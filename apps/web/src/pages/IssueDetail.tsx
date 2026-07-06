@@ -6,7 +6,7 @@ import { Markdown } from '../components/Markdown.js';
 import { AgentActivity } from '../components/AgentActivity.js';
 import { AccountPicker } from '../components/AccountPicker.js';
 import { CommentsSection } from '../components/Comments.js';
-import { ActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, timeAgo, useConfirm } from '../components/ui.js';
+import { ActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, Switch, timeAgo, useConfirm } from '../components/ui.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
   const { can } = useAuth();
@@ -215,7 +215,8 @@ function TriageCard({
       <div className="mb-2 flex items-center gap-2.5">
         <strong>AI triage</strong>
         <span className={triage.status === 'applied' ? 'badge-ok' : 'badge-warn'}>{triage.status}</span>
-        <a className="dim hover:underline" href={`#/runs/${triage.runId}`}>
+        <span className="flex-1" />
+        <a className="linkish text-xs" href={`#/runs/${triage.runId}`}>
           view run →
         </a>
       </div>
@@ -240,11 +241,19 @@ function TriageCard({
             </blockquote>
           ) : null}
           {triage.status === 'pending' && canAct ? (
-            <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-              <label className="dim flex items-center gap-1.5">
-                <input type="checkbox" checked={comment} onChange={(e) => setComment(e.target.checked)} /> post the
-                reply
+            <div className="mt-3.5 flex flex-wrap items-center gap-2.5 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+              <label className="dim flex cursor-pointer items-center gap-2 text-[13px]">
+                <Switch label="Post the draft reply as a comment" checked={comment} onChange={setComment} />
+                post the reply
               </label>
+              <span className="flex-1" />
+              <AccountPicker value={actAs} onChange={setActAs} />
+              <button
+                className="btn-ghost"
+                onClick={() => void api.dismissTriage(triage.id).then(onChange).catch((e) => setError(String(e)))}
+              >
+                Dismiss
+              </button>
               <button
                 className="btn"
                 onClick={() =>
@@ -255,13 +264,6 @@ function TriageCard({
                 }
               >
                 Apply to GitHub
-              </button>
-              <AccountPicker value={actAs} onChange={setActAs} />
-              <button
-                className="btn-danger"
-                onClick={() => void api.dismissTriage(triage.id).then(onChange).catch((e) => setError(String(e)))}
-              >
-                Dismiss
               </button>
             </div>
           ) : null}

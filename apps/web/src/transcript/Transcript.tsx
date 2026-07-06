@@ -12,7 +12,7 @@ export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
   return (
     <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto py-4">
       {blocks.length === 0 ? (
-        <div className="m-auto flex flex-col items-center gap-1 py-16 text-center">
+        <div className="m-auto flex shrink-0 flex-col items-center gap-1 py-16 text-center">
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">No messages yet</span>
           <span className="dim">Send a prompt below to start working with the agent.</span>
         </div>
@@ -29,7 +29,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
   switch (block.kind) {
     case 'user':
       return (
-        <div className="max-w-[80%] self-end rounded-xl bg-zinc-900 px-3.5 py-2.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900">
+        <div className="max-w-[80%] shrink-0 self-end rounded-xl bg-zinc-900 px-3.5 py-2.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900">
           {block.trigger ? <div className="mb-1 text-[11px] opacity-80">⚡ {block.trigger}</div> : null}
           <pre className="font-[inherit] whitespace-pre-wrap">{block.text}</pre>
         </div>
@@ -37,7 +37,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     case 'assistant': {
       const structured = block.streaming ? null : tryParseJsonObject(block.text);
       return (
-        <div className="max-w-[92%] self-start rounded-xl bg-zinc-100 px-3.5 py-2.5 text-sm dark:bg-zinc-800/80">
+        <div className="max-w-[92%] shrink-0 self-start rounded-xl bg-zinc-100 px-3.5 py-2.5 text-sm dark:bg-zinc-800/80">
           {block.streaming ? (
             <pre className="font-[inherit] whitespace-pre-wrap">
               {block.text}
@@ -54,7 +54,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     case 'reasoning':
       return (
         <details
-          className="group self-start border-l-2 border-zinc-200 pl-3 dark:border-zinc-700"
+          className="group shrink-0 self-start border-l-2 border-zinc-200 pl-3 dark:border-zinc-700"
           open={block.streaming}
         >
           <summary className="dim flex cursor-pointer list-none items-center gap-1.5 text-xs select-none [&::-webkit-details-marker]:hidden">
@@ -69,7 +69,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     case 'notice':
       if (block.level === 'error') {
         return (
-          <div className="flex items-start gap-2.5 self-stretch rounded-lg border border-red-500/40 bg-red-500/5 px-3.5 py-2.5">
+          <div className="flex shrink-0 items-start gap-2.5 self-stretch rounded-lg border border-red-500/40 bg-red-500/5 px-3.5 py-2.5">
             <span className="shrink-0 text-red-600 dark:text-red-400" aria-hidden>
               ✕
             </span>
@@ -80,7 +80,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
           </div>
         );
       }
-      return <div className="chip self-center">{block.text}</div>;
+      return <div className="chip shrink-0 self-center">{block.text}</div>;
     default:
       return null;
   }
@@ -99,7 +99,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: 'tool' }> }): JSX.
   const busy = block.status === 'pending' || block.status === 'running';
   const summary = toolSummary(block.input);
   return (
-    <details className="self-stretch overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <details className="shrink-0 self-stretch overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] transition-colors select-none hover:bg-zinc-50 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden">
         <span className={`flex w-4 shrink-0 justify-center ${status.cls}`} aria-hidden>
           {busy ? <Spinner /> : block.status === 'ok' ? '✓' : '✕'}

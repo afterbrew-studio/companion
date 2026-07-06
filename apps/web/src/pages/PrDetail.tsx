@@ -521,9 +521,11 @@ function ReviewCard({
             <Markdown text={v.reviewBody} />
           </blockquote>
           {review.status === 'pending' && canAct ? (
-            <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <div className="mt-3.5 flex flex-wrap items-center gap-2.5 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+              <span className="flex-1" />
+              <AccountPicker value={actAs} onChange={setActAs} />
               <button
-                className="btn"
+                className="btn order-last"
                 onClick={() =>
                   void api
                     .applyPrReview(review.id, actAs || undefined)
@@ -533,9 +535,8 @@ function ReviewCard({
               >
                 Post review to GitHub
               </button>
-              <AccountPicker value={actAs} onChange={setActAs} />
               <button
-                className="btn-danger"
+                className="btn-ghost"
                 onClick={() =>
                   void api
                     .dismissPrReview(review.id)
