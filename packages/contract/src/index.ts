@@ -1,6 +1,11 @@
 export * from './moxxy.js';
+export * from './auth.js';
+export * from './workspaces.js';
+export * from './checks.js';
+export * from './pipelines.js';
 
 import type { AskRequest, MoxxyEvent } from './moxxy.js';
+import type { ChecksSnapshot } from './checks.js';
 
 // ---------- Runs -------------------------------------------------------------
 
@@ -33,6 +38,8 @@ export interface RunRecord {
   readonly branch: string | null;
   /** PR opened from this run's branch, if any. */
   readonly prUrl: string | null;
+  /** Per-run model override; null rides the daemon default. */
+  readonly model: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** True while a gateway process is attached (live transcript available). */
@@ -51,6 +58,8 @@ export interface RepoRecord {
   readonly fullName: string;
   readonly owner: string;
   readonly name: string;
+  /** Workspace this repo belongs to. */
+  readonly workspaceId: string;
   readonly defaultBranch: string;
   readonly private: boolean;
   readonly cloneReady: boolean;
@@ -64,6 +73,8 @@ export interface RepoRecord {
   readonly prGateEnabled: boolean;
   /** Set once a webhook secret was generated (receiver active). */
   readonly webhookConfigured: boolean;
+  /** Pinned GitHub account for this repo's posting/actions; null = purpose bindings. */
+  readonly githubAccountId: string | null;
 }
 
 export interface IssueRecord {
@@ -79,6 +90,7 @@ export interface IssueRecord {
   readonly url: string;
   readonly createdAt: number;
   readonly updatedAt: number;
+  readonly closedAt: number | null;
   /** Latest triage result status for this issue, if any. */
   readonly triage: 'pending' | 'applied' | 'dismissed' | null;
 }
@@ -90,14 +102,25 @@ export interface PrRecord {
   readonly body: string;
   readonly state: 'open' | 'closed' | 'merged';
   readonly headRef: string;
+  readonly headSha: string | null;
   readonly baseRef: string;
   readonly draft: boolean;
   readonly author: string;
+  readonly labels: ReadonlyArray<string>;
+  readonly assignees: ReadonlyArray<string>;
+  /** Conversation comment count (harvested from the issues feed; 0 until synced). */
+  readonly comments: number;
   readonly url: string;
   readonly createdAt: number;
   readonly updatedAt: number;
+  /** When the PR was closed or merged. */
+  readonly closedAt: number | null;
   /** Latest AI review status for this PR, if any. */
   readonly review: 'pending' | 'applied' | 'dismissed' | null;
+  /** Human review decision on GitHub (folded per reviewer, latest wins). */
+  readonly reviewDecision: 'approved' | 'changes_requested' | null;
+  /** Latest CI pipeline snapshot (null until first fetch). */
+  readonly checks: ChecksSnapshot | null;
 }
 
 // ---------- PR reviews -----------------------------------------------------------
@@ -183,8 +206,17 @@ export interface ProposalRecord {
 export interface ReportRecord {
   readonly id: string;
   readonly repo: string | null;
-  readonly kind: 'digest' | 'stale-sweep' | 'webhook';
+  /** Issue/PR number this report is about (ci-analysis), if any. */
+  readonly issueNumber: number | null;
+  readonly kind: 'digest' | 'stale-sweep' | 'webhook' | 'ci-analysis';
   readonly title: string;
+  readonly body: string;
+  readonly createdAt: number;
+}
+
+/** A GitHub issue/PR conversation comment (read-through, not cached). */
+export interface CommentRecord {
+  readonly author: string;
   readonly body: string;
   readonly createdAt: number;
 }
@@ -203,12 +235,40 @@ export interface SkillFile {
   readonly updatedAt: number;
 }
 
-// ---------- REST DTOs ---------------------------------------------------------
+// ---------- GitHub accounts ----------------------------------------------------
 
-export interface SessionBootstrap {
-  readonly token: string;
-  readonly version: string;
+/** What an account is bound to do; one account can hold several purposes. */
+export type GitHubPurpose = 'fetch' | 'runs' | 'pipelines' | 'webhooks';
+
+export const GITHUB_PURPOSES: readonly GitHubPurpose[] = ['fetch', 'runs', 'pipelines', 'webhooks'];
+
+/** A connected GitHub account (PAT); tokens never leave the daemon. */
+export interface GitHubAccountRecord {
+  readonly id: string;
+  readonly login: string;
+  readonly purposes: readonly GitHubPurpose[];
+  readonly createdAt: number;
 }
+
+// ---------- Notifications -----------------------------------------------------
+
+export type NotificationKind = 'action_required' | 'finished' | 'error' | 'info';
+
+/** Inbox entry: workspaces report human-relevant events (action required, finished operations). */
+export interface NotificationRecord {
+  readonly id: string;
+  /** Workspace the event belongs to; null = instance-wide. */
+  readonly workspaceId: string | null;
+  readonly kind: NotificationKind;
+  readonly title: string;
+  readonly body: string;
+  /** SPA hash link the notification opens. */
+  readonly href: string | null;
+  readonly readAt: number | null;
+  readonly createdAt: number;
+}
+
+// ---------- REST DTOs ---------------------------------------------------------
 
 export interface MoxxyStatus {
   readonly cliPath: string | null;
@@ -225,6 +285,37 @@ export interface CreateRunRequest {
   readonly kind?: RunKind;
   readonly title?: string;
   readonly prompt?: string;
+}
+
+// ---------- model catalog (from the moxxy gateway) ------------------------------
+
+export interface ModelCatalogModel {
+  readonly id: string;
+  readonly contextWindow: number | null;
+}
+
+export interface ModelCatalogProvider {
+  readonly name: string;
+  readonly enabled: boolean;
+  /** Credentials resolved — moxxy can actually serve this provider. */
+  readonly ready: boolean;
+  readonly models: ReadonlyArray<ModelCatalogModel>;
+}
+
+/** Connected providers + their models, read live from a run's gateway. */
+export interface ModelCatalog {
+  readonly activeProvider: string | null;
+  readonly providers: ReadonlyArray<ModelCatalogProvider>;
+  /** Model the next turn of this run will use (override or daemon default). */
+  readonly current: string;
+  readonly defaultModel: string;
+}
+
+export interface SetRunModelRequest {
+  /** null clears the override (back to the daemon default). */
+  readonly model: string | null;
+  /** Switch the session's active provider first (for provider-scoped models). */
+  readonly provider?: string;
 }
 
 export interface PromptRequest {
@@ -256,9 +347,13 @@ export type SpaServerMessage =
   | { readonly t: 'run.changed'; readonly run: RunRecord }
   | { readonly t: 'runs.changed' }
   | { readonly t: 'repos.changed' }
+  | { readonly t: 'workspaces.changed' }
   | { readonly t: 'issues.changed'; readonly repo: string }
   | { readonly t: 'triage.changed'; readonly repo: string }
   | { readonly t: 'prs.changed'; readonly repo: string }
+  | { readonly t: 'pipelines.changed' }
+  | { readonly t: 'pipelineRuns.changed'; readonly repo: string }
   | { readonly t: 'proposals.changed' }
   | { readonly t: 'reports.changed' }
+  | { readonly t: 'notifications.changed' }
   | { readonly t: 'hello'; readonly version: string };

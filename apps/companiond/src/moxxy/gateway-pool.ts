@@ -80,6 +80,11 @@ export class GatewayPool {
     return this.live.get(runId);
   }
 
+  /** Run ids with an attached gateway right now. */
+  liveIds(): string[] {
+    return [...this.live.keys()];
+  }
+
   list(): string[] {
     return [...this.live.keys()];
   }

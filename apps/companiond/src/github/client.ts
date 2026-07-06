@@ -70,8 +70,9 @@ export class GitHubClient {
       const batch = await this.get<GhIssue[]>(
         `/repos/${fullName}/issues?state=all&per_page=100&sort=updated&direction=desc&page=${page}${since}`,
       );
-      // The issues endpoint interleaves PRs; a PR carries `pull_request`.
-      collected.push(...batch.filter((i) => !i.pull_request));
+      // The issues endpoint interleaves PRs (they carry `pull_request`) —
+      // keep them: the sync harvests PR comment counts from these rows.
+      collected.push(...batch);
       if (batch.length < 100) break;
     }
     return collected;
@@ -93,8 +94,17 @@ export class GitHubClient {
     return this.get(`/repos/${fullName}/issues/${issueNumber}/comments?per_page=50`);
   }
 
+  async prReviewList(fullName: string, prNumber: number): Promise<GhReview[]> {
+    return this.get(`/repos/${fullName}/pulls/${prNumber}/reviews?per_page=100`);
+  }
+
   async addLabels(fullName: string, issueNumber: number, labels: string[]): Promise<void> {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
+  }
+
+  /** Close/reopen an issue (works for PR numbers too via the issues API). */
+  async updateIssueState(fullName: string, issueNumber: number, state: 'open' | 'closed'): Promise<void> {
+    await this.patch(`/repos/${fullName}/issues/${issueNumber}`, { state });
   }
 
   async comment(fullName: string, issueNumber: number, body: string): Promise<{ html_url: string }> {
@@ -106,6 +116,19 @@ export class GitHubClient {
     args: { title: string; head: string; base: string; body: string },
   ): Promise<{ html_url: string; number: number }> {
     return this.post(`/repos/${fullName}/pulls`, args);
+  }
+
+  /** Check runs for a commit (GitHub Actions + apps). */
+  async checkRuns(fullName: string, ref: string): Promise<GhCheckRun[]> {
+    const body = await this.get<{ check_runs: GhCheckRun[] }>(
+      `/repos/${fullName}/commits/${ref}/check-runs?per_page=100`,
+    );
+    return body.check_runs ?? [];
+  }
+
+  /** Legacy combined commit status (CircleCI et al. still use it). */
+  async combinedStatus(fullName: string, ref: string): Promise<GhCombinedStatus> {
+    return this.get<GhCombinedStatus>(`/repos/${fullName}/commits/${ref}/status`);
   }
 
   /** Raw unified diff of a PR (GitHub's diff media type). */
@@ -188,6 +211,7 @@ export interface GhIssue {
   html_url: string;
   created_at: string;
   updated_at: string;
+  closed_at: string | null;
   pull_request?: unknown;
 }
 
@@ -197,11 +221,49 @@ export interface GhPull {
   body: string | null;
   state: 'open' | 'closed';
   merged_at: string | null;
+  closed_at: string | null;
   draft?: boolean;
-  head: { ref: string };
+  labels?: Array<{ name?: string } | string>;
+  assignees?: Array<{ login: string }> | null;
+  head: { ref: string; sha: string };
   base: { ref: string };
   user: { login: string } | null;
   html_url: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface GhReview {
+  user: { login: string } | null;
+  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
+  submitted_at: string | null;
+}
+
+export interface GhCheckRun {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'neutral'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'stale'
+    | null;
+  details_url: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface GhCombinedStatus {
+  state: 'success' | 'failure' | 'pending' | 'error';
+  statuses: Array<{
+    context: string;
+    state: 'success' | 'failure' | 'pending' | 'error';
+    target_url: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
 }

@@ -114,6 +114,15 @@ export class GatewayClient {
     await this.request('session.setMode', { mode });
   }
 
+  /** Session-side model override (null resets to the provider default). */
+  async setModel(model: string | null): Promise<void> {
+    await this.request('session.setModel', { model });
+  }
+
+  async setProvider(provider: string): Promise<void> {
+    await this.request('session.setProvider', { provider });
+  }
+
   async setAutoApprove(enabled: boolean): Promise<void> {
     await this.request('session.setAutoApprove', { enabled });
   }

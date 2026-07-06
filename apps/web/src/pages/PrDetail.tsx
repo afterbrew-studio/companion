@@ -1,32 +1,62 @@
-import { useEffect, useState } from 'react';
-import type { PrRecord, PrReviewResult } from '@companion/contract';
+import { useCallback, useEffect, useState } from 'react';
+import type {
+  ChecksSummary,
+  CheckRunInfo,
+  PipelineRecord,
+  PipelineRunRecord,
+  PrRecord,
+  PrReviewResult,
+  ReportRecord,
+} from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
+import { useWorkspace } from '../lib/workspace.js';
+import { Markdown } from '../components/Markdown.js';
+import { AgentActivity } from '../components/AgentActivity.js';
+import { AccountPicker } from '../components/AccountPicker.js';
+import { CommentsSection } from '../components/Comments.js';
+import { ActionMenu, Page, ChecksBadge, CopyText, GitHubUser, PageLoading, PrStateIcon, Spinner, pipelineStatusBadge, timeAgo, useConfirm } from '../components/ui.js';
 
 export function PrDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
+  const { can } = useAuth();
+  const { current } = useWorkspace();
   const [pr, setPr] = useState<PrRecord | null>(null);
   const [review, setReview] = useState<PrReviewResult | null>(null);
+  const [pipelineRuns, setPipelineRuns] = useState<PipelineRunRecord[]>([]);
+  const [ciAnalysis, setCiAnalysis] = useState<ReportRecord | null>(null);
+  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirmDanger, confirmElement } = useConfirm();
+  const canAct = can('prs:act');
 
-  const refresh = async (): Promise<void> => {
+  const refresh = useCallback(async (): Promise<void> => {
     try {
-      const { pr, review } = await api.getPr(repo, number);
+      const { pr, review, pipelineRuns, ciAnalysis } = await api.getPr(repo, number);
       setPr(pr);
       setReview(review);
+      setPipelineRuns(pipelineRuns);
+      setCiAnalysis(ciAnalysis);
       if (review && review.status !== 'failed') setAnalyzing(false);
     } catch (err) {
       setError(String(err));
     }
-  };
+  }, [repo, number]);
 
   useEffect(() => {
     void refresh();
+    if (current && can('pipelines:read')) {
+      api
+        .workspacePipelines(current.id)
+        .then((r) => setPipelines(r.pipelines))
+        .catch(() => undefined);
+    }
     return onServerMessage((msg) => {
-      if (msg.t === 'prs.changed' && msg.repo === repo) void refresh();
+      if ((msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') && msg.repo === repo) void refresh();
+      if (msg.t === 'reports.changed') void refresh();
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repo, number]);
+  }, [refresh, current, can, repo]);
 
   const analyze = async (): Promise<void> => {
     setAnalyzing(true);
@@ -52,76 +82,416 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
     }
   };
 
-  if (!pr) return <div className="mx-auto max-w-4xl px-6 py-6">{error ?? 'Loading…'}</div>;
+  if (!pr) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
-      <header className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">
-          <a href={`#/repos/${repo}`} className="dim font-normal">
-            {repo} /
-          </a>{' '}
-          PR #{pr.number}
-        </h1>
-        <div className="flex items-center gap-2">
-          <button className="btn" disabled={analyzing} onClick={() => void analyze()}>
-            {analyzing ? 'Analyzing…' : review ? 'Re-analyze' : 'AI review'}
-          </button>
-          {pr.state === 'open' ? (
-            <>
-              <button
-                className="btn"
-                disabled={busy}
-                onClick={() => {
-                  if (confirm(`Squash-merge PR #${pr.number}?`)) void act(() => api.mergePr(repo, number, 'squash'))();
-                }}
-              >
-                Merge
+    <Page className="anim-in">
+      <header>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="min-w-0 flex-1 text-xl leading-snug font-semibold">
+            <CopyText value={`#${pr.number}`} className="dim mr-1.5 align-baseline font-normal">
+              #{pr.number}
+            </CopyText>
+            {pr.title}
+          </h1>
+          <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Pull request actions">
+            {canAct ? (
+              <button className="btn" disabled={analyzing} onClick={() => void analyze()}>
+                {analyzing ? (
+                  <>
+                    <Spinner /> Reviewing…
+                  </>
+                ) : review ? (
+                  'Re-review'
+                ) : (
+                  'AI review'
+                )}
               </button>
-              <button
-                className="btn-danger"
-                disabled={busy}
-                onClick={() => {
-                  if (confirm(`Close PR #${pr.number} without merging?`)) void act(() => api.closePr(repo, number))();
-                }}
-              >
-                Close
-              </button>
-            </>
-          ) : null}
-          <a className="btn-ghost" href={pr.url} target="_blank" rel="noreferrer">
-            GitHub ↗
-          </a>
+            ) : null}
+            <a className="btn-ghost" href={pr.url} target="_blank" rel="noreferrer">
+              GitHub ↗
+            </a>
+            {canAct && pr.state === 'open' ? (
+              <ActionMenu
+                label="More pull request actions"
+                actions={[
+                  {
+                    label: 'Squash-merge…',
+                    disabled: busy,
+                    onSelect: () =>
+                      void (async () => {
+                        const ok = await confirmDanger({
+                          title: `Merge PR #${pr.number}`,
+                          message: `"${pr.title}" is squash-merged into ${pr.baseRef}. Merging cannot be undone from Companion.`,
+                          confirmLabel: 'Squash-merge',
+                        });
+                        if (ok) await act(() => api.mergePr(repo, number, 'squash'))();
+                      })(),
+                  },
+                  {
+                    label: 'Close PR…',
+                    danger: true,
+                    disabled: busy,
+                    onSelect: () =>
+                      void (async () => {
+                        const ok = await confirmDanger({
+                          title: `Close PR #${pr.number}`,
+                          message: 'The pull request is closed on GitHub without merging.',
+                          confirmLabel: 'Close PR',
+                        });
+                        if (ok) await act(() => api.closePr(repo, number))();
+                      })(),
+                  },
+                ]}
+              />
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[13px]">
+          <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
+          <ChecksBadge checks={pr.checks} />
+          <span className="dim flex min-w-0 flex-wrap items-center gap-x-1.5">
+            <GitHubUser login={pr.author} className="text-zinc-700 dark:text-zinc-300" />
+            <span aria-hidden>·</span>
+            <CopyText value={pr.headRef} title={`Copy branch "${pr.headRef}"`} className="min-w-0">
+              <code className="truncate text-xs">
+                {pr.headRef} → {pr.baseRef}
+              </code>
+            </CopyText>
+            <span aria-hidden>·</span>
+            <span>opened {timeAgo(pr.createdAt)}</span>
+            <span aria-hidden>·</span>
+            <span>updated {timeAgo(pr.updatedAt)}</span>
+          </span>
         </div>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}
+      {confirmElement}
 
-      <h2 className="mt-3 text-lg font-medium">{pr.title}</h2>
-      <div className="dim mt-1 flex flex-wrap items-center gap-1.5">
-        <span className={pr.state === 'merged' ? 'badge-ok' : pr.state === 'open' ? 'badge-accent' : 'badge'}>
-          {pr.state}
-        </span>
-        {pr.draft ? <span className="badge-warn">draft</span> : null}
-        by {pr.author} · {pr.headRef} → {pr.baseRef}
-      </div>
-      <pre className="card mt-4 max-h-72 overflow-y-auto text-[13px] whitespace-pre-wrap">
-        {pr.body || '(no description)'}
-      </pre>
+      <article className="card mt-4 max-h-[420px] overflow-y-auto">
+        {pr.body ? <Markdown text={pr.body} /> : <span className="dim text-sm">(no description)</span>}
+      </article>
 
-      {analyzing && !review ? <div className="banner-info">Review agent is reading the diff…</div> : null}
-      {review ? <ReviewCard review={review} onChange={refresh} /> : null}
-    </div>
+      <ChecksPanel repo={repo} number={number} canAct={canAct} ciAnalysis={ciAnalysis} />
+
+      <PipelinesPanel
+        repo={repo}
+        number={number}
+        prOpen={pr.state === 'open'}
+        pipelines={pipelines}
+        runs={pipelineRuns}
+        canRun={can('pipelines:run')}
+        onError={setError}
+      />
+
+      <AgentActivity repo={repo} issueNumber={number} />
+
+      {analyzing && !review ? (
+        <div className="banner-info anim-in">
+          <Spinner /> Review agent is reading the diff and CI status…
+        </div>
+      ) : null}
+      {review ? <ReviewCard review={review} canAct={canAct} onChange={refresh} /> : null}
+
+      <CommentsSection
+        load={() => api.prComments(repo, number)}
+        post={canAct ? (body) => api.commentPr(repo, number, body) : undefined}
+        canComment={canAct}
+      />
+    </Page>
   );
 }
 
-function ReviewCard({ review, onChange }: { review: PrReviewResult; onChange: () => Promise<void> }): JSX.Element {
+// ---------- CI checks -----------------------------------------------------------
+
+function checkOutcome(run: CheckRunInfo): { label: string; cls: string; failed: boolean } {
+  if (run.status !== 'completed') return { label: 'running', cls: 'badge-warn', failed: false };
+  const ok = run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped';
+  return ok
+    ? { label: run.conclusion ?? 'ok', cls: 'badge-ok', failed: false }
+    : { label: run.conclusion ?? 'failed', cls: 'badge-danger', failed: true };
+}
+
+function duration(run: CheckRunInfo): string | null {
+  if (!run.startedAt || !run.completedAt) return null;
+  const s = Math.max(0, Math.round((run.completedAt - run.startedAt) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function ChecksPanel({
+  repo,
+  number,
+  canAct,
+  ciAnalysis,
+}: {
+  repo: string;
+  number: number;
+  canAct: boolean;
+  ciAnalysis: ReportRecord | null;
+}): JSX.Element {
+  const [checks, setChecks] = useState<ChecksSummary | null>(null);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [open, setOpen] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(true);
+
+  const load = useCallback((): void => {
+    setState('loading');
+    api
+      .prChecks(repo, number)
+      .then((r) => {
+        setChecks(r.checks);
+        setState('ready');
+        if (r.checks.failed > 0) setOpen(true);
+      })
+      .catch(() => setState('error'));
+  }, [repo, number]);
+
+  useEffect(load, [load]);
+
+  // A fresh report arriving over reports.changed means the analysis is done.
+  useEffect(() => {
+    if (ciAnalysis) setAnalyzing(false);
+  }, [ciAnalysis?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const analyzeFailures = async (): Promise<void> => {
+    setAnalyzing(true);
+    try {
+      await api.analyzeFailedChecks(repo, number);
+    } catch {
+      setAnalyzing(false);
+    }
+  };
+
+  const sorted = checks ? [...checks.runs].sort((a, b) => Number(checkOutcome(b).failed) - Number(checkOutcome(a).failed)) : [];
+
+  return (
+    <section className="card mt-4" aria-label="CI pipelines">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <strong className="text-sm">CI pipelines</strong>
+        {state === 'loading' ? (
+          <span className="dim flex items-center gap-1.5">
+            <Spinner /> checking…
+          </span>
+        ) : null}
+        {state === 'error' ? <span className="badge-danger">status unavailable</span> : null}
+        {state === 'ready' && checks ? (
+          checks.state === 'none' ? (
+            <span className="dim">no pipelines reported for this commit</span>
+          ) : (
+            <>
+              <ChecksBadge checks={checks} />
+              <span className="dim">
+                {checks.passed} passed · {checks.failed} failed · {checks.pending} running
+              </span>
+            </>
+          )
+        ) : null}
+        <span className="flex-1" />
+        {checks && checks.failed > 0 && canAct ? (
+          <button className="btn" disabled={analyzing} onClick={() => void analyzeFailures()}>
+            {analyzing ? (
+              <>
+                <Spinner /> Investigating…
+              </>
+            ) : (
+              'Analyze failures with AI'
+            )}
+          </button>
+        ) : null}
+        {checks && checks.runs.length > 0 ? (
+          <button className="linkish text-sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            {open ? 'hide' : `show ${checks.runs.length} checks`}
+          </button>
+        ) : null}
+        <button className="btn-ghost" onClick={load} aria-label="Refresh CI status">
+          Refresh
+        </button>
+      </div>
+
+      {open && checks ? (
+        <ul className="mt-2.5 divide-y divide-zinc-200 dark:divide-zinc-800">
+          {sorted.map((run, i) => {
+            const o = checkOutcome(run);
+            const d = duration(run);
+            return (
+              <li key={`${run.name}-${i}`} className="anim-in flex items-center gap-2.5 py-1.5 text-[13px]">
+                <span className={o.cls}>{o.label}</span>
+                <span className="min-w-0 flex-1 truncate">{run.name}</span>
+                {d ? <span className="dim text-xs tabular-nums">{d}</span> : null}
+                {run.detailsUrl ? (
+                  <a className="linkish" href={run.detailsUrl} target="_blank" rel="noreferrer">
+                    logs ↗
+                  </a>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
+      {analyzing && !ciAnalysis ? (
+        <div className="banner-info anim-in mt-3">
+          <Spinner /> Agent is reproducing the failing pipelines locally — the report lands here.
+        </div>
+      ) : null}
+      {ciAnalysis ? (
+        <div className="anim-in mt-3 rounded-lg border border-accent-400/50 p-3 dark:border-accent-500/40">
+          <div className="flex items-center gap-2">
+            <strong className="text-[13px]">AI failure analysis</strong>
+            <span className="dim text-xs">{timeAgo(ciAnalysis.createdAt)}</span>
+            <span className="flex-1" />
+            <button className="linkish text-sm" onClick={() => setShowAnalysis((v) => !v)}>
+              {showAnalysis ? 'hide' : 'show'}
+            </button>
+          </div>
+          {showAnalysis ? (
+            <div className="mt-1.5 max-h-96 overflow-y-auto">
+              <Markdown text={ciAnalysis.body} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+// ---------- user pipelines -------------------------------------------------------
+
+function PipelinesPanel({
+  repo,
+  number,
+  prOpen,
+  pipelines,
+  runs,
+  canRun,
+  onError,
+}: {
+  repo: string;
+  number: number;
+  prOpen: boolean;
+  pipelines: PipelineRecord[];
+  runs: PipelineRunRecord[];
+  canRun: boolean;
+  onError: (e: string) => void;
+}): JSX.Element | null {
+  const [selected, setSelected] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (pipelines.length === 0 && runs.length === 0) return null;
+
+  const run = async (): Promise<void> => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      await api.runPipeline(repo, number, selected);
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card mt-4" aria-label="Pipelines">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <strong className="text-sm">Pipelines</strong>
+        <span className="flex-1" />
+        {canRun && prOpen && pipelines.length > 0 ? (
+          <>
+            <select
+              className="input py-1.5"
+              aria-label="Pipeline to run"
+              value={selected}
+              onChange={(e) => setSelected(e.target.value)}
+            >
+              <option value="">Choose a pipeline…</option>
+              {pipelines.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn" disabled={!selected || busy} onClick={() => void run()}>
+              {busy ? (
+                <>
+                  <Spinner /> Starting…
+                </>
+              ) : (
+                'Run'
+              )}
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      {runs.length > 0 ? (
+        <ul className="mt-2.5 flex flex-col gap-2">
+          {runs.map((r) => (
+            <li key={r.id} className="anim-in rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+              <button
+                className="flex w-full items-center gap-2.5 text-left"
+                onClick={() => setExpanded((v) => (v === r.id ? null : r.id))}
+                aria-expanded={expanded === r.id}
+              >
+                {r.status === 'running' ? <Spinner /> : null}
+                <span className={pipelineStatusBadge(r.status)}>{r.status}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{r.pipelineName}</span>
+                <span className="dim text-xs">
+                  {r.trigger === 'pr-opened' ? 'auto' : 'manual'} · {timeAgo(r.createdAt)}
+                </span>
+              </button>
+              {expanded === r.id ? (
+                <ol className="mt-2 flex flex-col gap-1.5" aria-label="Step results">
+                  {r.steps.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-[13px]">
+                      <span className={pipelineStatusBadge(s.status)}>{s.status}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">{s.name}</div>
+                        {s.summary ? <div className="dim">{s.summary}</div> : null}
+                        {s.detail ? (
+                          <details className="mt-0.5">
+                            <summary className="dim cursor-pointer text-xs">detail</summary>
+                            <div className="mt-1 max-h-48 overflow-y-auto">
+                              <Markdown text={s.detail} />
+                            </div>
+                          </details>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dim mt-2 text-[13px]">No pipeline has run against this PR yet.</p>
+      )}
+    </section>
+  );
+}
+
+// ---------- AI review ---------------------------------------------------------------
+
+function ReviewCard({
+  review,
+  canAct,
+  onChange,
+}: {
+  review: PrReviewResult;
+  canAct: boolean;
+  onChange: () => Promise<void>;
+}): JSX.Element {
   const [error, setError] = useState<string | null>(null);
+  const [actAs, setActAs] = useState('');
   const v = review.verdict;
   const riskClass = v?.risk === 'high' ? 'badge-danger' : v?.risk === 'medium' ? 'badge-warn' : 'badge-ok';
 
   return (
     <div
-      className={`mt-4 rounded-xl border p-4 ${
+      className={`anim-in mt-4 rounded-xl border p-4 ${
         review.status === 'applied' ? 'border-emerald-500/60' : 'border-amber-500/60'
       }`}
     >
@@ -146,23 +516,24 @@ function ReviewCard({ review, onChange }: { review: PrReviewResult; onChange: ()
               ))}
             </ul>
           ) : null}
-          <blockquote className="my-2.5 border-l-2 border-zinc-300 py-1 pl-3 text-[13px] whitespace-pre-wrap dark:border-zinc-600">
-            <div className="dim">review to post</div>
-            {v.reviewBody}
+          <blockquote className="my-2.5 border-l-2 border-zinc-300 py-1 pl-3 dark:border-zinc-600">
+            <div className="dim text-[13px]">review to post</div>
+            <Markdown text={v.reviewBody} />
           </blockquote>
-          {review.status === 'pending' ? (
-            <div className="mt-2.5 flex items-center gap-2.5">
+          {review.status === 'pending' && canAct ? (
+            <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
               <button
                 className="btn"
                 onClick={() =>
                   void api
-                    .applyPrReview(review.id)
+                    .applyPrReview(review.id, actAs || undefined)
                     .then(onChange)
                     .catch((e) => setError(String(e)))
                 }
               >
                 Post review to GitHub
               </button>
+              <AccountPicker value={actAs} onChange={setActAs} />
               <button
                 className="btn-danger"
                 onClick={() =>

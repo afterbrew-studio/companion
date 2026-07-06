@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RunRecord, RunStatus } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
+import { Page, PageHeader, EmptyState, Spinner, timeAgo } from '../components/ui.js';
 
 export function statusBadge(status: RunStatus, live: boolean): string {
   if (live || status === 'running' || status === 'review') return 'badge-ok';
@@ -52,34 +53,77 @@ export function RunsPage(): JSX.Element {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Agent runs</h1>
-        <button className="btn" disabled={creating} onClick={() => void createRun()}>
-          {creating ? 'Starting…' : 'New interactive run'}
-        </button>
-      </header>
+    <Page>
+      <PageHeader
+        title="Agent Runs"
+        subtitle="Every agent session — chats, triage, fixes, reviews, reports"
+        actions={
+          <button className="btn" disabled={creating} onClick={() => void createRun()}>
+            {creating ? 'Starting…' : 'New interactive run'}
+          </button>
+        }
+      />
       {error ? <div className="error-bar">{error}</div> : null}
 
-      <ul className="mt-4 divide-y divide-zinc-200 dark:divide-zinc-800">
-        {runs.map((run) => (
-          <li key={run.id} className="flex">
-            <a
-              className="flex flex-1 items-center gap-2.5 px-1.5 py-2.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900"
-              href={`#/runs/${run.id}`}
-            >
-              <span className={statusBadge(run.status, run.live)}>{run.live ? 'live' : run.status}</span>
-              <span className="badge">{run.kind}</span>
-              <span className="font-medium">{run.title}</span>
-              {run.repo ? <span className="dim">{run.repo}</span> : null}
-              {run.status === 'review' ? <span className="badge-warn">needs review</span> : null}
-              {run.prUrl ? <span className="badge-ok">PR ✓</span> : null}
-              <span className="dim ml-auto">{new Date(run.createdAt).toLocaleString()}</span>
+      {runs.length === 0 ? (
+        <EmptyState
+          title="No runs yet"
+          hint="Start an interactive run to chat with an agent, or trigger triage/fix/review from an issue or PR."
+          action={
+            <button className="btn" disabled={creating} onClick={() => void createRun()}>
+              Start the first run
+            </button>
+          }
+        />
+      ) : (
+        <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+          {runs.map((run) => (
+            <a key={run.id} className="row-link" href={`#/runs/${run.id}`}>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-2">
+                  <span className="truncate font-medium">{run.title}</span>
+                  {run.status === 'review' ? <span className="badge-warn shrink-0">needs review</span> : null}
+                  {run.prUrl ? <span className="badge-ok shrink-0">PR ✓</span> : null}
+                </span>
+                <span className="dim block truncate text-xs">
+                  {run.live ? 'live' : run.status} · {run.kind}
+                  {run.model ? ` · ${run.model}` : ''}
+                  {run.repo ? ` · ${run.repo}` : ''}
+                  {run.inputTokens + run.outputTokens > 0
+                    ? ` · ${formatTokens(run.inputTokens)} in · ${formatTokens(run.outputTokens)} out`
+                    : ''}
+                </span>
+              </span>
+              <span className="dim shrink-0" title={new Date(run.createdAt).toLocaleString()}>
+                {timeAgo(run.createdAt)}
+              </span>
+              {run.live ? (
+                <Spinner />
+              ) : (
+                <span
+                  className={`size-2 shrink-0 rounded-full ${
+                    run.status === 'failed' || run.status === 'interrupted'
+                      ? 'bg-red-500'
+                      : run.status === 'review'
+                        ? 'bg-amber-500'
+                        : run.status === 'completed'
+                          ? 'bg-emerald-500'
+                          : 'bg-zinc-300 dark:bg-zinc-600'
+                  }`}
+                  aria-hidden
+                  title={run.status}
+                />
+              )}
             </a>
-          </li>
-        ))}
-        {runs.length === 0 ? <li className="dim py-5">No runs yet.</li> : null}
-      </ul>
-    </div>
+          ))}
+        </div>
+      )}
+    </Page>
   );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
 }

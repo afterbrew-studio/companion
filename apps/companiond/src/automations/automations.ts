@@ -5,12 +5,14 @@ import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
 import type { Triage } from '../triage/triage.js';
 import type { PrReviews } from '../prs/reviews.js';
+import type { Pipelines } from '../pipelines/pipelines.js';
 import type { GitHubSync } from '../github/sync.js';
 import type { Checkouts } from '../git/checkouts.js';
 
 /**
  * Automations: a GitHub webhook receiver (HMAC-verified, raw body) and a slow
- * schedule ticker (daily digest, stale sweep). Rules are per-repo switches.
+ * schedule ticker (daily digest, stale sweep). Rules are per-repo switches;
+ * user-defined pipelines with auto-run also fire here on PR open.
  */
 export class Automations {
   private timer: NodeJS.Timeout | null = null;
@@ -20,6 +22,7 @@ export class Automations {
     private readonly orchestrator: Orchestrator,
     private readonly triage: Triage,
     private readonly prReviews: PrReviews,
+    private readonly pipelines: Pipelines,
     private readonly sync: GitHubSync,
     private readonly checkouts: Checkouts,
     private readonly broadcast: (msg: SpaServerMessage) => void,
@@ -82,16 +85,24 @@ export class Automations {
     }
     if (eventName === 'pull_request' && (action === 'opened' || action === 'ready_for_review')) {
       const pr = payload.pull_request as { number?: number; draft?: boolean } | undefined;
-      if (pr?.number && pr.draft !== true && repoRow?.pr_gate === 1) {
-        log.info('webhook: PR gate queued', { repo, pr: pr.number });
-        void this.sync
-          .syncRepo(repo)
-          .then(() => this.prReviews.gate(repo, pr.number!))
-          .catch((err) => log.warn('PR gate failed', { err: String(err) }));
+      if (pr?.number && pr.draft !== true) {
+        const number = pr.number;
+        const synced = this.sync.syncRepo(repo);
+        if (repoRow?.pr_gate === 1) {
+          log.info('webhook: PR gate queued', { repo, pr: number });
+          void synced
+            .then(() => this.prReviews.gate(repo, number))
+            .catch((err) => log.warn('PR gate failed', { err: String(err) }));
+        }
+        // User-defined pipelines flagged auto-run fire for every opened PR.
+        void synced
+          .then(() => this.pipelines.autoRunForPr(repo, number))
+          .catch((err) => log.warn('pipeline auto-run failed', { err: String(err) }));
       }
     }
 
     this.store.insertReport({
+      issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
       kind: 'webhook',
@@ -161,6 +172,7 @@ export class Automations {
     }
 
     this.store.insertReport({
+      issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
       kind: 'digest',
@@ -179,6 +191,7 @@ export class Automations {
         ? `No open issues idle for more than ${staleDays} days.`
         : stale.map((i) => `- #${i.number} ${i.title} — idle since ${new Date(i.updatedAt).toDateString()}`).join('\n');
     this.store.insertReport({
+      issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
       kind: 'stale-sweep',

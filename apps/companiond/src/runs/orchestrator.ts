@@ -3,7 +3,11 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   AskRequest,
+  NotificationKind,
   HistorySegment,
+  ModelCatalog,
+  ModelCatalogModel,
+  ModelCatalogProvider,
   MoxxyEvent,
   RunKind,
   RunRecord,
@@ -50,7 +54,7 @@ export class Orchestrator {
           // Autonomous goal runs land in review when their driving turn ends.
           const row = this.store.getRun(runId);
           if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
-            this.store.updateRunStatus(runId, 'review');
+            this.setStatus(runId, 'review');
             this.emitRunChanged(runId);
           }
         },
@@ -70,6 +74,7 @@ export class Orchestrator {
           }
           this.asksFor(runId).set(ask.requestId, ask);
           this.broadcast({ t: 'ask', runId, ask });
+          this.notifyRun(runId, 'action_required', 'Agent needs your input');
         },
         onAskResolved: (runId, requestId) => {
           this.asksFor(runId).delete(requestId);
@@ -84,7 +89,7 @@ export class Orchestrator {
           }
           const row = this.store.getRun(runId);
           if (row && (row.status === 'running' || row.status === 'provisioning')) {
-            this.store.updateRunStatus(runId, 'stopped');
+            this.setStatus(runId, 'stopped');
           }
           this.emitRunChanged(runId);
         },
@@ -136,6 +141,7 @@ export class Orchestrator {
     issueNumber?: number | null;
     proposalId?: string | null;
     branch?: string | null;
+    model?: string | null;
   }): Promise<RunRecord> {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
@@ -154,6 +160,7 @@ export class Orchestrator {
       proposalId: opts.proposalId ?? null,
       branch: opts.branch ?? null,
       prUrl: null,
+      model: opts.model ?? this.pinnedModel(opts.kind ?? 'interactive'),
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,
@@ -164,9 +171,9 @@ export class Orchestrator {
 
     try {
       await this.pool.spawn({ runId: id, cwd, moxxyCliPath: this.moxxyCliPath });
-      this.store.updateRunStatus(id, 'running');
+      this.setStatus(id, 'running');
     } catch (err) {
-      this.store.updateRunStatus(id, 'failed', String(err));
+      this.setStatus(id, 'failed', String(err));
       this.emitRunChanged(id);
       throw err;
     }
@@ -180,9 +187,16 @@ export class Orchestrator {
     if (!row) throw new Error(`unknown run: ${runId}`);
     if (!this.pool.get(runId)) {
       mkdirSync(row.cwd, { recursive: true });
-      await this.pool.spawn({ runId, cwd: row.cwd, moxxyCliPath: this.moxxyCliPath });
+      try {
+        await this.pool.spawn({ runId, cwd: row.cwd, moxxyCliPath: this.moxxyCliPath });
+      } catch (err) {
+        log.warn('resume failed', { runId, err: String(err) });
+        throw new Error(`could not resume: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-    this.store.updateRunStatus(runId, 'running');
+    // A fix/implement run awaiting human review keeps its review status —
+    // resuming just re-attaches the transcript/chat, it doesn't "un-review".
+    if (row.status !== 'review') this.setStatus(runId, 'running');
     this.emitRunChanged(runId);
     return this.getRun(runId)!;
   }
@@ -191,12 +205,41 @@ export class Orchestrator {
     const handle = this.pool.get(runId);
     if (handle) await handle.stop();
     const row = this.store.getRun(runId);
-    if (row && row.status === 'running') this.store.updateRunStatus(runId, 'stopped');
+    if (row && row.status === 'running') this.setStatus(runId, 'stopped');
     this.emitRunChanged(runId);
   }
 
+  /**
+   * Single choke point for status changes: persists the transition and drops
+   * an inbox notification for the ones a human acts on.
+   */
+  private setStatus(runId: string, status: RunRecord['status'], outcome?: string | null): void {
+    const prev = this.store.getRun(runId)?.status;
+    this.store.updateRunStatus(runId, status, outcome);
+    if (prev === status) return;
+    if (status === 'review') this.notifyRun(runId, 'action_required', 'Run ready for review');
+    else if (status === 'completed') this.notifyRun(runId, 'finished', 'Run completed');
+    else if (status === 'failed') this.notifyRun(runId, 'error', 'Run failed', outcome ?? undefined);
+  }
+
+  private notifyRun(runId: string, kind: NotificationKind, title: string, body?: string): void {
+    const run = this.store.getRun(runId);
+    if (!run) return;
+    const workspaceId = run.repo ? (this.store.getRepo(run.repo)?.workspace_id ?? null) : null;
+    this.store.insertNotification({
+      id: `ntf-${randomUUID().slice(0, 12)}`,
+      workspaceId,
+      kind,
+      title,
+      body: body ?? run.title,
+      href: `#/runs/${runId}`,
+      createdAt: Date.now(),
+    });
+    this.broadcast({ t: 'notifications.changed' });
+  }
+
   markRun(runId: string, status: RunRecord['status'], outcome?: string): void {
-    this.store.updateRunStatus(runId, status, outcome ?? null);
+    this.setStatus(runId, status, outcome ?? null);
     this.emitRunChanged(runId);
   }
 
@@ -204,7 +247,13 @@ export class Orchestrator {
 
   async sendPrompt(runId: string, prompt: string, model?: string): Promise<{ turnId: string }> {
     const handle = this.requireLive(runId);
-    const result = await handle.client.runTurn({ prompt, model });
+    // Per-turn pin > the run's persisted override > the daemon default.
+    let chosen = model ?? this.store.getRun(runId)?.model ?? this.config.defaultModel;
+    // Disabled selections quietly ride the daemon default instead of erroring.
+    if (chosen !== this.config.defaultModel && this.disabledModels().has(chosen)) {
+      chosen = this.config.defaultModel;
+    }
+    const result = await handle.client.runTurn({ prompt, model: chosen });
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
@@ -212,6 +261,187 @@ export class Orchestrator {
 
   async setGoalMode(runId: string): Promise<void> {
     await this.requireLive(runId).client.setMode('goal');
+  }
+
+  // ---------- model switching -----------------------------------------------------
+
+  /**
+   * Admin-pinned model for an action kind (settings `modelPin:<kind>`); new
+   * runs of that kind ride the pin unless the caller overrides explicitly.
+   * A pin pointing at a disabled model falls back to the daemon default.
+   */
+  private pinnedModel(kind: RunKind): string | null {
+    const pinned = this.store.getSetting(`modelPin:${kind}`);
+    if (!pinned || pinned.trim() === '') return null;
+    return this.disabledModels().has(pinned) ? null : pinned;
+  }
+
+  /** Admin-disabled model ids (settings `disabledModels`, JSON array). */
+  private disabledModels(): Set<string> {
+    try {
+      const raw = this.store.getSetting('disabledModels');
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  /** Admin-disabled provider names (settings `disabledProviders`, JSON array). */
+  private disabledProviders(): Set<string> {
+    try {
+      const raw = this.store.getSetting('disabledProviders');
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  /** Connected providers + models, read live from the run's gateway. */
+  async modelCatalog(runId: string): Promise<ModelCatalog> {
+    const disabledProviders = this.disabledProviders();
+    const disabledModels = this.disabledModels();
+    const handle = this.requireLive(runId);
+    const info = (await handle.client.sessionInfo()) as {
+      activeProvider?: unknown;
+      providers?: unknown;
+      readyProviders?: unknown;
+    } | null;
+    const ready = new Set(
+      Array.isArray(info?.readyProviders) ? info.readyProviders.filter((p) => typeof p === 'string') : [],
+    );
+    const providers: ModelCatalogProvider[] = (Array.isArray(info?.providers) ? info.providers : [])
+      .map((raw): ModelCatalogProvider | null => {
+        const p = raw as { name?: unknown; models?: unknown; enabled?: unknown };
+        if (typeof p.name !== 'string') return null;
+        const models: ModelCatalogModel[] = (Array.isArray(p.models) ? p.models : [])
+          .map((m): ModelCatalogModel | null => {
+            // Providers advertise models as ids or objects; tolerate both.
+            if (typeof m === 'string') return { id: m, contextWindow: null };
+            const obj = m as { id?: unknown; contextWindow?: unknown };
+            if (typeof obj.id !== 'string') return null;
+            return {
+              id: obj.id,
+              contextWindow: typeof obj.contextWindow === 'number' ? obj.contextWindow : null,
+            };
+          })
+          .filter((m): m is ModelCatalogModel => m !== null);
+        return {
+          name: p.name,
+          enabled: p.enabled !== false && !disabledProviders.has(p.name),
+          ready: ready.has(p.name),
+          models: models.filter((m) => !disabledModels.has(m.id) && !disabledModels.has(`${p.name}/${m.id}`)),
+        };
+      })
+      .filter((p): p is ModelCatalogProvider => p !== null);
+    // Cache the provider/model catalog so settings pages can offer dropdowns
+    // even when no gateway is live anymore.
+    try {
+      this.store.setSetting('modelCatalogCache', JSON.stringify({ providers }));
+    } catch {
+      // cache is best-effort
+    }
+    return {
+      activeProvider: typeof info?.activeProvider === 'string' ? info.activeProvider : null,
+      providers,
+      current: this.store.getRun(runId)?.model ?? this.config.defaultModel,
+      defaultModel: this.config.defaultModel,
+    };
+  }
+
+  /**
+   * Daemon-wide catalog for settings pages: read fresh from any live gateway,
+   * else the cached copy from the last live one — and when neither exists,
+   * probe: spawn a temporary gateway just to ask moxxy for the catalog, cache
+   * it, and reap the process. Users never need to know model ids by heart.
+   */
+  async sharedModelCatalog(): Promise<{
+    providers: ModelCatalogProvider[];
+    defaultModel: string;
+    fresh: boolean;
+  }> {
+    const liveId = this.pool.liveIds()[0];
+    if (liveId) {
+      try {
+        const catalog = await this.modelCatalog(liveId);
+        return { providers: [...catalog.providers], defaultModel: this.config.defaultModel, fresh: true };
+      } catch {
+        // fall through to the cache
+      }
+    }
+    let cached = this.readCatalogCache();
+    if (!cached) {
+      await this.probeCatalog();
+      cached = this.readCatalogCache();
+    }
+    return { providers: cached ?? [], defaultModel: this.config.defaultModel, fresh: false };
+  }
+
+  private readCatalogCache(): ModelCatalogProvider[] | null {
+    try {
+      const raw = this.store.getSetting('modelCatalogCache');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { providers?: ModelCatalogProvider[] };
+      return parsed.providers ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Single-flight, cooldown-guarded temporary-gateway catalog probe. */
+  private catalogProbe: Promise<void> | null = null;
+  private lastCatalogProbeAt = 0;
+
+  private probeCatalog(): Promise<void> {
+    if (this.catalogProbe) return this.catalogProbe;
+    if (Date.now() - this.lastCatalogProbeAt < 60_000) return Promise.resolve();
+    this.lastCatalogProbeAt = Date.now();
+    const job = (async () => {
+      const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
+      const cwd = paths.scratch();
+      mkdirSync(cwd, { recursive: true });
+      try {
+        await this.pool.spawn({ runId: probeId, cwd, moxxyCliPath: this.moxxyCliPath });
+        await this.modelCatalog(probeId); // success path writes the cache
+        log.info('model catalog probed via temporary gateway');
+      } catch (err) {
+        log.warn('model catalog probe failed', { err: String(err) });
+      } finally {
+        await this.pool
+          .get(probeId)
+          ?.stop()
+          .catch(() => undefined);
+      }
+    })();
+    this.catalogProbe = job.finally(() => {
+      this.catalogProbe = null;
+    });
+    return this.catalogProbe;
+  }
+
+  /**
+   * On-the-fly model switch. The persisted override is authoritative (it rides
+   * every runTurn); syncing the live session is best-effort because the
+   * headless serve runner doesn't handle session.setModel/setProvider — there
+   * the slash-command path (/provider, /model) is the supported fallback.
+   */
+  async setRunModel(runId: string, model: string | null, provider?: string): Promise<RunRecord> {
+    if (!this.store.getRun(runId)) throw new Error(`unknown run: ${runId}`);
+    const handle = this.pool.get(runId);
+    if (handle?.client.isOpen) {
+      if (provider) {
+        await handle.client
+          .setProvider(provider)
+          .catch(() => handle.client.runCommand('provider', provider))
+          .catch((err) => log.warn('provider switch failed', { runId, provider, err: String(err) }));
+      }
+      await handle.client
+        .setModel(model)
+        .catch(() => (model ? handle.client.runCommand('model', model) : undefined))
+        .catch((err) => log.warn('session model sync failed', { runId, err: String(err) }));
+    }
+    this.store.setRunModel(runId, model);
+    this.emitRunChanged(runId);
+    return this.getRun(runId)!;
   }
 
   async abortTurn(runId: string, turnId?: string): Promise<void> {
@@ -280,10 +510,22 @@ export class Orchestrator {
           if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
           finalMessage = await this.finalAssistantMessage(run.id);
         }
-        this.store.updateRunStatus(run.id, 'completed');
+        if (finalMessage === null) {
+          // Aborted stream, dead gateway, or timeout — never report success.
+          const status = this.store.getRun(run.id)?.status;
+          this.setStatus(
+            run.id,
+            'failed',
+            status === 'stopped' || status === 'interrupted'
+              ? 'gateway died before the turn finished (daemon restart?)'
+              : 'turn ended without a final assistant message',
+          );
+        } else {
+          this.setStatus(run.id, 'completed');
+        }
         return { runId: run.id, finalMessage };
       } catch (err) {
-        this.store.updateRunStatus(run.id, 'failed', String(err));
+        this.setStatus(run.id, 'failed', String(err));
         throw err;
       } finally {
         await this.stopRun(run.id).catch(() => undefined);
@@ -318,7 +560,7 @@ export class Orchestrator {
       const row = this.store.getRun(runId);
       if (row && row.output_tokens > MAX_RUN_OUTPUT_TOKENS && row.status === 'running') {
         log.warn('run exceeded token ceiling — aborting', { runId, outputTokens: row.output_tokens });
-        this.store.updateRunStatus(runId, row.status, 'aborted: output token ceiling exceeded');
+        this.setStatus(runId, row.status, 'aborted: output token ceiling exceeded');
         void this.abortTurn(runId).catch(() => undefined);
       }
     }
@@ -332,7 +574,7 @@ export class Orchestrator {
               (payload as { summary?: string; reason?: string }).reason ??
               subtype)
             : subtype;
-        this.store.updateRunStatus(runId, this.store.getRun(runId)?.status ?? 'running', `${subtype}: ${summary}`);
+        this.setStatus(runId, this.store.getRun(runId)?.status ?? 'running', `${subtype}: ${summary}`);
       }
     }
     this.broadcast({ t: 'event', runId, event });

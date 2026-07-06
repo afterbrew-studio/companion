@@ -8,6 +8,26 @@
  * Dark mode rides prefers-color-scheme via the default `dark:` variant.
  */
 
+/*
+ * Semantic accent palette. The platform is monochrome: accent-* resolves to
+ * zinc, primary controls invert (near-black on light, near-white on dark),
+ * and color is reserved for functional status (ok/warn/danger). Swap this
+ * block for a hue if the brand ever wants one back.
+ */
+@theme inline {
+  --color-accent-50: var(--color-zinc-50);
+  --color-accent-100: var(--color-zinc-100);
+  --color-accent-200: var(--color-zinc-200);
+  --color-accent-300: var(--color-zinc-300);
+  --color-accent-400: var(--color-zinc-400);
+  --color-accent-500: var(--color-zinc-500);
+  --color-accent-600: var(--color-zinc-600);
+  --color-accent-700: var(--color-zinc-700);
+  --color-accent-800: var(--color-zinc-800);
+  --color-accent-900: var(--color-zinc-900);
+  --color-accent-950: var(--color-zinc-950);
+}
+
 @layer base {
   html,
   body,
@@ -17,20 +37,24 @@
   body {
     @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
   }
+  /* Keyboard users always see where they are. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-zinc-500;
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-indigo-600 px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 dark:bg-indigo-500 dark:text-zinc-950 dark:hover:bg-indigo-400;
+    @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-default disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white;
   }
   .btn-danger {
-    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-red-600 px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-default disabled:opacity-50 dark:bg-red-500 dark:hover:bg-red-400;
+    @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-red-600 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-default disabled:opacity-50 dark:bg-red-500 dark:hover:bg-red-400;
   }
   .btn-ghost {
-    @apply inline-flex cursor-pointer items-center rounded-md border border-zinc-200 bg-transparent px-3 py-1.5 text-[13px] text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-default disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800;
+    @apply inline-flex h-9 cursor-pointer items-center rounded-md border border-zinc-200 bg-transparent px-3 text-[13px] text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-default disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800;
   }
   .linkish {
-    @apply cursor-pointer border-none bg-transparent p-0 text-left font-[inherit] text-indigo-600 hover:underline dark:text-indigo-400;
+    @apply cursor-pointer border-none bg-transparent p-0 text-left font-[inherit] font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-current dark:text-zinc-100 dark:decoration-zinc-500;
   }
   .badge {
     @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-px text-[11px] tracking-wide text-zinc-500 uppercase dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400;
@@ -45,13 +69,25 @@
     @apply inline-flex items-center rounded-full border border-red-500/50 bg-zinc-50 px-2 py-px text-[11px] tracking-wide text-red-600 uppercase dark:bg-zinc-800/60 dark:text-red-400;
   }
   .badge-accent {
-    @apply inline-flex items-center rounded-full border border-indigo-500/50 bg-zinc-50 px-2 py-px text-[11px] tracking-wide text-indigo-600 uppercase dark:bg-zinc-800/60 dark:text-indigo-400;
+    @apply inline-flex items-center rounded-full border border-zinc-400/60 bg-zinc-50 px-2 py-px text-[11px] tracking-wide text-zinc-700 uppercase dark:border-zinc-500/60 dark:bg-zinc-800/60 dark:text-zinc-200;
   }
   .chip {
     @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-px text-[11px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400;
   }
   .input {
-    @apply rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100;
+    @apply h-9 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-400;
+  }
+  /* Native selects: replace the OS arrow with our chevron and reserve room for it. */
+  select.input {
+    @apply cursor-pointer appearance-none bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: right 0.55rem center;
+    background-size: 1rem 1rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    select.input {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23a1a1aa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    }
   }
   .card {
     @apply rounded-xl border border-zinc-200 p-4 dark:border-zinc-800;
@@ -66,9 +102,86 @@
     @apply my-3 flex items-center gap-2.5 rounded-lg border border-amber-500/60 bg-zinc-50 px-3.5 py-2.5 text-[13px] dark:bg-zinc-900;
   }
   .banner-info {
-    @apply my-3 flex items-center gap-2.5 rounded-lg border border-indigo-500/60 bg-zinc-50 px-3.5 py-2.5 text-[13px] dark:bg-zinc-900;
+    @apply my-3 flex items-center gap-2.5 rounded-lg border border-zinc-400/60 bg-zinc-50 dark:border-zinc-600 px-3.5 py-2.5 text-[13px] dark:bg-zinc-900;
   }
   .mono-pane {
     @apply overflow-auto rounded-lg bg-zinc-50 p-3 font-mono text-xs whitespace-pre-wrap dark:bg-zinc-900;
+  }
+  /* Dense clickable list row (dashboard queues, area lists). */
+  .row-link {
+    @apply flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900;
+  }
+  /* Shimmering loading placeholder. */
+  .skeleton {
+    @apply block rounded-md bg-zinc-200 dark:bg-zinc-800;
+  }
+  /* Rendered markdown bodies (issues, PRs, comments, reports). */
+  .markdown {
+    @apply text-[13.5px] leading-relaxed;
+  }
+  .markdown p {
+    @apply my-2;
+  }
+  .markdown h2,
+  .markdown h3,
+  .markdown h4,
+  .markdown h5,
+  .markdown h6 {
+    @apply mt-4 mb-1.5 font-semibold;
+  }
+  .markdown h2 {
+    @apply text-base;
+  }
+  .markdown h3 {
+    @apply text-[15px];
+  }
+  .markdown ul {
+    @apply my-2 list-disc pl-5;
+  }
+  .markdown ol {
+    @apply my-2 list-decimal pl-5;
+  }
+  .markdown blockquote {
+    @apply my-2 border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-600 dark:text-zinc-400;
+  }
+  .markdown hr {
+    @apply my-3 border-zinc-200 dark:border-zinc-800;
+  }
+  .markdown code {
+    @apply rounded bg-zinc-100 px-1 py-0.5 font-mono text-[12px] dark:bg-zinc-800;
+  }
+  .markdown pre.md-code {
+    @apply my-2 overflow-x-auto rounded-lg bg-zinc-100 p-3 dark:bg-zinc-900;
+  }
+  .markdown pre.md-code code {
+    @apply bg-transparent p-0 text-xs whitespace-pre;
+  }
+  .markdown a {
+    @apply font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-current dark:text-zinc-100 dark:decoration-zinc-500;
+  }
+}
+
+/* Motion: entrance + shimmer, disabled for reduced-motion users. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes shimmer {
+    50% {
+      opacity: 0.55;
+    }
+  }
+  .anim-in {
+    animation: rise-in 220ms ease-out both;
+  }
+  .skeleton {
+    animation: shimmer 1.4s ease-in-out infinite;
   }
 }

@@ -1,33 +1,34 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { SpaServerMessage } from '@companion/contract';
+import type { AuthUser, SpaServerMessage } from '@companion/contract';
 import { log } from '../log.js';
 
 /**
- * The single WebSocket the browser SPA holds. companiond multiplexes every live
- * run's gateway stream onto it, tagged by runId. Browser -> server traffic goes
- * over REST (simpler auth + error surfaces); this socket is strictly push.
+ * The single WebSocket the browser SPA holds. companiond multiplexes every
+ * live run's gateway stream onto it, tagged by runId. Browser -> server
+ * traffic goes over REST (simpler auth + error surfaces); this socket is
+ * strictly push.
  *
- * Auth: `?token=<spaToken>` query. The server binds 127.0.0.1 only and the
- * token is minted per install, so the exposure window is other local processes
- * — same trust stance as moxxy's own loopback bridges.
+ * Auth: `?token=<session token>` — the same login session the REST API uses;
+ * an expired or bogus token is refused at upgrade time.
  */
 export class SpaHub {
   private readonly wss = new WebSocketServer({ noServer: true });
 
-  constructor(private readonly token: string) {}
+  constructor(private readonly verify: (token: string | null) => AuthUser | null) {}
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/ws' || url.searchParams.get('token') !== this.token) {
+    const user = url.pathname === '/ws' ? this.verify(url.searchParams.get('token')) : null;
+    if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       this.wss.emit('connection', ws, req);
-      this.send(ws, { t: 'hello', version: '0.1.0' });
+      this.send(ws, { t: 'hello', version: '0.3.0' });
     });
   }
 

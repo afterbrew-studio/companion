@@ -28,7 +28,7 @@ export class Triage {
     private readonly store: Store,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -80,11 +80,11 @@ export class Triage {
   }
 
   /** Apply a pending verdict to GitHub: labels + (optional) draft reply comment. */
-  async apply(id: string, opts: { comment: boolean }): Promise<void> {
+  async apply(id: string, opts: { comment: boolean; accountId?: string }): Promise<void> {
     const result = this.findTriage(id);
     if (!result || !result.verdict) throw new Error('triage result not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`triage is ${result.status}, not pending`);
-    const client = this.github();
+    const client = this.github({ repo: result.repo, accountId: opts.accountId });
     if (!client) throw new Error('GitHub is not configured');
 
     const labels = [...result.verdict.labels];

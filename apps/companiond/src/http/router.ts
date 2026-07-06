@@ -1,0 +1,222 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { z } from 'zod';
+import type { AuthUser, Permission } from '@companion/contract';
+import { AuthError, type Auth } from '../auth/auth.js';
+import { log } from '../log.js';
+
+/**
+ * The typed route table. Every endpoint is a `route({...})` value declaring
+ * its method, path pattern, required permission, and (optionally) a zod body
+ * schema. Path params are inferred from the pattern at the type level
+ * (`/api/repos/:owner/:name` → `params.owner`, `params.name`), the body type
+ * flows from the schema, and the permission is enforced centrally — a route
+ * cannot forget auth because auth is not the handler's job.
+ */
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/** `'/a/:x/b/:y'` → `'x' | 'y'` */
+type ParamNames<P extends string> = P extends `${string}:${infer Param}/${infer Rest}`
+  ? Param | ParamNames<`/${Rest}`>
+  : P extends `${string}:${infer Param}`
+    ? Param
+    : never;
+
+export type PathParams<P extends string> = { readonly [K in ParamNames<P>]: string };
+
+/** `'public'` = no auth; `'any'` = any signed-in user; otherwise a capability. */
+export type RouteAccess = Permission | 'public' | 'any';
+
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export const notFound = (what: string): HttpError => new HttpError(404, what);
+export const badRequest = (why: string): HttpError => new HttpError(400, why);
+
+/** Wrap a handler's return value to send a non-200 status. */
+export class Reply {
+  constructor(
+    readonly status: number,
+    readonly body: unknown,
+  ) {}
+}
+
+export const created = (body: unknown): Reply => new Reply(201, body);
+export const accepted = (body: unknown): Reply => new Reply(202, body);
+
+export interface RouteContext<P extends string, B> {
+  readonly params: PathParams<P>;
+  readonly query: URLSearchParams;
+  readonly body: B;
+  /** Resolved user; null only on 'public' routes. */
+  readonly user: AuthUser | null;
+  /** Raw bearer token of this request (for logout-style flows). */
+  readonly token: string | null;
+}
+
+export interface RouteDef<P extends string, B> {
+  readonly method: HttpMethod;
+  readonly path: P;
+  readonly access: RouteAccess;
+  /** Input pinned to `unknown` so B infers from the schema OUTPUT (defaults applied). */
+  readonly body?: z.ZodType<B, z.ZodTypeDef, unknown>;
+  readonly handler: (ctx: RouteContext<P, B>) => Promise<unknown> | unknown;
+}
+
+export interface CompiledRoute {
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly regex: RegExp;
+  readonly keys: readonly string[];
+  readonly access: RouteAccess;
+  readonly run: (
+    params: Record<string, string>,
+    query: URLSearchParams,
+    rawBody: unknown,
+    user: AuthUser | null,
+    token: string | null,
+  ) => Promise<unknown>;
+}
+
+/** Route factory: captures the body schema + param typing, erases generics. */
+export function route<P extends string, B = Record<string, never>>(
+  def: RouteDef<P, B>,
+): CompiledRoute {
+  const { regex, keys } = compilePath(def.path);
+  return {
+    method: def.method,
+    path: def.path,
+    regex,
+    keys,
+    access: def.access,
+    run: async (params, query, rawBody, user, token) => {
+      const body = (def.body ? def.body.parse(rawBody) : {}) as B;
+      return def.handler({ params: params as PathParams<P>, query, body, user, token });
+    },
+  };
+}
+
+const SEGMENT = '([^/]+)';
+
+function compilePath(path: string): { regex: RegExp; keys: string[] } {
+  const keys: string[] = [];
+  const pattern = path
+    .split('/')
+    .map((segment) => {
+      if (segment.startsWith(':')) {
+        keys.push(segment.slice(1));
+        return SEGMENT;
+      }
+      return segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('/');
+  return { regex: new RegExp(`^${pattern}$`), keys };
+}
+
+// ---------- dispatch --------------------------------------------------------------
+
+export class Router {
+  constructor(
+    private readonly routes: readonly CompiledRoute[],
+    private readonly auth: Auth,
+  ) {}
+
+  async dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const method = (req.method ?? 'GET') as HttpMethod;
+    const path = url.pathname;
+
+    try {
+      let pathMatched = false;
+      for (const r of this.routes) {
+        const match = r.regex.exec(path);
+        if (!match) continue;
+        pathMatched = true;
+        if (r.method !== method) continue;
+
+        const token = bearerToken(req, url);
+        const user = this.auth.verify(token);
+        if (r.access !== 'public') {
+          if (r.access === 'any') {
+            if (!user) throw new AuthError('authentication required', 401);
+          } else {
+            this.auth.require(user, r.access);
+          }
+        }
+
+        const params: Record<string, string> = {};
+        r.keys.forEach((key, i) => {
+          params[key] = decodeURIComponent(match[i + 1] ?? '');
+        });
+        const rawBody = method === 'GET' ? {} : await readBody(req);
+        const result = await r.run(params, url.searchParams, rawBody, user, token);
+        if (result instanceof Reply) return json(res, result.status, result.body);
+        return json(res, 200, result);
+      }
+      if (pathMatched) return json(res, 405, { error: `method ${method} not allowed on ${path}` });
+      return json(res, 404, { error: `no route: ${method} ${path}` });
+    } catch (err) {
+      return sendError(res, err, method, path);
+    }
+  }
+}
+
+function sendError(res: ServerResponse, err: unknown, method: string, path: string): void {
+  if (err instanceof z.ZodError) {
+    return json(res, 400, { error: 'invalid request', issues: err.issues });
+  }
+  if (err instanceof AuthError || err instanceof HttpError) {
+    return json(res, err.status, { error: err.message });
+  }
+  log.warn('request failed', { method, path, err: String(err) });
+  return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+}
+
+export function bearerToken(req: IncomingMessage, url: URL): string | null {
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ')) return header.slice('Bearer '.length);
+  return url.searchParams.get('token');
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  const raw = JSON.stringify(body);
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(raw),
+  });
+  res.end(raw);
+}
+
+export async function readBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 2 * 1024 * 1024) throw new HttpError(413, 'request body too large');
+    chunks.push(chunk as Buffer);
+  }
+  if (chunks.length === 0) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } catch {
+    throw badRequest('body is not valid JSON');
+  }
+}
+
+/** Raw-body reader for webhook HMAC verification (bytes must be exact). */
+export async function readRawBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > maxBytes) throw new HttpError(413, 'payload too large');
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}

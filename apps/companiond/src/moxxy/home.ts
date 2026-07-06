@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { log } from '../log.js';
@@ -7,13 +7,18 @@ import { paths } from '../config.js';
 /**
  * Bootstrap of Companion's isolated MOXXY_HOME (`~/.companion/moxxy-home`).
  *
- * Providers/vault are a one-time COPY from the user's daily `~/.moxxy` — never a
- * live sync. Re-running the import overwrites the copies with fresh ones (e.g.
- * after the user rotates a key in daily moxxy).
+ * Credential files are SYMLINKED to the user's daily `~/.moxxy`, not copied:
+ * OAuth refresh tokens rotate on every use, so two divergent copies burn each
+ * other (the classic "refresh token has already been used" 401 — whichever
+ * home refreshes first invalidates the other). Sharing the file keeps one
+ * rotating token that moxxy's own locking already coordinates. config.yaml
+ * stays a copy so Companion can diverge on provider config safely.
  */
 
-/** Files that carry provider credentials + config in a moxxy home. */
-const IMPORT_FILES = ['config.yaml', 'providers.json', 'vault.json', 'vault.key'] as const;
+/** Credential files shared (symlinked) with the daily home — rotation must be shared. */
+const LINK_FILES = ['providers.json', 'vault.json', 'vault.key'] as const;
+/** Config copied as a labeled copy; re-import refreshes it. */
+const COPY_FILES = ['config.yaml'] as const;
 
 export interface HomeStatus {
   readonly homeDir: string;
@@ -34,9 +39,10 @@ export function homeStatus(): HomeStatus {
 }
 
 /**
- * Copy provider config + vault from the user's daily moxxy home. Copies are
- * labeled copies: a later key rotation in ~/.moxxy does NOT propagate until
- * the user re-runs the import.
+ * Import provider config + credentials from the user's daily moxxy home.
+ * Credentials are symlinked (shared rotation — see module comment); config is
+ * copied. Re-running the import heals older installs that still hold stale
+ * credential copies by replacing them with links.
  */
 export function importProvidersFromDailyMoxxy(sourceHome?: string): {
   imported: string[];
@@ -46,7 +52,7 @@ export function importProvidersFromDailyMoxxy(sourceHome?: string): {
   const target = paths.moxxyHome();
   const imported: string[] = [];
   const missing: string[] = [];
-  for (const name of IMPORT_FILES) {
+  for (const name of COPY_FILES) {
     const from = join(source, name);
     if (!existsSync(from)) {
       missing.push(name);
@@ -55,8 +61,56 @@ export function importProvidersFromDailyMoxxy(sourceHome?: string): {
     copyFileSync(from, join(target, name));
     imported.push(name);
   }
+  for (const name of LINK_FILES) {
+    const from = join(source, name);
+    const to = join(target, name);
+    if (!existsSync(from)) {
+      missing.push(name);
+      continue;
+    }
+    try {
+      // Replace any previous copy/stale link; lstat so a dangling link counts.
+      try {
+        lstatSync(to);
+        rmSync(to);
+      } catch {
+        // nothing to replace
+      }
+      symlinkSync(from, to);
+      imported.push(`${name} (linked)`);
+    } catch (err) {
+      // Filesystems without symlink support fall back to the old copy behavior.
+      log.warn('symlink failed, copying credential file instead', { name, err: String(err) });
+      copyFileSync(from, to);
+      imported.push(name);
+    }
+  }
   log.info('provider import complete', { imported, missing });
   return { imported, missing };
+}
+
+/**
+ * Boot-time heal for installs that imported before credentials were shared:
+ * a regular-file providers.json copy means burned-refresh-token 401s, so
+ * re-run the import (which now links) when the daily home is available.
+ */
+export function healCredentialLinks(): void {
+  const source = join(homedir(), '.moxxy');
+  // Whichever credential file this moxxy version uses (providers.json on older
+  // ones, vault.json/vault.key on current ones): if the source exists and our
+  // copy is a regular file, re-import to replace it with a shared link.
+  for (const name of LINK_FILES) {
+    if (!existsSync(join(source, name))) continue;
+    const target = join(paths.moxxyHome(), name);
+    try {
+      if (lstatSync(target).isSymbolicLink()) continue; // already shared
+    } catch {
+      continue; // never imported — the user opts in from Settings
+    }
+    log.info('replacing stale provider credential copies with links to ~/.moxxy (shared token rotation)');
+    importProvidersFromDailyMoxxy();
+    return;
+  }
 }
 
 /**

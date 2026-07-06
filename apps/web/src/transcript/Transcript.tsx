@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Block } from './fold.js';
+import { Markdown } from '../components/Markdown.js';
+import { Spinner } from '../components/ui.js';
 
 export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
@@ -9,6 +11,12 @@ export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
 
   return (
     <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto py-4">
+      {blocks.length === 0 ? (
+        <div className="m-auto flex flex-col items-center gap-1 py-16 text-center">
+          <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">No messages yet</span>
+          <span className="dim">Send a prompt below to start working with the agent.</span>
+        </div>
+      ) : null}
       {blocks.map((block) => (
         <BlockView key={block.key} block={block} />
       ))}
@@ -21,7 +29,7 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
   switch (block.kind) {
     case 'user':
       return (
-        <div className="max-w-[80%] self-end rounded-xl bg-indigo-600 px-3.5 py-2.5 text-sm text-white dark:bg-indigo-500 dark:text-zinc-950">
+        <div className="max-w-[80%] self-end rounded-xl bg-zinc-900 px-3.5 py-2.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900">
           {block.trigger ? <div className="mb-1 text-[11px] opacity-80">⚡ {block.trigger}</div> : null}
           <pre className="font-[inherit] whitespace-pre-wrap">{block.text}</pre>
         </div>
@@ -29,53 +37,105 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     case 'assistant':
       return (
         <div className="max-w-[92%] self-start rounded-xl bg-zinc-100 px-3.5 py-2.5 text-sm dark:bg-zinc-800/80">
-          <pre className="font-[inherit] whitespace-pre-wrap">
-            {block.text}
-            {block.streaming ? <span className="animate-pulse">▌</span> : null}
-          </pre>
+          {block.streaming ? (
+            <pre className="font-[inherit] whitespace-pre-wrap">
+              {block.text}
+              <span className="animate-pulse">▌</span>
+            </pre>
+          ) : (
+            <Markdown text={block.text} />
+          )}
         </div>
       );
     case 'reasoning':
       return (
         <details
-          className="rounded-xl border border-dashed border-zinc-300 px-3.5 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+          className="group self-start border-l-2 border-zinc-200 pl-3 dark:border-zinc-700"
           open={block.streaming}
         >
-          <summary className="cursor-pointer">thinking{block.streaming ? '…' : ''}</summary>
-          <pre className="mt-1.5 whitespace-pre-wrap">{block.text}</pre>
-        </details>
-      );
-    case 'tool': {
-      const dot =
-        block.status === 'ok'
-          ? 'bg-emerald-500'
-          : block.status === 'error' || block.status === 'denied'
-            ? 'bg-red-500'
-            : 'bg-amber-500';
-      return (
-        <details className="rounded-xl border border-zinc-200 px-3.5 py-2 text-[13px] dark:border-zinc-800">
-          <summary className="flex cursor-pointer items-center gap-2">
-            <span className={`inline-block h-2 w-2 rounded-full ${dot}`} /> {block.name}
-            <span className="dim ml-auto">{block.status}</span>
+          <summary className="dim flex cursor-pointer list-none items-center gap-1.5 text-xs select-none [&::-webkit-details-marker]:hidden">
+            <span aria-hidden>✳</span> Thinking{block.streaming ? '…' : ''}
+            <span className="text-[10px] opacity-60 group-open:hidden">show</span>
           </summary>
-          <pre className="mono-pane mt-2 max-h-52">{safeJson(block.input)}</pre>
-          {block.detail ? <pre className="mono-pane mt-1.5 max-h-52">{block.detail}</pre> : null}
+          <pre className="dim mt-1.5 text-xs whitespace-pre-wrap">{block.text}</pre>
         </details>
       );
-    }
+    case 'tool':
+      return <ToolBlock block={block} />;
     case 'notice':
-      return (
-        <div
-          className={`self-center text-xs ${
-            block.level === 'error' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500 dark:text-zinc-400'
-          }`}
-        >
-          {block.text}
-        </div>
-      );
+      if (block.level === 'error') {
+        return (
+          <div className="flex items-start gap-2.5 self-stretch rounded-lg border border-red-500/40 bg-red-500/5 px-3.5 py-2.5">
+            <span className="shrink-0 text-red-600 dark:text-red-400" aria-hidden>
+              ✕
+            </span>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-red-600 dark:text-red-400">Run error</div>
+              <pre className="mt-1 font-mono text-xs break-all whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">{block.text}</pre>
+            </div>
+          </div>
+        );
+      }
+      return <div className="chip self-center">{block.text}</div>;
     default:
       return null;
   }
+}
+
+const TOOL_STATUS: Record<Extract<Block, { kind: 'tool' }>['status'], { label: string; cls: string }> = {
+  pending: { label: 'waiting', cls: 'text-amber-600 dark:text-amber-400' },
+  running: { label: 'running', cls: 'text-amber-600 dark:text-amber-400' },
+  ok: { label: 'done', cls: 'text-emerald-600 dark:text-emerald-400' },
+  error: { label: 'failed', cls: 'text-red-600 dark:text-red-400' },
+  denied: { label: 'denied', cls: 'text-red-600 dark:text-red-400' },
+};
+
+function ToolBlock({ block }: { block: Extract<Block, { kind: 'tool' }> }): JSX.Element {
+  const status = TOOL_STATUS[block.status];
+  const busy = block.status === 'pending' || block.status === 'running';
+  const summary = toolSummary(block.input);
+  return (
+    <details className="self-stretch overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] transition-colors select-none hover:bg-zinc-50 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden">
+        <span className={`flex w-4 shrink-0 justify-center ${status.cls}`} aria-hidden>
+          {busy ? <Spinner /> : block.status === 'ok' ? '✓' : '✕'}
+        </span>
+        <span className="shrink-0 font-mono text-xs font-medium">{block.name}</span>
+        {summary ? (
+          <span className="dim min-w-0 flex-1 truncate font-mono text-[11px]">{summary}</span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        <span className={`shrink-0 text-[11px] ${status.cls}`}>{status.label}</span>
+      </summary>
+      <div className="flex flex-col gap-1.5 border-t border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+        <div className="dim text-[10px] font-medium tracking-widest uppercase">Input</div>
+        <pre className="mono-pane max-h-52">{safeJson(block.input)}</pre>
+        {block.detail ? (
+          <>
+            <div className="dim mt-1 text-[10px] font-medium tracking-widest uppercase">
+              {block.status === 'ok' ? 'Result' : block.status === 'denied' ? 'Reason' : 'Error'}
+            </div>
+            <pre className="mono-pane max-h-52">{block.detail}</pre>
+          </>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+/** Best-effort one-liner of what the tool is doing, pulled from its input. */
+function toolSummary(input: unknown): string {
+  if (input == null) return '';
+  if (typeof input === 'string') return input;
+  if (typeof input !== 'object') return String(input);
+  const rec = input as Record<string, unknown>;
+  for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt', 'description', 'title']) {
+    const v = rec[key];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  const first = Object.values(rec).find((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return first ?? '';
 }
 
 function safeJson(value: unknown): string {

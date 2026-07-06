@@ -7,6 +7,7 @@ import type { Orchestrator } from '../runs/orchestrator.js';
 import type { Checkouts } from '../git/checkouts.js';
 import type { GitHubClient } from '../github/client.js';
 import { extractModelJson } from '../lib/model-json.js';
+import { describeChecks, type PrChecks } from './checks.js';
 
 const verdictSchema = z.object({
   summary: z.string(),
@@ -29,18 +30,23 @@ export class PrReviews {
     private readonly store: Store,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
   async analyzePr(repo: string, prNumber: number): Promise<PrReviewResult> {
     const pr = this.store.getPr(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    const client = this.github();
+    const client = this.github({ repo });
     if (!client) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    const diff = await client.prDiff(repo, prNumber);
+    // The assistant sees the PR's CI pipelines alongside the diff.
+    const [diff, checksSummary] = await Promise.all([
+      client.prDiff(repo, prNumber),
+      this.checks.trySummary(repo, prNumber),
+    ]);
     const clippedDiff =
       diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
 
@@ -50,7 +56,7 @@ export class PrReviews {
       cwd: this.checkouts.cloneDir(repo),
       repo,
       issueNumber: prNumber,
-      prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, clippedDiff),
+      prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, clippedDiff, describeChecks(checksSummary)),
       timeoutMs: 8 * 60_000,
     });
 
@@ -79,11 +85,11 @@ export class PrReviews {
   }
 
   /** Post the verdict to GitHub as a PR review. */
-  async apply(id: string): Promise<void> {
+  async apply(id: string, accountId?: string): Promise<void> {
     const result = this.store.getPrReview(id);
     if (!result?.verdict) throw new Error('review not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`review is ${result.status}, not pending`);
-    const client = this.github();
+    const client = this.github({ repo: result.repo, accountId });
     if (!client) throw new Error('GitHub is not configured');
 
     const event =
@@ -108,7 +114,7 @@ export class PrReviews {
   }
 
   async merge(repo: string, prNumber: number, method: 'merge' | 'squash' | 'rebase'): Promise<void> {
-    const client = this.github();
+    const client = this.github({ repo });
     if (!client) throw new Error('GitHub is not configured');
     const result = await client.mergePr(repo, prNumber, method);
     if (!result.merged) throw new Error(result.message || 'merge refused by GitHub');
@@ -116,27 +122,83 @@ export class PrReviews {
   }
 
   async close(repo: string, prNumber: number): Promise<void> {
-    const client = this.github();
+    const client = this.github({ repo });
     if (!client) throw new Error('GitHub is not configured');
     await client.closePr(repo, prNumber);
     this.broadcast({ t: 'prs.changed', repo });
   }
 
   /**
+   * Agent post-mortem of a PR's failing CI pipelines: given the failing check
+   * names, the diff, and the repo checkout, the agent investigates locally
+   * (may run builds/tests read-only) and writes a markdown report stored as a
+   * ci-analysis report on the PR.
+   */
+  async analyzeFailedChecks(repo: string, prNumber: number): Promise<void> {
+    const pr = this.store.getPr(repo, prNumber);
+    if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
+    const client = this.github();
+    if (!client) throw new Error('GitHub is not configured');
+    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
+
+    const summary = await this.checks.fetchSummary(repo, prNumber);
+    const failing = summary.runs.filter(
+      (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
+    );
+    if (failing.length === 0) throw new Error('no failing checks on this PR');
+
+    const diff = await client.prDiff(repo, prNumber);
+    const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
+    const { finalMessage } = await this.orchestrator.runOneShot({
+      kind: 'analysis',
+      title: `CI failure analysis — PR #${prNumber}`,
+      cwd: this.checkouts.cloneDir(repo),
+      repo,
+      issueNumber: prNumber,
+      prompt: ciAnalysisPrompt(pr.title, pr.headRef, failing, clipped),
+      timeoutMs: 10 * 60_000,
+    });
+    if (!finalMessage?.trim()) throw new Error('CI analysis produced no report');
+
+    this.store.insertReport({
+      id: `rep-${randomUUID().slice(0, 12)}`,
+      repo,
+      issueNumber: prNumber,
+      kind: 'ci-analysis',
+      title: `CI failure analysis — PR #${prNumber}`,
+      body: finalMessage.trim(),
+      createdAt: Date.now(),
+    });
+    this.broadcast({ t: 'reports.changed' });
+    this.broadcast({ t: 'prs.changed', repo });
+  }
+
+  /**
    * The PR gate (webhook → pull_request.opened): analyze, then auto-post ONLY
-   * a confident low-risk verdict; anything else stays pending for the human.
-   * Merging is never automatic.
+   * a confident low-risk verdict on a PR whose CI is not failing; anything
+   * else stays pending for the human. Merging is never automatic.
    */
   async gate(repo: string, prNumber: number): Promise<void> {
     const result = await this.analyzePr(repo, prNumber);
-    if (result.verdict && result.verdict.risk === 'low') {
-      await this.apply(result.id);
-      log.info('PR gate auto-posted review', { repo, prNumber, recommendation: result.verdict.recommendation });
+    if (!result.verdict || result.verdict.risk !== 'low') return;
+    const checks = this.store.getPr(repo, prNumber)?.checks ?? null;
+    if (checks && checks.state === 'failing') {
+      log.info('PR gate: verdict held back (CI failing)', { repo, prNumber });
+      return;
     }
+    await this.apply(result.id);
+    log.info('PR gate auto-posted review', { repo, prNumber, recommendation: result.verdict.recommendation });
   }
 }
 
-function reviewPrompt(title: string, body: string, author: string, baseRef: string, diff: string): string {
+function reviewPrompt(
+  title: string,
+  body: string,
+  author: string,
+  baseRef: string,
+  diff: string,
+  checks: string,
+): string {
   return `You are reviewing a GitHub pull request against the repository checked out in the current directory (branch ${baseRef}).
 
 READ-ONLY RULES (mandatory): you may read files and search the codebase for context, but you must NOT modify anything. Your ONLY output is the final JSON.
@@ -145,6 +207,9 @@ READ-ONLY RULES (mandatory): you may read files and search the codebase for cont
 Author: ${author}
 
 ${body || '(no description)'}
+
+## CI pipelines
+${checks}
 
 ## Diff
 \`\`\`diff
@@ -159,9 +224,38 @@ Assess correctness, risk, and fit with the surrounding code, then reply with ONL
   "recommendation": "approve" | "request_changes" | "comment",
   "findings": ["<specific issues or observations, empty if none>"],
   "reviewBody": "<the full review comment to post on the PR, markdown, friendly and specific>"
-}`;
+}
+Weigh the CI pipeline status in your assessment: failing or missing CI raises risk; do not recommend "approve" while required pipelines are failing.`;
 }
 
 export function parseReviewVerdict(text: string): PrReviewVerdict {
   return verdictSchema.parse(extractModelJson(text)) as PrReviewVerdict;
+}
+
+function ciAnalysisPrompt(
+  title: string,
+  headRef: string,
+  failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
+  diff: string,
+): string {
+  const list = failing
+    .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
+    .join('\n');
+  return `You are investigating why CI pipelines are failing on the pull request "${title}" (branch ${headRef}). The repository's base branch is checked out in the current directory.
+
+RULES: you may read files, search, and run non-destructive commands (installs into the existing environment, builds, linters, test suites) to reproduce the failures locally. You must NOT modify, commit, or push anything.
+
+## Failing pipelines
+${list}
+
+## PR diff
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Your task
+Figure out the most likely cause of each failing pipeline. Where practical, reproduce locally (e.g. run the linter or the test suite the check corresponds to) against the diff's changes. Reply with a concise markdown report:
+1. **Verdict per failing check** — probable cause, evidence, and whether you reproduced it.
+2. **Suggested fix** — concrete change(s) the author should make.
+3. **Confidence** — high/medium/low per finding.`;
 }

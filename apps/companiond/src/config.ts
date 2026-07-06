@@ -1,7 +1,8 @@
-import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { Role } from '@companion/contract';
+import { log } from './log.js';
 
 /**
  * Companion's own data root (NOT moxxy's). Everything Companion persists lives
@@ -24,25 +25,49 @@ export const paths = {
   runConfigs: (): string => join(companionHome(), 'run-configs'),
   db: (): string => join(companionHome(), 'companion.db'),
   daemonConfig: (): string => join(companionHome(), 'companiond.json'),
+  envFile: (): string => join(companionHome(), '.env'),
 };
+
+/** Model every agent run defaults to (overridable per prompt / via env). */
+export const DEFAULT_MODEL = 'gpt-5.5';
+
+export interface UserCredential {
+  readonly username: string;
+  readonly password: string;
+  readonly role: Role;
+}
 
 export interface DaemonConfig {
   /** Port the companiond HTTP+WS server binds on 127.0.0.1. */
   port: number;
-  /** Bearer token the SPA uses for /api and the SPA WebSocket. */
-  spaToken: string;
   /** Max concurrently live gateway processes. */
   maxLiveRuns: number;
   /** Explicit path to the moxxy CLI entry (overrides PATH lookup). */
   moxxyCliPath?: string;
+  /** Default model passed on every agent turn. */
+  defaultModel: string;
+  /** Accounts sourced from the .env files. */
+  users: readonly UserCredential[];
 }
 
-const DEFAULTS: Omit<DaemonConfig, 'spaToken'> = {
+const DEFAULTS = {
   port: 8901,
   maxLiveRuns: 3,
 };
 
-/** Load (or create on first boot) the daemon config. Also creates the dir layout. */
+interface StoredConfig {
+  port?: number;
+  maxLiveRuns?: number;
+  moxxyCliPath?: string;
+}
+
+/**
+ * Load (or create on first boot) the daemon config. Also creates the dir
+ * layout and resolves auth credentials from the environment:
+ * process.env > ./.env (cwd) > ~/.companion/.env. If no admin credential
+ * exists anywhere, one is generated into ~/.companion/.env so the install
+ * is never left without a login.
+ */
 export function loadDaemonConfig(): DaemonConfig {
   for (const dir of [
     paths.root(),
@@ -57,19 +82,106 @@ export function loadDaemonConfig(): DaemonConfig {
   }
 
   const file = paths.daemonConfig();
+  let stored: StoredConfig = {};
   if (existsSync(file)) {
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<DaemonConfig>;
-    return {
-      ...DEFAULTS,
-      spaToken: typeof raw.spaToken === 'string' && raw.spaToken ? raw.spaToken : mintToken(),
-      ...raw,
-    } as DaemonConfig;
+    try {
+      stored = JSON.parse(readFileSync(file, 'utf8')) as StoredConfig;
+    } catch (err) {
+      log.warn('unreadable companiond.json — using defaults', { err: String(err) });
+    }
+  } else {
+    writeFileSync(file, JSON.stringify(DEFAULTS, null, 2) + '\n', { mode: 0o600 });
   }
-  const config: DaemonConfig = { ...DEFAULTS, spaToken: mintToken() };
-  writeFileSync(file, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-  return config;
+
+  const env = resolveEnv();
+  const users = resolveUsers(env);
+
+  return {
+    port: numberFrom(env.COMPANION_PORT) ?? stored.port ?? DEFAULTS.port,
+    maxLiveRuns: stored.maxLiveRuns ?? DEFAULTS.maxLiveRuns,
+    moxxyCliPath: stored.moxxyCliPath,
+    defaultModel: env.COMPANION_MODEL?.trim() || DEFAULT_MODEL,
+    users,
+  };
 }
 
-function mintToken(): string {
-  return randomBytes(32).toString('hex');
+// ---------- .env resolution ------------------------------------------------------
+
+/** Layered env: home .env < cwd .env < real process env. */
+function resolveEnv(): Record<string, string> {
+  const layers = [paths.envFile(), join(process.cwd(), '.env')];
+  const merged: Record<string, string> = {};
+  for (const file of layers) {
+    Object.assign(merged, parseEnvFile(file));
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith('COMPANION_') && typeof value === 'string') merged[key] = value;
+  }
+  return merged;
+}
+
+/** Minimal .env parser: KEY=VALUE lines, `#` comments, optional quotes. */
+export function parseEnvFile(file: string): Record<string, string> {
+  if (!existsSync(file)) return {};
+  const out: Record<string, string> = {};
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return {};
+  }
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; pass: string }> = [
+  { role: 'admin', user: 'COMPANION_ADMIN_USER', pass: 'COMPANION_ADMIN_PASSWORD' },
+  { role: 'maintainer', user: 'COMPANION_MAINTAINER_USER', pass: 'COMPANION_MAINTAINER_PASSWORD' },
+  { role: 'business', user: 'COMPANION_BUSINESS_USER', pass: 'COMPANION_BUSINESS_PASSWORD' },
+];
+
+/**
+ * .env accounts are SEEDS: imported once into an empty user store, after
+ * which the DB (and the Users admin module) is authoritative. A clean setup
+ * with no .env credentials goes through first-boot onboarding in the SPA.
+ */
+function resolveUsers(env: Record<string, string>): UserCredential[] {
+  const users: UserCredential[] = [];
+  for (const { role, user, pass } of ROLE_ENV) {
+    const username = env[user]?.trim();
+    const password = env[pass];
+    if (username && password) users.push({ username, password, role });
+    else if (username || password) {
+      log.warn(`incomplete ${role} credentials — need both ${user} and ${pass}; account disabled`);
+    }
+  }
+  const seen = new Set<string>();
+  return users.filter((u) => {
+    if (seen.has(u.username)) {
+      log.warn(`duplicate username "${u.username}" in .env — keeping the first, dropping the ${u.role} entry`);
+      return false;
+    }
+    seen.add(u.username);
+    return true;
+  });
+}
+
+function numberFrom(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskRequest, RunRecord } from '@companion/contract';
+import type { AskRequest, ModelCatalog, RunRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { emptyFold, foldEvent, foldMany, type FoldState } from '../transcript/fold.js';
 import { Transcript } from '../transcript/Transcript.js';
@@ -11,6 +11,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
   const [asks, setAsks] = useState<AskRequest[]>([]);
   const [fold, setFold] = useState<FoldState>(emptyFold);
   const [busy, setBusy] = useState(false);
+  const [lifecycle, setLifecycle] = useState<'resuming' | 'stopping' | null>(null);
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -63,6 +64,24 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
     });
   }, [runId]);
 
+  // Resume/Stop spawn or reap gateway processes — a resume can take a while
+  // (moxxy serve + gateway boot), so the button must show progress and any
+  // refusal (live-run cap, missing providers) must land in the error bar.
+  const lifecycleAction = async (action: 'resume' | 'stop'): Promise<void> => {
+    if (lifecycle) return;
+    setLifecycle(action === 'resume' ? 'resuming' : 'stopping');
+    setError(null);
+    try {
+      if (action === 'resume') await api.resumeRun(runId);
+      else await api.stopRun(runId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLifecycle(null);
+    }
+  };
+
   const send = async (): Promise<void> => {
     const prompt = draft.trim();
     if (!prompt || busy) return;
@@ -88,32 +107,34 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
   };
 
   return (
-    <div className="mx-auto flex h-full max-w-4xl flex-col px-6">
-      <header className="flex items-center gap-3.5 border-b border-zinc-200 py-3.5 dark:border-zinc-800">
-        <a className="linkish text-sm" href="#/runs">
-          ← Runs
-        </a>
-        <h2 className="flex-1 truncate text-base font-semibold">{run?.title ?? runId}</h2>
-        <div className="flex items-center gap-2.5">
+    <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-6">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 py-3 dark:border-zinc-800">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-base font-semibold">{run?.title ?? runId}</h2>
           {run ? (
-            <>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className={statusBadge(run.status, run.live)}>{run.live ? 'live' : run.status}</span>
-              <span className="dim">
-                {formatTokens(fold.inputTokens + run.inputTokens)} in /{' '}
+              <span className="dim" title="Token usage this run (prompt / completion)">
+                {formatTokens(fold.inputTokens + run.inputTokens)} in ·{' '}
                 {formatTokens(fold.outputTokens + run.outputTokens)} out
               </span>
-              {!run.live ? (
-                <button className="btn-ghost" onClick={() => void api.resumeRun(runId).then(refresh)}>
-                  Resume
-                </button>
-              ) : (
-                <button className="btn-ghost" onClick={() => void api.stopRun(runId).then(refresh)}>
-                  Stop
-                </button>
-              )}
-            </>
+            </div>
           ) : null}
         </div>
+        {run ? (
+          <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Run actions">
+            <ModelPicker run={run} onChanged={setRun} />
+            {!run.live ? (
+              <button className="btn-ghost" disabled={lifecycle !== null} onClick={() => void lifecycleAction('resume')}>
+                {lifecycle === 'resuming' ? 'Resuming…' : 'Resume'}
+              </button>
+            ) : (
+              <button className="btn-ghost" disabled={lifecycle !== null} onClick={() => void lifecycleAction('stop')}>
+                {lifecycle === 'stopping' ? 'Stopping…' : 'Stop'}
+              </button>
+            )}
+          </div>
+        ) : null}
       </header>
 
       {run && (run.kind === 'fix' || run.kind === 'implement') && (run.status === 'review' || run.status === 'completed') ? (
@@ -128,29 +149,48 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
 
       {error ? <div className="error-bar">{error}</div> : null}
 
-      <footer className="flex gap-2.5 border-t border-zinc-200 pt-3 pb-4 dark:border-zinc-800">
-        <textarea
-          className="input max-h-40 min-h-11 flex-1 resize-none"
-          value={draft}
-          placeholder={run?.live ? 'Send a prompt…' : 'Run is not live — resume it to chat'}
-          disabled={!run?.live || busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        {activeTurn ? (
-          <button className="btn-danger" onClick={() => void api.abort(runId)}>
-            Abort
-          </button>
-        ) : (
-          <button className="btn" disabled={!run?.live || busy || !draft.trim()} onClick={() => void send()}>
-            Send
-          </button>
-        )}
+      <footer className="pt-3 pb-4">
+        <div className="flex items-end gap-2 rounded-xl border border-zinc-300 p-2 focus-within:border-zinc-500 dark:border-zinc-700 dark:focus-within:border-zinc-400">
+          <textarea
+            className="max-h-40 min-h-11 flex-1 resize-none border-none bg-transparent px-1.5 py-1 text-[13px] outline-none placeholder:text-zinc-400"
+            value={draft}
+            placeholder={run?.live ? 'Send a prompt…' : 'Run is not live — resume it to chat'}
+            disabled={!run?.live || busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          {activeTurn ? (
+            <button className="btn-danger" onClick={() => void api.abort(runId)} aria-label="Abort the running turn">
+              Abort
+            </button>
+          ) : (
+            <button
+              className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              disabled={!run?.live || busy || !draft.trim()}
+              onClick={() => void send()}
+              aria-label="Send prompt"
+              title="Send (Enter)"
+            >
+              <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
+                <path
+                  d="M14 2 7.5 8.5M14 2 9.8 14a.4.4 0 0 1-.75.02L7.5 8.5 2 6.55a.4.4 0 0 1 .02-.76L14 2z"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+        <p className="dim mt-1.5 px-1 text-[11px]">
+          Enter to send · Shift+Enter for a new line{activeTurn ? ' · agent is working' : ''}
+        </p>
       </footer>
     </div>
   );
@@ -158,6 +198,88 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/**
+ * On-the-fly model switch. The list comes from the run's live moxxy gateway
+ * (connected providers + their models); switching persists on the run and is
+ * pushed to the session so even goal-mode turns use it.
+ */
+function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunRecord) => void }): JSX.Element {
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!run.live) {
+      setCatalog(null);
+      return;
+    }
+    let alive = true;
+    api
+      .runModels(run.id)
+      .then((c) => alive && setCatalog(c))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [run.id, run.live]);
+
+  const current = run.model ?? '';
+
+  if (!run.live || !catalog) {
+    // Not live (or catalog unavailable): show the pinned model read-only.
+    return run.model ? (
+      <span className="badge normal-case" title="Model pinned for this run — resume to change">
+        {run.model}
+      </span>
+    ) : (
+      <span className="dim text-xs" title={error ? 'model list unavailable' : undefined}>
+        {error ? 'models n/a' : ''}
+      </span>
+    );
+  }
+
+  const pick = async (value: string): Promise<void> => {
+    setBusy(true);
+    try {
+      const provider =
+        value === ''
+          ? undefined
+          : catalog.providers.find((p) => p.models.some((m) => m.id === value))?.name;
+      const { run: next } = await api.setRunModel(run.id, value === '' ? null : value, provider);
+      onChanged(next);
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectable = catalog.providers.filter((p) => p.enabled && p.models.length > 0);
+
+  return (
+    <select
+      className="input max-w-48 py-1.5 text-xs"
+      aria-label="Model for this run"
+      title="Model for this run (from the moxxy gateway)"
+      value={current}
+      disabled={busy}
+      onChange={(e) => void pick(e.target.value)}
+    >
+      <option value="">default — {catalog.defaultModel}</option>
+      {selectable.map((p) => (
+        <optgroup key={p.name} label={`${p.name}${p.ready ? '' : ' (no credentials)'}`}>
+          {p.models.map((m) => (
+            <option key={`${p.name}:${m.id}`} value={m.id} disabled={!p.ready}>
+              {m.id}
+              {m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k ctx` : ''}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
 }
 
 function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promise<void> }): JSX.Element {
@@ -215,7 +337,7 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   };
 
   return (
-    <div className="my-3 rounded-xl border border-indigo-500/60 p-4">
+    <div className="my-3 rounded-xl border border-accent-500/60 p-4">
       <div className="flex flex-wrap items-center gap-2.5">
         <strong className="text-sm">Review — agent finished on branch {run.branch}</strong>
         <span className="dim">{run.outcome ?? ''}</span>

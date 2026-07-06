@@ -2,7 +2,9 @@ import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { log } from '../log.js';
-import { handleApi, readRawBody, type RestDeps } from './rest.js';
+import { Router, readRawBody } from './router.js';
+import { buildRoutes } from './routes/index.js';
+import type { ApiDeps } from './deps.js';
 import type { SpaHub } from './spa-ws.js';
 
 const MIME: Record<string, string> = {
@@ -17,22 +19,25 @@ const MIME: Record<string, string> = {
 };
 
 /**
- * The one companiond server: /api REST, /ws SPA socket (upgrade), and the
+ * The one companiond server: /api REST (typed route table + RBAC), /ws SPA
+ * socket (upgrade, session-token auth), GitHub webhooks (HMAC auth), and the
  * built SPA as static files (dev uses Vite with a proxy instead). Binds
- * 127.0.0.1 only — loopback is the trust boundary.
+ * 127.0.0.1 only — loopback plus login is the trust boundary.
  */
 export function startHttpServer(opts: {
   port: number;
-  deps: RestDeps;
+  deps: ApiDeps;
   hub: SpaHub;
   /** Directory of the built SPA (apps/web/dist); optional in dev. */
   staticDir?: string;
 }): Promise<Server> {
   const { port, deps, hub, staticDir } = opts;
+  const router = new Router(buildRoutes(deps), deps.auth);
+
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     if (path.startsWith('/api/')) {
-      void handleApi(req, res, deps);
+      void router.dispatch(req, res);
       return;
     }
     // GitHub webhook deliveries: HMAC over the RAW body, so this route never

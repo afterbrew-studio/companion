@@ -11,6 +11,8 @@ import { GitHubClient, type GhIssue, type GhPull } from './client.js';
 export class GitHubSync {
   private timer: NodeJS.Timeout | null = null;
   private syncing = new Set<string>();
+  /** Optional post-sync hook (checks refresh); injected to avoid a dep cycle. */
+  onSynced: ((repo: string) => Promise<void>) | null = null;
 
   constructor(
     private readonly store: Store,
@@ -53,12 +55,22 @@ export class GitHubSync {
         client.issues(fullName, since ? { since } : {}),
         client.pulls(fullName),
       ]);
-      for (const issue of issues) this.store.upsertIssue(mapIssue(fullName, issue));
       for (const pr of pulls) this.store.upsertPr(mapPull(fullName, pr));
+      for (const item of issues) {
+        // The issues feed interleaves PRs — those only contribute their
+        // conversation comment count to the PR row.
+        if (item.pull_request) this.store.setPrComments(fullName, item.number, item.comments);
+        else this.store.upsertIssue(mapIssue(fullName, item));
+      }
       this.store.setRepoSynced(fullName);
       if (issues.length > 0) this.broadcast({ t: 'issues.changed', repo: fullName });
       if (pulls.length > 0) this.broadcast({ t: 'prs.changed', repo: fullName });
       this.broadcast({ t: 'repos.changed' });
+      if (this.onSynced) {
+        void this.onSynced(fullName).catch((err) =>
+          log.warn('post-sync hook failed', { repo: fullName, err: String(err) }),
+        );
+      }
       return { issues: issues.length, prs: pulls.length };
     } finally {
       this.syncing.delete(fullName);
@@ -80,6 +92,7 @@ function mapIssue(repo: string, issue: GhIssue) {
     url: issue.html_url,
     createdAt: Date.parse(issue.created_at),
     updatedAt: Date.parse(issue.updated_at),
+    closedAt: issue.closed_at ? Date.parse(issue.closed_at) : null,
   };
 }
 
@@ -91,11 +104,17 @@ function mapPull(repo: string, pr: GhPull) {
     body: pr.body ?? '',
     state: (pr.merged_at ? 'merged' : pr.state) as 'open' | 'closed' | 'merged',
     headRef: pr.head.ref,
+    headSha: pr.head.sha ?? null,
     baseRef: pr.base.ref,
     draft: pr.draft === true,
     author: pr.user?.login ?? '',
+    labels: (pr.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? ''))).filter(Boolean),
+    assignees: (pr.assignees ?? []).map((a) => a.login),
+    comments: 0, // harvested separately from the issues feed
+
     url: pr.html_url,
     createdAt: Date.parse(pr.created_at),
     updatedAt: Date.parse(pr.updated_at),
+    closedAt: pr.closed_at ? Date.parse(pr.closed_at) : pr.merged_at ? Date.parse(pr.merged_at) : null,
   };
 }

@@ -1,14 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { IssueRecord, TriageResult } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
+import { Markdown } from '../components/Markdown.js';
+import { AgentActivity } from '../components/AgentActivity.js';
+import { AccountPicker } from '../components/AccountPicker.js';
+import { CommentsSection } from '../components/Comments.js';
+import { ActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, timeAgo, useConfirm } from '../components/ui.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
+  const { can } = useAuth();
   const [issue, setIssue] = useState<IssueRecord | null>(null);
   const [triage, setTriage] = useState<TriageResult | null>(null);
   const [triaging, setTriaging] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirmDanger, confirmElement } = useConfirm();
+  const canAct = can('issues:act');
 
-  const refresh = async (): Promise<void> => {
+  const refresh = useCallback(async (): Promise<void> => {
     try {
       const { issue, triage } = await api.getIssue(repo, number);
       setIssue(issue);
@@ -17,15 +27,14 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
     } catch (err) {
       setError(String(err));
     }
-  };
+  }, [repo, number]);
 
   useEffect(() => {
     void refresh();
     return onServerMessage((msg) => {
       if ((msg.t === 'triage.changed' || msg.t === 'issues.changed') && msg.repo === repo) void refresh();
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repo, number]);
+  }, [refresh, repo]);
 
   const startTriage = async (): Promise<void> => {
     setTriaging(true);
@@ -48,52 +57,146 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
     }
   };
 
-  if (!issue) return <div className="mx-auto max-w-4xl px-6 py-6">{error ?? 'Loading…'}</div>;
+  const toggleState = async (): Promise<void> => {
+    if (!issue) return;
+    const next = issue.state === 'open' ? 'closed' : 'open';
+    if (
+      next === 'closed' &&
+      !(await confirmDanger({
+        title: `Close issue #${issue.number}`,
+        message: 'The issue is closed on GitHub. It can be reopened later.',
+        confirmLabel: 'Close issue',
+      }))
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setIssueState(repo, number, next);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!issue) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
-      <header className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">
-          <a href={`#/repos/${repo}`} className="dim font-normal">
-            {repo} /
-          </a>{' '}
-          #{issue.number}
-        </h1>
-        <div className="flex items-center gap-2">
-          <button className="btn" disabled={triaging} onClick={() => void startTriage()}>
-            {triaging ? 'Triaging…' : triage ? 'Re-triage' : 'Triage'}
-          </button>
-          <button className="btn" onClick={() => void startFix()}>
-            Fix this issue
-          </button>
+    <Page className="anim-in">
+      {/* Header: identity left, one aligned action toolbar right. */}
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <nav className="dim text-[13px]" aria-label="Breadcrumb">
+            <a href="#/issues" className="hover:underline">
+              Issues
+            </a>{' '}
+            / {repo} / #{issue.number}
+          </nav>
+          <h1 className="mt-1 text-xl leading-snug font-semibold">
+            <CopyText value={`#${issue.number}`} className="dim mr-1.5 align-baseline font-normal">
+              #{issue.number}
+            </CopyText>
+            {issue.title}
+          </h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <span className={issue.state === 'open' ? 'badge-ok' : 'badge'}>{issue.state}</span>
+            <MetaItem label="by">
+              <GitHubUser login={issue.author} />
+            </MetaItem>
+            <MetaItem label="opened">{timeAgo(issue.createdAt)}</MetaItem>
+            <MetaItem label="updated">{timeAgo(issue.updatedAt)}</MetaItem>
+            <MetaItem label="comments">{issue.comments}</MetaItem>
+            {issue.assignees.length > 0 ? (
+              <MetaItem label="assignees">
+                {issue.assignees.map((a, i) => (
+                  <span key={a}>
+                    {i > 0 ? ', ' : ''}
+                    <GitHubUser login={a} />
+                  </span>
+                ))}
+              </MetaItem>
+            ) : null}
+          </div>
+          {issue.labels.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label="Labels">
+              {issue.labels.map((l) => (
+                <span key={l} className="chip">
+                  {l}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Issue actions">
+          {canAct ? (
+            <button className="btn" disabled={triaging} onClick={() => void startTriage()}>
+              {triaging ? (
+                <>
+                  <Spinner /> Triaging…
+                </>
+              ) : triage ? (
+                'Re-triage'
+              ) : (
+                'AI triage'
+              )}
+            </button>
+          ) : null}
           <a className="btn-ghost" href={issue.url} target="_blank" rel="noreferrer">
             GitHub ↗
           </a>
+          {canAct ? (
+            <ActionMenu
+              label="More issue actions"
+              actions={[
+                ...(issue.state === 'open'
+                  ? [{ label: 'Fix with agent', onSelect: () => void startFix() }]
+                  : []),
+                issue.state === 'open'
+                  ? { label: 'Close issue…', danger: true, disabled: busy, onSelect: () => void toggleState() }
+                  : { label: 'Reopen issue', disabled: busy, onSelect: () => void toggleState() },
+              ]}
+            />
+          ) : null}
         </div>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}
+      {confirmElement}
 
-      <h2 className="mt-3 text-lg font-medium">{issue.title}</h2>
-      <div className="dim mt-1 flex flex-wrap items-center gap-1.5">
-        {issue.state} · by {issue.author} · {issue.comments} comments
-        {issue.labels.map((l) => (
-          <span key={l} className="chip">
-            {l}
-          </span>
-        ))}
-      </div>
-      <pre className="card mt-4 max-h-96 overflow-y-auto text-[13px] whitespace-pre-wrap">
-        {issue.body || '(no description)'}
-      </pre>
+      <article className="card mt-4 max-h-[480px] overflow-y-auto">
+        {issue.body ? <Markdown text={issue.body} /> : <span className="dim text-sm">(no description)</span>}
+      </article>
 
-      {triaging && !triage ? <div className="banner-info">Triage agent is investigating…</div> : null}
-      {triage ? <TriageCard triage={triage} onChange={refresh} /> : null}
-    </div>
+      <AgentActivity repo={repo} issueNumber={number} />
+
+      {triaging && !triage ? (
+        <div className="banner-info anim-in">
+          <Spinner /> Triage agent is investigating this issue…
+        </div>
+      ) : null}
+      {triage ? <TriageCard triage={triage} canAct={canAct} onChange={refresh} /> : null}
+
+      <CommentsSection
+        load={() => api.issueComments(repo, number)}
+        post={canAct ? (body) => api.commentIssue(repo, number, body) : undefined}
+        canComment={canAct}
+      />
+    </Page>
   );
 }
 
-function TriageCard({ triage, onChange }: { triage: TriageResult; onChange: () => Promise<void> }): JSX.Element {
+function TriageCard({
+  triage,
+  canAct,
+  onChange,
+}: {
+  triage: TriageResult;
+  canAct: boolean;
+  onChange: () => Promise<void>;
+}): JSX.Element {
   const [comment, setComment] = useState(true);
+  const [actAs, setActAs] = useState('');
   const [error, setError] = useState<string | null>(null);
   const v = triage.verdict;
   const sevClass =
@@ -105,7 +208,7 @@ function TriageCard({ triage, onChange }: { triage: TriageResult; onChange: () =
 
   return (
     <div
-      className={`mt-4 rounded-xl border p-4 ${
+      className={`anim-in mt-4 rounded-xl border p-4 ${
         triage.status === 'applied' ? 'border-emerald-500/60' : 'border-amber-500/60'
       }`}
     >
@@ -133,11 +236,11 @@ function TriageCard({ triage, onChange }: { triage: TriageResult; onChange: () =
           {v.draftReply ? (
             <blockquote className="my-2.5 border-l-2 border-zinc-300 py-1 pl-3 text-[13px] dark:border-zinc-600">
               <div className="dim">draft reply</div>
-              {v.draftReply}
+              <Markdown text={v.draftReply} />
             </blockquote>
           ) : null}
-          {triage.status === 'pending' ? (
-            <div className="mt-2.5 flex items-center gap-2.5">
+          {triage.status === 'pending' && canAct ? (
+            <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
               <label className="dim flex items-center gap-1.5">
                 <input type="checkbox" checked={comment} onChange={(e) => setComment(e.target.checked)} /> post the
                 reply
@@ -146,13 +249,14 @@ function TriageCard({ triage, onChange }: { triage: TriageResult; onChange: () =
                 className="btn"
                 onClick={() =>
                   void api
-                    .applyTriage(triage.id, comment)
+                    .applyTriage(triage.id, comment, actAs || undefined)
                     .then(onChange)
                     .catch((e) => setError(String(e)))
                 }
               >
                 Apply to GitHub
               </button>
+              <AccountPicker value={actAs} onChange={setActAs} />
               <button
                 className="btn-danger"
                 onClick={() => void api.dismissTriage(triage.id).then(onChange).catch((e) => setError(String(e)))}
