@@ -100,32 +100,13 @@ export function PipelinesPage(): JSX.Element {
         {pipelines.map((p) => (
           <article key={p.id} className="card" aria-label={p.name}>
             <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-sm">{p.name}</strong>
-              {p.autoRunOnPrOpen ? <span className="badge-accent">auto-run on PR open</span> : null}
-              <span className="dim min-w-0 flex-1 truncate">{p.description}</span>
-              {canManage ? (
-                <>
-                  <button className="btn-ghost" onClick={() => setEditing(p)}>
-                    Edit
-                  </button>
-                  <button
-                    className="btn-danger"
-                    onClick={() =>
-                      void (async () => {
-                        const ok = await confirmDanger({
-                          title: `Delete pipeline ${p.name}`,
-                          message: `"${p.name}" stops running against pull requests. Its run history is kept.`,
-                        });
-                        if (ok) await api.deletePipeline(p.id).then(refresh).catch((e) => setError(String(e)));
-                      })()
-                    }
-                  >
-                    Delete
-                  </button>
-                </>
-              ) : null}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{p.name}</div>
+                {p.description ? <p className="dim mt-0.5 truncate text-xs">{p.description}</p> : null}
+              </div>
+              {p.autoRunOnPrOpen ? <span className="badge-accent shrink-0">auto-run on PR open</span> : null}
             </div>
-            <ol className="mt-2.5 flex flex-wrap items-center gap-1.5" aria-label={`${p.name} steps`}>
+            <ol className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={`${p.name} steps`}>
               {p.steps.map((spec, i) => {
                 const label =
                   spec.type === 'inline'
@@ -144,6 +125,28 @@ export function PipelinesPage(): JSX.Element {
                 );
               })}
             </ol>
+            {canManage ? (
+              <div className="mt-3.5 flex items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+                <button className="btn-ghost" onClick={() => setEditing(p)}>
+                  Edit
+                </button>
+                <span className="flex-1" />
+                <button
+                  className="btn-danger"
+                  onClick={() =>
+                    void (async () => {
+                      const ok = await confirmDanger({
+                        title: `Delete pipeline ${p.name}`,
+                        message: `"${p.name}" stops running against pull requests. Its run history is kept.`,
+                      });
+                      if (ok) await api.deletePipeline(p.id).then(refresh).catch((e) => setError(String(e)));
+                    })()
+                  }
+                >
+                  Delete
+                </button>
+              </div>
+            ) : null}
           </article>
         ))}
       </div>
@@ -181,32 +184,33 @@ export function PipelinesPage(): JSX.Element {
           <div className="grid gap-3 md:grid-cols-2">
             {stepDefs.map((d) => (
               <article key={d.id} className="card" aria-label={d.name}>
-                <div className="flex items-center gap-2">
-                  <span className="badge normal-case">{KIND_META[d.step.kind].label}</span>
-                  <strong className="min-w-0 flex-1 truncate text-sm">{d.name}</strong>
-                  {canManage ? (
-                    <>
-                      <button className="btn-ghost" onClick={() => setEditingDef(d)}>
-                        Edit
-                      </button>
-                      <button
-                        className="btn-danger"
-                        onClick={() =>
-                          void (async () => {
-                            const ok = await confirmDanger({
-                              title: `Delete step ${d.name}`,
-                              message: `Pipelines referencing "${d.name}" will fail to resolve it until they are edited.`,
-                            });
-                            if (ok) await api.deleteStepDefinition(d.id).then(refresh).catch((e) => setError(String(e)));
-                          })()
-                        }
-                      >
-                        Delete
-                      </button>
-                    </>
-                  ) : null}
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{d.name}</div>
+                  <div className="dim mt-0.5 text-xs">{KIND_META[d.step.kind].label}</div>
                 </div>
-                {d.description ? <p className="dim mt-1.5 text-[13px]">{d.description}</p> : null}
+                {d.description ? <p className="dim mt-2 line-clamp-2 text-[13px]">{d.description}</p> : null}
+                {canManage ? (
+                  <div className="mt-3.5 flex items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+                    <button className="btn-ghost" onClick={() => setEditingDef(d)}>
+                      Edit
+                    </button>
+                    <span className="flex-1" />
+                    <button
+                      className="btn-danger"
+                      onClick={() =>
+                        void (async () => {
+                          const ok = await confirmDanger({
+                            title: `Delete step ${d.name}`,
+                            message: `Pipelines referencing "${d.name}" will fail to resolve it until they are edited.`,
+                          });
+                          if (ok) await api.deleteStepDefinition(d.id).then(refresh).catch((e) => setError(String(e)));
+                        })()
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
