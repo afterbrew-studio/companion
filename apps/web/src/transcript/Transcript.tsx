@@ -34,7 +34,8 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
           <pre className="font-[inherit] whitespace-pre-wrap">{block.text}</pre>
         </div>
       );
-    case 'assistant':
+    case 'assistant': {
+      const structured = block.streaming ? null : tryParseJsonObject(block.text);
       return (
         <div className="max-w-[92%] self-start rounded-xl bg-zinc-100 px-3.5 py-2.5 text-sm dark:bg-zinc-800/80">
           {block.streaming ? (
@@ -42,11 +43,14 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
               {block.text}
               <span className="animate-pulse">▌</span>
             </pre>
+          ) : structured ? (
+            <StructuredReply data={structured} />
           ) : (
             <Markdown text={block.text} />
           )}
         </div>
       );
+    }
     case 'reasoning':
       return (
         <details
@@ -145,4 +149,71 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/** A full-message JSON object (agent verdict contracts) — or null. */
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+  const t = text.trim();
+  if (!t.startsWith('{') || !t.endsWith('}')) return null;
+  try {
+    const v: unknown = JSON.parse(t);
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase();
+}
+
+/**
+ * Structured agent replies (analysis verdicts etc.) rendered as labeled
+ * sections instead of a raw JSON wall; the raw payload stays one click away.
+ */
+function StructuredReply({ data }: { data: Record<string, unknown> }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-3">
+      {Object.entries(data).map(([key, value]) => (
+        <div key={key}>
+          <div className="dim mb-1 text-[10px] font-medium tracking-widest uppercase">{humanizeKey(key)}</div>
+          <StructuredValue value={value} ordered={/step/i.test(key)} />
+        </div>
+      ))}
+      <details>
+        <summary className="dim cursor-pointer text-xs select-none">raw JSON</summary>
+        <pre className="mono-pane mt-1.5 max-h-52">{JSON.stringify(data, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
+function StructuredValue({ value, ordered }: { value: unknown; ordered: boolean }): JSX.Element {
+  if (typeof value === 'string') {
+    return value.length <= 40 && !value.includes('\n') ? (
+      <span className="badge normal-case">{value}</span>
+    ) : (
+      <p className="whitespace-pre-wrap">{value}</p>
+    );
+  }
+  if (typeof value === 'boolean') {
+    return <span className={value ? 'badge-ok' : 'badge-danger'}>{value ? 'yes' : 'no'}</span>;
+  }
+  if (typeof value === 'number') return <span className="tabular-nums">{value}</span>;
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
+    const List = ordered ? 'ol' : 'ul';
+    return (
+      <List className={`flex flex-col gap-1 pl-5 ${ordered ? 'list-decimal' : 'list-disc'}`}>
+        {(value as string[]).map((v, i) => (
+          <li key={i} className="break-words">
+            {v}
+          </li>
+        ))}
+      </List>
+    );
+  }
+  return <pre className="mono-pane max-h-52">{JSON.stringify(value, null, 2)}</pre>;
 }
