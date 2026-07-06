@@ -4,8 +4,10 @@ import type {
   PipelineStep,
   PipelineStepKind,
   PipelineStepSpec,
+  PipelineType,
   StepDefinitionRecord,
 } from '@companion/contract';
+import { PIPELINE_TYPE_STEPS } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
@@ -15,6 +17,24 @@ import { Page, EmptyState, Modal, PageHeader, Section, useConfirm } from '../com
  * Pipeline builder: compose ordered steps (inline or from the workspace's
  * custom step library) into pipelines that run against pull requests.
  */
+
+const TYPE_META: Record<PipelineType, { label: string; hint: string; autoRun: string }> = {
+  pr: {
+    label: 'PR pipeline',
+    hint: 'Runs against a pull request — CI gate, AI review, agents, labels, comments',
+    autoRun: 'Run automatically when a PR opens in this workspace',
+  },
+  issue: {
+    label: 'Issue pipeline',
+    hint: 'Runs against an issue — agents, labels, comments',
+    autoRun: 'Run automatically when an issue opens in this workspace',
+  },
+  platform: {
+    label: 'Platform pipeline',
+    hint: 'Runs against a repo with no issue/PR payload — agent steps only',
+    autoRun: '',
+  },
+};
 
 const KIND_META: Record<PipelineStepKind, { label: string; hint: string }> = {
   'checks-gate': { label: 'CI checks gate', hint: 'Fails when GitHub pipelines are red' },
@@ -102,9 +122,16 @@ export function PipelinesPage(): JSX.Element {
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{p.name}</div>
-                {p.description ? <p className="dim mt-0.5 truncate text-xs">{p.description}</p> : null}
+                <p className="dim mt-0.5 truncate text-xs">
+                  {TYPE_META[p.type].label}
+                  {p.description ? ` · ${p.description}` : ''}
+                </p>
               </div>
-              {p.autoRunOnPrOpen ? <span className="badge-accent shrink-0">auto-run on PR open</span> : null}
+              {p.autoRunOnPrOpen ? (
+                <span className="badge-accent shrink-0">
+                  auto-run on {p.type === 'issue' ? 'issue' : 'PR'} open
+                </span>
+              ) : null}
             </div>
             <ol className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={`${p.name} steps`}>
               {p.steps.map((spec, i) => {
@@ -126,10 +153,13 @@ export function PipelinesPage(): JSX.Element {
               })}
             </ol>
             {canManage ? (
-              <div className="mt-3.5 flex items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+              <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
                 <button className="btn-ghost" onClick={() => setEditing(p)}>
                   Edit
                 </button>
+                {p.type === 'platform' && can('pipelines:run') ? (
+                  <PlatformRunButton pipeline={p} onError={setError} />
+                ) : null}
                 <span className="flex-1" />
                 <button
                   className="btn-danger"
@@ -363,6 +393,62 @@ function SkillsHint(): JSX.Element | null {
   );
 }
 
+/** Run a platform pipeline against a repo of the workspace. */
+function PlatformRunButton({
+  pipeline,
+  onError,
+}: {
+  pipeline: PipelineRecord;
+  onError: (e: string) => void;
+}): JSX.Element {
+  const { current } = useWorkspace();
+  const [repos, setRepos] = useState<string[]>([]);
+  const [repo, setRepo] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!current) return;
+    api
+      .workspaceRepos(current.id)
+      .then((r) => {
+        const names = r.repos.map((x) => x.fullName);
+        setRepos(names);
+        setRepo((prev) => prev || (names[0] ?? ''));
+      })
+      .catch(() => setRepos([]));
+  }, [current]);
+
+  if (repos.length === 0) return <span className="dim text-xs">connect a repo to run</span>;
+
+  const run = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await api.runPlatformPipeline(repo, pipeline.id);
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="flex items-center gap-2">
+      {repos.length > 1 ? (
+        <select className="input py-1.5" aria-label="Repo to run against" value={repo} onChange={(e) => setRepo(e.target.value)}>
+          {repos.map((r) => (
+            <option key={r} value={r}>
+              {r.split('/')[1]}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      <button className="btn-ghost" disabled={busy || !repo} onClick={() => void run()}>
+        {busy ? 'Starting…' : 'Run now'}
+      </button>
+    </span>
+  );
+}
+
 // ---------- pipeline editor ---------------------------------------------------------
 
 function PipelineEditor({
@@ -380,8 +466,10 @@ function PipelineEditor({
 }): JSX.Element {
   const [name, setName] = useState(pipeline?.name ?? '');
   const [description, setDescription] = useState(pipeline?.description ?? '');
+  const [type, setType] = useState<PipelineType>(pipeline?.type ?? 'pr');
   const [autoRun, setAutoRun] = useState(pipeline?.autoRunOnPrOpen ?? false);
   const [steps, setSteps] = useState<PipelineStepSpec[]>([...(pipeline?.steps ?? [])]);
+  const allowedKinds = PIPELINE_TYPE_STEPS[type];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -389,7 +477,13 @@ function PipelineEditor({
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), description: description.trim(), steps, autoRunOnPrOpen: autoRun };
+      const body = {
+        type,
+        name: name.trim(),
+        description: description.trim(),
+        steps,
+        autoRunOnPrOpen: type === 'platform' ? false : autoRun,
+      };
       if (pipeline) await api.updatePipeline(pipeline.id, body);
       else await api.createPipeline(workspaceId, body);
       onSaved();
@@ -435,10 +529,34 @@ function PipelineEditor({
             />
           </label>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
-          Run automatically when a PR opens in this workspace
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="dim">Type — decides the payload and which steps are allowed</span>
+          <select
+            className="input"
+            value={type}
+            onChange={(e) => {
+              const next = e.target.value as PipelineType;
+              setType(next);
+              // Drop inline steps the new type cannot run.
+              setSteps((prev) =>
+                prev.filter((sp) => sp.type !== 'inline' || PIPELINE_TYPE_STEPS[next].includes(sp.step.kind)),
+              );
+              if (next === 'platform') setAutoRun(false);
+            }}
+          >
+            {(Object.keys(TYPE_META) as PipelineType[]).map((t) => (
+              <option key={t} value={t}>
+                {TYPE_META[t].label} — {TYPE_META[t].hint}
+              </option>
+            ))}
+          </select>
         </label>
+        {type !== 'platform' ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
+            {TYPE_META[type].autoRun}
+          </label>
+        ) : null}
 
         <div>
           <div className="mb-1.5 text-sm font-medium">Steps</div>
@@ -484,7 +602,7 @@ function PipelineEditor({
           </ol>
 
           <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {(Object.keys(KIND_META) as PipelineStepKind[]).map((kind) => (
+            {(Object.keys(KIND_META) as PipelineStepKind[]).filter((kind) => allowedKinds.includes(kind)).map((kind) => (
               <button
                 key={kind}
                 className="btn-ghost"
@@ -506,11 +624,13 @@ function PipelineEditor({
                 }}
               >
                 <option value="">+ From library…</option>
-                {stepDefs.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
+                {stepDefs
+                  .filter((d) => allowedKinds.includes(d.step.kind))
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
               </select>
             ) : null}
           </div>

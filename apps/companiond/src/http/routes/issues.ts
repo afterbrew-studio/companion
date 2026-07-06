@@ -101,6 +101,32 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Kick an issue-type pipeline against this issue. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/issues/:number/pipelines/:pipelineId/run',
+      access: 'pipelines:run',
+      handler: ({ params }) => {
+        const fullName = `${params.owner}/${params.name}`;
+        const issue = deps.store.getIssue(fullName, Number(params.number));
+        if (!issue) throw notFound(`issue ${fullName}#${params.number} not found`);
+        const pipeline = deps.store.getPipeline(params.pipelineId);
+        if (pipeline && pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
+        const run = deps.pipelines.start(params.pipelineId, fullName, issue.number, 'manual');
+        return created({ run });
+      },
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/issues/:number/pipeline-runs',
+      access: 'issues:read',
+      handler: ({ params }) => {
+        const fullName = `${params.owner}/${params.name}`;
+        return { runs: deps.store.listPipelineRunsForIssue(fullName, Number(params.number)) };
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/api/triage/:id/apply',

@@ -264,6 +264,8 @@ export class Store {
       `ALTER TABLE prs ADD COLUMN assignees TEXT NOT NULL DEFAULT '[]'`,
       `ALTER TABLE prs ADD COLUMN comments INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE prs ADD COLUMN review_decision TEXT`,
+      `ALTER TABLE pipelines ADD COLUMN type TEXT NOT NULL DEFAULT 'pr'`,
+      `ALTER TABLE pipeline_runs ADD COLUMN target TEXT NOT NULL DEFAULT 'pr'`,
       `ALTER TABLE reports ADD COLUMN issue_number INTEGER`,
     ]) {
       try {
@@ -1252,12 +1254,13 @@ export class Store {
   insertPipeline(p: PipelineRecord): void {
     this.db
       .prepare(
-        `INSERT INTO pipelines (id, workspace_id, name, description, steps, auto_run, created_at, updated_at)
-         VALUES (@id, @workspaceId, @name, @description, @steps, @autoRun, @createdAt, @updatedAt)`,
+        `INSERT INTO pipelines (id, workspace_id, type, name, description, steps, auto_run, created_at, updated_at)
+         VALUES (@id, @workspaceId, @type, @name, @description, @steps, @autoRun, @createdAt, @updatedAt)`,
       )
       .run({
         id: p.id,
         workspaceId: p.workspaceId,
+        type: p.type,
         name: p.name,
         description: p.description,
         steps: JSON.stringify(p.steps),
@@ -1270,6 +1273,7 @@ export class Store {
   updatePipeline(
     id: string,
     fields: {
+      type?: string;
       name?: string;
       description?: string;
       steps?: ReadonlyArray<PipelineStepSpec>;
@@ -1279,6 +1283,7 @@ export class Store {
     this.db
       .prepare(
         `UPDATE pipelines SET
+           type = COALESCE(@type, type),
            name = COALESCE(@name, name),
            description = COALESCE(@description, description),
            steps = COALESCE(@steps, steps),
@@ -1288,6 +1293,7 @@ export class Store {
       )
       .run({
         id,
+        type: fields.type ?? null,
         name: fields.name ?? null,
         description: fields.description ?? null,
         steps: fields.steps ? JSON.stringify(fields.steps) : null,
@@ -1376,13 +1382,14 @@ export class Store {
   insertPipelineRun(r: PipelineRunRecord): void {
     this.db
       .prepare(
-        `INSERT INTO pipeline_runs (id, pipeline_id, pipeline_name, repo, pr_number, status, trigger, steps, created_at, finished_at)
-         VALUES (@id, @pipelineId, @pipelineName, @repo, @prNumber, @status, @trigger, @steps, @createdAt, @finishedAt)`,
+        `INSERT INTO pipeline_runs (id, pipeline_id, pipeline_name, target, repo, pr_number, status, trigger, steps, created_at, finished_at)
+         VALUES (@id, @pipelineId, @pipelineName, @target, @repo, @prNumber, @status, @trigger, @steps, @createdAt, @finishedAt)`,
       )
       .run({
         id: r.id,
         pipelineId: r.pipelineId,
         pipelineName: r.pipelineName,
+        target: r.target,
         repo: r.repo,
         prNumber: r.prNumber,
         status: r.status,
@@ -1424,10 +1431,19 @@ export class Store {
     return row ? pipelineRunRowToRecord(row) : undefined;
   }
 
+  listPipelineRunsForIssue(repo: string, issueNumber: number, limit = 50): PipelineRunRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM pipeline_runs WHERE repo = ? AND pr_number = ? AND target = 'issue' ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(repo, issueNumber, limit) as PipelineRunRow[];
+    return rows.map(pipelineRunRowToRecord);
+  }
+
   listPipelineRunsForPr(repo: string, prNumber: number, limit = 50): PipelineRunRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM pipeline_runs WHERE repo = ? AND pr_number = ? ORDER BY created_at DESC LIMIT ?`,
+        `SELECT * FROM pipeline_runs WHERE repo = ? AND pr_number = ? AND target = 'pr' ORDER BY created_at DESC LIMIT ?`,
       )
       .all(repo, prNumber, limit) as PipelineRunRow[];
     return rows.map(pipelineRunRowToRecord);
@@ -1594,6 +1610,7 @@ interface PrRow {
 interface PipelineRow {
   id: string;
   workspace_id: string;
+  type: string;
   name: string;
   description: string;
   steps: string;
@@ -1616,6 +1633,7 @@ interface PipelineRunRow {
   id: string;
   pipeline_id: string;
   pipeline_name: string;
+  target: string;
   repo: string;
   pr_number: number;
   status: PipelineRunStatus;
@@ -1677,6 +1695,7 @@ function pipelineRowToRecord(row: PipelineRow): PipelineRecord {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    type: row.type === 'issue' || row.type === 'platform' ? row.type : 'pr',
     name: row.name,
     description: row.description,
     steps: safeParse<PipelineStepSpec[]>(row.steps, []),
@@ -1705,6 +1724,7 @@ function pipelineRunRowToRecord(row: PipelineRunRow): PipelineRunRecord {
     id: row.id,
     pipelineId: row.pipeline_id,
     pipelineName: row.pipeline_name,
+    target: row.target === 'issue' || row.target === 'platform' ? row.target : 'pr',
     repo: row.repo,
     prNumber: row.pr_number,
     status: row.status,

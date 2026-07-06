@@ -70,7 +70,7 @@ export function PrsAreaPage(): JSX.Element {
     if (!current || !can('pipelines:read')) return;
     api
       .workspacePipelines(current.id)
-      .then((r) => setPipelines(r.pipelines))
+      .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'pr')))
       .catch(() => setPipelines([]));
   }, [current, can]);
 

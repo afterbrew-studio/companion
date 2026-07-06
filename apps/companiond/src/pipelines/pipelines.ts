@@ -11,7 +11,10 @@ import type {
   PrRecord,
   SpaServerMessage,
   StepDefinitionRecord,
+  IssueRecord,
+  PipelineType,
 } from '@companion/contract';
+import { PIPELINE_TYPE_STEPS } from '@companion/contract';
 import { log } from '../log.js';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
@@ -81,12 +84,35 @@ export const stepSpecSchema = z.union([
   }),
 ]);
 
-export const savePipelineSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().max(500).default(''),
-  steps: z.array(stepSpecSchema).min(1).max(20),
-  autoRunOnPrOpen: z.boolean().default(false),
-});
+export const savePipelineSchema = z
+  .object({
+    type: z.enum(['pr', 'issue', 'platform']).default('pr'),
+    name: z.string().min(1).max(100),
+    description: z.string().max(500).default(''),
+    steps: z.array(stepSpecSchema).min(1).max(20),
+    autoRunOnPrOpen: z.boolean().default(false),
+  })
+  .superRefine((v, ctx) => {
+    // Inline steps must fit the pipeline type's payload; library refs are
+    // re-checked when the run resolves them.
+    const allowed = PIPELINE_TYPE_STEPS[v.type];
+    v.steps.forEach((spec, i) => {
+      if (spec.type === 'inline' && !allowed.includes(spec.step.kind)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['steps', i],
+          message: `step kind "${spec.step.kind}" is not allowed in a ${v.type} pipeline`,
+        });
+      }
+    });
+    if (v.type === 'platform' && v.autoRunOnPrOpen) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['autoRunOnPrOpen'],
+        message: 'platform pipelines run manually',
+      });
+    }
+  });
 
 export const saveStepDefinitionSchema = z.object({
   name: z.string().min(1).max(80),
@@ -113,7 +139,18 @@ interface EngineDeps {
 
 interface StepContext {
   readonly repo: string;
-  readonly pr: PrRecord;
+  readonly type: PipelineType;
+  /** Present for pr-type runs. */
+  readonly pr: PrRecord | null;
+  /** Present for issue-type runs. */
+  readonly issue: IssueRecord | null;
+}
+
+/** The commentable/labelable target of a run (pr or issue), if any. */
+function targetOf(ctx: StepContext): { number: number; title: string; author: string } | null {
+  if (ctx.pr) return { number: ctx.pr.number, title: ctx.pr.title, author: ctx.pr.author };
+  if (ctx.issue) return { number: ctx.issue.number, title: ctx.issue.title, author: ctx.issue.author };
+  return null;
 }
 
 type HandlerFor<K extends PipelineStepKind> = (
@@ -135,6 +172,7 @@ const MAX_DIFF_CHARS = 60_000;
 function createStepRegistry(deps: EngineDeps): StepRegistry {
   return {
     'checks-gate': async (step, ctx) => {
+      if (!ctx.pr) return { status: 'error', summary: 'CI checks gate only applies to PR pipelines' };
       const summary = await deps.checks.fetchSummary(ctx.repo, ctx.pr.number);
       const line = `${summary.passed} passed, ${summary.failed} failed, ${summary.pending} running`;
       if (summary.state === 'failing') {
@@ -148,6 +186,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
     },
 
     'ai-review': async (step, ctx) => {
+      if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
       const result = await deps.reviews.analyzePr(ctx.repo, ctx.pr.number);
       if (!result.verdict) {
         return { status: 'error', summary: result.error ?? 'review produced no verdict' };
@@ -176,21 +215,33 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       if (!deps.checkouts.hasClone(ctx.repo)) {
         return { status: 'error', summary: `repo ${ctx.repo} has no clone yet` };
       }
-      const client = deps.github({ repo: ctx.repo });
-      if (!client) return { status: 'error', summary: 'GitHub is not configured' };
-      const [diff, checksSummary] = await Promise.all([
-        client.prDiff(ctx.repo, ctx.pr.number),
-        deps.checks.trySummary(ctx.repo, ctx.pr.number),
-      ]);
-      const clipped =
-        diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
+      let prompt: string;
+      let title: string;
+      if (ctx.pr) {
+        const client = deps.github({ repo: ctx.repo });
+        if (!client) return { status: 'error', summary: 'GitHub is not configured' };
+        const [diff, checksSummary] = await Promise.all([
+          client.prDiff(ctx.repo, ctx.pr.number),
+          deps.checks.trySummary(ctx.repo, ctx.pr.number),
+        ]);
+        const clipped =
+          diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
+        prompt = agentStepPrompt(step.config.prompt, ctx.pr, clipped, describeChecks(checksSummary));
+        title = `Pipeline step "${step.name}" on PR #${ctx.pr.number}`;
+      } else if (ctx.issue) {
+        prompt = agentIssueStepPrompt(step.config.prompt, ctx.issue);
+        title = `Pipeline step "${step.name}" on issue #${ctx.issue.number}`;
+      } else {
+        prompt = agentPlatformStepPrompt(step.config.prompt, ctx.repo);
+        title = `Pipeline step "${step.name}" on ${ctx.repo}`;
+      }
       const { finalMessage } = await deps.orchestrator.runOneShot({
         kind: 'analysis',
-        title: `Pipeline step "${step.name}" on PR #${ctx.pr.number}`,
+        title,
         cwd: deps.checkouts.cloneDir(ctx.repo),
         repo: ctx.repo,
-        issueNumber: ctx.pr.number,
-        prompt: agentStepPrompt(step.config.prompt, ctx.pr, clipped, describeChecks(checksSummary)),
+        issueNumber: targetOf(ctx)?.number ?? null,
+        prompt,
         timeoutMs: 8 * 60_000,
       });
       const verdict = agentVerdictSchema.parse(extractModelJson(finalMessage ?? ''));
@@ -202,24 +253,61 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
     },
 
     label: async (step, ctx) => {
+      const target = targetOf(ctx);
+      if (!target) return { status: 'error', summary: 'label steps need a PR or issue target' };
       const client = deps.github({ repo: ctx.repo });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
-      await client.addLabels(ctx.repo, ctx.pr.number, [...step.config.labels]);
+      await client.addLabels(ctx.repo, target.number, [...step.config.labels]);
       return { status: 'passed', summary: `added ${step.config.labels.join(', ')}` };
     },
 
     comment: async (step, ctx) => {
+      const target = targetOf(ctx);
+      if (!target) return { status: 'error', summary: 'comment steps need a PR or issue target' };
       const client = deps.github({ repo: ctx.repo });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
       const body = step.config.body
-        .replaceAll('{{pr.number}}', String(ctx.pr.number))
-        .replaceAll('{{pr.title}}', ctx.pr.title)
-        .replaceAll('{{pr.author}}', ctx.pr.author)
+        .replaceAll('{{pr.number}}', String(target.number))
+        .replaceAll('{{pr.title}}', target.title)
+        .replaceAll('{{pr.author}}', target.author)
+        .replaceAll('{{issue.number}}', String(target.number))
+        .replaceAll('{{issue.title}}', target.title)
+        .replaceAll('{{issue.author}}', target.author)
         .replaceAll('{{repo}}', ctx.repo);
-      await client.comment(ctx.repo, ctx.pr.number, body);
+      await client.comment(ctx.repo, target.number, body);
       return { status: 'passed', summary: 'comment posted' };
     },
   };
+}
+
+function agentIssueStepPrompt(instructions: string, issue: IssueRecord): string {
+  return `You are a pipeline step evaluating a GitHub issue against the repository checked out in the current directory.
+
+READ-ONLY RULES (mandatory): you may read files and search the codebase, but you must NOT modify anything. Your ONLY output is the final JSON.
+
+## Step instructions
+${instructions}
+
+## Issue #${issue.number}: ${issue.title}
+Author: ${issue.author}
+Labels: ${issue.labels.join(', ') || '(none)'}
+
+${issue.body || '(no description)'}
+
+## Verdict
+Reply with ONLY a JSON object: { "pass": boolean, "summary": "<one line>", "detail": "<optional longer notes>" }`;
+}
+
+function agentPlatformStepPrompt(instructions: string, repo: string): string {
+  return `You are a platform pipeline step running against the repository ${repo}, checked out in the current directory.
+
+READ-ONLY RULES (mandatory): you may read files and search the codebase, but you must NOT modify anything. Your ONLY output is the final JSON.
+
+## Step instructions
+${instructions}
+
+## Verdict
+Reply with ONLY a JSON object: { "pass": boolean, "summary": "<one line>", "detail": "<optional longer notes>" }`;
 }
 
 function agentStepPrompt(instructions: string, pr: PrRecord, diff: string, checks: string): string {
@@ -280,6 +368,7 @@ export class Pipelines {
     const record: PipelineRecord = {
       id: `pl-${randomUUID().slice(0, 12)}`,
       workspaceId,
+      type: input.type,
       name: input.name,
       description: input.description,
       steps: input.steps as PipelineStepSpec[],
@@ -296,6 +385,7 @@ export class Pipelines {
     const existing = this.deps.store.getPipeline(id);
     if (!existing) throw new Error(`unknown pipeline ${id}`);
     this.deps.store.updatePipeline(id, {
+      type: input.type,
       name: input.name,
       description: input.description,
       steps: input.steps as PipelineStepSpec[] | undefined,
@@ -361,19 +451,30 @@ export class Pipelines {
    * Start a pipeline against a PR. Returns the freshly inserted run record;
    * execution continues in the background and streams over pipelineRuns.changed.
    */
-  start(pipelineId: string, repo: string, prNumber: number, trigger: PipelineTrigger): PipelineRunRecord {
+  start(pipelineId: string, repo: string, targetNumber: number, trigger: PipelineTrigger): PipelineRunRecord {
     const pipeline = this.deps.store.getPipeline(pipelineId);
     if (!pipeline) throw new Error(`unknown pipeline ${pipelineId}`);
-    const pr = this.deps.store.getPr(repo, prNumber);
-    if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
+    // The pipeline's type decides the payload it needs.
+    let pr: PrRecord | null = null;
+    let issue: IssueRecord | null = null;
+    if (pipeline.type === 'pr') {
+      pr = this.deps.store.getPr(repo, targetNumber) ?? null;
+      if (!pr) throw new Error(`unknown PR ${repo}#${targetNumber}`);
+    } else if (pipeline.type === 'issue') {
+      issue = this.deps.store.getIssue(repo, targetNumber) ?? null;
+      if (!issue) throw new Error(`unknown issue ${repo}#${targetNumber}`);
+    } else if (!this.deps.store.getRepo(repo)) {
+      throw new Error(`repo ${repo} is not connected`);
+    }
 
-    const resolved = this.resolveSteps(pipeline.steps);
+    const resolved = this.resolveSteps(pipeline.steps, pipeline.type);
     const run: PipelineRunRecord = {
       id: `plr-${randomUUID().slice(0, 12)}`,
       pipelineId: pipeline.id,
       pipelineName: pipeline.name,
+      target: pipeline.type,
       repo,
-      prNumber,
+      prNumber: targetNumber,
       status: 'running',
       trigger,
       steps: resolved.map((r) =>
@@ -387,36 +488,60 @@ export class Pipelines {
     this.deps.store.insertPipelineRun(run);
     this.broadcast({ t: 'pipelineRuns.changed', repo });
 
-    void this.execute(run.id, resolved, { repo, pr }).catch((err) => {
+    void this.execute(run.id, resolved, { repo, type: pipeline.type, pr, issue }).catch((err) => {
       log.warn('pipeline run crashed', { runId: run.id, err: String(err) });
     });
     return run;
   }
 
-  /** Webhook hook: run every auto-run pipeline of the repo's workspace. */
+  /** Webhook hook: run every auto-run PR pipeline of the repo's workspace. */
   autoRunForPr(repo: string, prNumber: number): void {
+    this.autoRun(repo, prNumber, 'pr', 'pr-opened');
+  }
+
+  /** Webhook hook: run every auto-run issue pipeline of the repo's workspace. */
+  autoRunForIssue(repo: string, issueNumber: number): void {
+    this.autoRun(repo, issueNumber, 'issue', 'issue-opened');
+  }
+
+  private autoRun(repo: string, number: number, type: PipelineType, trigger: PipelineTrigger): void {
     const repoRow = this.deps.store.getRepo(repo);
     if (!repoRow) return;
-    const auto = this.deps.store.listPipelines(repoRow.workspace_id).filter((p) => p.autoRunOnPrOpen);
+    const auto = this.deps.store
+      .listPipelines(repoRow.workspace_id)
+      .filter((p) => p.autoRunOnPrOpen && p.type === type);
     for (const pipeline of auto) {
       try {
-        this.start(pipeline.id, repo, prNumber, 'pr-opened');
-        log.info('auto-run pipeline started', { pipeline: pipeline.name, repo, prNumber });
+        this.start(pipeline.id, repo, number, trigger);
+        log.info('auto-run pipeline started', { pipeline: pipeline.name, repo, number });
       } catch (err) {
         log.warn('auto-run pipeline failed to start', { pipeline: pipeline.name, err: String(err) });
       }
     }
   }
 
-  private resolveSteps(specs: ReadonlyArray<PipelineStepSpec>): ResolvedStep[] {
+  private resolveSteps(specs: ReadonlyArray<PipelineStepSpec>, type: PipelineType): ResolvedStep[] {
+    const allowed = PIPELINE_TYPE_STEPS[type];
     return specs.map((spec) => {
-      if (spec.type === 'inline') return { ok: true, step: spec.step };
+      if (spec.type === 'inline') {
+        if (!allowed.includes(spec.step.kind)) {
+          return { ok: false, name: spec.step.name, reason: `"${spec.step.kind}" steps are not allowed in ${type} pipelines` };
+        }
+        return { ok: true, step: spec.step };
+      }
       const def = this.deps.store.getStepDefinition(spec.stepDefinitionId);
       if (!def) {
         return {
           ok: false,
           name: spec.overrides?.name ?? 'library step',
           reason: `step definition ${spec.stepDefinitionId} no longer exists`,
+        };
+      }
+      if (!allowed.includes(def.step.kind)) {
+        return {
+          ok: false,
+          name: spec.overrides?.name ?? def.name,
+          reason: `"${def.step.kind}" steps are not allowed in ${type} pipelines`,
         };
       }
       return {

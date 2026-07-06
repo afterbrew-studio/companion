@@ -241,6 +241,12 @@ export const api = {
   deleteStepDefinition: (id: string) => del<{ ok: true }>(`/api/step-definitions/${id}`),
   runPipeline: (repo: string, prNumber: number, pipelineId: string) =>
     post<{ run: PipelineRunRecord }>(`/api/repos/${repo}/prs/${prNumber}/pipelines/${pipelineId}/run`),
+  runPipelineOnIssue: (repo: string, issueNumber: number, pipelineId: string) =>
+    post<{ run: PipelineRunRecord }>(`/api/repos/${repo}/issues/${issueNumber}/pipelines/${pipelineId}/run`),
+  runPlatformPipeline: (repo: string, pipelineId: string) =>
+    post<{ run: PipelineRunRecord }>(`/api/repos/${repo}/pipelines/${pipelineId}/run`),
+  issuePipelineRuns: (repo: string, issueNumber: number) =>
+    request<{ runs: PipelineRunRecord[] }>(`/api/repos/${repo}/issues/${issueNumber}/pipeline-runs`),
   prPipelineRuns: (repo: string, prNumber: number) =>
     request<{ runs: PipelineRunRecord[] }>(`/api/repos/${repo}/prs/${prNumber}/pipeline-runs`),
   pipelineRun: (id: string) => request<{ run: PipelineRunRecord }>(`/api/pipeline-runs/${id}`),

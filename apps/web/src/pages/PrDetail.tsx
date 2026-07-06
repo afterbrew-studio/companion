@@ -49,7 +49,7 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
     if (current && can('pipelines:read')) {
       api
         .workspacePipelines(current.id)
-        .then((r) => setPipelines(r.pipelines))
+        .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'pr')))
         .catch(() => undefined);
     }
     return onServerMessage((msg) => {

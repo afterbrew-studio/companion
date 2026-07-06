@@ -1,12 +1,23 @@
 /**
- * User-defined PR pipelines. A pipeline is an ordered list of typed steps that
- * runs against a pull request — manually from the PR view, or automatically
- * when a PR opens. Each step kind has its own config shape (discriminated
- * union) and a matching server-side handler registered in the step registry,
- * so adding a step kind = one union member + one handler.
+ * User-defined pipelines. A pipeline has a TYPE that decides what it runs
+ * against and which steps it may contain:
+ *  - 'pr'       → a pull request (CI gate, AI review, agents, labels, comments)
+ *  - 'issue'    → an issue (agents, labels, comments)
+ *  - 'platform' → the repo itself, no issue/PR payload (agent steps only)
+ * Each step kind has its own config shape (discriminated union) and a matching
+ * server-side handler; adding a step kind = one union member + one handler.
  */
 
+export type PipelineType = 'pr' | 'issue' | 'platform';
+
 export type PipelineStepKind = 'checks-gate' | 'ai-review' | 'agent' | 'label' | 'comment';
+
+/** Which step kinds each pipeline type may contain (payload-driven). */
+export const PIPELINE_TYPE_STEPS: Record<PipelineType, readonly PipelineStepKind[]> = {
+  pr: ['checks-gate', 'ai-review', 'agent', 'label', 'comment'],
+  issue: ['agent', 'label', 'comment'],
+  platform: ['agent'],
+};
 
 /** What to do with the rest of the pipeline when this step fails. */
 export type StepFailureMode = 'halt' | 'continue';
@@ -100,10 +111,15 @@ export type PipelineStepSpec =
 export interface PipelineRecord {
   readonly id: string;
   readonly workspaceId: string;
+  /** What this pipeline runs against; constrains its steps. */
+  readonly type: PipelineType;
   readonly name: string;
   readonly description: string;
   readonly steps: ReadonlyArray<PipelineStepSpec>;
-  /** Run automatically when a PR opens in any repo of this workspace (webhook). */
+  /**
+   * Auto-run on the type's opening event (PR opened / issue opened, via
+   * webhook). Always false for platform pipelines.
+   */
   readonly autoRunOnPrOpen: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -127,14 +143,17 @@ export interface PipelineStepResult {
   readonly finishedAt: number | null;
 }
 
-export type PipelineTrigger = 'manual' | 'pr-opened';
+export type PipelineTrigger = 'manual' | 'pr-opened' | 'issue-opened';
 
 export interface PipelineRunRecord {
   readonly id: string;
   readonly pipelineId: string;
   /** Denormalized so history survives pipeline deletion. */
   readonly pipelineName: string;
+  /** What the run targeted (copied from the pipeline's type at start). */
+  readonly target: PipelineType;
   readonly repo: string;
+  /** Target number: PR or issue number; 0 for platform runs. */
   readonly prNumber: number;
   readonly status: PipelineRunStatus;
   readonly trigger: PipelineTrigger;
@@ -146,6 +165,7 @@ export interface PipelineRunRecord {
 // ---------- DTOs -------------------------------------------------------------------
 
 export interface SavePipelineRequest {
+  readonly type?: PipelineType;
   readonly name: string;
   readonly description?: string;
   readonly steps: ReadonlyArray<PipelineStepSpec>;

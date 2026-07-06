@@ -126,6 +126,22 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Kick a platform pipeline against this repo (no issue/PR payload). */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/pipelines/:pipelineId/run',
+      access: 'pipelines:run',
+      handler: ({ params }) => {
+        const { fullName } = requireRepo(params.owner, params.name);
+        const pipeline = deps.store.getPipeline(params.pipelineId);
+        if (pipeline && pipeline.type !== 'platform') {
+          throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
+        }
+        const run = deps.pipelines.start(params.pipelineId, fullName, 0, 'manual');
+        return created({ run });
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/api/repos/:owner/:name/automation',

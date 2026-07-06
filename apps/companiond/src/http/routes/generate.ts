@@ -132,7 +132,7 @@ Reply with ONLY a fenced json block matching:
         requireWorkspace(params.id);
         const reply = await oneShot(
           'Generate pipeline',
-          `You are drafting a PR pipeline for Companion: an ordered set of steps run against pull requests. Do not modify any files.
+          `You are drafting a pipeline for Companion: an ordered set of steps with a type that decides its payload. Types: "pr" (runs against pull requests; all step kinds allowed), "issue" (runs against issues; only agent/label/comment steps), "platform" (runs against the repo itself; agent steps only). Pick the type that fits the request. Do not modify any files.
 
 ${STEP_SCHEMA_DOC}
 ${skillsNote()}
@@ -140,7 +140,7 @@ The maintainer wants: ${body.instructions}
 
 Reply with ONLY a fenced json block matching:
 \`\`\`json
-{ "name": "<pipeline name>", "description": "<one line>", "steps": [ { "type": "inline", "step": <step object> }, ... ] }
+{ "type": "pr" | "issue" | "platform", "name": "<pipeline name>", "description": "<one line>", "steps": [ { "type": "inline", "step": <step object> }, ... ] }
 \`\`\``,
         );
         let draft;

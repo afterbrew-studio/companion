@@ -74,13 +74,19 @@ export class Automations {
     const repoRow = this.store.getRepo(repo);
     if (eventName === 'issues' && action === 'opened') {
       const issue = payload.issue as { number?: number; title?: string } | undefined;
-      if (issue?.number && repoRow?.auto_triage === 1) {
-        log.info('webhook: auto-triage queued', { repo, issue: issue.number });
-        // Sync first so the issue row exists, then triage; fire-and-forget.
-        void this.sync
-          .syncRepo(repo)
-          .then(() => this.triage.triageIssue(repo, issue.number!))
-          .catch((err) => log.warn('auto-triage failed', { err: String(err) }));
+      if (issue?.number) {
+        const number = issue.number;
+        const synced = this.sync.syncRepo(repo);
+        if (repoRow?.auto_triage === 1) {
+          log.info('webhook: auto-triage queued', { repo, issue: number });
+          void synced
+            .then(() => this.triage.triageIssue(repo, number))
+            .catch((err) => log.warn('auto-triage failed', { err: String(err) }));
+        }
+        // Issue-type pipelines flagged auto-run fire for every opened issue.
+        void synced
+          .then(() => this.pipelines.autoRunForIssue(repo, number))
+          .catch((err) => log.warn('issue pipeline auto-run failed', { err: String(err) }));
       }
     }
     if (eventName === 'pull_request' && (action === 'opened' || action === 'ready_for_review')) {

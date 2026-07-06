@@ -132,6 +132,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'pipelines:run',
       handler: ({ params }) => {
         const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+        const pipeline = deps.store.getPipeline(params.pipelineId);
+        if (pipeline && pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = deps.pipelines.start(params.pipelineId, fullName, pr.number, 'manual');
         return created({ run });
       },

@@ -241,7 +241,7 @@ function ActivityFeed({
         id: `plr-${p.id}`,
         ts: p.finishedAt ?? p.createdAt,
         live: p.status === 'running',
-        status: `${p.status} · pipeline on PR #${p.prNumber}`,
+        status: `${p.status} · pipeline on ${p.target === 'platform' ? p.repo.split('/')[1] : `${p.target === 'issue' ? 'issue' : 'PR'} #${p.prNumber}`}`,
         dot:
           p.status === 'failed' || p.status === 'error'
             ? 'bg-red-500'
@@ -249,7 +249,7 @@ function ActivityFeed({
               ? 'bg-emerald-500'
               : 'bg-zinc-300 dark:bg-zinc-600',
         label: p.pipelineName,
-        href: `#/repos/${p.repo}/prs/${p.prNumber}`,
+        href: p.target === 'issue' ? `#/repos/${p.repo}/issues/${p.prNumber}` : p.target === 'platform' ? '#/pipelines' : `#/repos/${p.repo}/prs/${p.prNumber}`,
       }),
     ),
     ...reports.map(
