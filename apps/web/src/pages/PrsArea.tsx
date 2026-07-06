@@ -282,20 +282,39 @@ export function PrsAreaPage(): JSX.Element {
       ) : (
         <div className="card mt-3 divide-y divide-zinc-200 p-0 dark:divide-zinc-800" aria-label="Pull request list">
           {prs.map((pr) => (
-            <a key={`${pr.repo}#${pr.number}`} className="row-link" href={`#/repos/${pr.repo}/prs/${pr.number}`}>
+            <a
+              key={`${pr.repo}#${pr.number}`}
+              className="row-link group/row"
+              href={`#/repos/${pr.repo}/prs/${pr.number}`}
+            >
               {tab === 'open' && canRunPipelines && pipelines.length > 0 ? (
-                <input
-                  type="checkbox"
-                  className="shrink-0 cursor-pointer"
-                  checked={selected.has(`${pr.repo}#${pr.number}`)}
+                <span
+                  role="checkbox"
+                  aria-checked={selected.has(`${pr.repo}#${pr.number}`)}
                   aria-label={`Select #${pr.number} for a bulk pipeline run`}
+                  tabIndex={0}
+                  className={`flex size-4 shrink-0 cursor-pointer items-center justify-center rounded border transition-opacity ${
+                    selected.has(`${pr.repo}#${pr.number}`)
+                      ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+                      : 'border-zinc-300 text-transparent hover:border-zinc-500 dark:border-zinc-600 dark:hover:border-zinc-400'
+                  } ${selected.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}`}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     toggleSelected(`${pr.repo}#${pr.number}`);
                   }}
-                  onChange={() => undefined}
-                />
+                  onKeyDown={(e) => {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleSelected(`${pr.repo}#${pr.number}`);
+                    }
+                  }}
+                >
+                  <svg viewBox="0 0 16 16" fill="none" className="size-3" aria-hidden>
+                    <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
               ) : null}
               <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
               <span className="min-w-0 flex-1">
