@@ -125,8 +125,13 @@ export class Checkouts {
     const token = this.token();
     // Ephemeral credential helper: git asks it for credentials; it answers with
     // the PAT from env. Nothing token-shaped touches disk or process args.
+    // The leading empty helper CLEARS inherited helpers (osxkeychain etc.) —
+    // helpers are cumulative, and a stale keychain identity would otherwise
+    // win and push as the wrong user.
     const cred = token
       ? [
+          '-c',
+          'credential.helper=',
           '-c',
           'credential.helper=!f() { echo "username=x-access-token"; echo "password=$COMPANION_GH_TOKEN"; }; f',
         ]
