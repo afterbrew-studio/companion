@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { log } from '../log.js';
-import { handleApi, type RestDeps } from './rest.js';
+import { handleApi, readRawBody, type RestDeps } from './rest.js';
 import type { SpaHub } from './spa-ws.js';
 
 const MIME: Record<string, string> = {
@@ -33,6 +33,22 @@ export function startHttpServer(opts: {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     if (path.startsWith('/api/')) {
       void handleApi(req, res, deps);
+      return;
+    }
+    // GitHub webhook deliveries: HMAC over the RAW body, so this route never
+    // goes through the JSON parser. No bearer — the signature IS the auth.
+    const webhook = path.match(/^\/webhooks\/github\/([\w.-]+)\/([\w.-]+)$/);
+    if (webhook && req.method === 'POST') {
+      void readRawBody(req)
+        .then((raw) => {
+          const result = deps.automations.handleDelivery(`${webhook[1]}/${webhook[2]}`, req.headers, raw);
+          res.writeHead(result.status, { 'content-type': 'text/plain' });
+          res.end(result.body);
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end(String(err));
+        });
       return;
     }
     if (staticDir) {

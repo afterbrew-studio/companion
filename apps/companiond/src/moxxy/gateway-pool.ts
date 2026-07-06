@@ -94,8 +94,13 @@ export class GatewayPool {
     const port = await freePort();
     const token = randomBytes(32).toString('hex');
     const socketPath = join(paths.sockets(), `run-${opts.runId}.sock`);
+    // skills.userDir: moxxy's defaultUserSkillsDir() hardcodes ~/.moxxy/skills
+    // (ignores MOXXY_HOME — upstream bug), so point it at Companion's skills.
     const configFile = join(paths.runConfigs(), `${opts.runId}.yaml`);
-    writeFileSync(configFile, `channels:\n  mobile:\n    port: ${port}\n`);
+    writeFileSync(
+      configFile,
+      `channels:\n  mobile:\n    port: ${port}\nskills:\n  userDir: ${JSON.stringify(join(paths.moxxyHome(), 'skills'))}\n`,
+    );
 
     const baseEnv = {
       ...process.env,
@@ -108,7 +113,7 @@ export class GatewayPool {
     // 1. The session owner. Sticky MOXXY_SESSION_ID → the session file on disk
     // is named after the run id, giving resume + direct JSONL history reads.
     const serve = watchChild(
-      spawn(opts.moxxyCliPath, ['serve'], {
+      spawn(opts.moxxyCliPath, ['serve', '--config', configFile], {
         cwd: opts.cwd,
         env: { ...baseEnv, MOXXY_SESSION_ID: opts.runId, MOXXY_SESSION_SOURCE: 'mobile' },
         stdio: ['ignore', 'ignore', 'pipe'],

@@ -1,14 +1,23 @@
 import type {
   AskRequest,
   HistorySegment,
+  IssueRecord,
   MoxxyStatus,
+  PrRecord,
+  PrReviewResult,
+  ProposalRecord,
+  ReportRecord,
+  RepoRecord,
   RunRecord,
+  SkillFile,
   SpaServerMessage,
+  TriageResult,
+  WebhookInfo,
 } from '@companion/contract';
 
 /**
- * REST + WebSocket client for companiond. One WS connection app-wide; per-run
- * listeners subscribe to the multiplexed stream by runId.
+ * REST + WebSocket client for companiond. One WS connection app-wide; pages
+ * subscribe to the multiplexed stream and filter by tag.
  */
 
 let token: string | null = null;
@@ -39,38 +48,81 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+
 export const api = {
   status: () => request<MoxxyStatus>('/api/status'),
-  importProviders: () =>
-    request<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers', {
-      method: 'POST',
-      body: '{}',
-    }),
+  importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
+  setGithubToken: (t: string) => post<{ login: string }>('/api/settings/github', { token: t }),
+
+  // repos
+  listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
+  addRepo: (fullName: string) => post<{ repo: RepoRecord }>('/api/repos', { fullName }),
+  removeRepo: (fullName: string) => request<{ ok: true }>(`/api/repos/${fullName}`, { method: 'DELETE' }),
+  syncRepo: (fullName: string) => post<{ issues: number; prs: number }>(`/api/repos/${fullName}/sync`),
+  setAutomation: (
+    fullName: string,
+    fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean },
+  ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
+  webhookInfo: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
+  digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
+  staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
+
+  // issues
+  listIssues: (fullName: string, state?: 'open' | 'closed') =>
+    request<{ issues: IssueRecord[] }>(`/api/repos/${fullName}/issues${state ? `?state=${state}` : ''}`),
+  getIssue: (fullName: string, number: number) =>
+    request<{ issue: IssueRecord; triage: TriageResult | null }>(`/api/repos/${fullName}/issues/${number}`),
+  listPrs: (fullName: string) => request<{ prs: PrRecord[] }>(`/api/repos/${fullName}/prs`),
+  getPr: (fullName: string, number: number) =>
+    request<{ pr: PrRecord; review: PrReviewResult | null }>(`/api/repos/${fullName}/prs/${number}`),
+  analyzePr: (fullName: string, number: number) =>
+    post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/analyze`),
+  mergePr: (fullName: string, number: number, method: 'merge' | 'squash' | 'rebase') =>
+    post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/merge`, { method }),
+  closePr: (fullName: string, number: number) => post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/close`),
+  applyPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/apply`),
+  dismissPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/dismiss`),
+  triageIssue: (fullName: string, number: number) =>
+    post<{ queued: true }>(`/api/repos/${fullName}/issues/${number}/triage`),
+  fixIssue: (fullName: string, number: number) =>
+    post<{ run: RunRecord }>(`/api/repos/${fullName}/issues/${number}/fix`),
+  applyTriage: (id: string, comment: boolean) => post<{ ok: true }>(`/api/triage/${id}/apply`, { comment }),
+  dismissTriage: (id: string) => post<{ ok: true }>(`/api/triage/${id}/dismiss`),
+
+  // proposals
+  listProposals: () => request<{ proposals: ProposalRecord[] }>('/api/proposals'),
+  createProposal: (repo: string, title: string, body: string) =>
+    post<{ proposal: ProposalRecord }>('/api/proposals', { repo, title, body }),
+  analyzeProposal: (id: string) => post<{ queued: true }>(`/api/proposals/${id}/analyze`),
+  approveProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/approve`),
+  finishProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/finish`),
+  rejectProposal: (id: string) => post<{ ok: true }>(`/api/proposals/${id}/reject`),
+
+  // reports + skills
+  listReports: () => request<{ reports: ReportRecord[] }>('/api/reports'),
+  listSkills: () => request<{ skills: SkillFile[] }>('/api/skills'),
+  saveSkill: (name: string, content: string) =>
+    request<{ skill: SkillFile }>(`/api/skills/${name}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  deleteSkill: (name: string) => request<{ ok: true }>(`/api/skills/${name}`, { method: 'DELETE' }),
+
+  // runs
   listRuns: () => request<{ runs: RunRecord[] }>('/api/runs'),
-  createRun: (title?: string) =>
-    request<{ run: RunRecord }>('/api/runs', { method: 'POST', body: JSON.stringify({ title }) }),
+  createRun: (title?: string) => post<{ run: RunRecord }>('/api/runs', { title }),
   getRun: (id: string) => request<{ run: RunRecord; pendingAsks: AskRequest[] }>(`/api/runs/${id}`),
   history: (id: string, before: number | null, limit = 300) =>
-    request<HistorySegment>(
-      `/api/runs/${id}/history?limit=${limit}${before === null ? '' : `&before=${before}`}`,
-    ),
-  prompt: (id: string, prompt: string) =>
-    request<{ turnId: string }>(`/api/runs/${id}/prompt`, {
-      method: 'POST',
-      body: JSON.stringify({ prompt }),
-    }),
-  abort: (id: string, turnId?: string) =>
-    request<{ ok: true }>(`/api/runs/${id}/abort`, {
-      method: 'POST',
-      body: JSON.stringify({ turnId }),
-    }),
+    request<HistorySegment>(`/api/runs/${id}/history?limit=${limit}${before === null ? '' : `&before=${before}`}`),
+  runDiff: (id: string) => request<{ diff: string; branch: string | null }>(`/api/runs/${id}/diff`),
+  approvePr: (id: string, title?: string, body?: string) =>
+    post<{ prUrl: string }>(`/api/runs/${id}/approve-pr`, { title, body }),
+  discardRun: (id: string) => post<{ ok: true }>(`/api/runs/${id}/discard`),
+  prompt: (id: string, prompt: string) => post<{ turnId: string }>(`/api/runs/${id}/prompt`, { prompt }),
+  abort: (id: string, turnId?: string) => post<{ ok: true }>(`/api/runs/${id}/abort`, { turnId }),
   respondAsk: (id: string, requestId: string, response: Record<string, unknown>) =>
-    request<{ ok: true }>(`/api/runs/${id}/ask`, {
-      method: 'POST',
-      body: JSON.stringify({ requestId, response }),
-    }),
-  resumeRun: (id: string) => request<{ run: RunRecord }>(`/api/runs/${id}/resume`, { method: 'POST', body: '{}' }),
-  stopRun: (id: string) => request<{ ok: true }>(`/api/runs/${id}/stop`, { method: 'POST', body: '{}' }),
+    post<{ ok: true }>(`/api/runs/${id}/ask`, { requestId, response }),
+  resumeRun: (id: string) => post<{ run: RunRecord }>(`/api/runs/${id}/resume`),
+  stopRun: (id: string) => post<{ ok: true }>(`/api/runs/${id}/stop`),
 };
 
 // ---------- live stream -------------------------------------------------------
