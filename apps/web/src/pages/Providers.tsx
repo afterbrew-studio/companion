@@ -197,15 +197,6 @@ export function ProvidersPage(): JSX.Element {
                       })}
                     </div>
                   ) : null}
-                            {m.id}
-                            {m.contextWindow ? (
-                              <span className="text-[10px] no-underline opacity-60">{Math.round(m.contextWindow / 1000)}k</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
