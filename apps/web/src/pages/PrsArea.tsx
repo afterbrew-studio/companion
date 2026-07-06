@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { RepoRecord } from '@companion/contract';
+import type { PipelineRecord, RepoRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { ListFooter, PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
 import { Page, AssigneeNote, ChecksBadge, CommentCount, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
@@ -18,6 +19,7 @@ function tabFromHash(): PrTab {
  */
 export function PrsAreaPage(): JSX.Element {
   const { current } = useWorkspace();
+  const { can } = useAuth();
   // The tab lives in the URL (#/prs?state=merged) so back from a PR detail
   // restores the list the user left.
   const [tab, setTabState] = useState<PrTab>(tabFromHash);
@@ -56,6 +58,54 @@ export function PrsAreaPage(): JSX.Element {
       .then(({ repos }) => setRepos(repos))
       .catch(() => setRepos([]));
   }, [current]);
+
+  // Bulk pipeline runs: select open PRs, pick a pipeline, run against all.
+  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkPipeline, setBulkPipeline] = useState('');
+  const [bulkRunning, setBulkRunning] = useState<string | null>(null);
+  const canRunPipelines = can('pipelines:run');
+
+  useEffect(() => {
+    if (!current || !can('pipelines:read')) return;
+    api
+      .workspacePipelines(current.id)
+      .then((r) => setPipelines(r.pipelines))
+      .catch(() => setPipelines([]));
+  }, [current, can]);
+
+  // Selection only applies to the open tab of the current workspace.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [tab, current]);
+
+  const toggleSelected = (key: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const runBulk = async (): Promise<void> => {
+    if (!bulkPipeline || selected.size === 0) return;
+    const targets = prs.filter((pr) => selected.has(`${pr.repo}#${pr.number}`));
+    const failures: string[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const pr = targets[i]!;
+      setBulkRunning(`${i + 1}/${targets.length}`);
+      try {
+        await api.runPipeline(pr.repo, pr.number, bulkPipeline);
+      } catch {
+        failures.push(`#${pr.number}`);
+      }
+    }
+    setBulkRunning(null);
+    setSelected(new Set());
+    if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+  };
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const q = useDebounced(search.trim());
   const fetchPage = useCallback(
@@ -192,6 +242,39 @@ export function PrsAreaPage(): JSX.Element {
         ]}
       />
 
+      {tab === 'open' && canRunPipelines && pipelines.length > 0 && selected.size > 0 ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          <span className="text-[13px] font-medium tabular-nums">{selected.size} selected</span>
+          <button
+            className="linkish text-xs"
+            onClick={() => setSelected(new Set(prs.map((pr) => `${pr.repo}#${pr.number}`)))}
+          >
+            select all loaded
+          </button>
+          <button className="linkish text-xs" onClick={() => setSelected(new Set())}>
+            clear
+          </button>
+          <span className="flex-1" />
+          <select
+            className="input py-1.5"
+            aria-label="Pipeline to run against the selected PRs"
+            value={bulkPipeline}
+            onChange={(e) => setBulkPipeline(e.target.value)}
+          >
+            <option value="">Choose pipeline…</option>
+            {pipelines.map((pl) => (
+              <option key={pl.id} value={pl.id}>
+                {pl.name}
+              </option>
+            ))}
+          </select>
+          <button className="btn" disabled={!bulkPipeline || bulkRunning !== null} onClick={() => void runBulk()}>
+            {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} PR${selected.size === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      ) : null}
+      {bulkError ? <div className="error-bar">{bulkError}</div> : null}
+
       {prs.length === 0 && !loading ? (
         <EmptyState
           title={q || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
@@ -200,6 +283,20 @@ export function PrsAreaPage(): JSX.Element {
         <div className="card mt-3 divide-y divide-zinc-200 p-0 dark:divide-zinc-800" aria-label="Pull request list">
           {prs.map((pr) => (
             <a key={`${pr.repo}#${pr.number}`} className="row-link" href={`#/repos/${pr.repo}/prs/${pr.number}`}>
+              {tab === 'open' && canRunPipelines && pipelines.length > 0 ? (
+                <input
+                  type="checkbox"
+                  className="shrink-0 cursor-pointer"
+                  checked={selected.has(`${pr.repo}#${pr.number}`)}
+                  aria-label={`Select #${pr.number} for a bulk pipeline run`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleSelected(`${pr.repo}#${pr.number}`);
+                  }}
+                  onChange={() => undefined}
+                />
+              ) : null}
               <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">

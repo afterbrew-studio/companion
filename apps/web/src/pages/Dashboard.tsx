@@ -12,7 +12,7 @@ import type {
 } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
-import { Page, ChecksBadge, EmptyState, PageHeader, Spinner, StatTile, pipelineStatusBadge, timeAgo } from '../components/ui.js';
+import { Page, ChecksBadge, EmptyState, PageHeader, Spinner, StatTile, timeAgo } from '../components/ui.js';
 
 /**
  * Workspace overview: headline numbers plus the "needs a human" queues —
@@ -134,25 +134,36 @@ export function DashboardPage(): JSX.Element {
           <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
             {reviewRuns.map((run) => (
               <a key={run.id} href={`#/runs/${run.id}`} className="row-link">
-                <span className="badge-warn">review</span>
-                <span className="min-w-0 flex-1 truncate">{run.title}</span>
-                <span className="dim">{timeAgo(run.updatedAt)}</span>
+                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{run.title}</span>
+                  <span className="dim block truncate text-xs">agent run needs review</span>
+                </span>
+                <span className="dim shrink-0">{timeAgo(run.updatedAt)}</span>
               </a>
             ))}
             {failingPrs.slice(0, 6).map((pr) => (
               <a key={`${pr.repo}#${pr.number}`} href={`#/repos/${pr.repo}/prs/${pr.number}`} className="row-link">
                 <ChecksBadge checks={pr.checks} />
-                <span className="min-w-0 flex-1 truncate">
-                  #{pr.number} {pr.title}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{pr.title}</span>
+                  <span className="dim block truncate text-xs">
+                    CI failing · #{pr.number} · {pr.repo.split('/')[1]}
+                  </span>
                 </span>
-                <span className="dim">{pr.repo.split('/')[1]}</span>
+                <span className="dim shrink-0">{timeAgo(pr.updatedAt)}</span>
               </a>
             ))}
             {actionableProposals.slice(0, 6).map((p) => (
               <a key={p.id} href="#/proposals" className="row-link">
-                <span className="badge-accent">{p.status}</span>
-                <span className="min-w-0 flex-1 truncate">{p.title}</span>
-                <span className="dim">{timeAgo(p.updatedAt)}</span>
+                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{p.title}</span>
+                  <span className="dim block truncate text-xs">
+                    proposal {p.status === 'review' ? 'ready for review' : 'awaiting approval'}
+                  </span>
+                </span>
+                <span className="dim shrink-0">{timeAgo(p.updatedAt)}</span>
               </a>
             ))}
             {reviewRuns.length + failingPrs.length + actionableProposals.length === 0 ? (
@@ -182,8 +193,8 @@ interface ActivityEntry {
   readonly id: string;
   readonly ts: number;
   readonly live: boolean;
-  readonly badge: string;
-  readonly badgeClass: string;
+  readonly status: string;
+  readonly dot: string;
   readonly label: string;
   readonly href: string;
 }
@@ -212,9 +223,16 @@ function ActivityFeed({
         id: `run-${r.id}`,
         ts: r.updatedAt,
         live: r.live,
-        badge: r.live ? 'live' : r.status,
-        badgeClass: r.live ? 'badge-ok' : r.status === 'failed' ? 'badge-danger' : 'badge',
-        label: `${RUN_KIND_LABEL[r.kind]} — ${r.title}`,
+        status: `${r.live ? 'live' : r.status} · ${RUN_KIND_LABEL[r.kind]}`,
+        dot:
+          r.status === 'failed' || r.status === 'interrupted'
+            ? 'bg-red-500'
+            : r.status === 'completed'
+              ? 'bg-emerald-500'
+              : r.status === 'review'
+                ? 'bg-amber-500'
+                : 'bg-zinc-300 dark:bg-zinc-600',
+        label: r.title,
         href: `#/runs/${r.id}`,
       }),
     ),
@@ -223,9 +241,14 @@ function ActivityFeed({
         id: `plr-${p.id}`,
         ts: p.finishedAt ?? p.createdAt,
         live: p.status === 'running',
-        badge: p.status,
-        badgeClass: pipelineStatusBadge(p.status),
-        label: `Pipeline ${p.pipelineName} — PR #${p.prNumber}`,
+        status: `${p.status} · pipeline on PR #${p.prNumber}`,
+        dot:
+          p.status === 'failed' || p.status === 'error'
+            ? 'bg-red-500'
+            : p.status === 'passed'
+              ? 'bg-emerald-500'
+              : 'bg-zinc-300 dark:bg-zinc-600',
+        label: p.pipelineName,
         href: `#/repos/${p.repo}/prs/${p.prNumber}`,
       }),
     ),
@@ -234,8 +257,8 @@ function ActivityFeed({
         id: `rep-${r.id}`,
         ts: r.createdAt,
         live: false,
-        badge: r.kind,
-        badgeClass: 'badge',
+        status: `report · ${r.kind}`,
+        dot: 'bg-zinc-300 dark:bg-zinc-600',
         label: r.title,
         href:
           r.kind === 'ci-analysis' && r.repo && r.issueNumber
@@ -251,9 +274,11 @@ function ActivityFeed({
     <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
       {entries.map((e) => (
         <a key={e.id} href={e.href} className="row-link anim-in">
-          {e.live ? <Spinner /> : null}
-          <span className={e.badgeClass}>{e.badge}</span>
-          <span className="min-w-0 flex-1 truncate">{e.label}</span>
+          {e.live ? <Spinner /> : <span className={`size-2 shrink-0 rounded-full ${e.dot}`} aria-hidden />}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{e.label}</span>
+            <span className="dim block truncate text-xs">{e.status}</span>
+          </span>
           <span className="dim shrink-0">{timeAgo(e.ts)}</span>
         </a>
       ))}
