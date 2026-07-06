@@ -37,6 +37,17 @@
   body {
     @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
   }
+  /* Native form controls follow the monochrome theme. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: theme(--color-zinc-900);
+  }
+  @media (prefers-color-scheme: dark) {
+    input[type='checkbox'],
+    input[type='radio'] {
+      accent-color: theme(--color-zinc-100);
+    }
+  }
   /* Keyboard users always see where they are. */
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-zinc-500;

@@ -171,20 +171,34 @@ export function ProvidersPage(): JSX.Element {
                     <Switch label={`Provider ${p.name}`} checked={p.enabled} onChange={() => toggleProvider(p.name)} />
                   </div>
                   {p.enabled && models.length > 0 ? (
-                    <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5" aria-label={`Models of ${p.name}`}>
-                      {models.map((m) => (
-                        <label key={m.id} className="dim flex cursor-pointer items-center gap-1.5 text-xs">
-                          <input
-                            type="checkbox"
-                            checked={!isModelDisabled(p.name, m.id)}
-                            onChange={() => toggleModel(p.name, m.id)}
-                          />
-                          <span className="font-mono">{m.id}</span>
-                          {m.contextWindow ? (
-                            <span className="text-[10px] opacity-70">{Math.round(m.contextWindow / 1000)}k ctx</span>
-                          ) : null}
-                        </label>
-                      ))}
+                    <div className="mt-3 flex flex-wrap gap-1.5" aria-label={`Models of ${p.name}`}>
+                      {models.map((m) => {
+                        const enabled = !isModelDisabled(p.name, m.id);
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            aria-pressed={enabled}
+                            title={enabled ? `Disable ${m.id}` : `Enable ${m.id}`}
+                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs transition-colors ${
+                              enabled
+                                ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+                                : 'border-zinc-300 text-zinc-400 line-through hover:border-zinc-400 hover:text-zinc-500 dark:border-zinc-700 dark:text-zinc-500 dark:hover:border-zinc-500'
+                            }`}
+                            onClick={() => toggleModel(p.name, m.id)}
+                          >
+                            {enabled ? (
+                              <svg viewBox="0 0 16 16" fill="none" className="size-3" aria-hidden>
+                                <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            ) : null}
+                            {m.id}
+                            {m.contextWindow ? (
+                              <span className="text-[10px] no-underline opacity-60">{Math.round(m.contextWindow / 1000)}k</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>
