@@ -94,31 +94,34 @@ async function main(): Promise<void> {
   sync.start();
   const triage = new Triage(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), broadcast);
   const prReviews = new PrReviews(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), prChecks, broadcast);
-  const fixes = new Fixes(store, orchestrator, checkouts, () => ghAccounts.clientFor('runs'), broadcast);
+  const fixes = new Fixes(store, orchestrator, checkouts, () => ghAccounts.clientFor('runs'), prChecks, broadcast);
   const proposals = new Proposals(store, orchestrator, fixes, checkouts, broadcast);
   proposalsRef = proposals;
   const pipelines = new Pipelines(
     { store, orchestrator, checkouts, github: (ctx) => ghAccounts.clientFor('pipelines', ctx), checks: prChecks, reviews: prReviews },
     broadcast,
   );
+  const specs = new Specs(store, orchestrator, checkouts, proposals, () => ghAccounts.clientFor('fetch'), broadcast);
+  const docs = new Docs(store, orchestrator, checkouts, broadcast);
   const webhookTunnel = new WebhookTunnel(store, config.port);
   const automations = new Automations(
     store,
     orchestrator,
     triage,
     prReviews,
+    prChecks,
     pipelines,
     sync,
     checkouts,
     webhookTunnel,
+    specs,
+    () => ghAccounts.clientFor('pipelines'),
     broadcast,
   );
   automations.start();
   // Re-expose the public webhook URL if the user had the tunnel enabled.
   webhookTunnel.restore();
   const skills = new Skills();
-  const specs = new Specs(store, orchestrator, checkouts, proposals, broadcast);
-  const docs = new Docs(store, orchestrator, checkouts, broadcast);
   const assistant = new Assistant(store, orchestrator, auth, config);
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.

@@ -98,6 +98,11 @@ export class GitHubClient {
     return this.get(`/repos/${fullName}/pulls/${prNumber}/reviews?per_page=100`);
   }
 
+  /** Inline (file/line-anchored) review comments on a PR. */
+  async prReviewComments(fullName: string, prNumber: number): Promise<GhReviewComment[]> {
+    return this.get(`/repos/${fullName}/pulls/${prNumber}/comments?per_page=100`);
+  }
+
   async addLabels(fullName: string, issueNumber: number, labels: string[]): Promise<void> {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
   }
@@ -242,7 +247,19 @@ export interface GhPull {
 export interface GhReview {
   user: { login: string } | null;
   state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
+  body?: string | null;
   submitted_at: string | null;
+}
+
+export interface GhReviewComment {
+  user: { login: string } | null;
+  body: string;
+  path: string;
+  /** Line in the current diff; original_line survives force-pushes. */
+  line: number | null;
+  original_line?: number | null;
+  diff_hunk?: string;
+  created_at: string;
 }
 
 export interface GhCheckRun {

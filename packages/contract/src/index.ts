@@ -71,6 +71,8 @@ export interface RepoRecord {
   readonly staleSweepEnabled: boolean;
   /** Auto-analyze newly opened PRs (webhook) and post the review when confident. */
   readonly prGateEnabled: boolean;
+  /** Auto-merge open PRs that are green + human-approved + AI-reviewed low risk. */
+  readonly autoMergeEnabled: boolean;
   /** Set once a webhook secret was generated (receiver active). */
   readonly webhookConfigured: boolean;
   /** Pinned GitHub account for this repo's posting/actions; null = purpose bindings. */
@@ -117,6 +119,8 @@ export interface PrRecord {
   readonly closedAt: number | null;
   /** Latest AI review status for this PR, if any. */
   readonly review: 'pending' | 'applied' | 'dismissed' | null;
+  /** Risk from the latest AI review verdict — the auto-merge/priority signal. */
+  readonly reviewRisk: 'low' | 'medium' | 'high' | null;
   /** Human review decision on GitHub (folded per reviewer, latest wins). */
   readonly reviewDecision: 'approved' | 'changes_requested' | null;
   /** Latest CI pipeline snapshot (null until first fetch). */
@@ -254,6 +258,8 @@ export interface SpecRecord {
   readonly path: string | null;
   /** One-shot analysis run that drafted this spec, if generated. */
   readonly generateRunId: string | null;
+  /** Set when a merged PR contradicted this spec; cleared on edit/dismiss. */
+  readonly driftNote: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -347,7 +353,7 @@ export interface ReportRecord {
   readonly repo: string | null;
   /** Issue/PR number this report is about (ci-analysis), if any. */
   readonly issueNumber: number | null;
-  readonly kind: 'digest' | 'stale-sweep' | 'webhook' | 'ci-analysis';
+  readonly kind: 'digest' | 'stale-sweep' | 'webhook' | 'ci-analysis' | 'briefing';
   readonly title: string;
   readonly body: string;
   readonly createdAt: number;
@@ -367,6 +373,9 @@ export interface WebhookInfo {
   /** Absolute delivery URL when the moxxy-proxy tunnel is up; null otherwise. */
   readonly url: string | null;
 }
+
+/** How often a workspace's briefing report is generated. */
+export type BriefingCadence = 'off' | 'daily' | 'weekly';
 
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
 export interface WebhookTunnelState {

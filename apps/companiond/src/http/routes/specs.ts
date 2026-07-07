@@ -136,6 +136,37 @@ export function specRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    route({
+      method: 'POST',
+      path: '/api/specs/:id/dismiss-drift',
+      access: 'specs:manage',
+      handler: ({ params }) => {
+        requireSpec(params.id);
+        deps.specs.dismissDrift(params.id);
+        return { ok: true };
+      },
+    }),
+
+    // The knowledge flywheel's other half: an implemented proposal becomes a
+    // spec of the now-current behavior (async — a drafting agent runs).
+    route({
+      method: 'POST',
+      path: '/api/proposals/:id/capture-spec',
+      access: 'specs:manage',
+      handler: ({ params }) => {
+        const proposal = deps.store.proposals.get(params.id);
+        if (!proposal) throw notFound(`proposal ${params.id} not found`);
+        if (proposal.status !== 'implemented') throw badRequest(`proposal is ${proposal.status}, not implemented`);
+        void deps.specs
+          .generate(
+            proposal.repo,
+            `Document, as a specification of the CURRENT behavior, the feature implemented by the proposal "${proposal.title}". Original proposal:\n${proposal.body.slice(0, 2000)}`,
+          )
+          .catch((err) => log.warn('capture-spec failed', { proposal: params.id, err: String(err) }));
+        return accepted({ queued: true });
+      },
+    }),
+
     // Filing a feature from a spec is proposal creation — same capability the
     // business role uses to file one by hand.
     route({

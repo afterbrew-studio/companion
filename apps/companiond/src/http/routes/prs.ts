@@ -78,6 +78,36 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Repair agent: works ON the PR branch until the failing checks pass. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/fix-checks',
+      access: 'prs:act',
+      handler: async ({ params }) => {
+        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+        try {
+          return { run: await deps.fixes.startCheckFix(fullName, pr.number) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    /** Resolution agent: implements what human reviewers asked for, on the PR branch. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/address-reviews',
+      access: 'prs:act',
+      handler: async ({ params }) => {
+        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+        try {
+          return { run: await deps.fixes.startReviewFix(fullName, pr.number) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
     /** Fresh CI pipeline status straight from GitHub (also updates the snapshot). */
     route({
       method: 'GET',

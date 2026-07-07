@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { ProposalRecord, RepoRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
+import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
+import { useLive } from '../lib/live.js';
 
 /**
  * Proposals for the active workspace. Business users file and follow; a
@@ -31,12 +33,40 @@ export function ProposalsPage(): JSX.Element {
     }
   }, [current]);
 
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (msg.t === 'proposals.changed' || msg.t === 'run.changed') void refresh();
-    });
-  }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'proposals.changed' || msg.t === 'run.changed');
+
+  const filterFields: Array<FilterSelectField<ProposalRecord>> = [
+    {
+      key: 'repo',
+      label: 'Repository',
+      allLabel: 'All repositories',
+      options: facet(proposals, (p) => p.repo).map((r) => ({ value: r, label: r })),
+      match: (p, v) => p.repo === v,
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      allLabel: 'Any status',
+      options: [
+        'draft',
+        'analyzing',
+        'analyzed',
+        'approved',
+        'implementing',
+        'review',
+        'implemented',
+        'rejected',
+        'failed',
+      ].map((s) => ({ value: s, label: s[0]!.toUpperCase() + s.slice(1) })),
+      match: (p, v) => p.status === v,
+    },
+  ];
+  const filter = useListFilter(
+    proposals,
+    (p, needle) => p.title.toLowerCase().includes(needle) || p.body.toLowerCase().includes(needle),
+    filterFields,
+  );
+  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
 
@@ -55,8 +85,18 @@ export function ProposalsPage(): JSX.Element {
       />
       {error ? <div className="error-bar">{error}</div> : null}
 
+      {proposals.length > 0 ? (
+        <ListFilterToolbar
+          filter={filter}
+          fields={filterFields}
+          total={proposals.length}
+          placeholder="Search title or body…"
+          searchLabel="Search proposals"
+        />
+      ) : null}
+
       <div className="flex flex-col gap-3">
-        {proposals.map((p) => (
+        {filtered.map((p) => (
           <ProposalCard key={p.id} proposal={p} onChange={refresh} />
         ))}
       </div>
@@ -72,6 +112,8 @@ export function ProposalsPage(): JSX.Element {
             ) : undefined
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState title="No proposals match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {creating ? (
@@ -214,9 +256,25 @@ function ProposalCard({
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captured, setCaptured] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const canAct = can('proposals:act');
+
+  /** Distill what shipped into a spec draft — an agent reads the merged work. */
+  const capture = async (): Promise<void> => {
+    setCapturing(true);
+    setError(null);
+    try {
+      await api.captureSpecFromProposal(proposal.id);
+      setCaptured(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
     setBusy(true);
@@ -311,6 +369,20 @@ function ProposalCard({
           <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}`}>
             Watch implementation
           </a>
+        ) : null}
+        {proposal.status === 'implemented' && can('specs:manage') ? (
+          captured ? (
+            <span className="dim text-[13px]">
+              Spec drafting — see{' '}
+              <a className="linkish" href="#/specs">
+                Specifications
+              </a>
+            </span>
+          ) : (
+            <button className="btn-ghost" disabled={capturing} onClick={() => void capture()}>
+              {capturing ? 'Queueing…' : 'Capture as spec'}
+            </button>
+          )
         ) : null}
         {proposal.prUrl ? (
           <a className="btn-ghost" href={proposal.prUrl} target="_blank" rel="noreferrer">

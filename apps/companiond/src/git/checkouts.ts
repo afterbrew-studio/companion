@@ -61,6 +61,25 @@ export class Checkouts {
     });
   }
 
+  /**
+   * Worktree checked out AT an existing remote branch (a PR head) — for agents
+   * that continue someone's branch instead of starting a fresh one. The local
+   * branch is named after the run so concurrent repairs never collide; pushes
+   * go to the original remote branch via `push(..., branch)`.
+   */
+  async addWorktreeAtBranch(fullName: string, runId: string, branch: string): Promise<string> {
+    return this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      await this.git(['fetch', '--quiet', 'origin', branch], clone);
+      const wt = join(paths.worktrees(), runId);
+      await this.git(['worktree', 'add', '-b', `companion/${runId}`, wt, `origin/${branch}`], clone);
+      await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
+        () => undefined,
+      );
+      return wt;
+    });
+  }
+
   async removeWorktree(fullName: string, worktreePath: string): Promise<void> {
     await this.locked(fullName, async () => {
       await this.git(['worktree', 'remove', '--force', worktreePath], this.cloneDir(fullName)).catch(

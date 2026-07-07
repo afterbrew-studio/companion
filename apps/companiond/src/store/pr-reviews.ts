@@ -42,15 +42,31 @@ export class PrReviewsStore {
     return rows.map(prReviewRowToResult);
   }
 
-  latestByNumber(repo: string): Map<number, PrReviewResult['status']> {
+  latestByNumber(repo: string): Map<number, LatestReviewSignal> {
     const rows = this.db
       .prepare(
-        `SELECT pr_number, status FROM pr_reviews t1 WHERE repo = ?
+        `SELECT pr_number, status, verdict FROM pr_reviews t1 WHERE repo = ?
          AND created_at = (SELECT MAX(created_at) FROM pr_reviews t2 WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number)`,
       )
-      .all(repo) as Array<{ pr_number: number; status: PrReviewResult['status'] }>;
-    return new Map(rows.map((r) => [r.pr_number, r.status]));
+      .all(repo) as Array<{ pr_number: number; status: PrReviewResult['status']; verdict: string | null }>;
+    return new Map(rows.map((r) => [r.pr_number, toSignal(r.status, r.verdict)]));
   }
+}
+
+/** The slice of the latest AI review that PR list rows carry. */
+export interface LatestReviewSignal {
+  readonly status: PrReviewResult['status'];
+  readonly risk: NonNullable<PrReviewResult['verdict']>['risk'] | null;
+}
+
+export function reviewSignal(review: PrReviewResult | undefined): LatestReviewSignal | null {
+  if (!review) return null;
+  return { status: review.status, risk: review.verdict?.risk ?? null };
+}
+
+function toSignal(status: PrReviewResult['status'], verdict: string | null): LatestReviewSignal {
+  const parsed = verdict ? safeParse<PrReviewVerdict | null>(verdict, null) : null;
+  return { status, risk: parsed?.risk ?? null };
 }
 
 interface PrReviewRow {

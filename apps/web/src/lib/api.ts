@@ -4,6 +4,7 @@ import type {
   AreaStorageState,
   AskRequest,
   AuthState,
+  BriefingCadence,
   ChecksSummary,
   CommentRecord,
   CreateUserRequest,
@@ -279,7 +280,7 @@ export const api = {
   syncRepo: (fullName: string) => post<{ issues: number; prs: number }>(`/api/repos/${fullName}/sync`),
   setAutomation: (
     fullName: string,
-    fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean },
+    fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean; autoMerge?: boolean },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
   enableWebhook: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
@@ -289,6 +290,12 @@ export const api = {
   setWebhookTunnel: (enabled: boolean) => put<WebhookTunnelState>('/api/webhooks/tunnel', { enabled }),
   digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
   staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
+
+  // workspace briefing
+  getBriefing: (workspaceId: string) => request<{ cadence: BriefingCadence }>(`/api/workspaces/${workspaceId}/briefing`),
+  setBriefing: (workspaceId: string, cadence: BriefingCadence) =>
+    put<{ cadence: BriefingCadence }>(`/api/workspaces/${workspaceId}/briefing`, { cadence }),
+  briefingNow: (workspaceId: string) => post<{ ok: true }>(`/api/workspaces/${workspaceId}/briefing-now`),
 
   // issues + prs
   listIssues: (fullName: string, state?: 'open' | 'closed') =>
@@ -307,6 +314,10 @@ export const api = {
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
   analyzeFailedChecks: (fullName: string, number: number) =>
     post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/checks/analyze`),
+  fixChecks: (fullName: string, number: number) =>
+    post<{ run: RunRecord }>(`/api/repos/${fullName}/prs/${number}/fix-checks`),
+  addressReviews: (fullName: string, number: number) =>
+    post<{ run: RunRecord }>(`/api/repos/${fullName}/prs/${number}/address-reviews`),
   prComments: (fullName: string, number: number) =>
     request<{ comments: CommentRecord[] }>(`/api/repos/${fullName}/prs/${number}/comments`),
   commentPr: (fullName: string, number: number, body: string) =>
@@ -355,6 +366,9 @@ export const api = {
   deleteSpec: (id: string) => del<{ ok: true }>(`/api/specs/${id}`),
   generateSpec: (repo: string, instructions: string, storage?: AreaStorage) =>
     post<{ queued: true }>('/api/specs/generate', { repo, instructions, storage }),
+  dismissSpecDrift: (id: string) => post<{ ok: true }>(`/api/specs/${id}/dismiss-drift`),
+  captureSpecFromProposal: (proposalId: string) =>
+    post<{ queued: true }>(`/api/proposals/${proposalId}/capture-spec`),
   createFeatureFromSpec: (id: string, fields: { title?: string; notes?: string }) =>
     post<{ proposal: ProposalRecord }>(`/api/specs/${id}/create-feature`, fields),
 

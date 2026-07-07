@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import type { ChecksSnapshot, PrRecord, PrReviewResult } from '@companion/contract';
+import type { ChecksSnapshot, PrRecord } from '@companion/contract';
 import type { GithubAccountsStore } from './github-accounts.js';
-import type { PrReviewsStore } from './pr-reviews.js';
+import { reviewSignal, type LatestReviewSignal, type PrReviewsStore } from './pr-reviews.js';
 import { likeArg, safeParse } from './util.js';
 
 /**
@@ -15,7 +15,7 @@ export class PrsStore {
     private readonly githubAccounts: GithubAccountsStore,
   ) {}
 
-  upsert(pr: Omit<PrRecord, 'review' | 'checks' | 'reviewDecision'>): void {
+  upsert(pr: Omit<PrRecord, 'review' | 'reviewRisk' | 'checks' | 'reviewDecision'>): void {
     this.db
       .prepare(
         `INSERT INTO prs (repo, number, title, body, state, head_ref, head_sha, base_ref, draft, author, labels, assignees, url, created_at, updated_at, closed_at)
@@ -65,7 +65,7 @@ export class PrsStore {
       | PrRow
       | undefined;
     if (!row) return undefined;
-    return prRowToRecord(row, this.prReviews.latest(repo, number)?.status ?? null);
+    return prRowToRecord(row, reviewSignal(this.prReviews.latest(repo, number)));
   }
 
   listWorkspace(workspaceId: string): PrRecord[] {
@@ -75,7 +75,7 @@ export class PrsStore {
          WHERE r.workspace_id = ? ORDER BY p.updated_at DESC`,
       )
       .all(workspaceId) as PrRow[];
-    const reviewsByRepo = new Map<string, Map<number, PrReviewResult['status']>>();
+    const reviewsByRepo = new Map<string, Map<number, LatestReviewSignal>>();
     return rows.map((row) => {
       let map = reviewsByRepo.get(row.repo);
       if (!map) {
@@ -157,7 +157,7 @@ export class PrsStore {
     const rows = this.db
       .prepare(`SELECT p.* ${base}${stateCond} ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`)
       .all(...stateArgs, opts.limit ?? -1, opts.offset ?? 0) as PrRow[];
-    const reviewsByRepo = new Map<string, Map<number, PrReviewResult['status']>>();
+    const reviewsByRepo = new Map<string, Map<number, LatestReviewSignal>>();
     const prs = rows.map((row) => {
       let map = reviewsByRepo.get(row.repo);
       if (!map) {
@@ -198,7 +198,7 @@ interface PrRow {
   closed_at: number | null;
 }
 
-function prRowToRecord(row: PrRow, review: PrReviewResult['status'] | null): PrRecord {
+function prRowToRecord(row: PrRow, review: LatestReviewSignal | null): PrRecord {
   return {
     repo: row.repo,
     number: row.number,
@@ -217,7 +217,8 @@ function prRowToRecord(row: PrRow, review: PrReviewResult['status'] | null): PrR
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
-    review: review === 'failed' ? null : review,
+    review: review === null || review.status === 'failed' ? null : review.status,
+    reviewRisk: review?.risk ?? null,
     reviewDecision:
       row.review_decision === 'approved' || row.review_decision === 'changes_requested' ? row.review_decision : null,
     checks: row.checks ? safeParse<ChecksSnapshot | null>(row.checks, null) : null,

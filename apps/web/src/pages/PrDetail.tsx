@@ -27,6 +27,7 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [agentBusy, setAgentBusy] = useState<'checks' | 'reviews' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const canAct = can('prs:act');
@@ -82,6 +83,19 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
     }
   };
 
+  /** Kick off a repair agent and follow it to the run view. */
+  const startAgent = (kind: 'checks' | 'reviews') => async (): Promise<void> => {
+    setAgentBusy(kind);
+    setError(null);
+    try {
+      const { run } = await (kind === 'checks' ? api.fixChecks(repo, number) : api.addressReviews(repo, number));
+      location.hash = `#/runs/${run.id}`;
+    } catch (err) {
+      setError(String(err));
+      setAgentBusy(null);
+    }
+  };
+
   if (!pr) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;
 
   return (
@@ -105,6 +119,28 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
                   'Re-review'
                 ) : (
                   'AI review'
+                )}
+              </button>
+            ) : null}
+            {canAct && pr.state === 'open' && pr.checks?.state === 'failing' ? (
+              <button className="btn-ghost" disabled={agentBusy !== null} onClick={() => void startAgent('checks')()}>
+                {agentBusy === 'checks' ? (
+                  <>
+                    <Spinner /> Starting…
+                  </>
+                ) : (
+                  '✦ Fix failing checks'
+                )}
+              </button>
+            ) : null}
+            {canAct && pr.state === 'open' && pr.reviewDecision === 'changes_requested' ? (
+              <button className="btn-ghost" disabled={agentBusy !== null} onClick={() => void startAgent('reviews')()}>
+                {agentBusy === 'reviews' ? (
+                  <>
+                    <Spinner /> Starting…
+                  </>
+                ) : (
+                  '✦ Address review feedback'
                 )}
               </button>
             ) : null}

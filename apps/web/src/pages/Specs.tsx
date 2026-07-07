@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { AreaStorage, AreaStorageState, RepoRecord, SpecRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Markdown } from '../components/Markdown.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
+import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
+import { useLive } from '../lib/live.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 
 /**
@@ -41,12 +43,56 @@ export function SpecsPage(): JSX.Element {
     }
   }, [current]);
 
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (msg.t === 'specs.changed') void refresh();
-    });
-  }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'specs.changed');
+
+  const filterFields: Array<FilterSelectField<SpecRecord>> = [
+    {
+      key: 'repo',
+      label: 'Repository',
+      allLabel: 'All repositories',
+      options: facet(specs ?? [], (s) => s.repo).map((r) => ({ value: r, label: r })),
+      match: (s, v) => s.repo === v,
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      allLabel: 'Any status',
+      options: [
+        { value: 'ready', label: 'Ready' },
+        { value: 'generating', label: 'Generating' },
+        { value: 'failed', label: 'Failed' },
+        { value: 'drifted', label: 'Drifted' },
+      ],
+      match: (s, v) => (v === 'drifted' ? s.driftNote !== null : s.status === v),
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      allLabel: 'Any source',
+      options: [
+        { value: 'manual', label: 'Manual' },
+        { value: 'generated', label: 'Generated' },
+        { value: 'imported', label: 'Imported' },
+      ],
+      match: (s, v) => s.source === v,
+    },
+    {
+      key: 'storage',
+      label: 'Storage',
+      allLabel: 'Any storage',
+      options: [
+        { value: 'virtual', label: 'Virtual' },
+        { value: 'repo', label: 'Repository' },
+      ],
+      match: (s, v) => s.storage === v,
+    },
+  ];
+  const filter = useListFilter(
+    specs ?? [],
+    (s, needle) => s.title.toLowerCase().includes(needle) || s.content.toLowerCase().includes(needle),
+    filterFields,
+  );
+  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('specs:manage');
@@ -89,8 +135,18 @@ export function SpecsPage(): JSX.Element {
         <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
       ) : null}
 
+      {specs !== null && specs.length > 0 ? (
+        <ListFilterToolbar
+          filter={filter}
+          fields={filterFields}
+          total={specs.length}
+          placeholder="Search title or content…"
+          searchLabel="Search specifications"
+        />
+      ) : null}
+
       <div className="flex flex-col gap-3">
-        {(specs ?? []).map((s) => (
+        {filtered.map((s) => (
           <SpecCard key={s.id} spec={s} onChange={refresh} />
         ))}
       </div>
@@ -106,6 +162,8 @@ export function SpecsPage(): JSX.Element {
             ) : undefined
           }
         />
+      ) : specs !== null && filtered.length === 0 ? (
+        <EmptyState title="No specs match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {creating ? (
@@ -125,7 +183,7 @@ export function SpecsPage(): JSX.Element {
 }
 
 /** Spinner while an agent drafts; colored glyph for the settled states. */
-function SpecStateIcon({ status }: { status: SpecRecord['status'] }): JSX.Element {
+function SpecStateIcon({ status, drifted }: { status: SpecRecord['status']; drifted?: boolean }): JSX.Element {
   if (status === 'generating') {
     return (
       <Tooltip content="Agent is drafting this spec from the codebase">
@@ -136,7 +194,9 @@ function SpecStateIcon({ status }: { status: SpecRecord['status'] }): JSX.Elemen
   const spec =
     status === 'failed'
       ? { label: 'Generation failed', cls: 'text-red-600 dark:text-red-400', glyph: 'm5.5 5.5 5 5M10.5 5.5l-5 5' }
-      : { label: 'Ready', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' };
+      : drifted
+        ? { label: 'Diverged from code since a merged PR', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' }
+        : { label: 'Ready', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' };
   return (
     <Tooltip content={spec.label}>
       <svg
@@ -180,10 +240,19 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
     }
   };
 
+  const dismissDrift = async (): Promise<void> => {
+    try {
+      await api.dismissSpecDrift(spec.id);
+      await onChange();
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   return (
     <article className="card" aria-label={spec.title}>
       <div className="flex items-center gap-2.5">
-        <SpecStateIcon status={spec.status} />
+        <SpecStateIcon status={spec.status} drifted={spec.driftNote !== null} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{spec.title}</div>
           <div className="dim mt-0.5 truncate text-xs">
@@ -198,6 +267,17 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
           </button>
         ) : null}
       </div>
+
+      {spec.driftNote ? (
+        <div className="banner-warn mb-0">
+          <span className="min-w-0 flex-1">Diverged from code — {spec.driftNote}</span>
+          {can('specs:manage') ? (
+            <button className="linkish shrink-0 text-sm" onClick={() => void dismissDrift()}>
+              Dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {expanded && spec.status === 'ready' && spec.content ? (
         <div className="markdown mt-3 max-h-[32rem] overflow-y-auto rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">

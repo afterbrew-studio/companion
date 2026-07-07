@@ -15,6 +15,7 @@ import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
 import type { Checkouts } from '../git/checkouts.js';
 import type { Proposals } from '../proposals/proposals.js';
+import type { GitHubClient } from '../github/client.js';
 import { extractModelJson } from '../lib/model-json.js';
 import {
   assertSafeDir,
@@ -30,6 +31,21 @@ const draftSchema = z.object({
   content: z.string().min(40),
 });
 
+const driftSchema = z.object({
+  findings: z
+    .array(
+      z.object({
+        id: z.string(),
+        drift: z.boolean(),
+        note: z.string().max(600).default(''),
+      }),
+    )
+    .max(24),
+});
+
+const MAX_DRIFT_DIFF = 50_000;
+const MAX_DRIFT_SPECS = 12;
+
 /**
  * Specifications: living markdown documents describing how (part of) a repo
  * should behave. Written by hand or drafted by a read-only agent that studies
@@ -43,6 +59,7 @@ export class Specs {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly proposals: Proposals,
+    private readonly github: () => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -115,6 +132,7 @@ export class Specs {
             storage: 'repo',
             path,
             generateRunId: null,
+            driftNote: null,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           });
@@ -176,6 +194,7 @@ export class Specs {
       storage: resolved.storage,
       path: resolved.storage === 'repo' ? this.freshPath(repo, resolved.dir!, title) : null,
       generateRunId: null,
+      driftNote: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -188,8 +207,9 @@ export class Specs {
   update(id: string, fields: { title?: string; content?: string }): SpecRecord {
     const spec = this.store.specs.get(id);
     if (!spec) throw new Error('spec not found');
-    // Saving over a failed generation is how you rescue it by hand.
-    this.store.specs.update(id, { ...fields, status: 'ready' });
+    // Saving over a failed generation is how you rescue it by hand; an
+    // edit also settles any drift flag — the human just reconciled it.
+    this.store.specs.update(id, { ...fields, status: 'ready', driftNote: null });
     const next = this.store.specs.get(id)!;
     this.syncFile(next);
     this.broadcast({ t: 'specs.changed' });
@@ -229,6 +249,7 @@ export class Specs {
       storage: resolved.storage,
       path: null,
       generateRunId: null,
+      driftNote: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -289,6 +310,91 @@ export class Specs {
       .catch((err) => log.warn('spec feature analysis failed', { proposal: proposal.id, err: String(err) }));
     return proposal;
   }
+
+  // ---------- drift detection ----------------------------------------------------
+
+  /** Human looked at a drift flag and decided the spec is fine as written. */
+  dismissDrift(id: string): void {
+    this.store.specs.update(id, { driftNote: null });
+    this.broadcast({ t: 'specs.changed' });
+  }
+
+  /**
+   * A PR merged: does it contradict any of the repo's specs? A read-only agent
+   * compares the merged diff against the spec texts; contradictions flag the
+   * spec (driftNote) and raise an inbox notification. Specs are only useful
+   * while they are TRUE — this keeps the grounding honest.
+   */
+  async checkDriftForMergedPr(repo: string, prNumber: number): Promise<void> {
+    const workspaceId = this.store.repos.get(repo)?.workspace_id ?? null;
+    if (!workspaceId) return;
+    const specs = this.store.specs
+      .listWorkspace(workspaceId)
+      .filter((s) => s.repo === repo && s.status === 'ready' && s.content.trim())
+      .slice(0, MAX_DRIFT_SPECS);
+    if (specs.length === 0) return;
+    const client = this.github();
+    if (!client || !this.checkouts.hasClone(repo)) return;
+    const pr = this.store.prs.get(repo, prNumber);
+    const diffRaw = await client.prDiff(repo, prNumber);
+    const diff = diffRaw.length > MAX_DRIFT_DIFF ? `${diffRaw.slice(0, MAX_DRIFT_DIFF)}\n… (diff truncated)` : diffRaw;
+
+    const { finalMessage } = await this.orchestrator.runOneShot({
+      kind: 'analysis',
+      title: `Spec drift check — PR #${prNumber}`,
+      cwd: this.checkouts.cloneDir(repo),
+      repo,
+      issueNumber: prNumber,
+      prompt: driftPrompt(specs, pr?.title ?? `PR #${prNumber}`, diff),
+      timeoutMs: 8 * 60_000,
+    });
+    const { findings } = driftSchema.parse(extractModelJson(finalMessage ?? ''));
+    const known = new Set(specs.map((s) => s.id));
+    const drifted = findings.filter((f) => f.drift && known.has(f.id));
+    for (const f of drifted) {
+      this.store.specs.update(f.id, {
+        driftNote: `PR #${prNumber}${pr?.title ? ` ("${pr.title.slice(0, 80)}")` : ''}: ${f.note || 'merged changes contradict this spec'}`,
+      });
+    }
+    if (drifted.length > 0) {
+      this.store.notifications.insert({
+        id: `ntf-${randomUUID().slice(0, 12)}`,
+        workspaceId,
+        kind: 'action_required',
+        title: `Spec drift: ${drifted.length} spec(s) diverged from ${repo}`,
+        body: `PR #${prNumber} changed behavior that ${drifted.length === 1 ? 'a spec describes' : 'specs describe'} — review and update them.`,
+        href: '#/specs',
+        createdAt: Date.now(),
+      });
+      this.broadcast({ t: 'notifications.changed' });
+      this.broadcast({ t: 'specs.changed' });
+    }
+  }
+}
+
+function driftPrompt(specs: readonly SpecRecord[], prTitle: string, diff: string): string {
+  const blocks = specs
+    .map((s) => `### Spec ${s.id}: ${s.title}\n${s.content.slice(0, 4000)}`)
+    .join('\n\n');
+  return `A pull request just MERGED into the repository checked out in the current directory. Decide, for each specification below, whether the merged change makes the spec's described behavior wrong (drift).
+
+READ-ONLY RULES (mandatory): you may read files to verify, but you must NOT modify anything. Your ONLY output is the final JSON.
+
+## Merged PR: ${prTitle}
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Specifications to check
+${blocks}
+
+## Your task
+Only report drift when the merged change actually contradicts what a spec states — new unrelated features or refactors that keep behavior are NOT drift. Reply with ONLY a JSON object (no fence, no prose):
+{
+  "findings": [ { "id": "<spec id>", "drift": true | false, "note": "<one sentence: what diverged>" } ]
+}
+Include every spec id listed above exactly once.`;
 }
 
 function generatePrompt(instructions: string, docContext: readonly string[]): string {

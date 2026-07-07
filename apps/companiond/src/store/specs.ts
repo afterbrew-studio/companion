@@ -8,8 +8,8 @@ export class SpecsStore {
   insert(s: SpecRecord): void {
     this.db
       .prepare(
-        `INSERT INTO specs (id, repo, title, content, status, source, storage, path, generate_run_id, created_at, updated_at)
-         VALUES (@id, @repo, @title, @content, @status, @source, @storage, @path, @generateRunId, @createdAt, @updatedAt)`,
+        `INSERT INTO specs (id, repo, title, content, status, source, storage, path, generate_run_id, drift_note, created_at, updated_at)
+         VALUES (@id, @repo, @title, @content, @status, @source, @storage, @path, @generateRunId, @driftNote, @createdAt, @updatedAt)`,
       )
       .run({ ...s });
   }
@@ -23,6 +23,7 @@ export class SpecsStore {
       storage: SpecRecord['storage'];
       path: string | null;
       generateRunId: string | null;
+      driftNote: string | null;
     }>,
   ): void {
     const current = this.get(id);
@@ -31,7 +32,7 @@ export class SpecsStore {
     this.db
       .prepare(
         `UPDATE specs SET title = @title, content = @content, status = @status, storage = @storage,
-         path = @path, generate_run_id = @generateRunId, updated_at = @updatedAt WHERE id = @id`,
+         path = @path, generate_run_id = @generateRunId, drift_note = @driftNote, updated_at = @updatedAt WHERE id = @id`,
       )
       .run({
         id,
@@ -41,6 +42,7 @@ export class SpecsStore {
         storage: next.storage,
         path: next.path,
         generateRunId: next.generateRunId,
+        driftNote: next.driftNote,
         updatedAt: next.updatedAt,
       });
   }
@@ -83,6 +85,7 @@ interface SpecRow {
   storage: SpecRecord['storage'];
   path: string | null;
   generate_run_id: string | null;
+  drift_note: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -98,6 +101,7 @@ function specRowToRecord(row: SpecRow): SpecRecord {
     storage: row.storage,
     path: row.path,
     generateRunId: row.generate_run_id,
+    driftNote: row.drift_note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

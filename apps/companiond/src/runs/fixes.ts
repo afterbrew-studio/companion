@@ -1,12 +1,18 @@
-import type { RunRecord, SpaServerMessage } from '@companion/contract';
+import type { PrRecord, RunRecord, SpaServerMessage } from '@companion/contract';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Checkouts } from '../git/checkouts.js';
 import type { GitHubClient } from '../github/client.js';
+import type { PrChecks } from '../prs/checks.js';
+
+const MAX_DIFF_CHARS = 60_000;
 
 /**
- * Fix-issue-to-PR: a goal-mode agent works in a dedicated worktree; the human
- * reviews the diff; companiond (never the agent) pushes and opens the PR.
+ * Fix-to-PR flows: a goal-mode agent works in a dedicated worktree; the human
+ * reviews the diff; companiond (never the agent) pushes. Two shapes:
+ * fresh-branch runs (fix an issue, implement a proposal) open a NEW PR on
+ * approval; PR-branch runs (repair failing checks, address review feedback)
+ * continue an EXISTING PR's branch and push straight to it.
  */
 export class Fixes {
   constructor(
@@ -14,6 +20,7 @@ export class Fixes {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly github: () => GitHubClient | null,
+    private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -71,15 +78,101 @@ export class Fixes {
     return this.orchestrator.getRun(run.id)!;
   }
 
+  // ---------- PR-branch repair runs -----------------------------------------------
+
+  /** Agent repairs the failing CI on a PR, working directly on its branch. */
+  async startCheckFix(repo: string, prNumber: number): Promise<RunRecord> {
+    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const summary = await this.checks.fetchSummary(repo, prNumber);
+    const failing = summary.runs.filter(
+      (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
+    );
+    if (failing.length === 0) throw new Error('no failing checks on this PR');
+    const diff = await client.prDiff(repo, prNumber);
+    return this.createPrBranchRun(
+      pr,
+      `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
+      checkFixObjective(pr, failing, clip(diff)),
+    );
+  }
+
+  /** Agent implements the changes human reviewers asked for on a PR. */
+  async startReviewFix(repo: string, prNumber: number): Promise<RunRecord> {
+    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const [reviews, inline] = await Promise.all([
+      client.prReviewList(repo, prNumber),
+      client.prReviewComments(repo, prNumber).catch(() => []),
+    ]);
+    const feedback = reviews
+      .filter((r) => (r.state === 'CHANGES_REQUESTED' || r.state === 'COMMENTED') && r.body?.trim())
+      .map((r) => `Review by ${r.user?.login ?? 'reviewer'} (${r.state}):\n${r.body!.trim()}`);
+    const comments = inline.map(
+      (c) => `- ${c.path}:${c.line ?? c.original_line ?? '?'} (${c.user?.login ?? 'reviewer'}): ${c.body.trim()}`,
+    );
+    if (feedback.length === 0 && comments.length === 0) {
+      throw new Error('no human review feedback found on this PR');
+    }
+    const diff = await client.prDiff(repo, prNumber);
+    return this.createPrBranchRun(
+      pr,
+      `Address reviews on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
+      reviewFixObjective(pr, feedback, comments, clip(diff)),
+    );
+  }
+
+  private requireOpenPr(repo: string, prNumber: number): { pr: PrRecord; client: GitHubClient } {
+    const pr = this.store.prs.get(repo, prNumber);
+    if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
+    if (pr.state !== 'open') throw new Error(`PR #${prNumber} is ${pr.state}`);
+    if (!pr.headRef) throw new Error('PR has no head branch');
+    const client = this.github();
+    if (!client) throw new Error('GitHub is not configured');
+    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
+    return { pr, client };
+  }
+
+  /** Worktree AT the PR head; the run carries the PR so approve pushes to it. */
+  private async createPrBranchRun(pr: PrRecord, title: string, objective: string): Promise<RunRecord> {
+    const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
+    let cwd: string;
+    try {
+      cwd = await this.checkouts.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef);
+    } catch (err) {
+      throw new Error(
+        `could not check out ${pr.headRef} from origin — fork-branch PRs are not supported yet (${err instanceof Error ? err.message.split('\n')[0] : String(err)})`,
+      );
+    }
+    const run = await this.orchestrator.createRun({
+      kind: 'fix',
+      title,
+      cwd,
+      repo: pr.repo,
+      issueNumber: pr.number,
+      branch: pr.headRef,
+    });
+    // The existing PR is this run's destination; approve() pushes to its
+    // branch instead of opening a new one.
+    this.store.runs.setPr(run.id, pr.headRef, pr.url);
+    await this.orchestrator.setGoalMode(run.id);
+    await this.orchestrator.sendPrompt(run.id, objective);
+    return this.orchestrator.getRun(run.id)!;
+  }
+
   async diff(runId: string): Promise<{ diff: string; branch: string | null }> {
     const run = this.store.runs.get(runId);
     if (!run || !run.repo) throw new Error('run not found or not a repo run');
     const repoRow = this.store.repos.get(run.repo);
-    const diff = await this.checkouts.diffVsBase(run.cwd, repoRow?.default_branch ?? 'main');
+    // PR-branch runs diff against the PR head (only the agent's delta);
+    // fresh-branch runs diff against the default branch.
+    const base = run.pr_url && run.branch ? run.branch : (repoRow?.default_branch ?? 'main');
+    const diff = await this.checkouts.diffVsBase(run.cwd, base);
     return { diff, branch: run.branch };
   }
 
-  /** Human approved the diff: commit leftovers, push, open the PR. */
+  /**
+   * Human approved the diff: commit leftovers and push. Runs bound to an
+   * existing PR stop there; fresh-branch runs open the PR.
+   */
   async approve(runId: string, opts: { title?: string; body?: string } = {}): Promise<{ prUrl: string }> {
     const run = this.store.runs.get(runId);
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
@@ -90,6 +183,15 @@ export class Fixes {
 
     await this.checkouts.commitAll(run.cwd, opts.title ?? run.title);
     await this.checkouts.push(run.repo, run.cwd, run.branch);
+
+    if (run.pr_url) {
+      this.orchestrator.markRun(runId, 'completed', `pushed to ${run.branch} (${run.pr_url})`);
+      await this.orchestrator.stopRun(runId).catch(() => undefined);
+      this.broadcast({ t: 'runs.changed' });
+      this.broadcast({ t: 'prs.changed', repo: run.repo });
+      return { prUrl: run.pr_url };
+    }
+
     const pr = await client.createPr(run.repo, {
       title: opts.title ?? run.title,
       head: run.branch,
@@ -118,6 +220,58 @@ export class Fixes {
     }
     this.orchestrator.markRun(runId, 'abandoned', 'discarded by user');
   }
+}
+
+function clip(diff: string): string {
+  return diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
+}
+
+function checkFixObjective(
+  pr: PrRecord,
+  failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
+  diff: string,
+): string {
+  const list = failing
+    .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
+    .join('\n');
+  return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}). The PR's CI is failing; your job is to make it pass without changing what the PR intends to do.
+
+## Failing pipelines
+${list}
+
+## The PR's diff (for context — this work is already on your branch)
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Rules
+- Work ONLY inside this worktree, on this branch.
+- Reproduce the failures locally where practical (run the linter/build/test suite the failing check corresponds to), fix the causes minimally, and re-run to verify.
+- Respect the PR's intent — repair it, don't rewrite it.
+- Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- Finish with a short summary: cause of each failure, what you changed, and how you verified it.`;
+}
+
+function reviewFixObjective(pr: PrRecord, feedback: readonly string[], comments: readonly string[], diff: string): string {
+  return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}). Human reviewers asked for changes; implement them.
+
+## Review feedback
+${feedback.join('\n\n') || '(none beyond the inline comments)'}
+
+## Inline comments (file:line)
+${comments.join('\n') || '(none)'}
+
+## The PR's diff (for context — this work is already on your branch)
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Rules
+- Work ONLY inside this worktree, on this branch.
+- Address every piece of feedback; where a comment is ambiguous, pick the reading most consistent with the codebase and note the choice in your summary.
+- Verify your changes (run relevant tests/builds where possible).
+- Commit with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- Finish with a summary mapping each review comment to what you did about it.`;
 }
 
 function fixObjective(title: string, body: string, issueNumber: number, baseBranch: string): string {

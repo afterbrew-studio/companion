@@ -13,6 +13,7 @@ const automationSchema = z.object({
   digest: z.boolean().optional(),
   staleSweep: z.boolean().optional(),
   prGate: z.boolean().optional(),
+  autoMerge: z.boolean().optional(),
 });
 const moveSchema = z.object({ workspaceId: z.string().min(1) });
 
@@ -153,6 +154,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
         if (body.digest !== undefined) deps.store.repos.setAutomation(fullName, 'digest_enabled', body.digest);
         if (body.staleSweep !== undefined) deps.store.repos.setAutomation(fullName, 'stale_enabled', body.staleSweep);
         if (body.prGate !== undefined) deps.store.repos.setAutomation(fullName, 'pr_gate', body.prGate);
+        if (body.autoMerge !== undefined) deps.store.repos.setAutomation(fullName, 'auto_merge', body.autoMerge);
         deps.broadcast({ t: 'repos.changed' });
         return { repo: rowToRepo(deps.store.repos.get(fullName)!) };
       },

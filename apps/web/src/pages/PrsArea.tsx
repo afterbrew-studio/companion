@@ -391,6 +391,15 @@ export function PrsAreaPage(): JSX.Element {
                       review {pr.review}
                     </span>
                   ) : null}
+                  {pr.reviewRisk ? (
+                    <span
+                      className={`shrink-0 ${
+                        pr.reviewRisk === 'low' ? 'badge-ok' : pr.reviewRisk === 'medium' ? 'badge-warn' : 'badge-danger'
+                      }`}
+                    >
+                      risk {pr.reviewRisk}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="dim mt-0.5 flex items-center gap-1.5 text-xs">
                   <span className="min-w-0 truncate">

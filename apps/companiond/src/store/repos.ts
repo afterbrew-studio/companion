@@ -50,7 +50,7 @@ export class ReposStore {
 
   setAutomation(
     fullName: string,
-    field: 'auto_triage' | 'digest_enabled' | 'stale_enabled' | 'pr_gate',
+    field: 'auto_triage' | 'digest_enabled' | 'stale_enabled' | 'pr_gate' | 'auto_merge',
     value: boolean,
   ): void {
     this.db.prepare(`UPDATE repos SET ${field} = ? WHERE full_name = ?`).run(value ? 1 : 0, fullName);
@@ -100,6 +100,7 @@ export interface RepoRow {
   digest_enabled: number;
   stale_enabled: number;
   pr_gate: number;
+  auto_merge: number;
   webhook_secret: string | null;
 }
 
@@ -119,6 +120,7 @@ export function rowToRepo(row: RepoRow): RepoRecord {
     digestEnabled: row.digest_enabled === 1,
     staleSweepEnabled: row.stale_enabled === 1,
     prGateEnabled: row.pr_gate === 1,
+    autoMergeEnabled: row.auto_merge === 1,
     webhookConfigured: row.webhook_secret !== null,
   };
 }

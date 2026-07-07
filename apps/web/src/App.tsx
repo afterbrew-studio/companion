@@ -6,6 +6,7 @@ import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
 import { ChevronDown, Dropdown, Modal } from './components/ui.js';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
 import { AssistantButton, AssistantPanel } from './components/Assistant.js';
+import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { Inbox } from './components/Inbox.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { MODULES } from './modules.js';
@@ -43,9 +44,13 @@ function useHashRoute(): string {
 
 export function App(): JSX.Element {
   return (
-    <AuthProvider>
-      <Gate />
-    </AuthProvider>
+    // The app-root boundary is the SPA's 500 page; everything below also has
+    // feature-scoped boundaries so one broken area never sinks the shell.
+    <ErrorBoundary full>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
@@ -355,11 +360,18 @@ function Shell(): JSX.Element {
           onToggleAssistant={toggleAssistant}
         />
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
-          <Route hash={hash} />
+          {/* Keyed by route: navigating away from a crashed page recovers it. */}
+          <ErrorBoundary area="this page" resetKey={hash}>
+            <Route hash={hash} />
+          </ErrorBoundary>
         </main>
       </div>
 
-      {assistantMounted ? <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} /> : null}
+      {assistantMounted ? (
+        <ErrorBoundary area="AI Help" resetKey={String(assistantOpen)}>
+          <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        </ErrorBoundary>
+      ) : null}
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       {helpOpen ? <ShortcutHelp targets={shortcutTargets} onClose={() => setHelpOpen(false)} /> : null}
     </div>
@@ -765,7 +777,8 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (path.startsWith('/providers')) return guard(can('settings:manage'), <ProvidersPage />);
   if (path.startsWith('/users')) return guard(can('users:manage'), <UsersPage />);
   if (path.startsWith('/settings')) return guard(can('settings:manage'), <SettingsPage />);
-  return guard(can('issues:read'), <DashboardPage />);
+  if (path === '/' || path.startsWith('/overview')) return guard(can('issues:read'), <DashboardPage />);
+  return <NotFoundPage path={path} />;
 }
 
 function guard(allowed: boolean, page: JSX.Element): JSX.Element {

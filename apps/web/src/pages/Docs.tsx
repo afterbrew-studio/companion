@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AreaStorage, AreaStorageState, DocRecord, DocSearchHit, RepoDocFile, RepoRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Markdown } from '../components/Markdown.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
+import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
+import { useLive } from '../lib/live.js';
 
 /**
  * Documentation for the active workspace: curated knowledge (architecture,
@@ -43,12 +45,47 @@ export function DocsPage(): JSX.Element {
     }
   }, [current]);
 
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (msg.t === 'docs.changed') void refresh();
-    });
-  }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'docs.changed');
+
+  const filterFields: Array<FilterSelectField<DocRecord>> = [
+    {
+      key: 'repo',
+      label: 'Repository',
+      allLabel: 'All docs',
+      options: [
+        { value: '__workspace', label: 'Workspace-wide' },
+        ...facet(docs ?? [], (d) => d.repo).map((r) => ({ value: r, label: r })),
+      ],
+      match: (d, v) => (v === '__workspace' ? d.repo === null : d.repo === v),
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      allLabel: 'Any source',
+      options: [
+        { value: 'manual', label: 'Manual' },
+        { value: 'imported', label: 'Imported' },
+        { value: 'generated', label: 'Generated' },
+      ],
+      match: (d, v) => d.source === v,
+    },
+    {
+      key: 'storage',
+      label: 'Storage',
+      allLabel: 'Any storage',
+      options: [
+        { value: 'virtual', label: 'Virtual' },
+        { value: 'repo', label: 'Repository' },
+      ],
+      match: (d, v) => d.storage === v,
+    },
+  ];
+  const filter = useListFilter(
+    docs ?? [],
+    (d, needle) => d.title.toLowerCase().includes(needle) || d.content.toLowerCase().includes(needle),
+    filterFields,
+  );
+  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('docs:manage');
@@ -96,8 +133,20 @@ export function DocsPage(): JSX.Element {
 
       <RetrievalSearch workspaceId={current.id} />
 
+      {docs !== null && docs.length > 0 ? (
+        <div className="mt-4">
+          <ListFilterToolbar
+            filter={filter}
+            fields={filterFields}
+            total={docs.length}
+            placeholder="Filter docs by title or content…"
+            searchLabel="Filter the documentation list"
+          />
+        </div>
+      ) : null}
+
       <div className="mt-4 flex flex-col gap-3">
-        {(docs ?? []).map((d) => (
+        {filtered.map((d) => (
           <DocCard key={d.id} doc={d} onChange={refresh} />
         ))}
       </div>
@@ -113,6 +162,8 @@ export function DocsPage(): JSX.Element {
             ) : undefined
           }
         />
+      ) : docs !== null && filtered.length === 0 ? (
+        <EmptyState title="No docs match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {modal === 'write' ? (

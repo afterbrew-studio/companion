@@ -210,6 +210,7 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       storage         TEXT NOT NULL DEFAULT 'virtual',
       path            TEXT,
       generate_run_id TEXT,
+      drift_note      TEXT,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
     );
@@ -272,6 +273,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE specs ADD COLUMN path TEXT`,
     `ALTER TABLE docs ADD COLUMN storage TEXT NOT NULL DEFAULT 'virtual'`,
     `ALTER TABLE docs ADD COLUMN path TEXT`,
+    `ALTER TABLE specs ADD COLUMN drift_note TEXT`,
+    `ALTER TABLE repos ADD COLUMN auto_merge INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try {
       db.exec(ddl);

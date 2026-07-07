@@ -185,6 +185,41 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    // ---------- workspace briefing ----------------------------------------------
+
+    route({
+      method: 'GET',
+      path: '/api/workspaces/:id/briefing',
+      access: 'automations:manage',
+      handler: ({ params }) => {
+        requireWorkspace(params.id);
+        return { cadence: deps.automations.briefingCadence(params.id) };
+      },
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/api/workspaces/:id/briefing',
+      access: 'automations:manage',
+      body: z.object({ cadence: z.enum(['off', 'daily', 'weekly']) }),
+      handler: ({ params, body }) => {
+        requireWorkspace(params.id);
+        deps.automations.setBriefingCadence(params.id, body.cadence);
+        return { cadence: body.cadence };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/briefing-now',
+      access: 'automations:manage',
+      handler: async ({ params }) => {
+        requireWorkspace(params.id);
+        await deps.automations.runBriefing(params.id);
+        return { ok: true };
+      },
+    }),
+
     // ---------- pipelines + step library (workspace-scoped) ----------------------
 
     route({

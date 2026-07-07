@@ -1,20 +1,23 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { SpaServerMessage, WebhookInfo } from '@companion/contract';
+import type { BriefingCadence, NotificationKind, SpaServerMessage, WebhookInfo } from '@companion/contract';
 import { log } from '../log.js';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
 import type { Triage } from '../triage/triage.js';
 import type { PrReviews } from '../prs/reviews.js';
+import type { PrChecks } from '../prs/checks.js';
 import type { Pipelines } from '../pipelines/pipelines.js';
 import type { GitHubSync } from '../github/sync.js';
-import type { GhIssue, GhPull } from '../github/client.js';
+import type { GitHubClient, GhIssue, GhPull } from '../github/client.js';
 import type { Checkouts } from '../git/checkouts.js';
 import type { WebhookTunnel } from '../moxxy/webhook-tunnel.js';
+import type { Specs } from '../specs/specs.js';
 
 /**
  * Automations: a GitHub webhook receiver (HMAC-verified, raw body) and a slow
- * schedule ticker (daily digest, stale sweep). Rules are per-repo switches;
- * user-defined pipelines with auto-run also fire here on PR open.
+ * schedule ticker (daily digest, stale sweep, workspace briefings, the
+ * auto-merge sweep). Rules are per-repo switches; user-defined pipelines with
+ * auto-run also fire here on PR open.
  */
 export class Automations {
   private timer: NodeJS.Timeout | null = null;
@@ -24,10 +27,13 @@ export class Automations {
     private readonly orchestrator: Orchestrator,
     private readonly triage: Triage,
     private readonly prReviews: PrReviews,
+    private readonly prChecks: PrChecks,
     private readonly pipelines: Pipelines,
     private readonly sync: GitHubSync,
     private readonly checkouts: Checkouts,
     private readonly webhookTunnel: WebhookTunnel,
+    private readonly specs: Specs,
+    private readonly github: () => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -115,6 +121,15 @@ export class Automations {
       const pr = payload.pull_request as GhPull | undefined;
       if (pr?.number) {
         this.sync.applyPull(repo, pr);
+        // A merge is when specs can silently rot — check them against the diff.
+        if (action === 'closed' && pr.merged_at) {
+          const number = pr.number;
+          void this.specs
+            .checkDriftForMergedPr(repo, number)
+            .catch((err) =>
+              this.automationFailed(repo, `Spec drift check failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
+            );
+        }
         if ((action === 'opened' || action === 'ready_for_review') && pr.draft !== true) {
           const number = pr.number;
           if (repoRow?.pr_gate === 1) {
@@ -159,7 +174,7 @@ export class Automations {
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Run due schedules. Digest/stale run at most once per 24h per repo. */
+  /** Run due schedules. Digest/stale/briefing run per period; auto-merge every tick. */
   async tick(now = Date.now()): Promise<void> {
     for (const repo of this.store.repos.list()) {
       if (repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
@@ -170,7 +185,167 @@ export class Automations {
       if (repo.stale_enabled === 1 && this.due(`stale:${repo.full_name}`, now)) {
         this.runStaleSweep(repo.full_name);
       }
+      if (repo.auto_merge === 1) {
+        await this.autoMergeSweep(repo.full_name).catch((err) =>
+          log.warn('auto-merge sweep failed', { repo: repo.full_name, err: String(err) }),
+        );
+      }
     }
+    for (const ws of this.store.workspaces.list()) {
+      const cadence = this.briefingCadence(ws.id);
+      if (cadence === 'off') continue;
+      const period = cadence === 'weekly' ? 7 * 24 * 60 * 60_000 : 24 * 60 * 60_000;
+      if (this.due(`briefing:${ws.id}`, now, period)) {
+        await this.runBriefing(ws.id).catch((err) =>
+          log.warn('briefing failed', { workspace: ws.id, err: String(err) }),
+        );
+      }
+    }
+  }
+
+  // ---------- auto-merge ------------------------------------------------------------
+
+  /**
+   * The boring 40%: open, not draft, human-approved, latest AI review says low
+   * risk, CI green. Every candidate is re-verified with a FRESH checks fetch
+   * (which also refreshes the human decision) right before merging — the cache
+   * nominates, GitHub confirms. A failed merge backs off for 6 hours.
+   */
+  async autoMergeSweep(repo: string): Promise<void> {
+    const client = this.github();
+    if (!client) return;
+    const candidates = this.store.prs
+      .list(repo)
+      .filter(
+        (pr) =>
+          pr.state === 'open' &&
+          !pr.draft &&
+          pr.reviewDecision === 'approved' &&
+          pr.reviewRisk === 'low' &&
+          pr.checks?.state === 'passing',
+      );
+    for (const pr of candidates) {
+      const guard = `automerge:${repo}#${pr.number}`;
+      if (!this.due(guard, Date.now(), 6 * 60 * 60_000)) continue;
+      this.store.settings.set(`lastRun:${guard}`, String(Date.now()));
+      const fresh = await this.prChecks.trySummary(repo, pr.number);
+      const row = this.store.prs.get(repo, pr.number);
+      if (
+        !fresh ||
+        fresh.state !== 'passing' ||
+        row?.state !== 'open' ||
+        row.reviewDecision !== 'approved' ||
+        row.reviewRisk !== 'low'
+      ) {
+        continue;
+      }
+      try {
+        await client.mergePr(repo, pr.number, 'squash');
+        await client
+          .comment(repo, pr.number, 'Auto-merged by Companion: CI green, human-approved, AI review risk low.')
+          .catch(() => undefined);
+        log.info('auto-merged PR', { repo, prNumber: pr.number });
+        this.notify(repo, 'finished', `Auto-merged ${repo}#${pr.number}`, pr.title, `#/repos/${repo}/prs/${pr.number}`);
+        void this.sync.syncRepo(repo).catch(() => undefined);
+      } catch (err) {
+        this.automationFailed(repo, `Auto-merge failed for ${repo}#${pr.number}`, err, `#/repos/${repo}/prs/${pr.number}`);
+      }
+    }
+  }
+
+  // ---------- workspace briefing ------------------------------------------------------
+
+  briefingCadence(workspaceId: string): BriefingCadence {
+    const raw = this.store.settings.get(`briefing:${workspaceId}`);
+    return raw === 'daily' || raw === 'weekly' ? raw : 'off';
+  }
+
+  setBriefingCadence(workspaceId: string, cadence: BriefingCadence): void {
+    this.store.settings.set(`briefing:${workspaceId}`, cadence);
+  }
+
+  /**
+   * The "start your day here" report: everything awaiting a human, what the
+   * agents did since yesterday, CI health, hot issues, velocity. Deterministic
+   * (no tokens) — it summarizes state Companion already holds.
+   */
+  async runBriefing(workspaceId: string): Promise<void> {
+    const ws = this.store.workspaces.get(workspaceId);
+    if (!ws) throw new Error(`unknown workspace ${workspaceId}`);
+    this.store.settings.set(`lastRun:briefing:${workspaceId}`, String(Date.now()));
+    const repoNames = new Set(this.store.repos.listByWorkspace(workspaceId).map((r) => r.full_name));
+    const dayAgo = Date.now() - 24 * 60 * 60_000;
+
+    const sections: string[] = [];
+
+    // What needs a human, right now.
+    const reviewRuns = this.store.runs.list(500).filter((r) => r.status === 'review' && r.repo && repoNames.has(r.repo));
+    const pendingReviews = this.store.prReviews.listWorkspacePending(workspaceId);
+    const pendingTriage = this.store.triage.listWorkspacePending(workspaceId);
+    const needsYou = [
+      ...reviewRuns.map((r) => `- Agent run awaiting diff review: [${r.title}](#/runs/${r.id})`),
+      ...pendingReviews.map((r) => `- AI review pending on [${r.repo}#${r.prNumber}](#/repos/${r.repo}/prs/${r.prNumber})`),
+      ...pendingTriage.map((t) => `- Triage verdict pending on [${t.repo}#${t.issueNumber}](#/repos/${t.repo}/issues/${t.issueNumber})`),
+    ];
+    sections.push(`## Needs you (${needsYou.length})\n${needsYou.length ? needsYou.join('\n') : 'Inbox zero — nothing is waiting on you.'}`);
+
+    // What the agents did while you were away.
+    const recent = this.store.runs.list(500).filter((r) => r.created_at >= dayAgo && r.repo && repoNames.has(r.repo));
+    const byKind = new Map<string, number>();
+    for (const r of recent) byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
+    const failed = recent.filter((r) => r.status === 'failed');
+    const agentLines = [
+      recent.length === 0
+        ? 'No agent activity in the last 24h.'
+        : `${recent.length} run(s): ${[...byKind.entries()].map(([k, n]) => `${n} ${k}`).join(', ')}.`,
+      ...failed.map((r) => `- Failed: [${r.title}](#/runs/${r.id})`),
+    ];
+    sections.push(`## Agents, last 24h\n${agentLines.join('\n')}`);
+
+    // CI health across open PRs.
+    const openPrs = this.store.prs.listWorkspace(workspaceId).filter((pr) => pr.state === 'open');
+    const failing = openPrs.filter((pr) => pr.checks?.state === 'failing');
+    sections.push(
+      `## CI health\n${openPrs.length} open PR(s); ${failing.length} failing.` +
+        (failing.length ? `\n${failing.map((pr) => `- [${pr.repo}#${pr.number}](#/repos/${pr.repo}/prs/${pr.number}) ${pr.title}`).join('\n')}` : ''),
+    );
+
+    // Hot issues: touched in the last day, most discussed first.
+    const hot = this.store.issues
+      .listWorkspace(workspaceId, 'open')
+      .filter((i) => i.updatedAt >= dayAgo)
+      .sort((a, b) => b.comments - a.comments)
+      .slice(0, 5);
+    if (hot.length > 0) {
+      sections.push(`## Hot issues\n${hot.map((i) => `- [${i.repo}#${i.number}](#/repos/${i.repo}/issues/${i.number}) ${i.title} (${i.comments} comments)`).join('\n')}`);
+    }
+
+    // Velocity, rolling 7 days.
+    const m = this.store.workspaces.metrics(workspaceId);
+    sections.push(
+      `## Velocity (7d)\nIssues: ${m.issuesOpened7d} opened / ${m.issuesClosed7d} closed · PRs: ${m.prsOpened7d} opened / ${m.prsClosed7d} closed.`,
+    );
+
+    this.store.reports.insert({
+      id: `rep-${randomUUID().slice(0, 12)}`,
+      repo: null,
+      issueNumber: null,
+      kind: 'briefing',
+      title: `Briefing — ${ws.name}`,
+      body: sections.join('\n\n'),
+      createdAt: Date.now(),
+    });
+    this.broadcast({ t: 'reports.changed' });
+    this.store.notifications.insert({
+      id: `ntf-${randomUUID().slice(0, 12)}`,
+      workspaceId,
+      kind: 'info',
+      title: `Briefing ready — ${ws.name}`,
+      body: `${needsYou.length} item(s) waiting on you · ${recent.length} agent run(s) in the last 24h`,
+      href: '#/automations',
+      createdAt: Date.now(),
+    });
+    this.broadcast({ t: 'notifications.changed' });
   }
 
   /** Force a schedule to run now (UI button + tests). */
@@ -236,9 +411,22 @@ export class Automations {
     this.broadcast({ t: 'reports.changed' });
   }
 
-  private due(key: string, now: number): boolean {
+  private due(key: string, now: number, periodMs = 24 * 60 * 60_000): boolean {
     const last = Number(this.store.settings.get(`lastRun:${key}`) ?? 0);
-    return now - last >= 24 * 60 * 60_000;
+    return now - last >= periodMs;
+  }
+
+  private notify(repo: string, kind: NotificationKind, title: string, body: string, href: string | null): void {
+    this.store.notifications.insert({
+      id: `ntf-${randomUUID().slice(0, 12)}`,
+      workspaceId: this.store.repos.get(repo)?.workspace_id ?? null,
+      kind,
+      title,
+      body,
+      href,
+      createdAt: Date.now(),
+    });
+    this.broadcast({ t: 'notifications.changed' });
   }
 
   /** Automation failures must be visible in the inbox, not just a daemon log line. */

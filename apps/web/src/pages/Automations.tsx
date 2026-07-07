@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReportRecord, RepoRecord, WebhookInfo, WebhookTunnelState } from '@companion/contract';
+import type { BriefingCadence, ReportRecord, RepoRecord, WebhookInfo, WebhookTunnelState } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Markdown } from '../components/Markdown.js';
@@ -50,6 +50,8 @@ export function AutomationsPage(): JSX.Element {
       />
       {error ? <div className="error-bar">{error}</div> : null}
 
+      <WorkspaceBriefingCard workspaceId={current.id} onError={setError} onSent={refresh} />
+
       <WebhookTunnelCard onError={setError} />
 
       <div className="mt-3 flex flex-col gap-3">
@@ -71,7 +73,7 @@ export function AutomationsPage(): JSX.Element {
 
       <Section
         title="Reports"
-        description="What the scheduled agents produced — digests, stale sweeps, CI analyses."
+        description="What the scheduled agents produced — briefings, digests, stale sweeps, CI analyses."
       >
         {workspaceReports.length === 0 ? (
           <EmptyState title="No reports yet" hint="Enable a daily digest or stale sweep above and reports will land here." />
@@ -94,6 +96,86 @@ export function AutomationsPage(): JSX.Element {
         )}
       </Section>
     </Page>
+  );
+}
+
+/** Workspace-level scheduled report: one briefing covering every repo. */
+function WorkspaceBriefingCard({
+  workspaceId,
+  onError,
+  onSent,
+}: {
+  workspaceId: string;
+  onError: (e: string) => void;
+  onSent: () => Promise<void>;
+}): JSX.Element {
+  const [cadence, setCadence] = useState<BriefingCadence | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    setCadence(null);
+    api
+      .getBriefing(workspaceId)
+      .then((r) => setCadence(r.cadence))
+      .catch((err) => {
+        setCadence('off');
+        onError(String(err));
+      });
+    // onError is a stable setState — reloading on workspace switch is what matters.
+  }, [workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async (next: BriefingCadence): Promise<void> => {
+    const prev = cadence;
+    setCadence(next);
+    setBusy(true);
+    try {
+      await api.setBriefing(workspaceId, next);
+    } catch (err) {
+      setCadence(prev);
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendNow = async (): Promise<void> => {
+    setSending(true);
+    try {
+      await api.briefingNow(workspaceId);
+      await onSent();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <article className="card" aria-label="Workspace briefing">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium">Workspace briefing</div>
+          <p className="dim mt-0.5">
+            Everything that needs you, agent activity, CI health, hot issues, and velocity — in one report.
+          </p>
+        </div>
+        <select
+          className="input py-1.5"
+          aria-label="Briefing cadence"
+          value={cadence ?? 'off'}
+          disabled={cadence === null || busy}
+          onChange={(e) => void save(e.target.value as BriefingCadence)}
+        >
+          <option value="off">Off</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
+        <button className="btn-ghost" disabled={sending} onClick={() => void sendNow()}>
+          {sending ? 'Sending…' : 'Send now'}
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -126,7 +208,7 @@ function WebhookTunnelCard({ onError }: { onError: (e: string) => void }): JSX.E
   };
 
   return (
-    <article className="card" aria-label="Public webhook delivery">
+    <article className="card mt-3" aria-label="Public webhook delivery">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-medium">Public webhook delivery</div>
@@ -159,7 +241,7 @@ function WebhookTunnelCard({ onError }: { onError: (e: string) => void }): JSX.E
 }
 
 const AUTOMATIONS: ReadonlyArray<{
-  field: 'autoTriage' | 'digest' | 'staleSweep' | 'prGate';
+  field: 'autoTriage' | 'digest' | 'staleSweep' | 'prGate' | 'autoMerge';
   isOn: (r: RepoRecord) => boolean;
   label: string;
   description: string;
@@ -187,6 +269,12 @@ const AUTOMATIONS: ReadonlyArray<{
     isOn: (r) => r.prGateEnabled,
     label: 'PR gate',
     description: 'Auto AI review on newly opened PRs (CI-aware); posts to GitHub when confident.',
+  },
+  {
+    field: 'autoMerge',
+    isOn: (r) => r.autoMergeEnabled,
+    label: 'Auto-merge',
+    description: 'Squash-merges PRs that are CI-green, human-approved, and AI-reviewed low risk.',
   },
 ];
 
