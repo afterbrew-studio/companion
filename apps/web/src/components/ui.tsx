@@ -338,7 +338,7 @@ function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Ele
       className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
       aria-hidden
     >
-      <path d={area} className="fill-zinc-100 dark:fill-zinc-800/50" />
+      <path d={area} className="fill-zinc-200/40 dark:fill-zinc-700/25" />
       <path
         d={line}
         fill="none"
@@ -346,7 +346,7 @@ function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Ele
         vectorEffect="non-scaling-stroke"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="stroke-zinc-300 dark:stroke-zinc-600"
+        className="stroke-zinc-300/60 dark:stroke-zinc-600/50"
       />
     </svg>
   );
