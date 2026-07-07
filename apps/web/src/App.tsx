@@ -137,6 +137,18 @@ function Shell(): JSX.Element {
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // Mounted on first open and kept alive: the conversation (and the exit
+  // slide animation) survive closing the panel.
+  const [assistantMounted, setAssistantMounted] = useState(false);
+  const toggleAssistant = (): void => {
+    if (!assistantMounted) {
+      // Mount closed, open a frame later — so the FIRST open slides too.
+      setAssistantMounted(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setAssistantOpen(true)));
+    } else {
+      setAssistantOpen((o) => !o);
+    }
+  };
   // Areas with activity since you last looked (dot on the nav item).
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
 
@@ -331,14 +343,14 @@ function Shell(): JSX.Element {
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
           assistantOpen={assistantOpen}
-          onToggleAssistant={() => setAssistantOpen((o) => !o)}
+          onToggleAssistant={toggleAssistant}
         />
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
           <Route hash={hash} />
         </main>
       </div>
 
-      {assistantOpen ? <AssistantPanel onClose={() => setAssistantOpen(false)} /> : null}
+      {assistantMounted ? <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} /> : null}
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       {helpOpen ? <ShortcutHelp targets={shortcutTargets} onClose={() => setHelpOpen(false)} /> : null}
     </div>
@@ -560,8 +572,7 @@ function AgentsStatus(): JSX.Element {
           className={`size-2 rounded-full ${dotColor} ${n > 0 ? 'animate-pulse motion-reduce:animate-none' : ''}`}
           aria-hidden
         />
-        <span className="max-sm:hidden">{label}</span>
-        <span className="hidden font-medium tabular-nums max-sm:inline">{n}</span>
+        <span className="font-medium tabular-nums">{n}</span>
       </a>
       <div
         role="status"

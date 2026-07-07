@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Markdown } from '../components/Markdown.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
-import { Page, EmptyState, Modal, PageHeader, Spinner, timeAgo, useConfirm } from '../components/ui.js';
+import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 
 /**
  * Documentation for the active workspace: curated knowledge (architecture,
@@ -212,6 +212,31 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
   );
 }
 
+/** Indexed docs are retrievable; a 0-chunk doc is invisible to search. */
+function DocStateIcon({ indexed }: { indexed: boolean }): JSX.Element {
+  const spec = indexed
+    ? { label: 'Indexed for retrieval', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' }
+    : { label: 'Not indexed — search cannot find this doc', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' };
+  return (
+    <Tooltip content={spec.label}>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={`size-4 shrink-0 ${spec.cls}`}
+        role="img"
+        aria-label={spec.label}
+      >
+        <circle cx="8" cy="8" r="6.2" />
+        <path d={spec.glyph} />
+      </svg>
+    </Tooltip>
+  );
+}
+
 function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<void> }): JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
@@ -238,6 +263,7 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
   return (
     <article className="card" aria-label={doc.title}>
       <div className="flex items-center gap-2.5">
+        <DocStateIcon indexed={doc.chunkCount > 0} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{doc.title}</span>
@@ -252,16 +278,6 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
         <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
           {expanded ? 'Hide' : 'Read'}
         </button>
-        {can('docs:manage') ? (
-          <>
-            <button className="btn-ghost" onClick={() => setEditing(true)}>
-              Edit
-            </button>
-            <button className="btn-danger" onClick={() => void remove()}>
-              Delete
-            </button>
-          </>
-        ) : null}
       </div>
 
       {expanded ? (
@@ -270,6 +286,17 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
         </div>
       ) : null}
       {error ? <div className="error-bar">{error}</div> : null}
+
+      {can('docs:manage') ? (
+        <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+          <button className="btn-ghost" onClick={() => setEditing(true)}>
+            Edit
+          </button>
+          <button className="btn-danger ml-auto" onClick={() => void remove()}>
+            Delete
+          </button>
+        </div>
+      ) : null}
 
       {editing && current ? (
         <WriteDocModal

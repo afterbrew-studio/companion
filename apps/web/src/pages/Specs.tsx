@@ -192,45 +192,47 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
             {timeAgo(spec.updatedAt)}
           </div>
         </div>
+        {spec.status === 'ready' && spec.content ? (
+          <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? 'Hide' : 'Read'}
+          </button>
+        ) : null}
       </div>
 
-      {spec.status === 'ready' && spec.content ? (
-        <div className="mt-2.5">
-          <button className="linkish text-sm" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? 'Hide spec' : 'Read spec'}
-          </button>
-          {expanded ? (
-            <div className="markdown mt-2 max-h-[32rem] overflow-y-auto rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-              <Markdown text={spec.content} />
-            </div>
-          ) : null}
+      {expanded && spec.status === 'ready' && spec.content ? (
+        <div className="markdown mt-3 max-h-[32rem] overflow-y-auto rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
+          <Markdown text={spec.content} />
         </div>
       ) : null}
 
       {error ? <div className="error-bar">{error}</div> : null}
 
-      <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-        {spec.status === 'ready' && can('proposals:create') ? (
-          <button className="btn" onClick={() => setFiling(true)}>
-            Create feature
-          </button>
-        ) : null}
-        {can('specs:manage') && spec.status !== 'generating' ? (
-          <button className="btn-ghost" onClick={() => setEditing(true)}>
-            {spec.status === 'failed' ? 'Write by hand' : 'Edit'}
-          </button>
-        ) : null}
-        {spec.generateRunId ? (
-          <a className="btn-ghost" href={`#/runs/${spec.generateRunId}`}>
-            Drafting run
-          </a>
-        ) : null}
-        {can('specs:manage') && spec.status !== 'generating' ? (
-          <button className="btn-danger ml-auto" onClick={() => void remove()}>
-            Delete
-          </button>
-        ) : null}
-      </div>
+      {(spec.status === 'ready' && can('proposals:create')) ||
+      (can('specs:manage') && spec.status !== 'generating') ||
+      spec.generateRunId ? (
+        <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+          {spec.status === 'ready' && can('proposals:create') ? (
+            <button className="btn" onClick={() => setFiling(true)}>
+              Create feature
+            </button>
+          ) : null}
+          {can('specs:manage') && spec.status !== 'generating' ? (
+            <button className="btn-ghost" onClick={() => setEditing(true)}>
+              {spec.status === 'failed' ? 'Write by hand' : 'Edit'}
+            </button>
+          ) : null}
+          {spec.generateRunId ? (
+            <a className="btn-ghost" href={`#/runs/${spec.generateRunId}`}>
+              Drafting run
+            </a>
+          ) : null}
+          {can('specs:manage') && spec.status !== 'generating' ? (
+            <button className="btn-danger ml-auto" onClick={() => void remove()}>
+              Delete
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {editing ? (
         <EditSpecModal
