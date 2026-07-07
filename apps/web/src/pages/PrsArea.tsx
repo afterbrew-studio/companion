@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PipelineRecord, RepoRecord } from '@companion/contract';
+import type { PipelineRecord, PrRecord, RepoRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { ListFooter, PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
-import { Page, AssigneeNote, ChecksBadge, CommentCount, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
+import { useHashParams } from '../lib/hashParams.js';
+import { Page, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo, type ContextMenuState, type MenuAction } from '../components/ui.js';
 
 type PrTab = 'open' | 'merged' | 'closed';
-
-function tabFromHash(): PrTab {
-  const state = new URLSearchParams(location.hash.split('?')[1] ?? '').get('state');
-  return state === 'merged' || state === 'closed' ? state : 'open';
-}
 
 /**
  * Pull requests across every repo of the active workspace. Server-paged: only
@@ -20,29 +16,29 @@ function tabFromHash(): PrTab {
 export function PrsAreaPage(): JSX.Element {
   const { current } = useWorkspace();
   const { can } = useAuth();
-  // The tab lives in the URL (#/prs?state=merged) so back from a PR detail
-  // restores the list the user left.
-  const [tab, setTabState] = useState<PrTab>(tabFromHash);
-  const setTab = (t: PrTab): void => {
-    const base = location.hash.split('?')[0] || '#/prs';
-    location.hash = t === 'open' ? base : `${base}?state=${t}`;
-  };
-  useEffect(() => {
-    const onHash = (): void => setTabState(tabFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  // Tab and filters ride the URL (#/prs?state=merged&author=__me) so back from
+  // a PR detail restores the list and a filtered view is a shareable link.
+  const [params, setParam] = useHashParams();
+  const stateParam = params.get('state');
+  const tab: PrTab = stateParam === 'merged' || stateParam === 'closed' ? stateParam : 'open';
+  const setTab = (t: PrTab): void => setParam('state', t === 'open' ? null : t);
   // Remember the tab so breadcrumbs from a detail view return to it.
   useEffect(() => {
     sessionStorage.setItem('companion.tab:#/prs', tab);
   }, [tab]);
 
-  const [search, setSearch] = useState('');
-  const [repoFilter, setRepoFilter] = useState<string>('all');
-  const [authorFilter, setAuthorFilter] = useState<string>('all');
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
-  const [decisionFilter, setDecisionFilter] = useState<string>('all');
-  const [draftFilter, setDraftFilter] = useState<string>('all');
+  const [search, setSearch] = useState(() => params.get('q') ?? '');
+  const repoFilter = params.get('repo') ?? 'all';
+  const authorFilter = params.get('author') ?? 'all';
+  const assigneeFilter = params.get('assignee') ?? 'all';
+  const decisionFilter = params.get('decision') ?? 'all';
+  const draftFilter = params.get('draft') ?? 'all';
+  const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
+  // Back/forward or a pasted link updates the search box too.
+  useEffect(() => {
+    const urlQ = params.get('q') ?? '';
+    setSearch((s) => (s.trim() === urlQ ? s : urlQ));
+  }, [params]);
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
   const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({
@@ -59,12 +55,21 @@ export function PrsAreaPage(): JSX.Element {
       .catch(() => setRepos([]));
   }, [current]);
 
-  // Bulk pipeline runs: select open PRs, pick a pipeline, run against all.
+  // Bulk actions: select open PRs, then run a pipeline or AI review on all.
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [bulkPipeline, setBulkPipeline] = useState('');
   const [bulkRunning, setBulkRunning] = useState<string | null>(null);
   const canRunPipelines = can('pipelines:run');
+  const canActPrs = can('prs:act');
+  // Row quick actions (hover ⋯ or right-click) + transient confirmations.
+  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 4000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   useEffect(() => {
     if (!current || !can('pipelines:read')) return;
@@ -88,15 +93,15 @@ export function PrsAreaPage(): JSX.Element {
     });
   };
 
-  const runBulk = async (): Promise<void> => {
-    if (!bulkPipeline || selected.size === 0) return;
+  const runBulkWith = async (fn: (pr: PrRecord) => Promise<unknown>, noun: string): Promise<void> => {
+    if (selected.size === 0) return;
     const targets = prs.filter((pr) => selected.has(`${pr.repo}#${pr.number}`));
     const failures: string[] = [];
     for (let i = 0; i < targets.length; i++) {
       const pr = targets[i]!;
       setBulkRunning(`${i + 1}/${targets.length}`);
       try {
-        await api.runPipeline(pr.repo, pr.number, bulkPipeline);
+        await fn(pr);
       } catch {
         failures.push(`#${pr.number}`);
       }
@@ -104,10 +109,44 @@ export function PrsAreaPage(): JSX.Element {
     setBulkRunning(null);
     setSelected(new Set());
     if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+    else setFlash(`${noun} started for ${targets.length} PR${targets.length === 1 ? '' : 's'}`);
   };
   const [bulkError, setBulkError] = useState<string | null>(null);
 
+  /** One-off row action with a transient confirmation. */
+  const quick = async (fn: () => Promise<unknown>, done: string): Promise<void> => {
+    setBulkError(null);
+    try {
+      await fn();
+      setFlash(done);
+    } catch (err) {
+      setBulkError(String(err));
+    }
+  };
+
+  const rowActions = (pr: PrRecord): MenuAction[] => [
+    ...(canActPrs && pr.state === 'open'
+      ? [
+          {
+            label: 'Run AI review',
+            onSelect: () => void quick(() => api.analyzePr(pr.repo, pr.number), `AI review queued for #${pr.number}`),
+          },
+        ]
+      : []),
+    ...(canRunPipelines && pr.state === 'open'
+      ? pipelines.map((pl) => ({
+          label: `Run pipeline: ${pl.name}`,
+          onSelect: () => void quick(() => api.runPipeline(pr.repo, pr.number, pl.id), `${pl.name} started for #${pr.number}`),
+        }))
+      : []),
+    { label: 'Open on GitHub', href: pr.url, external: true },
+  ];
+
   const q = useDebounced(search.trim());
+  // Mirror the debounced query into the URL without spamming history.
+  useEffect(() => {
+    setParam('q', q || null, { replace: true });
+  }, [q, setParam]);
   const fetchPage = useCallback(
     async (offset: number) => {
       if (!current) return { items: [], total: 0 };
@@ -159,11 +198,11 @@ export function PrsAreaPage(): JSX.Element {
             <FiltersPopover
               active={activeFilters}
               onClear={() => {
-                setRepoFilter('all');
-                setAuthorFilter('all');
-                setAssigneeFilter('all');
-                setDecisionFilter('all');
-                setDraftFilter('all');
+                setParam('repo', null);
+                setParam('author', null);
+                setParam('assignee', null);
+                setParam('decision', null);
+                setParam('draft', null);
               }}
             >
               {repos.length > 1 ? (
@@ -171,7 +210,7 @@ export function PrsAreaPage(): JSX.Element {
                   <Dropdown
                     ariaLabel="Filter by repository"
                     value={repoFilter}
-                    onChange={setRepoFilter}
+                    onChange={setFilter('repo')}
                     options={[
                       { value: 'all', label: 'All repos' },
                       ...repos.map((r) => ({ value: r.fullName, label: r.fullName.split('/')[1] ?? r.fullName })),
@@ -183,19 +222,24 @@ export function PrsAreaPage(): JSX.Element {
                 <Dropdown
                   ariaLabel="Filter by author"
                   value={authorFilter}
-                  onChange={setAuthorFilter}
+                  onChange={setFilter('author')}
                   searchable={facets.authors.length > 8}
-                  options={[{ value: 'all', label: 'Any author' }, ...facets.authors.map((a) => ({ value: a, label: a }))]}
+                  options={[
+                    { value: 'all', label: 'Any author' },
+                    { value: '__me', label: 'Opened by me' },
+                    ...facets.authors.map((a) => ({ value: a, label: a })),
+                  ]}
                 />
               </FilterField>
               <FilterField label="Assignee">
                 <Dropdown
                   ariaLabel="Filter by assignee"
                   value={assigneeFilter}
-                  onChange={setAssigneeFilter}
+                  onChange={setFilter('assignee')}
                   searchable={facets.assignees.length > 8}
                   options={[
                     { value: 'all', label: 'Any assignee' },
+                    { value: '__me', label: 'Assigned to me' },
                     { value: '__none', label: 'Unassigned' },
                     ...facets.assignees.map((a) => ({ value: a, label: a })),
                   ]}
@@ -205,7 +249,7 @@ export function PrsAreaPage(): JSX.Element {
                 <Dropdown
                   ariaLabel="Filter by review decision"
                   value={decisionFilter}
-                  onChange={setDecisionFilter}
+                  onChange={setFilter('decision')}
                   options={[
                     { value: 'all', label: 'Any review' },
                     { value: 'approved', label: 'Approved' },
@@ -218,7 +262,7 @@ export function PrsAreaPage(): JSX.Element {
                 <Dropdown
                   ariaLabel="Draft filter"
                   value={draftFilter}
-                  onChange={setDraftFilter}
+                  onChange={setFilter('draft')}
                   options={[
                     { value: 'all', label: 'Included' },
                     { value: 'hide', label: 'Hidden' },
@@ -242,7 +286,7 @@ export function PrsAreaPage(): JSX.Element {
         ]}
       />
 
-      {tab === 'open' && canRunPipelines && pipelines.length > 0 && selected.size > 0 ? (
+      {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
           <span className="text-[13px] font-medium tabular-nums">{selected.size} selected</span>
           <button
@@ -255,25 +299,43 @@ export function PrsAreaPage(): JSX.Element {
             clear
           </button>
           <span className="flex-1" />
-          <select
-            className="input py-1.5"
-            aria-label="Pipeline to run against the selected PRs"
-            value={bulkPipeline}
-            onChange={(e) => setBulkPipeline(e.target.value)}
-          >
-            <option value="">Choose pipeline…</option>
-            {pipelines.map((pl) => (
-              <option key={pl.id} value={pl.id}>
-                {pl.name}
-              </option>
-            ))}
-          </select>
-          <button className="btn" disabled={!bulkPipeline || bulkRunning !== null} onClick={() => void runBulk()}>
-            {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} PR${selected.size === 1 ? '' : 's'}`}
-          </button>
+          {canActPrs ? (
+            <button
+              className="btn-ghost"
+              disabled={bulkRunning !== null}
+              onClick={() => void runBulkWith((pr) => api.analyzePr(pr.repo, pr.number), 'AI review')}
+            >
+              AI review {selected.size}
+            </button>
+          ) : null}
+          {canRunPipelines && pipelines.length > 0 ? (
+            <>
+              <select
+                className="input py-1.5"
+                aria-label="Pipeline to run against the selected PRs"
+                value={bulkPipeline}
+                onChange={(e) => setBulkPipeline(e.target.value)}
+              >
+                <option value="">Choose pipeline…</option>
+                {pipelines.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn"
+                disabled={!bulkPipeline || bulkRunning !== null}
+                onClick={() => void runBulkWith((pr) => api.runPipeline(pr.repo, pr.number, bulkPipeline), 'Pipeline')}
+              >
+                {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} PR${selected.size === 1 ? '' : 's'}`}
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
       {bulkError ? <div className="error-bar">{bulkError}</div> : null}
+      {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
 
       {prs.length === 0 && !loading ? (
         <EmptyState
@@ -286,8 +348,12 @@ export function PrsAreaPage(): JSX.Element {
               key={`${pr.repo}#${pr.number}`}
               className="row-link group/row"
               href={`#/repos/${pr.repo}/prs/${pr.number}`}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtx({ x: e.clientX, y: e.clientY, actions: rowActions(pr) });
+              }}
             >
-              {tab === 'open' && canRunPipelines && pipelines.length > 0 ? (
+              {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) ? (
                 <span
                   role="checkbox"
                   aria-checked={selected.has(`${pr.repo}#${pr.number}`)}
@@ -340,6 +406,22 @@ export function PrsAreaPage(): JSX.Element {
               <span className="dim w-16 shrink-0 text-right" title={new Date(pr.updatedAt).toLocaleString()}>
                 {timeAgo(pr.updatedAt)}
               </span>
+              <button
+                className="dim -mr-1 shrink-0 cursor-pointer rounded-md p-1 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-zinc-200 hover:text-zinc-800 focus-visible:opacity-100 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                aria-label={`Quick actions for #${pr.number}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setCtx({ x: r.right - 224, y: r.bottom + 4, actions: rowActions(pr) });
+                }}
+              >
+                <svg viewBox="0 0 16 16" className="size-4 fill-current" aria-hidden>
+                  <circle cx="3" cy="8" r="1.4" />
+                  <circle cx="8" cy="8" r="1.4" />
+                  <circle cx="13" cy="8" r="1.4" />
+                </svg>
+              </button>
             </a>
           ))}
           <ListFooter
@@ -352,6 +434,7 @@ export function PrsAreaPage(): JSX.Element {
           />
         </div>
       )}
+      <ContextMenu menu={ctx} onClose={() => setCtx(null)} />
     </Page>
   );
 }

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { auth } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
 import { Spinner } from '../components/ui.js';
 
 /** First-boot onboarding: a clean install creates its admin account here. */
 export function SetupPage(): JSX.Element {
+  const { branding } = useAuth();
+  const brandName = branding.name?.trim() || 'Companion';
   const [username, setUsername] = useState('admin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,10 +35,14 @@ export function SetupPage(): JSX.Element {
     <main className="flex h-full items-center justify-center bg-zinc-50 px-4 dark:bg-zinc-950">
       <div className="anim-in w-full max-w-md">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-xl bg-accent-600 text-lg font-bold text-white dark:bg-accent-500 dark:text-zinc-950">
-            C
-          </div>
-          <h1 className="text-xl font-semibold">Welcome to Companion</h1>
+          {branding.logo ? (
+            <img src={branding.logo} alt="" className="mx-auto mb-3 size-11 rounded-xl object-cover" />
+          ) : (
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-xl bg-accent-600 text-lg font-bold text-white dark:bg-accent-500 dark:text-zinc-950">
+              {brandName.slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <h1 className="text-xl font-semibold">Welcome to {brandName}</h1>
           <p className="dim mt-1">First boot — create the administrator account for this install.</p>
         </div>
 

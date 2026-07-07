@@ -7,6 +7,15 @@ import type { ApiDeps } from '../deps.js';
 const importSchema = z.object({ sourceHome: z.string().optional() });
 const ghTokenSchema = z.object({ token: z.string().min(10) });
 const skillSchema = z.object({ content: z.string().max(64_000) });
+const brandingSchema = z.object({
+  name: z.string().trim().max(40).nullable(),
+  // Logos are stored inline as data URLs; the client downscales before upload.
+  logo: z
+    .string()
+    .regex(/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/)
+    .max(400_000)
+    .nullable(),
+});
 
 /** Status indicators, provider import, GitHub PAT, reports, skills. */
 const RUN_KINDS = ['interactive', 'triage', 'fix', 'analysis', 'implement', 'report'] as const;
@@ -101,6 +110,24 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
         }
         return {
           pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.getSetting(`modelPin:${k}`) || null])),
+        };
+      },
+    }),
+
+    route({
+      // Instance branding: name + logo, public-readable via /api/auth/state.
+      method: 'PUT',
+      path: '/api/settings/branding',
+      access: 'settings:manage',
+      body: brandingSchema,
+      handler: ({ body }) => {
+        deps.store.setSetting('branding.name', body.name?.trim() ?? '');
+        deps.store.setSetting('branding.logo', body.logo ?? '');
+        return {
+          branding: {
+            name: deps.store.getSetting('branding.name') || null,
+            logo: deps.store.getSetting('branding.logo') || null,
+          },
         };
       },
     }),

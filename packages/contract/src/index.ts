@@ -167,6 +167,18 @@ export interface TriageResult {
   readonly createdAt: number;
 }
 
+// ---------- Review inbox ---------------------------------------------------------
+
+/**
+ * Everything awaiting a human decision in one workspace: agent runs parked in
+ * review, pending AI PR reviews, and pending triage verdicts.
+ */
+export interface WorkspaceReviews {
+  readonly runs: ReadonlyArray<RunRecord>;
+  readonly prReviews: ReadonlyArray<{ readonly review: PrReviewResult; readonly title: string }>;
+  readonly triage: ReadonlyArray<{ readonly triage: TriageResult; readonly title: string }>;
+}
+
 // ---------- Proposals -----------------------------------------------------------
 
 export interface ProposalAnalysis {
@@ -222,9 +234,18 @@ export interface CommentRecord {
 }
 
 export interface WebhookInfo {
-  /** Deliveries POST here (behind the user's tunnel / port-forward). */
+  /** Deliveries POST here (behind the public tunnel / the user's port-forward). */
   readonly path: string;
   readonly secret: string;
+  /** Absolute delivery URL when the moxxy-proxy tunnel is up; null otherwise. */
+  readonly url: string | null;
+}
+
+/** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
+export interface WebhookTunnelState {
+  readonly enabled: boolean;
+  /** Public base URL while up (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
+  readonly url: string | null;
 }
 
 // ---------- Skills -----------------------------------------------------------------

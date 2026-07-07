@@ -267,6 +267,7 @@ export class Store {
       `ALTER TABLE pipelines ADD COLUMN type TEXT NOT NULL DEFAULT 'pr'`,
       `ALTER TABLE pipeline_runs ADD COLUMN target TEXT NOT NULL DEFAULT 'pr'`,
       `ALTER TABLE reports ADD COLUMN issue_number INTEGER`,
+      `ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
     ]) {
       try {
         this.db.exec(ddl);
@@ -374,9 +375,9 @@ export class Store {
     const where: string[] = [];
     const args: unknown[] = [];
     if (opts.q) {
-      where.push(`(username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\')`);
+      where.push(`(username LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\')`);
       const like = likeArg(opts.q);
-      args.push(like, like);
+      args.push(like, like, like);
     }
     if (opts.role) {
       where.push(`role = ?`);
@@ -408,22 +409,23 @@ export class Store {
     return { ...userRowToRecord(row), passwordHash: row.password_hash };
   }
 
-  insertUser(u: { username: string; email: string; passwordHash: string; role: Role }): void {
+  insertUser(u: { username: string; displayName?: string; email: string; passwordHash: string; role: Role }): void {
     this.db
       .prepare(
-        `INSERT INTO users (username, email, password_hash, role, disabled, created_at)
-         VALUES (@username, @email, @passwordHash, @role, 0, @createdAt)`,
+        `INSERT INTO users (username, display_name, email, password_hash, role, disabled, created_at)
+         VALUES (@username, @displayName, @email, @passwordHash, @role, 0, @createdAt)`,
       )
-      .run({ ...u, createdAt: Date.now() });
+      .run({ ...u, displayName: u.displayName ?? '', createdAt: Date.now() });
   }
 
   updateUser(
     username: string,
-    fields: { email?: string; passwordHash?: string; role?: Role; disabled?: boolean },
+    fields: { displayName?: string; email?: string; passwordHash?: string; role?: Role; disabled?: boolean },
   ): void {
     this.db
       .prepare(
         `UPDATE users SET
+           display_name = COALESCE(@displayName, display_name),
            email = COALESCE(@email, email),
            password_hash = COALESCE(@passwordHash, password_hash),
            role = COALESCE(@role, role),
@@ -432,6 +434,7 @@ export class Store {
       )
       .run({
         username,
+        displayName: fields.displayName ?? null,
         email: fields.email ?? null,
         passwordHash: fields.passwordHash ?? null,
         role: fields.role ?? null,
@@ -578,6 +581,11 @@ export class Store {
 
   deleteGithubAccount(id: string): void {
     this.db.prepare(`DELETE FROM github_accounts WHERE id = ?`).run(id);
+  }
+
+  /** Logins of the connected GitHub accounts — the identity behind "__me" filters. */
+  private githubLogins(): string[] {
+    return this.listGithubAccounts().map((a) => a.login);
   }
 
   // ---------- notifications ---------------------------------------------------
@@ -900,12 +908,24 @@ export class Store {
       where.push('i.repo = ?');
       args.push(opts.repo);
     }
-    if (opts.author) {
+    if (opts.author === '__me') {
+      const mine = this.githubLogins();
+      where.push(mine.length > 0 ? `i.author IN (${mine.map(() => '?').join(', ')})` : '1 = 0');
+      args.push(...mine);
+    } else if (opts.author) {
       where.push('i.author = ?');
       args.push(opts.author);
     }
     if (opts.assignee === '__none') {
       where.push(`i.assignees = '[]'`);
+    } else if (opts.assignee === '__me') {
+      const mine = this.githubLogins();
+      where.push(
+        mine.length > 0
+          ? `EXISTS (SELECT 1 FROM json_each(i.assignees) WHERE json_each.value IN (${mine.map(() => '?').join(', ')}))`
+          : '1 = 0',
+      );
+      args.push(...mine);
     } else if (opts.assignee) {
       where.push(`EXISTS (SELECT 1 FROM json_each(i.assignees) WHERE json_each.value = ?)`);
       args.push(opts.assignee);
@@ -974,12 +994,24 @@ export class Store {
       where.push('p.repo = ?');
       args.push(opts.repo);
     }
-    if (opts.author) {
+    if (opts.author === '__me') {
+      const mine = this.githubLogins();
+      where.push(mine.length > 0 ? `p.author IN (${mine.map(() => '?').join(', ')})` : '1 = 0');
+      args.push(...mine);
+    } else if (opts.author) {
       where.push('p.author = ?');
       args.push(opts.author);
     }
     if (opts.assignee === '__none') {
       where.push(`p.assignees = '[]'`);
+    } else if (opts.assignee === '__me') {
+      const mine = this.githubLogins();
+      where.push(
+        mine.length > 0
+          ? `EXISTS (SELECT 1 FROM json_each(p.assignees) WHERE json_each.value IN (${mine.map(() => '?').join(', ')}))`
+          : '1 = 0',
+      );
+      args.push(...mine);
     } else if (opts.assignee) {
       where.push(`EXISTS (SELECT 1 FROM json_each(p.assignees) WHERE json_each.value = ?)`);
       args.push(opts.assignee);
@@ -1173,6 +1205,28 @@ export class Store {
         : this.db.prepare(`SELECT * FROM triage_results WHERE repo = ? ORDER BY created_at DESC`).all(repo)
     ) as TriageRow[];
     return rows.map(triageRowToResult);
+  }
+
+  /** Pending triage verdicts across a workspace's repos — the review inbox. */
+  listWorkspacePendingTriage(workspaceId: string): TriageResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.* FROM triage_results t JOIN repos r ON r.full_name = t.repo
+         WHERE r.workspace_id = ? AND t.status = 'pending' ORDER BY t.created_at DESC`,
+      )
+      .all(workspaceId) as TriageRow[];
+    return rows.map(triageRowToResult);
+  }
+
+  /** Pending AI PR reviews across a workspace's repos — the review inbox. */
+  listWorkspacePendingPrReviews(workspaceId: string): PrReviewResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT p.* FROM pr_reviews p JOIN repos r ON r.full_name = p.repo
+         WHERE r.workspace_id = ? AND p.status = 'pending' ORDER BY p.created_at DESC`,
+      )
+      .all(workspaceId) as PrReviewRow[];
+    return rows.map(prReviewRowToResult);
   }
 
   private latestTriageByIssue(repo: string): Map<number, TriageResult['status']> {
@@ -1546,6 +1600,7 @@ interface WorkspaceRow {
 
 interface UserRow {
   username: string;
+  display_name: string;
   email: string;
   password_hash: string;
   role: Role;
@@ -1566,6 +1621,7 @@ interface ReportRow {
 function userRowToRecord(row: UserRow): UserRecord {
   return {
     username: row.username,
+    displayName: row.display_name || row.username,
     email: row.email,
     role: row.role,
     disabled: row.disabled === 1,

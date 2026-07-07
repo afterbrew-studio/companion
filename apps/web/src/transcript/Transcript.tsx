@@ -28,11 +28,23 @@ export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
 function BlockView({ block }: { block: Block }): JSX.Element | null {
   switch (block.kind) {
     case 'user':
+      // Prompts are often long generated instructions — collapsed by default,
+      // with the first line as a preview; click to expand the full text.
       return (
-        <div className="max-w-[80%] shrink-0 self-end rounded-xl bg-zinc-900 px-3.5 py-2.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900">
-          {block.trigger ? <div className="mb-1 text-[11px] opacity-80">⚡ {block.trigger}</div> : null}
-          <pre className="font-[inherit] whitespace-pre-wrap">{block.text}</pre>
-        </div>
+        <details className="group max-w-[80%] shrink-0 self-end overflow-hidden rounded-xl bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+            {block.trigger ? <span className="shrink-0 text-[11px] opacity-80">⚡ {block.trigger}</span> : null}
+            <span className="shrink-0 text-[11px] font-medium tracking-wide uppercase opacity-80">Prompt</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] opacity-70 group-open:hidden">{firstLine(block.text)}</span>
+            <span className="shrink-0 text-[10px] opacity-60">
+              <span className="group-open:hidden">show</span>
+              <span className="hidden group-open:inline">hide</span>
+            </span>
+          </summary>
+          <pre className="border-t border-white/15 px-3.5 py-2.5 font-[inherit] text-sm whitespace-pre-wrap dark:border-zinc-900/15">
+            {block.text}
+          </pre>
+        </details>
       );
     case 'assistant': {
       const structured = block.streaming ? null : tryParseJsonObject(block.text);
@@ -84,6 +96,10 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     default:
       return null;
   }
+}
+
+function firstLine(text: string): string {
+  return text.split('\n').find((l) => l.trim()) ?? '';
 }
 
 const TOOL_STATUS: Record<Extract<Block, { kind: 'tool' }>['status'], { label: string; cls: string }> = {

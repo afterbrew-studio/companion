@@ -21,6 +21,7 @@ import { PrChecks } from './prs/checks.js';
 import { Proposals } from './proposals/proposals.js';
 import { Pipelines } from './pipelines/pipelines.js';
 import { Automations } from './automations/automations.js';
+import { WebhookTunnel } from './moxxy/webhook-tunnel.js';
 import { Skills } from './skills/skills.js';
 
 async function main(): Promise<void> {
@@ -95,6 +96,7 @@ async function main(): Promise<void> {
     { store, orchestrator, checkouts, github: (ctx) => ghAccounts.clientFor('pipelines', ctx), checks: prChecks, reviews: prReviews },
     broadcast,
   );
+  const webhookTunnel = new WebhookTunnel(store, config.port);
   const automations = new Automations(
     store,
     orchestrator,
@@ -103,9 +105,12 @@ async function main(): Promise<void> {
     pipelines,
     sync,
     checkouts,
+    webhookTunnel,
     broadcast,
   );
   automations.start();
+  // Re-expose the public webhook URL if the user had the tunnel enabled.
+  webhookTunnel.restore();
   const skills = new Skills();
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.
@@ -134,6 +139,7 @@ async function main(): Promise<void> {
       proposals,
       pipelines,
       automations,
+      webhookTunnel,
       skills,
     },
     hub,
@@ -149,6 +155,7 @@ async function main(): Promise<void> {
     force.unref();
     sync.stop();
     automations.stop();
+    webhookTunnel.close();
     await orchestrator.shutdown();
     hub.close();
     server.close();

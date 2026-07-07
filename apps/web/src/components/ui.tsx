@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { ChecksSnapshot, PipelineRunStatus, StepResultStatus } from '@companion/contract';
+import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus } from '@companion/contract';
 
 /** Small shared primitives so every page speaks the same visual language. */
 
@@ -730,11 +730,98 @@ export interface MenuAction {
   disabled?: boolean;
 }
 
+const MENU_ITEM_CLASS =
+  'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 disabled:cursor-default disabled:opacity-50 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800';
+
+/** Shared item list for ActionMenu and ContextMenu. */
+function MenuItems({ actions, onClose }: { actions: MenuAction[]; onClose: () => void }): JSX.Element {
+  return (
+    <>
+      {actions.map((a) =>
+        a.href ? (
+          <a
+            key={a.label}
+            role="menuitem"
+            className={MENU_ITEM_CLASS}
+            href={a.href}
+            target={a.external ? '_blank' : undefined}
+            rel={a.external ? 'noreferrer' : undefined}
+            onClick={onClose}
+          >
+            {a.label}
+            {a.external ? <span aria-hidden>↗</span> : null}
+          </a>
+        ) : (
+          <button
+            key={a.label}
+            type="button"
+            role="menuitem"
+            disabled={a.disabled}
+            className={`${MENU_ITEM_CLASS} ${a.danger ? 'text-red-600 dark:text-red-400' : ''}`}
+            onClick={() => {
+              onClose();
+              a.onSelect?.();
+            }}
+          >
+            {a.label}
+          </button>
+        ),
+      )}
+    </>
+  );
+}
+
+/** State for a cursor-positioned ContextMenu; owners keep it in useState. */
+export interface ContextMenuState {
+  readonly x: number;
+  readonly y: number;
+  readonly actions: MenuAction[];
+}
+
+/**
+ * Cursor-positioned menu for list-row right-clicks (a hover ⋯ trigger can
+ * open it too, anchored to the button). Controlled: the owner holds
+ * {x, y, actions} and clears it on close.
+ */
+export function ContextMenu({ menu, onClose }: { menu: ContextMenuState | null; onClose: () => void }): JSX.Element | null {
+  useEffect(() => {
+    if (!menu) return;
+    const close = (): void => onClose();
+    // ui.tsx imports React's KeyboardEvent type; this is the DOM one.
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu, onClose]);
+  if (!menu) return null;
+  const width = 224; // matches w-56
+  const estimatedHeight = menu.actions.length * 34 + 10;
+  const left = Math.max(8, Math.min(menu.x, window.innerWidth - width - 8));
+  const top = Math.max(8, Math.min(menu.y, window.innerHeight - estimatedHeight - 8));
+  return createPortal(
+    <div
+      role="menu"
+      className="fixed z-50 w-56 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+      style={{ left, top }}
+    >
+      <MenuItems actions={menu.actions} onClose={onClose} />
+    </div>,
+    document.body,
+  );
+}
+
 /** "⋯" overflow menu for secondary actions — keeps toolbars to one primary button. */
 export function ActionMenu({ actions, label = 'More actions' }: { actions: MenuAction[]; label?: string }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const itemClass =
-    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 disabled:cursor-default disabled:opacity-50 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800';
   return (
     <div
       className="relative"
@@ -765,36 +852,7 @@ export function ActionMenu({ actions, label = 'More actions' }: { actions: MenuA
           aria-label={label}
           className="absolute top-full right-0 z-30 mt-1.5 w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
         >
-          {actions.map((a) =>
-            a.href ? (
-              <a
-                key={a.label}
-                role="menuitem"
-                className={itemClass}
-                href={a.href}
-                target={a.external ? '_blank' : undefined}
-                rel={a.external ? 'noreferrer' : undefined}
-                onClick={() => setOpen(false)}
-              >
-                {a.label}
-                {a.external ? <span aria-hidden>↗</span> : null}
-              </a>
-            ) : (
-              <button
-                key={a.label}
-                type="button"
-                role="menuitem"
-                disabled={a.disabled}
-                className={`${itemClass} ${a.danger ? 'text-red-600 dark:text-red-400' : ''}`}
-                onClick={() => {
-                  setOpen(false);
-                  a.onSelect?.();
-                }}
-              >
-                {a.label}
-              </button>
-            ),
-          )}
+          <MenuItems actions={actions} onClose={() => setOpen(false)} />
         </div>
       ) : null}
     </div>
@@ -882,6 +940,98 @@ export function PrStateIcon({
         {spec.glyph}
       </svg>
     </Tooltip>
+  );
+}
+
+const TRIAGE_STATE_SPECS = {
+  none: {
+    label: 'Not triaged',
+    cls: 'text-zinc-300 dark:text-zinc-600',
+    glyph: (
+      <>
+        <circle cx="8" cy="8" r="6.2" />
+        <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      </>
+    ),
+  },
+  pending: {
+    label: 'Triage pending',
+    cls: 'text-amber-600 dark:text-amber-400',
+    glyph: (
+      <>
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="M8 4.9V8l2.2 1.6" />
+      </>
+    ),
+  },
+  applied: {
+    label: 'Triage applied',
+    cls: 'text-emerald-600 dark:text-emerald-400',
+    glyph: (
+      <>
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="m5.4 8.2 1.8 1.8 3.4-3.9" />
+      </>
+    ),
+  },
+  dismissed: {
+    label: 'Triage dismissed',
+    cls: 'text-zinc-400 dark:text-zinc-500',
+    glyph: (
+      <>
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="m5.9 5.9 4.2 4.2M10.1 5.9l-4.2 4.2" />
+      </>
+    ),
+  },
+} as const;
+
+type TriageIconState = keyof typeof TRIAGE_STATE_SPECS;
+
+function TriageGlyph({ state, className = 'size-4' }: { state: TriageIconState; className?: string }): JSX.Element {
+  const spec = TRIAGE_STATE_SPECS[state];
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`shrink-0 ${spec.cls} ${className}`}
+      role="img"
+      aria-label={spec.label}
+    >
+      {spec.glyph}
+    </svg>
+  );
+}
+
+/**
+ * Leading AI-triage state icon for issue rows — color + glyph, never a
+ * space-eating pill. The label lives in the tooltip; TriageLegend spells the
+ * states out under the list.
+ */
+export function TriageStateIcon({ triage, className = '' }: { triage: IssueRecord['triage']; className?: string }): JSX.Element {
+  const state: TriageIconState = triage ?? 'none';
+  return (
+    <Tooltip content={TRIAGE_STATE_SPECS[state].label} className={className}>
+      <TriageGlyph state={state} />
+    </Tooltip>
+  );
+}
+
+/** What the issue-row triage icons mean; sits under the issue list. */
+export function TriageLegend(): JSX.Element {
+  return (
+    <div className="dim mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
+      {(Object.keys(TRIAGE_STATE_SPECS) as TriageIconState[]).map((state) => (
+        <span key={state} className="flex items-center gap-1.5">
+          <TriageGlyph state={state} className="size-3.5" />
+          {TRIAGE_STATE_SPECS[state].label}
+        </span>
+      ))}
+    </div>
   );
 }
 

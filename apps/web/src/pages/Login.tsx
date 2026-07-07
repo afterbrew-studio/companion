@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useAuth } from '../lib/auth.js';
 
 export function LoginPage(): JSX.Element {
-  const { login } = useAuth();
+  const { login, branding } = useAuth();
+  const brandName = branding.name?.trim() || 'Companion';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,10 +26,14 @@ export function LoginPage(): JSX.Element {
     <main className="flex h-full items-center justify-center bg-zinc-50 px-4 dark:bg-zinc-950">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-xl bg-accent-600 text-lg font-bold text-white dark:bg-accent-500 dark:text-zinc-950">
-            C
-          </div>
-          <h1 className="text-xl font-semibold">Companion</h1>
+          {branding.logo ? (
+            <img src={branding.logo} alt="" className="mx-auto mb-3 size-11 rounded-xl object-cover" />
+          ) : (
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-xl bg-accent-600 text-lg font-bold text-white dark:bg-accent-500 dark:text-zinc-950">
+              {brandName.slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <h1 className="text-xl font-semibold">{brandName}</h1>
           <p className="dim mt-1">Sign in to your workspace</p>
         </div>
 

@@ -5,6 +5,7 @@ import type {
   CommentRecord,
   CreateUserRequest,
   HistorySegment,
+  InstanceBranding,
   IssueRecord,
   LoginResponse,
   ModelCatalog,
@@ -32,7 +33,9 @@ import type {
   UpdateUserRequest,
   UserRecord,
   WebhookInfo,
+  WebhookTunnelState,
   WorkspaceMetrics,
+  WorkspaceReviews,
   WorkspaceRecord,
 } from '@companion/contract';
 
@@ -74,6 +77,11 @@ export function onAuthChanged(fn: AuthListener): () => void {
 
 function emitAuthChanged(): void {
   for (const fn of [...authListeners]) fn();
+}
+
+/** Re-resolve the session (e.g. after editing your own display name). */
+export function refreshAuth(): void {
+  emitAuthChanged();
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -187,6 +195,8 @@ export const api = {
   deleteUser: (username: string) => del<{ ok: true }>(`/api/users/${username}`),
   importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
   setGithubToken: (t: string) => post<{ login: string }>('/api/settings/github', { token: t }),
+  setBranding: (branding: { name: string | null; logo: string | null }) =>
+    put<{ branding: InstanceBranding }>('/api/settings/branding', branding),
 
   // workspaces
   listWorkspaces: () => request<{ workspaces: WorkspaceRecord[] }>('/api/workspaces'),
@@ -221,6 +231,7 @@ export const api = {
   workspaceProposals: (id: string) =>
     request<{ proposals: ProposalRecord[] }>(`/api/workspaces/${id}/proposals`),
   workspaceMetrics: (id: string) => request<{ metrics: WorkspaceMetrics }>(`/api/workspaces/${id}/metrics`),
+  workspaceReviews: (id: string) => request<WorkspaceReviews>(`/api/workspaces/${id}/reviews`),
   workspacePipelines: (id: string) =>
     request<{ pipelines: PipelineRecord[]; stepDefinitions: StepDefinitionRecord[] }>(
       `/api/workspaces/${id}/pipelines`,
@@ -264,6 +275,8 @@ export const api = {
     fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
   webhookInfo: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
+  webhookTunnel: () => request<WebhookTunnelState>('/api/webhooks/tunnel'),
+  setWebhookTunnel: (enabled: boolean) => put<WebhookTunnelState>('/api/webhooks/tunnel', { enabled }),
   digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
   staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
 

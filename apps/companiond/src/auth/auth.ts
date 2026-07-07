@@ -81,7 +81,11 @@ export class Auth {
       expiresAt,
     });
     log.info('login', { username: account.username, role: account.role });
-    return { token, user: { username: account.username, role: account.role }, expiresAt };
+    return {
+      token,
+      user: { username: account.username, displayName: account.displayName, role: account.role },
+      expiresAt,
+    };
   }
 
   logout(token: string): void {
@@ -102,7 +106,7 @@ export class Auth {
       this.store.deleteSession(session.tokenHash);
       return null;
     }
-    return { username: account.username, role: account.role };
+    return { username: account.username, displayName: account.displayName, role: account.role };
   }
 
   /** Throw 401/403 unless the user holds the permission. */
@@ -124,10 +128,17 @@ export class Auth {
     return this.store.listUsers();
   }
 
-  createUser(input: { username: string; email?: string; password: string; role: Role }): UserRecord {
+  createUser(input: {
+    username: string;
+    displayName?: string;
+    email?: string;
+    password: string;
+    role: Role;
+  }): UserRecord {
     if (this.store.getUser(input.username)) throw new AuthError(`user ${input.username} already exists`, 403);
     this.store.insertUser({
       username: input.username,
+      displayName: input.displayName?.trim() ?? '',
       email: input.email ?? '',
       passwordHash: hashPassword(input.password),
       role: input.role,
@@ -138,7 +149,7 @@ export class Auth {
 
   updateUser(
     username: string,
-    fields: { email?: string; password?: string; role?: Role; disabled?: boolean },
+    fields: { displayName?: string; email?: string; password?: string; role?: Role; disabled?: boolean },
     actor?: AuthUser,
   ): UserRecord {
     const existing = this.store.getUser(username);
@@ -150,6 +161,7 @@ export class Auth {
     }
     this.guardLastAdmin(existing, fields.role, fields.disabled);
     this.store.updateUser(username, {
+      displayName: fields.displayName?.trim(),
       email: fields.email,
       passwordHash: fields.password ? hashPassword(fields.password) : undefined,
       role: fields.role,

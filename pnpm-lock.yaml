@@ -13,6 +13,12 @@ importers:
       '@companion/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@moxxy/plugin-tunnel-proxy':
+        specifier: ^0.29.0
+        version: 0.29.0(zod@3.25.76)
+      '@moxxy/sdk':
+        specifier: ^0.29.0
+        version: 0.29.0(zod@3.25.76)
       better-sqlite3:
         specifier: ^12.2.0
         version: 12.11.1
@@ -47,6 +53,9 @@ importers:
       '@companion/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      highlight.js:
+        specifier: ^11.11.1
+        version: 11.11.1
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -495,6 +504,30 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@moxxy/e2e@0.29.0':
+    resolution: {integrity: sha512-i5RjBfvqHV9tiJWQxzF/rWAGE5vuATqD8pZiebNSxZBvayA+pfRukek60g6BndEEENz+Y0Hew6PPwLEvl0qaJA==}
+
+  '@moxxy/plugin-tunnel-proxy@0.29.0':
+    resolution: {integrity: sha512-1GSrNDbKbIpX2FEPBCJ896+h4g/TV7bMadmIFtD7qktmaLqSdQhsJ2xLPI0yKaAzoPHYb47IJL/sui5hn2ykgQ==}
+
+  '@moxxy/sdk@0.29.0':
+    resolution: {integrity: sha512-8vHshkMlmTQ8Y7Xukv+P0mabECpM23eIQ2W+VmBXPRgTIqCR+ZQX2dPp7sZseMG7w7FWkyI72ad35BOHma+ldQ==}
+    engines: {node: '>=20.10.0'}
+    peerDependencies:
+      zod: ^3.24.0
+
+  '@noble/ciphers@2.2.0':
+    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/curves@2.2.0':
+    resolution: {integrity: sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.2.0':
+    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
+
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
 
@@ -887,6 +920,10 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  highlight.js@11.11.1:
+    resolution: {integrity: sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w==}
+    engines: {node: '>=12.0.0'}
 
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
@@ -1505,6 +1542,37 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@moxxy/e2e@0.29.0(zod@3.25.76)':
+    dependencies:
+      '@moxxy/sdk': 0.29.0(zod@3.25.76)
+      '@noble/ciphers': 2.2.0
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
+    transitivePeerDependencies:
+      - zod
+
+  '@moxxy/plugin-tunnel-proxy@0.29.0(zod@3.25.76)':
+    dependencies:
+      '@moxxy/e2e': 0.29.0(zod@3.25.76)
+      '@moxxy/sdk': 0.29.0(zod@3.25.76)
+      ws: 8.21.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+      - zod
+
+  '@moxxy/sdk@0.29.0(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
+  '@noble/ciphers@2.2.0': {}
+
+  '@noble/curves@2.2.0':
+    dependencies:
+      '@noble/hashes': 2.2.0
+
+  '@noble/hashes@2.2.0': {}
+
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
@@ -1849,6 +1917,8 @@ snapshots:
   github-from-package@0.0.0: {}
 
   graceful-fs@4.2.11: {}
+
+  highlight.js@11.11.1: {}
 
   ieee754@1.2.1: {}
 

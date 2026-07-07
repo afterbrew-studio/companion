@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReportRecord, RepoRecord, WebhookInfo } from '@companion/contract';
+import type { ReportRecord, RepoRecord, WebhookInfo, WebhookTunnelState } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { Markdown } from '../components/Markdown.js';
@@ -50,7 +50,9 @@ export function AutomationsPage(): JSX.Element {
       />
       {error ? <div className="error-bar">{error}</div> : null}
 
-      <div className="flex flex-col gap-3">
+      <WebhookTunnelCard onError={setError} />
+
+      <div className="mt-3 flex flex-col gap-3">
         {repos.map((repo) => (
           <RepoAutomation key={repo.fullName} repo={repo} onChange={refresh} onError={setError} />
         ))}
@@ -92,6 +94,67 @@ export function AutomationsPage(): JSX.Element {
         )}
       </Section>
     </Page>
+  );
+}
+
+/**
+ * Instance-wide switch: expose the webhook receiver publicly through moxxy's
+ * proxy relay so GitHub can deliver without a user-managed tunnel.
+ */
+function WebhookTunnelCard({ onError }: { onError: (e: string) => void }): JSX.Element | null {
+  const [tunnel, setTunnel] = useState<WebhookTunnelState | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .webhookTunnel()
+      .then(setTunnel)
+      .catch(() => setTunnel(null));
+  }, []);
+
+  if (!tunnel) return null;
+
+  const toggle = async (enabled: boolean): Promise<void> => {
+    setBusy(true);
+    try {
+      setTunnel(await api.setWebhookTunnel(enabled));
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <article className="card" aria-label="Public webhook delivery">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium">Public webhook delivery</div>
+          <p className="dim mt-0.5">
+            Routes GitHub deliveries through the moxxy proxy — no tunnel or port-forward of your own needed. The URL
+            is stable across restarts.
+          </p>
+        </div>
+        <Switch
+          label="Public webhook delivery via moxxy proxy"
+          checked={tunnel.enabled}
+          disabled={busy}
+          onChange={(v) => void toggle(v)}
+        />
+      </div>
+      {tunnel.enabled ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2.5 text-[13px] dark:border-zinc-800">
+          <span className="dim">Base URL:</span>
+          {tunnel.url ? (
+            <CopyText value={tunnel.url} title="Copy public base URL">
+              <code className="text-xs break-all">{tunnel.url}</code>
+            </CopyText>
+          ) : (
+            <span className="badge-warn">connecting…</span>
+          )}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -205,9 +268,18 @@ function RepoAutomation({
           <div>
             Point a GitHub webhook (content type <code>application/json</code>, events: issues + pull requests) at:
           </div>
-          <CopyText value={webhook.path} title="Copy webhook path">
-            <code className="text-xs break-all">http://&lt;your-tunnel&gt;{webhook.path}</code>
-          </CopyText>
+          {webhook.url ? (
+            <CopyText value={webhook.url} title="Copy webhook URL">
+              <code className="text-xs break-all">{webhook.url}</code>
+            </CopyText>
+          ) : (
+            <>
+              <CopyText value={webhook.path} title="Copy webhook path">
+                <code className="text-xs break-all">http://&lt;your-tunnel&gt;{webhook.path}</code>
+              </CopyText>
+              <div className="dim">Enable public webhook delivery above to get a ready-to-paste URL.</div>
+            </>
+          )}
           <div className="flex items-center gap-1.5">
             Secret:
             <CopyText value={webhook.secret} title="Copy webhook secret">

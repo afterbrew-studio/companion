@@ -190,8 +190,14 @@ export class GitHubClient {
     const body = await res.text().catch(() => '');
     let message = `${res.status} ${res.statusText}`;
     try {
-      const parsed = JSON.parse(body) as { message?: string };
+      const parsed = JSON.parse(body) as { message?: string; errors?: Array<{ message?: string } | string> };
       if (parsed.message) message = parsed.message;
+      // 422s carry the actual reason in errors[] ("Can not request changes on
+      // your own pull request", ...) — without it the failure is undebuggable.
+      const details = (parsed.errors ?? [])
+        .map((e) => (typeof e === 'string' ? e : e.message))
+        .filter((m): m is string => Boolean(m));
+      if (details.length > 0) message += ` — ${details.join('; ')}`;
     } catch {
       // keep the status line
     }

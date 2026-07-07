@@ -10,7 +10,7 @@ import { GitHubClient, type GhIssue, type GhPull } from './client.js';
  */
 export class GitHubSync {
   private timer: NodeJS.Timeout | null = null;
-  private syncing = new Set<string>();
+  private inFlight = new Map<string, Promise<{ issues: number; prs: number }>>();
   /** Optional post-sync hook (checks refresh); injected to avoid a dep cycle. */
   onSynced: ((repo: string) => Promise<void>) | null = null;
 
@@ -21,6 +21,9 @@ export class GitHubSync {
   ) {}
 
   start(intervalMs = 120_000): void {
+    // First poll now, not one interval from now — a freshly booted daemon
+    // should catch up without waiting or a manual sync.
+    void this.syncAll().catch((err) => log.warn('initial sync failed', { err: String(err) }));
     this.timer = setInterval(() => {
       void this.syncAll().catch((err) => log.warn('sync tick failed', { err: String(err) }));
     }, intervalMs);
@@ -39,42 +42,65 @@ export class GitHubSync {
     }
   }
 
+  /** Webhook fast path: the delivery carries the full issue — apply it now. */
+  applyIssue(fullName: string, issue: GhIssue): void {
+    this.store.upsertIssue(mapIssue(fullName, issue));
+    this.broadcast({ t: 'issues.changed', repo: fullName });
+  }
+
+  /** Webhook fast path: the delivery carries the full PR — apply it now. */
+  applyPull(fullName: string, pr: GhPull): void {
+    this.store.upsertPr(mapPull(fullName, pr));
+    this.broadcast({ t: 'prs.changed', repo: fullName });
+  }
+
   async syncRepo(fullName: string): Promise<{ issues: number; prs: number }> {
     const client = this.client();
     if (!client) throw new Error('GitHub is not configured (set a PAT in Settings)');
-    if (this.syncing.has(fullName)) return { issues: 0, prs: 0 };
-    this.syncing.add(fullName);
+    // Concurrent callers join the in-flight sync — returning a fake empty
+    // result here would let automation run before the data actually landed.
+    const existing = this.inFlight.get(fullName);
+    if (existing) return existing;
+    const run = this.doSync(fullName, client);
+    this.inFlight.set(fullName, run);
     try {
-      const repoRow = this.store.getRepo(fullName);
-      // Incremental: only issues updated since the last sync (minus a safety margin).
-      const since = repoRow?.last_sync_at
-        ? new Date(repoRow.last_sync_at - 5 * 60_000).toISOString()
-        : undefined;
-
-      const [issues, pulls] = await Promise.all([
-        client.issues(fullName, since ? { since } : {}),
-        client.pulls(fullName),
-      ]);
-      for (const pr of pulls) this.store.upsertPr(mapPull(fullName, pr));
-      for (const item of issues) {
-        // The issues feed interleaves PRs — those only contribute their
-        // conversation comment count to the PR row.
-        if (item.pull_request) this.store.setPrComments(fullName, item.number, item.comments);
-        else this.store.upsertIssue(mapIssue(fullName, item));
-      }
-      this.store.setRepoSynced(fullName);
-      if (issues.length > 0) this.broadcast({ t: 'issues.changed', repo: fullName });
-      if (pulls.length > 0) this.broadcast({ t: 'prs.changed', repo: fullName });
-      this.broadcast({ t: 'repos.changed' });
-      if (this.onSynced) {
-        void this.onSynced(fullName).catch((err) =>
-          log.warn('post-sync hook failed', { repo: fullName, err: String(err) }),
-        );
-      }
-      return { issues: issues.length, prs: pulls.length };
+      return await run;
     } finally {
-      this.syncing.delete(fullName);
+      this.inFlight.delete(fullName);
     }
+  }
+
+  private async doSync(
+    fullName: string,
+    client: GitHubClient,
+  ): Promise<{ issues: number; prs: number }> {
+    const repoRow = this.store.getRepo(fullName);
+    // Incremental: only issues updated since the last sync (minus a safety margin).
+    const since = repoRow?.last_sync_at
+      ? new Date(repoRow.last_sync_at - 5 * 60_000).toISOString()
+      : undefined;
+
+    const [issues, pulls] = await Promise.all([
+      client.issues(fullName, since ? { since } : {}),
+      client.pulls(fullName),
+    ]);
+    for (const pr of pulls) this.store.upsertPr(mapPull(fullName, pr));
+    for (const item of issues) {
+      // The issues feed interleaves PRs — those only contribute their
+      // conversation comment count to the PR row.
+      if (item.pull_request) this.store.setPrComments(fullName, item.number, item.comments);
+      else this.store.upsertIssue(mapIssue(fullName, item));
+    }
+    this.store.setRepoSynced(fullName);
+    if (issues.length > 0) this.broadcast({ t: 'issues.changed', repo: fullName });
+    if (pulls.length > 0) this.broadcast({ t: 'prs.changed', repo: fullName });
+    this.broadcast({ t: 'repos.changed' });
+    if (this.onSynced) {
+      void this.onSynced(fullName).catch((err) =>
+        log.warn('post-sync hook failed', { repo: fullName, err: String(err) }),
+      );
+    }
+    return { issues: issues.length, prs: pulls.length };
   }
 }
 

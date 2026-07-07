@@ -5,7 +5,7 @@ import { log } from '../log.js';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
 import type { Checkouts } from '../git/checkouts.js';
-import type { GitHubClient } from '../github/client.js';
+import { GitHubError, type GitHubClient } from '../github/client.js';
 import { extractModelJson } from '../lib/model-json.js';
 import { describeChecks, type PrChecks } from './checks.js';
 
@@ -98,10 +98,26 @@ export class PrReviews {
         : result.verdict.recommendation === 'request_changes'
           ? 'REQUEST_CHANGES'
           : 'COMMENT';
-    await client.createPrReview(result.repo, result.prNumber, {
-      body: result.verdict.reviewBody,
-      event,
-    });
+    const post = (e: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES'): Promise<unknown> =>
+      client.createPrReview(result.repo, result.prNumber, { body: result.verdict!.reviewBody, event: e });
+    try {
+      await post(event);
+    } catch (err) {
+      // GitHub rejects APPROVE/REQUEST_CHANGES from the PR's own author (422)
+      // — common here, since the agent's account both opens PRs and reviews.
+      // The verdict is still worth publishing: fall back to a comment review.
+      if (err instanceof GitHubError && err.status === 422 && event !== 'COMMENT') {
+        log.info('review event rejected by GitHub, posting as comment', {
+          repo: result.repo,
+          pr: result.prNumber,
+          event,
+          err: String(err),
+        });
+        await post('COMMENT');
+      } else {
+        throw err;
+      }
+    }
     this.store.updatePrReview(id, 'applied');
     this.broadcast({ t: 'prs.changed', repo: result.repo });
   }

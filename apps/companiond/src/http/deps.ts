@@ -15,6 +15,7 @@ import type { GitHubAccounts } from '../github/accounts.js';
 import type { Proposals } from '../proposals/proposals.js';
 import type { Pipelines } from '../pipelines/pipelines.js';
 import type { Automations } from '../automations/automations.js';
+import type { WebhookTunnel } from '../moxxy/webhook-tunnel.js';
 import type { Skills } from '../skills/skills.js';
 
 /** Everything the route modules can reach — injected once at boot. */
@@ -38,5 +39,6 @@ export interface ApiDeps {
   readonly proposals: Proposals;
   readonly pipelines: Pipelines;
   readonly automations: Automations;
+  readonly webhookTunnel: WebhookTunnel;
   readonly skills: Skills;
 }

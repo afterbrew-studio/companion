@@ -73,12 +73,17 @@ export function hasPermission(role: Role, permission: Permission): boolean {
 
 export interface AuthUser {
   readonly username: string;
+  /** How the user is shown in the UI; defaults to the username. */
+  readonly displayName: string;
   readonly role: Role;
 }
 
 /** A managed account (admin-editable; passwords are scrypt hashes at rest). */
 export interface UserRecord {
+  /** Immutable login identifier. */
   readonly username: string;
+  /** Modifiable display name shown across the UI; defaults to the username. */
+  readonly displayName: string;
   readonly email: string;
   readonly role: Role;
   readonly disabled: boolean;
@@ -87,10 +92,19 @@ export interface UserRecord {
 
 // ---------- DTOs ---------------------------------------------------------------
 
+/** Instance branding shown pre-login and in the shell chrome. */
+export interface InstanceBranding {
+  /** Display name for this install; null → "Companion". */
+  readonly name: string | null;
+  /** Logo as a data: URL; null → the default letter tile. */
+  readonly logo: string | null;
+}
+
 /** Public bootstrap: does this install still need first-boot onboarding? */
 export interface AuthState {
   readonly setup: boolean;
   readonly version: string;
+  readonly branding: InstanceBranding;
 }
 
 export interface SetupRequest {
@@ -101,12 +115,14 @@ export interface SetupRequest {
 
 export interface CreateUserRequest {
   readonly username: string;
+  readonly displayName?: string;
   readonly email?: string;
   readonly password: string;
   readonly role: Role;
 }
 
 export interface UpdateUserRequest {
+  readonly displayName?: string;
   readonly email?: string;
   readonly password?: string;
   readonly role?: Role;

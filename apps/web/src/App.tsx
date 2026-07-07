@@ -13,6 +13,7 @@ import { SetupPage } from './pages/Setup.js';
 import { UsersPage } from './pages/Users.js';
 import { DashboardPage } from './pages/Dashboard.js';
 import { ProposalsPage } from './pages/Proposals.js';
+import { ReviewsPage } from './pages/Reviews.js';
 import { IssuesAreaPage } from './pages/IssuesArea.js';
 import { PrsAreaPage } from './pages/PrsArea.js';
 import { PipelinesPage } from './pages/Pipelines.js';
@@ -65,6 +66,24 @@ const SECTION_LABELS: Record<string, string> = {
   operate: 'Operate',
   admin: 'Admin',
 };
+
+/** Sidebar brand block: instance logo + name, falling back to the letter tile. */
+function Brand({ rail }: { rail: boolean }): JSX.Element {
+  const { branding } = useAuth();
+  const name = branding.name?.trim() || 'Companion';
+  return (
+    <div className={`flex items-center gap-2 pt-4 pb-2 ${rail ? 'justify-center px-2' : 'px-4'}`}>
+      {branding.logo ? (
+        <img src={branding.logo} alt="" className="size-7 shrink-0 rounded-lg object-cover" />
+      ) : (
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-sm font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
+          {name.slice(0, 1).toUpperCase()}
+        </div>
+      )}
+      {rail ? null : <span className="truncate text-[15px] font-semibold">{name}</span>}
+    </div>
+  );
+}
 
 function Shell(): JSX.Element {
   const { user, can, logout } = useAuth();
@@ -171,12 +190,7 @@ function Shell(): JSX.Element {
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         } ${collapsed ? 'md:w-16' : 'md:w-56'}`}
       >
-        <div className={`flex items-center gap-2 pt-4 pb-2 ${rail ? 'justify-center px-2' : 'px-4'}`}>
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-sm font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-            C
-          </div>
-          {rail ? null : <span className="truncate text-[15px] font-semibold">Companion</span>}
-        </div>
+        <Brand rail={rail} />
 
         <WorkspaceSwitcher rail={rail} onExpand={toggleSidebar} />
 
@@ -244,21 +258,21 @@ function Shell(): JSX.Element {
               className="btn-ghost w-full justify-center"
               onClick={() => void logout()}
               aria-label="Sign out"
-              title={`Sign out ${user?.username ?? ''}`}
+              title={`Sign out ${user?.displayName ?? ''}`}
             >
               <SignOutIcon />
             </button>
           ) : (
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="truncate text-[13px] font-medium">{user?.username}</div>
+                <div className="truncate text-[13px] font-medium">{user?.displayName}</div>
                 <div className="dim text-[11px] capitalize">{user?.role}</div>
               </div>
               <button
                 className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={() => void logout()}
                 aria-label="Sign out"
-                title={`Sign out ${user?.username ?? ''}`}
+                title={`Sign out ${user?.displayName ?? ''}`}
               >
                 <SignOutIcon />
               </button>
@@ -666,6 +680,7 @@ function Route({ hash }: { hash: string }): JSX.Element {
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
   if (m) return guard(can('prs:read'), <PrDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
 
+  if (path.startsWith('/reviews')) return guard(can('runs:read'), <ReviewsPage />);
   if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
   if (path.startsWith('/issues')) return guard(can('issues:read'), <IssuesAreaPage />);
   if (path.startsWith('/prs')) return guard(can('prs:read'), <PrsAreaPage />);

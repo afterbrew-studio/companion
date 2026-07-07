@@ -1,11 +1,72 @@
 import { Fragment, type ReactNode } from 'react';
+import hljs from 'highlight.js/lib/core';
+import bash from 'highlight.js/lib/languages/bash';
+import css from 'highlight.js/lib/languages/css';
+import diff from 'highlight.js/lib/languages/diff';
+import dockerfile from 'highlight.js/lib/languages/dockerfile';
+import go from 'highlight.js/lib/languages/go';
+import javascript from 'highlight.js/lib/languages/javascript';
+import json from 'highlight.js/lib/languages/json';
+import markdown from 'highlight.js/lib/languages/markdown';
+import python from 'highlight.js/lib/languages/python';
+import rust from 'highlight.js/lib/languages/rust';
+import sql from 'highlight.js/lib/languages/sql';
+import typescript from 'highlight.js/lib/languages/typescript';
+import xml from 'highlight.js/lib/languages/xml';
+import yaml from 'highlight.js/lib/languages/yaml';
 
 /**
  * Small, safe GitHub-flavored-ish markdown renderer. Emits React nodes (never
- * raw HTML), so untrusted issue/PR bodies cannot inject markup. Supports:
- * headings, paragraphs, fenced code, inline code, bold/italic/strike, links,
- * images (rendered as links), blockquotes, hr, ordered/unordered/task lists.
+ * raw HTML), so untrusted issue/PR bodies cannot inject markup — the one
+ * exception is fenced code, which goes through highlight.js (it escapes all
+ * source text; only its own span markup is injected). Supports: headings,
+ * paragraphs, fenced code (highlighted), inline code, bold/italic/strike,
+ * links, images (rendered as links), blockquotes, hr, ordered/unordered/task
+ * lists.
  */
+
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('diff', diff);
+hljs.registerLanguage('dockerfile', dockerfile);
+hljs.registerLanguage('go', go);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('rust', rust);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerAliases(['sh', 'zsh', 'shell'], { languageName: 'bash' });
+hljs.registerAliases(['js', 'jsx', 'mjs'], { languageName: 'javascript' });
+hljs.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
+hljs.registerAliases(['yml'], { languageName: 'yaml' });
+hljs.registerAliases(['html'], { languageName: 'xml' });
+hljs.registerAliases(['py'], { languageName: 'python' });
+hljs.registerAliases(['patch'], { languageName: 'diff' });
+hljs.registerAliases(['md'], { languageName: 'markdown' });
+
+function CodeBlock({ lang, code }: { lang: string; code: string }): JSX.Element {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      const html = hljs.highlight(code, { language: lang }).value;
+      return (
+        <pre className="md-code">
+          <code dangerouslySetInnerHTML={{ __html: html }} />
+        </pre>
+      );
+    } catch {
+      // fall through to plain text
+    }
+  }
+  return (
+    <pre className="md-code">
+      <code>{code}</code>
+    </pre>
+  );
+}
 
 export function Markdown({ text }: { text: string }): JSX.Element {
   return <div className="markdown">{renderBlocks(text)}</div>;
@@ -35,11 +96,7 @@ function renderBlocks(text: string): ReactNode[] {
         i++;
       }
       i++; // closing fence
-      out.push(
-        <pre key={key++} className="md-code">
-          <code>{buf.join('\n')}</code>
-        </pre>,
-      );
+      out.push(<CodeBlock key={key++} lang={(fence[1] ?? '').toLowerCase()} code={buf.join('\n')} />);
       continue;
     }
 

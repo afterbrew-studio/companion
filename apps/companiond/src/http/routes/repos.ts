@@ -168,6 +168,28 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Instance-wide public webhook delivery over moxxy's proxy relay. */
+    route({
+      method: 'GET',
+      path: '/api/webhooks/tunnel',
+      access: 'automations:manage',
+      handler: () => ({ enabled: deps.webhookTunnel.enabled(), url: deps.webhookTunnel.url() }),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/api/webhooks/tunnel',
+      access: 'automations:manage',
+      body: z.object({ enabled: z.boolean() }),
+      handler: async ({ body }) => {
+        if (body.enabled) await deps.webhookTunnel.start();
+        else await deps.webhookTunnel.stop();
+        // Per-repo webhook URLs shown in the UI change with the tunnel.
+        deps.broadcast({ t: 'repos.changed' });
+        return { enabled: deps.webhookTunnel.enabled(), url: deps.webhookTunnel.url() };
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/api/repos/:owner/:name/digest-now',

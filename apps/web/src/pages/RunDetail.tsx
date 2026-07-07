@@ -4,6 +4,9 @@ import { api, onServerMessage } from '../lib/api.js';
 import { emptyFold, foldEvent, foldMany, type FoldState } from '../transcript/fold.js';
 import { Transcript } from '../transcript/Transcript.js';
 import { AskSheet } from '../components/AskSheet.js';
+import { Markdown } from '../components/Markdown.js';
+import { DiffView } from '../components/DiffView.js';
+import { ActionMenu } from '../components/ui.js';
 import { statusBadge } from './RunsPage.js';
 
 export function RunDetail({ runId }: { runId: string }): JSX.Element {
@@ -339,33 +342,39 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   return (
     <div className="my-3 rounded-xl border border-accent-500/60 p-4">
       <div className="flex flex-wrap items-center gap-2.5">
-        <strong className="text-sm">Review — agent finished on branch {run.branch}</strong>
-        <span className="dim">{run.outcome ?? ''}</span>
+        <strong className="text-sm">
+          Review — agent finished on branch <code className="text-[12px]">{run.branch}</code>
+        </strong>
         <span className="flex-1" />
-        <button className="linkish text-sm" onClick={() => setOpen((v) => !v)}>
-          {open ? 'hide diff' : 'show diff'}
-        </button>
         <button className="btn" disabled={busy || diff === null} onClick={() => void approve()}>
           {busy ? 'Working…' : 'Approve → push + open PR'}
         </button>
-        <button className="btn-danger" disabled={busy} onClick={() => void discard()}>
-          Discard
-        </button>
+        <ActionMenu
+          label="Review actions"
+          actions={[
+            { label: open ? 'Hide diff' : 'Show diff', onSelect: () => setOpen((v) => !v) },
+            { label: 'Discard run…', onSelect: () => void discard(), danger: true, disabled: busy },
+          ]}
+        />
       </div>
+      {run.outcome ? (
+        <div className="mt-2">
+          <Markdown text={run.outcome} />
+        </div>
+      ) : null}
+      <p className="dim mt-2">
+        Not convinced? Send a prompt below — the agent keeps working on the same branch.
+      </p>
       {error ? <div className="error-bar">{error}</div> : null}
       {open ? (
         diff === null ? (
           <div className="dim mt-2">Loading diff…</div>
         ) : diff.trim() ? (
-          <pre className="mono-pane mt-2.5 max-h-[420px]">{renderableDiff(diff)}</pre>
+          <DiffView diff={diff} className="mt-2.5" />
         ) : (
           <div className="banner-warn">The agent produced no changes.</div>
         )
       ) : null}
     </div>
   );
-}
-
-function renderableDiff(diff: string): string {
-  return diff.length > 100_000 ? `${diff.slice(0, 100_000)}\n… (${diff.length - 100_000} more bytes)` : diff;
 }

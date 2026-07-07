@@ -5,8 +5,10 @@
  * repeated everywhere (buttons, badges, chips, inputs) are component classes.
  * NOTE: @apply may only reference real Tailwind utilities (not other component
  * classes), so shared "base" styles are spelled out in each variant.
- * Dark mode rides prefers-color-scheme via the default `dark:` variant.
+ * Dark mode is class-based: index.html + lib/theme.ts put `.dark` on <html>
+ * (following the OS unless the user picked a theme in Settings).
  */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /*
  * Semantic accent palette. The platform is monochrome: accent-* resolves to
@@ -34,6 +36,12 @@
   #root {
     @apply h-full;
   }
+  :root {
+    color-scheme: light;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
   body {
     @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
   }
@@ -42,11 +50,9 @@
   input[type='radio'] {
     accent-color: theme(--color-zinc-900);
   }
-  @media (prefers-color-scheme: dark) {
-    input[type='checkbox'],
-    input[type='radio'] {
-      accent-color: theme(--color-zinc-100);
-    }
+  .dark input[type='checkbox'],
+  .dark input[type='radio'] {
+    accent-color: theme(--color-zinc-100);
   }
   /* Keyboard users always see where they are. */
   :focus-visible {
@@ -95,10 +101,8 @@
     background-position: right 0.55rem center;
     background-size: 1rem 1rem;
   }
-  @media (prefers-color-scheme: dark) {
-    select.input {
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23a1a1aa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    }
+  .dark select.input {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23a1a1aa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
   .card {
     @apply rounded-xl border border-zinc-200 p-4 dark:border-zinc-800;
@@ -169,6 +173,90 @@
   }
   .markdown a {
     @apply font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-current dark:text-zinc-100 dark:decoration-zinc-500;
+  }
+
+  /* highlight.js tokens (fenced code) — GitHub-ish hues on the zinc palette. */
+  .hljs-comment,
+  .hljs-quote {
+    @apply text-zinc-500 italic dark:text-zinc-400;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-type,
+  .hljs-meta {
+    color: #cf222e;
+  }
+  .hljs-title,
+  .hljs-title.class_,
+  .hljs-title.function_,
+  .hljs-section {
+    color: #6639ba;
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-addition {
+    color: #0a7227;
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: #0550ae;
+  }
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-selector-attr,
+  .hljs-selector-class,
+  .hljs-selector-id,
+  .hljs-built_in {
+    color: #953800;
+  }
+  .hljs-deletion {
+    color: #cf222e;
+  }
+  .hljs-emphasis {
+    @apply italic;
+  }
+  .hljs-strong {
+    @apply font-semibold;
+  }
+  .dark .hljs-keyword,
+  .dark .hljs-selector-tag,
+  .dark .hljs-type,
+  .dark .hljs-meta {
+    color: #ff7b72;
+  }
+  .dark .hljs-title,
+  .dark .hljs-title.class_,
+  .dark .hljs-title.function_,
+  .dark .hljs-section {
+    color: #d2a8ff;
+  }
+  .dark .hljs-string,
+  .dark .hljs-regexp,
+  .dark .hljs-addition {
+    color: #7ee787;
+  }
+  .dark .hljs-number,
+  .dark .hljs-literal,
+  .dark .hljs-symbol,
+  .dark .hljs-bullet {
+    color: #79c0ff;
+  }
+  .dark .hljs-attr,
+  .dark .hljs-attribute,
+  .dark .hljs-variable,
+  .dark .hljs-template-variable,
+  .dark .hljs-selector-attr,
+  .dark .hljs-selector-class,
+  .dark .hljs-selector-id,
+  .dark .hljs-built_in {
+    color: #ffa657;
+  }
+  .dark .hljs-deletion {
+    color: #ff7b72;
   }
 }
 

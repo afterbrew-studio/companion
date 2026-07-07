@@ -8,12 +8,14 @@ const roleSchema = z.enum(['admin', 'maintainer', 'business']);
 
 const createUserSchema = z.object({
   username: z.string().regex(USERNAME_RE, 'letters, digits, dots, dashes (2-40 chars)'),
+  displayName: z.string().trim().min(1).max(60).optional(),
   email: z.string().email().max(200).optional(),
   password: z.string().min(8).max(500),
   role: roleSchema,
 });
 
 const updateUserSchema = z.object({
+  displayName: z.string().trim().min(1).max(60).optional(),
   email: z.string().email().max(200).optional(),
   password: z.string().min(8).max(500).optional(),
   role: roleSchema.optional(),

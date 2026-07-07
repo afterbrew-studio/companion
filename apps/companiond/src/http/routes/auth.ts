@@ -24,7 +24,14 @@ export function authRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/auth/state',
       access: 'public',
-      handler: (): AuthState => ({ setup: deps.auth.setupNeeded(), version: '0.3.0' }),
+      handler: (): AuthState => ({
+        setup: deps.auth.setupNeeded(),
+        version: '0.3.0',
+        branding: {
+          name: deps.store.getSetting('branding.name') || null,
+          logo: deps.store.getSetting('branding.logo') || null,
+        },
+      }),
     }),
 
     /** First-boot onboarding: create the admin account (clean installs only). */

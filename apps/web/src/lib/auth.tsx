@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AuthUser, Permission } from '@companion/contract';
+import type { AuthUser, InstanceBranding, Permission } from '@companion/contract';
 import { auth as authApi, onAuthChanged, connectWs } from './api.js';
 
 interface AuthState {
@@ -8,6 +8,10 @@ interface AuthState {
   /** Clean install: first-boot onboarding must run before anything else. */
   readonly needsSetup: boolean;
   readonly permissions: readonly Permission[];
+  /** Instance branding (name/logo); available pre-login. */
+  readonly branding: InstanceBranding;
+  /** Local update after saving branding in Settings — no refetch needed. */
+  readonly setBranding: (b: InstanceBranding) => void;
   readonly can: (permission: Permission) => boolean;
   readonly login: (username: string, password: string) => Promise<void>;
   readonly logout: () => Promise<void>;
@@ -19,10 +23,17 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
+  const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
+
+  // The instance name owns the tab title.
+  useEffect(() => {
+    document.title = branding.name?.trim() || 'Companion';
+  }, [branding]);
 
   const resolve = useCallback(async () => {
     try {
       const state = await authApi.state();
+      setBranding(state.branding);
       setNeedsSetup(state.setup);
       if (state.setup) {
         setUser(null);
@@ -65,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const can = useCallback((p: Permission) => permissions.includes(p), [permissions]);
 
   return (
-    <AuthContext.Provider value={{ user, needsSetup, permissions, can, login, logout }}>
+    <AuthContext.Provider value={{ user, needsSetup, permissions, branding, setBranding, can, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

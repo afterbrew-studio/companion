@@ -48,6 +48,12 @@ const icons = {
       <circle cx="12" cy="12" r="2.5" />
     </svg>
   ),
+  reviews: (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+      <path d="m9.8 12 1.6 1.6 3-3.4" />
+    </svg>
+  ),
   prs: (
     <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
       <circle cx="6" cy="6" r="2.5" />
@@ -120,6 +126,15 @@ export const MODULES: readonly AppModule[] = [
     permission: 'issues:read',
     section: 'workspace',
     icon: icons.overview,
+  },
+  {
+    key: 'reviews',
+    label: 'Reviews',
+    hash: '#/reviews',
+    shortcut: 'w',
+    permission: 'runs:read',
+    section: 'workspace',
+    icon: icons.reviews,
   },
   {
     key: 'proposals',
