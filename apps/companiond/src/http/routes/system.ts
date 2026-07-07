@@ -18,7 +18,7 @@ const brandingSchema = z.object({
 });
 
 /** Status indicators, provider import, GitHub PAT, reports, skills. */
-const RUN_KINDS = ['interactive', 'triage', 'fix', 'analysis', 'implement', 'report'] as const;
+const RUN_KINDS = ['interactive', 'triage', 'fix', 'analysis', 'implement', 'report', 'assistant'] as const;
 const modelPinsSchema = z.object({
   pins: z.record(z.enum(RUN_KINDS), z.string().max(200).nullable()),
 });
@@ -40,7 +40,7 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: () => {
         const parse = (key: string): string[] => {
           try {
-            const raw = deps.store.getSetting(key);
+            const raw = deps.store.settings.get(key);
             return raw ? (JSON.parse(raw) as string[]) : [];
           } catch {
             return [];
@@ -83,8 +83,8 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
         disabledModels: z.array(z.string().min(1).max(200)).max(500),
       }),
       handler: ({ body }) => {
-        deps.store.setSetting('disabledProviders', JSON.stringify(body.disabledProviders));
-        deps.store.setSetting('disabledModels', JSON.stringify(body.disabledModels));
+        deps.store.settings.set('disabledProviders', JSON.stringify(body.disabledProviders));
+        deps.store.settings.set('disabledModels', JSON.stringify(body.disabledModels));
         return { ok: true };
       },
     }),
@@ -94,7 +94,7 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/settings/model-pins',
       access: 'settings:manage',
       handler: () => ({
-        pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.getSetting(`modelPin:${k}`) || null])),
+        pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.settings.get(`modelPin:${k}`) || null])),
         defaultModel: deps.config.defaultModel,
       }),
     }),
@@ -106,10 +106,10 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       body: modelPinsSchema,
       handler: ({ body }) => {
         for (const [kind, model] of Object.entries(body.pins)) {
-          deps.store.setSetting(`modelPin:${kind}`, model?.trim() ?? '');
+          deps.store.settings.set(`modelPin:${kind}`, model?.trim() ?? '');
         }
         return {
-          pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.getSetting(`modelPin:${k}`) || null])),
+          pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.settings.get(`modelPin:${k}`) || null])),
         };
       },
     }),
@@ -121,12 +121,12 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'settings:manage',
       body: brandingSchema,
       handler: ({ body }) => {
-        deps.store.setSetting('branding.name', body.name?.trim() ?? '');
-        deps.store.setSetting('branding.logo', body.logo ?? '');
+        deps.store.settings.set('branding.name', body.name?.trim() ?? '');
+        deps.store.settings.set('branding.logo', body.logo ?? '');
         return {
           branding: {
-            name: deps.store.getSetting('branding.name') || null,
-            logo: deps.store.getSetting('branding.logo') || null,
+            name: deps.store.settings.get('branding.name') || null,
+            logo: deps.store.settings.get('branding.logo') || null,
           },
         };
       },
@@ -174,7 +174,7 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/reports',
       access: 'reports:read',
-      handler: () => ({ reports: deps.store.listReports() }),
+      handler: () => ({ reports: deps.store.reports.list() }),
     }),
 
     route({

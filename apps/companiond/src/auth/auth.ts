@@ -34,14 +34,14 @@ export class AuthError extends Error {
  */
 export class Auth {
   constructor(private readonly store: Store) {
-    this.store.pruneExpiredSessions();
+    this.store.sessions.pruneExpired();
   }
 
   /** One-time import of .env accounts into an EMPTY users table. */
   seedFromEnv(users: readonly UserCredential[]): void {
-    if (this.store.countUsers() > 0 || users.length === 0) return;
+    if (this.store.users.count() > 0 || users.length === 0) return;
     for (const u of users) {
-      this.store.insertUser({
+      this.store.users.insert({
         username: u.username,
         email: '',
         passwordHash: hashPassword(u.password),
@@ -53,27 +53,27 @@ export class Auth {
 
   /** Clean install (no accounts): the SPA must run onboarding first. */
   setupNeeded(): boolean {
-    return this.store.countUsers() === 0;
+    return this.store.users.count() === 0;
   }
 
   /** First-boot onboarding: create the admin account and sign it in. */
   setup(username: string, email: string, password: string): { token: string; user: AuthUser; expiresAt: number } {
     if (!this.setupNeeded()) throw new AuthError('setup already completed', 403);
-    this.store.insertUser({ username, email, passwordHash: hashPassword(password), role: 'admin' });
+    this.store.users.insert({ username, email, passwordHash: hashPassword(password), role: 'admin' });
     log.info('onboarding complete — admin account created', { username });
     return this.login(username, password);
   }
 
   /** Sign in with username OR email. */
   login(identifier: string, password: string): { token: string; user: AuthUser; expiresAt: number } {
-    const account = this.store.getUser(identifier) ?? this.store.getUserByEmail(identifier);
+    const account = this.store.users.get(identifier) ?? this.store.users.getByEmail(identifier);
     if (!account || account.disabled || !verifyPassword(password, account.passwordHash)) {
       log.warn('login rejected', { identifier });
       throw new AuthError('invalid username or password', 401);
     }
     const token = randomBytes(32).toString('hex');
     const expiresAt = Date.now() + SESSION_TTL_MS;
-    this.store.insertSession({
+    this.store.sessions.insert({
       tokenHash: hashToken(token),
       username: account.username,
       role: account.role,
@@ -89,21 +89,42 @@ export class Auth {
   }
 
   logout(token: string): void {
-    this.store.deleteSession(hashToken(token));
+    this.store.sessions.delete(hashToken(token));
+  }
+
+  /**
+   * Mint a session token for a trusted internal consumer (the AI Help
+   * assistant acting as the user). Same session store as logins — verify()
+   * re-reads role and disabled state on every request, so the token can never
+   * outlive or outrank the account.
+   */
+  mintSession(username: string, ttlMs: number): { token: string; expiresAt: number } {
+    const account = this.store.users.get(username);
+    if (!account || account.disabled) throw new AuthError('unknown or disabled account', 403);
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + ttlMs;
+    this.store.sessions.insert({
+      tokenHash: hashToken(token),
+      username: account.username,
+      role: account.role,
+      createdAt: Date.now(),
+      expiresAt,
+    });
+    return { token, expiresAt };
   }
 
   /** Resolve a bearer token to its user, or null. Role reads live from the account. */
   verify(token: string | null): AuthUser | null {
     if (!token) return null;
-    const session = this.store.getSession(hashToken(token));
+    const session = this.store.sessions.get(hashToken(token));
     if (!session) return null;
     if (session.expiresAt <= Date.now()) {
-      this.store.deleteSession(session.tokenHash);
+      this.store.sessions.delete(session.tokenHash);
       return null;
     }
-    const account = this.store.getUser(session.username);
+    const account = this.store.users.get(session.username);
     if (!account || account.disabled) {
-      this.store.deleteSession(session.tokenHash);
+      this.store.sessions.delete(session.tokenHash);
       return null;
     }
     return { username: account.username, displayName: account.displayName, role: account.role };
@@ -125,7 +146,7 @@ export class Auth {
   // ---------- user management (admin) -----------------------------------------
 
   listUsers(): UserRecord[] {
-    return this.store.listUsers();
+    return this.store.users.list();
   }
 
   createUser(input: {
@@ -135,8 +156,8 @@ export class Auth {
     password: string;
     role: Role;
   }): UserRecord {
-    if (this.store.getUser(input.username)) throw new AuthError(`user ${input.username} already exists`, 403);
-    this.store.insertUser({
+    if (this.store.users.get(input.username)) throw new AuthError(`user ${input.username} already exists`, 403);
+    this.store.users.insert({
       username: input.username,
       displayName: input.displayName?.trim() ?? '',
       email: input.email ?? '',
@@ -144,7 +165,7 @@ export class Auth {
       role: input.role,
     });
     log.info('user created', { username: input.username, role: input.role });
-    return sanitize(this.store.getUser(input.username)!);
+    return sanitize(this.store.users.get(input.username)!);
   }
 
   updateUser(
@@ -152,7 +173,7 @@ export class Auth {
     fields: { displayName?: string; email?: string; password?: string; role?: Role; disabled?: boolean },
     actor?: AuthUser,
   ): UserRecord {
-    const existing = this.store.getUser(username);
+    const existing = this.store.users.get(username);
     if (!existing) throw new AuthError(`user ${username} not found`, 403);
     // Nobody demotes (or otherwise reassigns) themselves — a second admin has
     // to do it, which also keeps the install from locking itself out.
@@ -160,7 +181,7 @@ export class Auth {
       throw new AuthError('you cannot change your own role', 403);
     }
     this.guardLastAdmin(existing, fields.role, fields.disabled);
-    this.store.updateUser(username, {
+    this.store.users.update(username, {
       displayName: fields.displayName?.trim(),
       email: fields.email,
       passwordHash: fields.password ? hashPassword(fields.password) : undefined,
@@ -169,17 +190,17 @@ export class Auth {
     });
     // Role change / disable must not ride old sessions.
     if (fields.role !== undefined || fields.disabled === true || fields.password !== undefined) {
-      this.store.deleteSessionsForUser(username);
+      this.store.sessions.deleteForUser(username);
     }
-    return sanitize(this.store.getUser(username)!);
+    return sanitize(this.store.users.get(username)!);
   }
 
   deleteUser(username: string, actor: AuthUser): void {
-    const existing = this.store.getUser(username);
+    const existing = this.store.users.get(username);
     if (!existing) throw new AuthError(`user ${username} not found`, 403);
     if (actor.username === username) throw new AuthError('you cannot delete your own account', 403);
     this.guardLastAdmin(existing, 'business', undefined);
-    this.store.deleteUser(username);
+    this.store.users.delete(username);
     log.info('user deleted', { username });
   }
 
@@ -189,7 +210,7 @@ export class Auth {
       existing.role === 'admin' &&
       !existing.disabled &&
       ((nextRole !== undefined && nextRole !== 'admin') || nextDisabled === true);
-    if (losesAdmin && this.store.countActiveAdmins() <= 1) {
+    if (losesAdmin && this.store.users.countActiveAdmins() <= 1) {
       throw new AuthError('cannot remove the last enabled admin', 403);
     }
   }

@@ -15,7 +15,7 @@ export function proposalRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/proposals',
       access: 'proposals:read',
-      handler: () => ({ proposals: deps.store.listProposals() }),
+      handler: () => ({ proposals: deps.store.proposals.list() }),
     }),
 
     route({
@@ -24,7 +24,7 @@ export function proposalRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'proposals:create',
       body: proposalSchema,
       handler: ({ body }) => {
-        if (!deps.store.getRepo(body.repo)) throw badRequest(`repo ${body.repo} not connected`);
+        if (!deps.store.repos.get(body.repo)) throw badRequest(`repo ${body.repo} not connected`);
         return created({ proposal: deps.proposals.create(body.repo, body.title, body.body) });
       },
     }),

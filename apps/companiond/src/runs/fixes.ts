@@ -18,9 +18,9 @@ export class Fixes {
   ) {}
 
   async startFix(repo: string, issueNumber: number): Promise<RunRecord> {
-    const issue = this.store.getIssue(repo, issueNumber);
+    const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
-    const repoRow = this.store.getRepo(repo);
+    const repoRow = this.store.repos.get(repo);
     if (!repoRow) throw new Error(`unknown repo ${repo}`);
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
@@ -72,18 +72,18 @@ export class Fixes {
   }
 
   async diff(runId: string): Promise<{ diff: string; branch: string | null }> {
-    const run = this.store.getRun(runId);
+    const run = this.store.runs.get(runId);
     if (!run || !run.repo) throw new Error('run not found or not a repo run');
-    const repoRow = this.store.getRepo(run.repo);
+    const repoRow = this.store.repos.get(run.repo);
     const diff = await this.checkouts.diffVsBase(run.cwd, repoRow?.default_branch ?? 'main');
     return { diff, branch: run.branch };
   }
 
   /** Human approved the diff: commit leftovers, push, open the PR. */
   async approve(runId: string, opts: { title?: string; body?: string } = {}): Promise<{ prUrl: string }> {
-    const run = this.store.getRun(runId);
+    const run = this.store.runs.get(runId);
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
-    const repoRow = this.store.getRepo(run.repo);
+    const repoRow = this.store.repos.get(run.repo);
     if (!repoRow) throw new Error(`unknown repo ${run.repo}`);
     const client = this.github();
     if (!client) throw new Error('GitHub is not configured');
@@ -99,18 +99,18 @@ export class Fixes {
         `${run.outcome ?? ''}\n\n${run.issue_number ? `Closes #${run.issue_number}.` : ''}`.trim(),
     });
 
-    this.store.setRunPr(runId, run.branch, pr.html_url);
+    this.store.runs.setPr(runId, run.branch, pr.html_url);
     this.orchestrator.markRun(runId, 'completed', `PR opened: ${pr.html_url}`);
     // Stop the gateway; the worktree stays for post-merge cleanup.
     await this.orchestrator.stopRun(runId).catch(() => undefined);
-    this.store.updateRunStatus(runId, 'completed');
+    this.store.runs.updateStatus(runId, 'completed');
     this.broadcast({ t: 'runs.changed' });
     return { prUrl: pr.html_url };
   }
 
   /** Human rejected the work: stop the run and drop the worktree. */
   async discard(runId: string): Promise<void> {
-    const run = this.store.getRun(runId);
+    const run = this.store.runs.get(runId);
     if (!run) throw new Error('run not found');
     await this.orchestrator.stopRun(runId).catch(() => undefined);
     if (run.repo && run.cwd.includes('worktrees')) {

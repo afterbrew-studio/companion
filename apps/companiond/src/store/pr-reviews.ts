@@ -1,0 +1,78 @@
+import type Database from 'better-sqlite3';
+import type { PrReviewResult, PrReviewVerdict } from '@companion/contract';
+import { safeParse } from './util.js';
+
+/** AI PR review verdicts; the latest row per PR wins. */
+export class PrReviewsStore {
+  constructor(private readonly db: Database.Database) {}
+
+  insert(r: PrReviewResult): void {
+    this.db
+      .prepare(
+        `INSERT INTO pr_reviews (id, repo, pr_number, run_id, status, verdict, error, created_at)
+         VALUES (@id, @repo, @prNumber, @runId, @status, @verdict, @error, @createdAt)`,
+      )
+      .run({ ...r, verdict: r.verdict ? JSON.stringify(r.verdict) : null });
+  }
+
+  update(id: string, status: PrReviewResult['status']): void {
+    this.db.prepare(`UPDATE pr_reviews SET status = ? WHERE id = ?`).run(status, id);
+  }
+
+  get(id: string): PrReviewResult | undefined {
+    const row = this.db.prepare(`SELECT * FROM pr_reviews WHERE id = ?`).get(id) as PrReviewRow | undefined;
+    return row ? prReviewRowToResult(row) : undefined;
+  }
+
+  latest(repo: string, prNumber: number): PrReviewResult | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM pr_reviews WHERE repo = ? AND pr_number = ? ORDER BY created_at DESC LIMIT 1`)
+      .get(repo, prNumber) as PrReviewRow | undefined;
+    return row ? prReviewRowToResult(row) : undefined;
+  }
+
+  /** Pending AI PR reviews across a workspace's repos — the review inbox. */
+  listWorkspacePending(workspaceId: string): PrReviewResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT p.* FROM pr_reviews p JOIN repos r ON r.full_name = p.repo
+         WHERE r.workspace_id = ? AND p.status = 'pending' ORDER BY p.created_at DESC`,
+      )
+      .all(workspaceId) as PrReviewRow[];
+    return rows.map(prReviewRowToResult);
+  }
+
+  latestByNumber(repo: string): Map<number, PrReviewResult['status']> {
+    const rows = this.db
+      .prepare(
+        `SELECT pr_number, status FROM pr_reviews t1 WHERE repo = ?
+         AND created_at = (SELECT MAX(created_at) FROM pr_reviews t2 WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number)`,
+      )
+      .all(repo) as Array<{ pr_number: number; status: PrReviewResult['status'] }>;
+    return new Map(rows.map((r) => [r.pr_number, r.status]));
+  }
+}
+
+interface PrReviewRow {
+  id: string;
+  repo: string;
+  pr_number: number;
+  run_id: string;
+  status: PrReviewResult['status'];
+  verdict: string | null;
+  error: string | null;
+  created_at: number;
+}
+
+function prReviewRowToResult(row: PrReviewRow): PrReviewResult {
+  return {
+    id: row.id,
+    repo: row.repo,
+    prNumber: row.pr_number,
+    runId: row.run_id,
+    status: row.status,
+    verdict: row.verdict ? safeParse<PrReviewVerdict | null>(row.verdict, null) : null,
+    error: row.error,
+    createdAt: row.created_at,
+  };
+}

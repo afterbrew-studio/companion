@@ -52,7 +52,7 @@ export class Orchestrator {
             waiters.clear();
           }
           // Autonomous goal runs land in review when their driving turn ends.
-          const row = this.store.getRun(runId);
+          const row = this.store.runs.get(runId);
           if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
             this.setStatus(runId, 'review');
             this.emitRunChanged(runId);
@@ -63,8 +63,11 @@ export class Orchestrator {
           // declared allow-policy (e.g. Glob on moxxy 0.26.0) reach the ask
           // path; auto-allow them — the real fences are the isolated
           // clone/worktree cwd and the permissions.json deny rules.
-          const row = this.store.getRun(runId);
-          if (row && row.kind !== 'interactive' && ask.kind === 'permission') {
+          // Attended kinds (interactive chats, the AI Help assistant) keep the
+          // human in the loop: their asks park in the UI.
+          const row = this.store.runs.get(runId);
+          const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
+          if (row && !attended && ask.kind === 'permission') {
             log.info('auto-allowing ask for unattended run', {
               runId,
               tool: ask.tool?.name,
@@ -87,7 +90,7 @@ export class Orchestrator {
             for (const resolve of [...waiters]) resolve();
             waiters.clear();
           }
-          const row = this.store.getRun(runId);
+          const row = this.store.runs.get(runId);
           if (row && (row.status === 'running' || row.status === 'provisioning')) {
             this.setStatus(runId, 'stopped');
           }
@@ -100,7 +103,7 @@ export class Orchestrator {
 
   /** Boot-time recovery: daemon died with children; rows are the truth. */
   recover(): void {
-    const swept = this.store.markInterruptedRuns();
+    const swept = this.store.runs.markInterrupted();
     if (swept > 0) log.info(`marked ${swept} run(s) interrupted from previous daemon life`);
     // Children die with the daemon, so every socket file left behind is stale.
     try {
@@ -119,11 +122,11 @@ export class Orchestrator {
   // ---------- queries -----------------------------------------------------------
 
   listRuns(): RunRecord[] {
-    return this.store.listRuns().map((row) => rowToRun(row, this.pool.get(row.id) !== undefined));
+    return this.store.runs.list().map((row) => rowToRun(row, this.pool.get(row.id) !== undefined));
   }
 
   getRun(runId: string): RunRecord | null {
-    const row = this.store.getRun(runId);
+    const row = this.store.runs.get(runId);
     return row ? rowToRun(row, this.pool.get(runId) !== undefined) : null;
   }
 
@@ -149,7 +152,7 @@ export class Orchestrator {
     // Each run gets its own cwd so concurrent agents never share a directory.
     const cwd = opts.cwd ?? join(paths.scratch(), id);
     mkdirSync(cwd, { recursive: true });
-    this.store.insertRun({
+    this.store.runs.insert({
       id,
       kind,
       status: 'provisioning',
@@ -183,7 +186,7 @@ export class Orchestrator {
 
   /** Re-attach a gateway to an existing (reaped/interrupted) run's session. */
   async resumeRun(runId: string): Promise<RunRecord> {
-    const row = this.store.getRun(runId);
+    const row = this.store.runs.get(runId);
     if (!row) throw new Error(`unknown run: ${runId}`);
     if (!this.pool.get(runId)) {
       mkdirSync(row.cwd, { recursive: true });
@@ -204,7 +207,7 @@ export class Orchestrator {
   async stopRun(runId: string): Promise<void> {
     const handle = this.pool.get(runId);
     if (handle) await handle.stop();
-    const row = this.store.getRun(runId);
+    const row = this.store.runs.get(runId);
     if (row && row.status === 'running') this.setStatus(runId, 'stopped');
     this.emitRunChanged(runId);
   }
@@ -214,8 +217,8 @@ export class Orchestrator {
    * an inbox notification for the ones a human acts on.
    */
   private setStatus(runId: string, status: RunRecord['status'], outcome?: string | null): void {
-    const prev = this.store.getRun(runId)?.status;
-    this.store.updateRunStatus(runId, status, outcome);
+    const prev = this.store.runs.get(runId)?.status;
+    this.store.runs.updateStatus(runId, status, outcome);
     if (prev === status) return;
     if (status === 'review') this.notifyRun(runId, 'action_required', 'Run ready for review');
     else if (status === 'completed') this.notifyRun(runId, 'finished', 'Run completed');
@@ -223,10 +226,10 @@ export class Orchestrator {
   }
 
   private notifyRun(runId: string, kind: NotificationKind, title: string, body?: string): void {
-    const run = this.store.getRun(runId);
+    const run = this.store.runs.get(runId);
     if (!run) return;
-    const workspaceId = run.repo ? (this.store.getRepo(run.repo)?.workspace_id ?? null) : null;
-    this.store.insertNotification({
+    const workspaceId = run.repo ? (this.store.repos.get(run.repo)?.workspace_id ?? null) : null;
+    this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
       workspaceId,
       kind,
@@ -248,7 +251,7 @@ export class Orchestrator {
   async sendPrompt(runId: string, prompt: string, model?: string): Promise<{ turnId: string }> {
     const handle = this.requireLive(runId);
     // Per-turn pin > the run's persisted override > the daemon default.
-    let chosen = model ?? this.store.getRun(runId)?.model ?? this.config.defaultModel;
+    let chosen = model ?? this.store.runs.get(runId)?.model ?? this.config.defaultModel;
     // Disabled selections quietly ride the daemon default instead of erroring.
     if (chosen !== this.config.defaultModel && this.disabledModels().has(chosen)) {
       chosen = this.config.defaultModel;
@@ -271,7 +274,7 @@ export class Orchestrator {
    * A pin pointing at a disabled model falls back to the daemon default.
    */
   private pinnedModel(kind: RunKind): string | null {
-    const pinned = this.store.getSetting(`modelPin:${kind}`);
+    const pinned = this.store.settings.get(`modelPin:${kind}`);
     if (!pinned || pinned.trim() === '') return null;
     return this.disabledModels().has(pinned) ? null : pinned;
   }
@@ -279,7 +282,7 @@ export class Orchestrator {
   /** Admin-disabled model ids (settings `disabledModels`, JSON array). */
   private disabledModels(): Set<string> {
     try {
-      const raw = this.store.getSetting('disabledModels');
+      const raw = this.store.settings.get('disabledModels');
       return new Set(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       return new Set();
@@ -289,7 +292,7 @@ export class Orchestrator {
   /** Admin-disabled provider names (settings `disabledProviders`, JSON array). */
   private disabledProviders(): Set<string> {
     try {
-      const raw = this.store.getSetting('disabledProviders');
+      const raw = this.store.settings.get('disabledProviders');
       return new Set(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       return new Set();
@@ -336,14 +339,14 @@ export class Orchestrator {
     // Cache the provider/model catalog so settings pages can offer dropdowns
     // even when no gateway is live anymore.
     try {
-      this.store.setSetting('modelCatalogCache', JSON.stringify({ providers }));
+      this.store.settings.set('modelCatalogCache', JSON.stringify({ providers }));
     } catch {
       // cache is best-effort
     }
     return {
       activeProvider: typeof info?.activeProvider === 'string' ? info.activeProvider : null,
       providers,
-      current: this.store.getRun(runId)?.model ?? this.config.defaultModel,
+      current: this.store.runs.get(runId)?.model ?? this.config.defaultModel,
       defaultModel: this.config.defaultModel,
     };
   }
@@ -378,7 +381,7 @@ export class Orchestrator {
 
   private readCatalogCache(): ModelCatalogProvider[] | null {
     try {
-      const raw = this.store.getSetting('modelCatalogCache');
+      const raw = this.store.settings.get('modelCatalogCache');
       if (!raw) return null;
       const parsed = JSON.parse(raw) as { providers?: ModelCatalogProvider[] };
       return parsed.providers ?? null;
@@ -425,7 +428,7 @@ export class Orchestrator {
    * the slash-command path (/provider, /model) is the supported fallback.
    */
   async setRunModel(runId: string, model: string | null, provider?: string): Promise<RunRecord> {
-    if (!this.store.getRun(runId)) throw new Error(`unknown run: ${runId}`);
+    if (!this.store.runs.get(runId)) throw new Error(`unknown run: ${runId}`);
     const handle = this.pool.get(runId);
     if (handle?.client.isOpen) {
       if (provider) {
@@ -439,7 +442,7 @@ export class Orchestrator {
         .catch(() => (model ? handle.client.runCommand('model', model) : undefined))
         .catch((err) => log.warn('session model sync failed', { runId, err: String(err) }));
     }
-    this.store.setRunModel(runId, model);
+    this.store.runs.setModel(runId, model);
     this.emitRunChanged(runId);
     return this.getRun(runId)!;
   }
@@ -512,7 +515,7 @@ export class Orchestrator {
         }
         if (finalMessage === null) {
           // Aborted stream, dead gateway, or timeout — never report success.
-          const status = this.store.getRun(run.id)?.status;
+          const status = this.store.runs.get(run.id)?.status;
           this.setStatus(
             run.id,
             'failed',
@@ -554,10 +557,10 @@ export class Orchestrator {
     if (event.type === 'provider_response') {
       const input = numberField(event, 'inputTokens');
       const output = numberField(event, 'outputTokens');
-      if (input || output) this.store.addRunUsage(runId, input, output);
+      if (input || output) this.store.runs.addUsage(runId, input, output);
       // moxxy's goal mode is uncapped (its built-in budgets were removed in
       // #439) — companiond's ceiling is the PRIMARY runaway-cost guard.
-      const row = this.store.getRun(runId);
+      const row = this.store.runs.get(runId);
       if (row && row.output_tokens > MAX_RUN_OUTPUT_TOKENS && row.status === 'running') {
         log.warn('run exceeded token ceiling — aborting', { runId, outputTokens: row.output_tokens });
         this.setStatus(runId, row.status, 'aborted: output token ceiling exceeded');
@@ -574,7 +577,7 @@ export class Orchestrator {
               (payload as { summary?: string; reason?: string }).reason ??
               subtype)
             : subtype;
-        this.setStatus(runId, this.store.getRun(runId)?.status ?? 'running', `${subtype}: ${summary}`);
+        this.setStatus(runId, this.store.runs.get(runId)?.status ?? 'running', `${subtype}: ${summary}`);
       }
     }
     this.broadcast({ t: 'event', runId, event });

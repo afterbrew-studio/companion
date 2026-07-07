@@ -31,7 +31,7 @@ export function userRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'users:manage',
       handler: ({ query }) => {
         const role = query.get('role');
-        return deps.store.searchUsers({
+        return deps.store.users.search({
           q: query.get('q') ?? undefined,
           role: role === 'admin' || role === 'maintainer' || role === 'business' ? role : undefined,
           limit: Number(query.get('limit')) || undefined,

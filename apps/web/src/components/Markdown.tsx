@@ -117,6 +117,47 @@ function renderBlocks(text: string): ReactNode[] {
       continue;
     }
 
+    // GFM table: a header row followed by the `---|---` separator row
+    if (line.includes('|') && i + 1 < lines.length && TABLE_SEPARATOR_RE.test(lines[i + 1]!)) {
+      const header = splitRow(line);
+      const aligns = splitRow(lines[i + 1]!).map((cell) =>
+        /^:-+:$/.test(cell) ? 'center' : /^-+:$/.test(cell) ? 'right' : undefined,
+      );
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '') {
+        rows.push(splitRow(lines[i]!));
+        i++;
+      }
+      out.push(
+        <div key={key++} className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                {header.map((cell, c) => (
+                  <th key={c} style={aligns[c] ? { textAlign: aligns[c] } : undefined}>
+                    {renderInline(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, r) => (
+                <tr key={r}>
+                  {header.map((_, c) => (
+                    <td key={c} style={aligns[c] ? { textAlign: aligns[c] } : undefined}>
+                      {renderInline(row[c] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+
     // blockquote
     if (line.startsWith('>')) {
       const buf: string[] = [];
@@ -164,13 +205,13 @@ function renderBlocks(text: string): ReactNode[] {
       continue;
     }
 
-    // paragraph: gather until blank/blocky line
+    // paragraph: gather until blank/blocky line (tables end a paragraph too)
     const buf: string[] = [line];
     i++;
     while (
       i < lines.length &&
       lines[i]!.trim() !== '' &&
-      !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\s*(-{3,}|\*{3,})\s*$)/.test(lines[i]!)
+      !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\s*(-{3,}|\*{3,})\s*$|\s*\|)/.test(lines[i]!)
     ) {
       buf.push(lines[i]!);
       i++;
@@ -178,6 +219,18 @@ function renderBlocks(text: string): ReactNode[] {
     out.push(<p key={key++}>{renderInline(buf.join(' '))}</p>);
   }
   return out;
+}
+
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+
+/** `| a | b |` → ['a', 'b'] (leading/trailing pipes optional). */
+function splitRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
 }
 
 // ---------- inline ------------------------------------------------------------------
@@ -213,8 +266,10 @@ function renderToken(token: string): ReactNode {
     const href = safeHref(link[3]!);
     const label = link[2] || link[3]!;
     if (!href) return label;
+    // In-app hash links (#/runs/x) navigate the SPA; external ones open a tab.
+    const external = !href.startsWith('#/');
     return (
-      <a href={href} target="_blank" rel="noreferrer">
+      <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>
         {link[1] === '!' ? `🖼 ${label}` : renderInline(label)}
       </a>
     );
@@ -230,7 +285,7 @@ function renderToken(token: string): ReactNode {
   return token;
 }
 
-/** http(s) only — javascript:/data: and friends render as plain text. */
+/** http(s) and in-app `#/` routes only — javascript:/data: render as plain text. */
 function safeHref(raw: string): string | null {
-  return /^https?:\/\//i.test(raw) ? raw : null;
+  return /^https?:\/\//i.test(raw) || /^#\//.test(raw) ? raw : null;
 }

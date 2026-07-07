@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './lib/auth.js';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
 import { ChevronDown, Dropdown, Modal } from './components/ui.js';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
+import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { Inbox } from './components/Inbox.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { MODULES } from './modules.js';
@@ -13,6 +14,8 @@ import { SetupPage } from './pages/Setup.js';
 import { UsersPage } from './pages/Users.js';
 import { DashboardPage } from './pages/Dashboard.js';
 import { ProposalsPage } from './pages/Proposals.js';
+import { SpecsPage } from './pages/Specs.js';
+import { DocsPage } from './pages/Docs.js';
 import { ReviewsPage } from './pages/Reviews.js';
 import { IssuesAreaPage } from './pages/IssuesArea.js';
 import { PrsAreaPage } from './pages/PrsArea.js';
@@ -62,7 +65,9 @@ function Gate(): JSX.Element {
 }
 
 const SECTION_LABELS: Record<string, string> = {
-  workspace: 'Areas',
+  workspace: 'Workspace',
+  plan: 'Plan',
+  code: 'Code',
   operate: 'Operate',
   admin: 'Admin',
 };
@@ -91,6 +96,23 @@ function Shell(): JSX.Element {
   const [collapsed, setCollapsed] = useState(localStorage.getItem('companion.sidebar') === 'collapsed');
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Per-group collapse, persisted — the set holds the folded section keys.
+  const [foldedSections, setFoldedSections] = useState<ReadonlySet<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('companion.nav-folded') ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleSection = (section: string): void => {
+    setFoldedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      localStorage.setItem('companion.nav-folded', JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   // Icon-only rail applies to the desktop collapsed state; the mobile drawer
   // always shows full content.
@@ -114,13 +136,24 @@ function Shell(): JSX.Element {
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   // Areas with activity since you last looked (dot on the nav item).
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     return onServerMessage((msg) => {
       const area =
-        msg.t === 'proposals.changed' ? 'proposals' : msg.t === 'issues.changed' ? 'issues' : msg.t === 'prs.changed' ? 'prs' : null;
+        msg.t === 'proposals.changed'
+          ? 'proposals'
+          : msg.t === 'specs.changed'
+            ? 'specs'
+            : msg.t === 'docs.changed'
+              ? 'docs'
+              : msg.t === 'issues.changed'
+                ? 'issues'
+                : msg.t === 'prs.changed'
+                  ? 'prs'
+                  : null;
       if (!area || location.hash.startsWith(`#/${area}`)) return;
       setFresh((prev) => (prev.has(area) ? prev : new Set(prev).add(area)));
     });
@@ -129,7 +162,7 @@ function Shell(): JSX.Element {
   // Visiting an area clears its dot.
   useEffect(() => {
     const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    const area = ['proposals', 'issues', 'prs'].find((a) => path.startsWith(`/${a}`));
+    const area = ['proposals', 'specs', 'docs', 'issues', 'prs'].find((a) => path.startsWith(`/${a}`));
     if (!area) return;
     setFresh((prev) => {
       if (!prev.has(area)) return prev;
@@ -202,11 +235,20 @@ function Shell(): JSX.Element {
                   {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
                 </div>
               ) : (
-                <div className="dim flex h-5 items-end px-2 pb-1 text-[10px] font-medium tracking-widest uppercase">
+                <button
+                  type="button"
+                  className="dim flex h-5 w-full cursor-pointer items-end justify-between px-2 pb-1 text-[10px] font-medium tracking-widest uppercase transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
+                  onClick={() => toggleSection(section)}
+                  aria-expanded={!foldedSections.has(section)}
+                >
                   {SECTION_LABELS[section]}
-                </div>
+                  <ChevronDown open={!foldedSections.has(section)} className="size-3" />
+                </button>
               )}
-              {modules.map((m) => {
+              {/* The icon rail ignores folding — hiding icons there saves nothing. */}
+              {!rail && foldedSections.has(section)
+                ? null
+                : modules.map((m) => {
                 const active = hash.startsWith(m.hash) || (m.key === 'overview' && hash === '#/');
                 return (
                   <a
@@ -288,12 +330,15 @@ function Shell(): JSX.Element {
           collapsed={collapsed}
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
+          assistantOpen={assistantOpen}
+          onToggleAssistant={() => setAssistantOpen((o) => !o)}
         />
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
           <Route hash={hash} />
         </main>
       </div>
 
+      {assistantOpen ? <AssistantPanel onClose={() => setAssistantOpen(false)} /> : null}
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       {helpOpen ? <ShortcutHelp targets={shortcutTargets} onClose={() => setHelpOpen(false)} /> : null}
     </div>
@@ -567,12 +612,16 @@ function TopBar({
   collapsed,
   onToggleSidebar,
   onOpenPalette,
+  assistantOpen,
+  onToggleAssistant,
 }: {
   hash: string;
   chordPending: boolean;
   collapsed: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
+  assistantOpen: boolean;
+  onToggleAssistant: () => void;
 }): JSX.Element {
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
   const crumbs = crumbsFor(path);
@@ -631,6 +680,7 @@ function TopBar({
       </button>
       <Inbox />
       <AgentsStatus />
+      <AssistantButton open={assistantOpen} onClick={onToggleAssistant} />
     </div>
   );
 }
@@ -682,6 +732,8 @@ function Route({ hash }: { hash: string }): JSX.Element {
 
   if (path.startsWith('/reviews')) return guard(can('runs:read'), <ReviewsPage />);
   if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
+  if (path.startsWith('/specs')) return guard(can('specs:read'), <SpecsPage />);
+  if (path.startsWith('/docs')) return guard(can('docs:read'), <DocsPage />);
   if (path.startsWith('/issues')) return guard(can('issues:read'), <IssuesAreaPage />);
   if (path.startsWith('/prs')) return guard(can('prs:read'), <PrsAreaPage />);
   if (path.startsWith('/pipelines')) return guard(can('pipelines:read'), <PipelinesPage />);

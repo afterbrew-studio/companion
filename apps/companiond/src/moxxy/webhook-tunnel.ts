@@ -31,7 +31,7 @@ export class WebhookTunnel {
   }
 
   enabled(): boolean {
-    return this.store.getSetting('webhookTunnel') === 'on';
+    return this.store.settings.get('webhookTunnel') === 'on';
   }
 
   /** Absolute delivery URL for a receiver path, when the tunnel is up. */
@@ -55,7 +55,7 @@ export class WebhookTunnel {
       });
       const handle = await provider.open({ host: '127.0.0.1', port: this.port, label: LABEL });
       this.handle = handle;
-      this.store.setSetting('webhookTunnel', 'on');
+      this.store.settings.set('webhookTunnel', 'on');
       log.info('webhook tunnel up', { url: handle.url });
       return handle.url;
     })();
@@ -67,7 +67,7 @@ export class WebhookTunnel {
   }
 
   async stop(): Promise<void> {
-    this.store.setSetting('webhookTunnel', '');
+    this.store.settings.set('webhookTunnel', '');
     const h = this.handle;
     this.handle = null;
     if (h) await h.close();

@@ -9,7 +9,7 @@ export function notificationRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/notifications',
       access: 'workspaces:read',
       handler: ({ query }) => ({
-        notifications: deps.store.listNotifications(query.get('workspace')),
+        notifications: deps.store.notifications.list(query.get('workspace')),
       }),
     }),
 
@@ -18,7 +18,7 @@ export function notificationRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/notifications/:id/read',
       access: 'workspaces:read',
       handler: ({ params }) => {
-        deps.store.markNotificationRead(params.id);
+        deps.store.notifications.markRead(params.id);
         deps.broadcast({ t: 'notifications.changed' });
         return { ok: true };
       },
@@ -29,7 +29,7 @@ export function notificationRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/notifications/read-all',
       access: 'workspaces:read',
       handler: ({ query }) => {
-        deps.store.markAllNotificationsRead(query.get('workspace'));
+        deps.store.notifications.markAllRead(query.get('workspace'));
         deps.broadcast({ t: 'notifications.changed' });
         return { ok: true };
       },

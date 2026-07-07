@@ -19,7 +19,7 @@ const moveSchema = z.object({ workspaceId: z.string().min(1) });
 export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
   const requireRepo = (owner: string, name: string) => {
     const fullName = `${owner}/${name}`;
-    const row = deps.store.getRepo(fullName);
+    const row = deps.store.repos.get(fullName);
     if (!row) throw notFound(`repo ${fullName} not connected`);
     return { fullName, row };
   };
@@ -30,9 +30,9 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos',
       access: 'repos:read',
       handler: () => ({
-        repos: deps.store.listRepos().map((row) => ({
+        repos: deps.store.repos.list().map((row) => ({
           ...rowToRepo(row),
-          openIssues: deps.store.listIssues(row.full_name, 'open').length,
+          openIssues: deps.store.issues.list(row.full_name, 'open').length,
         })),
       }),
     }),
@@ -45,11 +45,11 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: async ({ body }) => {
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured (set a PAT first)');
-        if (!deps.store.getWorkspace(body.workspaceId)) {
+        if (!deps.store.workspaces.get(body.workspaceId)) {
           throw badRequest(`workspace ${body.workspaceId} not found`);
         }
         const meta = await client.repo(body.fullName);
-        deps.store.upsertRepo({
+        deps.store.repos.upsert({
           fullName: meta.full_name,
           owner: meta.owner.login,
           name: meta.name,
@@ -61,14 +61,14 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
         void (async () => {
           try {
             await deps.checkouts.clone(meta.full_name);
-            deps.store.setRepoCloneReady(meta.full_name, true);
+            deps.store.repos.setCloneReady(meta.full_name, true);
             await deps.sync.syncRepo(meta.full_name);
           } catch (err) {
             log.warn('repo provisioning failed', { repo: meta.full_name, err: String(err) });
           }
         })();
         deps.broadcast({ t: 'repos.changed' });
-        return created({ repo: rowToRepo(deps.store.getRepo(meta.full_name)!) });
+        return created({ repo: rowToRepo(deps.store.repos.get(meta.full_name)!) });
       },
     }),
 
@@ -78,7 +78,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'repos:manage',
       handler: ({ params }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        deps.store.removeRepo(fullName);
+        deps.store.repos.remove(fullName);
         deps.broadcast({ t: 'repos.changed' });
         return { ok: true };
       },
@@ -91,12 +91,12 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       body: moveSchema,
       handler: ({ params, body }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        if (!deps.store.getWorkspace(body.workspaceId)) {
+        if (!deps.store.workspaces.get(body.workspaceId)) {
           throw badRequest(`workspace ${body.workspaceId} not found`);
         }
-        deps.store.setRepoWorkspace(fullName, body.workspaceId);
+        deps.store.repos.setWorkspace(fullName, body.workspaceId);
         deps.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(deps.store.getRepo(fullName)!) };
+        return { repo: rowToRepo(deps.store.repos.get(fullName)!) };
       },
     }),
 
@@ -120,9 +120,9 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
         if (body.accountId && !deps.githubAccounts.list().some((a) => a.id === body.accountId)) {
           throw notFound(`unknown GitHub account: ${body.accountId}`);
         }
-        deps.store.setRepoGithubAccount(fullName, body.accountId);
+        deps.store.repos.setGithubAccount(fullName, body.accountId);
         deps.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(deps.store.getRepo(fullName)!) };
+        return { repo: rowToRepo(deps.store.repos.get(fullName)!) };
       },
     }),
 
@@ -133,7 +133,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'pipelines:run',
       handler: ({ params }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        const pipeline = deps.store.getPipeline(params.pipelineId);
+        const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'platform') {
           throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
         }
@@ -149,12 +149,12 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       body: automationSchema,
       handler: ({ params, body }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        if (body.autoTriage !== undefined) deps.store.setRepoAutomation(fullName, 'auto_triage', body.autoTriage);
-        if (body.digest !== undefined) deps.store.setRepoAutomation(fullName, 'digest_enabled', body.digest);
-        if (body.staleSweep !== undefined) deps.store.setRepoAutomation(fullName, 'stale_enabled', body.staleSweep);
-        if (body.prGate !== undefined) deps.store.setRepoAutomation(fullName, 'pr_gate', body.prGate);
+        if (body.autoTriage !== undefined) deps.store.repos.setAutomation(fullName, 'auto_triage', body.autoTriage);
+        if (body.digest !== undefined) deps.store.repos.setAutomation(fullName, 'digest_enabled', body.digest);
+        if (body.staleSweep !== undefined) deps.store.repos.setAutomation(fullName, 'stale_enabled', body.staleSweep);
+        if (body.prGate !== undefined) deps.store.repos.setAutomation(fullName, 'pr_gate', body.prGate);
         deps.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(deps.store.getRepo(fullName)!) };
+        return { repo: rowToRepo(deps.store.repos.get(fullName)!) };
       },
     }),
 
@@ -242,7 +242,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
         const { fullName } = requireRepo(params.owner, params.name);
         const state = query.get('state');
         return {
-          issues: deps.store.listIssues(fullName, state === 'open' || state === 'closed' ? state : undefined),
+          issues: deps.store.issues.list(fullName, state === 'open' || state === 'closed' ? state : undefined),
         };
       },
     }),
@@ -253,7 +253,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'prs:read',
       handler: ({ params }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        return { prs: deps.store.listPrs(fullName) };
+        return { prs: deps.store.prs.list(fullName) };
       },
     }),
 
@@ -263,7 +263,7 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'issues:read',
       handler: ({ params }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        return { results: deps.store.listTriage(fullName) };
+        return { results: deps.store.triage.list(fullName) };
       },
     }),
   ];

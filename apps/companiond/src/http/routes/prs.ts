@@ -10,7 +10,7 @@ const commentSchema = z.object({ body: z.string().min(1).max(64_000) });
 export function prRoutes(deps: ApiDeps): CompiledRoute[] {
   const requirePr = (owner: string, name: string, number: string) => {
     const fullName = `${owner}/${name}`;
-    const pr = deps.store.getPr(fullName, Number(number));
+    const pr = deps.store.prs.get(fullName, Number(number));
     if (!pr) throw notFound(`PR ${fullName}#${number} not found`);
     return { fullName, pr };
   };
@@ -24,9 +24,9 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
         const { fullName, pr } = requirePr(params.owner, params.name, params.number);
         return {
           pr,
-          review: deps.store.latestPrReview(fullName, pr.number) ?? null,
-          pipelineRuns: deps.store.listPipelineRunsForPr(fullName, pr.number),
-          ciAnalysis: deps.store.latestReportFor(fullName, pr.number, 'ci-analysis'),
+          review: deps.store.prReviews.latest(fullName, pr.number) ?? null,
+          pipelineRuns: deps.store.pipelines.listRunsForPr(fullName, pr.number),
+          ciAnalysis: deps.store.reports.latestFor(fullName, pr.number, 'ci-analysis'),
         };
       },
     }),
@@ -132,7 +132,7 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'pipelines:run',
       handler: ({ params }) => {
         const { fullName, pr } = requirePr(params.owner, params.name, params.number);
-        const pipeline = deps.store.getPipeline(params.pipelineId);
+        const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = deps.pipelines.start(params.pipelineId, fullName, pr.number, 'manual');
         return created({ run });
@@ -145,7 +145,7 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'prs:read',
       handler: ({ params }) => {
         const { fullName, pr } = requirePr(params.owner, params.name, params.number);
-        return { runs: deps.store.listPipelineRunsForPr(fullName, pr.number) };
+        return { runs: deps.store.pipelines.listRunsForPr(fullName, pr.number) };
       },
     }),
 

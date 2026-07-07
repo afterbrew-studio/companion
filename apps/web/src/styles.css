@@ -174,6 +174,16 @@
   .markdown a {
     @apply font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-current dark:text-zinc-100 dark:decoration-zinc-500;
   }
+  .markdown table {
+    @apply my-2 w-full border-collapse text-[13px];
+  }
+  .markdown th,
+  .markdown td {
+    @apply border border-zinc-200 px-2.5 py-1.5 text-left align-top dark:border-zinc-700;
+  }
+  .markdown th {
+    @apply bg-zinc-50 font-semibold dark:bg-zinc-900;
+  }
 
   /* highlight.js tokens (fenced code) — GitHub-ish hues on the zinc palette. */
   .hljs-comment,
@@ -277,10 +287,145 @@
       opacity: 0.55;
     }
   }
+  /* AI Help header button: a slow, soft emerald breath — noticeable at a
+     glance, quiet enough to live in the chrome all day. */
+  @keyframes ai-breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+    }
+    50% {
+      box-shadow: 0 0 8px 1.5px rgb(16 185 129 / 0.35);
+    }
+  }
   .anim-in {
     animation: rise-in 220ms ease-out both;
   }
   .skeleton {
     animation: shimmer 1.4s ease-in-out infinite;
+  }
+  .ai-glow {
+    animation: ai-breathe 3.2s ease-in-out infinite;
+  }
+  .ai-glow:hover,
+  .ai-glow[aria-expanded='true'] {
+    animation: none;
+    box-shadow: 0 0 8px 1.5px rgb(16 185 129 / 0.35);
+  }
+
+  /* The assistant mascot, a hovering robo-puppy: the body floats while its
+     shadow breathes in counterphase, the tail wags nonstop, both eyes blink
+     on a long cycle, the gaze wanders, one ear twitches, the chest pulses. */
+  @keyframes ai-pet-float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+  @keyframes ai-pet-shadow {
+    0%,
+    100% {
+      transform: scaleX(1);
+      opacity: 0.18;
+    }
+    50% {
+      transform: scaleX(0.82);
+      opacity: 0.12;
+    }
+  }
+  @keyframes ai-pet-blink {
+    0%,
+    90%,
+    96%,
+    100% {
+      transform: scaleY(1);
+    }
+    92%,
+    94% {
+      transform: scaleY(0.08);
+    }
+  }
+  @keyframes ai-pet-gaze {
+    0%,
+    24%,
+    58%,
+    100% {
+      transform: translateX(0);
+    }
+    30%,
+    40% {
+      transform: translateX(-3px);
+    }
+    66%,
+    76% {
+      transform: translateX(3px);
+    }
+  }
+  @keyframes ai-pet-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes ai-pet-wag {
+    0%,
+    100% {
+      transform: rotate(-9deg);
+    }
+    50% {
+      transform: rotate(13deg);
+    }
+  }
+  @keyframes ai-pet-ear {
+    0%,
+    88%,
+    100% {
+      transform: rotate(0deg);
+    }
+    91%,
+    95% {
+      transform: rotate(-10deg);
+    }
+    93%,
+    97% {
+      transform: rotate(4deg);
+    }
+  }
+  .ai-pet-float {
+    animation: ai-pet-float 3.6s ease-in-out infinite;
+  }
+  .ai-pet-shadow {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ai-pet-shadow 3.6s ease-in-out infinite;
+  }
+  .ai-pet-eye {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ai-pet-blink 4.4s ease-in-out infinite;
+  }
+  .ai-pet-gaze {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ai-pet-gaze 9s ease-in-out infinite;
+  }
+  .ai-pet-heart {
+    animation: ai-pet-pulse 2.4s ease-in-out infinite;
+  }
+  .ai-pet-wag {
+    transform-box: fill-box;
+    transform-origin: left center;
+    animation: ai-pet-wag 0.9s ease-in-out infinite;
+  }
+  .ai-pet-ear {
+    transform-box: fill-box;
+    transform-origin: bottom center;
+    animation: ai-pet-ear 6s ease-in-out infinite;
   }
 }

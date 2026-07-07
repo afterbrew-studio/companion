@@ -18,21 +18,21 @@ export class GitHubAccounts {
 
   /** One-time adoption of the legacy single PAT (settings table) into the registry. */
   migrateLegacyToken(): void {
-    const token = this.store.getSetting('github_token');
-    if (!token || this.store.listGithubAccounts().length > 0) return;
+    const token = this.store.settings.get('github_token');
+    if (!token || this.store.githubAccounts.list().length > 0) return;
     const id = `gha-${randomUUID().slice(0, 12)}`;
-    this.store.insertGithubAccount({ id, login: '', token, purposes: GITHUB_PURPOSES, createdAt: Date.now() });
+    this.store.githubAccounts.insert({ id, login: '', token, purposes: GITHUB_PURPOSES, createdAt: Date.now() });
     // The token was validated when it was saved; fill the login lazily.
     new GitHubClient(token)
       .viewer()
-      .then((v) => this.store.updateGithubAccount(id, { login: v.login }))
+      .then((v) => this.store.githubAccounts.update(id, { login: v.login }))
       .catch((err) => log.warn('legacy GitHub token failed validation during migration', { err: String(err) }));
     log.info('migrated legacy GitHub token into the accounts registry');
   }
 
   list(): GitHubAccountRecord[] {
-    return this.store
-      .listGithubAccounts()
+    return this.store.githubAccounts
+      .list()
       .map(({ id, login, purposes, createdAt }) => ({ id, login, purposes, createdAt }));
   }
 
@@ -40,27 +40,27 @@ export class GitHubAccounts {
   async add(token: string, purposes: readonly GitHubPurpose[]): Promise<GitHubAccountRecord> {
     const client = new GitHubClient(token);
     const viewer = await client.viewer();
-    const existing = this.store.listGithubAccounts().find((a) => a.login === viewer.login);
+    const existing = this.store.githubAccounts.list().find((a) => a.login === viewer.login);
     if (existing) {
-      this.store.updateGithubAccount(existing.id, { token, purposes });
+      this.store.githubAccounts.update(existing.id, { token, purposes });
       this.clients.set(existing.id, client);
       return { id: existing.id, login: viewer.login, purposes, createdAt: existing.createdAt };
     }
     const id = `gha-${randomUUID().slice(0, 12)}`;
-    this.store.insertGithubAccount({ id, login: viewer.login, token, purposes, createdAt: Date.now() });
+    this.store.githubAccounts.insert({ id, login: viewer.login, token, purposes, createdAt: Date.now() });
     this.clients.set(id, client);
     return { id, login: viewer.login, purposes, createdAt: Date.now() };
   }
 
   setPurposes(id: string, purposes: readonly GitHubPurpose[]): GitHubAccountRecord {
-    const row = this.store.listGithubAccounts().find((a) => a.id === id);
+    const row = this.store.githubAccounts.list().find((a) => a.id === id);
     if (!row) throw new Error(`unknown GitHub account: ${id}`);
-    this.store.updateGithubAccount(id, { purposes });
+    this.store.githubAccounts.update(id, { purposes });
     return { id, login: row.login, purposes, createdAt: row.createdAt };
   }
 
   remove(id: string): void {
-    this.store.deleteGithubAccount(id);
+    this.store.githubAccounts.delete(id);
     this.clients.delete(id);
   }
 
@@ -89,13 +89,13 @@ export class GitHubAccounts {
   }
 
   private rowFor(purpose: GitHubPurpose, ctx?: { repo?: string; accountId?: string }) {
-    const rows = this.store.listGithubAccounts();
+    const rows = this.store.githubAccounts.list();
     if (ctx?.accountId) {
       const explicit = rows.find((r) => r.id === ctx.accountId);
       if (explicit) return explicit;
     }
     if (ctx?.repo) {
-      const pin = this.store.getRepo(ctx.repo)?.github_account_id;
+      const pin = this.store.repos.get(ctx.repo)?.github_account_id;
       if (pin) {
         const pinned = rows.find((r) => r.id === pin);
         if (pinned) return pinned;

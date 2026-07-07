@@ -11,7 +11,7 @@ const stateSchema = z.object({ state: z.enum(['open', 'closed']) });
 export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
   const requireIssue = (owner: string, name: string, number: string) => {
     const fullName = `${owner}/${name}`;
-    const issue = deps.store.getIssue(fullName, Number(number));
+    const issue = deps.store.issues.get(fullName, Number(number));
     if (!issue) throw notFound(`issue ${fullName}#${number} not found`);
     return { fullName, issue };
   };
@@ -23,7 +23,7 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'issues:read',
       handler: ({ params }) => {
         const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
-        return { issue, triage: deps.store.latestTriage(fullName, issue.number) ?? null };
+        return { issue, triage: deps.store.triage.latest(fullName, issue.number) ?? null };
       },
     }),
 
@@ -108,9 +108,9 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'pipelines:run',
       handler: ({ params }) => {
         const fullName = `${params.owner}/${params.name}`;
-        const issue = deps.store.getIssue(fullName, Number(params.number));
+        const issue = deps.store.issues.get(fullName, Number(params.number));
         if (!issue) throw notFound(`issue ${fullName}#${params.number} not found`);
-        const pipeline = deps.store.getPipeline(params.pipelineId);
+        const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = deps.pipelines.start(params.pipelineId, fullName, issue.number, 'manual');
         return created({ run });
@@ -123,7 +123,7 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'issues:read',
       handler: ({ params }) => {
         const fullName = `${params.owner}/${params.name}`;
-        return { runs: deps.store.listPipelineRunsForIssue(fullName, Number(params.number)) };
+        return { runs: deps.store.pipelines.listRunsForIssue(fullName, Number(params.number)) };
       },
     }),
 

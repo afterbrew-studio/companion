@@ -353,14 +353,14 @@ export class Pipelines {
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {
     this.registry = createStepRegistry(deps);
-    const swept = deps.store.markInterruptedPipelineRuns();
+    const swept = deps.store.pipelines.markInterruptedRuns();
     if (swept > 0) log.info(`marked ${swept} pipeline run(s) interrupted from previous daemon life`);
   }
 
   // ---------- definitions CRUD ---------------------------------------------------
 
   list(workspaceId: string): PipelineRecord[] {
-    return this.deps.store.listPipelines(workspaceId);
+    return this.deps.store.pipelines.list(workspaceId);
   }
 
   create(workspaceId: string, input: z.infer<typeof savePipelineSchema>): PipelineRecord {
@@ -376,15 +376,15 @@ export class Pipelines {
       createdAt: now,
       updatedAt: now,
     };
-    this.deps.store.insertPipeline(record);
+    this.deps.store.pipelines.insert(record);
     this.broadcast({ t: 'pipelines.changed' });
     return record;
   }
 
   update(id: string, input: Partial<z.infer<typeof savePipelineSchema>>): PipelineRecord {
-    const existing = this.deps.store.getPipeline(id);
+    const existing = this.deps.store.pipelines.get(id);
     if (!existing) throw new Error(`unknown pipeline ${id}`);
-    this.deps.store.updatePipeline(id, {
+    this.deps.store.pipelines.update(id, {
       type: input.type,
       name: input.name,
       description: input.description,
@@ -392,18 +392,18 @@ export class Pipelines {
       autoRunOnPrOpen: input.autoRunOnPrOpen,
     });
     this.broadcast({ t: 'pipelines.changed' });
-    return this.deps.store.getPipeline(id)!;
+    return this.deps.store.pipelines.get(id)!;
   }
 
   remove(id: string): void {
-    this.deps.store.deletePipeline(id);
+    this.deps.store.pipelines.delete(id);
     this.broadcast({ t: 'pipelines.changed' });
   }
 
   // ---------- step library CRUD ----------------------------------------------------
 
   listStepDefinitions(workspaceId: string): StepDefinitionRecord[] {
-    return this.deps.store.listStepDefinitions(workspaceId);
+    return this.deps.store.pipelines.listStepDefinitions(workspaceId);
   }
 
   createStepDefinition(
@@ -420,7 +420,7 @@ export class Pipelines {
       createdAt: now,
       updatedAt: now,
     };
-    this.deps.store.insertStepDefinition(record);
+    this.deps.store.pipelines.insertStepDefinition(record);
     this.broadcast({ t: 'pipelines.changed' });
     return record;
   }
@@ -429,19 +429,19 @@ export class Pipelines {
     id: string,
     input: Partial<z.infer<typeof saveStepDefinitionSchema>>,
   ): StepDefinitionRecord {
-    const existing = this.deps.store.getStepDefinition(id);
+    const existing = this.deps.store.pipelines.getStepDefinition(id);
     if (!existing) throw new Error(`unknown step definition ${id}`);
-    this.deps.store.updateStepDefinition(id, {
+    this.deps.store.pipelines.updateStepDefinition(id, {
       name: input.name,
       description: input.description,
       step: input.step ? { ...(input.step as PipelineStep), name: input.name ?? existing.name } : undefined,
     });
     this.broadcast({ t: 'pipelines.changed' });
-    return this.deps.store.getStepDefinition(id)!;
+    return this.deps.store.pipelines.getStepDefinition(id)!;
   }
 
   removeStepDefinition(id: string): void {
-    this.deps.store.deleteStepDefinition(id);
+    this.deps.store.pipelines.deleteStepDefinition(id);
     this.broadcast({ t: 'pipelines.changed' });
   }
 
@@ -452,18 +452,18 @@ export class Pipelines {
    * execution continues in the background and streams over pipelineRuns.changed.
    */
   start(pipelineId: string, repo: string, targetNumber: number, trigger: PipelineTrigger): PipelineRunRecord {
-    const pipeline = this.deps.store.getPipeline(pipelineId);
+    const pipeline = this.deps.store.pipelines.get(pipelineId);
     if (!pipeline) throw new Error(`unknown pipeline ${pipelineId}`);
     // The pipeline's type decides the payload it needs.
     let pr: PrRecord | null = null;
     let issue: IssueRecord | null = null;
     if (pipeline.type === 'pr') {
-      pr = this.deps.store.getPr(repo, targetNumber) ?? null;
+      pr = this.deps.store.prs.get(repo, targetNumber) ?? null;
       if (!pr) throw new Error(`unknown PR ${repo}#${targetNumber}`);
     } else if (pipeline.type === 'issue') {
-      issue = this.deps.store.getIssue(repo, targetNumber) ?? null;
+      issue = this.deps.store.issues.get(repo, targetNumber) ?? null;
       if (!issue) throw new Error(`unknown issue ${repo}#${targetNumber}`);
-    } else if (!this.deps.store.getRepo(repo)) {
+    } else if (!this.deps.store.repos.get(repo)) {
       throw new Error(`repo ${repo} is not connected`);
     }
 
@@ -485,7 +485,7 @@ export class Pipelines {
       createdAt: Date.now(),
       finishedAt: null,
     };
-    this.deps.store.insertPipelineRun(run);
+    this.deps.store.pipelines.insertRun(run);
     this.broadcast({ t: 'pipelineRuns.changed', repo });
 
     void this.execute(run.id, resolved, { repo, type: pipeline.type, pr, issue }).catch((err) => {
@@ -505,10 +505,10 @@ export class Pipelines {
   }
 
   private autoRun(repo: string, number: number, type: PipelineType, trigger: PipelineTrigger): void {
-    const repoRow = this.deps.store.getRepo(repo);
+    const repoRow = this.deps.store.repos.get(repo);
     if (!repoRow) return;
-    const auto = this.deps.store
-      .listPipelines(repoRow.workspace_id)
+    const auto = this.deps.store.pipelines
+      .list(repoRow.workspace_id)
       .filter((p) => p.autoRunOnPrOpen && p.type === type);
     for (const pipeline of auto) {
       try {
@@ -529,7 +529,7 @@ export class Pipelines {
         }
         return { ok: true, step: spec.step };
       }
-      const def = this.deps.store.getStepDefinition(spec.stepDefinitionId);
+      const def = this.deps.store.pipelines.getStepDefinition(spec.stepDefinitionId);
       if (!def) {
         return {
           ok: false,
@@ -557,10 +557,10 @@ export class Pipelines {
 
   private async execute(runId: string, resolved: ResolvedStep[], ctx: StepContext): Promise<void> {
     const steps: PipelineStepResult[] = [
-      ...(this.deps.store.getPipelineRun(runId)?.steps ?? []),
+      ...(this.deps.store.pipelines.getRun(runId)?.steps ?? []),
     ];
     const save = (): void => {
-      this.deps.store.updatePipelineRun(runId, { steps });
+      this.deps.store.pipelines.updateRun(runId, { steps });
       this.broadcast({ t: 'pipelineRuns.changed', repo: ctx.repo });
     };
 
@@ -602,7 +602,7 @@ export class Pipelines {
       : steps.some((s) => s.status === 'failed')
         ? 'failed'
         : 'passed';
-    this.deps.store.updatePipelineRun(runId, { status, steps, finishedAt: Date.now() });
+    this.deps.store.pipelines.updateRun(runId, { status, steps, finishedAt: Date.now() });
     this.broadcast({ t: 'pipelineRuns.changed', repo: ctx.repo });
     log.info('pipeline run finished', { runId, status });
   }

@@ -14,7 +14,7 @@ const workspacePatchSchema = workspaceSchema.partial();
 /** Workspace lifecycle + the per-workspace area feeds. */
 export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
   const requireWorkspace = (id: string) => {
-    const ws = deps.store.getWorkspace(id);
+    const ws = deps.store.workspaces.get(id);
     if (!ws) throw notFound(`workspace ${id} not found`);
     return ws;
   };
@@ -24,7 +24,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces',
       access: 'workspaces:read',
-      handler: () => ({ workspaces: deps.store.listWorkspaces() }),
+      handler: () => ({ workspaces: deps.store.workspaces.list() }),
     }),
 
     route({
@@ -34,12 +34,12 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       body: workspaceSchema,
       handler: ({ body }) => {
         const id = `ws-${randomUUID().slice(0, 12)}`;
-        const taken = new Set(deps.store.listWorkspaces().map((w) => w.slug));
+        const taken = new Set(deps.store.workspaces.list().map((w) => w.slug));
         let slug = slugify(body.name, id);
         if (taken.has(slug)) slug = `${slug}-${id.slice(3, 7)}`;
-        deps.store.insertWorkspace({ id, name: body.name, slug, description: body.description });
+        deps.store.workspaces.insert({ id, name: body.name, slug, description: body.description });
         deps.broadcast({ t: 'workspaces.changed' });
-        return created({ workspace: deps.store.getWorkspace(id) });
+        return created({ workspace: deps.store.workspaces.get(id) });
       },
     }),
 
@@ -50,9 +50,9 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       body: workspacePatchSchema,
       handler: ({ params, body }) => {
         requireWorkspace(params.id);
-        deps.store.updateWorkspace(params.id, body);
+        deps.store.workspaces.update(params.id, body);
         deps.broadcast({ t: 'workspaces.changed' });
-        return { workspace: deps.store.getWorkspace(params.id) };
+        return { workspace: deps.store.workspaces.get(params.id) };
       },
     }),
 
@@ -65,10 +65,10 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
         if (ws.repoCount > 0) {
           throw badRequest('workspace still has repos — move or remove them first');
         }
-        if (deps.store.listWorkspaces().length === 1) {
+        if (deps.store.workspaces.list().length === 1) {
           throw badRequest('cannot delete the last workspace');
         }
-        deps.store.deleteWorkspace(params.id);
+        deps.store.workspaces.delete(params.id);
         deps.broadcast({ t: 'workspaces.changed' });
         return { ok: true };
       },
@@ -83,9 +83,9 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: ({ params }) => {
         requireWorkspace(params.id);
         return {
-          repos: deps.store.listReposByWorkspace(params.id).map((row) => ({
+          repos: deps.store.repos.listByWorkspace(params.id).map((row) => ({
             ...rowToRepo(row),
-            openIssues: deps.store.listIssues(row.full_name, 'open').length,
+            openIssues: deps.store.issues.list(row.full_name, 'open').length,
           })),
         };
       },
@@ -98,7 +98,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: ({ params, query }) => {
         requireWorkspace(params.id);
         const state = query.get('state');
-        return deps.store.listWorkspaceIssuesPaged(
+        return deps.store.issues.listWorkspacePaged(
           params.id,
           state === 'open' || state === 'closed' ? state : undefined,
           {
@@ -121,7 +121,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: ({ params, query }) => {
         requireWorkspace(params.id);
         const state = query.get('state');
-        const page = deps.store.listWorkspacePrsPaged(
+        const page = deps.store.prs.listWorkspacePaged(
           params.id,
           state === 'open' || state === 'merged' || state === 'closed' ? state : undefined,
           {
@@ -149,17 +149,17 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'runs:read',
       handler: ({ params }) => {
         requireWorkspace(params.id);
-        const repoNames = new Set(deps.store.listReposByWorkspace(params.id).map((r) => r.full_name));
+        const repoNames = new Set(deps.store.repos.listByWorkspace(params.id).map((r) => r.full_name));
         const runs = deps.orchestrator
           .listRuns()
           .filter((r) => r.status === 'review' && r.repo !== null && repoNames.has(r.repo));
-        const prReviews = deps.store.listWorkspacePendingPrReviews(params.id).map((review) => ({
+        const prReviews = deps.store.prReviews.listWorkspacePending(params.id).map((review) => ({
           review,
-          title: deps.store.getPr(review.repo, review.prNumber)?.title ?? `PR #${review.prNumber}`,
+          title: deps.store.prs.get(review.repo, review.prNumber)?.title ?? `PR #${review.prNumber}`,
         }));
-        const triage = deps.store.listWorkspacePendingTriage(params.id).map((t) => ({
+        const triage = deps.store.triage.listWorkspacePending(params.id).map((t) => ({
           triage: t,
-          title: deps.store.getIssue(t.repo, t.issueNumber)?.title ?? `Issue #${t.issueNumber}`,
+          title: deps.store.issues.get(t.repo, t.issueNumber)?.title ?? `Issue #${t.issueNumber}`,
         }));
         return { runs, prReviews, triage };
       },
@@ -171,7 +171,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'issues:read',
       handler: ({ params }) => {
         requireWorkspace(params.id);
-        return { metrics: deps.store.workspaceMetrics(params.id) };
+        return { metrics: deps.store.workspaces.metrics(params.id) };
       },
     }),
 
@@ -181,7 +181,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'proposals:read',
       handler: ({ params }) => {
         requireWorkspace(params.id);
-        return { proposals: deps.store.listWorkspaceProposals(params.id) };
+        return { proposals: deps.store.proposals.listWorkspace(params.id) };
       },
     }),
 
@@ -228,7 +228,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'pipelines:read',
       handler: ({ params }) => {
         requireWorkspace(params.id);
-        return { runs: deps.store.listWorkspacePipelineRuns(params.id) };
+        return { runs: deps.store.pipelines.listWorkspaceRuns(params.id) };
       },
     }),
   ];

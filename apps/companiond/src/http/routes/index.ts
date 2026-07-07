@@ -8,6 +8,9 @@ import { repoRoutes } from './repos.js';
 import { issueRoutes } from './issues.js';
 import { prRoutes } from './prs.js';
 import { proposalRoutes } from './proposals.js';
+import { specRoutes } from './specs.js';
+import { docRoutes } from './docs.js';
+import { assistantRoutes } from './assistant.js';
 import { pipelineRoutes } from './pipelines.js';
 import { runRoutes } from './runs.js';
 import { notificationRoutes } from './notifications.js';
@@ -29,6 +32,9 @@ export function buildRoutes(deps: ApiDeps): CompiledRoute[] {
     ...issueRoutes(deps),
     ...prRoutes(deps),
     ...proposalRoutes(deps),
+    ...specRoutes(deps),
+    ...docRoutes(deps),
+    ...assistantRoutes(deps),
     ...pipelineRoutes(deps),
     ...runRoutes(deps),
     ...notificationRoutes(deps),

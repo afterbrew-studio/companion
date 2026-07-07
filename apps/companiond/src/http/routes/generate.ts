@@ -62,7 +62,7 @@ export function generateRoutes(deps: ApiDeps): CompiledRoute[] {
   };
 
   const requireWorkspace = (id: string) => {
-    const ws = deps.store.getWorkspace(id);
+    const ws = deps.store.workspaces.get(id);
     if (!ws) throw notFound(`workspace ${id} not found`);
     return ws;
   };

@@ -23,6 +23,9 @@ import { Pipelines } from './pipelines/pipelines.js';
 import { Automations } from './automations/automations.js';
 import { WebhookTunnel } from './moxxy/webhook-tunnel.js';
 import { Skills } from './skills/skills.js';
+import { Specs } from './specs/specs.js';
+import { Docs } from './docs/docs.js';
+import { Assistant } from './assistant/assistant.js';
 
 async function main(): Promise<void> {
   const config = loadDaemonConfig();
@@ -72,16 +75,18 @@ async function main(): Promise<void> {
     // Onboarding path: the first token gets every purpose; rebinding happens
     // in Settings → GitHub accounts.
     const account = await ghAccounts.add(token, ['fetch', 'runs', 'pipelines', 'webhooks']);
-    store.setSetting('github_token', token);
+    store.settings.set('github_token', token);
     broadcast({ t: 'repos.changed' });
     return { login: account.login };
   };
 
-  const checkouts = new Checkouts(() => ghAccounts.tokenFor('runs') ?? store.getSetting('github_token'));
+  const checkouts = new Checkouts(() => ghAccounts.tokenFor('runs') ?? store.settings.get('github_token'));
   const orchestrator = new Orchestrator(store, config, moxxyCli?.path ?? 'moxxy', broadcast);
   orchestrator.recover();
-  const dangling = store.resetDanglingProposalAnalyses();
+  const dangling = store.proposals.resetDangling();
   if (dangling > 0) log.info(`reset ${dangling} proposal(s) stuck in 'analyzing' from previous daemon life`);
+  const danglingSpecs = store.specs.resetDangling();
+  if (danglingSpecs > 0) log.info(`marked ${danglingSpecs} spec(s) stuck in 'generating' as failed from previous daemon life`);
   const sync = new GitHubSync(store, () => ghAccounts.clientFor('fetch'), broadcast);
   const prChecks = new PrChecks(store, () => ghAccounts.clientFor('fetch'), broadcast);
   // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
@@ -112,6 +117,9 @@ async function main(): Promise<void> {
   // Re-expose the public webhook URL if the user had the tunnel enabled.
   webhookTunnel.restore();
   const skills = new Skills();
+  const specs = new Specs(store, orchestrator, checkouts, proposals, broadcast);
+  const docs = new Docs(store, orchestrator, checkouts, broadcast);
+  const assistant = new Assistant(store, orchestrator, auth, config);
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.
   const here = dirname(fileURLToPath(import.meta.url));
@@ -141,6 +149,9 @@ async function main(): Promise<void> {
       automations,
       webhookTunnel,
       skills,
+      specs,
+      docs,
+      assistant,
     },
     hub,
     staticDir: existsSync(join(builtSpa, 'index.html')) ? builtSpa : undefined,

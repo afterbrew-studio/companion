@@ -243,6 +243,7 @@ const RUN_KIND_LABEL: Record<RunRecord['kind'], string> = {
   analysis: 'AI analysis',
   implement: 'AI implement',
   report: 'AI report',
+  assistant: 'AI Help',
 };
 
 function ActivityFeed({

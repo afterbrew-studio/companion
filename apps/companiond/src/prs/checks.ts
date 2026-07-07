@@ -76,8 +76,8 @@ export class PrChecks {
 
   /** Refresh snapshots for the most recently updated open PRs of a repo. */
   async refreshOpenPrs(repo: string, max = 25): Promise<void> {
-    const open = this.store
-      .listPrs(repo)
+    const open = this.store.prs
+      .list(repo)
       .filter((pr) => pr.state === 'open')
       .slice(0, max);
     for (const pr of open) {
@@ -86,7 +86,7 @@ export class PrChecks {
   }
 
   private async fetchFresh(repo: string, prNumber: number): Promise<ChecksSummary> {
-    const pr = this.store.getPr(repo, prNumber);
+    const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const client = this.github();
     if (!client || !pr.headSha) {
@@ -116,11 +116,11 @@ export class PrChecks {
       headSha: pr.headSha,
       runs,
     };
-    this.store.setPrChecks(repo, prNumber, toSnapshot(summary));
+    this.store.prs.setChecks(repo, prNumber, toSnapshot(summary));
     // Human review decision rides the same fetch cadence as the CI snapshot.
     try {
       const reviews = await client.prReviewList(repo, prNumber);
-      this.store.setPrReviewDecision(repo, prNumber, foldReviewDecision(reviews));
+      this.store.prs.setReviewDecision(repo, prNumber, foldReviewDecision(reviews));
     } catch (err) {
       log.warn('review decision fetch failed', { repo, prNumber, err: String(err) });
     }

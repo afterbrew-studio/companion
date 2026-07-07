@@ -35,10 +35,10 @@ export class Automations {
 
   /** Enable the receiver for a repo: mint (or return) its HMAC secret. */
   ensureWebhook(repo: string): WebhookInfo {
-    let secret = this.store.getRepoWebhookSecret(repo);
+    let secret = this.store.repos.getWebhookSecret(repo);
     if (!secret) {
       secret = randomBytes(24).toString('hex');
-      this.store.setRepoWebhookSecret(repo, secret);
+      this.store.repos.setWebhookSecret(repo, secret);
       this.broadcast({ t: 'repos.changed' });
     }
     const path = `/webhooks/github/${repo}`;
@@ -47,13 +47,13 @@ export class Automations {
 
   /** Disable the receiver for a repo: deliveries 401/404 until re-enabled. */
   disableWebhook(repo: string): void {
-    this.store.setRepoWebhookSecret(repo, null);
+    this.store.repos.setWebhookSecret(repo, null);
     this.broadcast({ t: 'repos.changed' });
   }
 
   /** Current receiver info WITHOUT enabling — null while disabled. */
   webhookInfo(repo: string): WebhookInfo | null {
-    const secret = this.store.getRepoWebhookSecret(repo);
+    const secret = this.store.repos.getWebhookSecret(repo);
     if (!secret) return null;
     const path = `/webhooks/github/${repo}`;
     return { path, secret, url: this.webhookTunnel.deliveryUrl(path) };
@@ -68,7 +68,7 @@ export class Automations {
     headers: Record<string, string | string[] | undefined>,
     rawBody: Buffer,
   ): { status: number; body: string } {
-    const secret = this.store.getRepoWebhookSecret(repo);
+    const secret = this.store.repos.getWebhookSecret(repo);
     if (!secret) return { status: 404, body: 'webhook not configured for this repo' };
 
     const signature = String(headers['x-hub-signature-256'] ?? '');
@@ -90,7 +90,7 @@ export class Automations {
     // REST sync: before this, triage fired against an issue that wasn't in
     // the store yet and died on "unknown issue".
     const action = String(payload.action ?? '');
-    const repoRow = this.store.getRepo(repo);
+    const repoRow = this.store.repos.get(repo);
     if (eventName === 'issues') {
       const issue = payload.issue as GhIssue | undefined;
       if (issue?.number && !issue.pull_request) {
@@ -135,7 +135,7 @@ export class Automations {
     // counts, anything else that changed since the last poll).
     void this.sync.syncRepo(repo).catch(() => undefined);
 
-    this.store.insertReport({
+    this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
@@ -161,7 +161,7 @@ export class Automations {
 
   /** Run due schedules. Digest/stale run at most once per 24h per repo. */
   async tick(now = Date.now()): Promise<void> {
-    for (const repo of this.store.listRepos()) {
+    for (const repo of this.store.repos.list()) {
       if (repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
         await this.runDigest(repo.full_name).catch((err) =>
           log.warn('digest failed', { repo: repo.full_name, err: String(err) }),
@@ -175,9 +175,9 @@ export class Automations {
 
   /** Force a schedule to run now (UI button + tests). */
   async runDigest(repo: string): Promise<void> {
-    const since = Number(this.store.getSetting(`lastRun:digest:${repo}`) ?? 0) || Date.now() - 86_400_000;
-    const fresh = this.store.listIssuesSince(repo, since);
-    this.store.setSetting(`lastRun:digest:${repo}`, String(Date.now()));
+    const since = Number(this.store.settings.get(`lastRun:digest:${repo}`) ?? 0) || Date.now() - 86_400_000;
+    const fresh = this.store.issues.listSince(repo, since);
+    this.store.settings.set(`lastRun:digest:${repo}`, String(Date.now()));
 
     let body: string;
     if (fresh.length === 0) {
@@ -205,7 +205,7 @@ export class Automations {
       }
     }
 
-    this.store.insertReport({
+    this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
@@ -218,13 +218,13 @@ export class Automations {
   }
 
   runStaleSweep(repo: string, staleDays = 30): void {
-    this.store.setSetting(`lastRun:stale:${repo}`, String(Date.now()));
-    const stale = this.store.listStaleIssues(repo, staleDays);
+    this.store.settings.set(`lastRun:stale:${repo}`, String(Date.now()));
+    const stale = this.store.issues.listStale(repo, staleDays);
     const body =
       stale.length === 0
         ? `No open issues idle for more than ${staleDays} days.`
         : stale.map((i) => `- #${i.number} ${i.title} — idle since ${new Date(i.updatedAt).toDateString()}`).join('\n');
-    this.store.insertReport({
+    this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
@@ -237,16 +237,16 @@ export class Automations {
   }
 
   private due(key: string, now: number): boolean {
-    const last = Number(this.store.getSetting(`lastRun:${key}`) ?? 0);
+    const last = Number(this.store.settings.get(`lastRun:${key}`) ?? 0);
     return now - last >= 24 * 60 * 60_000;
   }
 
   /** Automation failures must be visible in the inbox, not just a daemon log line. */
   private automationFailed(repo: string, title: string, err: unknown, href: string | null): void {
     log.warn(title, { err: String(err) });
-    this.store.insertNotification({
+    this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
-      workspaceId: this.store.getRepo(repo)?.workspace_id ?? null,
+      workspaceId: this.store.repos.get(repo)?.workspace_id ?? null,
       kind: 'error',
       title,
       body: String(err),

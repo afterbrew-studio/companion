@@ -19,6 +19,10 @@ export type Permission =
   | 'proposals:read'
   | 'proposals:create'
   | 'proposals:act'
+  | 'specs:read'
+  | 'specs:manage'
+  | 'docs:read'
+  | 'docs:manage'
   | 'pipelines:read'
   | 'pipelines:manage'
   | 'pipelines:run'
@@ -42,6 +46,10 @@ const ALL_PERMISSIONS: readonly Permission[] = [
   'proposals:read',
   'proposals:create',
   'proposals:act',
+  'specs:read',
+  'specs:manage',
+  'docs:read',
+  'docs:manage',
   'pipelines:read',
   'pipelines:manage',
   'pipelines:run',
@@ -64,7 +72,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   maintainer: ALL_PERMISSIONS.filter(
     (p) => p !== 'settings:manage' && p !== 'workspaces:manage' && p !== 'users:manage',
   ),
-  business: ['workspaces:read', 'repos:read', 'proposals:read', 'proposals:create'],
+  business: ['workspaces:read', 'repos:read', 'proposals:read', 'proposals:create', 'specs:read', 'docs:read'],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {

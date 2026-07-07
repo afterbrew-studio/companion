@@ -48,7 +48,7 @@ export function pipelineRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/pipeline-runs/:id',
       access: 'pipelines:read',
       handler: ({ params }) => {
-        const run = deps.store.getPipelineRun(params.id);
+        const run = deps.store.pipelines.getRun(params.id);
         if (!run) throw notFound(`pipeline run ${params.id} not found`);
         return { run };
       },

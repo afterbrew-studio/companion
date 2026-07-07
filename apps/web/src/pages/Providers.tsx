@@ -17,6 +17,7 @@ const PIN_KINDS: ReadonlyArray<{ kind: string; label: string; hint: string }> = 
   { kind: 'implement', label: 'Implement runs', hint: 'proposal → branch agents' },
   { kind: 'report', label: 'Reports', hint: 'digests and sweeps' },
   { kind: 'interactive', label: 'Interactive chats', hint: 'default for new chats (switchable per run)' },
+  { kind: 'assistant', label: 'AI Help', hint: 'the platform assistant in the top bar' },
 ];
 
 export function ProvidersPage(): JSX.Element {

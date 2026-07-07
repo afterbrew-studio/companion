@@ -28,8 +28,8 @@ export function authRoutes(deps: ApiDeps): CompiledRoute[] {
         setup: deps.auth.setupNeeded(),
         version: '0.3.0',
         branding: {
-          name: deps.store.getSetting('branding.name') || null,
-          logo: deps.store.getSetting('branding.logo') || null,
+          name: deps.store.settings.get('branding.name') || null,
+          logo: deps.store.settings.get('branding.logo') || null,
         },
       }),
     }),

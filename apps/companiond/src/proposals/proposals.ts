@@ -45,18 +45,18 @@ export class Proposals {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    this.store.insertProposal(proposal);
+    this.store.proposals.insert(proposal);
     this.broadcast({ t: 'proposals.changed' });
     return proposal;
   }
 
   /** Kick the analysis run (async — resolves when analysis is stored). */
   async analyze(id: string): Promise<ProposalRecord> {
-    const proposal = this.store.getProposal(id);
+    const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
     if (!this.checkouts.hasClone(proposal.repo)) throw new Error(`repo ${proposal.repo} has no clone yet`);
 
-    this.store.updateProposal(id, { status: 'analyzing' });
+    this.store.proposals.update(id, { status: 'analyzing' });
     this.broadcast({ t: 'proposals.changed' });
 
     try {
@@ -69,26 +69,26 @@ export class Proposals {
         timeoutMs: 10 * 60_000,
       });
       const analysis = parseAnalysis(finalMessage ?? '');
-      this.store.updateProposal(id, { status: 'analyzed', analysis, analysisRunId: runId });
+      this.store.proposals.update(id, { status: 'analyzed', analysis, analysisRunId: runId });
     } catch (err) {
       log.warn('proposal analysis failed', { id, err: String(err) });
-      this.store.updateProposal(id, { status: 'failed' });
+      this.store.proposals.update(id, { status: 'failed' });
       this.broadcast({ t: 'proposals.changed' });
       throw err;
     }
     this.broadcast({ t: 'proposals.changed' });
-    return this.store.getProposal(id)!;
+    return this.store.proposals.get(id)!;
   }
 
   /** Maintainer approved the analyzed plan → start the implementation goal run. */
   async approve(id: string): Promise<ProposalRecord> {
-    const proposal = this.store.getProposal(id);
+    const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
     if (proposal.status !== 'analyzed') throw new Error(`proposal is ${proposal.status}, not analyzed`);
-    const repoRow = this.store.getRepo(proposal.repo);
+    const repoRow = this.store.repos.get(proposal.repo);
     if (!repoRow) throw new Error(`unknown repo ${proposal.repo}`);
 
-    this.store.updateProposal(id, { status: 'implementing' });
+    this.store.proposals.update(id, { status: 'implementing' });
     this.broadcast({ t: 'proposals.changed' });
 
     const run = await this.fixes.createGoalRun({
@@ -100,34 +100,34 @@ export class Proposals {
       baseBranch: repoRow.default_branch,
       objective: implementObjective(proposal),
     });
-    this.store.updateProposal(id, { implementRunId: run.id, branch: run.branch ?? undefined });
+    this.store.proposals.update(id, { implementRunId: run.id, branch: run.branch ?? undefined });
     this.broadcast({ t: 'proposals.changed' });
-    return this.store.getProposal(id)!;
+    return this.store.proposals.get(id)!;
   }
 
   /** Implementation diff approved → push + PR, mark implemented. */
   async finishImplementation(id: string): Promise<ProposalRecord> {
-    const proposal = this.store.getProposal(id);
+    const proposal = this.store.proposals.get(id);
     if (!proposal?.implementRunId) throw new Error('proposal has no implementation run');
     const { prUrl } = await this.fixes.approve(proposal.implementRunId, {
       title: proposal.title,
       body: `${proposal.body}\n\n---\n${proposal.analysis?.summary ?? ''}`,
     });
-    this.store.updateProposal(id, { status: 'implemented', prUrl });
+    this.store.proposals.update(id, { status: 'implemented', prUrl });
     this.broadcast({ t: 'proposals.changed' });
-    return this.store.getProposal(id)!;
+    return this.store.proposals.get(id)!;
   }
 
   reject(id: string): void {
-    this.store.updateProposal(id, { status: 'rejected' });
+    this.store.proposals.update(id, { status: 'rejected' });
     this.broadcast({ t: 'proposals.changed' });
   }
 
   /** Called when an implement run lands in review — flip the proposal too. */
   onRunReview(runId: string): void {
-    for (const proposal of this.store.listProposals()) {
+    for (const proposal of this.store.proposals.list()) {
       if (proposal.implementRunId === runId && proposal.status === 'implementing') {
-        this.store.updateProposal(proposal.id, { status: 'review' });
+        this.store.proposals.update(proposal.id, { status: 'review' });
         this.broadcast({ t: 'proposals.changed' });
       }
     }

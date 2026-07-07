@@ -1,9 +1,14 @@
 import type {
+  AreaStorage,
+  AreaStorageConfig,
+  AreaStorageState,
   AskRequest,
   AuthState,
   ChecksSummary,
   CommentRecord,
   CreateUserRequest,
+  DocRecord,
+  DocSearchHit,
   HistorySegment,
   InstanceBranding,
   IssueRecord,
@@ -20,9 +25,11 @@ import type {
   PrReviewResult,
   ProposalRecord,
   ReportRecord,
+  RepoDocFile,
   RepoRecord,
   Role,
   RunRecord,
+  SpecRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
   SessionInfo,
@@ -334,6 +341,55 @@ export const api = {
   approveProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/approve`),
   finishProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/finish`),
   rejectProposal: (id: string) => post<{ ok: true }>(`/api/proposals/${id}/reject`),
+
+  // specifications
+  workspaceSpecs: (id: string) => request<{ specs: SpecRecord[] }>(`/api/workspaces/${id}/specs`),
+  specsConfig: (id: string) => request<AreaStorageState>(`/api/workspaces/${id}/specs-config`),
+  saveSpecsConfig: (id: string, dir: string | null) =>
+    put<{ config: AreaStorageConfig; imported: number }>(`/api/workspaces/${id}/specs-config`, { dir }),
+  getSpec: (id: string) => request<{ spec: SpecRecord }>(`/api/specs/${id}`),
+  createSpec: (repo: string, title: string, content: string, storage?: AreaStorage) =>
+    post<{ spec: SpecRecord }>('/api/specs', { repo, title, content, storage }),
+  updateSpec: (id: string, fields: { title?: string; content?: string }) =>
+    patch<{ spec: SpecRecord }>(`/api/specs/${id}`, fields),
+  deleteSpec: (id: string) => del<{ ok: true }>(`/api/specs/${id}`),
+  generateSpec: (repo: string, instructions: string, storage?: AreaStorage) =>
+    post<{ queued: true }>('/api/specs/generate', { repo, instructions, storage }),
+  createFeatureFromSpec: (id: string, fields: { title?: string; notes?: string }) =>
+    post<{ proposal: ProposalRecord }>(`/api/specs/${id}/create-feature`, fields),
+
+  // documentation
+  workspaceDocs: (id: string) => request<{ docs: DocRecord[] }>(`/api/workspaces/${id}/docs`),
+  docsConfig: (id: string) => request<AreaStorageState>(`/api/workspaces/${id}/docs-config`),
+  saveDocsConfig: (id: string, dir: string | null) =>
+    put<{ config: AreaStorageConfig; imported: number }>(`/api/workspaces/${id}/docs-config`, { dir }),
+  getDoc: (id: string) => request<{ doc: DocRecord }>(`/api/docs/${id}`),
+  createDoc: (
+    workspaceId: string,
+    body: { repo?: string | null; title: string; content: string; storage?: AreaStorage },
+  ) => post<{ doc: DocRecord }>(`/api/workspaces/${workspaceId}/docs`, body),
+  updateDoc: (id: string, fields: { title?: string; content?: string; repo?: string | null }) =>
+    patch<{ doc: DocRecord }>(`/api/docs/${id}`, fields),
+  deleteDoc: (id: string) => del<{ ok: true }>(`/api/docs/${id}`),
+  searchDocs: (workspaceId: string, q: string, limit = 8) =>
+    request<{ hits: DocSearchHit[] }>(`/api/workspaces/${workspaceId}/docs/search${qs({ q, limit })}`),
+  repoDocFiles: (repo: string) => request<{ files: RepoDocFile[] }>(`/api/repos/${repo}/doc-files`),
+  importRepoDocs: (workspaceId: string, repo: string, paths: string[]) =>
+    post<{ docs: DocRecord[] }>(`/api/workspaces/${workspaceId}/docs/import`, { repo, paths }),
+  generateDoc: (workspaceId: string, body: { repo?: string; instructions: string; storage?: AreaStorage }) =>
+    post<{ doc: DocRecord }>(`/api/workspaces/${workspaceId}/docs/generate`, body),
+
+  // AI Help assistant (per-user conversation run)
+  assistant: () => request<{ run: RunRecord | null; pendingAsks: AskRequest[] }>('/api/assistant'),
+  assistantSession: () => post<{ run: RunRecord; pendingAsks: AskRequest[] }>('/api/assistant/session'),
+  assistantMessage: (text: string, repo?: string) =>
+    post<{ turnId: string }>('/api/assistant/message', { text, repo }),
+  assistantHistory: (before: number | null, limit = 300) =>
+    request<HistorySegment>(`/api/assistant/history?limit=${limit}${before === null ? '' : `&before=${before}`}`),
+  assistantAsk: (requestId: string, response: Record<string, unknown>) =>
+    post<{ ok: true }>('/api/assistant/ask', { requestId, response }),
+  assistantAbort: () => post<{ ok: true }>('/api/assistant/abort'),
+  assistantReset: () => post<{ ok: true }>('/api/assistant/reset'),
 
   // model pins (per action kind)
   getModelPins: () =>

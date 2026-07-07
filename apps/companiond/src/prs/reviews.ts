@@ -36,7 +36,7 @@ export class PrReviews {
   ) {}
 
   async analyzePr(repo: string, prNumber: number): Promise<PrReviewResult> {
-    const pr = this.store.getPr(repo, prNumber);
+    const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const client = this.github({ repo });
     if (!client) throw new Error('GitHub is not configured');
@@ -79,14 +79,14 @@ export class PrReviews {
       error,
       createdAt: Date.now(),
     };
-    this.store.insertPrReview(result);
+    this.store.prReviews.insert(result);
     this.broadcast({ t: 'prs.changed', repo });
     return result;
   }
 
   /** Post the verdict to GitHub as a PR review. */
   async apply(id: string, accountId?: string): Promise<void> {
-    const result = this.store.getPrReview(id);
+    const result = this.store.prReviews.get(id);
     if (!result?.verdict) throw new Error('review not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`review is ${result.status}, not pending`);
     const client = this.github({ repo: result.repo, accountId });
@@ -118,14 +118,14 @@ export class PrReviews {
         throw err;
       }
     }
-    this.store.updatePrReview(id, 'applied');
+    this.store.prReviews.update(id, 'applied');
     this.broadcast({ t: 'prs.changed', repo: result.repo });
   }
 
   dismiss(id: string): void {
-    const result = this.store.getPrReview(id);
+    const result = this.store.prReviews.get(id);
     if (!result) throw new Error('review not found');
-    this.store.updatePrReview(id, 'dismissed');
+    this.store.prReviews.update(id, 'dismissed');
     this.broadcast({ t: 'prs.changed', repo: result.repo });
   }
 
@@ -151,7 +151,7 @@ export class PrReviews {
    * ci-analysis report on the PR.
    */
   async analyzeFailedChecks(repo: string, prNumber: number): Promise<void> {
-    const pr = this.store.getPr(repo, prNumber);
+    const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const client = this.github();
     if (!client) throw new Error('GitHub is not configured');
@@ -176,7 +176,7 @@ export class PrReviews {
     });
     if (!finalMessage?.trim()) throw new Error('CI analysis produced no report');
 
-    this.store.insertReport({
+    this.store.reports.insert({
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
       issueNumber: prNumber,
@@ -197,7 +197,7 @@ export class PrReviews {
   async gate(repo: string, prNumber: number): Promise<void> {
     const result = await this.analyzePr(repo, prNumber);
     if (!result.verdict || result.verdict.risk !== 'low') return;
-    const checks = this.store.getPr(repo, prNumber)?.checks ?? null;
+    const checks = this.store.prs.get(repo, prNumber)?.checks ?? null;
     if (checks && checks.state === 'failing') {
       log.info('PR gate: verdict held back (CI failing)', { repo, prNumber });
       return;

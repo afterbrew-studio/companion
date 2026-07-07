@@ -34,12 +34,12 @@ export class Triage {
 
   /** Queue a triage run for one issue. Resolves when the verdict is stored. */
   async triageIssue(repo: string, issueNumber: number): Promise<TriageResult> {
-    const issue = this.store.getIssue(repo, issueNumber);
+    const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    const openIssues = this.store
-      .listIssues(repo, 'open')
+    const openIssues = this.store.issues
+      .list(repo, 'open')
       .filter((i) => i.number !== issueNumber)
       .slice(0, 60);
 
@@ -73,7 +73,7 @@ export class Triage {
       error,
       createdAt: Date.now(),
     };
-    this.store.insertTriage(result);
+    this.store.triage.insert(result);
     this.broadcast({ t: 'triage.changed', repo });
     this.broadcast({ t: 'issues.changed', repo });
     return result;
@@ -100,20 +100,20 @@ export class Triage {
       await client.comment(result.repo, result.issueNumber, reply);
     }
 
-    this.store.updateTriage(id, 'applied');
+    this.store.triage.update(id, 'applied');
     this.broadcast({ t: 'triage.changed', repo: result.repo });
   }
 
   dismiss(id: string): void {
     const result = this.findTriage(id);
     if (!result) throw new Error('triage result not found');
-    this.store.updateTriage(id, 'dismissed');
+    this.store.triage.update(id, 'dismissed');
     this.broadcast({ t: 'triage.changed', repo: result.repo });
   }
 
   private findTriage(id: string): TriageResult | undefined {
-    for (const repo of this.store.listRepos()) {
-      const hit = this.store.listTriage(repo.full_name).find((t) => t.id === id);
+    for (const repo of this.store.repos.list()) {
+      const hit = this.store.triage.list(repo.full_name).find((t) => t.id === id);
       if (hit) return hit;
     }
     return undefined;

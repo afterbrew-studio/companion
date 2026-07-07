@@ -35,7 +35,7 @@ export class GitHubSync {
   }
 
   async syncAll(): Promise<void> {
-    for (const repo of this.store.listRepos()) {
+    for (const repo of this.store.repos.list()) {
       await this.syncRepo(repo.full_name).catch((err) =>
         log.warn(`sync failed for ${repo.full_name}`, { err: String(err) }),
       );
@@ -44,13 +44,13 @@ export class GitHubSync {
 
   /** Webhook fast path: the delivery carries the full issue — apply it now. */
   applyIssue(fullName: string, issue: GhIssue): void {
-    this.store.upsertIssue(mapIssue(fullName, issue));
+    this.store.issues.upsert(mapIssue(fullName, issue));
     this.broadcast({ t: 'issues.changed', repo: fullName });
   }
 
   /** Webhook fast path: the delivery carries the full PR — apply it now. */
   applyPull(fullName: string, pr: GhPull): void {
-    this.store.upsertPr(mapPull(fullName, pr));
+    this.store.prs.upsert(mapPull(fullName, pr));
     this.broadcast({ t: 'prs.changed', repo: fullName });
   }
 
@@ -74,7 +74,7 @@ export class GitHubSync {
     fullName: string,
     client: GitHubClient,
   ): Promise<{ issues: number; prs: number }> {
-    const repoRow = this.store.getRepo(fullName);
+    const repoRow = this.store.repos.get(fullName);
     // Incremental: only issues updated since the last sync (minus a safety margin).
     const since = repoRow?.last_sync_at
       ? new Date(repoRow.last_sync_at - 5 * 60_000).toISOString()
@@ -84,14 +84,14 @@ export class GitHubSync {
       client.issues(fullName, since ? { since } : {}),
       client.pulls(fullName),
     ]);
-    for (const pr of pulls) this.store.upsertPr(mapPull(fullName, pr));
+    for (const pr of pulls) this.store.prs.upsert(mapPull(fullName, pr));
     for (const item of issues) {
       // The issues feed interleaves PRs — those only contribute their
       // conversation comment count to the PR row.
-      if (item.pull_request) this.store.setPrComments(fullName, item.number, item.comments);
-      else this.store.upsertIssue(mapIssue(fullName, item));
+      if (item.pull_request) this.store.prs.setComments(fullName, item.number, item.comments);
+      else this.store.issues.upsert(mapIssue(fullName, item));
     }
-    this.store.setRepoSynced(fullName);
+    this.store.repos.setSynced(fullName);
     if (issues.length > 0) this.broadcast({ t: 'issues.changed', repo: fullName });
     if (pulls.length > 0) this.broadcast({ t: 'prs.changed', repo: fullName });
     this.broadcast({ t: 'repos.changed' });

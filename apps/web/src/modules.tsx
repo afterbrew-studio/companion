@@ -15,7 +15,7 @@ export interface AppModule {
   /** `g` + this key jumps to the module. */
   readonly shortcut: string;
   readonly permission: Permission;
-  readonly section: 'workspace' | 'operate' | 'admin';
+  readonly section: 'workspace' | 'plan' | 'code' | 'operate' | 'admin';
   readonly icon: JSX.Element;
 }
 
@@ -40,6 +40,18 @@ const icons = {
     <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
       <circle cx="12" cy="12" r="3.5" />
+    </svg>
+  ),
+  specs: (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+      <path d="M6 3h9l4 4v14H6a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 6 3z" />
+      <path d="M15 3v4h4M8.5 11h7M8.5 14.5h7M8.5 18h4" />
+    </svg>
+  ),
+  docs: (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+      <path d="M12 6.5C10.5 5 8.5 4.5 5.5 4.5c-1 0-2 .15-3 .5v14c1-.35 2-.5 3-.5 3 0 5 .5 6.5 2 1.5-1.5 3.5-2 6.5-2 1 0 2 .15 3 .5v-14c-1-.35-2-.5-3-.5-3 0-5 .5-6.5 2z" />
+      <path d="M12 6.5v14" />
     </svg>
   ),
   issues: (
@@ -142,8 +154,26 @@ export const MODULES: readonly AppModule[] = [
     hash: '#/proposals',
     shortcut: 'p',
     permission: 'proposals:read',
-    section: 'workspace',
+    section: 'plan',
     icon: icons.proposals,
+  },
+  {
+    key: 'specs',
+    label: 'Specifications',
+    hash: '#/specs',
+    shortcut: 'c',
+    permission: 'specs:read',
+    section: 'plan',
+    icon: icons.specs,
+  },
+  {
+    key: 'docs',
+    label: 'Documentation',
+    hash: '#/docs',
+    shortcut: 'd',
+    permission: 'docs:read',
+    section: 'plan',
+    icon: icons.docs,
   },
   {
     key: 'issues',
@@ -151,7 +181,7 @@ export const MODULES: readonly AppModule[] = [
     hash: '#/issues',
     shortcut: 'i',
     permission: 'issues:read',
-    section: 'workspace',
+    section: 'code',
     icon: icons.issues,
   },
   {
@@ -160,7 +190,7 @@ export const MODULES: readonly AppModule[] = [
     hash: '#/prs',
     shortcut: 'r',
     permission: 'prs:read',
-    section: 'workspace',
+    section: 'code',
     icon: icons.prs,
   },
   {
@@ -169,7 +199,7 @@ export const MODULES: readonly AppModule[] = [
     hash: '#/pipelines',
     shortcut: 'l',
     permission: 'pipelines:read',
-    section: 'workspace',
+    section: 'code',
     icon: icons.pipelines,
   },
   {
