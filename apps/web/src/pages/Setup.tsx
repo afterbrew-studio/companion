@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { auth } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { Spinner } from '../components/ui.js';
@@ -7,6 +7,10 @@ import { Spinner } from '../components/ui.js';
 export function SetupPage(): JSX.Element {
   const { branding } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
+
+  useEffect(() => {
+    document.title = `Welcome · ${brandName}`;
+  }, [brandName]);
   const [username, setUsername] = useState('admin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

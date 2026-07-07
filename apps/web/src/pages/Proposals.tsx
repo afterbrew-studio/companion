@@ -280,7 +280,7 @@ function ProposalCard({
 
       {error ? <div className="error-bar">{error}</div> : null}
 
-      <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+      <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         {proposal.status === 'draft' || proposal.status === 'failed' ? (
           <button
             className="btn-ghost"
@@ -321,22 +321,25 @@ function ProposalCard({
         proposal.status !== 'rejected' &&
         proposal.status !== 'implemented' &&
         proposal.status !== 'implementing' ? (
-          <button
-            className="btn-danger ml-auto"
-            disabled={busy}
-            onClick={() =>
-              void (async () => {
-                const ok = await confirmDanger({
-                  title: 'Reject proposal',
-                  message: `"${proposal.title}" is marked rejected and leaves the actionable queue.`,
-                  confirmLabel: 'Reject',
-                });
-                if (ok) await act(() => api.rejectProposal(proposal.id))();
-              })()
-            }
-          >
-            Reject
-          </button>
+          <>
+            <span className="action-sep" aria-hidden />
+            <button
+              className="btn-danger-ghost"
+              disabled={busy}
+              onClick={() =>
+                void (async () => {
+                  const ok = await confirmDanger({
+                    title: 'Reject proposal',
+                    message: `"${proposal.title}" is marked rejected and leaves the actionable queue.`,
+                    confirmLabel: 'Reject',
+                  });
+                  if (ok) await act(() => api.rejectProposal(proposal.id))();
+                })()
+              }
+            >
+              Reject
+            </button>
+          </>
         ) : null}
       </div>
       {confirmElement}

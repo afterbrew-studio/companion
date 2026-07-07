@@ -25,9 +25,15 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
 
-  // The instance name owns the tab title.
+  // The uploaded logo becomes the favicon (falling back to the bundled letter
+  // tile from index.html). The tab title is route-aware and owned by the
+  // shell (App.tsx); pre-login pages set their own.
   useEffect(() => {
-    document.title = branding.name?.trim() || 'Companion';
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (icon) {
+      icon.dataset.defaultHref ??= icon.href;
+      icon.href = branding.logo ?? icon.dataset.defaultHref;
+    }
   }, [branding]);
 
   const resolve = useCallback(async () => {

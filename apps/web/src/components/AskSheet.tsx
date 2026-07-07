@@ -24,7 +24,8 @@ export function AskSheet({
           <button className="btn-ghost" onClick={() => onRespond({ mode: 'allow_session' })}>
             Allow for session
           </button>
-          <button className="btn-danger" onClick={() => onRespond({ mode: 'deny' })}>
+          <span className="action-sep" aria-hidden />
+          <button className="btn-danger-ghost" onClick={() => onRespond({ mode: 'deny' })}>
             Deny
           </button>
         </div>

@@ -91,8 +91,17 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 }
 
 function Shell(): JSX.Element {
-  const { user, can, logout } = useAuth();
+  const { user, can, logout, branding } = useAuth();
   const hash = useHashRoute();
+
+  // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
+  useEffect(() => {
+    const name = branding.name?.trim() || 'Companion';
+    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/')
+      .map((c) => c.label)
+      .join(' · ');
+    document.title = labels ? `${labels} · ${name}` : name;
+  }, [hash, branding]);
   const [collapsed, setCollapsed] = useState(localStorage.getItem('companion.sidebar') === 'collapsed');
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);

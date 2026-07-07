@@ -206,7 +206,7 @@ function RepoCard({
         ))}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
           {busy ? 'Working…' : 'Sync now'}
         </button>
@@ -233,9 +233,9 @@ function RepoCard({
             </select>
           </label>
         ) : null}
-        <span className="flex-1" />
+        <span className="action-sep" aria-hidden />
         <button
-          className="btn-danger"
+          className="btn-danger-ghost"
           disabled={busy}
           onClick={() =>
             void (async () => {
@@ -462,7 +462,7 @@ function WorkspaceSettingsModal({
               {deleteBlocked ?? `Removes "${workspace.name}" permanently. Pipelines and step library go with it.`}
             </p>
           </div>
-          <button className="btn-danger" disabled={deleteBlocked !== null} title={deleteBlocked ?? undefined} onClick={() => void remove()}>
+          <button className="btn-danger-ghost" disabled={deleteBlocked !== null} title={deleteBlocked ?? undefined} onClick={() => void remove()}>
             Delete
           </button>
         </div>

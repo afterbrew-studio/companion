@@ -153,16 +153,16 @@ export function PipelinesPage(): JSX.Element {
               })}
             </ol>
             {canManage ? (
-              <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+              <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
                 <button className="btn-ghost" onClick={() => setEditing(p)}>
                   Edit
                 </button>
                 {p.type === 'platform' && can('pipelines:run') ? (
                   <PlatformRunButton pipeline={p} onError={setError} />
                 ) : null}
-                <span className="flex-1" />
+                <span className="action-sep" aria-hidden />
                 <button
-                  className="btn-danger"
+                  className="btn-danger-ghost"
                   onClick={() =>
                     void (async () => {
                       const ok = await confirmDanger({
@@ -220,13 +220,13 @@ export function PipelinesPage(): JSX.Element {
                 </div>
                 {d.description ? <p className="dim mt-2 line-clamp-2 text-[13px]">{d.description}</p> : null}
                 {canManage ? (
-                  <div className="mt-3.5 flex items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+                  <div className="mt-3.5 flex items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
                     <button className="btn-ghost" onClick={() => setEditingDef(d)}>
                       Edit
                     </button>
-                    <span className="flex-1" />
+                    <span className="action-sep" aria-hidden />
                     <button
-                      className="btn-danger"
+                      className="btn-danger-ghost"
                       onClick={() =>
                         void (async () => {
                           const ok = await confirmDanger({

@@ -288,11 +288,12 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
       {error ? <div className="error-bar">{error}</div> : null}
 
       {can('docs:manage') ? (
-        <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+        <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
           <button className="btn-ghost" onClick={() => setEditing(true)}>
             Edit
           </button>
-          <button className="btn-danger ml-auto" onClick={() => void remove()}>
+          <span className="action-sep" aria-hidden />
+          <button className="btn-danger-ghost" onClick={() => void remove()}>
             Delete
           </button>
         </div>

@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth.js';
 
 export function LoginPage(): JSX.Element {
   const { login, branding } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
+
+  useEffect(() => {
+    document.title = `Sign in · ${brandName}`;
+  }, [brandName]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

@@ -4,6 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Companion</title>
+    <!-- Default letter-tile favicon; the SPA swaps in the instance logo once
+         branding loads (lib/auth.tsx). -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2318181b'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='36' font-weight='700' fill='%23ffffff' text-anchor='middle'%3EC%3C/text%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="Companion — a self-hosted engineering dashboard that manages GitHub repositories end-to-end with AI agents: proposals, specs, docs, issues, PRs, and pipelines."
+    />
+    <!-- A private, self-hosted tool: never index it. -->
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#09090b" />
+    <!-- Link previews (Slack, chat apps); og:image is intentionally absent —
+         the logo is instance data, not a public asset scrapers can fetch. -->
+    <meta property="og:title" content="Companion" />
+    <meta property="og:site_name" content="Companion" />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:description"
+      content="Self-hosted engineering dashboard: proposals, specifications, documentation, issues, PRs, and pipelines — operated by AI agents."
+    />
+    <meta name="twitter:card" content="summary" />
     <script>
       // Apply the stored theme before first paint so there is no flash.
       (function () {

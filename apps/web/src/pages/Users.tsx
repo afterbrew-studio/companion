@@ -287,16 +287,16 @@ function UserModal({
 
       {error ? <div className="error-bar mt-2">{error}</div> : null}
 
-      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         <button className="btn-ghost" onClick={onResetPassword}>
           Reset password
         </button>
         <button className="btn-ghost" onClick={onToggleDisabled}>
           {user.disabled ? 'Enable' : 'Disable'}
         </button>
-        <span className="flex-1" />
+        <span className="action-sep" aria-hidden />
         <button
-          className="btn-danger"
+          className="btn-danger-ghost"
           disabled={isSelf}
           title={isSelf ? 'You cannot delete your own account' : undefined}
           onClick={onDelete}

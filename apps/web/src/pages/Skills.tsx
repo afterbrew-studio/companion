@@ -80,7 +80,8 @@ export function SkillsPage(): JSX.Element {
               <button className="btn-ghost" onClick={() => setEditing(s)}>
                 Edit
               </button>
-              <button className="btn-danger" onClick={() => void remove(s.name)}>
+              <span className="action-sep" aria-hidden />
+              <button className="btn-danger-ghost" onClick={() => void remove(s.name)}>
                 Delete
               </button>
             </div>

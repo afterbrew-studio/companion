@@ -168,7 +168,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
             }}
           />
           {activeTurn ? (
-            <button className="btn-danger" onClick={() => void api.abort(runId)} aria-label="Abort the running turn">
+            <button className="btn-danger-ghost" onClick={() => void api.abort(runId)} aria-label="Abort the running turn">
               Abort
             </button>
           ) : (

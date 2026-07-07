@@ -112,7 +112,7 @@ export function GithubAccountsPage(): JSX.Element {
                   <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
                   <div className="dim text-xs">connected {timeAgo(a.createdAt)}</div>
                 </div>
-                <button className="btn-danger" onClick={() => void remove(a)}>
+                <button className="btn-danger-ghost" onClick={() => void remove(a)}>
                   Disconnect
                 </button>
               </div>

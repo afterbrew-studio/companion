@@ -210,7 +210,7 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
       {(spec.status === 'ready' && can('proposals:create')) ||
       (can('specs:manage') && spec.status !== 'generating') ||
       spec.generateRunId ? (
-        <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+        <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
           {spec.status === 'ready' && can('proposals:create') ? (
             <button className="btn" onClick={() => setFiling(true)}>
               Create feature
@@ -227,9 +227,12 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
             </a>
           ) : null}
           {can('specs:manage') && spec.status !== 'generating' ? (
-            <button className="btn-danger ml-auto" onClick={() => void remove()}>
-              Delete
-            </button>
+            <>
+              <span className="action-sep" aria-hidden />
+              <button className="btn-danger-ghost" onClick={() => void remove()}>
+                Delete
+              </button>
+            </>
           ) : null}
         </div>
       ) : null}
