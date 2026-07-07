@@ -1068,7 +1068,7 @@ export class Store {
   }
 
   /** Counters + weekly open/close velocity for a workspace's dashboard. */
-  workspaceMetrics(workspaceId: string, weeks = 8): WorkspaceMetrics {
+  workspaceMetrics(workspaceId: string, weeks = 12): WorkspaceMetrics {
     const issues = this.db
       .prepare(
         `SELECT i.state, i.created_at, i.closed_at FROM issues i

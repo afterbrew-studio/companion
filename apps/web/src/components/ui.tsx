@@ -285,18 +285,79 @@ export function PageHeader({
   );
 }
 
+/** Signed change vs a named period; color = direction × whether up is good. */
+export interface StatDelta {
+  readonly current: number;
+  readonly previous: number;
+  /** Named comparison period, e.g. "vs last week". */
+  readonly period: string;
+  /** Colors the marker: green when upward movement is desirable. Default true. */
+  readonly upIsGood?: boolean;
+}
+
+function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
+  const diff = delta.current - delta.previous;
+  // Percent only against a real base; from zero the absolute count is honest.
+  const pct = delta.previous > 0 ? Math.round((diff / delta.previous) * 100) : null;
+  const amount = diff === 0 ? '±0' : `${diff > 0 ? '+' : ''}${pct !== null ? `${pct}%` : diff}`;
+  const cls =
+    diff === 0
+      ? 'text-zinc-400 dark:text-zinc-500'
+      : (delta.upIsGood ?? true) === diff > 0
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : 'text-red-600 dark:text-red-400';
+  return (
+    <span className={`inline-flex items-baseline gap-1 text-[11px] font-medium whitespace-nowrap ${cls}`}>
+      <span aria-hidden>{diff > 0 ? '▲' : diff < 0 ? '▼' : '→'}</span>
+      {amount} <span className="dim font-normal">{delta.period}</span>
+    </span>
+  );
+}
+
+/** Tiny trend line in de-emphasis ink; the current period gets the accent dot. */
+export function Sparkline({ points, className = '' }: { points: ReadonlyArray<number>; className?: string }): JSX.Element | null {
+  if (points.length < 2) return null;
+  const w = 64;
+  const h = 24;
+  const pad = 2.5;
+  const max = Math.max(...points);
+  const min = Math.min(...points);
+  const flat = max === min;
+  const x = (i: number): number => pad + (i / (points.length - 1)) * (w - pad * 2);
+  const y = (v: number): number => (flat ? h / 2 : pad + (1 - (v - min) / (max - min)) * (h - pad * 2));
+  const d = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const last = points.length - 1;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className={`h-6 w-16 shrink-0 ${className}`} aria-hidden>
+      <path
+        d={d}
+        fill="none"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="stroke-zinc-300 dark:stroke-zinc-600"
+      />
+      <circle cx={x(last)} cy={y(points[last]!)} r="2" className="fill-zinc-900 dark:fill-zinc-100" />
+    </svg>
+  );
+}
+
 export function StatTile({
   label,
   value,
   hint,
   href,
   tone = 'default',
+  delta,
+  trend,
 }: {
   label: string;
   value: string | number;
   hint?: string;
   href?: string;
   tone?: 'default' | 'ok' | 'warn' | 'danger';
+  delta?: StatDelta;
+  trend?: ReadonlyArray<number>;
 }): JSX.Element {
   const toneClass =
     tone === 'danger'
@@ -309,7 +370,13 @@ export function StatTile({
   const body = (
     <>
       <div className="dim text-[11px] tracking-wide uppercase">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <div className={`flex min-w-0 flex-wrap items-baseline gap-x-2 text-2xl font-semibold ${toneClass}`}>
+          {value}
+          {delta ? <DeltaChip delta={delta} /> : null}
+        </div>
+        {trend ? <Sparkline points={trend} /> : null}
+      </div>
       {hint ? <div className="dim mt-0.5 truncate">{hint}</div> : null}
     </>
   );

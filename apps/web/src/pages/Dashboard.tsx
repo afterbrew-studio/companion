@@ -93,14 +93,34 @@ export function DashboardPage(): JSX.Element {
   const reviewRuns = runs.filter((r) => r.status === 'review' && (r.repo === null || wsRepoNames.has(r.repo)));
   const actionableProposals = proposals.filter((p) => p.status === 'analyzed' || p.status === 'review');
 
+  // Backlog trends reconstructed from weekly nets (current value, walking back).
+  const issueBacklog = metrics
+    ? backlogTrend(metrics.weekly, issues.length, (w) => w.issuesOpened, (w) => w.issuesClosed)
+    : null;
+  const prBacklog = metrics
+    ? backlogTrend(metrics.weekly, openPrs.length, (w) => w.prsOpened, (w) => w.prsClosed)
+    : null;
+
   return (
     <Page>
       <PageHeader title="Overview" subtitle={`${current.name} — ${repos.length} repositories`} />
       {error ? <div className="error-bar">{error}</div> : null}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <StatTile label="Open issues" value={issues.length} href="#/issues" />
-        <StatTile label="Open PRs" value={openPrs.length} href="#/prs" />
+        <StatTile
+          label="Open issues"
+          value={issues.length}
+          href="#/issues"
+          delta={backlogDelta(issueBacklog, false)}
+          trend={issueBacklog ?? undefined}
+        />
+        <StatTile
+          label="Open PRs"
+          value={openPrs.length}
+          href="#/prs"
+          delta={backlogDelta(prBacklog, false)}
+          trend={prBacklog ?? undefined}
+        />
         <StatTile
           label="Failing CI"
           value={failingPrs.length}
@@ -355,6 +375,32 @@ function UsageSection({ runs }: { runs: RunRecord[] }): JSX.Element | null {
 
 // ---------- metrics --------------------------------------------------------------
 
+/**
+ * Open-count history derived from weekly nets: walk backwards from the current
+ * value, undoing each week's opened−closed. Clamped at 0 because history before
+ * the sync horizon under-counts.
+ */
+function backlogTrend(
+  weekly: ReadonlyArray<WeeklyCounts>,
+  openNow: number,
+  opened: (w: WeeklyCounts) => number,
+  closed: (w: WeeklyCounts) => number,
+): number[] {
+  const out: number[] = new Array<number>(weekly.length);
+  let v = openNow;
+  for (let i = weekly.length - 1; i >= 0; i--) {
+    out[i] = Math.max(0, v);
+    v -= opened(weekly[i]!) - closed(weekly[i]!);
+  }
+  return out;
+}
+
+/** Week-over-week delta for a backlog series (current vs end of last week). */
+function backlogDelta(trend: number[] | null, upIsGood: boolean): { current: number; previous: number; period: string; upIsGood: boolean } | undefined {
+  if (!trend || trend.length < 2) return undefined;
+  return { current: trend[trend.length - 1]!, previous: trend[trend.length - 2]!, period: 'vs last week', upIsGood };
+}
+
 // Two-series categorical palette (dataviz slots 1+2), validated per mode on the
 // app surfaces; the light aqua sits below 3:1 so the data-table view is the relief.
 const OPENED = 'fill-[#2a78d6] dark:fill-[#3987e5]';
@@ -363,6 +409,11 @@ const OPENED_SWATCH = 'bg-[#2a78d6] dark:bg-[#3987e5]';
 const CLOSED_SWATCH = 'bg-[#1baf7a] dark:bg-[#199e70]';
 
 function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element {
+  const weekly = metrics.weekly;
+  const prev = weekly.length >= 2 ? weekly[weekly.length - 2]! : null;
+  const weekDelta = (current: number, previous: number | undefined, upIsGood: boolean) =>
+    prev === null || previous === undefined ? undefined : { current, previous, period: 'vs last week', upIsGood };
+
   return (
     <section className="mt-6" aria-labelledby="metrics-heading">
       <h2 id="metrics-heading" className="mb-2 text-sm font-semibold">
@@ -372,12 +423,16 @@ function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element
         <StatTile
           label="Issues opened this week"
           value={metrics.issuesOpenedThisWeek}
+          delta={weekDelta(metrics.issuesOpenedThisWeek, prev?.issuesOpened, false)}
+          trend={weekly.map((w) => w.issuesOpened)}
           hint={`${metrics.openIssues} open · ${metrics.closedIssues} closed all-time`}
         />
         <StatTile
           label="Issues closed this week"
           value={metrics.issuesClosedThisWeek}
           tone={metrics.issuesClosedThisWeek >= metrics.issuesOpenedThisWeek ? 'ok' : 'warn'}
+          delta={weekDelta(metrics.issuesClosedThisWeek, prev?.issuesClosed, true)}
+          trend={weekly.map((w) => w.issuesClosed)}
           hint={
             metrics.issuesClosedThisWeek >= metrics.issuesOpenedThisWeek
               ? 'keeping up with intake'
@@ -387,12 +442,16 @@ function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element
         <StatTile
           label="PRs opened this week"
           value={metrics.prsOpenedThisWeek}
+          delta={weekDelta(metrics.prsOpenedThisWeek, prev?.prsOpened, true)}
+          trend={weekly.map((w) => w.prsOpened)}
           hint={`${metrics.openPrs} open · ${metrics.mergedPrs} merged all-time`}
         />
         <StatTile
           label="PRs closed this week"
           value={metrics.prsClosedThisWeek}
           tone={metrics.prsClosedThisWeek >= metrics.prsOpenedThisWeek ? 'ok' : 'warn'}
+          delta={weekDelta(metrics.prsClosedThisWeek, prev?.prsClosed, true)}
+          trend={weekly.map((w) => w.prsClosed)}
           hint="merged or closed"
         />
       </div>
