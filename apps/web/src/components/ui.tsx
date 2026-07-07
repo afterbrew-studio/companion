@@ -307,9 +307,11 @@ function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
         ? 'text-emerald-600 dark:text-emerald-400'
         : 'text-red-600 dark:text-red-400';
   return (
-    <span className={`inline-flex items-baseline gap-1 text-[11px] font-medium whitespace-nowrap ${cls}`}>
-      <span aria-hidden>{diff > 0 ? '▲' : diff < 0 ? '▼' : '→'}</span>
-      {amount} <span className="dim font-normal">{delta.period}</span>
+    <span className="flex shrink-0 flex-col items-end leading-tight">
+      <span className={`text-[12px] font-semibold whitespace-nowrap ${cls}`}>
+        <span aria-hidden>{diff > 0 ? '▲' : diff < 0 ? '▼' : '→'}</span> {amount}
+      </span>
+      <span className="dim text-[10px] whitespace-nowrap">{delta.period}</span>
     </span>
   );
 }
@@ -380,12 +382,16 @@ export function StatTile({
   const body = (
     <>
       {trend ? <TrendBackground points={trend} /> : null}
-      <div className="dim relative text-[11px] tracking-wide uppercase">{label}</div>
-      <div className={`relative mt-1 flex flex-wrap items-baseline gap-x-2 text-2xl font-semibold ${toneClass}`}>
-        {value}
+      <div className="dim relative truncate text-[11px] tracking-wide uppercase">{label}</div>
+      <div className="relative mt-1 flex items-center justify-between gap-2">
+        <div className={`min-w-0 truncate text-2xl font-semibold ${toneClass}`}>{value}</div>
         {delta ? <DeltaChip delta={delta} /> : null}
       </div>
-      {hint ? <div className="dim relative mt-0.5 truncate">{hint}</div> : null}
+      {hint ? (
+        <div className="dim relative mt-0.5 truncate" title={hint}>
+          {hint}
+        </div>
+      ) : null}
     </>
   );
   return href ? (
