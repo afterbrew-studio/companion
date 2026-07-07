@@ -179,6 +179,17 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Read-only info: unlike the POST, never (re-)enables the receiver. */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/webhook',
+      access: 'automations:manage',
+      handler: ({ params }) => {
+        const { fullName } = requireRepo(params.owner, params.name);
+        return { webhook: deps.automations.webhookInfo(fullName) };
+      },
+    }),
+
     /** Instance-wide public webhook delivery over moxxy's proxy relay. */
     route({
       method: 'GET',

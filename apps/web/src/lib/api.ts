@@ -274,8 +274,10 @@ export const api = {
     fullName: string,
     fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
-  webhookInfo: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
+  enableWebhook: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
+  /** Read-only: never (re-)enables the receiver. */
+  getWebhook: (fullName: string) => request<{ webhook: WebhookInfo | null }>(`/api/repos/${fullName}/webhook`),
   webhookTunnel: () => request<WebhookTunnelState>('/api/webhooks/tunnel'),
   setWebhookTunnel: (enabled: boolean) => put<WebhookTunnelState>('/api/webhooks/tunnel', { enabled }),
   digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),

@@ -51,6 +51,14 @@ export class Automations {
     this.broadcast({ t: 'repos.changed' });
   }
 
+  /** Current receiver info WITHOUT enabling — null while disabled. */
+  webhookInfo(repo: string): WebhookInfo | null {
+    const secret = this.store.getRepoWebhookSecret(repo);
+    if (!secret) return null;
+    const path = `/webhooks/github/${repo}`;
+    return { path, secret, url: this.webhookTunnel.deliveryUrl(path) };
+  }
+
   /**
    * Handle a delivery. `rawBody` MUST be the exact bytes received — GitHub's
    * X-Hub-Signature-256 is HMAC-SHA256 over the raw payload.

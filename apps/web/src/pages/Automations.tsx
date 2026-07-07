@@ -214,6 +214,24 @@ function RepoAutomation({
     }
   };
 
+  const toggleWebhook = async (on: boolean): Promise<void> => {
+    setBusy(true);
+    try {
+      if (on) {
+        // Enabling surfaces the URL + secret right away.
+        setWebhook(await api.enableWebhook(repo.fullName));
+      } else {
+        await api.disableWebhook(repo.fullName);
+        setWebhook(null);
+      }
+      await onChange();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <article className="card" aria-label={repo.fullName}>
       <div className="flex flex-wrap items-center gap-2">
@@ -222,6 +240,20 @@ function RepoAutomation({
       </div>
 
       <div className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800/60 dark:border-zinc-800">
+        <div className="flex items-center gap-3 px-3.5 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">GitHub webhook</div>
+            <p className="dim mt-0.5">
+              Receive deliveries for this repo — events sync instantly and trigger the automations below.
+            </p>
+          </div>
+          <Switch
+            label={`GitHub webhook for ${repo.fullName}`}
+            checked={repo.webhookConfigured}
+            disabled={busy}
+            onChange={(v) => void toggleWebhook(v)}
+          />
+        </div>
         {AUTOMATIONS.map((a) => (
           <div key={a.field} className="flex items-center gap-3 px-3.5 py-2.5">
             <div className="min-w-0 flex-1">
@@ -246,21 +278,24 @@ function RepoAutomation({
           Stale sweep now
         </button>
         <span className="flex-1" />
-        <button
-          className="btn-ghost"
-          disabled={busy}
-          onClick={() =>
-            void api
-              .webhookInfo(repo.fullName)
-              .then((info) => {
-                setWebhook(info);
-                void onChange();
-              })
-              .catch((e) => onError(String(e)))
-          }
-        >
-          {repo.webhookConfigured ? 'Webhook info' : 'Enable webhook'}
-        </button>
+        {repo.webhookConfigured ? (
+          <button
+            className="btn-ghost"
+            disabled={busy}
+            onClick={() => {
+              if (webhook) {
+                setWebhook(null);
+                return;
+              }
+              void api
+                .getWebhook(repo.fullName)
+                .then((r) => setWebhook(r.webhook))
+                .catch((e) => onError(String(e)));
+            }}
+          >
+            {webhook ? 'Hide webhook info' : 'Webhook info'}
+          </button>
+        ) : null}
       </div>
 
       {webhook ? (
@@ -286,22 +321,9 @@ function RepoAutomation({
               <code className="text-xs break-all">{webhook.secret}</code>
             </CopyText>
           </div>
-          <div className="mt-1 flex w-full items-center gap-2 border-t border-zinc-300/60 pt-2 dark:border-zinc-700">
-            <span className="dim min-w-0 flex-1">
-              Disabling rejects future deliveries here; also delete the webhook on GitHub to stop them at the source.
-            </span>
-            <button
-              className="btn-ghost shrink-0 text-red-600 dark:text-red-400"
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  await api.disableWebhook(repo.fullName);
-                  setWebhook(null);
-                })()
-              }
-            >
-              Disable webhook
-            </button>
+          <div className="dim mt-1 w-full border-t border-zinc-300/60 pt-2 dark:border-zinc-700">
+            Turning the webhook off rejects future deliveries here; also delete the webhook on GitHub to stop them at
+            the source.
           </div>
         </div>
       ) : null}
