@@ -314,30 +314,40 @@ function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
   );
 }
 
-/** Tiny trend line in de-emphasis ink; the current period gets the accent dot. */
-export function Sparkline({ points, className = '' }: { points: ReadonlyArray<number>; className?: string }): JSX.Element | null {
+/**
+ * Full-bleed trend behind a stat tile's content: a recessive line + soft area
+ * fill hugging the tile's bottom edge. Decorative — the delta chip carries the
+ * readable comparison.
+ */
+function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Element | null {
   if (points.length < 2) return null;
-  const w = 64;
-  const h = 24;
-  const pad = 2.5;
+  const w = 100;
+  const h = 32;
   const max = Math.max(...points);
   const min = Math.min(...points);
   const flat = max === min;
-  const x = (i: number): number => pad + (i / (points.length - 1)) * (w - pad * 2);
-  const y = (v: number): number => (flat ? h / 2 : pad + (1 - (v - min) / (max - min)) * (h - pad * 2));
-  const d = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  const last = points.length - 1;
+  const x = (i: number): number => (i / (points.length - 1)) * w;
+  // Headroom at the top so peaks never touch the content; flat series sit low.
+  const y = (v: number): number => (flat ? h * 0.72 : 6 + (1 - (v - min) / (max - min)) * (h - 10));
+  const line = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${w} ${h} L0 ${h} Z`;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className={`h-6 w-16 shrink-0 ${className}`} aria-hidden>
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
+      aria-hidden
+    >
+      <path d={area} className="fill-zinc-100 dark:fill-zinc-800/50" />
       <path
-        d={d}
+        d={line}
         fill="none"
         strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
         strokeLinecap="round"
         strokeLinejoin="round"
         className="stroke-zinc-300 dark:stroke-zinc-600"
       />
-      <circle cx={x(last)} cy={y(points[last]!)} r="2" className="fill-zinc-900 dark:fill-zinc-100" />
     </svg>
   );
 }
@@ -369,23 +379,24 @@ export function StatTile({
           : '';
   const body = (
     <>
-      <div className="dim text-[11px] tracking-wide uppercase">{label}</div>
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <div className={`flex min-w-0 flex-wrap items-baseline gap-x-2 text-2xl font-semibold ${toneClass}`}>
-          {value}
-          {delta ? <DeltaChip delta={delta} /> : null}
-        </div>
-        {trend ? <Sparkline points={trend} /> : null}
+      {trend ? <TrendBackground points={trend} /> : null}
+      <div className="dim relative text-[11px] tracking-wide uppercase">{label}</div>
+      <div className={`relative mt-1 flex flex-wrap items-baseline gap-x-2 text-2xl font-semibold ${toneClass}`}>
+        {value}
+        {delta ? <DeltaChip delta={delta} /> : null}
       </div>
-      {hint ? <div className="dim mt-0.5 truncate">{hint}</div> : null}
+      {hint ? <div className="dim relative mt-0.5 truncate">{hint}</div> : null}
     </>
   );
   return href ? (
-    <a href={href} className="card block transition-colors hover:border-accent-400 dark:hover:border-accent-500">
+    <a
+      href={href}
+      className="card relative block overflow-hidden transition-colors hover:border-accent-400 dark:hover:border-accent-500"
+    >
       {body}
     </a>
   ) : (
-    <div className="card">{body}</div>
+    <div className="card relative overflow-hidden">{body}</div>
   );
 }
 
