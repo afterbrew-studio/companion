@@ -295,6 +295,7 @@ export interface StatDelta {
   readonly upIsGood?: boolean;
 }
 
+/** Compact pill: direction + amount; the named period lives in the tooltip. */
 function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
   const diff = delta.current - delta.previous;
   // Percent only against a real base; from zero the absolute count is honest.
@@ -302,45 +303,40 @@ function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
   const amount = diff === 0 ? '±0' : `${diff > 0 ? '+' : ''}${pct !== null ? `${pct}%` : diff}`;
   const cls =
     diff === 0
-      ? 'text-zinc-400 dark:text-zinc-500'
+      ? 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'
       : (delta.upIsGood ?? true) === diff > 0
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : 'text-red-600 dark:text-red-400';
+        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+        : 'bg-red-500/10 text-red-600 dark:text-red-400';
   return (
-    <span className="flex shrink-0 flex-col items-end leading-tight">
-      <span className={`text-[12px] font-semibold whitespace-nowrap ${cls}`}>
-        <span aria-hidden>{diff > 0 ? '▲' : diff < 0 ? '▼' : '→'}</span> {amount}
-      </span>
-      <span className="dim text-[10px] whitespace-nowrap">{delta.period}</span>
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${cls}`}
+      title={`${amount} ${delta.period}`}
+    >
+      <span aria-hidden>{diff > 0 ? '▲' : diff < 0 ? '▼' : '→'}</span>
+      {amount}
+      <span className="sr-only"> {delta.period}</span>
     </span>
   );
 }
 
 /**
- * Full-bleed trend behind a stat tile's content: a recessive line + soft area
- * fill hugging the tile's bottom edge. Decorative — the delta chip carries the
- * readable comparison.
+ * The tile's foot: a full-bleed trend strip below the content — the line and
+ * fill never sit behind text. Decorative; the delta pill carries the reading.
  */
-function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Element | null {
+function TrendStrip({ points }: { points: ReadonlyArray<number> }): JSX.Element | null {
   if (points.length < 2) return null;
   const w = 100;
-  const h = 32;
+  const h = 28;
   const max = Math.max(...points);
   const min = Math.min(...points);
   const flat = max === min;
   const x = (i: number): number => (i / (points.length - 1)) * w;
-  // Headroom at the top so peaks never touch the content; flat series sit low.
-  const y = (v: number): number => (flat ? h * 0.72 : 6 + (1 - (v - min) / (max - min)) * (h - 10));
+  const y = (v: number): number => (flat ? h * 0.6 : 4 + (1 - (v - min) / (max - min)) * (h - 8));
   const line = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
   const area = `${line} L${w} ${h} L0 ${h} Z`;
   return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
-      aria-hidden
-    >
-      <path d={area} className="fill-zinc-200/20 dark:fill-zinc-700/10" />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none block h-7 w-full" aria-hidden>
+      <path d={area} className="fill-zinc-200/25 dark:fill-zinc-700/20" />
       <path
         d={line}
         fill="none"
@@ -348,7 +344,7 @@ function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Ele
         vectorEffect="non-scaling-stroke"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="stroke-zinc-300/40 dark:stroke-zinc-600/30"
+        className="stroke-zinc-300 dark:stroke-zinc-600"
       />
     </svg>
   );
@@ -381,15 +377,26 @@ export function StatTile({
           : '';
   const body = (
     <>
-      {trend ? <TrendBackground points={trend} /> : null}
-      <div className="dim relative truncate text-[11px] tracking-wide uppercase">{label}</div>
-      <div className="relative mt-1 flex items-center justify-between gap-2">
-        <div className={`min-w-0 truncate text-2xl font-semibold ${toneClass}`}>{value}</div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="dim min-w-0 truncate text-xs" title={label}>
+          {label}
+        </div>
         {delta ? <DeltaChip delta={delta} /> : null}
       </div>
+      <div className={`mt-1.5 text-3xl leading-none font-semibold ${toneClass}`}>{value}</div>
       {hint ? (
-        <div className="dim relative mt-0.5 truncate" title={hint}>
+        // Secondary detail stays off the tile face; it fades in on hover/focus.
+        <div
+          className="dim mt-1.5 truncate opacity-0 transition-opacity duration-150 group-hover/tile:opacity-100 group-focus-within/tile:opacity-100"
+          title={hint}
+        >
           {hint}
+        </div>
+      ) : null}
+      {/* mt-auto pins the strip to the tile's foot so a row of tiles aligns. */}
+      {trend ? (
+        <div className="-mx-4 -mb-4 mt-auto pt-3">
+          <TrendStrip points={trend} />
         </div>
       ) : null}
     </>
@@ -397,12 +404,12 @@ export function StatTile({
   return href ? (
     <a
       href={href}
-      className="card relative block overflow-hidden transition-colors hover:border-accent-400 dark:hover:border-accent-500"
+      className="group/tile card flex flex-col overflow-hidden transition-colors hover:border-accent-400 dark:hover:border-accent-500"
     >
       {body}
     </a>
   ) : (
-    <div className="card relative overflow-hidden">{body}</div>
+    <div className="group/tile card flex flex-col overflow-hidden">{body}</div>
   );
 }
 
