@@ -1120,6 +1120,13 @@ export class Store {
     }
 
     const thisWeek = weekly[weekly.length - 1]!;
+
+    // Rolling 7-day windows: the calendar week is partial for delta purposes.
+    const now = Date.now();
+    const d7 = now - 7 * 86_400_000;
+    const d14 = now - 14 * 86_400_000;
+    const win = (ts: number | null, from: number, to: number): boolean => ts !== null && ts >= from && ts < to;
+
     return {
       openIssues: issues.filter((i) => i.state === 'open').length,
       closedIssues: issues.filter((i) => i.state === 'closed').length,
@@ -1129,6 +1136,14 @@ export class Store {
       issuesClosedThisWeek: thisWeek.issuesClosed,
       prsOpenedThisWeek: thisWeek.prsOpened,
       prsClosedThisWeek: thisWeek.prsClosed,
+      issuesOpened7d: issues.filter((i) => win(i.created_at, d7, now + 1)).length,
+      issuesOpenedPrev7d: issues.filter((i) => win(i.created_at, d14, d7)).length,
+      issuesClosed7d: issues.filter((i) => win(i.closed_at, d7, now + 1)).length,
+      issuesClosedPrev7d: issues.filter((i) => win(i.closed_at, d14, d7)).length,
+      prsOpened7d: prs.filter((p) => win(p.created_at, d7, now + 1)).length,
+      prsOpenedPrev7d: prs.filter((p) => win(p.created_at, d14, d7)).length,
+      prsClosed7d: prs.filter((p) => win(p.closed_at, d7, now + 1)).length,
+      prsClosedPrev7d: prs.filter((p) => win(p.closed_at, d14, d7)).length,
       weekly,
     };
   }

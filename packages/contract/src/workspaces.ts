@@ -41,6 +41,18 @@ export interface WorkspaceMetrics {
   readonly issuesClosedThisWeek: number;
   readonly prsOpenedThisWeek: number;
   readonly prsClosedThisWeek: number;
+  /**
+   * Rolling windows (trailing 7 days vs the 7 before) — the honest delta base:
+   * calendar "this week" is partial and reads as a fake drop early in the week.
+   */
+  readonly issuesOpened7d: number;
+  readonly issuesOpenedPrev7d: number;
+  readonly issuesClosed7d: number;
+  readonly issuesClosedPrev7d: number;
+  readonly prsOpened7d: number;
+  readonly prsOpenedPrev7d: number;
+  readonly prsClosed7d: number;
+  readonly prsClosedPrev7d: number;
   /** Oldest → newest, includes the current (partial) week. */
   readonly weekly: ReadonlyArray<WeeklyCounts>;
 }

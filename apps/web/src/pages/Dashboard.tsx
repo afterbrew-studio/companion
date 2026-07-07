@@ -100,6 +100,23 @@ export function DashboardPage(): JSX.Element {
   const prBacklog = metrics
     ? backlogTrend(metrics.weekly, openPrs.length, (w) => w.prsOpened, (w) => w.prsClosed)
     : null;
+  // Backlog a week ago = today minus the trailing-7-day net. Growing backlog = red.
+  const issueBacklogDelta = metrics
+    ? {
+        current: issues.length,
+        previous: Math.max(0, issues.length - (metrics.issuesOpened7d - metrics.issuesClosed7d)),
+        period: 'vs 7 days ago',
+        upIsGood: false,
+      }
+    : undefined;
+  const prBacklogDelta = metrics
+    ? {
+        current: openPrs.length,
+        previous: Math.max(0, openPrs.length - (metrics.prsOpened7d - metrics.prsClosed7d)),
+        period: 'vs 7 days ago',
+        upIsGood: false,
+      }
+    : undefined;
 
   return (
     <Page>
@@ -111,14 +128,14 @@ export function DashboardPage(): JSX.Element {
           label="Open issues"
           value={issues.length}
           href="#/issues"
-          delta={backlogDelta(issueBacklog, false)}
+          delta={issueBacklogDelta}
           trend={issueBacklog ?? undefined}
         />
         <StatTile
           label="Open PRs"
           value={openPrs.length}
           href="#/prs"
-          delta={backlogDelta(prBacklog, false)}
+          delta={prBacklogDelta}
           trend={prBacklog ?? undefined}
         />
         <StatTile
@@ -395,11 +412,6 @@ function backlogTrend(
   return out;
 }
 
-/** Week-over-week delta for a backlog series (current vs end of last week). */
-function backlogDelta(trend: number[] | null, upIsGood: boolean): { current: number; previous: number; period: string; upIsGood: boolean } | undefined {
-  if (!trend || trend.length < 2) return undefined;
-  return { current: trend[trend.length - 1]!, previous: trend[trend.length - 2]!, period: 'vs last week', upIsGood };
-}
 
 // Two-series categorical palette (dataviz slots 1+2), validated per mode on the
 // app surfaces; the light aqua sits below 3:1 so the data-table view is the relief.
@@ -410,9 +422,13 @@ const CLOSED_SWATCH = 'bg-[#1baf7a] dark:bg-[#199e70]';
 
 function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element {
   const weekly = metrics.weekly;
-  const prev = weekly.length >= 2 ? weekly[weekly.length - 2]! : null;
-  const weekDelta = (current: number, previous: number | undefined, upIsGood: boolean) =>
-    prev === null || previous === undefined ? undefined : { current, previous, period: 'vs last week', upIsGood };
+  // Rolling 7-day deltas: immune to the partial-calendar-week distortion.
+  const rolling = (current: number, previous: number, upIsGood: boolean) => ({
+    current,
+    previous,
+    period: 'vs prior 7 days',
+    upIsGood,
+  });
 
   return (
     <section className="mt-6" aria-labelledby="metrics-heading">
@@ -421,36 +437,34 @@ function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element
       </h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile
-          label="Issues opened this week"
-          value={metrics.issuesOpenedThisWeek}
-          delta={weekDelta(metrics.issuesOpenedThisWeek, prev?.issuesOpened, false)}
+          label="Issues opened · 7d"
+          value={metrics.issuesOpened7d}
+          delta={rolling(metrics.issuesOpened7d, metrics.issuesOpenedPrev7d, false)}
           trend={weekly.map((w) => w.issuesOpened)}
           hint={`${metrics.openIssues} open · ${metrics.closedIssues} closed all-time`}
         />
         <StatTile
-          label="Issues closed this week"
-          value={metrics.issuesClosedThisWeek}
-          tone={metrics.issuesClosedThisWeek >= metrics.issuesOpenedThisWeek ? 'ok' : 'warn'}
-          delta={weekDelta(metrics.issuesClosedThisWeek, prev?.issuesClosed, true)}
+          label="Issues closed · 7d"
+          value={metrics.issuesClosed7d}
+          tone={metrics.issuesClosed7d >= metrics.issuesOpened7d ? 'ok' : 'warn'}
+          delta={rolling(metrics.issuesClosed7d, metrics.issuesClosedPrev7d, true)}
           trend={weekly.map((w) => w.issuesClosed)}
           hint={
-            metrics.issuesClosedThisWeek >= metrics.issuesOpenedThisWeek
-              ? 'keeping up with intake'
-              : 'intake outpacing closes'
+            metrics.issuesClosed7d >= metrics.issuesOpened7d ? 'keeping up with intake' : 'intake outpacing closes'
           }
         />
         <StatTile
-          label="PRs opened this week"
-          value={metrics.prsOpenedThisWeek}
-          delta={weekDelta(metrics.prsOpenedThisWeek, prev?.prsOpened, true)}
+          label="PRs opened · 7d"
+          value={metrics.prsOpened7d}
+          delta={rolling(metrics.prsOpened7d, metrics.prsOpenedPrev7d, true)}
           trend={weekly.map((w) => w.prsOpened)}
           hint={`${metrics.openPrs} open · ${metrics.mergedPrs} merged all-time`}
         />
         <StatTile
-          label="PRs closed this week"
-          value={metrics.prsClosedThisWeek}
-          tone={metrics.prsClosedThisWeek >= metrics.prsOpenedThisWeek ? 'ok' : 'warn'}
-          delta={weekDelta(metrics.prsClosedThisWeek, prev?.prsClosed, true)}
+          label="PRs closed · 7d"
+          value={metrics.prsClosed7d}
+          tone={metrics.prsClosed7d >= metrics.prsOpened7d ? 'ok' : 'warn'}
+          delta={rolling(metrics.prsClosed7d, metrics.prsClosedPrev7d, true)}
           trend={weekly.map((w) => w.prsClosed)}
           hint="merged or closed"
         />
