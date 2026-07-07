@@ -286,6 +286,23 @@ function RepoAutomation({
               <code className="text-xs break-all">{webhook.secret}</code>
             </CopyText>
           </div>
+          <div className="mt-1 flex w-full items-center gap-2 border-t border-zinc-300/60 pt-2 dark:border-zinc-700">
+            <span className="dim min-w-0 flex-1">
+              Disabling rejects future deliveries here; also delete the webhook on GitHub to stop them at the source.
+            </span>
+            <button
+              className="btn-ghost shrink-0 text-red-600 dark:text-red-400"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  await api.disableWebhook(repo.fullName);
+                  setWebhook(null);
+                })()
+              }
+            >
+              Disable webhook
+            </button>
+          </div>
         </div>
       ) : null}
     </article>

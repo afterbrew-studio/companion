@@ -45,6 +45,12 @@ export class Automations {
     return { path, secret, url: this.webhookTunnel.deliveryUrl(path) };
   }
 
+  /** Disable the receiver for a repo: deliveries 401/404 until re-enabled. */
+  disableWebhook(repo: string): void {
+    this.store.setRepoWebhookSecret(repo, null);
+    this.broadcast({ t: 'repos.changed' });
+  }
+
   /**
    * Handle a delivery. `rawBody` MUST be the exact bytes received — GitHub's
    * X-Hub-Signature-256 is HMAC-SHA256 over the raw payload.

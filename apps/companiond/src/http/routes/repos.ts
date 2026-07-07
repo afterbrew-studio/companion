@@ -168,6 +168,17 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    route({
+      method: 'DELETE',
+      path: '/api/repos/:owner/:name/webhook',
+      access: 'automations:manage',
+      handler: ({ params }) => {
+        const { fullName } = requireRepo(params.owner, params.name);
+        deps.automations.disableWebhook(fullName);
+        return { ok: true };
+      },
+    }),
+
     /** Instance-wide public webhook delivery over moxxy's proxy relay. */
     route({
       method: 'GET',

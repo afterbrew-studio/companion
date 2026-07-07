@@ -699,7 +699,7 @@ export class Store {
     this.db.prepare(`UPDATE repos SET ${field} = ? WHERE full_name = ?`).run(value ? 1 : 0, fullName);
   }
 
-  setRepoWebhookSecret(fullName: string, secret: string): void {
+  setRepoWebhookSecret(fullName: string, secret: string | null): void {
     this.db.prepare(`UPDATE repos SET webhook_secret = ? WHERE full_name = ?`).run(secret, fullName);
   }
 
