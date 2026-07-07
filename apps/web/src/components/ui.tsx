@@ -335,10 +335,10 @@ function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Ele
     <svg
       viewBox={`0 0 ${w} ${h}`}
       preserveAspectRatio="none"
-      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full opacity-20"
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
       aria-hidden
     >
-      <path d={area} className="fill-zinc-300 dark:fill-zinc-600" />
+      <path d={area} className="fill-zinc-200/20 dark:fill-zinc-700/10" />
       <path
         d={line}
         fill="none"
@@ -346,7 +346,7 @@ function TrendBackground({ points }: { points: ReadonlyArray<number> }): JSX.Ele
         vectorEffect="non-scaling-stroke"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="stroke-zinc-400 dark:stroke-zinc-500"
+        className="stroke-zinc-300/40 dark:stroke-zinc-600/30"
       />
     </svg>
   );
