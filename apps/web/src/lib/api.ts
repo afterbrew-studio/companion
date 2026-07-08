@@ -333,6 +333,8 @@ export const api = {
     }>(`/api/repos/${fullName}/prs/${number}`),
   prChecks: (fullName: string, number: number) =>
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
+  prDiff: (fullName: string, number: number) =>
+    request<{ diff: string }>(`/api/repos/${fullName}/prs/${number}/diff`),
   analyzeFailedChecks: (fullName: string, number: number) =>
     post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/checks/analyze`),
   fixChecks: (fullName: string, number: number) =>

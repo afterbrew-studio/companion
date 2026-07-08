@@ -121,6 +121,19 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** The PR's unified diff from GitHub — powers the code preview on the review page. */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/prs/:number/diff',
+      access: 'prs:read',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const client = deps.githubAccounts.clientFor('fetch', { repo: fullName });
+        if (!client) throw badRequest('GitHub is not configured');
+        return { diff: await client.prDiff(fullName, pr.number) };
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/analyze',

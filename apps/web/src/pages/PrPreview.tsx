@@ -54,13 +54,14 @@ export function PrPreview({ runId }: { runId: string }): JSX.Element {
   if (!run) return <PageLoading label="Loading pull request…" />;
 
   const phase: Phase =
-    run.status === 'failed' || run.status === 'interrupted'
-      ? 'failed'
-      : run.status === 'completed'
-        ? 'shipped'
-        : run.status === 'review'
-          ? 'ready'
-          : 'building';
+    run.status === 'completed'
+      ? 'shipped'
+      : run.status === 'review'
+        ? 'ready'
+        : run.status === 'running' || run.status === 'provisioning' || run.status === 'queued'
+          ? 'building'
+          : // failed / interrupted / stopped / abandoned — the run ended without a PR.
+            'failed';
 
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-6">
@@ -96,14 +97,18 @@ export function PrPreview({ runId }: { runId: string }): JSX.Element {
 
 // ---------- building (agent working) --------------------------------------------
 
-const STEPS = ['Understanding the issue', 'Writing the change', 'Preparing the pull request'] as const;
+const STEPS = [
+  { label: 'Understanding the issue', desc: 'Reading the issue and the relevant code' },
+  { label: 'Writing the change', desc: 'Editing files on a fresh branch' },
+  { label: 'Preparing the pull request', desc: 'Bundling the change into a PR' },
+] as const;
 
 function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JSX.Element {
   // No granular phase data, so infer loosely: step 0 done once the agent starts
   // thinking, step 1 active while it works, step 2 lights up at review.
   const started = blocks.some((b) => b.kind !== 'user');
   const active = run.status === 'provisioning' ? 0 : started ? 1 : 0;
-  const latest = latestActivity(blocks);
+  const activity = recentActivity(blocks);
 
   return (
     <section className="anim-in">
@@ -118,51 +123,109 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
         <div className="ppv-shimmer mx-auto mt-5 h-1 w-56 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" />
       </div>
 
-      <ol className="mt-5 flex flex-col gap-2.5">
-        {STEPS.map((label, i) => {
-          const state = i < active ? 'done' : i === active ? 'active' : 'pending';
-          return (
-            <li key={label} className="flex items-center gap-3">
-              <span
-                className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] ${
-                  state === 'done'
-                    ? 'bg-emerald-500 text-white'
-                    : state === 'active'
-                      ? 'bg-accent-500/15 text-accent-600 dark:text-accent-400'
-                      : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800'
-                }`}
-              >
-                {state === 'done' ? <CheckIcon /> : state === 'active' ? <Spinner /> : i + 1}
-              </span>
-              <span className={`text-sm ${state === 'pending' ? 'dim' : 'font-medium'}`}>{label}</span>
-            </li>
-          );
-        })}
-      </ol>
-
-      {latest ? (
-        <div className="dim mt-5 flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
-          <span className="ppv-live size-1.5 shrink-0 rounded-full bg-accent-500" aria-hidden />
-          <span className="min-w-0 flex-1 truncate">{latest}</span>
+      <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        {/* Left: the high-level stepper, in a card matching the activity feed. */}
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="dim border-b border-zinc-200 px-3.5 py-2 text-[11px] font-medium tracking-widest uppercase dark:border-zinc-800">
+            Progress
+          </div>
+          <ol className="flex flex-col p-4">
+            {STEPS.map((step, i) => {
+              const state = i < active ? 'done' : i === active ? 'active' : 'pending';
+              return (
+                <li key={step.label} className="relative flex gap-3 pb-5 last:pb-0">
+                  {i < STEPS.length - 1 ? (
+                    <span
+                      className={`absolute top-7 left-[13px] h-full w-0.5 -translate-x-1/2 ${
+                        i < active ? 'bg-emerald-500/60' : 'bg-zinc-200 dark:bg-zinc-800'
+                      }`}
+                      aria-hidden
+                    />
+                  ) : null}
+                  <span
+                    className={`z-10 flex size-[26px] shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors ${
+                      state === 'done'
+                        ? 'bg-emerald-500 text-white'
+                        : state === 'active'
+                          ? 'bg-accent-500/15 text-accent-600 ring-4 ring-accent-500/10 dark:text-accent-400'
+                          : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500'
+                    }`}
+                  >
+                    {state === 'done' ? <CheckIcon /> : state === 'active' ? <Spinner /> : i + 1}
+                  </span>
+                  <span className="min-w-0 pt-0.5">
+                    <span className={`block text-[13px] ${state === 'pending' ? 'dim' : 'font-medium'}`}>
+                      {step.label}
+                    </span>
+                    <span className={`block text-xs ${state === 'active' ? 'dim' : 'text-zinc-400 dark:text-zinc-600'}`}>
+                      {step.desc}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
-      ) : null}
+
+        {/* Right: the live activity timeline. */}
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="dim border-b border-zinc-200 px-3.5 py-2 text-[11px] font-medium tracking-widest uppercase dark:border-zinc-800">
+            Live activity
+          </div>
+          <ol className="max-h-72 overflow-y-auto p-3.5">
+            {activity.length === 0 ? (
+              <li className="dim flex items-center gap-2 text-xs">
+                <Spinner /> Waiting for the agent to start…
+              </li>
+            ) : (
+              activity.map((a, i) => (
+                <li key={a.key} className="relative flex gap-2.5 pb-3 last:pb-0">
+                  {i < activity.length - 1 ? (
+                    <span className="absolute top-3 left-[3px] h-full w-px bg-zinc-200 dark:bg-zinc-800" aria-hidden />
+                  ) : null}
+                  <span
+                    className={`z-10 mt-1 size-1.5 shrink-0 rounded-full ${
+                      a.running ? 'ppv-live bg-accent-500' : 'bg-zinc-300 dark:bg-zinc-600'
+                    }`}
+                    aria-hidden
+                  />
+                  <span className={`min-w-0 flex-1 text-xs leading-relaxed ${a.running ? '' : 'dim'}`}>{a.text}</span>
+                </li>
+              ))
+            )}
+          </ol>
+        </div>
+      </div>
     </section>
   );
 }
 
-/** A short human line describing what the agent is doing right now. */
-function latestActivity(blocks: Block[]): string | null {
-  for (let i = blocks.length - 1; i >= 0; i--) {
+interface ActivityLine {
+  key: string;
+  text: string;
+  running: boolean;
+}
+
+/** The most recent meaningful agent steps, newest first, for the live timeline. */
+function recentActivity(blocks: Block[], limit = 8): ActivityLine[] {
+  const out: ActivityLine[] = [];
+  for (let i = blocks.length - 1; i >= 0 && out.length < limit; i--) {
     const b = blocks[i]!;
-    if (b.kind === 'tool') return `${b.status === 'running' ? 'Running' : 'Ran'} ${b.name}${b.detail ? ` — ${b.detail}` : ''}`;
-    if (b.kind === 'assistant' && b.text.trim()) return firstLine(b.text);
-    if (b.kind === 'reasoning' && b.text.trim()) return firstLine(b.text);
+    if (b.kind === 'tool') {
+      out.push({
+        key: b.key,
+        text: `${b.status === 'running' ? 'Running' : 'Ran'} ${b.name}${b.detail ? ` — ${b.detail}` : ''}`,
+        running: b.status === 'running' || b.status === 'pending',
+      });
+    } else if ((b.kind === 'assistant' || b.kind === 'reasoning') && b.text.trim()) {
+      out.push({ key: b.key, text: firstLine(b.text), running: b.streaming });
+    }
   }
-  return null;
+  return out;
 }
 function firstLine(text: string): string {
   const line = text.trim().split('\n')[0] ?? '';
-  return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
 }
 
 // ---------- ready (diff preview + create PR) ------------------------------------
@@ -325,13 +388,60 @@ function ShippedStage({ run }: { run: RunRecord }): JSX.Element {
 }
 
 function FailedStage({ run }: { run: RunRecord }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [gone, setGone] = useState(false);
+  const cancelled =
+    run.status === 'stopped' ||
+    run.status === 'abandoned' ||
+    /abort|cancel/i.test(run.outcome ?? '');
+
+  const discard = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await api.discardRun(run.id);
+      setGone(true);
+    } catch {
+      // leave the branch; the full run view can retry
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <section className="anim-in rounded-2xl border border-red-500/40 p-6">
-      <h2 className="text-sm font-semibold text-red-600 dark:text-red-400">The agent couldn't finish</h2>
-      {run.outcome ? <p className="dim mt-2 text-sm">{run.outcome}</p> : null}
-      <a className="btn-ghost mt-3 inline-block" href={`#/runs/${run.id}`}>
-        Open the full run
-      </a>
+    <section
+      className={`anim-in rounded-2xl border p-6 ${cancelled ? 'border-zinc-300 dark:border-zinc-700' : 'border-red-500/40'}`}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className={`flex size-8 items-center justify-center rounded-lg ${
+            cancelled
+              ? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+              : 'bg-red-500/15 text-red-600 dark:text-red-400'
+          }`}
+        >
+          <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
+            <path d="m5 5 6 6M11 5l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </span>
+        <h2 className="text-sm font-semibold">{cancelled ? 'Fix cancelled' : "The agent couldn't finish"}</h2>
+      </div>
+      <p className="dim mt-2 text-sm">
+        {cancelled
+          ? gone
+            ? 'The branch and its worktree were discarded.'
+            : 'The run was stopped before a pull request was ready. Its branch may hold partial work.'
+          : (run.outcome ?? 'The run ended without producing a pull request.')}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <a className="btn-ghost" href={`#/runs/${run.id}`}>
+          Open the full run
+        </a>
+        {run.branch && !gone ? (
+          <button className="btn-danger-ghost" disabled={busy} onClick={() => void discard()}>
+            {busy ? 'Discarding…' : 'Discard branch'}
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }

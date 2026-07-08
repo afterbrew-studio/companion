@@ -349,14 +349,24 @@ function ProposalCard({
           </button>
         ) : null}
         {proposal.status === 'analyzed' && canAct ? (
-          <button className="btn" disabled={busy} onClick={() => void act(() => api.approveProposal(proposal.id))()}>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                // Land on the animated PR preview to watch the agent build it.
+                const { proposal: p } = await api.approveProposal(proposal.id);
+                if (p.implementRunId) location.hash = `#/runs/${p.implementRunId}/preview`;
+              })()
+            }
+          >
             Approve & implement
           </button>
         ) : null}
         {proposal.status === 'review' && canAct ? (
           <>
             {proposal.implementRunId ? (
-              <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}`}>
+              <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}/preview`}>
                 Review the diff
               </a>
             ) : null}
@@ -366,7 +376,7 @@ function ProposalCard({
           </>
         ) : null}
         {proposal.status === 'implementing' && proposal.implementRunId ? (
-          <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}`}>
+          <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}/preview`}>
             Watch implementation
           </a>
         ) : null}

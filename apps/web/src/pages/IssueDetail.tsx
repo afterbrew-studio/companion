@@ -150,7 +150,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
                 ...(issue.state === 'open'
                   ? [
                       {
-                        label: fixing ? 'Starting fix…' : 'Fix with AI — opens a PR',
+                        label: fixing ? 'Starting fix…' : 'Fix with AI',
                         disabled: fixing,
                         onSelect: () => void startFix(),
                       } as MenuAction,
