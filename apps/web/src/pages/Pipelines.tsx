@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   PipelineRecord,
   PipelineStep,
@@ -8,9 +8,10 @@ import type {
   StepDefinitionRecord,
 } from '@companion/contract';
 import { PIPELINE_TYPE_STEPS } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { usePipelines } from '../hooks/usePipelines.js';
 import { Page, EmptyState, Modal, PageHeader, Section, useConfirm } from '../components/ui.js';
 
 /**
@@ -61,35 +62,13 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
 }
 
 export function PipelinesPage(): JSX.Element {
-  const { current } = useWorkspace();
+  const { current, pipelines, stepDefs, error, setError, refresh } = usePipelines();
   const { can } = useAuth();
-  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
-  const [stepDefs, setStepDefs] = useState<StepDefinitionRecord[]>([]);
   const [editing, setEditing] = useState<PipelineRecord | 'new' | null>(null);
   const [editingDef, setEditingDef] = useState<StepDefinitionRecord | 'new' | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const canManage = can('pipelines:manage');
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const res = await api.workspacePipelines(current.id);
-      setPipelines(res.pipelines);
-      setStepDefs(res.stepDefinitions);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [current]);
-
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (msg.t === 'pipelines.changed') void refresh();
-    });
-  }, [refresh]);
 
   if (!current) return <EmptyState title="No workspace selected" />;
 

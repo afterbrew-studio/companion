@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { RunKind, RunRecord, RunStatus } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
+import { useRuns } from '../hooks/useRuns.js';
 import { Page, PageHeader, EmptyState, Spinner, timeAgo } from '../components/ui.js';
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
 
@@ -46,34 +47,8 @@ function matchesStatus(run: RunRecord, bucket: string): boolean {
 }
 
 export function RunsPage(): JSX.Element {
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const { runs, error, setError } = useRuns();
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = async (): Promise<void> => {
-    try {
-      const { runs } = await api.listRuns();
-      setRuns(runs);
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (msg.t === 'runs.changed') void refresh();
-      if (msg.t === 'run.changed') {
-        setRuns((prev) => {
-          const i = prev.findIndex((r) => r.id === msg.run.id);
-          if (i === -1) return [msg.run, ...prev];
-          const next = [...prev];
-          next[i] = msg.run;
-          return next;
-        });
-      }
-    });
-  }, []);
 
   const createRun = async (): Promise<void> => {
     setCreating(true);

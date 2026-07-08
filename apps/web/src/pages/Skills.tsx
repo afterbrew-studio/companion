@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { SkillFile } from '@companion/contract';
 import { api } from '../lib/api.js';
+import { useSkills } from '../hooks/useSkills.js';
 import { Page, EmptyState, Modal, PageHeader, timeAgo, useConfirm } from '../components/ui.js';
 
 /**
@@ -9,25 +10,9 @@ import { Page, EmptyState, Modal, PageHeader, timeAgo, useConfirm } from '../com
  * delete with confirm.
  */
 export function SkillsPage(): JSX.Element {
-  const [skills, setSkills] = useState<SkillFile[] | null>(null);
+  const { skills, error, setError, refresh } = useSkills();
   const [editing, setEditing] = useState<SkillFile | 'new' | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
-
-  const refresh = useCallback(async () => {
-    try {
-      const { skills } = await api.listSkills();
-      setSkills(skills);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setSkills([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const remove = async (name: string): Promise<void> => {
     const ok = await confirmDanger({

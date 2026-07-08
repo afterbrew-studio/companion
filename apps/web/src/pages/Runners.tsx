@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   RunnerCatalog,
   RunnerModelPins,
@@ -11,7 +11,7 @@ import type {
 } from '@companion/contract';
 import { RUNNER_PINNABLE_KINDS } from '@companion/contract';
 import { api } from '../lib/api.js';
-import { useLive } from '../lib/live.js';
+import { useRunners } from '../hooks/useRunners.js';
 import { Modal, Page, PageHeader, Spinner, Switch, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 
 const DOT_COLOR: Record<RunnerStatus, string> = {
@@ -27,31 +27,9 @@ const DOT_COLOR: Record<RunnerStatus, string> = {
  * bearer token. Health is polled by the daemon and pushed over WS.
  */
 export function RunnersPage(): JSX.Element {
-  const [runners, setRunners] = useState<RunnerRecord[] | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const { runners, workspaces, error, setError, refresh } = useRunners();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<RunnerRecord | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const { runners } = await api.listRunners();
-      setRunners(runners);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setRunners((prev) => prev ?? []);
-    }
-  }, []);
-
-  useLive(refresh, (msg) => msg.t === 'runners.changed');
-
-  useEffect(() => {
-    api
-      .listWorkspaces()
-      .then((r) => setWorkspaces(r.workspaces))
-      .catch(() => setWorkspaces([]));
-  }, []);
 
   return (
     <Page>

@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { ReportRecord, RepoRecord, RunRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { useState } from 'react';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { useWorkspace } from '../lib/workspace.js';
+import { useDigest } from '../hooks/useDigest.js';
 import { Markdown } from '../components/Markdown.js';
 import { EmptyState, Page, PageHeader, Section, Spinner, timeAgo } from '../components/ui.js';
 
@@ -12,50 +11,9 @@ import { EmptyState, Page, PageHeader, Section, Spinner, timeAgo } from '../comp
  * run; generated on demand here or on the daily schedule (Automations).
  */
 export function DigestPage(): JSX.Element {
-  const { current } = useWorkspace();
+  const { current, repos, reports, runs, selected, setSelected, loaded, error, setError, refresh } = useDigest();
   const { can } = useAuth();
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [reports, setReports] = useState<ReportRecord[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const [rp, rep, r] = await Promise.all([
-        api.workspaceRepos(current.id),
-        api.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
-        api.listRuns().catch(() => ({ runs: [] as RunRecord[] })),
-      ]);
-      setRepos(rp.repos);
-      setReports(rep.reports);
-      setRuns(r.runs);
-      setSelected((prev) => (prev && rp.repos.some((x) => x.fullName === prev) ? prev : (rp.repos[0]?.fullName ?? null)));
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoaded(true);
-    }
-  }, [current]);
-
-  useEffect(() => {
-    setLoaded(false);
-    void refresh();
-    return onServerMessage((msg) => {
-      if (
-        msg.t === 'reports.changed' ||
-        msg.t === 'repos.changed' ||
-        msg.t === 'runs.changed' ||
-        msg.t === 'run.changed'
-      ) {
-        void refresh();
-      }
-    });
-  }, [refresh]);
 
   if (!current) {
     return (
