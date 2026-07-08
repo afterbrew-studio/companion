@@ -6,6 +6,7 @@ import type {
   WorkspaceMember,
   WorkspaceMemberCandidate,
   WorkspaceRecord,
+  WorkspaceVisibility,
 } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
@@ -22,9 +23,8 @@ import { Page, EmptyState, LockIcon, Modal, PageHeader, Spinner, timeAgo, useCon
 export function ReposPage(): JSX.Element {
   const { can, user } = useAuth();
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
-  // Owner of a private workspace manages it even without workspaces:manage (admin).
-  const canManageCurrent =
-    can('workspaces:manage') || (current?.visibility === 'private' && current?.ownerId === user?.username);
+  // Admins manage any workspace; an owner manages their own (public or private).
+  const canManageCurrent = can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username);
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
   const [runners, setRunners] = useState<RunnerRecord[]>([]);
@@ -472,6 +472,26 @@ function WorkspaceSettingsModal({
 
   const { confirmDanger, confirmElement } = useConfirm();
 
+  const setVisibility = async (visibility: WorkspaceVisibility): Promise<void> => {
+    if (visibility === workspace.visibility) return;
+    const ok = await confirmDanger({
+      title: visibility === 'public' ? 'Make this workspace public?' : 'Make this workspace private?',
+      message:
+        visibility === 'public'
+          ? 'Every user will be able to see and work in this workspace, including all its repositories, issues, and pull requests.'
+          : 'Only you and the people you invite will be able to see this workspace. Everyone else loses access immediately.',
+      confirmLabel: visibility === 'public' ? 'Make public' : 'Make private',
+    });
+    if (!ok) return;
+    setError(null);
+    try {
+      await api.updateWorkspace(workspace.id, { visibility });
+      onChanged();
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const remove = async (): Promise<void> => {
     const ok = await confirmDanger({
       title: `Delete workspace ${workspace.name}`,
@@ -501,6 +521,43 @@ function WorkspaceSettingsModal({
         </button>
       </form>
       {note ? <p className="mt-2 text-[13px] text-emerald-600 dark:text-emerald-400">{note}</p> : null}
+
+      <fieldset className="mt-4">
+        <legend className="text-[13px] font-medium">Visibility</legend>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {(['public', 'private'] as const).map((v) => {
+            const selected = workspace.visibility === v;
+            return (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => void setVisibility(v)}
+                className={`flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${
+                  selected
+                    ? 'border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-zinc-800/60'
+                    : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+                }`}
+              >
+                {v === 'private' ? (
+                  <LockIcon className="mt-0.5 size-4" />
+                ) : (
+                  <svg viewBox="0 0 16 16" fill="none" className="mt-0.5 size-4 shrink-0" aria-hidden>
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
+                    <path d="M2 8h12M8 2c1.8 1.6 2.8 3.8 2.8 6S9.8 12.4 8 14M8 2C6.2 3.6 5.2 5.8 5.2 8S6.2 12.4 8 14" stroke="currentColor" strokeWidth="1.3" />
+                  </svg>
+                )}
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium capitalize">{v}</span>
+                  <span className="dim block text-xs">
+                    {v === 'public' ? 'Shared with everyone' : 'Just you and people you invite'}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
 
       {workspace.visibility === 'private' ? <MembersSection workspace={workspace} /> : null}
 

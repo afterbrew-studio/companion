@@ -21,7 +21,11 @@ export interface WorkspaceRecord {
   readonly slug: string;
   readonly description: string;
   readonly visibility: WorkspaceVisibility;
-  /** Username of the owner (creator) for private workspaces; null for public. */
+  /**
+   * Username of the owner — the creator of a private workspace, retained even
+   * if it's later flipped to public. null for a workspace that never had an
+   * owner (an admin-created public one).
+   */
   readonly ownerId: string | null;
   readonly createdAt: number;
   /** Computed: number of repos attached. */
@@ -93,4 +97,6 @@ export interface WorkspaceMetrics {
 export interface UpdateWorkspaceRequest {
   readonly name?: string;
   readonly description?: string;
+  /** Owner or admin can flip a workspace between public and private. */
+  readonly visibility?: WorkspaceVisibility;
 }

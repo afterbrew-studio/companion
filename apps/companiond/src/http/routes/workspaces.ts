@@ -14,6 +14,7 @@ const workspaceSchema = z.object({
 const workspacePatchSchema = z.object({
   name: z.string().min(2).max(80).optional(),
   description: z.string().max(500).optional(),
+  visibility: z.enum(['public', 'private']).optional(),
 });
 const memberSchema = z.object({ username: z.string().min(1).max(100) });
 
@@ -81,6 +82,7 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       body: workspacePatchSchema,
       handler: ({ params, body, user }) => {
         requireManage(user, params.id);
+        if (body.visibility) deps.store.workspaces.setVisibility(params.id, body.visibility, user!.username);
         deps.store.workspaces.update(params.id, body);
         deps.broadcast({ t: 'workspaces.changed' });
         return { workspace: deps.store.workspaces.get(params.id) };

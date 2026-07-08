@@ -148,9 +148,29 @@ export class WorkspacesStore {
     return user.role === 'admin' || ws.visibility === 'public' || this.isMember(ws.id, user.username);
   }
 
-  /** Can this user rename/delete/manage members? Admins and the owner. */
+  /**
+   * Can this user rename/delete/manage/retarget the workspace? Admins and the
+   * owner — ownership is retained across a public↔private flip, so an owner who
+   * makes their workspace public can still manage it (and switch it back).
+   */
   canManage(user: AuthUser, ws: WorkspaceRecord): boolean {
-    return user.role === 'admin' || (ws.visibility === 'private' && ws.ownerId === user.username);
+    return user.role === 'admin' || ws.ownerId === user.username;
+  }
+
+  /**
+   * Flip a workspace's visibility. Making a public (ownerless) workspace
+   * private hands ownership to the actor; making it public keeps the owner and
+   * member roster intact, so a later switch back to private restores access.
+   */
+  setVisibility(id: string, visibility: WorkspaceVisibility, actorUsername: string): void {
+    if (visibility === 'private') {
+      const ws = this.get(id);
+      if (ws && !ws.ownerId) {
+        this.db.prepare(`UPDATE workspaces SET owner_id = ? WHERE id = ?`).run(actorUsername, id);
+        this.addMember(id, actorUsername, 'owner');
+      }
+    }
+    this.db.prepare(`UPDATE workspaces SET visibility = ? WHERE id = ?`).run(visibility, id);
   }
 
   /** Visibility of the workspace a repo belongs to, resolved in one query. */

@@ -218,8 +218,10 @@ export const api = {
   listWorkspaces: () => request<{ workspaces: WorkspaceRecord[] }>('/api/workspaces'),
   createWorkspace: (name: string, opts?: { description?: string; visibility?: WorkspaceVisibility }) =>
     post<{ workspace: WorkspaceRecord }>('/api/workspaces', { name, ...opts }),
-  updateWorkspace: (id: string, fields: { name?: string; description?: string }) =>
-    patch<{ workspace: WorkspaceRecord }>(`/api/workspaces/${id}`, fields),
+  updateWorkspace: (
+    id: string,
+    fields: { name?: string; description?: string; visibility?: WorkspaceVisibility },
+  ) => patch<{ workspace: WorkspaceRecord }>(`/api/workspaces/${id}`, fields),
   deleteWorkspace: (id: string) => del<{ ok: true }>(`/api/workspaces/${id}`),
   // private-workspace membership
   listWorkspaceMembers: (id: string) =>
