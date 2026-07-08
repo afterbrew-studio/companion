@@ -253,6 +253,15 @@ export const MODULES: readonly AppModule[] = [
     icon: icons.repos,
   },
   {
+    key: 'github',
+    label: 'GitHub',
+    hash: '#/github',
+    shortcut: 'h',
+    permission: 'github:connect',
+    section: 'operate',
+    icon: icons.github,
+  },
+  {
     key: 'skills',
     label: 'Skills',
     hash: '#/skills',
@@ -269,15 +278,6 @@ export const MODULES: readonly AppModule[] = [
     permission: 'settings:manage',
     section: 'admin',
     icon: icons.providers,
-  },
-  {
-    key: 'github',
-    label: 'GitHub',
-    hash: '#/github',
-    shortcut: 'h',
-    permission: 'github:connect',
-    section: 'admin',
-    icon: icons.github,
   },
   {
     key: 'runners',

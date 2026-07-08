@@ -857,7 +857,7 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (path.startsWith('/automations')) return guard(can('automations:manage'), <AutomationsPage />);
   if (path.startsWith('/repos')) return guard(can('repos:manage'), <ReposPage />);
   if (path.startsWith('/skills')) return guard(can('skills:manage'), <SkillsPage />);
-  if (path.startsWith('/github')) return guard(can('settings:manage'), <GithubAccountsPage />);
+  if (path.startsWith('/github')) return guard(can('github:connect'), <GithubAccountsPage />);
   if (path.startsWith('/providers')) return guard(can('settings:manage'), <ProvidersPage />);
   if (path.startsWith('/users')) return guard(can('users:manage'), <UsersPage />);
   if (path.startsWith('/settings')) return guard(can('settings:manage'), <SettingsPage />);
