@@ -27,6 +27,7 @@ import type {
   MoxxyStatus,
   PipelineRecord,
   PipelineRunRecord,
+  PrFileChange,
   PrRecord,
   PrReviewResult,
   ProposalRecord,
@@ -335,6 +336,8 @@ export const api = {
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
   prDiff: (fullName: string, number: number) =>
     request<{ diff: string }>(`/api/repos/${fullName}/prs/${number}/diff`),
+  prFiles: (fullName: string, number: number) =>
+    request<{ files: PrFileChange[]; truncated: boolean }>(`/api/repos/${fullName}/prs/${number}/files`),
   analyzeFailedChecks: (fullName: string, number: number) =>
     post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/checks/analyze`),
   fixChecks: (fullName: string, number: number) =>

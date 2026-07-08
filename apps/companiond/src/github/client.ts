@@ -145,6 +145,27 @@ export class GitHubClient {
     return res.text();
   }
 
+  /**
+   * Changed files via the paginated files API — resilient to large PRs that the
+   * single-payload `.diff` endpoint rejects (406). Pages are capped to bound the
+   * response; `truncated` flags a PR that exceeds the cap.
+   */
+  async prFiles(fullName: string, number: number, maxPages = 15): Promise<{ files: GhPrFile[]; truncated: boolean }> {
+    const files: GhPrFile[] = [];
+    let full = false;
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await fetch(`${API}/repos/${fullName}/pulls/${number}/files?per_page=100&page=${page}`, {
+        headers: this.headers(),
+      });
+      if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}/files`);
+      const batch = (await res.json()) as GhPrFile[];
+      files.push(...batch);
+      full = batch.length === 100;
+      if (!full) break;
+    }
+    return { files, truncated: full };
+  }
+
   /** Post a PR review (COMMENT / APPROVE / REQUEST_CHANGES). */
   async createPrReview(
     fullName: string,
@@ -260,6 +281,15 @@ export interface GhReviewComment {
   original_line?: number | null;
   diff_hunk?: string;
   created_at: string;
+}
+
+export interface GhPrFile {
+  filename: string;
+  previous_filename?: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+  additions: number;
+  deletions: number;
+  patch?: string;
 }
 
 export interface GhCheckRun {

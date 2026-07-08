@@ -34,7 +34,7 @@ type Mode = 'detail' | 'review';
  */
 export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): JSX.Element {
   const pr = usePr(repo, number);
-  const fetchDiff = useCallback(() => api.prDiff(repo, number).then((r) => r.diff), [repo, number]);
+  const fetchFiles = useCallback(() => api.prFiles(repo, number), [repo, number]);
 
   if (!pr.pr) return pr.error ? <Page><div className="error-bar">{pr.error}</div></Page> : <PageLoading />;
 
@@ -72,7 +72,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
             </>
           )}
 
-          <PrChanges fetchDiff={fetchDiff} />
+          <PrChanges fetchFiles={fetchFiles} />
 
           <PrChecks
             repo={repo}

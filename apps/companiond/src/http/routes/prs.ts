@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AuthUser, CommentRecord } from '@companion/contract';
+import type { AuthUser, CommentRecord, PrFileChange } from '@companion/contract';
 import { route, accepted, created, notFound, badRequest, type CompiledRoute } from '../router.js';
 import { log } from '../../log.js';
 import type { ApiDeps } from '../deps.js';
@@ -131,6 +131,31 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
         const client = deps.githubAccounts.clientFor('fetch', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         return { diff: await client.prDiff(fullName, pr.number) };
+      },
+    }),
+
+    /**
+     * Changed files via the paginated files API — powers the changed-files view.
+     * Unlike the single `.diff` payload this doesn't 406 on large PRs.
+     */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/prs/:number/files',
+      access: 'prs:read',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const client = deps.githubAccounts.clientFor('fetch', { repo: fullName });
+        if (!client) throw badRequest('GitHub is not configured');
+        const { files, truncated } = await client.prFiles(fullName, pr.number);
+        const mapped: PrFileChange[] = files.map((f) => ({
+          filename: f.filename,
+          previousFilename: f.previous_filename ?? null,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          patch: f.patch ?? null,
+        }));
+        return { files: mapped, truncated };
       },
     }),
 

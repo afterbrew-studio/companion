@@ -261,6 +261,20 @@ export interface PrRecord {
   readonly checks: ChecksSnapshot | null;
 }
 
+/**
+ * One changed file in a PR, from GitHub's paginated files API — which, unlike
+ * the single `.diff` payload, never 406s on large pull requests. `patch` is the
+ * unified hunk body; GitHub omits it for binary files and very large diffs.
+ */
+export interface PrFileChange {
+  readonly filename: string;
+  readonly previousFilename: string | null;
+  readonly status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+  readonly additions: number;
+  readonly deletions: number;
+  readonly patch: string | null;
+}
+
 // ---------- PR reviews -----------------------------------------------------------
 
 export interface PrReviewVerdict {
