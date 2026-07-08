@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AuthUser, RunRecord } from '@companion/contract';
 import { route, created, notFound, type CompiledRoute } from '../router.js';
 import type { ApiDeps } from '../deps.js';
 
@@ -23,12 +24,23 @@ const setModelSchema = z.object({
 });
 
 export function runRoutes(deps: ApiDeps): CompiledRoute[] {
+  // A run tied to a repo inherits that repo's workspace access; a repo the
+  // user can't see reads as "not found". Repo-less runs (interactive/AI Help)
+  // are reachable to any runs:read holder.
+  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean =>
+    !!user && (!run.repo || deps.store.workspaces.canAccessRepo(user, run.repo));
+  const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => {
+    const run = deps.orchestrator.getRun(id);
+    if (!run || !canSeeRun(user, run)) throw notFound(`run ${id} not found`);
+    return run;
+  };
+
   return [
     route({
       method: 'GET',
       path: '/api/runs',
       access: 'runs:read',
-      handler: () => ({ runs: deps.orchestrator.listRuns() }),
+      handler: ({ user }) => ({ runs: deps.orchestrator.listRuns().filter((r) => canSeeRun(user, r)) }),
     }),
 
     route({
@@ -43,9 +55,8 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/runs/:id',
       access: 'runs:read',
-      handler: ({ params }) => {
-        const run = deps.orchestrator.getRun(params.id);
-        if (!run) throw notFound(`run ${params.id} not found`);
+      handler: ({ params, user }) => {
+        const run = requireRunAccess(user, params.id);
         return { run, pendingAsks: deps.orchestrator.pendingAsksFor(params.id) };
       },
     }),
@@ -54,7 +65,8 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/runs/:id/history',
       access: 'runs:read',
-      handler: async ({ params, query }) => {
+      handler: async ({ params, query, user }) => {
+        requireRunAccess(user, params.id);
         const before = query.get('before');
         const limit = Number(query.get('limit') ?? '200');
         return deps.orchestrator.loadHistory(
@@ -69,7 +81,10 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/runs/:id/diff',
       access: 'runs:read',
-      handler: ({ params }) => deps.fixes.diff(params.id),
+      handler: ({ params, user }) => {
+        requireRunAccess(user, params.id);
+        return deps.fixes.diff(params.id);
+      },
     }),
 
     /** Connected providers + models from the run's live gateway. */
@@ -77,7 +92,10 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/runs/:id/models',
       access: 'runs:read',
-      handler: ({ params }) => deps.orchestrator.modelCatalog(params.id),
+      handler: ({ params, user }) => {
+        requireRunAccess(user, params.id);
+        return deps.orchestrator.modelCatalog(params.id);
+      },
     }),
 
     /** On-the-fly model switch for this run. */
@@ -86,9 +104,10 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs/:id/model',
       access: 'runs:act',
       body: setModelSchema,
-      handler: async ({ params, body }) => ({
-        run: await deps.orchestrator.setRunModel(params.id, body.model, body.provider),
-      }),
+      handler: async ({ params, body, user }) => {
+        requireRunAccess(user, params.id);
+        return { run: await deps.orchestrator.setRunModel(params.id, body.model, body.provider) };
+      },
     }),
 
     route({
@@ -96,14 +115,18 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs/:id/approve-pr',
       access: 'runs:act',
       body: approvePrSchema,
-      handler: ({ params, body }) => deps.fixes.approve(params.id, body),
+      handler: ({ params, body, user }) => {
+        requireRunAccess(user, params.id);
+        return deps.fixes.approve(params.id, body);
+      },
     }),
 
     route({
       method: 'POST',
       path: '/api/runs/:id/discard',
       access: 'runs:act',
-      handler: async ({ params }) => {
+      handler: async ({ params, user }) => {
+        requireRunAccess(user, params.id);
         await deps.fixes.discard(params.id);
         return { ok: true };
       },
@@ -114,7 +137,10 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs/:id/prompt',
       access: 'runs:act',
       body: promptSchema,
-      handler: ({ params, body }) => deps.orchestrator.sendPrompt(params.id, body.prompt, body.model),
+      handler: ({ params, body, user }) => {
+        requireRunAccess(user, params.id);
+        return deps.orchestrator.sendPrompt(params.id, body.prompt, body.model);
+      },
     }),
 
     route({
@@ -122,7 +148,8 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs/:id/abort',
       access: 'runs:act',
       body: abortSchema,
-      handler: async ({ params, body }) => {
+      handler: async ({ params, body, user }) => {
+        requireRunAccess(user, params.id);
         await deps.orchestrator.abortTurn(params.id, body.turnId);
         return { ok: true };
       },
@@ -133,7 +160,8 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs/:id/ask',
       access: 'runs:act',
       body: askRespondSchema,
-      handler: async ({ params, body }) => {
+      handler: async ({ params, body, user }) => {
+        requireRunAccess(user, params.id);
         await deps.orchestrator.respondAsk(params.id, body.requestId, body.response);
         return { ok: true };
       },
@@ -143,14 +171,18 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/runs/:id/resume',
       access: 'runs:act',
-      handler: async ({ params }) => ({ run: await deps.orchestrator.resumeRun(params.id) }),
+      handler: async ({ params, user }) => {
+        requireRunAccess(user, params.id);
+        return { run: await deps.orchestrator.resumeRun(params.id) };
+      },
     }),
 
     route({
       method: 'POST',
       path: '/api/runs/:id/stop',
       access: 'runs:act',
-      handler: async ({ params }) => {
+      handler: async ({ params, user }) => {
+        requireRunAccess(user, params.id);
         await deps.orchestrator.stopRun(params.id);
         return { ok: true };
       },

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { SpaServerMessage } from '@companion/contract';
 import { log } from './log.js';
 import { loadDaemonConfig, paths } from './config.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from './moxxy/cli.js';
@@ -54,11 +55,24 @@ async function main(): Promise<void> {
   if (auth.setupNeeded()) {
     log.info('no accounts yet — first-boot onboarding is waiting in the browser');
   }
-  const hub = new SpaHub((token) => auth.verify(token));
+  // The run-repo resolver + repo-visibility check let the hub scope run-stream
+  // messages to users who can see the run's repo. `orchestrator` is created
+  // below; these closures only run at broadcast time, so the forward reference
+  // is safe.
+  const hub: SpaHub = new SpaHub(
+    (token) => auth.verify(token),
+    (runId) => orchestrator.getRun(runId)?.repo ?? null,
+    (username, repo) => {
+      const u = store.users.get(username);
+      return u
+        ? store.workspaces.canAccessRepo({ username: u.username, displayName: u.displayName, role: u.role }, repo)
+        : false;
+    },
+  );
   // Wrapped so domain modules can react to run lifecycle broadcasts
   // (an implement run reaching review flips its proposal to review too).
   let proposalsRef: Proposals | null = null;
-  const broadcast: typeof hub.broadcast = (msg) => {
+  const broadcast: (msg: SpaServerMessage) => void = (msg) => {
     hub.broadcast(msg);
     if (msg.t === 'run.changed' && msg.run.status === 'review') {
       proposalsRef?.onRunReview(msg.run.id);

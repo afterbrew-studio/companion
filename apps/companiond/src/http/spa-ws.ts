@@ -17,8 +17,16 @@ export class SpaHub {
   private readonly wss = new WebSocketServer({ noServer: true });
   /** Which user each socket authenticated as — for per-user directives. */
   private readonly owner = new WeakMap<WebSocket, string>();
+  /** run id → repo, cached so per-message filtering doesn't hit the store per token. */
+  private readonly runRepoCache = new Map<string, string | null>();
 
-  constructor(private readonly verify: (token: string | null) => AuthUser | null) {}
+  constructor(
+    private readonly verify: (token: string | null) => AuthUser | null,
+    /** Resolve a run's repo (for scoping run-stream messages). */
+    private readonly runRepo: (runId: string) => string | null = () => null,
+    /** Can this user (by name) see this repo? Gates run-scoped messages. */
+    private readonly canSeeRepo: (username: string, repo: string) => boolean = () => true,
+  ) {}
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -37,15 +45,39 @@ export class SpaHub {
 
   broadcast(msg: SpaServerMessage): void {
     const raw = JSON.stringify(msg);
+    // Run-stream messages (a run's events/turns/asks or its record) only go to
+    // users who can see that run's repo — a private workspace's live output
+    // must not reach non-members' sockets. Non-run messages go to everyone.
+    const repo = this.repoScopeOf(msg);
     for (const client of this.wss.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(raw);
-        } catch (err) {
-          log.warn('dropping SPA ws send', { err: String(err) });
-        }
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (repo) {
+        const username = this.owner.get(client);
+        if (!username || !this.canSeeRepo(username, repo)) continue;
+      }
+      try {
+        client.send(raw);
+      } catch (err) {
+        log.warn('dropping SPA ws send', { err: String(err) });
       }
     }
+  }
+
+  /** The repo a run-scoped message belongs to (null = broadcast to all). */
+  private repoScopeOf(msg: SpaServerMessage): string | null {
+    if (msg.t === 'run.changed') {
+      this.runRepoCache.set(msg.run.id, msg.run.repo);
+      return msg.run.repo;
+    }
+    if (msg.t === 'event' || msg.t === 'turn' || msg.t === 'ask' || msg.t === 'askResolved') {
+      let repo = this.runRepoCache.get(msg.runId);
+      if (repo === undefined) {
+        repo = this.runRepo(msg.runId);
+        this.runRepoCache.set(msg.runId, repo);
+      }
+      return repo;
+    }
+    return null;
   }
 
   /** Push to exactly the sockets a given user has open (all their tabs). */

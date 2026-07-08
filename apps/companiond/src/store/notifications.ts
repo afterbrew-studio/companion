@@ -16,16 +16,35 @@ export class NotificationsStore {
     this.db.prepare(`DELETE FROM notifications WHERE created_at < ?`).run(Date.now() - 30 * 24 * 3600_000);
   }
 
-  /** Workspace-scoped rows plus instance-wide (NULL workspace) rows, newest first. */
-  list(workspaceId: string | null | undefined, limit = 100): NotificationRecord[] {
-    const rows = workspaceId
-      ? this.db
-          .prepare(
-            `SELECT * FROM notifications WHERE workspace_id = ? OR workspace_id IS NULL
-             ORDER BY created_at DESC LIMIT ?`,
-          )
-          .all(workspaceId, limit)
-      : this.db.prepare(`SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?`).all(limit);
+  /**
+   * Notifications the caller may see, newest first: a specific workspace's rows
+   * plus instance-wide (NULL) rows, or — with no specific workspace — the
+   * instance-wide rows plus every accessible workspace's. `accessibleIds`
+   * undefined means "unrestricted" (admin/internal); an empty array means only
+   * instance-wide rows.
+   */
+  list(
+    workspaceId: string | null | undefined,
+    limit = 100,
+    accessibleIds?: readonly string[],
+  ): NotificationRecord[] {
+    let rows: unknown[];
+    if (workspaceId) {
+      rows = this.db
+        .prepare(
+          `SELECT * FROM notifications WHERE workspace_id = ? OR workspace_id IS NULL
+           ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(workspaceId, limit);
+    } else if (accessibleIds === undefined) {
+      rows = this.db.prepare(`SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?`).all(limit);
+    } else {
+      const placeholders = accessibleIds.map(() => '?').join(', ');
+      const cond = accessibleIds.length > 0 ? `OR workspace_id IN (${placeholders})` : '';
+      rows = this.db
+        .prepare(`SELECT * FROM notifications WHERE workspace_id IS NULL ${cond} ORDER BY created_at DESC LIMIT ?`)
+        .all(...accessibleIds, limit);
+    }
     return (rows as NotificationRow[]).map(rowToNotification);
   }
 
@@ -33,15 +52,22 @@ export class NotificationsStore {
     this.db.prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL`).run(Date.now(), id);
   }
 
-  markAllRead(workspaceId: string | null | undefined): void {
+  markAllRead(workspaceId: string | null | undefined, accessibleIds?: readonly string[]): void {
+    const now = Date.now();
     if (workspaceId) {
       this.db
         .prepare(
           `UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND (workspace_id = ? OR workspace_id IS NULL)`,
         )
-        .run(Date.now(), workspaceId);
+        .run(now, workspaceId);
+    } else if (accessibleIds === undefined) {
+      this.db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`).run(now);
     } else {
-      this.db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`).run(Date.now());
+      const placeholders = accessibleIds.map(() => '?').join(', ');
+      const cond = accessibleIds.length > 0 ? `OR workspace_id IN (${placeholders})` : '';
+      this.db
+        .prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND (workspace_id IS NULL ${cond})`)
+        .run(now, ...accessibleIds);
     }
   }
 }
