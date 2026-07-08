@@ -120,45 +120,46 @@ export class GitHubAccounts {
 
   private rowFor(purpose: GitHubPurpose, ctx?: ResolveCtx): GithubAccountRow | undefined {
     const rows = this.store.githubAccounts.list();
-    if (ctx?.accountId) {
-      const explicit = rows.find((r) => r.id === ctx.accountId);
-      if (explicit) return explicit;
-    }
     const repoRow = ctx?.repo ? this.store.repos.get(ctx.repo) : undefined;
     const workspaceId = repoRow?.workspace_id ?? null;
+    const username = ctx?.username ?? currentUser()?.username ?? null;
     const eligibleHere = (r: GithubAccountRow): boolean =>
       r.scope === 'shared' || (workspaceId !== null && r.workspaceIds.includes(workspaceId));
+    // A personal account (owned by someone) is usable ONLY by its owner — it is
+    // never a default and never acts for another user, on any resolution path.
+    const usable = (r: GithubAccountRow): boolean => r.ownerId === null || r.ownerId === username;
 
-    // 1. The invoking user's own account, if it holds the purpose and is
+    // 1. Explicit per-action account override — only if the caller may use it.
+    if (ctx?.accountId) {
+      const explicit = rows.find((r) => r.id === ctx.accountId && usable(r));
+      if (explicit) return explicit;
+    }
+
+    // 2. The invoking user's own account, if it holds the purpose and is
     //    eligible here — a maintainer acts as themselves when they've connected.
-    const username = ctx?.username ?? currentUser()?.username ?? null;
     if (username) {
       const mine = rows.find((r) => r.ownerId === username && r.purposes.includes(purpose) && eligibleHere(r));
       if (mine) return mine;
     }
 
-    // 2. Repo pin (an admin forcing a specific account for this repo).
+    // 3. Repo pin (an admin forcing an account for this repo) — shared, or the
+    //    caller's own; a pin to someone else's personal account is ignored.
     if (repoRow?.github_account_id) {
-      const pinned = rows.find((r) => r.id === repoRow.github_account_id);
+      const pinned = rows.find((r) => r.id === repoRow.github_account_id && usable(r));
       if (pinned) return pinned;
     }
 
-    // 3. Shared default accounts (ownerId null) eligible for the workspace —
-    //    delegated-to-it before shared. Falls back to all accounts when no
-    //    shared default exists, so a single personal account still serves as
-    //    the default (backward compatible).
-    const defaults = rows.filter((r) => r.ownerId === null);
-    const pool = defaults.length > 0 ? defaults : rows;
-    let eligible: GithubAccountRow[];
-    if (workspaceId) {
-      eligible = [
-        ...pool.filter((r) => r.scope === 'delegated' && r.workspaceIds.includes(workspaceId)),
-        ...pool.filter((r) => r.scope === 'shared'),
-      ];
-    } else {
-      const shared = pool.filter((r) => r.scope === 'shared');
-      eligible = shared.length > 0 ? shared : pool;
-    }
+    // 4. Shared default accounts only (ownerId null), eligible for the
+    //    workspace — delegated-to-it before shared. No personal-account
+    //    fallback: with no shared default, an action without an owning account
+    //    gets none.
+    const pool = rows.filter((r) => r.ownerId === null);
+    const eligible = workspaceId
+      ? [
+          ...pool.filter((r) => r.scope === 'delegated' && r.workspaceIds.includes(workspaceId)),
+          ...pool.filter((r) => r.scope === 'shared'),
+        ]
+      : pool.filter((r) => r.scope === 'shared');
     return eligible.find((r) => r.purposes.includes(purpose)) ?? eligible[0];
   }
 }
