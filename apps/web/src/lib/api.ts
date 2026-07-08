@@ -332,8 +332,6 @@ export const api = {
     }>(`/api/repos/${fullName}/prs/${number}`),
   prChecks: (fullName: string, number: number) =>
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
-  prDiff: (fullName: string, number: number) =>
-    request<{ diff: string }>(`/api/repos/${fullName}/prs/${number}/diff`),
   prFiles: (fullName: string, number: number) =>
     request<{ files: PrFileChange[]; truncated: boolean }>(`/api/repos/${fullName}/prs/${number}/files`),
   analyzeFailedChecks: (fullName: string, number: number) =>
