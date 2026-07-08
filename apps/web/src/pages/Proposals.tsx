@@ -1,11 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import type { ProposalRecord, RepoRecord } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { useWorkspace } from '../lib/workspace.js';
+import { useProposals } from '../hooks/useProposals.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
-import { useLive } from '../lib/live.js';
 
 /**
  * Proposals for the active workspace. Business users file and follow; a
@@ -14,26 +13,9 @@ import { useLive } from '../lib/live.js';
  * implemented.
  */
 export function ProposalsPage(): JSX.Element {
-  const { current } = useWorkspace();
+  const { current, repos, proposals, error, refresh } = useProposals();
   const { can } = useAuth();
-  const [proposals, setProposals] = useState<ProposalRecord[]>([]);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const [p, r] = await Promise.all([api.workspaceProposals(current.id), api.workspaceRepos(current.id)]);
-      setProposals(p.proposals);
-      setRepos(r.repos);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [current]);
-
-  useLive(refresh, (msg) => msg.t === 'proposals.changed' || msg.t === 'run.changed');
 
   const filterFields: Array<FilterSelectField<ProposalRecord>> = [
     {

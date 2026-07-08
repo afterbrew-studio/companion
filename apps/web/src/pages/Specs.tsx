@@ -1,12 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import type { AreaStorage, AreaStorageState, RepoRecord, SpecRecord } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { useWorkspace } from '../lib/workspace.js';
+import { useSpecs } from '../hooks/useSpecs.js';
 import { Markdown } from '../components/Markdown.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
-import { useLive } from '../lib/live.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 
 /**
@@ -16,34 +15,10 @@ import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConf
  * (a proposal carrying the spec rides the normal analyze → implement flow).
  */
 export function SpecsPage(): JSX.Element {
-  const { current } = useWorkspace();
+  const { current, repos, specs, storage, error, refresh } = useSpecs();
   const { can } = useAuth();
-  const [specs, setSpecs] = useState<SpecRecord[] | null>(null);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [storage, setStorage] = useState<AreaStorageState | null>(null);
   const [configuring, setConfiguring] = useState(false);
   const [creating, setCreating] = useState<'write' | 'generate' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const [s, r, cfg] = await Promise.all([
-        api.workspaceSpecs(current.id),
-        api.workspaceRepos(current.id),
-        api.specsConfig(current.id),
-      ]);
-      setSpecs(s.specs);
-      setRepos(r.repos);
-      setStorage(cfg);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setSpecs([]);
-    }
-  }, [current]);
-
-  useLive(refresh, (msg) => msg.t === 'specs.changed');
 
   const filterFields: Array<FilterSelectField<SpecRecord>> = [
     {

@@ -2,22 +2,22 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BriefingCadence, ReportRecord, RepoRecord, WebhookInfo, WebhookTunnelState } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { useWorkspaceRepos } from '../hooks/useWorkspaceRepos.js';
 import { Markdown } from '../components/Markdown.js';
 import { Page, CopyText, EmptyState, PageHeader, Section, Switch, timeAgo } from '../components/ui.js';
 
 /** Per-repo automation switches + the report feed they produce, workspace-scoped. */
 export function AutomationsPage(): JSX.Element {
   const { current } = useWorkspace();
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
+  const repos = useWorkspaceRepos(current?.id);
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!current) return;
     try {
-      const [r, rep] = await Promise.all([api.workspaceRepos(current.id), api.listReports()]);
-      setRepos(r.repos);
-      setReports(rep.reports);
+      const { reports } = await api.listReports();
+      setReports(reports);
       setError(null);
     } catch (err) {
       setError(String(err));
@@ -27,7 +27,7 @@ export function AutomationsPage(): JSX.Element {
   useEffect(() => {
     void refresh();
     return onServerMessage((msg) => {
-      if (msg.t === 'repos.changed' || msg.t === 'reports.changed' || msg.t === 'workspaces.changed') void refresh();
+      if (msg.t === 'reports.changed' || msg.t === 'workspaces.changed') void refresh();
     });
   }, [refresh]);
 

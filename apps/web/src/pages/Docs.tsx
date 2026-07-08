@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AreaStorage, AreaStorageState, DocRecord, DocSearchHit, RepoDocFile, RepoRecord } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { useDocs } from '../hooks/useDocs.js';
 import { Markdown } from '../components/Markdown.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
 import { Page, EmptyState, Modal, PageHeader, Spinner, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
-import { useLive } from '../lib/live.js';
 
 /**
  * Documentation for the active workspace: curated knowledge (architecture,
@@ -18,34 +18,10 @@ import { useLive } from '../lib/live.js';
  * retrieval returns.
  */
 export function DocsPage(): JSX.Element {
-  const { current } = useWorkspace();
   const { can } = useAuth();
-  const [docs, setDocs] = useState<DocRecord[] | null>(null);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [storage, setStorage] = useState<AreaStorageState | null>(null);
+  const { current, repos, docs, storage, error, refresh } = useDocs();
   const [configuring, setConfiguring] = useState(false);
   const [modal, setModal] = useState<'write' | 'import' | 'generate' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const [d, r, cfg] = await Promise.all([
-        api.workspaceDocs(current.id),
-        api.workspaceRepos(current.id),
-        api.docsConfig(current.id),
-      ]);
-      setDocs(d.docs);
-      setRepos(r.repos);
-      setStorage(cfg);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setDocs([]);
-    }
-  }, [current]);
-
-  useLive(refresh, (msg) => msg.t === 'docs.changed');
 
   const filterFields: Array<FilterSelectField<DocRecord>> = [
     {
