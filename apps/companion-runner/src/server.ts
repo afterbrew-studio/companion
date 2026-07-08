@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import {
   RUNNER_AGENT_PROTOCOL,
@@ -24,6 +24,7 @@ import {
   type AgentWorktreeAtRequest,
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
+  type AgentWriteFileRequest,
 } from '@companion/contract';
 import { paths } from '../../companiond/src/config.js';
 import type { Checkouts } from '../../companiond/src/git/checkouts.js';
@@ -193,6 +194,26 @@ async function route(
     const cwd = join(paths.scratch(), safeId(runId));
     mkdirSync(cwd, { recursive: true });
     return { cwd } satisfies AgentScratchResponse;
+  }
+
+  if (method === 'POST' && path === '/agent/files/write') {
+    const { cwd, path: relPath, content, mode } = body as AgentWriteFileRequest;
+    requireString(cwd, 'cwd');
+    requireString(relPath, 'path');
+    requireString(content, 'content');
+    // Only inside dirs the agent manages, and no traversal out of `cwd`.
+    const roots = [paths.scratch(), paths.worktrees()].map((r) => resolve(r));
+    const base = resolve(cwd);
+    if (!roots.some((root) => base === root || base.startsWith(root + sep))) {
+      throw new HttpError(403, 'cwd is outside the agent working area');
+    }
+    const target = resolve(base, relPath);
+    if (target !== base && !target.startsWith(base + sep)) {
+      throw new HttpError(403, 'path escapes the working dir');
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, content, { mode: typeof mode === 'number' ? mode : 0o600 });
+    return { ok: true };
   }
 
   if (method === 'POST' && path.startsWith('/agent/git/')) {

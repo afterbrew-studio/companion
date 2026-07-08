@@ -261,6 +261,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       scope         TEXT NOT NULL DEFAULT 'shared',
       max_runs      INTEGER NOT NULL DEFAULT 3,
       enabled       INTEGER NOT NULL DEFAULT 1,
+      model_pins    TEXT NOT NULL DEFAULT '{}',
+      catalog       TEXT,
       created_at    INTEGER NOT NULL
     );
 
@@ -318,6 +320,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE github_accounts ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'`,
     `ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`,
     `ALTER TABLE workspaces ADD COLUMN owner_id TEXT`,
+    `ALTER TABLE runners ADD COLUMN model_pins TEXT NOT NULL DEFAULT '{}'`,
+    `ALTER TABLE runners ADD COLUMN catalog TEXT`,
   ]) {
     try {
       db.exec(ddl);

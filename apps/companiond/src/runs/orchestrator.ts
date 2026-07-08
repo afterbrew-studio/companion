@@ -183,17 +183,19 @@ export class Orchestrator implements RunnerEventSink {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
     const kind: RunKind = opts.kind ?? 'interactive';
-    const model = opts.model ?? this.pinnedModel(kind);
     // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
     // worktree/clone from a one-shot) pins to the local runner; otherwise pick
-    // a runner for the repo, preferring one whose providers can serve the
-    // run's model, and let its backend allocate a scratch dir.
+    // a ready runner for the repo and let its backend allocate a scratch dir.
     const runnerId =
       opts.runnerId !== undefined
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.placeRun(opts.repo ?? null, kind, model);
+          : this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind));
+    // Model: explicit override → the CHOSEN runner's pin for this action →
+    // legacy global pin. null lets that runner's own moxxy default apply.
+    const model =
+      opts.model ?? this.runners.modelPinFor(runnerId, kind) ?? this.pinnedModel(kind);
     const backend = this.runners.backend(runnerId);
     const cwd = opts.cwd ?? (await backend.scratchDir(id));
     this.store.runs.insert({
@@ -227,6 +229,13 @@ export class Orchestrator implements RunnerEventSink {
     }
     this.emitRunChanged(id);
     return this.getRun(id)!;
+  }
+
+  /** Drop a file into a run's working dir on whatever runner it executes on. */
+  async writeRunFile(runId: string, relPath: string, content: string): Promise<void> {
+    const run = this.store.runs.get(runId);
+    if (!run) throw new Error(`run ${runId} not found`);
+    await this.runners.backendForRun(run.runner_id ?? null).writeFile(run.cwd, relPath, content);
   }
 
   /** Re-attach a gateway to an existing (reaped/interrupted) run's session. */

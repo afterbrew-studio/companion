@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  RunnerCatalog,
+  RunnerModelPins,
+  RunnerPinnableKind,
   RunnerRecord,
   RunnerScope,
   RunnerStatus,
   UpdateRunnerRequest,
   WorkspaceRecord,
 } from '@companion/contract';
+import { RUNNER_PINNABLE_KINDS } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useLive } from '../lib/live.js';
 import { Modal, Page, PageHeader, Spinner, Switch, Tooltip, timeAgo, useConfirm } from '../components/ui.js';
@@ -203,7 +207,40 @@ function RunnerCard({
         <span className="chip">{runner.kind}</span>
         {local ? <span className="dim">this machine</span> : null}
         <span className="flex-1" />
-        {!runner.enabled ? <span className="badge">disabled</span> : null}
+        {/* Health/test controls live by the title now, not in a footer. */}
+        {probe !== null && probe !== 'busy' ? (
+          <span
+            role="status"
+            className={`text-xs ${probe.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+          >
+            {probe.ok ? '✓' : '✕'} {probe.note}
+          </span>
+        ) : null}
+        {local ? (
+          <Tooltip content="the local runner is always on">
+            <Switch label={`${runner.name} enabled`} checked disabled onChange={() => undefined} />
+          </Tooltip>
+        ) : (
+          <Switch
+            label={`${runner.name} enabled`}
+            checked={runner.enabled}
+            disabled={busy}
+            onChange={(v) => void setEnabled(v)}
+          />
+        )}
+        <Tooltip content="Test connection">
+          <button
+            className="dim rounded-md p-1 transition-colors hover:bg-zinc-200 hover:text-zinc-800 disabled:opacity-50 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+            aria-label="Test connection"
+            disabled={probe === 'busy'}
+            onClick={() => void testConnection()}
+          >
+            <svg viewBox="0 0 16 16" fill="none" className={`size-4 ${probe === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden>
+              <path d="M13 8a5 5 0 1 1-1.46-3.54" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <path d="M13 2.5V5.5H10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </Tooltip>
       </div>
 
       <div className="dim mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[18px]">
@@ -229,31 +266,6 @@ function RunnerCard({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-        {probe !== null && probe !== 'busy' ? (
-          <span
-            role="status"
-            className={`text-xs ${probe.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
-          >
-            {probe.ok ? '✓' : '✕'} {probe.note}
-          </span>
-        ) : null}
-        {local ? (
-          <Tooltip content="the local runner is always on">
-            <Switch label={`${runner.name} enabled`} checked disabled onChange={() => undefined} />
-          </Tooltip>
-        ) : (
-          <Switch
-            label={`${runner.name} enabled`}
-            checked={runner.enabled}
-            disabled={busy}
-            onChange={(v) => void setEnabled(v)}
-          />
-        )}
-        {!local ? (
-          <button className="btn-ghost" disabled={probe === 'busy'} onClick={() => void testConnection()}>
-            {probe === 'busy' ? 'Testing…' : 'Test connection'}
-          </button>
-        ) : null}
         <button className="btn-ghost" onClick={onEdit}>
           Edit
         </button>
@@ -365,16 +377,31 @@ function RunnerModal({
   const [maxRuns, setMaxRuns] = useState(String(runner?.maxRuns ?? 3));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Model pins + the runner's catalog. For a new runner the catalog only exists
+  // after it's created (and probed), so the Add flow is create-then-pin: the
+  // first submit connects, then the pins section appears for the saved runner.
+  const [modelPins, setModelPins] = useState<RunnerModelPins>(runner?.modelPins ?? {});
+  const [catalog, setCatalog] = useState<RunnerCatalog | null>(runner?.catalog ?? null);
+  const [savedId, setSavedId] = useState<string | null>(runner?.id ?? null);
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState<string | null>(null);
 
   const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
   const capacity = Number(maxRuns);
 
-  // Bare `host:port` / `ip:port` is fine — default the scheme to plain http
-  // (the agent speaks http; put a TLS proxy in front if you need https).
   const normalizeEndpoint = (raw: string): string => {
     const trimmed = raw.trim();
     return trimmed && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
   };
+
+  const connectionBody = (): UpdateRunnerRequest => ({
+    name: name.trim(),
+    scope,
+    workspaceIds: scope === 'delegated' ? workspaceIds : [],
+    maxRuns: capacity,
+    modelPins,
+    ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
+  });
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -385,17 +412,13 @@ function RunnerModal({
     setBusy(true);
     setError(null);
     try {
-      if (runner) {
-        const body: UpdateRunnerRequest = {
-          name: name.trim(),
-          scope,
-          workspaceIds: scope === 'delegated' ? workspaceIds : [],
-          maxRuns: capacity,
-          ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
-        };
-        await api.updateRunner(runner.id, body);
+      if (savedId) {
+        // Existing runner (edit, or the second save of a just-added one).
+        await api.updateRunner(savedId, connectionBody());
+        onDone();
       } else {
-        await api.createRunner({
+        // First save of a new runner: create + probe, then reveal the pins.
+        const { runner: made } = await api.createRunner({
           name: name.trim(),
           endpoint: normalizeEndpoint(endpoint),
           token: token.trim(),
@@ -403,11 +426,40 @@ function RunnerModal({
           workspaceIds: scope === 'delegated' ? workspaceIds : [],
           maxRuns: capacity,
         });
+        setSavedId(made.id);
+        setCatalog(made.catalog);
+        setModelPins(made.modelPins);
+        setTestNote(
+          made.catalog && made.catalog.providers.some((p) => p.ready)
+            ? 'Connected — pin models per action below, or leave them on the runner default.'
+            : 'Connected, but no ready provider was found on this machine. Configure a provider there, then re-test.',
+        );
+        setBusy(false);
       }
-      onDone();
     } catch (err) {
       setError(String(err));
       setBusy(false);
+    }
+  };
+
+  const testConnection = async (): Promise<void> => {
+    if (!savedId) return;
+    setTesting(true);
+    setTestNote(null);
+    setError(null);
+    try {
+      const result = await api.probeRunner(savedId);
+      setCatalog(result.catalog);
+      const ready = result.catalog?.providers.filter((p) => p.ready).length ?? 0;
+      setTestNote(
+        result.ok
+          ? `Reachable — ${ready} provider${ready === 1 ? '' : 's'} with credentials.`
+          : (result.health.detail ?? 'unreachable'),
+      );
+    } catch (err) {
+      setTestNote(String(err));
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -507,10 +559,27 @@ function RunnerModal({
           />
         </label>
 
+        {/* Model pins: available once the runner exists and has been probed. */}
+        {savedId ? (
+          <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <legend className="text-sm font-medium">Model pins</legend>
+              <button type="button" className="btn-ghost text-xs" disabled={testing} onClick={() => void testConnection()}>
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+            </div>
+            <p className="dim text-xs">
+              Bind each action to a model this machine can serve. Unpinned actions ride its own default.
+            </p>
+            {testNote ? <p className="dim text-xs">{testNote}</p> : null}
+            <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
+          </fieldset>
+        ) : null}
+
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
-            Cancel
+            {savedId && !runner ? 'Done' : 'Cancel'}
           </button>
           <button
             className="btn"
@@ -521,13 +590,83 @@ function RunnerModal({
               delegatedEmpty ||
               !(capacity >= 1) ||
               (!local && !endpoint.trim()) ||
-              (!runner && !token.trim())
+              (!savedId && !token.trim())
             }
           >
-            {busy ? (runner ? 'Saving…' : 'Adding…') : runner ? 'Save' : 'Add machine'}
+            {busy
+              ? savedId
+                ? 'Saving…'
+                : 'Connecting…'
+              : savedId
+                ? 'Save'
+                : 'Connect & continue'}
           </button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+const PIN_LABELS: Record<RunnerPinnableKind, string> = {
+  triage: 'Issue triage',
+  analysis: 'Reviews & analyses',
+  fix: 'Fix runs',
+  implement: 'Implement runs',
+  report: 'Reports',
+  interactive: 'Interactive chats',
+  assistant: 'AI Help',
+};
+
+/** Per-action model dropdowns, options drawn from the runner's ready models. */
+function ModelPinsEditor({
+  catalog,
+  pins,
+  onChange,
+}: {
+  catalog: RunnerCatalog | null;
+  pins: RunnerModelPins;
+  onChange: (next: RunnerModelPins) => void;
+}): JSX.Element {
+  // Ready models across the runner's providers, de-duplicated by id.
+  const models = Array.from(
+    new Map(
+      (catalog?.providers ?? [])
+        .filter((p) => p.ready)
+        .flatMap((p) => p.models.map((m) => [m.id, m] as const)),
+    ).values(),
+  );
+
+  if (models.length === 0) {
+    return (
+      <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
+        No ready models on this machine yet — configure a provider there and re-test to pin models.
+      </p>
+    );
+  }
+
+  const set = (kind: RunnerPinnableKind, model: string): void => {
+    const next = { ...pins };
+    if (model) next[kind] = model;
+    else delete next[kind];
+    onChange(next);
+  };
+
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {RUNNER_PINNABLE_KINDS.map((kind) => (
+        <label key={kind} className="flex flex-col gap-1 text-xs">
+          <span className="dim">{PIN_LABELS[kind]}</span>
+          <select className="input py-1.5 text-sm" value={pins[kind] ?? ''} onChange={(e) => set(kind, e.target.value)}>
+            <option value="">Runner default</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id}
+                {m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+    </div>
   );
 }

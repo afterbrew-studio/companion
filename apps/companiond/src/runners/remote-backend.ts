@@ -161,6 +161,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
     return this.call<AgentHistoryResponse>('GET', `/runs/${runId}/history${q}`);
   }
 
+  async writeFile(cwd: string, relPath: string, content: string): Promise<void> {
+    await this.call('POST', '/files/write', { cwd, path: relPath, content });
+  }
+
   // ---------- git working area ----------
 
   async scratchDir(runId: string): Promise<string> {

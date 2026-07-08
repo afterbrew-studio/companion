@@ -4,6 +4,10 @@ import { LOCAL_RUNNER_ID } from '../../store/db.js';
 import type { ApiDeps } from '../deps.js';
 
 const workspaceIds = z.array(z.string()).max(200).optional();
+// Per-action model pins: kind → model id. Kinds match RUNNER_PINNABLE_KINDS.
+const modelPins = z
+  .record(z.enum(['triage', 'analysis', 'fix', 'implement', 'report', 'interactive', 'assistant']), z.string().max(200))
+  .optional();
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),
@@ -12,6 +16,7 @@ const createSchema = z.object({
   scope: z.enum(['shared', 'delegated']).optional(),
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
+  modelPins,
 });
 
 const updateSchema = z.object({
@@ -22,6 +27,7 @@ const updateSchema = z.object({
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
   enabled: z.boolean().optional(),
+  modelPins,
 });
 
 /** Runners: execution machines. Admin-only (instance administration). */

@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { HistorySegment, RunnerHealth, RunTurnResult, AskResponse } from '@companion/contract';
 import { paths } from '../config.js';
 import { GatewayPool } from '../moxxy/gateway-pool.js';
@@ -108,6 +108,12 @@ export class LocalRunnerBackend implements RunnerBackend {
     const handle = this.pool.get(runId);
     if (handle?.client.isOpen) return handle.client.loadHistory(runId, before, limit);
     return readSessionHistory(runId, before, limit);
+  }
+
+  async writeFile(cwd: string, relPath: string, content: string): Promise<void> {
+    const target = join(cwd, relPath);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, content, { mode: 0o600 });
   }
 
   // ---------- git working area ----------

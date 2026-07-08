@@ -48,6 +48,12 @@ export interface DaemonConfig {
   moxxyCliPath?: string;
   /** Default model passed on every agent turn. */
   defaultModel: string;
+  /**
+   * URL remote runners use to reach this daemon's REST API (e.g.
+   * https://companion.example.com). AI Help agents running on a remote runner
+   * call back here; unset means AI Help can only run on the local machine.
+   */
+  publicUrl?: string;
   /** Accounts sourced from the .env files. */
   users: readonly UserCredential[];
 }
@@ -63,6 +69,7 @@ interface StoredConfig {
   port?: number;
   maxLiveRuns?: number;
   moxxyCliPath?: string;
+  publicUrl?: string;
 }
 
 /**
@@ -106,6 +113,7 @@ export function loadDaemonConfig(): DaemonConfig {
     maxLiveRuns: stored.maxLiveRuns ?? DEFAULTS.maxLiveRuns,
     moxxyCliPath: stored.moxxyCliPath,
     defaultModel: env.COMPANION_MODEL?.trim() || DEFAULT_MODEL,
+    publicUrl: env.COMPANION_PUBLIC_URL?.trim() || stored.publicUrl || undefined,
     users,
   };
 }

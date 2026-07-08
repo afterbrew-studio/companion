@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { RunnerKind, RunnerScope } from '@companion/contract';
+import type { RunnerCatalog, RunnerKind, RunnerModelPins, RunnerScope } from '@companion/contract';
 
 /** The built-in runner: companiond's own machine. Always present, undeletable. */
 export const LOCAL_RUNNER_ID = 'runner-local';
@@ -14,6 +14,10 @@ export interface RunnerRow {
   scope: RunnerScope;
   max_runs: number;
   enabled: number;
+  /** Per-action model pins (JSON: kind → model id). */
+  model_pins: RunnerModelPins;
+  /** Last-fetched provider/model catalog (JSON), or null. */
+  catalog: RunnerCatalog | null;
   created_at: number;
   /** Filled by list()/get() joins — the delegated workspace ids. */
   workspace_ids: string[];
@@ -49,21 +53,24 @@ export class RunnersStore {
     ).map((r) => r.workspace_id);
   }
 
-  private hydrate(row: Omit<RunnerRow, 'workspace_ids'>): RunnerRow {
-    return { ...row, workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [] };
+  private hydrate(row: RawRunnerRow): RunnerRow {
+    return {
+      ...row,
+      model_pins: parseJson<RunnerModelPins>(row.model_pins, {}),
+      catalog: parseJson<RunnerCatalog | null>(row.catalog, null),
+      workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [],
+    };
   }
 
   list(): RunnerRow[] {
-    const rows = this.db.prepare(`SELECT * FROM runners ORDER BY kind = 'local' DESC, created_at`).all() as Array<
-      Omit<RunnerRow, 'workspace_ids'>
-    >;
+    const rows = this.db
+      .prepare(`SELECT * FROM runners ORDER BY kind = 'local' DESC, created_at`)
+      .all() as RawRunnerRow[];
     return rows.map((r) => this.hydrate(r));
   }
 
   get(id: string): RunnerRow | undefined {
-    const row = this.db.prepare(`SELECT * FROM runners WHERE id = ?`).get(id) as
-      | Omit<RunnerRow, 'workspace_ids'>
-      | undefined;
+    const row = this.db.prepare(`SELECT * FROM runners WHERE id = ?`).get(id) as RawRunnerRow | undefined;
     return row ? this.hydrate(row) : undefined;
   }
 
@@ -83,13 +90,14 @@ export class RunnersStore {
     scope: RunnerScope;
     maxRuns: number;
     workspaceIds: readonly string[];
+    modelPins?: RunnerModelPins;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO runners (id, name, kind, endpoint, token, scope, max_runs, enabled, created_at)
-         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @maxRuns, 1, @createdAt)`,
+        `INSERT INTO runners (id, name, kind, endpoint, token, scope, max_runs, enabled, model_pins, created_at)
+         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @maxRuns, 1, @modelPins, @createdAt)`,
       )
-      .run({ ...r, createdAt: Date.now() });
+      .run({ ...r, modelPins: JSON.stringify(r.modelPins ?? {}), createdAt: Date.now() });
     this.setWorkspaces(r.id, r.workspaceIds);
   }
 
@@ -103,6 +111,7 @@ export class RunnersStore {
       maxRuns: number;
       enabled: boolean;
       workspaceIds: readonly string[];
+      modelPins: RunnerModelPins;
     }>,
   ): void {
     const current = this.get(id);
@@ -110,7 +119,7 @@ export class RunnersStore {
     this.db
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
-         max_runs = @maxRuns, enabled = @enabled WHERE id = @id`,
+         max_runs = @maxRuns, enabled = @enabled, model_pins = @modelPins WHERE id = @id`,
       )
       .run({
         id,
@@ -120,8 +129,16 @@ export class RunnersStore {
         scope: fields.scope ?? current.scope,
         maxRuns: fields.maxRuns ?? current.max_runs,
         enabled: fields.enabled === undefined ? current.enabled : fields.enabled ? 1 : 0,
+        modelPins: JSON.stringify(fields.modelPins ?? current.model_pins),
       });
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
+  }
+
+  /** Cache a runner's freshly-probed provider/model catalog. */
+  setCatalog(id: string, catalog: RunnerCatalog | null): void {
+    this.db
+      .prepare(`UPDATE runners SET catalog = ? WHERE id = ?`)
+      .run(catalog ? JSON.stringify(catalog) : null, id);
   }
 
   private setWorkspaces(runnerId: string, workspaceIds: readonly string[]): void {
@@ -139,5 +156,20 @@ export class RunnersStore {
   /** Token for a remote runner (never leaves the daemon). */
   tokenFor(id: string): string | null {
     return this.get(id)?.token ?? null;
+  }
+}
+
+/** Row as SQLite returns it — JSON columns are still strings here. */
+type RawRunnerRow = Omit<RunnerRow, 'workspace_ids' | 'model_pins' | 'catalog'> & {
+  model_pins: string;
+  catalog: string | null;
+};
+
+function parseJson<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
   }
 }

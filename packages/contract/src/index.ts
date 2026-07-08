@@ -125,6 +125,34 @@ export interface RunnerHealth {
  * `remote` runners are other machines running the companion-runner agent,
  * reached at `endpoint` with a bearer `token` (write-only; never returned).
  */
+/**
+ * Action kinds a runner can pin a model to — the same "cases" as the global
+ * model pins, but resolved against THIS runner's own available models. A kind
+ * left unpinned rides the runner's own moxxy default model.
+ */
+export type RunnerPinnableKind = 'triage' | 'analysis' | 'fix' | 'implement' | 'report' | 'interactive' | 'assistant';
+
+export const RUNNER_PINNABLE_KINDS: readonly RunnerPinnableKind[] = [
+  'triage',
+  'analysis',
+  'fix',
+  'implement',
+  'report',
+  'interactive',
+  'assistant',
+];
+
+/** A runner's own provider/model catalog, fetched live from its moxxy. */
+export interface RunnerCatalog {
+  readonly providers: ReadonlyArray<ModelCatalogProvider>;
+  /** The runner's own default model (its moxxy `default` provider's model), if known. */
+  readonly defaultModel: string | null;
+  readonly fetchedAt: number;
+}
+
+/** Per-runner model pins: action kind → model id (only kinds the user set). */
+export type RunnerModelPins = Partial<Record<RunnerPinnableKind, string>>;
+
 export interface RunnerRecord {
   readonly id: string;
   readonly name: string;
@@ -140,6 +168,10 @@ export interface RunnerRecord {
   /** Admin can disable a runner without deleting it — placement skips it. */
   readonly enabled: boolean;
   readonly health: RunnerHealth;
+  /** This runner's own provider/model catalog (last fetched); null until probed. */
+  readonly catalog: RunnerCatalog | null;
+  /** Action kind → model id pinned on this runner; unpinned kinds use its default. */
+  readonly modelPins: RunnerModelPins;
   readonly createdAt: number;
 }
 
@@ -150,6 +182,7 @@ export interface CreateRunnerRequest {
   readonly scope?: RunnerScope;
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
+  readonly modelPins?: RunnerModelPins;
 }
 
 export interface UpdateRunnerRequest {
@@ -161,12 +194,15 @@ export interface UpdateRunnerRequest {
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
   readonly enabled?: boolean;
+  readonly modelPins?: RunnerModelPins;
 }
 
 /** Result of probing a runner's endpoint (the "Test connection" action). */
 export interface RunnerProbeResult {
   readonly ok: boolean;
   readonly health: RunnerHealth;
+  /** The runner's provider/model catalog, fetched during the probe (for the pin UI). */
+  readonly catalog: RunnerCatalog | null;
 }
 
 export interface IssueRecord {

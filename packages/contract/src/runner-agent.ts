@@ -53,6 +53,19 @@ export interface AgentPromptRequest {
   readonly model?: string;
 }
 
+/**
+ * POST /agent/files/write — drop a small file into a run's working dir (used to
+ * hand AI Help its scoped credentials). `cwd` must be one the agent handed out
+ * (under its scratch/worktrees root); `path` is relative and may not escape it.
+ */
+export interface AgentWriteFileRequest {
+  readonly cwd: string;
+  readonly path: string;
+  readonly content: string;
+  /** Octal file mode (e.g. 0o600); defaults to 0o600 for credential hygiene. */
+  readonly mode?: number;
+}
+
 /** POST /agent/runs/:runId/command — the misc typed gateway commands. */
 export interface AgentCommandRequest {
   readonly command:

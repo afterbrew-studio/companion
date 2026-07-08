@@ -43,6 +43,9 @@ export interface RunnerBackend {
   /** Gateway when live, else the session JSONL on the runner's disk. */
   loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment>;
 
+  /** Drop a small file into a run's working dir (e.g. AI Help's scoped creds). */
+  writeFile(cwd: string, relPath: string, content: string): Promise<void>;
+
   // ---------- git working area (proxied to Checkouts) ----------
   /** Throwaway working dir for scratch/interactive runs (returns the cwd). */
   scratchDir(runId: string): Promise<string>;

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CreateRunnerRequest,
+  ModelCatalogModel,
+  ModelCatalogProvider,
+  RunnerCatalog,
   RunnerHealth,
+  RunnerPinnableKind,
   RunnerProbeResult,
   RunnerRecord,
   SpaServerMessage,
@@ -143,25 +147,26 @@ export class Runners {
       // the first poll); offline ones are skipped.
       return !h || h.status === 'online' || h.status === 'degraded' || h.status === 'unknown';
     };
-    const someProvider = (row: RunnerRow): boolean => {
-      const p = this.health.get(row.id)?.providers ?? null;
-      return p === null || p.length > 0;
-    };
-    const wantedProvider = (row: RunnerRow): boolean => {
-      if (!wantedProviders || wantedProviders.length === 0) return true;
-      const p = this.health.get(row.id)?.providers ?? null;
-      return p === null || wantedProviders.some((w) => p.includes(w));
-    };
+    // A runner is usable only if it has a credential-ready provider (its
+    // catalog says so). Unknown catalog (never probed) stays optimistic.
+    const ready = (row: RunnerRow): boolean => this.hasReadyProvider(row);
     const load = (row: RunnerRow): number => this.backend(row.id).liveIds().length / Math.max(1, row.max_runs);
 
     if (pinned) {
-      // An explicit repo pin wins over model preference, but not over a
-      // runner that provably can't run anything.
+      // An explicit repo pin wins, but not over a runner that can't run anything.
       const pin = eligible.find((r) => r.id === pinned);
-      if (pin && online(pin) && someProvider(pin)) return this.normalize(pin.id);
+      if (pin && online(pin) && ready(pin)) return this.normalize(pin.id);
     }
-    const capable = eligible.filter(online).filter(someProvider).sort((a, b) => load(a) - load(b));
-    const chosen = capable.find(wantedProvider) ?? capable[0];
+    // Prefer runners whose model pins cover this action's model preference when
+    // given; otherwise any ready runner, least-loaded first.
+    const usable = eligible.filter(online).filter(ready).sort((a, b) => load(a) - load(b));
+    const served = (row: RunnerRow): boolean => {
+      if (!wantedProviders || wantedProviders.length === 0) return true;
+      const cat = row.catalog;
+      if (!cat) return true;
+      return cat.providers.some((p) => p.ready && wantedProviders.includes(p.name));
+    };
+    const chosen = usable.find(served) ?? usable[0];
     return this.normalize(chosen?.id ?? LOCAL_RUNNER_ID);
   }
 
@@ -217,9 +222,11 @@ export class Runners {
       scope: req.scope ?? 'shared',
       maxRuns: req.maxRuns ?? 3,
       workspaceIds: req.workspaceIds ?? [],
+      modelPins: req.modelPins,
     });
     this.rebuildRemotes();
     await this.probeOne(id);
+    await this.probeCatalog(id);
     this.broadcast({ t: 'runners.changed' });
     return this.get(id)!;
   }
@@ -228,13 +235,14 @@ export class Runners {
     const row = this.store.runners.get(id);
     if (!row) throw new Error('runner not found');
     if (row.kind === 'local') {
-      // Only capacity + scope are meaningful for the local runner.
+      // Capacity, scope, and per-action model pins apply to the local runner too.
       this.store.runners.update(id, {
         name: req.name,
         maxRuns: req.maxRuns,
         scope: req.scope,
         workspaceIds: req.workspaceIds,
         enabled: req.enabled,
+        modelPins: req.modelPins,
       });
     } else {
       this.store.runners.update(id, {
@@ -245,6 +253,7 @@ export class Runners {
         workspaceIds: req.workspaceIds,
         maxRuns: req.maxRuns,
         enabled: req.enabled,
+        modelPins: req.modelPins,
       });
       this.rebuildRemotes();
       await this.probeOne(id);
@@ -266,11 +275,29 @@ export class Runners {
     this.broadcast({ t: 'runners.changed' });
   }
 
-  /** The "Test connection" action — probe now and return the health. */
+  /** The "Test connection" action — probe health + fetch the runner's catalog. */
   async probeNow(id: string): Promise<RunnerProbeResult> {
     const health = await this.probeOne(id);
+    const ok = health.status === 'online' || health.status === 'degraded';
+    // Only bother fetching the (heavier) catalog when the runner is reachable.
+    const catalog = ok ? await this.probeCatalog(id) : (this.store.runners.get(id)?.catalog ?? null);
     this.broadcast({ t: 'runners.changed' });
-    return { ok: health.status === 'online' || health.status === 'degraded', health };
+    return { ok, health, catalog };
+  }
+
+  /** Resolve the model a run of `kind` should use on `runnerId`: its pin, else its default. */
+  modelPinFor(runnerId: string | null, kind: RunnerPinnableKind): string | null {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    return row?.model_pins[kind] ?? row?.catalog?.defaultModel ?? null;
+  }
+
+  /** True when the runner has at least one credential-ready provider. */
+  private hasReadyProvider(row: RunnerRow): boolean {
+    const cat = row.catalog;
+    // Unknown catalog stays optimistic (never probed yet); an empty/all-unready
+    // catalog means the runner can't actually serve anything.
+    if (!cat) return true;
+    return cat.providers.some((p) => p.ready);
   }
 
   private async probeOne(id: string): Promise<RunnerHealth> {
@@ -293,7 +320,66 @@ export class Runners {
       maxRuns: row.max_runs,
       enabled: row.enabled === 1,
       health: this.healthFor(row.id),
+      catalog: row.catalog,
+      modelPins: row.model_pins,
       createdAt: row.created_at,
     };
   }
+
+  /**
+   * Fetch a runner's own provider/model catalog by spawning a throwaway gateway
+   * on that runner and reading moxxy's session info. Heavier than a health
+   * probe, so it only runs on explicit "Test connection" / add / edit — not the
+   * periodic poll. Cached on the runner row for the pin UI and routing.
+   */
+  async probeCatalog(id: string): Promise<RunnerCatalog | null> {
+    const backend = this.backends.get(id);
+    if (!backend) return null;
+    const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
+    try {
+      const cwd = await backend.scratchDir(probeId);
+      await backend.spawn(probeId, cwd);
+      const info = (await backend.sessionInfo(probeId)) as {
+        activeProvider?: unknown;
+        providers?: unknown;
+        readyProviders?: unknown;
+      } | null;
+      const catalog = parseCatalog(info);
+      this.store.runners.setCatalog(id, catalog);
+      return catalog;
+    } catch (err) {
+      log.warn('runner catalog probe failed', { runner: id, err: String(err) });
+      return this.store.runners.get(id)?.catalog ?? null;
+    } finally {
+      await backend.stop(probeId).catch(() => undefined);
+    }
+  }
+}
+
+/** Parse moxxy session info into a per-runner catalog (providers + real readiness). */
+function parseCatalog(
+  info: { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null,
+): RunnerCatalog {
+  const ready = new Set(
+    Array.isArray(info?.readyProviders) ? info!.readyProviders.filter((p): p is string => typeof p === 'string') : [],
+  );
+  const providers: ModelCatalogProvider[] = (Array.isArray(info?.providers) ? info!.providers : [])
+    .map((raw): ModelCatalogProvider | null => {
+      const p = raw as { name?: unknown; models?: unknown; enabled?: unknown };
+      if (typeof p.name !== 'string') return null;
+      const models: ModelCatalogModel[] = (Array.isArray(p.models) ? p.models : [])
+        .map((m): ModelCatalogModel | null => {
+          if (typeof m === 'string') return { id: m, contextWindow: null };
+          const o = m as { id?: unknown; contextWindow?: unknown };
+          return typeof o.id === 'string'
+            ? { id: o.id, contextWindow: typeof o.contextWindow === 'number' ? o.contextWindow : null }
+            : null;
+        })
+        .filter((m): m is ModelCatalogModel => m !== null);
+      return { name: p.name, enabled: p.enabled !== false, ready: ready.has(p.name), models };
+    })
+    .filter((p): p is ModelCatalogProvider => p !== null);
+  const active = typeof info?.activeProvider === 'string' ? info.activeProvider : null;
+  const defaultModel = providers.find((p) => p.name === active)?.models[0]?.id ?? null;
+  return { providers, defaultModel, fetchedAt: Date.now() };
 }

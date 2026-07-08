@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { AskRequest, AuthUser, HistorySegment, RunRecord } from '@companion/contract';
 import { log } from '../log.js';
-import { paths, type DaemonConfig } from '../config.js';
+import type { DaemonConfig } from '../config.js';
 import type { Auth } from '../auth/auth.js';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from '../runs/orchestrator.js';
@@ -86,7 +84,7 @@ export class Assistant {
       }
       try {
         const resumed = await this.orchestrator.resumeRun(existing.id);
-        this.writeCredentials(resumed.cwd, user.username);
+        await this.writeCredentials(resumed, user.username);
         this.touch(resumed.id);
         return resumed;
       } catch (err) {
@@ -97,15 +95,16 @@ export class Assistant {
       }
     }
 
-    const safe = user.username.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cwd = join(paths.scratch(), 'assistant', safe);
-    mkdirSync(cwd, { recursive: true });
-    this.writeCredentials(cwd, user.username);
+    // Place AI Help like any other run — on a credential-ready runner — so it
+    // works even when the local machine has no provider. It can only leave the
+    // local machine when a reachable daemon URL is configured (the agent calls
+    // back here from another box); without one, keep it on the local runner.
     const run = await this.orchestrator.createRun({
       kind: 'assistant',
       title: `AI Help — ${user.displayName || user.username}`,
-      cwd,
+      runnerId: this.config.publicUrl ? undefined : null,
     });
+    await this.writeCredentials(run, user.username);
     this.store.settings.set(this.mapKey(user.username), run.id);
     this.store.settings.set(`assistant:primed:${run.id}`, '0');
     this.touch(run.id);
@@ -168,19 +167,25 @@ export class Assistant {
   }
 
   /**
-   * Fresh scoped token into the run's cwd. Role checks happen server-side on
-   * every request, so a stale file can never out-privilege the user.
+   * Fresh scoped token dropped into the run's cwd on WHATEVER runner it landed
+   * on (local via fs, remote via the agent's file-write endpoint). A local run
+   * reaches the daemon at 127.0.0.1; a remote run needs the configured public
+   * URL, since the agent curls it from another machine. Role checks happen
+   * server-side on every request, so a stale file can never out-privilege the
+   * user.
    */
-  private writeCredentials(cwd: string, username: string): void {
+  private async writeCredentials(run: RunRecord, username: string): Promise<void> {
+    const baseUrl = run.runnerId ? this.config.publicUrl : `http://127.0.0.1:${this.config.port}`;
+    if (!baseUrl) {
+      throw new Error(
+        'AI Help landed on a remote runner but no reachable daemon URL is set — set COMPANION_PUBLIC_URL, or give the Companion server its own model provider.',
+      );
+    }
     const session = this.auth.mintSession(username, TOKEN_TTL_MS);
-    writeFileSync(
-      join(cwd, CREDENTIALS_FILE),
-      JSON.stringify(
-        { baseUrl: `http://127.0.0.1:${this.config.port}`, token: session.token, expiresAt: session.expiresAt },
-        null,
-        2,
-      ),
-      { mode: 0o600 },
+    await this.orchestrator.writeRunFile(
+      run.id,
+      CREDENTIALS_FILE,
+      JSON.stringify({ baseUrl, token: session.token, expiresAt: session.expiresAt }, null, 2),
     );
   }
 
