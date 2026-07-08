@@ -13,6 +13,7 @@ import type {
 } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { pipelineRunHref, reportHref, runHref } from '../lib/links.js';
 import { Page, ChecksBadge, EmptyState, PageHeader, Spinner, StatTile, timeAgo } from '../components/ui.js';
 
 /**
@@ -315,7 +316,7 @@ function ActivityFeed({
                 ? 'bg-amber-500'
                 : 'bg-zinc-300 dark:bg-zinc-600',
         label: r.title,
-        href: `#/runs/${r.id}`,
+        href: runHref(r),
       }),
     ),
     ...pipelineRuns.map(
@@ -331,7 +332,7 @@ function ActivityFeed({
               ? 'bg-emerald-500'
               : 'bg-zinc-300 dark:bg-zinc-600',
         label: p.pipelineName,
-        href: p.target === 'issue' ? `#/repos/${p.repo}/issues/${p.prNumber}` : p.target === 'platform' ? '#/pipelines' : `#/repos/${p.repo}/prs/${p.prNumber}`,
+        href: pipelineRunHref(p),
       }),
     ),
     ...reports.map(
@@ -342,12 +343,7 @@ function ActivityFeed({
         status: `report · ${r.kind}`,
         dot: 'bg-zinc-300 dark:bg-zinc-600',
         label: r.title,
-        href:
-          r.kind === 'ci-analysis' && r.repo && r.issueNumber
-            ? `#/repos/${r.repo}/prs/${r.issueNumber}`
-            : r.kind === 'digest'
-              ? '#/digest'
-              : '#/automations',
+        href: reportHref(r),
       }),
     ),
   ]

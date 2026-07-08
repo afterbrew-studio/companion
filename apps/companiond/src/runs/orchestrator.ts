@@ -14,6 +14,7 @@ import type {
   SpaServerMessage,
 } from '@companion/contract';
 import { log } from '../log.js';
+import type { RunRow } from '../store/runs.js';
 import { paths, type DaemonConfig } from '../config.js';
 import type { Checkouts } from '../git/checkouts.js';
 import type { MoxxyCli } from '../moxxy/cli.js';
@@ -300,10 +301,28 @@ export class Orchestrator implements RunnerEventSink {
       kind,
       title,
       body: body ?? run.title,
-      href: `#/runs/${runId}`,
+      href: this.runHref(run),
       createdAt: Date.now(),
     });
     this.broadcast({ t: 'notifications.changed' });
+  }
+
+  /**
+   * The section a run's notification opens. The raw transcript (#/runs/:id) is
+   * audit-only, so we route to the work itself: triage to its issue, reports to
+   * the digest, CI analysis to its PR, and PR-building runs to the outcome
+   * preview (which shows building / ready / shipped / failed).
+   */
+  private runHref(run: RunRow): string {
+    const repo = run.repo;
+    if (run.kind === 'triage' && repo && run.issue_number != null) {
+      return `#/repos/${repo}/issues/${run.issue_number}`;
+    }
+    if (run.kind === 'report') return '#/digest';
+    if (run.kind === 'analysis' && repo && run.issue_number != null) {
+      return `#/repos/${repo}/prs/${run.issue_number}`;
+    }
+    return `#/runs/${run.id}/preview`;
   }
 
   markRun(runId: string, status: RunRecord['status'], outcome?: string): void {
