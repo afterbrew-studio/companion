@@ -26,7 +26,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }): JSX.El
   const refresh = useCallback(async () => {
     try {
       const { workspaces } = await api.listWorkspaces();
-      setWorkspaces(workspaces);
+      // Keep the previous array (and thus `current`'s identity) when nothing
+      // changed: repos.changed fires on every sync tick, and handing pages a
+      // fresh `current` object each time restarts their fetch loops.
+      setWorkspaces((prev) => (JSON.stringify(prev) === JSON.stringify(workspaces) ? prev : workspaces));
     } catch {
       // signed out or the daemon is down; the shell surfaces that elsewhere
     }

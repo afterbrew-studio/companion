@@ -15,6 +15,9 @@ type IssueTab = 'open' | 'closed';
  */
 export function IssuesAreaPage(): JSX.Element {
   const { current } = useWorkspace();
+  // Key data fetching on the id, not the object — a background workspaces
+  // refresh must not restart the list (it read as an infinite loading loop).
+  const workspaceId = current?.id;
   const { can } = useAuth();
   // Tab and filters ride the URL (#/issues?state=closed&author=__me) so back
   // navigation works and a filtered view is a shareable link.
@@ -46,12 +49,12 @@ export function IssuesAreaPage(): JSX.Element {
   const [counts, setCounts] = useState<{ open: number; closed: number }>({ open: 0, closed: 0 });
 
   useEffect(() => {
-    if (!current) return;
+    if (!workspaceId) return;
     api
-      .workspaceRepos(current.id)
+      .workspaceRepos(workspaceId)
       .then(({ repos }) => setRepos(repos))
       .catch(() => setRepos([]));
-  }, [current]);
+  }, [workspaceId]);
 
   // Bulk actions: select open issues, then run a pipeline or AI triage on all.
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
@@ -71,16 +74,16 @@ export function IssuesAreaPage(): JSX.Element {
   }, [flash]);
 
   useEffect(() => {
-    if (!current || !can('pipelines:read')) return;
+    if (!workspaceId || !can('pipelines:read')) return;
     api
-      .workspacePipelines(current.id)
+      .workspacePipelines(workspaceId)
       .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'issue')))
       .catch(() => setPipelines([]));
-  }, [current, can]);
+  }, [workspaceId, can]);
 
   useEffect(() => {
     setSelected(new Set());
-  }, [tab, current]);
+  }, [tab, workspaceId]);
 
   const toggleSelected = (key: string): void => {
     setSelected((prev) => {
@@ -151,8 +154,8 @@ export function IssuesAreaPage(): JSX.Element {
   }, [q, setParam]);
   const fetchPage = useCallback(
     async (offset: number) => {
-      if (!current) return { items: [], total: 0 };
-      const page = await api.workspaceIssues(current.id, tab, {
+      if (!workspaceId) return { items: [], total: 0 };
+      const page = await api.workspaceIssues(workspaceId, tab, {
         q: q || undefined,
         repo: repoFilter === 'all' ? undefined : repoFilter,
         author: authorFilter === 'all' ? undefined : authorFilter,
@@ -165,7 +168,7 @@ export function IssuesAreaPage(): JSX.Element {
       setFacets(page.facets);
       return { items: page.issues, total: page.total };
     },
-    [current, tab, q, repoFilter, authorFilter, assigneeFilter, labelFilter],
+    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, labelFilter],
   );
   const { items: issues, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
   const activeFilters = [repoFilter, authorFilter, assigneeFilter, labelFilter].filter((f) => f !== 'all').length;

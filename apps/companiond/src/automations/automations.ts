@@ -33,7 +33,7 @@ export class Automations {
     private readonly checkouts: Checkouts,
     private readonly webhookTunnel: WebhookTunnel,
     private readonly specs: Specs,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (repo?: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -212,7 +212,7 @@ export class Automations {
    * nominates, GitHub confirms. A failed merge backs off for 6 hours.
    */
   async autoMergeSweep(repo: string): Promise<void> {
-    const client = this.github();
+    const client = this.github(repo);
     if (!client) return;
     const candidates = this.store.prs
       .list(repo)

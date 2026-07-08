@@ -22,7 +22,7 @@ export class PrChecks {
 
   constructor(
     private readonly store: Store,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (repo: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -88,7 +88,7 @@ export class PrChecks {
   private async fetchFresh(repo: string, prNumber: number): Promise<ChecksSummary> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    const client = this.github();
+    const client = this.github(repo);
     if (!client || !pr.headSha) {
       return { ...emptySnapshot(), repo, prNumber, headSha: pr?.headSha ?? null, runs: [] };
     }

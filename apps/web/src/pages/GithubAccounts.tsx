@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GitHubAccountRecord, GitHubPurpose, MoxxyStatus } from '@companion/contract';
+import type {
+  GitHubAccountRecord,
+  GitHubAccountScope,
+  GitHubPurpose,
+  MoxxyStatus,
+  WorkspaceRecord,
+} from '@companion/contract';
 import { GITHUB_PURPOSES } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { Page, EmptyState, Modal, PageHeader, Switch, timeAgo, useConfirm } from '../components/ui.js';
@@ -12,12 +18,14 @@ const PURPOSE_META: Record<GitHubPurpose, { label: string; hint: string }> = {
 };
 
 /**
- * Connected GitHub accounts, each bound to what it does. A purpose with no
- * bound account falls back to the first connected account, so a single
- * account with everything on is the simple default.
+ * Connected GitHub accounts, each bound to what it does and where it may act.
+ * A purpose with no bound account falls back to the first connected account,
+ * so a single shared account with everything on is the simple default.
+ * Delegated accounts only act for repos in their workspaces.
  */
 export function GithubAccountsPage(): JSX.Element {
   const [accounts, setAccounts] = useState<GitHubAccountRecord[] | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [status, setStatus] = useState<MoxxyStatus | null>(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +45,10 @@ export function GithubAccountsPage(): JSX.Element {
 
   useEffect(() => {
     void refresh();
+    api
+      .listWorkspaces()
+      .then((r) => setWorkspaces(r.workspaces))
+      .catch(() => setWorkspaces([]));
   }, [refresh]);
 
   const togglePurpose = async (account: GitHubAccountRecord, purpose: GitHubPurpose): Promise<void> => {
@@ -49,7 +61,7 @@ export function GithubAccountsPage(): JSX.Element {
     }
     setError(null);
     try {
-      await api.updateGithubAccount(account.id, next);
+      await api.updateGithubAccount(account.id, { purposes: next });
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -110,7 +122,12 @@ export function GithubAccountsPage(): JSX.Element {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
-                  <div className="dim text-xs">connected {timeAgo(a.createdAt)}</div>
+                  <div className="dim text-xs">
+                    connected {timeAgo(a.createdAt)} ·{' '}
+                    {a.scope === 'shared'
+                      ? 'shared'
+                      : `delegated to ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
+                  </div>
                 </div>
                 <button className="btn-danger-ghost" onClick={() => void remove(a)}>
                   Disconnect
@@ -131,6 +148,7 @@ export function GithubAccountsPage(): JSX.Element {
                   </div>
                 ))}
               </div>
+              <ScopeEditor account={a} workspaces={workspaces} onError={setError} onSaved={refresh} />
             </article>
           ))}
         </div>
@@ -138,6 +156,7 @@ export function GithubAccountsPage(): JSX.Element {
 
       {adding ? (
         <ConnectAccountModal
+          workspaces={workspaces}
           onClose={() => setAdding(false)}
           onDone={() => {
             setAdding(false);
@@ -150,18 +169,126 @@ export function GithubAccountsPage(): JSX.Element {
   );
 }
 
-function ConnectAccountModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }): JSX.Element {
+/**
+ * Where the account may act, saved on change. Flipping to "delegated" waits
+ * for the first workspace pick before saving — the server (rightly) rejects a
+ * delegated account with no workspaces.
+ */
+function ScopeEditor({
+  account,
+  workspaces,
+  onError,
+  onSaved,
+}: {
+  account: GitHubAccountRecord;
+  workspaces: readonly WorkspaceRecord[];
+  onError: (e: string | null) => void;
+  onSaved: () => Promise<void>;
+}): JSX.Element {
+  const delegated = account.scope === 'delegated';
+  const [pendingDelegated, setPendingDelegated] = useState(false);
+  const showWorkspaces = delegated || pendingDelegated;
+
+  const save = async (scope: GitHubAccountScope, workspaceIds: readonly string[]): Promise<void> => {
+    onError(null);
+    try {
+      await api.updateGithubAccount(account.id, { scope, workspaceIds });
+      setPendingDelegated(false);
+      await onSaved();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  const toggleWorkspace = (id: string, checked: boolean): void => {
+    const next = checked ? [...account.workspaceIds, id] : account.workspaceIds.filter((w) => w !== id);
+    if (delegated && next.length === 0) {
+      onError('A delegated account needs at least one workspace — switch it to shared instead.');
+      return;
+    }
+    void save('delegated', next);
+  };
+
+  return (
+    <fieldset className="mt-3 flex flex-col gap-1.5">
+      <legend className="dim mb-1 text-sm">Available to</legend>
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="radio"
+          name={`scope-${account.id}`}
+          checked={!showWorkspaces}
+          onChange={() => {
+            setPendingDelegated(false);
+            if (delegated) void save('shared', []);
+            else onError(null);
+          }}
+        />
+        Shared
+        <span className="dim text-xs">— acts for any workspace</span>
+      </label>
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="radio"
+          name={`scope-${account.id}`}
+          checked={showWorkspaces}
+          onChange={() => {
+            onError(null);
+            setPendingDelegated(true);
+          }}
+        />
+        Delegated
+        <span className="dim text-xs">— only the workspaces picked below</span>
+      </label>
+      {showWorkspaces ? (
+        <div className="ml-6 flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+          {workspaces.length === 0 ? <span className="dim text-sm">No workspaces found.</span> : null}
+          {pendingDelegated && !delegated ? (
+            <span className="dim text-xs">Pick at least one workspace to delegate this account.</span>
+          ) : null}
+          {workspaces.map((w) => (
+            <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={account.workspaceIds.includes(w.id)}
+                onChange={(e) => toggleWorkspace(w.id, e.target.checked)}
+              />
+              {w.name}
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+function ConnectAccountModal({
+  workspaces,
+  onClose,
+  onDone,
+}: {
+  workspaces: readonly WorkspaceRecord[];
+  onClose: () => void;
+  onDone: () => void;
+}): JSX.Element {
   const [token, setToken] = useState('');
   const [purposes, setPurposes] = useState<readonly GitHubPurpose[]>(GITHUB_PURPOSES);
+  const [scope, setScope] = useState<GitHubAccountScope>('shared');
+  const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
+
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
+    if (delegatedEmpty) {
+      setError('A delegated account needs at least one workspace.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api.addGithubAccount(token.trim(), purposes);
+      await api.addGithubAccount(token.trim(), purposes, scope, scope === 'delegated' ? workspaceIds : []);
       onDone();
     } catch (err) {
       setError(String(err));
@@ -204,12 +331,49 @@ function ConnectAccountModal({ onClose, onDone }: { onClose: () => void; onDone:
             </label>
           ))}
         </fieldset>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="dim mb-1 text-sm">Available to</legend>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="radio" name="scope" checked={scope === 'shared'} onChange={() => setScope('shared')} />
+            Shared
+            <span className="dim text-xs">— acts for any workspace</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="radio" name="scope" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />
+            Delegated
+            <span className="dim text-xs">— only the workspaces picked below</span>
+          </label>
+        </fieldset>
+        {scope === 'delegated' ? (
+          <fieldset className="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <legend className="dim px-1">Workspaces</legend>
+            {workspaces.length === 0 ? <span className="dim">No workspaces found.</span> : null}
+            {workspaces.map((w) => (
+              <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={workspaceIds.includes(w.id)}
+                  onChange={(e) =>
+                    setWorkspaceIds((prev) =>
+                      e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id),
+                    )
+                  }
+                />
+                {w.name}
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" type="submit" disabled={busy || token.trim().length < 10 || purposes.length === 0}>
+          <button
+            className="btn"
+            type="submit"
+            disabled={busy || token.trim().length < 10 || purposes.length === 0 || delegatedEmpty}
+          >
             {busy ? 'Validating…' : 'Connect'}
           </button>
         </div>

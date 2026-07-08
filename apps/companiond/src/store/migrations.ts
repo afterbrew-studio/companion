@@ -183,7 +183,14 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       login      TEXT NOT NULL,
       token      TEXT NOT NULL,
       purposes   TEXT NOT NULL DEFAULT '[]',
+      scope      TEXT NOT NULL DEFAULT 'shared',
       created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS github_account_workspaces (
+      account_id   TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      PRIMARY KEY (account_id, workspace_id)
     );
   `);
   db.exec(`
@@ -295,6 +302,7 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE repos ADD COLUMN auto_merge INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE runs ADD COLUMN runner_id TEXT`,
     `ALTER TABLE repos ADD COLUMN runner_id TEXT`,
+    `ALTER TABLE github_accounts ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'`,
   ]) {
     try {
       db.exec(ddl);

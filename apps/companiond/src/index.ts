@@ -92,21 +92,21 @@ async function main(): Promise<void> {
   if (dangling > 0) log.info(`reset ${dangling} proposal(s) stuck in 'analyzing' from previous daemon life`);
   const danglingSpecs = store.specs.resetDangling();
   if (danglingSpecs > 0) log.info(`marked ${danglingSpecs} spec(s) stuck in 'generating' as failed from previous daemon life`);
-  const sync = new GitHubSync(store, () => ghAccounts.clientFor('fetch'), broadcast);
-  const prChecks = new PrChecks(store, () => ghAccounts.clientFor('fetch'), broadcast);
+  const sync = new GitHubSync(store, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
+  const prChecks = new PrChecks(store, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
   // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
   sync.onSynced = (repo) => prChecks.refreshOpenPrs(repo);
   sync.start();
   const triage = new Triage(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), broadcast);
   const prReviews = new PrReviews(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), prChecks, broadcast);
-  const fixes = new Fixes(store, orchestrator, () => ghAccounts.clientFor('runs'), prChecks, broadcast);
+  const fixes = new Fixes(store, orchestrator, (repo) => ghAccounts.clientFor('runs', { repo }), prChecks, broadcast);
   const proposals = new Proposals(store, orchestrator, fixes, checkouts, broadcast);
   proposalsRef = proposals;
   const pipelines = new Pipelines(
     { store, orchestrator, checkouts, github: (ctx) => ghAccounts.clientFor('pipelines', ctx), checks: prChecks, reviews: prReviews },
     broadcast,
   );
-  const specs = new Specs(store, orchestrator, checkouts, proposals, () => ghAccounts.clientFor('fetch'), broadcast);
+  const specs = new Specs(store, orchestrator, checkouts, proposals, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
   const docs = new Docs(store, orchestrator, checkouts, broadcast);
   const webhookTunnel = new WebhookTunnel(store, config.port);
   const automations = new Automations(
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     checkouts,
     webhookTunnel,
     specs,
-    () => ghAccounts.clientFor('pipelines'),
+    (repo) => ghAccounts.clientFor('pipelines', { repo }),
     broadcast,
   );
   automations.start();

@@ -221,46 +221,45 @@ function RepoCard({
         <button className="btn-ghost" disabled={busy || workspaces.length < 2} title={workspaces.length < 2 ? 'Create another workspace to transfer' : undefined} onClick={() => setTransferring(true)}>
           Transfer…
         </button>
+        {/* Label + description live inside the opened dropdown (optgroup) — the closed control stays label-free. */}
         {accounts.length > 1 ? (
-          <label className="dim flex items-center gap-1.5 text-xs">
-            posts as
-            <select
-              className="input py-1.5"
-              value={repo.githubAccountId ?? ''}
-              disabled={busy}
-              aria-label={`GitHub account posting for ${repo.fullName}`}
-              title="Reviews, labels, and comments on this repo post as this account"
-              onChange={(e) => void act(() => api.setRepoGithubAccount(repo.fullName, e.target.value || null))()}
-            >
+          <select
+            className="input py-1.5 text-xs"
+            value={repo.githubAccountId ?? ''}
+            disabled={busy}
+            aria-label={`GitHub account posting for ${repo.fullName}`}
+            title="Reviews, labels, and comments on this repo post as this account"
+            onChange={(e) => void act(() => api.setRepoGithubAccount(repo.fullName, e.target.value || null))()}
+          >
+            <optgroup label="Posts as — reviews, labels, and comments on this repo post as this account">
               <option value="">auto (bindings)</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.login}
                 </option>
               ))}
-            </select>
-          </label>
+            </optgroup>
+          </select>
         ) : null}
         {/* A pin is pointless while only the local runner exists — hide it. */}
         {runners.length > 1 ? (
-          <label className="dim flex items-center gap-1.5 text-xs">
-            runs on
-            <select
-              className="input py-1.5"
-              value={repo.runnerId ?? ''}
-              disabled={busy}
-              aria-label={`Runner executing agent work for ${repo.fullName}`}
-              title="Agent runs for this repo execute on this machine"
-              onChange={(e) => void act(() => api.setRepoRunner(repo.fullName, e.target.value || null))()}
-            >
+          <select
+            className="input py-1.5 text-xs"
+            value={repo.runnerId ?? ''}
+            disabled={busy}
+            aria-label={`Runner executing agent work for ${repo.fullName}`}
+            title="Agent runs for this repo execute on this machine"
+            onChange={(e) => void act(() => api.setRepoRunner(repo.fullName, e.target.value || null))()}
+          >
+            <optgroup label="Runs on — agent runs for this repo execute on this machine">
               <option value="">auto (place among eligible)</option>
               {runners.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
                 </option>
               ))}
-            </select>
-          </label>
+            </optgroup>
+          </select>
         ) : null}
         <span className="action-sep" aria-hidden />
         <button

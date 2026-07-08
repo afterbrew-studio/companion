@@ -489,11 +489,21 @@ export type GitHubPurpose = 'fetch' | 'runs' | 'pipelines' | 'webhooks';
 
 export const GITHUB_PURPOSES: readonly GitHubPurpose[] = ['fetch', 'runs', 'pipelines', 'webhooks'];
 
+/**
+ * Where an account may act. `shared` accounts serve any workspace; `delegated`
+ * accounts only act for repos in the workspaces explicitly assigned to them
+ * (GitHubAccountRecord.workspaceIds) — mirroring RunnerScope.
+ */
+export type GitHubAccountScope = 'shared' | 'delegated';
+
 /** A connected GitHub account (PAT); tokens never leave the daemon. */
 export interface GitHubAccountRecord {
   readonly id: string;
   readonly login: string;
   readonly purposes: readonly GitHubPurpose[];
+  readonly scope: GitHubAccountScope;
+  /** Workspaces this account serves when `delegated` (ignored when `shared`). */
+  readonly workspaceIds: ReadonlyArray<string>;
   readonly createdAt: number;
 }
 

@@ -23,7 +23,7 @@ export class Fixes {
   constructor(
     private readonly store: Store,
     private readonly orchestrator: Orchestrator,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (repo?: string) => GitHubClient | null,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
@@ -141,7 +141,7 @@ export class Fixes {
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     if (pr.state !== 'open') throw new Error(`PR #${prNumber} is ${pr.state}`);
     if (!pr.headRef) throw new Error('PR has no head branch');
-    const client = this.github();
+    const client = this.github(repo);
     if (!client) throw new Error('GitHub is not configured');
     return { pr, client };
   }
@@ -197,7 +197,7 @@ export class Fixes {
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
     const repoRow = this.store.repos.get(run.repo);
     if (!repoRow) throw new Error(`unknown repo ${run.repo}`);
-    const client = this.github();
+    const client = this.github(run.repo);
     if (!client) throw new Error('GitHub is not configured');
 
     const backend = this.backendForRun(run.runner_id);

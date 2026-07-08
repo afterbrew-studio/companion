@@ -15,6 +15,9 @@ type PrTab = 'open' | 'merged' | 'closed';
  */
 export function PrsAreaPage(): JSX.Element {
   const { current } = useWorkspace();
+  // Key data fetching on the id, not the object — a background workspaces
+  // refresh must not restart the list (it read as an infinite loading loop).
+  const workspaceId = current?.id;
   const { can } = useAuth();
   // Tab and filters ride the URL (#/prs?state=merged&author=__me) so back from
   // a PR detail restores the list and a filtered view is a shareable link.
@@ -48,12 +51,12 @@ export function PrsAreaPage(): JSX.Element {
   });
 
   useEffect(() => {
-    if (!current) return;
+    if (!workspaceId) return;
     api
-      .workspaceRepos(current.id)
+      .workspaceRepos(workspaceId)
       .then(({ repos }) => setRepos(repos))
       .catch(() => setRepos([]));
-  }, [current]);
+  }, [workspaceId]);
 
   // Bulk actions: select open PRs, then run a pipeline or AI review on all.
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
@@ -72,17 +75,17 @@ export function PrsAreaPage(): JSX.Element {
   }, [flash]);
 
   useEffect(() => {
-    if (!current || !can('pipelines:read')) return;
+    if (!workspaceId || !can('pipelines:read')) return;
     api
-      .workspacePipelines(current.id)
+      .workspacePipelines(workspaceId)
       .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'pr')))
       .catch(() => setPipelines([]));
-  }, [current, can]);
+  }, [workspaceId, can]);
 
   // Selection only applies to the open tab of the current workspace.
   useEffect(() => {
     setSelected(new Set());
-  }, [tab, current]);
+  }, [tab, workspaceId]);
 
   const toggleSelected = (key: string): void => {
     setSelected((prev) => {
@@ -149,8 +152,8 @@ export function PrsAreaPage(): JSX.Element {
   }, [q, setParam]);
   const fetchPage = useCallback(
     async (offset: number) => {
-      if (!current) return { items: [], total: 0 };
-      const page = await api.workspacePrs(current.id, tab, {
+      if (!workspaceId) return { items: [], total: 0 };
+      const page = await api.workspacePrs(workspaceId, tab, {
         q: q || undefined,
         repo: repoFilter === 'all' ? undefined : repoFilter,
         author: authorFilter === 'all' ? undefined : authorFilter,
@@ -164,7 +167,7 @@ export function PrsAreaPage(): JSX.Element {
       setFacets(page.facets);
       return { items: page.prs, total: page.total };
     },
-    [current, tab, q, repoFilter, authorFilter, assigneeFilter, decisionFilter, draftFilter],
+    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, decisionFilter, draftFilter],
   );
   const { items: prs, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
   const activeFilters = [repoFilter, authorFilter, assigneeFilter, decisionFilter, draftFilter].filter(

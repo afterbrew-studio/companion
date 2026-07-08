@@ -22,6 +22,7 @@ import type {
   ModelCatalogProvider,
   NotificationRecord,
   GitHubAccountRecord,
+  GitHubAccountScope,
   GitHubPurpose,
   MoxxyStatus,
   PipelineRecord,
@@ -427,10 +428,16 @@ export const api = {
 
   // GitHub accounts
   listGithubAccounts: () => request<{ accounts: GitHubAccountRecord[] }>('/api/github/accounts'),
-  addGithubAccount: (token: string, purposes: readonly GitHubPurpose[]) =>
-    post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes }),
-  updateGithubAccount: (id: string, purposes: readonly GitHubPurpose[]) =>
-    patch<{ account: GitHubAccountRecord }>(`/api/github/accounts/${id}`, { purposes }),
+  addGithubAccount: (
+    token: string,
+    purposes: readonly GitHubPurpose[],
+    scope: GitHubAccountScope = 'shared',
+    workspaceIds: readonly string[] = [],
+  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds }),
+  updateGithubAccount: (
+    id: string,
+    fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },
+  ) => patch<{ account: GitHubAccountRecord }>(`/api/github/accounts/${id}`, fields),
   removeGithubAccount: (id: string) => del<{ ok: true }>(`/api/github/accounts/${id}`),
   setRepoGithubAccount: (fullName: string, accountId: string | null) =>
     patch<{ repo: RepoRecord }>(`/api/repos/${fullName}/github-account`, { accountId }),

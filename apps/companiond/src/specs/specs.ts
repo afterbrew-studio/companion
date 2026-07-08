@@ -59,7 +59,7 @@ export class Specs {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly proposals: Proposals,
-    private readonly github: () => GitHubClient | null,
+    private readonly github: (repo?: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -333,7 +333,7 @@ export class Specs {
       .filter((s) => s.repo === repo && s.status === 'ready' && s.content.trim())
       .slice(0, MAX_DRIFT_SPECS);
     if (specs.length === 0) return;
-    const client = this.github();
+    const client = this.github(repo);
     if (!client || !this.checkouts.hasClone(repo)) return;
     const pr = this.store.prs.get(repo, prNumber);
     const diffRaw = await client.prDiff(repo, prNumber);

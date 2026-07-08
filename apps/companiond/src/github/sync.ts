@@ -16,7 +16,8 @@ export class GitHubSync {
 
   constructor(
     private readonly store: Store,
-    private readonly client: () => GitHubClient | null,
+    /** Per-repo so account pins and workspace delegation apply. */
+    private readonly client: (repo: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -55,7 +56,7 @@ export class GitHubSync {
   }
 
   async syncRepo(fullName: string): Promise<{ issues: number; prs: number }> {
-    const client = this.client();
+    const client = this.client(fullName);
     if (!client) throw new Error('GitHub is not configured (set a PAT in Settings)');
     // Concurrent callers join the in-flight sync — returning a fake empty
     // result here would let automation run before the data actually landed.

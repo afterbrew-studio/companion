@@ -1,15 +1,29 @@
 import { z } from 'zod';
-import { route, created, type CompiledRoute } from '../router.js';
+import { route, created, badRequest, type CompiledRoute } from '../router.js';
 import type { ApiDeps } from '../deps.js';
 
 const purposesSchema = z.array(z.enum(['fetch', 'runs', 'pipelines', 'webhooks'])).min(1).max(4);
+const scopeSchema = z.enum(['shared', 'delegated']);
+const workspaceIdsSchema = z.array(z.string()).max(200);
 
 const addAccountSchema = z.object({
   token: z.string().min(10).max(500),
   purposes: purposesSchema,
+  scope: scopeSchema.default('shared'),
+  workspaceIds: workspaceIdsSchema.default([]),
 });
 
-/** Multiple GitHub accounts, each bound to what it does (fetches, runs, pipelines, webhooks). */
+const patchAccountSchema = z.object({
+  purposes: purposesSchema.optional(),
+  scope: scopeSchema.optional(),
+  workspaceIds: workspaceIdsSchema.optional(),
+});
+
+/**
+ * Multiple GitHub accounts, each bound to what it does (fetches, runs,
+ * pipelines, webhooks) and where it may act (shared, or delegated to specific
+ * workspaces).
+ */
 export function githubRoutes(deps: ApiDeps): CompiledRoute[] {
   return [
     route({
@@ -26,7 +40,10 @@ export function githubRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'settings:manage',
       body: addAccountSchema,
       handler: async ({ body }) => {
-        const account = await deps.githubAccounts.add(body.token, body.purposes);
+        if (body.scope === 'delegated' && body.workspaceIds.length === 0) {
+          throw badRequest('a delegated account needs at least one workspace');
+        }
+        const account = await deps.githubAccounts.add(body.token, body.purposes, body.scope, body.workspaceIds);
         deps.broadcast({ t: 'repos.changed' });
         return created({ account });
       },
@@ -36,8 +53,13 @@ export function githubRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'PATCH',
       path: '/api/github/accounts/:id',
       access: 'settings:manage',
-      body: z.object({ purposes: purposesSchema }),
-      handler: ({ params, body }) => ({ account: deps.githubAccounts.setPurposes(params.id, body.purposes) }),
+      body: patchAccountSchema,
+      handler: ({ params, body }) => {
+        if (body.scope === 'delegated' && body.workspaceIds && body.workspaceIds.length === 0) {
+          throw badRequest('a delegated account needs at least one workspace');
+        }
+        return { account: deps.githubAccounts.update(params.id, body) };
+      },
     }),
 
     route({
