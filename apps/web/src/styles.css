@@ -281,6 +281,45 @@
 
 /* Motion: entrance + shimmer, disabled for reduced-motion users. */
 @media (prefers-reduced-motion: no-preference) {
+  /* PR preview (agentic "pull request in the making") animations. */
+  @keyframes ppv-float {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-4px) scale(1.03); }
+  }
+  @keyframes ppv-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes ppv-pop {
+    from { opacity: 0; transform: scale(0.6); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes ppv-shimmer-move {
+    from { transform: translateX(-120%); }
+    to { transform: translateX(320%); }
+  }
+  .ppv-orb {
+    animation: ppv-float 3s ease-in-out infinite;
+  }
+  .ppv-live {
+    animation: ppv-pulse 1.6s ease-in-out infinite;
+  }
+  .ppv-pop {
+    animation: ppv-pop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1.4) both;
+  }
+  .ppv-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .ppv-shimmer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent, rgb(16 185 129 / 0.85), transparent);
+    animation: ppv-shimmer-move 1.4s ease-in-out infinite;
+  }
   @keyframes rise-in {
     from {
       opacity: 0;

@@ -925,43 +925,103 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState | null; 
   );
 }
 
-/** "⋯" overflow menu for secondary actions — keeps toolbars to one primary button. */
-export function ActionMenu({ actions, label = 'More actions' }: { actions: MenuAction[]; label?: string }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  return (
+/**
+ * A dropdown anchored to a trigger element, rendered in a portal and clamped to
+ * the viewport — so it never clips under an overflow ancestor or sits behind the
+ * sidebar (unlike an absolutely-positioned menu). Flips above the trigger when
+ * there's no room below.
+ */
+function AnchoredMenu({
+  anchorRef,
+  open,
+  onClose,
+  actions,
+  width = 208,
+  label,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  open: boolean;
+  onClose: () => void;
+  actions: MenuAction[];
+  width?: number;
+  label?: string;
+}): JSX.Element | null {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = (): void => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const estH = actions.length * 36 + 12;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+      const top = r.bottom + estH > window.innerHeight - 8 ? Math.max(8, r.top - estH - 6) : r.bottom + 6;
+      setPos({ top, left });
+    };
+    place();
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node;
+      if (anchorRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      onClose();
+    };
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    const onScroll = (): void => onClose();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('keydown', onKey);
+    // Defer so the opening click doesn't immediately close it.
+    const id = window.setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open, actions.length, width, onClose, anchorRef]);
+
+  if (!open || !pos) return null;
+  return createPortal(
     <div
-      className="relative"
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') setOpen(false);
-      }}
+      ref={menuRef}
+      role="menu"
+      aria-label={label}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width }}
+      className="z-[60] rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
     >
+      <MenuItems actions={actions} onClose={onClose} />
+    </div>,
+    document.body,
+  );
+}
+
+/** Labeled "Actions" overflow menu for secondary actions. */
+export function ActionMenu({ actions, label = 'Actions' }: { actions: MenuAction[]; label?: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <>
       <button
+        ref={ref}
         type="button"
-        className="btn-ghost w-9 justify-center px-0"
+        className="btn-ghost gap-1.5"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label}
         onClick={() => setOpen((o) => !o)}
       >
-        <svg viewBox="0 0 16 16" className="size-4 fill-current" aria-hidden>
-          <circle cx="3" cy="8" r="1.4" />
-          <circle cx="8" cy="8" r="1.4" />
-          <circle cx="13" cy="8" r="1.4" />
-        </svg>
+        Actions
+        <ChevronDown open={open} className="size-3.5" />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          aria-label={label}
-          className="absolute top-full right-0 z-30 mt-1.5 w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <MenuItems actions={actions} onClose={() => setOpen(false)} />
-        </div>
-      ) : null}
-    </div>
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} actions={actions} label={label} />
+    </>
   );
 }
 
@@ -980,19 +1040,13 @@ export function AiActionMenu({
   label?: string;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
   return (
-    <div
-      className="relative"
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') setOpen(false);
-      }}
-    >
+    <>
       <button
+        ref={ref}
         type="button"
-        className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors ${
+        className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors ${
           open
             ? 'border-emerald-500/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
             : 'border-emerald-500/40 text-emerald-600 hover:border-emerald-500/70 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
@@ -1016,17 +1070,11 @@ export function AiActionMenu({
             <path d="M15.5 12.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" fill="currentColor" stroke="none" />
           </svg>
         )}
+        AI
+        <ChevronDown open={open} className="size-3.5" />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          aria-label={label}
-          className="absolute top-full right-0 z-30 mt-1.5 w-60 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <MenuItems actions={actions} onClose={() => setOpen(false)} />
-        </div>
-      ) : null}
-    </div>
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} actions={actions} width={224} label={label} />
+    </>
   );
 }
 

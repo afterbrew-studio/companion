@@ -6,7 +6,7 @@ import { Markdown } from '../components/Markdown.js';
 import { AgentActivity } from '../components/AgentActivity.js';
 import { AccountPicker } from '../components/AccountPicker.js';
 import { CommentsSection } from '../components/Comments.js';
-import { ActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, Switch, timeAgo, useConfirm } from '../components/ui.js';
+import { ActionMenu, AiActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '../components/ui.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
   const { can } = useAuth();
@@ -47,13 +47,17 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
     }
   };
 
+  const [fixing, setFixing] = useState(false);
   const startFix = async (): Promise<void> => {
     setError(null);
+    setFixing(true);
     try {
       const { run } = await api.fixIssue(repo, number);
-      location.hash = `#/runs/${run.id}`;
+      // Land on the animated PR-preview view, not the raw run transcript.
+      location.hash = `#/runs/${run.id}/preview`;
     } catch (err) {
       setError(String(err));
+      setFixing(false);
     }
   };
 
@@ -85,9 +89,10 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
 
   return (
     <Page className="anim-in">
-      {/* Header: identity left, one aligned action toolbar right. */}
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      {/* Header: identity left, action toolbar right. The identity flexes so the
+          title wraps first; the toolbar only drops below when space truly runs out. */}
+      <header className="flex flex-wrap items-start gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1">
           <nav className="dim text-[13px]" aria-label="Breadcrumb">
             <a href="#/issues" className="hover:underline">
               Issues
@@ -129,36 +134,44 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
             </div>
           ) : null}
         </div>
+        {/* Stable order: AI group first, then the overflow menu, then the
+            external GitHub link last. */}
         <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Issue actions">
           {canAct ? (
-            <button className="btn" disabled={triaging} onClick={() => void startTriage()}>
-              {triaging ? (
-                <>
-                  <Spinner /> Triaging…
-                </>
-              ) : triage ? (
-                'Re-triage'
-              ) : (
-                'AI triage'
-              )}
-            </button>
+            <AiActionMenu
+              label="AI actions"
+              busy={triaging || fixing}
+              actions={[
+                {
+                  label: triaging ? 'Triaging…' : triage ? 'Re-triage' : 'AI triage',
+                  disabled: triaging,
+                  onSelect: () => void startTriage(),
+                },
+                ...(issue.state === 'open'
+                  ? [
+                      {
+                        label: fixing ? 'Starting fix…' : 'Fix with AI — opens a PR',
+                        disabled: fixing,
+                        onSelect: () => void startFix(),
+                      } as MenuAction,
+                    ]
+                  : []),
+              ]}
+            />
           ) : null}
-          <a className="btn-ghost" href={issue.url} target="_blank" rel="noreferrer">
-            GitHub ↗
-          </a>
           {canAct ? (
             <ActionMenu
               label="More issue actions"
               actions={[
-                ...(issue.state === 'open'
-                  ? [{ label: 'Fix with agent', onSelect: () => void startFix() }]
-                  : []),
                 issue.state === 'open'
                   ? { label: 'Close issue…', danger: true, disabled: busy, onSelect: () => void toggleState() }
                   : { label: 'Reopen issue', disabled: busy, onSelect: () => void toggleState() },
               ]}
             />
           ) : null}
+          <a className="btn-ghost" href={issue.url} target="_blank" rel="noreferrer">
+            GitHub ↗
+          </a>
         </div>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}

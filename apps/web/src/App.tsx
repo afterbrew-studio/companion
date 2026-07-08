@@ -26,6 +26,7 @@ import { PrsAreaPage } from './pages/PrsArea.js';
 import { PipelinesPage } from './pages/Pipelines.js';
 import { RunsPage } from './pages/RunsPage.js';
 import { RunDetail } from './pages/RunDetail.js';
+import { PrPreview } from './pages/PrPreview.js';
 import { IssueDetail } from './pages/IssueDetail.js';
 import { PrDetail } from './pages/PrDetail.js';
 import { ReposPage } from './pages/ReposPage.js';
@@ -836,7 +837,9 @@ function Route({ hash }: { hash: string }): JSX.Element {
   const { can } = useAuth();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
 
-  let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
+  let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)\/preview$/);
+  if (m) return guard(can('runs:read'), <PrPreview key={m[1]} runId={m[1]!} />);
+  m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
   if (m) return guard(can('runs:read'), <RunDetail key={m[1]} runId={m[1]!} />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return guard(can('issues:read'), <IssueDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
