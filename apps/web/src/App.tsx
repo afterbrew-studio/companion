@@ -27,9 +27,8 @@ import { PipelinesPage } from './pages/Pipelines.js';
 import { RunsPage } from './pages/RunsPage.js';
 import { RunDetail } from './pages/RunDetail.js';
 import { PrPreview } from './pages/PrPreview.js';
-import { PrReviewPage } from './pages/PrReviewPage.js';
+import { PrView } from './pages/pr/PrView.js';
 import { IssueDetail } from './pages/IssueDetail.js';
-import { PrDetail } from './pages/PrDetail.js';
 import { ReposPage } from './pages/ReposPage.js';
 import { SkillsPage } from './pages/Skills.js';
 import { GithubAccountsPage } from './pages/GithubAccounts.js';
@@ -845,9 +844,9 @@ function Route({ hash }: { hash: string }): JSX.Element {
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return guard(can('issues:read'), <IssueDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)\/review$/);
-  if (m) return guard(can('prs:read'), <PrReviewPage key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
+  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} mode="review" />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
-  if (m) return guard(can('prs:read'), <PrDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
+  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
 
   if (path.startsWith('/digest')) return guard(can('reports:read'), <DigestPage />);
   if (path.startsWith('/reviews')) return guard(can('runs:read'), <ReviewsPage />);
