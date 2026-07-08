@@ -11,6 +11,7 @@ import type {
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { useReposAdmin } from '../hooks/useReposAdmin.js';
 import { useIntent } from '../lib/intents.js';
 import { useDebounced } from '../lib/paging.js';
 import { Page, EmptyState, LockIcon, Modal, PageHeader, Spinner, timeAgo, useConfirm } from '../components/ui.js';
@@ -25,38 +26,9 @@ export function ReposPage(): JSX.Element {
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
   // Admins manage any workspace; an owner manages their own (public or private).
   const canManageCurrent = can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
-  const [runners, setRunners] = useState<RunnerRecord[]>([]);
+  const { repos, accounts, runners, error, setError, refresh } = useReposAdmin();
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      const { repos } = await api.workspaceRepos(current.id);
-      setRepos(repos);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [current]);
-
-  useEffect(() => {
-    void refresh();
-    api
-      .listGithubAccounts()
-      .then((r) => setAccounts(r.accounts))
-      .catch(() => setAccounts([]));
-    api
-      .listRunners()
-      .then((r) => setRunners(r.runners))
-      .catch(() => setRunners([]));
-    return onServerMessage((msg) => {
-      if (msg.t === 'repos.changed' || msg.t === 'workspaces.changed') void refresh();
-    });
-  }, [refresh]);
 
   // ⌘K → "Connect repository" lands here and opens the add-repo modal.
   useIntent('connect-repo', () => setAdding(true));

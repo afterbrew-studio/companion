@@ -9,6 +9,7 @@ import type {
 import { GITHUB_PURPOSES } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { useGithubAccounts } from '../hooks/useGithubAccounts.js';
 import { useIntent } from '../lib/intents.js';
 import { Page, EmptyState, Modal, PageHeader, Switch, timeAgo, useConfirm } from '../components/ui.js';
 
@@ -31,32 +32,9 @@ export function GithubAccountsPage(): JSX.Element {
   const canManage = (a: GitHubAccountRecord): boolean => isAdmin || a.ownerId === user?.username;
   const ownerLabel = (a: GitHubAccountRecord): string =>
     a.ownerId === null ? 'shared default' : a.ownerId === user?.username ? 'your account' : `owned by @${a.ownerId}`;
-  const [accounts, setAccounts] = useState<GitHubAccountRecord[] | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
+  const { accounts, workspaces, status, error, setError, refresh } = useGithubAccounts();
   const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
-
-  const refresh = useCallback(async () => {
-    try {
-      const [{ accounts }, st] = await Promise.all([api.listGithubAccounts(), api.status().catch(() => null)]);
-      setAccounts(accounts);
-      setStatus(st);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setAccounts([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    api
-      .listWorkspaces()
-      .then((r) => setWorkspaces(r.workspaces))
-      .catch(() => setWorkspaces([]));
-  }, [refresh]);
 
   // ⌘K → "Connect GitHub account" lands here and opens the connect modal.
   useIntent('connect-github', () => setAdding(true));

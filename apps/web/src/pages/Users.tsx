@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Role, UserRecord } from '@companion/contract';
 import { api, refreshAuth } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { ListFooter, PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
+import { useUsers } from '../hooks/useUsers.js';
+import { ListFooter } from '../lib/paging.js';
 import { Page, Dropdown, EmptyState, FilterField, FiltersPopover, Modal, PageHeader, timeAgo, useConfirm } from '../components/ui.js';
 
 const ROLE_HELP: Record<Role, string> = {
@@ -14,47 +15,18 @@ const ROLE_HELP: Record<Role, string> = {
 /** User management (admin): accounts, roles/scopes, resets, disable/delete. */
 export function UsersPage(): JSX.Element {
   const { user: me } = useAuth();
+  const { search, setSearch, role, setRole, users, total, loading, hasMore, loadMore, reload, error, listError, act } = useUsers();
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<UserRecord | null>(null);
   const [viewing, setViewing] = useState<UserRecord | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [role, setRole] = useState<'all' | Role>('all');
   const { confirmDanger, confirmElement } = useConfirm();
-
-  const q = useDebounced(search.trim());
-  const fetchPage = useCallback(
-    async (offset: number) => {
-      const { users, total } = await api.listUsers({
-        q: q || undefined,
-        role: role === 'all' ? undefined : role,
-        limit: PAGE_SIZE,
-        offset,
-      });
-      return { items: users, total };
-    },
-    [q, role],
-  );
-  const { items: users, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
 
   // Keep the open modal on the fresh record after an action reloads the list.
   useEffect(() => {
     setViewing((v) => (v ? (users.find((u) => u.username === v.username) ?? v) : v));
   }, [users]);
 
-  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
-    setError(null);
-    try {
-      await fn();
-      reload();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return false;
-    }
-  };
-
-  const filtered = q !== '' || role !== 'all';
+  const filtered = search.trim() !== '' || role !== 'all';
 
   return (
     <Page>

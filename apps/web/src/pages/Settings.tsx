@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { MoxxyStatus } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { useMoxxyStatus } from '../hooks/useMoxxyStatus.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
 import { Page, Dropdown, PageHeader, Section } from '../components/ui.js';
 
@@ -37,8 +38,7 @@ async function fileToLogoDataUrl(file: File): Promise<string> {
 /** Instance administration: branding, appearance, moxxy runtime. */
 export function SettingsPage(): JSX.Element {
   const { branding, setBranding } = useAuth();
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { status, error, setError, refresh } = useMoxxyStatus();
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: string[]; missing: string[] } | null>(null);
 
@@ -89,19 +89,6 @@ export function SettingsPage(): JSX.Element {
       setImporting(false);
     }
   };
-
-  const refresh = useCallback(async () => {
-    try {
-      setStatus(await api.status());
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const previewName = name.trim() || 'Companion';
 

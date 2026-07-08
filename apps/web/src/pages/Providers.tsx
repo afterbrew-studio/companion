@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { ModelCatalogProvider } from '@companion/contract';
+import { useState } from 'react';
 import { api } from '../lib/api.js';
+import { useProviders } from '../hooks/useProviders.js';
 import { Page, EmptyState, PageHeader, Section, Switch } from '../components/ui.js';
 
 /**
@@ -12,40 +12,10 @@ import { Page, EmptyState, PageHeader, Section, Switch } from '../components/ui.
  */
 
 export function ProvidersPage(): JSX.Element {
-  const [providers, setProviders] = useState<Array<{ name: string; enabled: boolean }> | null>(null);
-  const [disabledModels, setDisabledModels] = useState<string[]>([]);
-  const [catalog, setCatalog] = useState<ModelCatalogProvider[]>([]);
-  const [catalogFresh, setCatalogFresh] = useState<boolean | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { providers, disabledModels, catalog, catalogFresh, error, setError, refresh, isModelDisabled, toggleProvider, toggleModel, removeManualId } =
+    useProviders();
   const [note, setNote] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const [settings, cat] = await Promise.all([
-        api.getProviderSettings(),
-        api.getModelsCatalog().catch(() => null),
-      ]);
-      // Providers known to config plus providers the gateway reports.
-      const names = new Set(settings.providers.map((p) => p.name));
-      const merged = [...settings.providers];
-      for (const p of cat?.providers ?? []) {
-        if (!names.has(p.name)) merged.push({ name: p.name, enabled: p.enabled });
-      }
-      setProviders(merged.sort((a, b) => a.name.localeCompare(b.name)));
-      setDisabledModels(settings.disabledModels);
-      setCatalog(cat?.providers ?? []);
-      setCatalogFresh(cat?.fresh ?? null);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setProviders([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const reimport = async (): Promise<void> => {
     setImporting(true);
@@ -64,46 +34,6 @@ export function ProvidersPage(): JSX.Element {
     } finally {
       setImporting(false);
     }
-  };
-
-  const save = async (nextProviders: Array<{ name: string; enabled: boolean }>, nextModels: string[]): Promise<void> => {
-    setError(null);
-    setNote(null);
-    try {
-      await api.setProviderSettings(
-        nextProviders.filter((p) => !p.enabled).map((p) => p.name),
-        nextModels,
-      );
-      await refresh();
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const toggleProvider = (name: string): void => {
-    if (!providers) return;
-    const next = providers.map((p) => (p.name === name ? { ...p, enabled: !p.enabled } : p));
-    setProviders(next);
-    void save(next, disabledModels);
-  };
-
-  const isModelDisabled = (provider: string, id: string): boolean =>
-    disabledModels.includes(id) || disabledModels.includes(`${provider}/${id}`);
-
-  const toggleModel = (provider: string, id: string): void => {
-    if (!providers) return;
-    const next = isModelDisabled(provider, id)
-      ? disabledModels.filter((m) => m !== id && m !== `${provider}/${id}`)
-      : [...disabledModels, id];
-    setDisabledModels(next);
-    void save(providers, next);
-  };
-
-  const removeManualId = (id: string): void => {
-    if (!providers) return;
-    const next = disabledModels.filter((m) => m !== id);
-    setDisabledModels(next);
-    void save(providers, next);
   };
 
   const catalogIds = new Set(catalog.flatMap((p) => p.models.flatMap((m) => [m.id, `${p.name}/${m.id}`])));
