@@ -8,8 +8,8 @@ export class RunsStore {
   insert(run: Omit<RunRecord, 'live'>): void {
     this.db
       .prepare(
-        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, created_at, updated_at, input_tokens, output_tokens, outcome)
-         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
+        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, created_at, updated_at, input_tokens, output_tokens, outcome)
+         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
       .run(run);
   }
@@ -79,6 +79,7 @@ export interface RunRow {
   pr_url: string | null;
   model: string | null;
   runner_id: string | null;
+  user_id: string | null;
   created_at: number;
   updated_at: number;
   input_tokens: number;
@@ -100,6 +101,7 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     prUrl: row.pr_url,
     model: row.model,
     runnerId: row.runner_id,
+    userId: row.user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     live,

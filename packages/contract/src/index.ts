@@ -16,6 +16,9 @@ export type RunStatus =
   | 'queued'
   | 'provisioning'
   | 'running'
+  /** Attended run (interactive chat / AI Help) whose gateway is live but no
+   *  turn is in flight — it answered and is waiting for the next message. */
+  | 'idle'
   | 'review'
   | 'completed'
   | 'abandoned'
@@ -43,6 +46,11 @@ export interface RunRecord {
   readonly model: string | null;
   /** Runner (machine) this run executes on; null = the built-in local runner. */
   readonly runnerId: string | null;
+  /**
+   * User who owns this run. Attended chats (interactive / AI Help) are private
+   * to their owner; null for automated/system runs (triage, digests, webhooks).
+   */
+  readonly userId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** True while a gateway process is attached (live transcript available). */

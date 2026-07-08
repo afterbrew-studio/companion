@@ -24,11 +24,18 @@ const setModelSchema = z.object({
 });
 
 export function runRoutes(deps: ApiDeps): CompiledRoute[] {
-  // A run tied to a repo inherits that repo's workspace access; a repo the
-  // user can't see reads as "not found". Repo-less runs (interactive/AI Help)
-  // are reachable to any runs:read holder.
-  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean =>
-    !!user && (!run.repo || deps.store.workspaces.canAccessRepo(user, run.repo));
+  // Visibility:
+  //  - Attended chats (interactive / AI Help) are PRIVATE to their owner
+  //    (and admins) — one maintainer must not see another's AI Help.
+  //  - Runs tied to a repo inherit that repo's workspace access.
+  //  - Other repo-less runs (automated one-shots) stay visible to runs:read.
+  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (run.kind === 'interactive' || run.kind === 'assistant') return run.userId === user.username;
+    if (run.repo) return deps.store.workspaces.canAccessRepo(user, run.repo);
+    return true;
+  };
   const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => {
     const run = deps.orchestrator.getRun(id);
     if (!run || !canSeeRun(user, run)) throw notFound(`run ${id} not found`);
@@ -48,7 +55,8 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/runs',
       access: 'runs:act',
       body: createRunSchema,
-      handler: async ({ body }) => created({ run: await deps.orchestrator.createRun(body) }),
+      handler: async ({ body, user }) =>
+        created({ run: await deps.orchestrator.createRun({ ...body, userId: user?.username ?? null }) }),
     }),
 
     route({

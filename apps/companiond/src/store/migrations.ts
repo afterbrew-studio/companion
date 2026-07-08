@@ -15,7 +15,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       updated_at    INTEGER NOT NULL,
       input_tokens  INTEGER NOT NULL DEFAULT 0,
       output_tokens INTEGER NOT NULL DEFAULT 0,
-      outcome       TEXT
+      outcome       TEXT,
+      user_id       TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 
@@ -322,12 +323,27 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE workspaces ADD COLUMN owner_id TEXT`,
     `ALTER TABLE runners ADD COLUMN model_pins TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE runners ADD COLUMN catalog TEXT`,
+    `ALTER TABLE runs ADD COLUMN user_id TEXT`,
   ]) {
     try {
       db.exec(ddl);
     } catch {
       // column already exists
     }
+  }
+  // Backfill ownership of existing AI Help runs from the per-user run map, so
+  // they become private to their owner immediately (not visible to everyone).
+  try {
+    db.exec(`
+      UPDATE runs SET user_id = (
+        SELECT substr(s.key, length('assistant:run:') + 1)
+        FROM settings s WHERE s.value = runs.id AND s.key LIKE 'assistant:run:%'
+      )
+      WHERE kind = 'assistant' AND user_id IS NULL
+        AND EXISTS (SELECT 1 FROM settings s WHERE s.value = runs.id AND s.key LIKE 'assistant:run:%')
+    `);
+  } catch {
+    // best-effort backfill
   }
   return { ftsReady };
 }

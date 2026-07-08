@@ -13,19 +13,26 @@ import { log } from '../log.js';
  * Auth: `?token=<session token>` — the same login session the REST API uses;
  * an expired or bogus token is refused at upgrade time.
  */
+/** The bits of a run the hub needs to decide who may see its stream. */
+export interface RunVisibility {
+  readonly repo: string | null;
+  readonly kind: string;
+  readonly userId: string | null;
+}
+
 export class SpaHub {
   private readonly wss = new WebSocketServer({ noServer: true });
   /** Which user each socket authenticated as — for per-user directives. */
   private readonly owner = new WeakMap<WebSocket, string>();
-  /** run id → repo, cached so per-message filtering doesn't hit the store per token. */
-  private readonly runRepoCache = new Map<string, string | null>();
+  /** run id → its visibility, cached so per-message filtering avoids store hits. */
+  private readonly runInfoCache = new Map<string, RunVisibility | null>();
 
   constructor(
     private readonly verify: (token: string | null) => AuthUser | null,
-    /** Resolve a run's repo (for scoping run-stream messages). */
-    private readonly runRepo: (runId: string) => string | null = () => null,
-    /** Can this user (by name) see this repo? Gates run-scoped messages. */
-    private readonly canSeeRepo: (username: string, repo: string) => boolean = () => true,
+    /** Resolve a run's visibility (repo/kind/owner) for scoping its stream. */
+    private readonly runInfo: (runId: string) => RunVisibility | null = () => null,
+    /** Can this user (by name) see a run with this visibility? */
+    private readonly canSeeRun: (username: string, info: RunVisibility) => boolean = () => true,
   ) {}
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -45,15 +52,16 @@ export class SpaHub {
 
   broadcast(msg: SpaServerMessage): void {
     const raw = JSON.stringify(msg);
-    // Run-stream messages (a run's events/turns/asks or its record) only go to
-    // users who can see that run's repo — a private workspace's live output
-    // must not reach non-members' sockets. Non-run messages go to everyone.
-    const repo = this.repoScopeOf(msg);
+    // Run-stream messages (a run's record, events, turns, asks) only go to
+    // users who may see that run: a private workspace's live output and one
+    // user's AI Help chat must not reach others' sockets. Everything else is
+    // broadcast to all.
+    const info = this.runScopeOf(msg);
     for (const client of this.wss.clients) {
       if (client.readyState !== WebSocket.OPEN) continue;
-      if (repo) {
+      if (info) {
         const username = this.owner.get(client);
-        if (!username || !this.canSeeRepo(username, repo)) continue;
+        if (!username || !this.canSeeRun(username, info)) continue;
       }
       try {
         client.send(raw);
@@ -63,19 +71,20 @@ export class SpaHub {
     }
   }
 
-  /** The repo a run-scoped message belongs to (null = broadcast to all). */
-  private repoScopeOf(msg: SpaServerMessage): string | null {
+  /** The run a run-scoped message belongs to (null = broadcast to all). */
+  private runScopeOf(msg: SpaServerMessage): RunVisibility | null {
     if (msg.t === 'run.changed') {
-      this.runRepoCache.set(msg.run.id, msg.run.repo);
-      return msg.run.repo;
+      const info: RunVisibility = { repo: msg.run.repo, kind: msg.run.kind, userId: msg.run.userId };
+      this.runInfoCache.set(msg.run.id, info);
+      return info;
     }
     if (msg.t === 'event' || msg.t === 'turn' || msg.t === 'ask' || msg.t === 'askResolved') {
-      let repo = this.runRepoCache.get(msg.runId);
-      if (repo === undefined) {
-        repo = this.runRepo(msg.runId);
-        this.runRepoCache.set(msg.runId, repo);
+      let info = this.runInfoCache.get(msg.runId);
+      if (info === undefined) {
+        info = this.runInfo(msg.runId);
+        this.runInfoCache.set(msg.runId, info);
       }
-      return repo;
+      return info;
     }
     return null;
   }

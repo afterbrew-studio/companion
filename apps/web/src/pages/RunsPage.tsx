@@ -5,6 +5,8 @@ import { Page, PageHeader, EmptyState, Spinner, timeAgo } from '../components/ui
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
 
 export function statusBadge(status: RunStatus, live: boolean): string {
+  // Idle attended chats keep a live gateway but shouldn't read as active.
+  if (status === 'idle') return 'badge';
   if (live || status === 'running' || status === 'review') return 'badge-ok';
   if (status === 'failed' || status === 'interrupted') return 'badge-danger';
   return 'badge';

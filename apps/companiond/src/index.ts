@@ -55,18 +55,28 @@ async function main(): Promise<void> {
   if (auth.setupNeeded()) {
     log.info('no accounts yet — first-boot onboarding is waiting in the browser');
   }
-  // The run-repo resolver + repo-visibility check let the hub scope run-stream
-  // messages to users who can see the run's repo. `orchestrator` is created
-  // below; these closures only run at broadcast time, so the forward reference
-  // is safe.
+  // These let the hub scope run-stream messages to users who may see the run —
+  // repo access for repo runs, owner-only for attended chats. `orchestrator` is
+  // created below; the closures only run at broadcast time, so the forward
+  // reference is safe.
   const hub: SpaHub = new SpaHub(
     (token) => auth.verify(token),
-    (runId) => orchestrator.getRun(runId)?.repo ?? null,
-    (username, repo) => {
+    (runId) => {
+      const r = orchestrator.getRun(runId);
+      return r ? { repo: r.repo, kind: r.kind, userId: r.userId } : null;
+    },
+    (username, info) => {
       const u = store.users.get(username);
-      return u
-        ? store.workspaces.canAccessRepo({ username: u.username, displayName: u.displayName, role: u.role }, repo)
-        : false;
+      if (!u) return false;
+      if (u.role === 'admin') return true;
+      if (info.kind === 'interactive' || info.kind === 'assistant') return info.userId === username;
+      if (info.repo) {
+        return store.workspaces.canAccessRepo(
+          { username: u.username, displayName: u.displayName, role: u.role },
+          info.repo,
+        );
+      }
+      return true;
     },
   );
   // Wrapped so domain modules can react to run lifecycle broadcasts

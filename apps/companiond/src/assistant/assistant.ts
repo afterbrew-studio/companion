@@ -103,6 +103,7 @@ export class Assistant {
       kind: 'assistant',
       title: `AI Help — ${user.displayName || user.username}`,
       runnerId: this.config.publicUrl ? undefined : null,
+      userId: user.username,
     });
     await this.writeCredentials(run, user.username);
     this.store.settings.set(this.mapKey(user.username), run.id);

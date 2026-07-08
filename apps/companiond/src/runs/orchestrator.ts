@@ -65,10 +65,15 @@ export class Orchestrator implements RunnerEventSink {
       for (const resolve of [...waiters]) resolve();
       waiters.clear();
     }
-    // Autonomous goal runs land in review when their driving turn ends.
+    // Autonomous goal runs land in review when their driving turn ends;
+    // attended chats (interactive / AI Help) go idle — the gateway stays live
+    // but nothing is in flight, so they must not read as "running".
     const row = this.store.runs.get(runId);
     if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
       this.setStatus(runId, 'review');
+      this.emitRunChanged(runId);
+    } else if (row && (row.kind === 'interactive' || row.kind === 'assistant') && row.status === 'running') {
+      this.setStatus(runId, 'idle');
       this.emitRunChanged(runId);
     }
   }
@@ -104,7 +109,7 @@ export class Orchestrator implements RunnerEventSink {
       waiters.clear();
     }
     const row = this.store.runs.get(runId);
-    if (row && (row.status === 'running' || row.status === 'provisioning')) {
+    if (row && (row.status === 'running' || row.status === 'provisioning' || row.status === 'idle')) {
       this.setStatus(runId, 'stopped');
     }
     this.emitRunChanged(runId);
@@ -179,6 +184,8 @@ export class Orchestrator implements RunnerEventSink {
     proposalId?: string | null;
     branch?: string | null;
     model?: string | null;
+    /** Owner of an attended run (interactive / AI Help); null for automated. */
+    userId?: string | null;
   }): Promise<RunRecord> {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
@@ -211,6 +218,7 @@ export class Orchestrator implements RunnerEventSink {
       prUrl: null,
       model,
       runnerId,
+      userId: opts.userId ?? null,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,
@@ -260,7 +268,7 @@ export class Orchestrator implements RunnerEventSink {
   async stopRun(runId: string): Promise<void> {
     await this.backend(runId).stop(runId);
     const row = this.store.runs.get(runId);
-    if (row && row.status === 'running') this.setStatus(runId, 'stopped');
+    if (row && (row.status === 'running' || row.status === 'idle')) this.setStatus(runId, 'stopped');
     this.emitRunChanged(runId);
   }
 
@@ -307,6 +315,11 @@ export class Orchestrator implements RunnerEventSink {
 
   async sendPrompt(runId: string, prompt: string, model?: string): Promise<{ turnId: string }> {
     const backend = this.requireLive(runId);
+    // A new turn on an idle attended chat: it's working again.
+    if (this.store.runs.get(runId)?.status === 'idle') {
+      this.setStatus(runId, 'running');
+      this.emitRunChanged(runId);
+    }
     // Per-turn pin > the run's persisted override > the daemon default.
     let chosen = model ?? this.store.runs.get(runId)?.model ?? this.config.defaultModel;
     // Disabled selections quietly ride the daemon default instead of erroring.
