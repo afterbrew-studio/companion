@@ -35,6 +35,7 @@ export function PrsAreaPage(): JSX.Element {
   const authorFilter = params.get('author') ?? 'all';
   const assigneeFilter = params.get('assignee') ?? 'all';
   const decisionFilter = params.get('decision') ?? 'all';
+  const reviewFilter = params.get('review') ?? 'all';
   const draftFilter = params.get('draft') ?? 'all';
   const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
   // Back/forward or a pasted link updates the search box too.
@@ -159,6 +160,7 @@ export function PrsAreaPage(): JSX.Element {
         author: authorFilter === 'all' ? undefined : authorFilter,
         assignee: assigneeFilter === 'all' ? undefined : assigneeFilter,
         decision: decisionFilter === 'all' ? undefined : decisionFilter,
+        review: reviewFilter === 'all' ? undefined : reviewFilter,
         draft: draftFilter === 'all' ? undefined : draftFilter,
         limit: PAGE_SIZE,
         offset,
@@ -167,10 +169,10 @@ export function PrsAreaPage(): JSX.Element {
       setFacets(page.facets);
       return { items: page.prs, total: page.total };
     },
-    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, decisionFilter, draftFilter],
+    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, decisionFilter, reviewFilter, draftFilter],
   );
   const { items: prs, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
-  const activeFilters = [repoFilter, authorFilter, assigneeFilter, decisionFilter, draftFilter].filter(
+  const activeFilters = [repoFilter, authorFilter, assigneeFilter, decisionFilter, reviewFilter, draftFilter].filter(
     (f) => f !== 'all',
   ).length;
 
@@ -205,6 +207,7 @@ export function PrsAreaPage(): JSX.Element {
                 setParam('author', null);
                 setParam('assignee', null);
                 setParam('decision', null);
+                setParam('review', null);
                 setParam('draft', null);
               }}
             >
@@ -258,6 +261,19 @@ export function PrsAreaPage(): JSX.Element {
                     { value: 'approved', label: 'Approved' },
                     { value: 'changes_requested', label: 'Changes requested' },
                     { value: 'none', label: 'No decision yet' },
+                  ]}
+                />
+              </FilterField>
+              <FilterField label="AI review">
+                <Dropdown
+                  ariaLabel="Filter by AI review status"
+                  value={reviewFilter}
+                  onChange={setFilter('review')}
+                  options={[
+                    { value: 'all', label: 'Any AI review' },
+                    { value: 'pending', label: 'Needs review' },
+                    { value: 'applied', label: 'Review posted' },
+                    { value: 'dismissed', label: 'Review dismissed' },
                   ]}
                 />
               </FilterField>

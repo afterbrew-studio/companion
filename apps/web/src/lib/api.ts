@@ -239,7 +239,7 @@ export const api = {
   workspaceIssues: (
     id: string,
     state?: 'open' | 'closed',
-    page?: PageQuery & { author?: string; assignee?: string; label?: string },
+    page?: PageQuery & { author?: string; assignee?: string; label?: string; triage?: string },
   ) =>
     request<{
       issues: IssueRecord[];
@@ -250,7 +250,7 @@ export const api = {
   workspacePrs: (
     id: string,
     state?: 'open' | 'merged' | 'closed',
-    page?: PageQuery & { author?: string; assignee?: string; decision?: string; draft?: string },
+    page?: PageQuery & { author?: string; assignee?: string; decision?: string; draft?: string; review?: string },
   ) =>
     request<{
       prs: PrRecord[];

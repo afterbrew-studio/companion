@@ -96,6 +96,8 @@ export class PrsStore {
       author?: string;
       assignee?: string;
       decision?: 'approved' | 'changes_requested' | 'none';
+      /** Latest AI review verdict status for the PR. */
+      review?: 'pending' | 'applied' | 'dismissed';
       draft?: 'hide' | 'only';
       limit?: number;
       offset?: number;
@@ -139,6 +141,16 @@ export class PrsStore {
     } else if (opts.decision) {
       where.push('p.review_decision = ?');
       args.push(opts.decision);
+    }
+    if (opts.review) {
+      // The latest AI review verdict for this PR is in that status.
+      where.push(
+        `EXISTS (SELECT 1 FROM pr_reviews pv
+                 WHERE pv.repo = p.repo AND pv.pr_number = p.number AND pv.status = ?
+                   AND pv.created_at = (SELECT MAX(created_at) FROM pr_reviews pv2
+                                        WHERE pv2.repo = pv.repo AND pv2.pr_number = pv.pr_number))`,
+      );
+      args.push(opts.review);
     }
     if (opts.draft === 'hide') where.push('p.draft = 0');
     else if (opts.draft === 'only') where.push('p.draft = 1');

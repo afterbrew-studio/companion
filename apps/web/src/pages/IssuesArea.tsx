@@ -34,6 +34,7 @@ export function IssuesAreaPage(): JSX.Element {
   const authorFilter = params.get('author') ?? 'all';
   const assigneeFilter = params.get('assignee') ?? 'all';
   const labelFilter = params.get('label') ?? 'all';
+  const triageFilter = params.get('triage') ?? 'all';
   const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
   // Back/forward or a pasted link updates the search box too.
   useEffect(() => {
@@ -161,6 +162,7 @@ export function IssuesAreaPage(): JSX.Element {
         author: authorFilter === 'all' ? undefined : authorFilter,
         assignee: assigneeFilter === 'all' ? undefined : assigneeFilter,
         label: labelFilter === 'all' ? undefined : labelFilter,
+        triage: triageFilter === 'all' ? undefined : triageFilter,
         limit: PAGE_SIZE,
         offset,
       });
@@ -168,10 +170,10 @@ export function IssuesAreaPage(): JSX.Element {
       setFacets(page.facets);
       return { items: page.issues, total: page.total };
     },
-    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, labelFilter],
+    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, labelFilter, triageFilter],
   );
   const { items: issues, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
-  const activeFilters = [repoFilter, authorFilter, assigneeFilter, labelFilter].filter((f) => f !== 'all').length;
+  const activeFilters = [repoFilter, authorFilter, assigneeFilter, labelFilter, triageFilter].filter((f) => f !== 'all').length;
 
   useEffect(() => {
     return onServerMessage((msg) => {
@@ -204,6 +206,7 @@ export function IssuesAreaPage(): JSX.Element {
                 setParam('author', null);
                 setParam('assignee', null);
                 setParam('label', null);
+                setParam('triage', null);
               }}
             >
               {repos.length > 1 ? (
@@ -253,6 +256,19 @@ export function IssuesAreaPage(): JSX.Element {
                   onChange={setFilter('label')}
                   searchable={facets.labels.length > 8}
                   options={[{ value: 'all', label: 'Any label' }, ...facets.labels.map((l) => ({ value: l, label: l }))]}
+                />
+              </FilterField>
+              <FilterField label="Triage">
+                <Dropdown
+                  ariaLabel="Filter by triage status"
+                  value={triageFilter}
+                  onChange={setFilter('triage')}
+                  options={[
+                    { value: 'all', label: 'Any triage' },
+                    { value: 'pending', label: 'Pending triage' },
+                    { value: 'applied', label: 'Triage applied' },
+                    { value: 'dismissed', label: 'Triage dismissed' },
+                  ]}
                 />
               </FilterField>
             </FiltersPopover>

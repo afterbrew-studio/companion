@@ -105,6 +105,8 @@ export class IssuesStore {
       author?: string;
       assignee?: string;
       label?: string;
+      /** Latest triage verdict status for the issue. */
+      triage?: 'pending' | 'applied' | 'dismissed';
       limit?: number;
       offset?: number;
     },
@@ -145,6 +147,16 @@ export class IssuesStore {
     if (opts.label) {
       where.push(`EXISTS (SELECT 1 FROM json_each(i.labels) WHERE json_each.value = ?)`);
       args.push(opts.label);
+    }
+    if (opts.triage) {
+      // The latest triage verdict for this issue is in that status.
+      where.push(
+        `EXISTS (SELECT 1 FROM triage_results tv
+                 WHERE tv.repo = i.repo AND tv.issue_number = i.number AND tv.status = ?
+                   AND tv.created_at = (SELECT MAX(created_at) FROM triage_results tv2
+                                        WHERE tv2.repo = tv.repo AND tv2.issue_number = tv.issue_number))`,
+      );
+      args.push(opts.triage);
     }
     if (opts.q) {
       where.push(`(i.title LIKE ? ESCAPE '\\' OR i.labels LIKE ? ESCAPE '\\' OR CAST(i.number AS TEXT) = ?)`);
