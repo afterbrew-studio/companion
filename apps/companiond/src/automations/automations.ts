@@ -178,9 +178,9 @@ export class Automations {
   async tick(now = Date.now()): Promise<void> {
     for (const repo of this.store.repos.list()) {
       if (repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
-        await this.runDigest(repo.full_name).catch((err) =>
-          log.warn('digest failed', { repo: repo.full_name, err: String(err) }),
-        );
+        // Fire-and-forget: runDigest stamps lastRun synchronously, so the next
+        // tick won't re-fire while this one is still working.
+        this.startDigest(repo.full_name);
       }
       if (repo.stale_enabled === 1 && this.due(`stale:${repo.full_name}`, now)) {
         this.runStaleSweep(repo.full_name);
@@ -348,35 +348,114 @@ export class Automations {
     this.broadcast({ t: 'notifications.changed' });
   }
 
-  /** Force a schedule to run now (UI button + tests). */
+  private readonly digestsInFlight = new Set<string>();
+
+  /**
+   * Kick off a digest WITHOUT holding the caller. The run takes minutes —
+   * longer than Node's 5-minute request timeout — so the HTTP route must not
+   * await it (the socket gets destroyed and the browser sees a 500 while the
+   * digest quietly completes). Failures land in the inbox; the report lands
+   * via `reports.changed`. Returns false when one is already running.
+   */
+  startDigest(repo: string): boolean {
+    if (this.digestsInFlight.has(repo)) return false;
+    this.digestsInFlight.add(repo);
+    void this.runDigest(repo)
+      .catch((err) => this.automationFailed(repo, `Digest failed for ${repo}`, err, '#/digest'))
+      .finally(() => this.digestsInFlight.delete(repo));
+    return true;
+  }
+
+  /**
+   * The AI repo review: everything that moved since the last digest — shipped,
+   * failed, new, in flight — grounded in tracker state Companion already holds,
+   * then handed to an agent inside the clone to judge what matters and where
+   * the project is heading. Falls back to the deterministic fact sheet when the
+   * agent (or the clone) is unavailable, so the report always lands.
+   */
   async runDigest(repo: string): Promise<void> {
     const since = Number(this.store.settings.get(`lastRun:digest:${repo}`) ?? 0) || Date.now() - 86_400_000;
-    const fresh = this.store.issues.listSince(repo, since);
     this.store.settings.set(`lastRun:digest:${repo}`, String(Date.now()));
 
-    let body: string;
-    if (fresh.length === 0) {
-      body = 'No new issues since the last digest.';
-    } else {
-      const list = fresh
-        .map((i) => `- #${i.number} ${i.title} (${i.author})${i.labels.length ? ` [${i.labels.join(', ')}]` : ''}`)
-        .join('\n');
-      // A bounded agent turn summarizes; fall back to the raw list on failure.
-      body = list;
-      if (this.checkouts.hasClone(repo)) {
-        try {
-          const { finalMessage } = await this.orchestrator.runOneShot({
-            kind: 'report',
-            title: `Digest: ${repo}`,
-            cwd: this.checkouts.cloneDir(repo),
-            repo,
-            prompt: `You are writing a maintainer's daily digest for ${repo}. Do not modify any files.\n\nNew issues since the last digest:\n${list}\n\nEach issue body:\n${fresh.map((i) => `### #${i.number} ${i.title}\n${i.body.slice(0, 1500)}`).join('\n\n')}\n\nReply with a concise markdown digest: 2-3 sentences of overall assessment, then a prioritized checklist of what deserves attention first and why.`,
-            timeoutMs: 5 * 60_000,
-          });
-          if (finalMessage?.trim()) body = finalMessage.trim();
-        } catch (err) {
-          log.warn('digest agent failed, using raw list', { err: String(err) });
-        }
+    const freshIssues = this.store.issues.listSince(repo, since);
+    const prs = this.store.prs.list(repo);
+    const merged = prs.filter((pr) => pr.state === 'merged' && (pr.closedAt ?? 0) >= since);
+    const openPrs = prs.filter((pr) => pr.state === 'open');
+    const failingPrs = openPrs.filter((pr) => pr.checks?.state === 'failing');
+    const allRuns = this.store.runs.list(500);
+    const recentRuns = allRuns.filter((r) => r.repo === repo && r.created_at >= since);
+    const failedRuns = recentRuns.filter((r) => r.status === 'failed');
+    const reviewRuns = allRuns.filter((r) => r.repo === repo && r.status === 'review');
+
+    const prLink = (n: number): string => `[${repo}#${n}](#/repos/${repo}/prs/${n})`;
+    const issueLink = (n: number): string => `[${repo}#${n}](#/repos/${repo}/issues/${n})`;
+
+    // The fact sheet: grounds the agent AND doubles as the fallback body.
+    const facts: string[] = [];
+    facts.push(
+      `## Shipped since last digest\n${
+        merged.length
+          ? merged.slice(0, 20).map((pr) => `- ${prLink(pr.number)} ${pr.title} (${pr.author})`).join('\n')
+          : 'No PRs merged.'
+      }`,
+    );
+    const broken = [
+      ...failingPrs.slice(0, 10).map((pr) => `- CI failing on ${prLink(pr.number)} ${pr.title}`),
+      ...failedRuns.slice(0, 10).map((r) => `- Agent run failed: [${r.title}](#/runs/${r.id})${r.outcome ? ` — ${r.outcome.slice(0, 200)}` : ''}`),
+    ];
+    facts.push(`## Failing\n${broken.length ? broken.join('\n') : 'CI green on open PRs; no failed agent runs.'}`);
+    facts.push(
+      `## New issues\n${
+        freshIssues.length
+          ? freshIssues
+              .slice(0, 15)
+              .map((i) => `- ${issueLink(i.number)} ${i.title} (${i.author})${i.labels.length ? ` [${i.labels.join(', ')}]` : ''}`)
+              .join('\n')
+          : 'No new issues.'
+      }`,
+    );
+    const inFlight = [
+      ...openPrs
+        .filter((pr) => !pr.draft && pr.checks?.state !== 'failing')
+        .slice(0, 15)
+        .map((pr) => `- ${prLink(pr.number)} ${pr.title}${pr.reviewDecision === 'approved' ? ' (approved, mergeable)' : ''}`),
+      ...reviewRuns.map((r) => `- Agent diff awaiting human review: [${r.title}](#/runs/${r.id})`),
+    ];
+    facts.push(`## In flight\n${inFlight.length ? inFlight.join('\n') : 'Nothing in flight.'}`);
+
+    const quiet =
+      freshIssues.length === 0 && merged.length === 0 && failingPrs.length === 0 && recentRuns.length === 0;
+
+    let body = quiet ? 'Quiet since the last digest — nothing shipped, failed, or arrived.' : facts.join('\n\n');
+    if (!quiet && this.checkouts.hasClone(repo)) {
+      try {
+        // Fresh git history is the "what actually landed" source for the agent.
+        await this.checkouts.fetch(repo).catch(() => undefined);
+        const sinceIso = new Date(since).toISOString();
+        const { finalMessage } = await this.orchestrator.runOneShot({
+          kind: 'report',
+          title: `Digest: ${repo}`,
+          cwd: this.checkouts.cloneDir(repo),
+          repo,
+          prompt:
+            `You are writing the daily digest for ${repo} — the AI review a maintainer reads first thing. Do not modify any files.\n\n` +
+            `Ground truth from Companion's tracker (trust it; add judgement, don't restate it verbatim):\n\n${facts.join('\n\n')}\n\n` +
+            (freshIssues.length
+              ? `New issue bodies:\n${freshIssues.slice(0, 15).map((i) => `### #${i.number} ${i.title}\n${i.body.slice(0, 1200)}`).join('\n\n')}\n\n`
+              : '') +
+            `You are inside a clone of the repository. Run read-only git commands (e.g. \`git log --stat --since="${sinceIso}" origin/HEAD\`) to see what actually changed, and read code or docs where it sharpens your judgement. Budget your exploration: a handful of git commands and at most a few file reads, then write — a good digest on time beats a perfect one that never lands.\n\n` +
+            `Reply in markdown with exactly these sections:\n` +
+            `## Headline — 2-3 sentences: the state of the repo today and the single most important thing.\n` +
+            `## What matters now — prioritized checklist (max 5) of what deserves attention first, each with a one-line why.\n` +
+            `## Done — what shipped since the last digest, grouped by theme, from merged PRs and git history.\n` +
+            `## Failed or blocked — failing CI, failed agent runs, stuck PRs; each with the likely cause in one line.\n` +
+            `## Direction — 2-4 sentences: where the project is heading given recent activity vs the open backlog; call out drift or risk.\n\n` +
+            `Link issues/PRs as [${repo}#N](#/repos/${repo}/issues/N) or (#/repos/${repo}/prs/N). Be specific and terse; no filler.`,
+          timeoutMs: 12 * 60_000,
+        });
+        if (finalMessage?.trim()) body = finalMessage.trim();
+      } catch (err) {
+        log.warn('digest agent failed, using fact sheet', { err: String(err) });
       }
     }
 
@@ -385,11 +464,20 @@ export class Automations {
       id: `rep-${randomUUID().slice(0, 12)}`,
       repo,
       kind: 'digest',
-      title: `Daily digest — ${fresh.length} new issue(s)`,
+      title: `Daily digest — ${repo}`,
       body,
       createdAt: Date.now(),
     });
     this.broadcast({ t: 'reports.changed' });
+    if (!quiet) {
+      this.notify(
+        repo,
+        'info',
+        `Daily digest ready — ${repo}`,
+        `${merged.length} merged · ${failingPrs.length} failing CI · ${freshIssues.length} new issue(s)`,
+        '#/digest',
+      );
+    }
   }
 
   runStaleSweep(repo: string, staleDays = 30): void {

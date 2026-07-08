@@ -68,7 +68,8 @@ export function DashboardPage(): JSX.Element {
         msg.t === 'runs.changed' ||
         msg.t === 'run.changed' ||
         msg.t === 'pipelineRuns.changed' ||
-        msg.t === 'repos.changed'
+        msg.t === 'repos.changed' ||
+        msg.t === 'reports.changed'
       ) {
         void refresh();
       }
@@ -301,7 +302,9 @@ function ActivityFeed({
         href:
           r.kind === 'ci-analysis' && r.repo && r.issueNumber
             ? `#/repos/${r.repo}/prs/${r.issueNumber}`
-            : '#/automations',
+            : r.kind === 'digest'
+              ? '#/digest'
+              : '#/automations',
       }),
     ),
   ]

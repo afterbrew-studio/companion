@@ -36,6 +36,13 @@ const icons = {
       <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
     </svg>
   ),
+  digest: (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+      <path d="M4 5.5h13V17a3 3 0 0 0 3 3H7a3 3 0 0 1-3-3V5.5z" />
+      <path d="M17 9h3.5v8a3 3 0 0 1-3 3" />
+      <path d="M7.5 9.5h6M7.5 13h6M7.5 16.5h3.5" />
+    </svg>
+  ),
   proposals: (
     <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
@@ -145,6 +152,15 @@ export const MODULES: readonly AppModule[] = [
     permission: 'issues:read',
     section: 'workspace',
     icon: icons.overview,
+  },
+  {
+    key: 'digest',
+    label: 'Daily Digest',
+    hash: '#/digest',
+    shortcut: 'g',
+    permission: 'reports:read',
+    section: 'workspace',
+    icon: icons.digest,
   },
   {
     key: 'reviews',

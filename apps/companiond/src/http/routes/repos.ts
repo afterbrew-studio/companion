@@ -235,9 +235,11 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/digest-now',
       access: 'automations:manage',
-      handler: async ({ params }) => {
+      handler: ({ params }) => {
         const { fullName } = requireRepo(params.owner, params.name);
-        await deps.automations.runDigest(fullName);
+        // Kick off and return: the run takes minutes and must not hold the
+        // request open. Progress streams via runs.changed/reports.changed.
+        deps.automations.startDigest(fullName);
         return { ok: true };
       },
     }),

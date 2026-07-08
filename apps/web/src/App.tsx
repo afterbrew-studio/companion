@@ -15,6 +15,7 @@ import { LoginPage } from './pages/Login.js';
 import { SetupPage } from './pages/Setup.js';
 import { UsersPage } from './pages/Users.js';
 import { DashboardPage } from './pages/Dashboard.js';
+import { DigestPage } from './pages/Digest.js';
 import { ProposalsPage } from './pages/Proposals.js';
 import { SpecsPage } from './pages/Specs.js';
 import { DocsPage } from './pages/Docs.js';
@@ -789,6 +790,7 @@ function Route({ hash }: { hash: string }): JSX.Element {
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
   if (m) return guard(can('prs:read'), <PrDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
 
+  if (path.startsWith('/digest')) return guard(can('reports:read'), <DigestPage />);
   if (path.startsWith('/reviews')) return guard(can('runs:read'), <ReviewsPage />);
   if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
   if (path.startsWith('/specs')) return guard(can('specs:read'), <SpecsPage />);
