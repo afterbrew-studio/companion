@@ -15,6 +15,8 @@ import { log } from '../log.js';
  */
 export class SpaHub {
   private readonly wss = new WebSocketServer({ noServer: true });
+  /** Which user each socket authenticated as — for per-user directives. */
+  private readonly owner = new WeakMap<WebSocket, string>();
 
   constructor(private readonly verify: (token: string | null) => AuthUser | null) {}
 
@@ -27,6 +29,7 @@ export class SpaHub {
       return;
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.owner.set(ws, user.username);
       this.wss.emit('connection', ws, req);
       this.send(ws, { t: 'hello', version: '0.3.0' });
     });
@@ -36,6 +39,20 @@ export class SpaHub {
     const raw = JSON.stringify(msg);
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(raw);
+        } catch (err) {
+          log.warn('dropping SPA ws send', { err: String(err) });
+        }
+      }
+    }
+  }
+
+  /** Push to exactly the sockets a given user has open (all their tabs). */
+  sendToUser(username: string, msg: SpaServerMessage): void {
+    const raw = JSON.stringify(msg);
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN && this.owner.get(client) === username) {
         try {
           client.send(raw);
         } catch (err) {

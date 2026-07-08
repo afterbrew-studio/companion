@@ -126,8 +126,21 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       name        TEXT NOT NULL,
       slug        TEXT NOT NULL UNIQUE,
       description TEXT NOT NULL DEFAULT '',
+      visibility  TEXT NOT NULL DEFAULT 'public',
+      owner_id    TEXT,
       created_at  INTEGER NOT NULL
     );
+
+    -- Members of a private workspace (owner + invitees). Public workspaces
+    -- carry no rows here; access is universal.
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      workspace_id TEXT NOT NULL,
+      username     TEXT NOT NULL,
+      role         TEXT NOT NULL DEFAULT 'member',
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (workspace_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(username);
 
     CREATE TABLE IF NOT EXISTS pipelines (
       id           TEXT PRIMARY KEY,
@@ -303,6 +316,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE runs ADD COLUMN runner_id TEXT`,
     `ALTER TABLE repos ADD COLUMN runner_id TEXT`,
     `ALTER TABLE github_accounts ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'`,
+    `ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`,
+    `ALTER TABLE workspaces ADD COLUMN owner_id TEXT`,
   ]) {
     try {
       db.exec(ddl);

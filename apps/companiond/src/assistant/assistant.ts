@@ -186,7 +186,9 @@ export class Assistant {
 
   /** The tailored platform knowledge + API cookbook the agent starts from. */
   private briefing(user: AuthUser): string {
-    const workspaces = this.store.workspaces.list().map((ws) => {
+    // Only the workspaces this user may see — the assistant acts with their
+    // token, so it must not even mention private workspaces they aren't in.
+    const workspaces = this.store.workspaces.listFor(user).map((ws) => {
       const repos = this.store.repos
         .listByWorkspace(ws.id)
         .map((r) => r.full_name)
@@ -228,6 +230,10 @@ Acting:
 - POST /api/repos/:owner/:name/issues/:n/triage · /fix (starts a fix agent) · /comment {body} · /state {state:"open"|"closed"}
 - POST /api/repos/:owner/:name/prs/:n/analyze (AI review) · /comment {body} · /merge {method:"merge"|"squash"|"rebase"} · /close
 - POST /api/repos/:owner/:name/prs/:n/pipelines/:pipelineId/run · POST /api/repos/:owner/:name/sync
+Driving the user's screen (their browser reacts instantly):
+- POST /api/assistant/ui {"hash":"#/prs"} — navigate the user to a page (any #/… route: #/proposals, #/repos, #/runs/<id>, …)
+- POST /api/assistant/ui {"intent":"new-workspace"} — open a form for them: "new-workspace", "connect-repo", or "connect-github"
+  Use this to FINISH an action visually: after you create/run something, navigate them to where they can see it; when a task needs details only a form collects (a new workspace, connecting a repo/account), open that form instead of doing it blind.
 
 ## Rules
 1. Platform operations ONLY. The single shell command you use is curl against $BASEURL (plus reading ./${CREDENTIALS_FILE} once). Never edit files, never run other tools, and decline requests outside operating Companion — say it is out of scope.

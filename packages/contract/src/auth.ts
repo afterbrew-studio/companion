@@ -9,6 +9,7 @@ export type Role = 'admin' | 'maintainer' | 'business';
 
 export type Permission =
   | 'workspaces:read'
+  | 'workspaces:create'
   | 'workspaces:manage'
   | 'repos:read'
   | 'repos:manage'
@@ -37,6 +38,7 @@ export type Permission =
 
 const ALL_PERMISSIONS: readonly Permission[] = [
   'workspaces:read',
+  'workspaces:create',
   'workspaces:manage',
   'repos:read',
   'repos:manage',
@@ -66,8 +68,10 @@ const ALL_PERMISSIONS: readonly Permission[] = [
 
 /**
  * The capability grid. admin: everything. maintainer: day-to-day operation of
- * every area except instance administration (settings, workspace lifecycle).
- * business: proposals only (plus the reads needed to file one).
+ * every area except instance administration (settings, users, runners, and
+ * public-workspace lifecycle) — but they CAN create private workspaces they
+ * own (workspaces:create). business: proposals only (plus the reads needed to
+ * file one).
  */
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: ALL_PERMISSIONS,

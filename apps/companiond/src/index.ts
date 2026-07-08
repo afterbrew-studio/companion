@@ -139,6 +139,7 @@ async function main(): Promise<void> {
       config,
       auth,
       broadcast,
+      pushToUser: (username, msg) => hub.sendToUser(username, msg),
       orchestrator,
       moxxyCli,
       store,

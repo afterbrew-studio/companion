@@ -520,4 +520,25 @@
   .ob-blink-2 {
     animation-delay: 0.9s;
   }
+  @keyframes ob-tile {
+    from {
+      opacity: 0;
+      transform: scale(0.6) translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .ob-tile {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ob-tile 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
+  .ob-tile-2 {
+    animation-delay: 0.12s;
+  }
+  .ob-tile-3 {
+    animation-delay: 0.24s;
+  }
 }

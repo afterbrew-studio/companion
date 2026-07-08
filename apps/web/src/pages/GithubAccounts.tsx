@@ -8,6 +8,7 @@ import type {
 } from '@companion/contract';
 import { GITHUB_PURPOSES } from '@companion/contract';
 import { api } from '../lib/api.js';
+import { useIntent } from '../lib/intents.js';
 import { Page, EmptyState, Modal, PageHeader, Switch, timeAgo, useConfirm } from '../components/ui.js';
 
 const PURPOSE_META: Record<GitHubPurpose, { label: string; hint: string }> = {
@@ -50,6 +51,9 @@ export function GithubAccountsPage(): JSX.Element {
       .then((r) => setWorkspaces(r.workspaces))
       .catch(() => setWorkspaces([]));
   }, [refresh]);
+
+  // ⌘K → "Connect GitHub account" lands here and opens the connect modal.
+  useIntent('connect-github', () => setAdding(true));
 
   const togglePurpose = async (account: GitHubAccountRecord, purpose: GitHubPurpose): Promise<void> => {
     const next = account.purposes.includes(purpose)

@@ -3,7 +3,16 @@
  * Pull Requests) are scoped to the active workspace. A repo belongs to exactly
  * one workspace; a fresh install has a "Default" workspace that adopts any
  * repo connected before workspaces existed.
+ *
+ * Visibility: `public` workspaces are shared with every user; `private` ones
+ * are visible only to their members (the creator is the owner). Everything
+ * scoped to a workspace — repos, issues, PRs, proposals, notifications —
+ * inherits that access. Admins see and manage every workspace.
  */
+
+export type WorkspaceVisibility = 'public' | 'private';
+
+export type WorkspaceMemberRole = 'owner' | 'member';
 
 export interface WorkspaceRecord {
   readonly id: string;
@@ -11,14 +20,38 @@ export interface WorkspaceRecord {
   /** URL-safe handle, unique. */
   readonly slug: string;
   readonly description: string;
+  readonly visibility: WorkspaceVisibility;
+  /** Username of the owner (creator) for private workspaces; null for public. */
+  readonly ownerId: string | null;
   readonly createdAt: number;
   /** Computed: number of repos attached. */
   readonly repoCount: number;
+  /** Computed for private workspaces: number of members (incl. owner). */
+  readonly memberCount: number;
+}
+
+/** A member of a private workspace. */
+export interface WorkspaceMember {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: WorkspaceMemberRole;
+}
+
+/** A user who could be invited to a private workspace (member-picker search result). */
+export interface WorkspaceMemberCandidate {
+  readonly username: string;
+  readonly displayName: string;
 }
 
 export interface CreateWorkspaceRequest {
   readonly name: string;
   readonly description?: string;
+  /** Defaults to `private` for non-admins; `public` requires workspaces:manage. */
+  readonly visibility?: WorkspaceVisibility;
+}
+
+export interface AddWorkspaceMemberRequest {
+  readonly username: string;
 }
 
 // ---------- metrics ---------------------------------------------------------------

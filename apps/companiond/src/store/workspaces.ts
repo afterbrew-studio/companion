@@ -1,5 +1,12 @@
 import type Database from 'better-sqlite3';
-import type { WorkspaceMetrics, WorkspaceRecord } from '@companion/contract';
+import type {
+  AuthUser,
+  WorkspaceMember,
+  WorkspaceMemberRole,
+  WorkspaceMetrics,
+  WorkspaceRecord,
+  WorkspaceVisibility,
+} from '@companion/contract';
 
 /** Workspaces group repos; the dashboard metrics roll up per workspace. */
 export class WorkspacesStore {
@@ -19,33 +26,64 @@ export class WorkspacesStore {
     this.db.prepare(`UPDATE repos SET workspace_id = ? WHERE workspace_id IS NULL`).run(first.id);
   }
 
+  private readonly selectCols = `SELECT w.*,
+    (SELECT COUNT(*) FROM repos r WHERE r.workspace_id = w.id) AS repo_count,
+    (SELECT COUNT(*) FROM workspace_members m WHERE m.workspace_id = w.id) AS member_count
+    FROM workspaces w`;
+
   list(): WorkspaceRecord[] {
+    const rows = this.db.prepare(`${this.selectCols} ORDER BY w.created_at`).all() as WorkspaceRow[];
+    return rows.map(workspaceRowToRecord);
+  }
+
+  /**
+   * Workspaces a user may see: admins get everything; everyone else gets the
+   * public ones plus the private ones they belong to.
+   */
+  listFor(user: AuthUser): WorkspaceRecord[] {
+    if (user.role === 'admin') return this.list();
     const rows = this.db
       .prepare(
-        `SELECT w.*, (SELECT COUNT(*) FROM repos r WHERE r.workspace_id = w.id) AS repo_count
-         FROM workspaces w ORDER BY w.created_at`,
+        `${this.selectCols}
+         WHERE w.visibility = 'public'
+            OR EXISTS (SELECT 1 FROM workspace_members m
+                       WHERE m.workspace_id = w.id AND m.username = ?)
+         ORDER BY w.created_at`,
       )
-      .all() as WorkspaceRow[];
+      .all(user.username) as WorkspaceRow[];
     return rows.map(workspaceRowToRecord);
   }
 
   get(id: string): WorkspaceRecord | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT w.*, (SELECT COUNT(*) FROM repos r WHERE r.workspace_id = w.id) AS repo_count
-         FROM workspaces w WHERE w.id = ?`,
-      )
-      .get(id) as WorkspaceRow | undefined;
+    const row = this.db.prepare(`${this.selectCols} WHERE w.id = ?`).get(id) as WorkspaceRow | undefined;
     return row ? workspaceRowToRecord(row) : undefined;
   }
 
-  insert(w: { id: string; name: string; slug: string; description: string }): void {
+  insert(w: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string;
+    visibility?: WorkspaceVisibility;
+    ownerId?: string | null;
+  }): void {
+    const visibility = w.visibility ?? 'public';
     this.db
       .prepare(
-        `INSERT INTO workspaces (id, name, slug, description, created_at)
-         VALUES (@id, @name, @slug, @description, @createdAt)`,
+        `INSERT INTO workspaces (id, name, slug, description, visibility, owner_id, created_at)
+         VALUES (@id, @name, @slug, @description, @visibility, @ownerId, @createdAt)`,
       )
-      .run({ ...w, createdAt: Date.now() });
+      .run({
+        id: w.id,
+        name: w.name,
+        slug: w.slug,
+        description: w.description,
+        visibility,
+        ownerId: visibility === 'private' ? (w.ownerId ?? null) : null,
+        createdAt: Date.now(),
+      });
+    // A private workspace's creator is its first member, as owner.
+    if (visibility === 'private' && w.ownerId) this.addMember(w.id, w.ownerId, 'owner');
   }
 
   update(id: string, fields: { name?: string; description?: string }): void {
@@ -59,7 +97,85 @@ export class WorkspacesStore {
   delete(id: string): void {
     this.db.prepare(`DELETE FROM pipelines WHERE workspace_id = ?`).run(id);
     this.db.prepare(`DELETE FROM step_definitions WHERE workspace_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM workspace_members WHERE workspace_id = ?`).run(id);
     this.db.prepare(`DELETE FROM workspaces WHERE id = ?`).run(id);
+  }
+
+  // ---------- membership + access ------------------------------------------------
+
+  /** Members of a private workspace (owner first), joined to display names. */
+  members(id: string): WorkspaceMember[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.username, m.role, COALESCE(u.display_name, '') AS display_name
+         FROM workspace_members m
+         LEFT JOIN users u ON u.username = m.username
+         WHERE m.workspace_id = ?
+         ORDER BY m.role = 'owner' DESC, m.created_at`,
+      )
+      .all(id) as Array<{ username: string; role: string; display_name: string }>;
+    return rows.map((r) => ({
+      username: r.username,
+      displayName: r.display_name || r.username,
+      role: r.role as WorkspaceMemberRole,
+    }));
+  }
+
+  addMember(id: string, username: string, role: WorkspaceMemberRole = 'member'): void {
+    this.db
+      .prepare(
+        `INSERT INTO workspace_members (workspace_id, username, role, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(workspace_id, username) DO UPDATE SET role = excluded.role`,
+      )
+      .run(id, username, role, Date.now());
+  }
+
+  removeMember(id: string, username: string): void {
+    this.db
+      .prepare(`DELETE FROM workspace_members WHERE workspace_id = ? AND username = ? AND role != 'owner'`)
+      .run(id, username);
+  }
+
+  isMember(id: string, username: string): boolean {
+    return !!this.db
+      .prepare(`SELECT 1 FROM workspace_members WHERE workspace_id = ? AND username = ?`)
+      .get(id, username);
+  }
+
+  /** Can this user see the workspace? Admins: always. Public: always. Private: members. */
+  canAccess(user: AuthUser, ws: WorkspaceRecord): boolean {
+    return user.role === 'admin' || ws.visibility === 'public' || this.isMember(ws.id, user.username);
+  }
+
+  /** Can this user rename/delete/manage members? Admins and the owner. */
+  canManage(user: AuthUser, ws: WorkspaceRecord): boolean {
+    return user.role === 'admin' || (ws.visibility === 'private' && ws.ownerId === user.username);
+  }
+
+  /** Visibility of the workspace a repo belongs to, resolved in one query. */
+  private repoVisibility(fullName: string): { id: string; visibility: string; owner_id: string | null } | undefined {
+    return this.db
+      .prepare(
+        `SELECT w.id, w.visibility, w.owner_id
+         FROM repos r JOIN workspaces w ON w.id = r.workspace_id
+         WHERE r.full_name = ?`,
+      )
+      .get(fullName) as { id: string; visibility: string; owner_id: string | null } | undefined;
+  }
+
+  /** Can this user see a repo? Follows its workspace's access rule. */
+  canAccessRepo(user: AuthUser, fullName: string): boolean {
+    if (user.role === 'admin') return true;
+    const w = this.repoVisibility(fullName);
+    // A repo with no workspace (shouldn't happen post-ensureDefault) is public.
+    if (!w) return true;
+    return w.visibility === 'public' || this.isMember(w.id, user.username);
+  }
+
+  /** Ids of the workspaces a user may see — for filtering global listings. */
+  accessibleIds(user: AuthUser): Set<string> {
+    return new Set(this.listFor(user).map((w) => w.id));
   }
 
   /** Counters + weekly open/close velocity for a workspace's dashboard. */
@@ -149,8 +265,11 @@ interface WorkspaceRow {
   name: string;
   slug: string;
   description: string;
+  visibility: string;
+  owner_id: string | null;
   created_at: number;
   repo_count: number;
+  member_count: number;
 }
 
 function workspaceRowToRecord(row: WorkspaceRow): WorkspaceRecord {
@@ -159,7 +278,10 @@ function workspaceRowToRecord(row: WorkspaceRow): WorkspaceRecord {
     name: row.name,
     slug: row.slug,
     description: row.description,
+    visibility: row.visibility === 'private' ? 'private' : 'public',
+    ownerId: row.owner_id,
     createdAt: row.created_at,
     repoCount: row.repo_count,
+    memberCount: row.member_count,
   };
 }

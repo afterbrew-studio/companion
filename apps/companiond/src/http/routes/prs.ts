@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { CommentRecord } from '@companion/contract';
+import type { AuthUser, CommentRecord } from '@companion/contract';
 import { route, accepted, created, notFound, badRequest, type CompiledRoute } from '../router.js';
 import { log } from '../../log.js';
 import type { ApiDeps } from '../deps.js';
@@ -8,10 +8,12 @@ const mergeSchema = z.object({ method: z.enum(['merge', 'squash', 'rebase']).def
 const commentSchema = z.object({ body: z.string().min(1).max(64_000) });
 
 export function prRoutes(deps: ApiDeps): CompiledRoute[] {
-  const requirePr = (owner: string, name: string, number: string) => {
+  const requirePr = (user: AuthUser | null, owner: string, name: string, number: string) => {
     const fullName = `${owner}/${name}`;
     const pr = deps.store.prs.get(fullName, Number(number));
-    if (!pr) throw notFound(`PR ${fullName}#${number} not found`);
+    if (!pr || !user || !deps.store.workspaces.canAccessRepo(user, fullName)) {
+      throw notFound(`PR ${fullName}#${number} not found`);
+    }
     return { fullName, pr };
   };
 
@@ -20,8 +22,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number',
       access: 'prs:read',
-      handler: ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         return {
           pr,
           review: deps.store.prReviews.latest(fullName, pr.number) ?? null,
@@ -36,8 +38,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/comments',
       access: 'prs:read',
-      handler: async ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured');
         const raw = await client.issueComments(fullName, pr.number);
@@ -55,8 +57,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/prs/:number/comment',
       access: 'prs:act',
       body: commentSchema,
-      handler: async ({ params, body }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, body, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured');
         const result = await client.comment(fullName, pr.number, body.body);
@@ -69,8 +71,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/checks/analyze',
       access: 'prs:act',
-      handler: ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         void deps.prReviews
           .analyzeFailedChecks(fullName, pr.number)
           .catch((err) => log.warn('CI analysis failed', { fullName, number: pr.number, err: String(err) }));
@@ -83,8 +85,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/fix-checks',
       access: 'prs:act',
-      handler: async ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
           return { run: await deps.fixes.startCheckFix(fullName, pr.number) };
         } catch (err) {
@@ -98,8 +100,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/address-reviews',
       access: 'prs:act',
-      handler: async ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
           return { run: await deps.fixes.startReviewFix(fullName, pr.number) };
         } catch (err) {
@@ -113,8 +115,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/checks',
       access: 'prs:read',
-      handler: async ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         return { checks: await deps.prChecks.fetchSummary(fullName, pr.number) };
       },
     }),
@@ -123,8 +125,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/analyze',
       access: 'prs:act',
-      handler: ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         void deps.prReviews
           .analyzePr(fullName, pr.number)
           .catch((err) => log.warn('pr analysis failed', { fullName, number: pr.number, err: String(err) }));
@@ -137,8 +139,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/prs/:number/merge',
       access: 'prs:act',
       body: mergeSchema,
-      handler: async ({ params, body }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, body, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         await deps.prReviews.merge(fullName, pr.number, body.method);
         return { ok: true };
       },
@@ -148,8 +150,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/close',
       access: 'prs:act',
-      handler: async ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         await deps.prReviews.close(fullName, pr.number);
         return { ok: true };
       },
@@ -160,8 +162,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/pipelines/:pipelineId/run',
       access: 'pipelines:run',
-      handler: ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = deps.pipelines.start(params.pipelineId, fullName, pr.number, 'manual');
@@ -173,8 +175,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/pipeline-runs',
       access: 'prs:read',
-      handler: ({ params }) => {
-        const { fullName, pr } = requirePr(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         return { runs: deps.store.pipelines.listRunsForPr(fullName, pr.number) };
       },
     }),

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { IssueRecord, PrRecord, RepoRecord, RunRecord } from '@companion/contract';
+import type { IssueRecord, Permission, PrRecord, RepoRecord, RunRecord } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { runIntent, type Intent } from '../lib/intents.js';
 import { MODULES } from '../modules.js';
 
 /**
@@ -20,6 +21,39 @@ interface Entry {
 }
 
 const MAX_PER_GROUP = 6;
+
+/**
+ * "Do something" commands. Each opens a modal owned elsewhere via a one-shot
+ * intent (navigating to its page first when needed). `keywords` widen the
+ * fuzzy match so "add repo" / "new workspace" land too.
+ */
+interface Command {
+  readonly intent: Intent;
+  readonly label: string;
+  readonly need: Permission;
+  readonly keywords: string;
+}
+
+const COMMANDS: readonly Command[] = [
+  {
+    intent: 'new-workspace',
+    label: 'Create workspace',
+    need: 'workspaces:create',
+    keywords: 'new add create workspace group private public',
+  },
+  {
+    intent: 'connect-repo',
+    label: 'Connect repository',
+    need: 'repos:manage',
+    keywords: 'add new connect repository repo import github',
+  },
+  {
+    intent: 'connect-github',
+    label: 'Connect GitHub account',
+    need: 'settings:manage',
+    keywords: 'add new connect github account token pat',
+  },
+];
 
 export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Element {
   const { can } = useAuth();
@@ -62,6 +96,17 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     const cap = <T,>(arr: T[]): T[] => arr.slice(0, MAX_PER_GROUP);
 
     return [
+      ...cap(
+        COMMANDS.filter((c) => can(c.need) && match(c.label, c.keywords)).map((c) => ({
+          id: `cmd-${c.intent}`,
+          group: 'Actions',
+          label: c.label,
+          run: () => {
+            runIntent(c.intent);
+            onClose();
+          },
+        })),
+      ),
       ...cap(
         MODULES.filter((m) => can(m.permission) && match(m.label)).map((m) => ({
           id: `page-${m.key}`,
@@ -180,7 +225,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
             ref={inputRef}
             type="search"
             className="flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-zinc-400"
-            placeholder="Search pages, issues, PRs, runs…"
+            placeholder="Search actions, pages, issues, PRs…"
             aria-label="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

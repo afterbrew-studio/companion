@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { route, created, notFound, badRequest, type CompiledRoute } from '../router.js';
+import type { AuthUser } from '@companion/contract';
+import { route, created, notFound, badRequest, forbidden, type CompiledRoute } from '../router.js';
 import { rowToRepo } from '../../store/db.js';
 import { log } from '../../log.js';
 import type { ApiDeps } from '../deps.js';
@@ -18,10 +19,14 @@ const automationSchema = z.object({
 const moveSchema = z.object({ workspaceId: z.string().min(1) });
 
 export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
-  const requireRepo = (owner: string, name: string) => {
+  // Resolve a repo and enforce its workspace's access rule — a repo in a
+  // private workspace the user isn't in reads as "not connected".
+  const requireRepo = (user: AuthUser | null, owner: string, name: string) => {
     const fullName = `${owner}/${name}`;
     const row = deps.store.repos.get(fullName);
-    if (!row) throw notFound(`repo ${fullName} not connected`);
+    if (!row || !user || !deps.store.workspaces.canAccessRepo(user, fullName)) {
+      throw notFound(`repo ${fullName} not connected`);
+    }
     return { fullName, row };
   };
 
@@ -30,12 +35,18 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos',
       access: 'repos:read',
-      handler: () => ({
-        repos: deps.store.repos.list().map((row) => ({
-          ...rowToRepo(row),
-          openIssues: deps.store.issues.list(row.full_name, 'open').length,
-        })),
-      }),
+      handler: ({ user }) => {
+        const accessible = deps.store.workspaces.accessibleIds(user!);
+        return {
+          repos: deps.store.repos
+            .list()
+            .filter((row) => !row.workspace_id || accessible.has(row.workspace_id))
+            .map((row) => ({
+              ...rowToRepo(row),
+              openIssues: deps.store.issues.list(row.full_name, 'open').length,
+            })),
+        };
+      },
     }),
 
     route({
@@ -43,11 +54,13 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos',
       access: 'repos:manage',
       body: addRepoSchema,
-      handler: async ({ body }) => {
+      handler: async ({ body, user }) => {
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured (set a PAT first)');
-        if (!deps.store.workspaces.get(body.workspaceId)) {
-          throw badRequest(`workspace ${body.workspaceId} not found`);
+        const ws = deps.store.workspaces.get(body.workspaceId);
+        if (!ws) throw badRequest(`workspace ${body.workspaceId} not found`);
+        if (!deps.store.workspaces.canAccess(user!, ws)) {
+          throw forbidden('you cannot add repos to that workspace');
         }
         const meta = await client.repo(body.fullName);
         deps.store.repos.upsert({
@@ -77,8 +90,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'DELETE',
       path: '/api/repos/:owner/:name',
       access: 'repos:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         deps.store.repos.remove(fullName);
         deps.broadcast({ t: 'repos.changed' });
         return { ok: true };
@@ -90,10 +103,12 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/workspace',
       access: 'repos:manage',
       body: moveSchema,
-      handler: ({ params, body }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
-        if (!deps.store.workspaces.get(body.workspaceId)) {
-          throw badRequest(`workspace ${body.workspaceId} not found`);
+      handler: ({ params, body, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
+        const target = deps.store.workspaces.get(body.workspaceId);
+        if (!target) throw badRequest(`workspace ${body.workspaceId} not found`);
+        if (!deps.store.workspaces.canAccess(user!, target)) {
+          throw forbidden('you cannot move this repo into that workspace');
         }
         deps.store.repos.setWorkspace(fullName, body.workspaceId);
         deps.broadcast({ t: 'repos.changed' });
@@ -105,8 +120,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/sync',
       access: 'repos:manage',
-      handler: async ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: async ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         return deps.sync.syncRepo(fullName);
       },
     }),
@@ -116,8 +131,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/github-account',
       access: 'repos:manage',
       body: z.object({ accountId: z.string().max(60).nullable() }),
-      handler: ({ params, body }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, body, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         if (body.accountId && !deps.githubAccounts.list().some((a) => a.id === body.accountId)) {
           throw notFound(`unknown GitHub account: ${body.accountId}`);
         }
@@ -133,8 +148,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/runner',
       access: 'repos:manage',
       body: z.object({ runnerId: z.string().max(60).nullable() }),
-      handler: ({ params, body }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, body, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         if (body.runnerId && !deps.runners.get(body.runnerId)) {
           throw notFound(`unknown runner: ${body.runnerId}`);
         }
@@ -149,8 +164,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/pipelines/:pipelineId/run',
       access: 'pipelines:run',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'platform') {
           throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
@@ -165,8 +180,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/automation',
       access: 'automations:manage',
       body: automationSchema,
-      handler: ({ params, body }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, body, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         if (body.autoTriage !== undefined) deps.store.repos.setAutomation(fullName, 'auto_triage', body.autoTriage);
         if (body.digest !== undefined) deps.store.repos.setAutomation(fullName, 'digest_enabled', body.digest);
         if (body.staleSweep !== undefined) deps.store.repos.setAutomation(fullName, 'stale_enabled', body.staleSweep);
@@ -181,8 +196,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/webhook',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         return deps.automations.ensureWebhook(fullName);
       },
     }),
@@ -191,8 +206,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'DELETE',
       path: '/api/repos/:owner/:name/webhook',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         deps.automations.disableWebhook(fullName);
         return { ok: true };
       },
@@ -203,8 +218,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/webhook',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         return { webhook: deps.automations.webhookInfo(fullName) };
       },
     }),
@@ -235,8 +250,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/digest-now',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         // Kick off and return: the run takes minutes and must not hold the
         // request open. Progress streams via runs.changed/reports.changed.
         deps.automations.startDigest(fullName);
@@ -248,8 +263,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/stale-now',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         deps.automations.runStaleSweep(fullName);
         return { ok: true };
       },
@@ -259,8 +274,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues',
       access: 'issues:read',
-      handler: ({ params, query }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, query, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         const state = query.get('state');
         return {
           issues: deps.store.issues.list(fullName, state === 'open' || state === 'closed' ? state : undefined),
@@ -272,8 +287,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs',
       access: 'prs:read',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         return { prs: deps.store.prs.list(fullName) };
       },
     }),
@@ -282,8 +297,8 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/triage',
       access: 'issues:read',
-      handler: ({ params }) => {
-        const { fullName } = requireRepo(params.owner, params.name);
+      handler: ({ params, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
         return { results: deps.store.triage.list(fullName) };
       },
     }),

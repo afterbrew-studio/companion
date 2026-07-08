@@ -17,9 +17,21 @@ export function ChevronDown({ open, className = '' }: { open?: boolean; classNam
   );
 }
 
+/** Small stroked padlock — marks private workspaces. */
+export function LockIcon({ className = 'size-3.5' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden className={`shrink-0 ${className}`}>
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export interface DropdownOption<T extends string> {
   value: T;
   label: string;
+  /** Optional leading glyph (e.g. a lock for private workspaces). */
+  icon?: ReactNode;
   /** Dim secondary text, right-aligned in the menu (e.g. a count). */
   hint?: string;
 }
@@ -193,9 +205,12 @@ export function Dropdown<T extends string>({
                     close(true);
                   }}
                 >
-                  <span className="min-w-0">
-                    <span className={`block truncate ${isSelected ? 'font-medium' : ''}`}>{o.label}</span>
-                    {o.hint ? <span className="dim block truncate text-[11px]">{o.hint}</span> : null}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {o.icon ? <span className="dim shrink-0">{o.icon}</span> : null}
+                    <span className="min-w-0">
+                      <span className={`block truncate ${isSelected ? 'font-medium' : ''}`}>{o.label}</span>
+                      {o.hint ? <span className="dim block truncate text-[11px]">{o.hint}</span> : null}
+                    </span>
                   </span>
                   {isSelected ? (
                     <svg

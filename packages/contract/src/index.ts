@@ -616,4 +616,13 @@ export type SpaServerMessage =
   | { readonly t: 'reports.changed' }
   | { readonly t: 'notifications.changed' }
   | { readonly t: 'runners.changed' }
+  /**
+   * A UI directive pushed to one user's browser(s) — AI Help uses it to take
+   * the user somewhere or open a form after acting. `hash` navigates; `intent`
+   * opens a modal via the client intent bus.
+   */
+  | { readonly t: 'client.intent'; readonly hash?: string; readonly intent?: ClientIntent }
   | { readonly t: 'hello'; readonly version: string };
+
+/** UI intents AI Help can trigger in the user's browser. */
+export type ClientIntent = 'new-workspace' | 'connect-repo' | 'connect-github';

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { CommentRecord } from '@companion/contract';
+import type { AuthUser, CommentRecord } from '@companion/contract';
 import { route, accepted, created, notFound, badRequest, type CompiledRoute } from '../router.js';
 import { log } from '../../log.js';
 import type { ApiDeps } from '../deps.js';
@@ -9,10 +9,12 @@ const commentSchema = z.object({ body: z.string().min(1).max(64_000) });
 const stateSchema = z.object({ state: z.enum(['open', 'closed']) });
 
 export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
-  const requireIssue = (owner: string, name: string, number: string) => {
+  const requireIssue = (user: AuthUser | null, owner: string, name: string, number: string) => {
     const fullName = `${owner}/${name}`;
     const issue = deps.store.issues.get(fullName, Number(number));
-    if (!issue) throw notFound(`issue ${fullName}#${number} not found`);
+    if (!issue || !user || !deps.store.workspaces.canAccessRepo(user, fullName)) {
+      throw notFound(`issue ${fullName}#${number} not found`);
+    }
     return { fullName, issue };
   };
 
@@ -21,8 +23,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues/:number',
       access: 'issues:read',
-      handler: ({ params }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         return { issue, triage: deps.store.triage.latest(fullName, issue.number) ?? null };
       },
     }),
@@ -31,8 +33,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/issues/:number/triage',
       access: 'issues:act',
-      handler: ({ params }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: ({ params, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         // Long-running; kick it and let the UI follow triage.changed.
         void deps.triage
           .triageIssue(fullName, issue.number)
@@ -45,8 +47,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/issues/:number/fix',
       access: 'issues:act',
-      handler: async ({ params }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const run = await deps.fixes.startFix(fullName, issue.number);
         return created({ run });
       },
@@ -57,8 +59,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues/:number/comments',
       access: 'issues:read',
-      handler: async ({ params }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: async ({ params, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured');
         const raw = await client.issueComments(fullName, issue.number);
@@ -76,8 +78,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/issues/:number/comment',
       access: 'issues:act',
       body: commentSchema,
-      handler: async ({ params, body }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: async ({ params, body, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured');
         const result = await client.comment(fullName, issue.number, body.body);
@@ -90,8 +92,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/repos/:owner/:name/issues/:number/state',
       access: 'issues:act',
       body: stateSchema,
-      handler: async ({ params, body }) => {
-        const { fullName, issue } = requireIssue(params.owner, params.name, params.number);
+      handler: async ({ params, body, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const client = deps.github();
         if (!client) throw badRequest('GitHub is not configured');
         await client.updateIssueState(fullName, issue.number, body.state);
@@ -106,10 +108,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/repos/:owner/:name/issues/:number/pipelines/:pipelineId/run',
       access: 'pipelines:run',
-      handler: ({ params }) => {
-        const fullName = `${params.owner}/${params.name}`;
-        const issue = deps.store.issues.get(fullName, Number(params.number));
-        if (!issue) throw notFound(`issue ${fullName}#${params.number} not found`);
+      handler: ({ params, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const pipeline = deps.store.pipelines.get(params.pipelineId);
         if (pipeline && pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = deps.pipelines.start(params.pipelineId, fullName, issue.number, 'manual');
@@ -121,8 +121,8 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues/:number/pipeline-runs',
       access: 'issues:read',
-      handler: ({ params }) => {
-        const fullName = `${params.owner}/${params.name}`;
+      handler: ({ params, user }) => {
+        const { fullName } = requireIssue(user, params.owner, params.name, params.number);
         return { runs: deps.store.pipelines.listRunsForIssue(fullName, Number(params.number)) };
       },
     }),

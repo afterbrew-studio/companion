@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { GitHubAccountRecord, RepoRecord, RunnerRecord, WorkspaceRecord } from '@companion/contract';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  GitHubAccountRecord,
+  RepoRecord,
+  RunnerRecord,
+  WorkspaceMember,
+  WorkspaceMemberCandidate,
+  WorkspaceRecord,
+} from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
-import { Page, EmptyState, Modal, PageHeader, Spinner, timeAgo, useConfirm } from '../components/ui.js';
+import { useIntent } from '../lib/intents.js';
+import { useDebounced } from '../lib/paging.js';
+import { Page, EmptyState, LockIcon, Modal, PageHeader, Spinner, timeAgo, useConfirm } from '../components/ui.js';
 
 /**
  * Repository management, scoped to the active workspace. Repos move between
@@ -11,8 +20,11 @@ import { Page, EmptyState, Modal, PageHeader, Spinner, timeAgo, useConfirm } fro
  * is managed here too.
  */
 export function ReposPage(): JSX.Element {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
+  // Owner of a private workspace manages it even without workspaces:manage (admin).
+  const canManageCurrent =
+    can('workspaces:manage') || (current?.visibility === 'private' && current?.ownerId === user?.username);
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
   const [runners, setRunners] = useState<RunnerRecord[]>([]);
@@ -46,6 +58,9 @@ export function ReposPage(): JSX.Element {
     });
   }, [refresh]);
 
+  // ⌘K → "Connect repository" lands here and opens the add-repo modal.
+  useIntent('connect-repo', () => setAdding(true));
+
   if (!current) {
     return (
       <Page>
@@ -58,10 +73,15 @@ export function ReposPage(): JSX.Element {
     <Page>
       <PageHeader
         title="Repositories"
-        subtitle={`${current.name} — connected GitHub repositories in this workspace`}
+        subtitle={
+          <span className="inline-flex items-center gap-1.5">
+            {current.visibility === 'private' ? <LockIcon className="dim size-3.5" /> : null}
+            {current.name} — connected GitHub repositories in this {current.visibility} workspace
+          </span>
+        }
         actions={
           <>
-            {can('workspaces:manage') ? (
+            {canManageCurrent ? (
               <button className="btn-ghost" onClick={() => setManaging(true)}>
                 Workspace settings
               </button>
@@ -482,6 +502,8 @@ function WorkspaceSettingsModal({
       </form>
       {note ? <p className="mt-2 text-[13px] text-emerald-600 dark:text-emerald-400">{note}</p> : null}
 
+      {workspace.visibility === 'private' ? <MembersSection workspace={workspace} /> : null}
+
       <div className="mt-4 rounded-lg border border-red-500/40 p-3.5">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="min-w-0 flex-1">
@@ -498,5 +520,239 @@ function WorkspaceSettingsModal({
       {error ? <div className="error-bar mt-2">{error}</div> : null}
       {confirmElement}
     </Modal>
+  );
+}
+
+/** Two-letter initials for an avatar tile. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? parts[0]?.[1] ?? '')).toUpperCase() || '?';
+}
+
+function Avatar({ name, className = 'size-7' }: { name: string; className?: string }): JSX.Element {
+  return (
+    <span
+      className={`flex ${className} shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-[10px] font-semibold uppercase dark:bg-zinc-800`}
+      aria-hidden
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+/** Invite/remove members of a private workspace (owner + admins). */
+function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Element {
+  const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { members } = await api.listWorkspaceMembers(workspace.id);
+      setMembers(members);
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [workspace.id]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const add = async (username: string): Promise<void> => {
+    setError(null);
+    const { members } = await api.addWorkspaceMember(workspace.id, username);
+    setMembers(members);
+  };
+
+  const remove = async (name: string): Promise<void> => {
+    setError(null);
+    try {
+      const { members } = await api.removeWorkspaceMember(workspace.id, name);
+      setMembers(members);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const count = members?.length ?? 0;
+
+  return (
+    <div className="mt-4 rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center justify-between px-3.5 pt-3">
+        <div>
+          <div className="text-[13px] font-medium">Members</div>
+          <p className="dim mt-0.5 text-xs">People who can see and work in this private workspace.</p>
+        </div>
+        {members ? <span className="dim text-xs tabular-nums">{count}</span> : null}
+      </div>
+
+      <UserPicker workspaceId={workspace.id} onAdd={add} onError={setError} />
+
+      <ul className="flex flex-col px-1.5 pb-1.5">
+        {members?.map((m) => (
+          <li key={m.username} className="group/mem flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+            <Avatar name={m.displayName} />
+            <span className="min-w-0 flex-1 leading-tight">
+              <span className="block truncate text-sm font-medium">{m.displayName}</span>
+              <span className="dim block truncate text-xs">@{m.username}</span>
+            </span>
+            {m.role === 'owner' ? (
+              <span className="badge shrink-0">owner</span>
+            ) : (
+              <button
+                className="dim shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-600 focus-visible:opacity-100 group-hover/mem:opacity-100 dark:hover:text-red-400"
+                aria-label={`Remove ${m.displayName}`}
+                title="Remove from workspace"
+                onClick={() => void remove(m.username)}
+              >
+                <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
+                  <path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+          </li>
+        ))}
+        {members?.length === 0 ? (
+          <li className="dim px-2 py-3 text-center text-sm">No members yet — search above to add people.</li>
+        ) : null}
+      </ul>
+      {error ? <div className="error-bar mx-3.5 mb-3">{error}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * Searchable people picker: type to search users (workspace-scoped candidate
+ * feed, already-members excluded), arrow/enter to add. Adds on select and
+ * keeps the box open so several can be added in a row.
+ */
+function UserPicker({
+  workspaceId,
+  onAdd,
+  onError,
+}: {
+  workspaceId: string;
+  onAdd: (username: string) => Promise<void>;
+  onError: (e: string | null) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<WorkspaceMemberCandidate[]>([]);
+  const [active, setActive] = useState(0);
+  const [adding, setAdding] = useState<string | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const debounced = useDebounced(query, 200);
+
+  // Fetch candidates whenever the (debounced) query changes and the box is open.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api
+      .workspaceMemberCandidates(workspaceId, debounced.trim())
+      .then((r) => alive && (setResults(r.candidates), setActive(0)))
+      .catch(() => alive && setResults([]));
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId, debounced, open]);
+
+  // Close on outside click.
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const pick = async (username: string): Promise<void> => {
+    setAdding(username);
+    onError(null);
+    try {
+      await onAdd(username);
+      // Drop the just-added user from the list; keep the box open for the next.
+      setResults((prev) => prev.filter((c) => c.username !== username));
+      setQuery('');
+      setActive(0);
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive((a) => Math.min(a + 1, results.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((a) => Math.max(a - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const c = results[active];
+      if (c) void pick(c.username);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={boxRef} className="relative px-3.5 py-3">
+      <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-2.5 focus-within:border-zinc-400 dark:border-zinc-700 dark:focus-within:border-zinc-500">
+        <svg viewBox="0 0 16 16" fill="none" className="dim size-4 shrink-0" aria-hidden>
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+          <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+        <input
+          className="flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-zinc-400"
+          placeholder="Search people to add…"
+          aria-label="Search people to add"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+        />
+      </div>
+
+      {open ? (
+        <div className="absolute inset-x-3.5 top-full z-20 mt-1 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          {results.length === 0 ? (
+            <div className="dim px-3 py-3 text-center text-[13px]">
+              {debounced.trim() ? 'No matching people.' : 'Everyone already has access.'}
+            </div>
+          ) : (
+            <ul className="max-h-56 overflow-y-auto p-1" role="listbox">
+              {results.map((c, i) => (
+                <li key={c.username}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={i === active}
+                    disabled={adding !== null}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left ${
+                      i === active ? 'bg-zinc-100 dark:bg-zinc-800' : ''
+                    }`}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => void pick(c.username)}
+                  >
+                    <Avatar name={c.displayName} />
+                    <span className="min-w-0 flex-1 leading-tight">
+                      <span className="block truncate text-sm font-medium">{c.displayName}</span>
+                      <span className="dim block truncate text-xs">@{c.username}</span>
+                    </span>
+                    {adding === c.username ? (
+                      <Spinner />
+                    ) : (
+                      <span className={`dim shrink-0 text-xs ${i === active ? 'opacity-100' : 'opacity-0'}`}>Add</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -27,6 +27,8 @@ export interface ApiDeps {
   readonly config: DaemonConfig;
   readonly auth: Auth;
   readonly broadcast: (msg: SpaServerMessage) => void;
+  /** Push a message to just one user's connected browsers (all their tabs). */
+  readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
   readonly orchestrator: Orchestrator;
   readonly moxxyCli: MoxxyCli | null;
   readonly store: Store;

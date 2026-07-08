@@ -1,21 +1,39 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { hasPermission, type AuthUser } from '@companion/contract';
 import { savePipelineSchema, saveStepDefinitionSchema } from '../../pipelines/pipelines.js';
-import { route, created, notFound, badRequest, type CompiledRoute } from '../router.js';
+import { route, created, notFound, badRequest, forbidden, type CompiledRoute } from '../router.js';
 import { rowToRepo } from '../../store/db.js';
 import type { ApiDeps } from '../deps.js';
 
 const workspaceSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(500).default(''),
+  visibility: z.enum(['public', 'private']).optional(),
 });
-const workspacePatchSchema = workspaceSchema.partial();
+const workspacePatchSchema = z.object({
+  name: z.string().min(2).max(80).optional(),
+  description: z.string().max(500).optional(),
+});
+const memberSchema = z.object({ username: z.string().min(1).max(100) });
 
 /** Workspace lifecycle + the per-workspace area feeds. */
 export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
-  const requireWorkspace = (id: string) => {
+  // Access gate: a private workspace the user isn't in reads as "not found" —
+  // membership is hidden, so its existence is too.
+  const requireWorkspace = (user: AuthUser | null, id: string) => {
     const ws = deps.store.workspaces.get(id);
-    if (!ws) throw notFound(`workspace ${id} not found`);
+    if (!ws || !user || !deps.store.workspaces.canAccess(user, ws)) {
+      throw notFound(`workspace ${id} not found`);
+    }
+    return ws;
+  };
+  // Manage gate (rename/delete/members): owner or admin only.
+  const requireManage = (user: AuthUser | null, id: string) => {
+    const ws = requireWorkspace(user, id);
+    if (!user || !deps.store.workspaces.canManage(user, ws)) {
+      throw forbidden('only the workspace owner or an admin can manage this workspace');
+    }
     return ws;
   };
 
@@ -24,20 +42,33 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces',
       access: 'workspaces:read',
-      handler: () => ({ workspaces: deps.store.workspaces.list() }),
+      handler: ({ user }) => ({ workspaces: deps.store.workspaces.listFor(user!) }),
     }),
 
     route({
       method: 'POST',
       path: '/api/workspaces',
-      access: 'workspaces:manage',
+      access: 'workspaces:create',
       body: workspaceSchema,
-      handler: ({ body }) => {
+      handler: ({ body, user }) => {
+        // Omitted visibility defaults to private (the per-user case); making a
+        // workspace public — shared with everyone — needs workspaces:manage.
+        const visibility = body.visibility ?? 'private';
+        if (visibility === 'public' && !hasPermission(user!.role, 'workspaces:manage')) {
+          throw forbidden('only an admin can create a public workspace');
+        }
         const id = `ws-${randomUUID().slice(0, 12)}`;
         const taken = new Set(deps.store.workspaces.list().map((w) => w.slug));
         let slug = slugify(body.name, id);
         if (taken.has(slug)) slug = `${slug}-${id.slice(3, 7)}`;
-        deps.store.workspaces.insert({ id, name: body.name, slug, description: body.description });
+        deps.store.workspaces.insert({
+          id,
+          name: body.name,
+          slug,
+          description: body.description,
+          visibility,
+          ownerId: visibility === 'private' ? user!.username : null,
+        });
         deps.broadcast({ t: 'workspaces.changed' });
         return created({ workspace: deps.store.workspaces.get(id) });
       },
@@ -46,10 +77,10 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
     route({
       method: 'PATCH',
       path: '/api/workspaces/:id',
-      access: 'workspaces:manage',
+      access: 'workspaces:read',
       body: workspacePatchSchema,
-      handler: ({ params, body }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, body, user }) => {
+        requireManage(user, params.id);
         deps.store.workspaces.update(params.id, body);
         deps.broadcast({ t: 'workspaces.changed' });
         return { workspace: deps.store.workspaces.get(params.id) };
@@ -59,9 +90,9 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
     route({
       method: 'DELETE',
       path: '/api/workspaces/:id',
-      access: 'workspaces:manage',
-      handler: ({ params }) => {
-        const ws = requireWorkspace(params.id);
+      access: 'workspaces:read',
+      handler: ({ params, user }) => {
+        const ws = requireManage(user, params.id);
         if (ws.repoCount > 0) {
           throw badRequest('workspace still has repos — move or remove them first');
         }
@@ -74,14 +105,75 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    // ---------- private-workspace membership -----------------------------------
+
+    route({
+      method: 'GET',
+      path: '/api/workspaces/:id/members',
+      access: 'workspaces:read',
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
+        return { members: deps.store.workspaces.members(params.id) };
+      },
+    }),
+
+    // Typeahead for the member picker: users who could be invited (not already
+    // members, not disabled). Manager-gated, and returns only name + handle —
+    // never roles/emails — so a non-admin owner can search without users:manage.
+    route({
+      method: 'GET',
+      path: '/api/workspaces/:id/member-candidates',
+      access: 'workspaces:read',
+      handler: ({ params, query, user }) => {
+        requireManage(user, params.id);
+        const members = new Set(deps.store.workspaces.members(params.id).map((m) => m.username));
+        const { users } = deps.store.users.search({ q: query.get('q') ?? undefined, limit: 24 });
+        const candidates = users
+          .filter((u) => !u.disabled && !members.has(u.username))
+          .slice(0, 8)
+          .map((u) => ({ username: u.username, displayName: u.displayName }));
+        return { candidates };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/members',
+      access: 'workspaces:read',
+      body: memberSchema,
+      handler: ({ params, body, user }) => {
+        const ws = requireManage(user, params.id);
+        if (ws.visibility !== 'private') throw badRequest('only private workspaces have members');
+        if (!deps.store.users.get(body.username)) throw notFound(`user ${body.username} not found`);
+        deps.store.workspaces.addMember(params.id, body.username, 'member');
+        deps.broadcast({ t: 'workspaces.changed' });
+        return created({ members: deps.store.workspaces.members(params.id) });
+      },
+    }),
+
+    route({
+      method: 'DELETE',
+      path: '/api/workspaces/:id/members/:username',
+      access: 'workspaces:read',
+      handler: ({ params, user }) => {
+        requireManage(user, params.id);
+        if (params.username === user!.username && user!.role !== 'admin') {
+          throw badRequest('the owner cannot remove themselves — delete the workspace instead');
+        }
+        deps.store.workspaces.removeMember(params.id, params.username);
+        deps.broadcast({ t: 'workspaces.changed' });
+        return { members: deps.store.workspaces.members(params.id) };
+      },
+    }),
+
     // ---------- area feeds -----------------------------------------------------
 
     route({
       method: 'GET',
       path: '/api/workspaces/:id/repos',
       access: 'repos:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return {
           repos: deps.store.repos.listByWorkspace(params.id).map((row) => ({
             ...rowToRepo(row),
@@ -95,8 +187,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/issues',
       access: 'issues:read',
-      handler: ({ params, query }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, query, user }) => {
+        requireWorkspace(user, params.id);
         const state = query.get('state');
         return deps.store.issues.listWorkspacePaged(
           params.id,
@@ -118,8 +210,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/prs',
       access: 'prs:read',
-      handler: ({ params, query }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, query, user }) => {
+        requireWorkspace(user, params.id);
         const state = query.get('state');
         const page = deps.store.prs.listWorkspacePaged(
           params.id,
@@ -147,8 +239,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/reviews',
       access: 'runs:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         const repoNames = new Set(deps.store.repos.listByWorkspace(params.id).map((r) => r.full_name));
         const runs = deps.orchestrator
           .listRuns()
@@ -169,8 +261,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/metrics',
       access: 'issues:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { metrics: deps.store.workspaces.metrics(params.id) };
       },
     }),
@@ -179,8 +271,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/proposals',
       access: 'proposals:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { proposals: deps.store.proposals.listWorkspace(params.id) };
       },
     }),
@@ -191,8 +283,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/briefing',
       access: 'automations:manage',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { cadence: deps.automations.briefingCadence(params.id) };
       },
     }),
@@ -202,8 +294,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/workspaces/:id/briefing',
       access: 'automations:manage',
       body: z.object({ cadence: z.enum(['off', 'daily', 'weekly']) }),
-      handler: ({ params, body }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         deps.automations.setBriefingCadence(params.id, body.cadence);
         return { cadence: body.cadence };
       },
@@ -213,8 +305,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'POST',
       path: '/api/workspaces/:id/briefing-now',
       access: 'automations:manage',
-      handler: async ({ params }) => {
-        requireWorkspace(params.id);
+      handler: async ({ params, user }) => {
+        requireWorkspace(user, params.id);
         await deps.automations.runBriefing(params.id);
         return { ok: true };
       },
@@ -226,8 +318,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/pipelines',
       access: 'pipelines:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return {
           pipelines: deps.pipelines.list(params.id),
           stepDefinitions: deps.pipelines.listStepDefinitions(params.id),
@@ -240,8 +332,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/workspaces/:id/pipelines',
       access: 'pipelines:manage',
       body: savePipelineSchema,
-      handler: ({ params, body }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         return created({ pipeline: deps.pipelines.create(params.id, body) });
       },
     }),
@@ -251,8 +343,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/workspaces/:id/step-definitions',
       access: 'pipelines:manage',
       body: saveStepDefinitionSchema,
-      handler: ({ params, body }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         return created({ stepDefinition: deps.pipelines.createStepDefinition(params.id, body) });
       },
     }),
@@ -261,8 +353,8 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       method: 'GET',
       path: '/api/workspaces/:id/pipeline-runs',
       access: 'pipelines:read',
-      handler: ({ params }) => {
-        requireWorkspace(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { runs: deps.store.pipelines.listWorkspaceRuns(params.id) };
       },
     }),

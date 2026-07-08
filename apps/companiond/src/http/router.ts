@@ -38,6 +38,7 @@ export class HttpError extends Error {
 
 export const notFound = (what: string): HttpError => new HttpError(404, what);
 export const badRequest = (why: string): HttpError => new HttpError(400, why);
+export const forbidden = (why: string): HttpError => new HttpError(403, why);
 
 /** Wrap a handler's return value to send a non-200 status. */
 export class Reply {

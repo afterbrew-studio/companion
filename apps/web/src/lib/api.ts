@@ -47,9 +47,12 @@ import type {
   UserRecord,
   WebhookInfo,
   WebhookTunnelState,
+  WorkspaceMember,
+  WorkspaceMemberCandidate,
   WorkspaceMetrics,
   WorkspaceReviews,
   WorkspaceRecord,
+  WorkspaceVisibility,
 } from '@companion/contract';
 
 /**
@@ -213,11 +216,22 @@ export const api = {
 
   // workspaces
   listWorkspaces: () => request<{ workspaces: WorkspaceRecord[] }>('/api/workspaces'),
-  createWorkspace: (name: string, description?: string) =>
-    post<{ workspace: WorkspaceRecord }>('/api/workspaces', { name, description }),
+  createWorkspace: (name: string, opts?: { description?: string; visibility?: WorkspaceVisibility }) =>
+    post<{ workspace: WorkspaceRecord }>('/api/workspaces', { name, ...opts }),
   updateWorkspace: (id: string, fields: { name?: string; description?: string }) =>
     patch<{ workspace: WorkspaceRecord }>(`/api/workspaces/${id}`, fields),
   deleteWorkspace: (id: string) => del<{ ok: true }>(`/api/workspaces/${id}`),
+  // private-workspace membership
+  listWorkspaceMembers: (id: string) =>
+    request<{ members: WorkspaceMember[] }>(`/api/workspaces/${id}/members`),
+  workspaceMemberCandidates: (id: string, q: string) =>
+    request<{ candidates: WorkspaceMemberCandidate[] }>(
+      `/api/workspaces/${id}/member-candidates${qs({ q: q || undefined })}`,
+    ),
+  addWorkspaceMember: (id: string, username: string) =>
+    post<{ members: WorkspaceMember[] }>(`/api/workspaces/${id}/members`, { username }),
+  removeWorkspaceMember: (id: string, username: string) =>
+    del<{ members: WorkspaceMember[] }>(`/api/workspaces/${id}/members/${encodeURIComponent(username)}`),
   workspaceRepos: (id: string) => request<{ repos: RepoRecord[] }>(`/api/workspaces/${id}/repos`),
   workspaceIssues: (
     id: string,

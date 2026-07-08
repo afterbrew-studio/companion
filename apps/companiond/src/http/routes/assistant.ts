@@ -17,6 +17,18 @@ const askSchema = z.object({
   }),
 });
 
+/** A UI directive AI Help emits into the caller's own browser. */
+const uiSchema = z
+  .object({
+    hash: z
+      .string()
+      .max(300)
+      .regex(/^#\//, 'hash must start with #/')
+      .optional(),
+    intent: z.enum(['new-workspace', 'connect-repo', 'connect-github']).optional(),
+  })
+  .refine((v) => v.hash || v.intent, 'provide a hash to navigate or an intent to open');
+
 /**
  * AI Help. Every route is 'any' (each signed-in role gets an assistant) and
  * resolves the CALLER's own conversation run — there is no way to address
@@ -89,6 +101,19 @@ export function assistantRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'any',
       handler: async ({ user }) => {
         await deps.assistant.reset(user!);
+        return { ok: true };
+      },
+    }),
+
+    // AI Help drives the caller's own browser: navigate to a page or open a
+    // create/connect form. Pushed only to this user's sockets — never another's.
+    route({
+      method: 'POST',
+      path: '/api/assistant/ui',
+      access: 'any',
+      body: uiSchema,
+      handler: ({ user, body }) => {
+        deps.pushToUser(user!.username, { t: 'client.intent', hash: body.hash, intent: body.intent });
         return { ok: true };
       },
     }),

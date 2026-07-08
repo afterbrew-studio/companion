@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { MoxxyStatus } from '@companion/contract';
+import type { MoxxyStatus, WorkspaceVisibility } from '@companion/contract';
 import { api, onServerMessage, onWsState, type WsState } from './lib/api.js';
 import { AuthProvider, useAuth } from './lib/auth.js';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
-import { ChevronDown, Dropdown, Modal } from './components/ui.js';
+import { useIntent, runIntent } from './lib/intents.js';
+import { ChevronDown, Dropdown, LockIcon, Modal } from './components/ui.js';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
 import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
@@ -219,6 +220,15 @@ function Shell(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // AI Help can take the user somewhere or open a form in their own browser.
+  useEffect(() => {
+    return onServerMessage((msg) => {
+      if (msg.t !== 'client.intent') return;
+      if (msg.intent) runIntent(msg.intent);
+      else if (msg.hash) location.hash = msg.hash;
+    });
+  }, []);
+
   // Tapping a nav item (hash change) dismisses the mobile drawer.
   useEffect(() => {
     setMobileOpen(false);
@@ -412,6 +422,19 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
   const { workspaces, current, setCurrent, refresh } = useWorkspace();
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
+  // ⌘K → "Create workspace" opens this modal even when the rail is collapsed.
+  useIntent('new-workspace', () => can('workspaces:create') && setCreating(true));
+  const createModal =
+    creating && can('workspaces:create') ? (
+      <NewWorkspaceModal
+        canPublic={can('workspaces:manage')}
+        onClose={() => setCreating(false)}
+        onCreated={(id) => {
+          setCreating(false);
+          void refresh().then(() => setCurrent(id));
+        }}
+      />
+    ) : null;
   const avatar = (
     <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-200 text-[13px] font-semibold uppercase dark:bg-zinc-800">
       {(current?.name ?? '?').slice(0, 1)}
@@ -428,6 +451,7 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
         >
           {avatar}
         </button>
+        {createModal}
       </div>
     );
   }
@@ -445,7 +469,10 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
             {avatar}
             <span className="min-w-0 flex-1">
               <span className="dim block text-[10px] font-medium tracking-widest uppercase">Workspace</span>
-              <span className="block truncate text-[13px] font-medium">{selected?.label ?? 'No workspaces'}</span>
+              <span className="flex items-center gap-1.5">
+                {current?.visibility === 'private' ? <LockIcon className="dim size-3.5" /> : null}
+                <span className="block truncate text-[13px] font-medium">{selected?.label ?? 'No workspaces'}</span>
+              </span>
             </span>
             <ChevronDown open={open} />
           </>
@@ -453,31 +480,29 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
         options={workspaces.map((w) => ({
           value: w.id,
           label: w.name,
-          hint: `${w.repoCount} ${w.repoCount === 1 ? 'repo' : 'repos'}`,
+          hint: `${w.repoCount} ${w.repoCount === 1 ? 'repo' : 'repos'}${w.visibility === 'private' ? ' · private' : ''}`,
         }))}
-        action={can('workspaces:manage') ? { label: 'New workspace', onSelect: () => setCreating(true) } : undefined}
+        action={can('workspaces:create') ? { label: 'New workspace', onSelect: () => setCreating(true) } : undefined}
       />
-      {creating ? (
-        <NewWorkspaceModal
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            setCreating(false);
-            void refresh().then(() => setCurrent(id));
-          }}
-        />
-      ) : null}
+      {createModal}
     </div>
   );
 }
 
 function NewWorkspaceModal({
+  canPublic,
   onClose,
   onCreated,
 }: {
+  /** Only admins (workspaces:manage) may create a public, shared-with-everyone workspace. */
+  canPublic: boolean;
   onClose: () => void;
   onCreated: (id: string) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
+  // Admins default to public (their historic shared workspaces); everyone else
+  // gets a private workspace they own.
+  const [visibility, setVisibility] = useState<WorkspaceVisibility>(canPublic ? 'public' : 'private');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -486,7 +511,7 @@ function NewWorkspaceModal({
     setBusy(true);
     setError(null);
     try {
-      const { workspace } = await api.createWorkspace(name.trim());
+      const { workspace } = await api.createWorkspace(name.trim(), { visibility });
       onCreated(workspace.id);
     } catch (err) {
       setError(String(err));
@@ -509,6 +534,34 @@ function NewWorkspaceModal({
             onChange={(e) => setName(e.target.value)}
           />
         </label>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="dim mb-1 text-sm">Visibility</legend>
+          <label
+            className={`flex items-center gap-2 text-sm ${canPublic ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+          >
+            <input
+              type="radio"
+              name="visibility"
+              checked={visibility === 'public'}
+              disabled={!canPublic}
+              onChange={() => setVisibility('public')}
+            />
+            Public
+            <span className="dim text-xs">
+              — shared with everyone{canPublic ? '' : ' (admins only)'}
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="visibility"
+              checked={visibility === 'private'}
+              onChange={() => setVisibility('private')}
+            />
+            Private
+            <span className="dim text-xs">— just you, plus anyone you invite</span>
+          </label>
+        </fieldset>
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>

@@ -263,6 +263,11 @@ export class Orchestrator implements RunnerEventSink {
     const prev = this.store.runs.get(runId)?.status;
     this.store.runs.updateStatus(runId, status, outcome);
     if (prev === status) return;
+    // AI Help conversations are per-user chat, not reviewable work — they churn
+    // through completed/failed on every idle-reap and reset. Notifying would
+    // drop an instance-wide inbox entry (no repo → no workspace) that every
+    // user sees, so skip them entirely.
+    if (this.store.runs.get(runId)?.kind === 'assistant') return;
     if (status === 'review') this.notifyRun(runId, 'action_required', 'Run ready for review');
     else if (status === 'completed') this.notifyRun(runId, 'finished', 'Run completed');
     else if (status === 'failed') this.notifyRun(runId, 'error', 'Run failed', outcome ?? undefined);

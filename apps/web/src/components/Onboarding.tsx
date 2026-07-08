@@ -52,11 +52,19 @@ const STEPS: readonly Step[] = [
     art: (playing) => <MascotArt playing={playing} />,
   },
   {
+    key: 'workspaces',
+    need: 'workspaces:manage',
+    title: 'Start with a workspace',
+    body: 'Workspaces group related repositories — Proposals, Issues, and Pull Requests are all scoped to the one you have active. Create and switch workspaces from the switcher at the top of the sidebar, or press ⌘K and search “Create workspace”.',
+    chips: ['Sidebar → Workspace', '⌘K → Create workspace'],
+    art: (playing) => <WorkspaceArt playing={playing} />,
+  },
+  {
     key: 'connect',
     need: 'settings:manage',
     title: 'Connect GitHub, add repositories',
-    body: 'Start by connecting a GitHub account and adding repositories to a workspace. Companion syncs issues and PRs and clones each repo so agents can work on it.',
-    chips: ['Settings → GitHub', 'Repositories'],
+    body: 'Connect a GitHub account, then add repositories into the active workspace from the Repositories page — or press ⌘K and search “Connect repository”. Companion syncs issues and PRs and clones each repo so agents can work on it.',
+    chips: ['Settings → GitHub', 'Repositories', '⌘K → Connect repository'],
     art: (playing) => <LinkArt playing={playing} />,
   },
   {
@@ -261,6 +269,18 @@ function MascotArt({ playing }: { playing: boolean }): JSX.Element {
       <circle className="ob-eye" cx="52" cy="45" r="3.6" fill="currentColor" stroke="none" />
       <circle className="ob-eye" cx="68" cy="45" r="3.6" fill="currentColor" stroke="none" />
       <path d="M54 53q6 4 12 0" />
+    </g>,
+  );
+}
+
+function WorkspaceArt({ playing }: { playing: boolean }): JSX.Element {
+  // A workspace folder gathering three repo tiles that settle in.
+  return stage(
+    <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M26 34h14l4-6h30a4 4 0 0 1 4 4v30a4 4 0 0 1-4 4H26a4 4 0 0 1-4-4V38a4 4 0 0 1 4-4z" />
+      <rect className={playing ? 'ob-tile' : ''} x="34" y="42" width="12" height="10" rx="2" />
+      <rect className={playing ? 'ob-tile ob-tile-2' : ''} x="54" y="42" width="12" height="10" rx="2" />
+      <rect className={playing ? 'ob-tile ob-tile-3' : ''} x="44" y="56" width="12" height="10" rx="2" />
     </g>,
   );
 }
