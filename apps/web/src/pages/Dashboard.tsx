@@ -182,7 +182,7 @@ export function DashboardPage(): JSX.Element {
           </h2>
           <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
             {reviewRuns.map((run) => (
-              <a key={run.id} href={`#/runs/${run.id}`} className="row-link">
+              <a key={run.id} href={`#/runs/${run.id}/preview`} className="row-link">
                 <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{run.title}</span>
@@ -194,7 +194,7 @@ export function DashboardPage(): JSX.Element {
             {prReviewsPending.slice(0, 6).map(({ review, title }) => (
               <a
                 key={review.id}
-                href={`#/repos/${review.repo}/prs/${review.prNumber}`}
+                href={`#/repos/${review.repo}/prs/${review.prNumber}/review`}
                 className="row-link"
               >
                 <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />

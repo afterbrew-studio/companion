@@ -27,6 +27,7 @@ import { PipelinesPage } from './pages/Pipelines.js';
 import { RunsPage } from './pages/RunsPage.js';
 import { RunDetail } from './pages/RunDetail.js';
 import { PrPreview } from './pages/PrPreview.js';
+import { PrReviewPage } from './pages/PrReviewPage.js';
 import { IssueDetail } from './pages/IssueDetail.js';
 import { PrDetail } from './pages/PrDetail.js';
 import { ReposPage } from './pages/ReposPage.js';
@@ -843,6 +844,8 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (m) return guard(can('runs:read'), <RunDetail key={m[1]} runId={m[1]!} />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return guard(can('issues:read'), <IssueDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
+  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)\/review$/);
+  if (m) return guard(can('prs:read'), <PrReviewPage key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
   if (m) return guard(can('prs:read'), <PrDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
 

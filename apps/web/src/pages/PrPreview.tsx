@@ -147,7 +147,7 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
                       state === 'done'
                         ? 'bg-emerald-500 text-white'
                         : state === 'active'
-                          ? 'bg-accent-500/15 text-accent-600 ring-4 ring-accent-500/10 dark:text-accent-400'
+                          ? 'bg-zinc-100 text-accent-600 ring-4 ring-accent-500/15 dark:bg-zinc-800 dark:text-accent-400'
                           : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500'
                     }`}
                   >
@@ -248,13 +248,18 @@ function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise
   }, [run.id]);
 
   const create = async (): Promise<void> => {
+    // Reserve the tab in the click gesture so it isn't popup-blocked after the
+    // await; we stay on this page and the PR opens beside it.
+    const tab = window.open('', '_blank');
     setBusy('create');
     setError(null);
     try {
       const { prUrl } = await api.approvePr(run.id);
+      if (tab) tab.location.href = prUrl;
+      else window.open(prUrl, '_blank');
       await onChange();
-      window.open(prUrl, '_blank');
     } catch (err) {
+      tab?.close();
       setError(String(err));
     } finally {
       setBusy(null);

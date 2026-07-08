@@ -679,13 +679,13 @@ export class Orchestrator implements RunnerEventSink {
       const subtype = (event as { subtype?: string }).subtype ?? '';
       if (subtype === 'goal_completed' || subtype === 'goal_abandoned' || subtype === 'goal_stalled') {
         const payload = (event as { payload?: unknown }).payload;
-        const summary =
-          typeof payload === 'object' && payload !== null
-            ? ((payload as { summary?: string; reason?: string }).summary ??
-              (payload as { summary?: string; reason?: string }).reason ??
-              subtype)
-            : subtype;
-        this.setStatus(runId, this.store.runs.get(runId)?.status ?? 'running', `${subtype}: ${summary}`);
+        const info =
+          typeof payload === 'object' && payload !== null ? (payload as { summary?: string; reason?: string }) : {};
+        // Store just the human summary. The run STATUS already conveys
+        // completed vs abandoned, so the "goal_completed:" prefix is noise —
+        // and it was leaking into PR bodies/commit summaries.
+        const summary = (info.summary ?? info.reason ?? '').trim();
+        this.setStatus(runId, this.store.runs.get(runId)?.status ?? 'running', summary || null);
       }
     }
     this.broadcast({ t: 'event', runId, event });

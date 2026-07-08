@@ -334,13 +334,17 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   }
 
   const approve = async (): Promise<void> => {
+    // Reserve the tab in the gesture so it isn't popup-blocked after the await.
+    const tab = window.open('', '_blank');
     setBusy(true);
     setError(null);
     try {
       const { prUrl } = await api.approvePr(run.id);
+      if (tab) tab.location.href = prUrl;
+      else window.open(prUrl, '_blank');
       await onChange();
-      window.open(prUrl, '_blank');
     } catch (err) {
+      tab?.close();
       setError(String(err));
     } finally {
       setBusy(false);

@@ -159,7 +159,7 @@ function RunReviewCard({ run, onChange, onError }: { run: RunRecord } & CardProp
           {run.repo} · {run.branch ? <code className="text-[11px]">{run.branch}</code> : null} · {timeAgo(run.updatedAt)}
         </>
       }
-      href={`#/runs/${run.id}`}
+      href={`#/runs/${run.id}/preview`}
     >
       {run.outcome ? <Markdown text={run.outcome} /> : <p className="dim">The agent finished without a summary.</p>}
 
@@ -259,7 +259,7 @@ function PrReviewCard({ review, title, onChange, onError }: { review: PrReviewRe
           {review.repo} · {timeAgo(review.createdAt)}
         </>
       }
-      href={`#/repos/${review.repo}/prs/${review.prNumber}`}
+      href={`#/repos/${review.repo}/prs/${review.prNumber}/review`}
     >
       {v ? (
         <>
