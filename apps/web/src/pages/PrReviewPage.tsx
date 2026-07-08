@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PrRecord, PrReviewResult } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { AccountPicker } from '../components/AccountPicker.js';
 import { DiffView } from '../components/DiffView.js';
 import { Markdown } from '../components/Markdown.js';
 import { AiActionMenu, Page, PageLoading, Spinner, timeAgo, type MenuAction } from '../components/ui.js';
@@ -27,6 +28,7 @@ export function PrReviewPage({ repo, number }: { repo: string; number: number })
   const [analyzing, setAnalyzing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actAs, setActAs] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -134,7 +136,9 @@ export function PrReviewPage({ repo, number }: { repo: string; number: number })
           verdict={v}
           canAct={canAct}
           busy={busy}
-          onApply={() => void act('apply', () => api.applyPrReview(review!.id))}
+          actAs={actAs}
+          onActAs={setActAs}
+          onApply={() => void act('apply', () => api.applyPrReview(review!.id, actAs || undefined))}
           onDismiss={() => void act('dismiss', () => api.dismissPrReview(review!.id))}
         />
       ) : (
@@ -196,6 +200,8 @@ function VerdictCard({
   verdict,
   canAct,
   busy,
+  actAs,
+  onActAs,
   onApply,
   onDismiss,
 }: {
@@ -203,6 +209,8 @@ function VerdictCard({
   verdict: NonNullable<PrReviewResult['verdict']>;
   canAct: boolean;
   busy: string | null;
+  actAs: string;
+  onActAs: (id: string) => void;
   onApply: () => void;
   onDismiss: () => void;
 }): JSX.Element {
@@ -218,6 +226,7 @@ function VerdictCard({
           <span className="badge-ok">{review.status}</span>
         ) : canAct ? (
           <>
+            <AccountPicker value={actAs} onChange={onActAs} />
             <button className="btn" disabled={busy !== null} onClick={onApply}>
               {busy === 'apply' ? 'Posting…' : 'Post review to GitHub'}
             </button>

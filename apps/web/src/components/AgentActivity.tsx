@@ -107,31 +107,63 @@ export function AgentActivity({
           open run →
         </a>
       </div>
-      <ol className="mt-2.5 flex flex-col gap-1" aria-label="Latest agent events">
-        {entries.map((e, i) => (
-          <li
-            key={e.id}
-            className={`anim-in flex items-center gap-2 text-[13px] ${
-              i === entries.length - 1 ? '' : 'opacity-70'
-            }`}
-          >
-            <span
-              className={
-                e.tone === 'err'
-                  ? 'text-red-500'
-                  : e.tone === 'ok'
-                    ? 'text-emerald-500'
-                    : 'text-accent-400'
-              }
-              aria-hidden
-            >
-              {e.icon}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{e.label}</span>
-            <span className="dim text-xs">{timeAgo(e.ts)}</span>
-          </li>
-        ))}
-        {entries.length === 0 ? <li className="dim text-[13px]">Waiting for the first event…</li> : null}
+      <ol className="mt-3 flex flex-col" aria-label="Latest agent events">
+        {entries.length === 0 ? (
+          <li className="dim text-[13px]">Waiting for the first event…</li>
+        ) : (
+          entries.map((e, i) => {
+            const last = i === entries.length - 1;
+            const active = last && working;
+            const time = timeAgo(e.ts);
+            const prev = entries[i - 1];
+            const showTime = !prev || timeAgo(prev.ts) !== time;
+            return (
+              <li key={e.id} className="anim-in relative flex gap-3 pb-3 last:pb-0">
+                {/* connecting rail */}
+                {!last && (
+                  <span
+                    className="absolute bottom-0 left-[6.5px] top-3 w-px bg-zinc-200 dark:bg-zinc-700/80"
+                    aria-hidden
+                  />
+                )}
+                {/* node */}
+                <span className="relative z-10 mt-1 flex size-3.5 shrink-0 items-center justify-center" aria-hidden>
+                  {active ? (
+                    <span className="absolute inline-flex size-3.5 animate-ping rounded-full bg-accent-500/50 motion-reduce:hidden" />
+                  ) : null}
+                  {e.tone === 'err' ? (
+                    <span className="flex size-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold leading-none text-white">
+                      ✕
+                    </span>
+                  ) : e.tone === 'ok' ? (
+                    <span className="flex size-3.5 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold leading-none text-white">
+                      ✓
+                    </span>
+                  ) : (
+                    <span
+                      className={`size-2 rounded-full ${
+                        active
+                          ? 'bg-accent-500'
+                          : 'bg-zinc-300 ring-1 ring-inset ring-zinc-400/40 dark:bg-zinc-600 dark:ring-zinc-500/40'
+                      }`}
+                    />
+                  )}
+                </span>
+                {/* label + time */}
+                <div className="flex min-w-0 flex-1 items-baseline gap-2 pt-0.5">
+                  <span
+                    className={`min-w-0 flex-1 truncate text-[13px] ${
+                      last ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    {e.label}
+                  </span>
+                  {showTime ? <span className="dim shrink-0 text-[11px] tabular-nums">{time}</span> : null}
+                </div>
+              </li>
+            );
+          })
+        )}
       </ol>
     </section>
   );
