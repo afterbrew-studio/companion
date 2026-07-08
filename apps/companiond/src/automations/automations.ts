@@ -277,15 +277,22 @@ export class Automations {
     const dayAgo = Date.now() - 24 * 60 * 60_000;
 
     const sections: string[] = [];
+    const openPrs = this.store.prs.listWorkspace(workspaceId).filter((pr) => pr.state === 'open');
+    const openIssues = this.store.issues.listWorkspace(workspaceId, 'open');
 
-    // What needs a human, right now.
+    // What needs a human, right now — mirrors the Overview "Needs attention" queue.
+    // Reviews and triage now live on the PR and issue records themselves.
     const reviewRuns = this.store.runs.list(500).filter((r) => r.status === 'review' && r.repo && repoNames.has(r.repo));
-    const pendingReviews = this.store.prReviews.listWorkspacePending(workspaceId);
-    const pendingTriage = this.store.triage.listWorkspacePending(workspaceId);
+    const pendingReviews = openPrs.filter((pr) => pr.review === 'pending');
+    const pendingTriage = openIssues.filter((i) => i.triage === 'pending');
+    const pendingProposals = this.store.proposals
+      .listWorkspace(workspaceId)
+      .filter((p) => p.status === 'analyzed' || p.status === 'review');
     const needsYou = [
-      ...reviewRuns.map((r) => `- Agent run awaiting diff review: [${r.title}](#/runs/${r.id})`),
-      ...pendingReviews.map((r) => `- AI review pending on [${r.repo}#${r.prNumber}](#/repos/${r.repo}/prs/${r.prNumber})`),
-      ...pendingTriage.map((t) => `- Triage verdict pending on [${t.repo}#${t.issueNumber}](#/repos/${t.repo}/issues/${t.issueNumber})`),
+      ...reviewRuns.map((r) => `- Agent change awaiting review: [${r.title}](#/runs/${r.id}/preview)`),
+      ...pendingReviews.map((pr) => `- AI review to post: [${pr.repo}#${pr.number}](#/repos/${pr.repo}/prs/${pr.number}/review) — ${pr.title}`),
+      ...pendingTriage.map((i) => `- Triage to apply: [${i.repo}#${i.number}](#/repos/${i.repo}/issues/${i.number}) — ${i.title}`),
+      ...pendingProposals.map((p) => `- Proposal ${p.status === 'review' ? 'ready for review' : 'awaiting approval'}: [${p.title}](#/proposals)`),
     ];
     sections.push(`## Needs you (${needsYou.length})\n${needsYou.length ? needsYou.join('\n') : 'Inbox zero — nothing is waiting on you.'}`);
 
@@ -298,12 +305,11 @@ export class Automations {
       recent.length === 0
         ? 'No agent activity in the last 24h.'
         : `${recent.length} run(s): ${[...byKind.entries()].map(([k, n]) => `${n} ${k}`).join(', ')}.`,
-      ...failed.map((r) => `- Failed: [${r.title}](#/runs/${r.id})`),
+      ...failed.map((r) => `- Failed: [${r.title}](#/runs/${r.id}/preview)`),
     ];
     sections.push(`## Agents, last 24h\n${agentLines.join('\n')}`);
 
     // CI health across open PRs.
-    const openPrs = this.store.prs.listWorkspace(workspaceId).filter((pr) => pr.state === 'open');
     const failing = openPrs.filter((pr) => pr.checks?.state === 'failing');
     sections.push(
       `## CI health\n${openPrs.length} open PR(s); ${failing.length} failing.` +
@@ -311,8 +317,7 @@ export class Automations {
     );
 
     // Hot issues: touched in the last day, most discussed first.
-    const hot = this.store.issues
-      .listWorkspace(workspaceId, 'open')
+    const hot = openIssues
       .filter((i) => i.updatedAt >= dayAgo)
       .sort((a, b) => b.comments - a.comments)
       .slice(0, 5);

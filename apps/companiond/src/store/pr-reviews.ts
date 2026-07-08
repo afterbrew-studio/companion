@@ -31,17 +31,6 @@ export class PrReviewsStore {
     return row ? prReviewRowToResult(row) : undefined;
   }
 
-  /** Pending AI PR reviews across a workspace's repos — used by the digest/briefing. */
-  listWorkspacePending(workspaceId: string): PrReviewResult[] {
-    const rows = this.db
-      .prepare(
-        `SELECT p.* FROM pr_reviews p JOIN repos r ON r.full_name = p.repo
-         WHERE r.workspace_id = ? AND p.status = 'pending' ORDER BY p.created_at DESC`,
-      )
-      .all(workspaceId) as PrReviewRow[];
-    return rows.map(prReviewRowToResult);
-  }
-
   latestByNumber(repo: string): Map<number, LatestReviewSignal> {
     const rows = this.db
       .prepare(

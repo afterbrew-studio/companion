@@ -41,17 +41,6 @@ export class TriageStore {
     return rows.map(triageRowToResult);
   }
 
-  /** Pending triage verdicts across a workspace's repos — used by the digest/briefing. */
-  listWorkspacePending(workspaceId: string): TriageResult[] {
-    const rows = this.db
-      .prepare(
-        `SELECT t.* FROM triage_results t JOIN repos r ON r.full_name = t.repo
-         WHERE r.workspace_id = ? AND t.status = 'pending' ORDER BY t.created_at DESC`,
-      )
-      .all(workspaceId) as TriageRow[];
-    return rows.map(triageRowToResult);
-  }
-
   latestByIssue(repo: string): Map<number, TriageResult['status']> {
     const rows = this.db
       .prepare(
