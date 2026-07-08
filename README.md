@@ -27,20 +27,18 @@ Every agent run uses its own `moxxy serve` + gateway process pair under an isola
 
 A **runner** is a machine that executes agent work. Companion ships with the built-in **local runner** — the machine `companiond` runs on — and can attach any number of **remote runners**: other machines running the `companion-runner` agent, reached over the network with a bearer token.
 
-Each runner is either **shared** (eligible for any workspace) or **delegated** (serves only the workspaces you assign it), and repos can pin a preferred runner. When an agent run starts, Companion places it on an eligible, online runner and prepares its git worktree there, so the whole run — gateway, clone, worktree, and session history — lives on one machine. The local execution path is unchanged; remote runners are entirely additive. Manage them in the admin **Runners** module.
+Each runner is either **shared** (eligible for any workspace) or **delegated** (serves only the workspaces you assign it), and repos can pin a preferred runner. When an agent run starts, Companion places it on an eligible, online runner and prepares its git worktree there, so the whole run — gateway, clone, worktree, and session history — lives on one machine. Placement is **provider-aware**: runners advertise the model providers configured in their moxxy home, Companion prefers a runner that can serve the run's pinned/default model, never places work on a runner with no providers at all, and if a run still lands where its model isn't available, that turn quietly rides the runner's own default model instead of failing. The local execution path is unchanged; remote runners are entirely additive. Manage them in the admin **Runners** module.
 
 The agent publishes as a standalone package — a machine needs only Node and the moxxy CLI, not a Companion checkout. To attach one, install it, check it's ready, start it, and register the endpoint + token in Runners:
 
 ```sh
 npm i -g @moxxy/companion-runner
-companion-runner setup   # installs the moxxy CLI if missing, imports providers
+companion-runner setup   # installs the moxxy CLI if missing, imports providers, opens the firewall
 
-COMPANION_RUNNER_TOKEN=<shared-secret> \
-COMPANION_RUNNER_GITHUB_TOKEN=<pat-for-clone-push> \
-companion-runner
+COMPANION_RUNNER_TOKEN=<shared-secret> companion-runner --background
 ```
 
-`companion-runner doctor` reports what a box still needs. See `apps/companion-runner/README.md` for the full environment. (In a monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.)
+No GitHub credential is needed on the box — Companion sends its own configured GitHub token with each clone and push (set `COMPANION_RUNNER_GITHUB_TOKEN` to override with a machine-specific PAT). `companion-runner doctor` reports what a box still needs; `status`/`stop` manage a background runner. See `apps/companion-runner/README.md` for the full environment. (In a monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.)
 
 ## Repository layout
 
@@ -128,6 +126,20 @@ docker compose down -v
 
 The image installs `@moxxy/cli` globally so agent runs can start inside the container. If your repositories require SSH access, mount an SSH configuration/key into the container and make sure the key has the appropriate GitHub permissions.
 
+### Deploying with Coolify
+
+The image is self-contained (companiond + built SPA + git + moxxy CLI) and ships a `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can gate deploys on it. Point Coolify at the repository and either build pack works:
+
+- **Dockerfile** — port `8901`; add a persistent storage mount at `/data`.
+- **Docker Compose** — uses `docker-compose.yml` as is (the `.env` file is optional; the named `companion-data` volume persists `/data`).
+
+Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`, etc.) in Coolify's UI — they take precedence over any `.env`.
+
+**Model providers in a container:** the image ships the moxxy CLI, but a fresh container has no provider credentials (there is no `~/.moxxy` to import from, and `moxxy init` has never run). Two ways to get agent runs working:
+
+- **Exec in once** — `docker exec -it <container> sh`, then run moxxy's own login/init with the home pinned into the persistent volume: `MOXXY_HOME=/data/moxxy-home moxxy init`. Credentials survive redeploys because they live in `/data`. An API-key provider is the right choice on a server; OAuth-based credentials rotate their refresh token on every use and should not be shared across machines.
+- **Skip local execution entirely** — leave the container provider-less as a pure control plane (UI, GitHub sync, orchestration) and attach remote runners (machines where moxxy is already configured) to execute all agent work.
+
 ## Configuration
 
 Companion reads configuration from real environment variables, then `./.env`, then `~/.companion/.env` for local runs. In Docker, Compose passes variables from `.env` and sets `COMPANION_HOME=/data`.
@@ -164,3 +176,17 @@ pnpm --filter companiond start
 ```
 
 After `pnpm build`, companiond serves the built SPA from `apps/web/dist` when present.
+
+### Run under pm2
+
+`ecosystem.config.cjs` runs the whole suite (companiond serving the built SPA, local runner included) as a managed process:
+
+```sh
+npm i -g pm2
+pnpm prod            # pnpm -r build && pm2 startOrRestart ecosystem.config.cjs
+
+pm2 logs companion   # follow logs
+pm2 save && pm2 startup   # survive reboots
+```
+
+Configuration comes from companiond's layered env (`process env > ./.env > ~/.companion/.env`), so no pm2-specific settings are needed. The file also has a commented-out entry for serving a `companion-runner` agent from the same checkout.

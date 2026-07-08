@@ -111,6 +111,12 @@ export interface RunnerHealth {
   readonly lastSeenAt: number | null;
   /** Human detail for the degraded/offline case. */
   readonly detail: string | null;
+  /**
+   * Model provider names configured on the runner (from its moxxy home).
+   * null = unknown (old agent / not probed yet) — placement assumes capable.
+   * An empty array means the runner can't serve any model; placement skips it.
+   */
+  readonly providers: readonly string[] | null;
 }
 
 /**

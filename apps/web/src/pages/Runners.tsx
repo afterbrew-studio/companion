@@ -215,6 +215,16 @@ function RunnerCard({
         {!local && runner.endpoint ? <span>{endpointHost(runner.endpoint)}</span> : null}
         {health.status === 'offline' ? (
           <span>{health.lastSeenAt ? `last seen ${timeAgo(health.lastSeenAt)}` : 'never seen'}</span>
+        ) : health.providers !== null ? (
+          health.providers.length > 0 ? (
+            <Tooltip content="model providers configured on this machine — placement matches runs to them">
+              <span>{health.providers.join(' · ')}</span>
+            </Tooltip>
+          ) : (
+            <Tooltip content="no model providers configured — agent work is not placed here">
+              <span className="text-amber-600 dark:text-amber-500">no providers</span>
+            </Tooltip>
+          )
         ) : null}
       </div>
 
@@ -275,26 +285,27 @@ function AttachGuide(): JSX.Element {
           providers), then start it:
           <pre className="mono-pane mt-1.5">
 {`npm i -g @moxxy/companion-runner
-companion-runner setup    # installs the moxxy CLI if missing
+companion-runner setup    # installs the moxxy CLI if missing, opens the firewall
 
-COMPANION_RUNNER_TOKEN=<pick-a-secret> \\
-COMPANION_RUNNER_GITHUB_TOKEN=<github-pat> \\
-companion-runner`}
+COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
           </pre>
           <span className="dim">
             <code className="font-mono">companion-runner doctor</code> reports what a box still needs. Leave{' '}
             <code className="font-mono">COMPANION_RUNNER_TOKEN</code> out and the agent generates one — printed once and
-            saved to <code className="font-mono">~/.companion-runner/token</code>.
+            saved to <code className="font-mono">~/.companion-runner/token</code>. No GitHub setup is needed on the box:
+            Companion sends its own GitHub credential with each clone and push.
           </span>
         </li>
         <li>
           Make sure this Companion can reach the box on its port (default{' '}
-          <code className="font-mono text-xs">8920</code>) — a private network address or tunnel is fine.
+          <code className="font-mono text-xs">8920</code>) — a private network address or tunnel is fine.{' '}
+          <code className="font-mono">companion-runner open-firewall</code> opens the host firewall if{' '}
+          <code className="font-mono">setup</code> didn't.
         </li>
         <li>
           Click <span className="font-medium">Add machine</span> and enter the endpoint (
-          <code className="font-mono text-xs">http://&lt;host&gt;:8920</code>) and the token. Companion probes it, and
-          once it's online you can scope it to workspaces and pin repos to it.
+          <code className="font-mono text-xs">&lt;host&gt;:8920</code> — plain http is fine) and the token. Companion
+          probes it, and once it's online you can scope it to workspaces and pin repos to it.
         </li>
       </ol>
     </details>
@@ -358,6 +369,13 @@ function RunnerModal({
   const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
   const capacity = Number(maxRuns);
 
+  // Bare `host:port` / `ip:port` is fine — default the scheme to plain http
+  // (the agent speaks http; put a TLS proxy in front if you need https).
+  const normalizeEndpoint = (raw: string): string => {
+    const trimmed = raw.trim();
+    return trimmed && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
+  };
+
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (delegatedEmpty) {
@@ -373,13 +391,13 @@ function RunnerModal({
           scope,
           workspaceIds: scope === 'delegated' ? workspaceIds : [],
           maxRuns: capacity,
-          ...(local ? {} : { endpoint: endpoint.trim(), ...(token.trim() ? { token: token.trim() } : {}) }),
+          ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
         };
         await api.updateRunner(runner.id, body);
       } else {
         await api.createRunner({
           name: name.trim(),
-          endpoint: endpoint.trim(),
+          endpoint: normalizeEndpoint(endpoint),
           token: token.trim(),
           scope,
           workspaceIds: scope === 'delegated' ? workspaceIds : [],
@@ -412,15 +430,19 @@ function RunnerModal({
         {local ? null : (
           <>
             <label className="flex flex-col gap-1 text-sm">
-              <span className="dim">Endpoint — companion-runner agent URL</span>
+              <span className="dim">Endpoint — companion-runner agent address</span>
               <input
                 className="input"
-                type="url"
+                type="text"
                 required
-                placeholder="https://box.internal:8920"
+                placeholder="192.168.1.42:8920"
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
               />
+              <span className="dim text-xs">
+                Plain <code className="font-mono">host:port</code> or <code className="font-mono">ip:port</code> works —
+                http is assumed unless you write <code className="font-mono">https://</code>.
+              </span>
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span className="dim">Bearer token</span>

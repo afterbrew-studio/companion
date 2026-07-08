@@ -25,6 +25,7 @@ const UNKNOWN_HEALTH: RunnerHealth = {
   maxRuns: 0,
   lastSeenAt: null,
   detail: null,
+  providers: null,
 };
 
 /**
@@ -47,6 +48,8 @@ export class Runners {
     maxLiveRuns: number,
     private readonly sink: RunnerEventSink,
     private readonly broadcast: (msg: SpaServerMessage) => void,
+    /** Hub GitHub credential remote agents receive with network git calls. */
+    private readonly githubTokenFor: (repo: string) => string | null = () => null,
   ) {
     this.local = new LocalRunnerBackend(
       LOCAL_RUNNER_ID,
@@ -96,7 +99,10 @@ export class Runners {
       // Rebuild fresh so endpoint/token edits take effect.
       const existing = this.backends.get(row.id);
       if (existing) (existing as RemoteRunnerBackend).dispose();
-      this.backends.set(row.id, new RemoteRunnerBackend(row.id, row.endpoint, row.token, this.sink));
+      this.backends.set(
+        row.id,
+        new RemoteRunnerBackend(row.id, row.endpoint, row.token, this.sink, this.githubTokenFor),
+      );
     }
   }
 
@@ -118,8 +124,15 @@ export class Runners {
    * (if eligible + healthy), then the least-loaded online eligible runner,
    * then local as the always-available fallback. Returns the runner id (null
    * means the local runner).
+   *
+   * Provider capability: runners that advertise ZERO providers can't serve
+   * any model and are never chosen (unknown = null stays optimistic). When
+   * `wantedProviders` names the providers that can serve the run's model,
+   * runners advertising one of them are preferred; if none does, placement
+   * falls back to the capability-agnostic choice and the model is reconciled
+   * per turn instead (see Orchestrator.sendPrompt).
    */
-  place(repo: string | null): string | null {
+  place(repo: string | null, wantedProviders?: readonly string[] | null): string | null {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
     const eligible = this.store.runners.eligibleFor(workspaceId);
     const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
@@ -130,15 +143,31 @@ export class Runners {
       // the first poll); offline ones are skipped.
       return !h || h.status === 'online' || h.status === 'degraded' || h.status === 'unknown';
     };
+    const someProvider = (row: RunnerRow): boolean => {
+      const p = this.health.get(row.id)?.providers ?? null;
+      return p === null || p.length > 0;
+    };
+    const wantedProvider = (row: RunnerRow): boolean => {
+      if (!wantedProviders || wantedProviders.length === 0) return true;
+      const p = this.health.get(row.id)?.providers ?? null;
+      return p === null || wantedProviders.some((w) => p.includes(w));
+    };
     const load = (row: RunnerRow): number => this.backend(row.id).liveIds().length / Math.max(1, row.max_runs);
 
     if (pinned) {
+      // An explicit repo pin wins over model preference, but not over a
+      // runner that provably can't run anything.
       const pin = eligible.find((r) => r.id === pinned);
-      if (pin && online(pin)) return this.normalize(pin.id);
+      if (pin && online(pin) && someProvider(pin)) return this.normalize(pin.id);
     }
-    const candidates = eligible.filter(online).sort((a, b) => load(a) - load(b));
-    const chosen = candidates[0];
+    const capable = eligible.filter(online).filter(someProvider).sort((a, b) => load(a) - load(b));
+    const chosen = capable.find(wantedProvider) ?? capable[0];
     return this.normalize(chosen?.id ?? LOCAL_RUNNER_ID);
+  }
+
+  /** Advertised providers of a runner (null = unknown); null id = local. */
+  providersFor(runnerId: string | null): readonly string[] | null {
+    return this.health.get(runnerId ?? LOCAL_RUNNER_ID)?.providers ?? null;
   }
 
   /** Store null for the local runner so existing rows/queries stay simple. */

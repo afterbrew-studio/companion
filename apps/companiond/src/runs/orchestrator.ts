@@ -46,8 +46,9 @@ export class Orchestrator implements RunnerEventSink {
     checkouts: Checkouts,
     moxxyCli: MoxxyCli | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
+    githubTokenFor: (repo: string) => string | null = () => null,
   ) {
-    this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast);
+    this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast, githubTokenFor);
   }
 
   /** The backend a run executes on (its runner, or local). */
@@ -153,6 +154,18 @@ export class Orchestrator implements RunnerEventSink {
 
   // ---------- lifecycle -----------------------------------------------------------
 
+  /**
+   * Provider-aware placement: resolve the model the run will actually ride
+   * (explicit > kind pin > daemon default) to the providers that serve it,
+   * and prefer a runner advertising one of them. Callers that provision a
+   * worktree before createRun (fixes, pipelines) use this so the worktree
+   * lands on the runner the run will execute on.
+   */
+  placeRun(repo: string | null, kind: RunKind, model?: string | null): string | null {
+    const effective = model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
+    return this.runners.place(repo, this.providersForModel(effective));
+  }
+
   async createRun(opts: {
     kind?: RunKind;
     title?: string;
@@ -170,15 +183,17 @@ export class Orchestrator implements RunnerEventSink {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
     const kind: RunKind = opts.kind ?? 'interactive';
+    const model = opts.model ?? this.pinnedModel(kind);
     // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
     // worktree/clone from a one-shot) pins to the local runner; otherwise pick
-    // a runner for the repo and let its backend allocate a scratch dir.
+    // a runner for the repo, preferring one whose providers can serve the
+    // run's model, and let its backend allocate a scratch dir.
     const runnerId =
       opts.runnerId !== undefined
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.runners.place(opts.repo ?? null);
+          : this.placeRun(opts.repo ?? null, kind, model);
     const backend = this.runners.backend(runnerId);
     const cwd = opts.cwd ?? (await backend.scratchDir(id));
     this.store.runs.insert({
@@ -192,7 +207,7 @@ export class Orchestrator implements RunnerEventSink {
       proposalId: opts.proposalId ?? null,
       branch: opts.branch ?? null,
       prUrl: null,
-      model: opts.model ?? this.pinnedModel(opts.kind ?? 'interactive'),
+      model,
       runnerId,
       createdAt: now,
       updatedAt: now,
@@ -284,10 +299,36 @@ export class Orchestrator implements RunnerEventSink {
     if (chosen !== this.config.defaultModel && this.disabledModels().has(chosen)) {
       chosen = this.config.defaultModel;
     }
+    // A model whose provider provably isn't configured on the run's runner
+    // would fail the turn — omit the override and let that runner's own moxxy
+    // default model apply instead.
+    if (!this.runnerServes(runId, chosen)) {
+      log.info('model not served by the run\'s runner — riding the runner\'s default model', {
+        runId,
+        model: chosen,
+      });
+      const result = await backend.runTurn(runId, { prompt });
+      this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
+      return result;
+    }
     const result = await backend.runTurn(runId, { prompt, model: chosen });
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
+  }
+
+  /**
+   * Can the run's runner serve this model? True unless BOTH sides are known
+   * (the model resolves to providers via the catalog AND the runner reports
+   * its provider list) and they don't intersect — unknowns stay permissive so
+   * behavior only changes on a provable mismatch.
+   */
+  private runnerServes(runId: string, model: string): boolean {
+    const wanted = this.providersForModel(model);
+    if (!wanted) return true;
+    const advertised = this.runners.providersFor(this.store.runs.get(runId)?.runner_id ?? null);
+    if (advertised === null) return true;
+    return wanted.some((w) => advertised.includes(w));
   }
 
   async setGoalMode(runId: string): Promise<void> {
@@ -325,6 +366,23 @@ export class Orchestrator implements RunnerEventSink {
     } catch {
       return new Set();
     }
+  }
+
+  /**
+   * Enabled providers that serve `model`, from the cached catalog. null =
+   * no constraint derivable (no model, empty/stale catalog, or unknown model
+   * id) — placement and the per-turn check then behave as before.
+   */
+  private providersForModel(model: string | null): string[] | null {
+    if (!model) return null;
+    const catalog = this.readCatalogCache();
+    if (!catalog || catalog.length === 0) return null;
+    const disabled = this.disabledProviders();
+    const names = catalog
+      .filter((p) => p.models.some((m) => m.id === model || `${p.name}/${m.id}` === model))
+      .map((p) => p.name)
+      .filter((name) => !disabled.has(name));
+    return names.length > 0 ? names : null;
   }
 
   /** Connected providers + models, read live from the run's gateway. */

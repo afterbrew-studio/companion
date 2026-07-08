@@ -8,6 +8,7 @@ import { paths } from '../../companiond/src/config.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../../companiond/src/moxxy/cli.js';
 import { homeStatus, importProvidersFromDailyMoxxy } from '../../companiond/src/moxxy/home.js';
 import { loadRunnerConfig } from './config.js';
+import { openFirewall } from './firewall.js';
 
 const execFileP = promisify(execFile);
 
@@ -131,16 +132,17 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
       addrs.length > 0
         ? addrs.map((a) => `http://${a}:${config.port}`).join('  ')
         : `http://<this-host>:${config.port}`,
-    fix: 'open this port to the machine running Companion (firewall / cloud security group). External openness can only be confirmed from Companion — use "Test connection" after registering.',
+    fix: 'open this port to the machine running Companion — "companion-runner open-firewall" handles the host firewall; cloud security groups must be opened in your provider. External openness can only be confirmed from Companion — use "Test connection" after registering.',
   });
 
-  // GitHub token
+  // GitHub token — optional: Companion sends its own credential with each git
+  // operation; the env var is a per-machine override.
   checks.push({
     label: 'GitHub token',
-    level: config.githubToken ? 'ok' : 'warn',
+    level: 'ok',
     detail: config.githubToken
-      ? 'set — private clones and pushes will work'
-      : 'COMPANION_RUNNER_GITHUB_TOKEN not set — private clones/pushes will fail',
+      ? 'COMPANION_RUNNER_GITHUB_TOKEN set — this machine uses its own credential'
+      : 'not set — Companion supplies its configured GitHub credential per git operation',
   });
 
   // Auth token
@@ -160,6 +162,12 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
     }
   }
 
+  // Host firewall — setup opens the port (sudo may prompt); doctor only hints.
+  if (opts.fix) {
+    process.stdout.write(`\nMaking sure TCP ${config.port} is open on the host firewall…\n`);
+    await openFirewall(config.port);
+  }
+
   const fails = checks.filter((c) => c.level === 'fail').length;
   const warns = checks.filter((c) => c.level === 'warn').length;
   process.stdout.write(
@@ -169,7 +177,7 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
     process.stdout.write(`Run "companion-runner setup" to install and fix what it can automatically.\n`);
   }
   process.stdout.write(
-    `\nNext: start the agent with\n  COMPANION_RUNNER_TOKEN=<secret> COMPANION_RUNNER_GITHUB_TOKEN=<pat> companion-runner\nthen add it in Companion → Runners with this box's URL and the token.\n\n`,
+    `\nNext: start the agent with\n  COMPANION_RUNNER_TOKEN=<secret> companion-runner --background\nthen add it in Companion → Runners with this box's URL and the token.\n(GitHub access is supplied by Companion; "companion-runner open-firewall" opens the port.)\n\n`,
   );
   return fails > 0 ? 1 : 0;
 }

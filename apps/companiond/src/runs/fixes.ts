@@ -68,7 +68,7 @@ export class Fixes {
   }): Promise<RunRecord> {
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
-    const runnerId = this.orchestrator.runners.place(opts.repo);
+    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind);
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo);
     const cwd = await backend.addWorktree(
@@ -149,7 +149,7 @@ export class Fixes {
   /** Worktree AT the PR head; the run carries the PR so approve pushes to it. */
   private async createPrBranchRun(pr: PrRecord, title: string, objective: string): Promise<RunRecord> {
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
-    const runnerId = this.orchestrator.runners.place(pr.repo);
+    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix');
     const backend = this.backendForRun(runnerId);
     let cwd: string;
     try {

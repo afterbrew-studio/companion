@@ -37,6 +37,12 @@ export function startHttpServer(opts: {
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
+    // Unauthenticated liveness probe for Docker/Coolify/uptime monitors.
+    if (path === '/healthz') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
     if (path.startsWith('/api/')) {
       void router.dispatch(req, res);
       return;

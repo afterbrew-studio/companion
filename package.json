@@ -8,7 +8,8 @@
     "dev": "pnpm --parallel --filter companiond --filter companion-web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "prod": "pnpm -r build && pm2 startOrRestart ecosystem.config.cjs"
   },
   "engines": {
     "node": ">=20"

@@ -6,7 +6,9 @@ services:
     ports:
       - "8901:8901"
     env_file:
-      - .env
+      # Optional — Coolify and friends inject env through their own UI instead.
+      - path: .env
+        required: false
     environment:
       COMPANION_HOME: /data
       COMPANION_HOST: 0.0.0.0

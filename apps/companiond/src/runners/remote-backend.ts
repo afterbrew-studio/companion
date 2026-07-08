@@ -26,6 +26,10 @@ const HTTP_TIMEOUT_MS = 30_000;
  * long-lived WebSocket receives the run event stream and fans it into the
  * shared sink (the same one a local gateway feeds). Working directories are
  * the agent's local paths — opaque here, round-tripped verbatim.
+ *
+ * Git operations that touch the network carry the hub's GitHub credential
+ * (`githubTokenFor`, per repo so account pins apply), so the agent machine
+ * needs no GitHub configuration of its own.
  */
 export class RemoteRunnerBackend implements RunnerBackend {
   private ws: WebSocket | null = null;
@@ -39,6 +43,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly endpoint: string,
     private readonly token: string,
     private readonly sink: RunnerEventSink,
+    private readonly githubTokenFor: (repo: string) => string | null,
   ) {
     this.connectEvents();
   }
@@ -86,6 +91,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
           : h.moxxyCompatible
             ? null
             : `agent's moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
+        // Older agents don't report providers — null = unknown, assume capable.
+        providers: h.providers ?? null,
       };
     } catch (err) {
       return {
@@ -96,6 +103,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
         maxRuns: 0,
         lastSeenAt: null,
         detail: err instanceof Error ? err.message : String(err),
+        providers: null,
       };
     }
   }
@@ -165,13 +173,22 @@ export class RemoteRunnerBackend implements RunnerBackend {
     return (await this.call<AgentCloneStatusResponse>('POST', '/git/clone-status', { repo })).cloneDir;
   }
   async ensureClone(repo: string): Promise<void> {
-    await this.call('POST', '/git/ensure-clone', { repo });
+    await this.call('POST', '/git/ensure-clone', { repo, ...this.ghToken(repo) });
   }
   async addWorktree(repo: string, key: string, branch: string, baseBranch: string): Promise<string> {
-    return (await this.call<AgentWorktreeResponse>('POST', '/git/worktree', { repo, key, branch, baseBranch })).cwd;
+    return (
+      await this.call<AgentWorktreeResponse>('POST', '/git/worktree', {
+        repo,
+        key,
+        branch,
+        baseBranch,
+        ...this.ghToken(repo),
+      })
+    ).cwd;
   }
   async addWorktreeAtBranch(repo: string, key: string, branch: string): Promise<string> {
-    return (await this.call<AgentWorktreeResponse>('POST', '/git/worktree-at', { repo, key, branch })).cwd;
+    return (await this.call<AgentWorktreeResponse>('POST', '/git/worktree-at', { repo, key, branch, ...this.ghToken(repo) }))
+      .cwd;
   }
   async removeWorktree(repo: string, cwd: string): Promise<void> {
     await this.call('POST', '/git/remove-worktree', { repo, cwd });
@@ -183,7 +200,13 @@ export class RemoteRunnerBackend implements RunnerBackend {
     await this.call('POST', '/git/commit-all', { cwd, message });
   }
   async push(repo: string, cwd: string, branch: string): Promise<void> {
-    await this.call('POST', '/git/push', { repo, cwd, branch });
+    await this.call('POST', '/git/push', { repo, cwd, branch, ...this.ghToken(repo) });
+  }
+
+  /** Spread-ready `{ githubToken }` when the hub has a credential for the repo. */
+  private ghToken(repo: string): { githubToken?: string } {
+    const token = this.githubTokenFor(repo);
+    return token ? { githubToken: token } : {};
   }
 
   // ---------- event stream ----------

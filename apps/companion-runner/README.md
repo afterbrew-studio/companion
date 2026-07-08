@@ -24,7 +24,7 @@ same box is never touched:
 | `COMPANION_RUNNER_HOME` | `~/.companion-runner` | Data root (moxxy home, repos, worktrees, scratch, sessions). |
 | `COMPANION_RUNNER_HOST` | `0.0.0.0` | Bind host. |
 | `COMPANION_RUNNER_PORT` | `8920` | Bind port. |
-| `COMPANION_RUNNER_GITHUB_TOKEN` | *(unset)* | GitHub PAT used for clones and pushes. Without it, private clones/pushes fail. |
+| `COMPANION_RUNNER_GITHUB_TOKEN` | *(unset)* | Optional machine-specific GitHub PAT. Normally unset: the controlling Companion sends its own configured GitHub credential with each clone/fetch/push, held in memory only for that one git invocation. Set this to force this machine's own credential instead (per-machine audit trail / revocation). |
 | `COMPANION_RUNNER_MAX_RUNS` | `3` | Max concurrently live gateway (run) processes. |
 
 The box also needs the `moxxy` CLI on PATH (`npm i -g @moxxy/cli`). On first
@@ -43,12 +43,22 @@ npm i -g @moxxy/companion-runner
 # network: bind host (loopback vs all-interfaces), whether the port is free,
 # and the reachable http://<ip>:<port> URL(s) to register in Companion:
 companion-runner doctor
-# …or install/repair what's missing automatically (installs the moxxy CLI):
+# …or install/repair what's missing automatically (installs the moxxy CLI,
+# opens the agent port on the host firewall — sudo may prompt):
 companion-runner setup
 
-# start it:
-COMPANION_RUNNER_TOKEN=<secret> COMPANION_RUNNER_GITHUB_TOKEN=<pat> companion-runner
+# start it in the foreground:
+COMPANION_RUNNER_TOKEN=<secret> companion-runner
+# …or detached, with logs in ~/.companion-runner/runner.log:
+COMPANION_RUNNER_TOKEN=<secret> companion-runner --background
+companion-runner status   # is it running? (pid + log path)
+companion-runner stop     # stop a background runner
 ```
+
+No GitHub credential is needed on the box — the controlling Companion sends
+its own with each git operation. `companion-runner open-firewall` opens the
+agent port on the host firewall (ufw/firewalld on Linux, the application
+firewall on macOS, Windows Defender Firewall) if `setup` didn't already.
 
 `@moxxy/cli` is an optional peer dependency: `companion-runner setup` installs
 it globally if it's missing (it's a CLI the runner shells out to, not a library
@@ -59,8 +69,10 @@ From a monorepo checkout instead: `pnpm --filter @moxxy/companion-runner dev`
 
 ## Register with companiond
 
-In companiond, add a runner with this machine's endpoint URL
-(`http://<host>:8920`) and the token. companiond probes `GET /agent/health`,
-refuses protocol mismatches, and from then on provisions clones/worktrees and
-drives runs here; all working-directory paths are local to this machine and
-opaque to companiond.
+In companiond, add a runner with this machine's endpoint (`<host>:8920` —
+plain http is assumed unless you write `https://`) and the token. companiond
+probes `GET /agent/health`, refuses protocol mismatches, and from then on
+provisions clones/worktrees and drives runs here; all working-directory paths
+are local to this machine and opaque to companiond. Git operations that touch
+the network arrive with companiond's GitHub credential unless this machine
+sets `COMPANION_RUNNER_GITHUB_TOKEN`.

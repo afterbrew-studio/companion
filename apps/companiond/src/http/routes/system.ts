@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { MoxxyStatus } from '@companion/contract';
-import { homeStatus, importProvidersFromDailyMoxxy, readHomeFile } from '../../moxxy/home.js';
+import { configuredProviderNames, homeStatus, importProvidersFromDailyMoxxy } from '../../moxxy/home.js';
 import { route, notFound, type CompiledRoute } from '../router.js';
 import type { ApiDeps } from '../deps.js';
 
@@ -46,25 +46,9 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
             return [];
           }
         };
-        // Provider names live in providers.json on older moxxy versions and in
-        // config.yaml (plugins.provider.items) on current ones — read both, and
-        // always include disabled leftovers so they stay visible.
-        const names = new Set<string>();
-        try {
-          const raw = readHomeFile('providers.json');
-          const parsed: unknown = raw ? JSON.parse(raw) : null;
-          if (Array.isArray(parsed)) {
-            for (const entry of parsed) {
-              const name = (entry as { name?: unknown; provider?: unknown }).name ?? (entry as { provider?: unknown }).provider;
-              if (typeof name === 'string') names.add(name);
-            }
-          } else if (parsed && typeof parsed === 'object') {
-            for (const key of Object.keys(parsed as Record<string, unknown>)) names.add(key);
-          }
-        } catch {
-          // unreadable providers.json — config.yaml below still contributes
-        }
-        for (const name of providerNamesFromConfigYaml(readHomeFile('config.yaml'))) names.add(name);
+        // Configured provider names (shared helper — same set runners
+        // advertise in health), plus disabled leftovers so they stay visible.
+        const names = new Set<string>(configuredProviderNames());
         const disabledProviders = parse('disabledProviders');
         for (const name of disabledProviders) names.add(name);
         return {
@@ -213,49 +197,4 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
   ];
-}
-
-/**
- * Provider names from a moxxy config.yaml without a YAML dependency: the keys
- * one indent level under `plugins.provider.items`, plus the `default`. The
- * shape is stable moxxy config; anything unexpected just yields no names.
- */
-export function providerNamesFromConfigYaml(yaml: string | null): string[] {
-  if (!yaml) return [];
-  const names = new Set<string>();
-  let providerIndent = -1; // -1 = outside the provider block
-  let itemsIndent = -1;
-  let childIndent = -1;
-  for (const line of yaml.split('\n')) {
-    if (/^\s*#/.test(line) || line.trim() === '') continue;
-    const indent = line.length - line.trimStart().length;
-    const trimmed = line.trim();
-    // Leaving blocks: a sibling (or shallower) key closes the deeper scopes.
-    if (providerIndent >= 0 && indent <= providerIndent) {
-      providerIndent = -1;
-      itemsIndent = -1;
-      childIndent = -1;
-    } else if (itemsIndent >= 0 && indent <= itemsIndent) {
-      itemsIndent = -1;
-      childIndent = -1;
-    }
-    if (providerIndent < 0) {
-      if (/^provider:\s*$/.test(trimmed)) providerIndent = indent;
-      continue;
-    }
-    if (itemsIndent < 0 && /^items:\s*$/.test(trimmed)) {
-      itemsIndent = indent;
-      continue;
-    }
-    if (itemsIndent < 0 && /^default:\s*\S/.test(trimmed)) {
-      const value = trimmed.slice('default:'.length).trim();
-      if (value) names.add(value);
-      continue;
-    }
-    if (itemsIndent >= 0) {
-      if (childIndent < 0) childIndent = indent; // first child fixes the item level
-      if (indent === childIndent && trimmed.endsWith(':')) names.add(trimmed.slice(0, -1).trim());
-    }
-  }
-  return [...names];
 }

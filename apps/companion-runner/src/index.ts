@@ -15,37 +15,66 @@ import {
   importProvidersFromDailyMoxxy,
   seedPermissionDenyRules,
 } from '../../companiond/src/moxxy/home.js';
+import { removePidFile, startBackground, statusBackground, stopBackground, writePidFile } from './background.js';
 import { loadRunnerConfig } from './config.js';
 import { log } from './log.js';
 import { runDoctor } from './doctor.js';
+import { openFirewall } from './firewall.js';
 import { EventHub, startAgentServer } from './server.js';
 
 const HELP = `companion-runner — run Companion agent work on this machine
 
 Usage:
-  companion-runner            Start the runner agent (the default).
-  companion-runner doctor     Check this machine is ready to attach.
-  companion-runner setup      Check + install/repair prerequisites (moxxy CLI, providers).
-  companion-runner --help     Show this help.
+  companion-runner                 Start the runner agent in the foreground.
+  companion-runner --background    Start it detached; logs go to <home>/runner.log.
+  companion-runner status          Show whether a runner is running (and its pid).
+  companion-runner stop            Stop a running runner.
+  companion-runner doctor          Check this machine is ready to attach.
+  companion-runner setup           Check + install/repair prerequisites (moxxy CLI,
+                                   providers, host firewall).
+  companion-runner open-firewall   Open the agent port on this machine's firewall.
+  companion-runner --help          Show this help.
 
 Key environment (see the README for the full list):
   COMPANION_RUNNER_TOKEN          Bearer token Companion presents (generated if unset).
-  COMPANION_RUNNER_GITHUB_TOKEN   GitHub PAT for clones and pushes.
   COMPANION_RUNNER_PORT           Bind port (default 8920).
   COMPANION_RUNNER_HOME           Data root (default ~/.companion-runner).
+  COMPANION_RUNNER_GITHUB_TOKEN   Optional machine-specific GitHub PAT. Normally
+                                  unset: Companion sends its own configured
+                                  credential with each git operation.
 `;
 
 async function main(): Promise<void> {
-  const cmd = process.argv[2];
-  if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+  const argv = process.argv.slice(2);
+  const cmd = argv.find((a) => !a.startsWith('-'));
+  if (argv.includes('--help') || argv.includes('-h') || cmd === 'help') {
     process.stdout.write(HELP);
     return;
   }
   if (cmd === 'doctor' || cmd === 'setup') {
-    process.exit(await runDoctor({ fix: cmd === 'setup' }));
+    process.exit(await runDoctor({ fix: cmd === 'setup' || argv.includes('--fix') }));
+  }
+  if (cmd === 'status') {
+    statusBackground();
+    return;
+  }
+  if (cmd === 'stop') {
+    process.exit(await stopBackground());
+  }
+  if (cmd === 'open-firewall') {
+    process.exit(await openFirewall(loadRunnerConfig().port));
+  }
+  if (cmd !== undefined) {
+    process.stderr.write(`unknown command: ${cmd}\n\n${HELP}`);
+    process.exit(2);
+  }
+  if (argv.includes('--background') || argv.includes('-b')) {
+    startBackground();
+    return;
   }
 
   const config = loadRunnerConfig();
+  writePidFile();
   log.info(`data root: ${config.home}`);
 
   // Same moxxy-home bootstrap companiond does: deny rules fence unattended
@@ -71,8 +100,10 @@ async function main(): Promise<void> {
     log.info(`moxxy ${moxxy.version} at ${moxxy.path}`);
   }
 
-  if (!config.githubToken) {
-    log.warn('COMPANION_RUNNER_GITHUB_TOKEN not set — private clones and pushes will fail');
+  if (config.githubToken) {
+    log.info('COMPANION_RUNNER_GITHUB_TOKEN set — this machine uses its own GitHub credential');
+  } else {
+    log.info('no machine GitHub token — Companion supplies its credential with each git operation');
   }
   const checkouts = new Checkouts(() => config.githubToken);
 
@@ -108,6 +139,7 @@ async function main(): Promise<void> {
     await pool.stopAll();
     hub.close();
     server.close();
+    removePidFile();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());

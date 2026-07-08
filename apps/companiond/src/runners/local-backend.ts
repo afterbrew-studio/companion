@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { HistorySegment, RunnerHealth, RunTurnResult, AskResponse } from '@companion/contract';
 import { paths } from '../config.js';
 import { GatewayPool } from '../moxxy/gateway-pool.js';
+import { configuredProviderNames } from '../moxxy/home.js';
 import { readSessionHistory } from '../moxxy/history.js';
 import type { Checkouts } from '../git/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../moxxy/cli.js';
@@ -50,6 +51,7 @@ export class LocalRunnerBackend implements RunnerBackend {
       maxRuns: this.maxLive,
       lastSeenAt: Date.now(),
       detail: this.moxxyCompatible ? null : `moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
+      providers: configuredProviderNames(),
     };
   }
 

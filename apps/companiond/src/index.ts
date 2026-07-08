@@ -81,7 +81,11 @@ async function main(): Promise<void> {
   };
 
   const checkouts = new Checkouts(() => ghAccounts.tokenFor('runs') ?? store.settings.get('github_token'));
-  const orchestrator = new Orchestrator(store, config, checkouts, moxxyCli, broadcast);
+  // Remote runner agents get the same credential with each network git call,
+  // resolved per repo so account pins apply — no GitHub setup on their box.
+  const githubTokenFor = (repo: string): string | null =>
+    ghAccounts.tokenFor('runs', { repo }) ?? store.settings.get('github_token') ?? null;
+  const orchestrator = new Orchestrator(store, config, checkouts, moxxyCli, broadcast, githubTokenFor);
   orchestrator.recover();
   orchestrator.start();
   const dangling = store.proposals.resetDangling();

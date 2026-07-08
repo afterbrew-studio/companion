@@ -14,6 +14,11 @@ const execFileP = promisify(execFile);
  * PAT hygiene: the token never lands in .git/config or remote URLs. Every
  * network operation passes an ephemeral credential helper via `-c` that echoes
  * the token from the child's env.
+ *
+ * Network-touching methods take an optional per-call `token` used when the
+ * constructor thunk yields none — on a runner agent that's the hub-supplied
+ * credential riding the request, overridden by the machine's own
+ * COMPANION_RUNNER_GITHUB_TOKEN when set.
  */
 export class Checkouts {
   /** Per-repo mutex: `git worktree add` / fetch mutate shared .git state. */
@@ -30,27 +35,33 @@ export class Checkouts {
     return existsSync(join(this.cloneDir(fullName), '.git'));
   }
 
-  async clone(fullName: string): Promise<void> {
+  async clone(fullName: string, token?: string): Promise<void> {
     await this.locked(fullName, async () => {
       const dir = this.cloneDir(fullName);
       if (existsSync(join(dir, '.git'))) return;
       mkdirSync(dir, { recursive: true });
-      await this.git(['clone', '--quiet', `https://github.com/${fullName}.git`, dir], undefined);
+      await this.git(['clone', '--quiet', `https://github.com/${fullName}.git`, dir], undefined, token);
       log.info(`cloned ${fullName}`);
     });
   }
 
-  async fetch(fullName: string): Promise<void> {
+  async fetch(fullName: string, token?: string): Promise<void> {
     await this.locked(fullName, () =>
-      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName)),
+      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName), token),
     );
   }
 
   /** Create a worktree + branch for a run. Returns the worktree path. */
-  async addWorktree(fullName: string, runId: string, branch: string, baseBranch: string): Promise<string> {
+  async addWorktree(
+    fullName: string,
+    runId: string,
+    branch: string,
+    baseBranch: string,
+    token?: string,
+  ): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone);
+      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone, token);
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', branch, wt, `origin/${baseBranch}`], clone);
       // Keep run scaffolding (agent notes etc.) out of accidental commits.
@@ -67,10 +78,10 @@ export class Checkouts {
    * branch is named after the run so concurrent repairs never collide; pushes
    * go to the original remote branch via `push(..., branch)`.
    */
-  async addWorktreeAtBranch(fullName: string, runId: string, branch: string): Promise<string> {
+  async addWorktreeAtBranch(fullName: string, runId: string, branch: string, token?: string): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', branch], clone);
+      await this.git(['fetch', '--quiet', 'origin', branch], clone, token);
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', `companion/${runId}`, wt, `origin/${branch}`], clone);
       await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
@@ -119,9 +130,9 @@ export class Checkouts {
     );
   }
 
-  async push(fullName: string, worktree: string, branch: string): Promise<void> {
+  async push(fullName: string, worktree: string, branch: string, token?: string): Promise<void> {
     await this.locked(fullName, () =>
-      this.git(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], worktree),
+      this.git(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], worktree, token),
     );
   }
 
@@ -140,8 +151,12 @@ export class Checkouts {
     return patch;
   }
 
-  private git(args: string[], cwd: string | undefined): Promise<{ stdout: string; stderr: string }> {
-    const token = this.token();
+  private git(
+    args: string[],
+    cwd: string | undefined,
+    fallbackToken?: string,
+  ): Promise<{ stdout: string; stderr: string }> {
+    const token = this.token() ?? fallbackToken?.trim() ?? null;
     // Ephemeral credential helper: git asks it for credentials; it answers with
     // the PAT from env. Nothing token-shaped touches disk or process args.
     // The leading empty helper CLEARS inherited helpers (osxkeychain etc.) —

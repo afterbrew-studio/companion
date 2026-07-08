@@ -19,7 +19,11 @@ export interface RunnerConfig {
   readonly maxRuns: number;
   /** Bearer token companiond must present on every request. */
   readonly token: string;
-  /** GitHub PAT for clone/push; null = public clones only, pushes fail. */
+  /**
+   * Optional per-machine GitHub PAT override. When null (the default),
+   * Companion supplies its own configured credential with each network git
+   * call, so no GitHub setup is needed on this box.
+   */
   readonly githubToken: string | null;
 }
 

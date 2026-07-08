@@ -27,6 +27,7 @@ import {
 } from '@companion/contract';
 import { paths } from '../../companiond/src/config.js';
 import type { Checkouts } from '../../companiond/src/git/checkouts.js';
+import { configuredProviderNames } from '../../companiond/src/moxxy/home.js';
 import type { MoxxyCli } from '../../companiond/src/moxxy/cli.js';
 import type { GatewayClient } from '../../companiond/src/moxxy/gateway-client.js';
 import type { GatewayPool } from '../../companiond/src/moxxy/gateway-pool.js';
@@ -175,6 +176,7 @@ async function route(
       liveRuns: deps.pool.liveCount,
       maxRuns: deps.maxRuns,
       protocol: RUNNER_AGENT_PROTOCOL,
+      providers: configuredProviderNames(),
     };
     return health;
   }
@@ -305,26 +307,26 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       } satisfies AgentCloneStatusResponse;
     }
     case 'ensure-clone': {
-      const { repo } = body as AgentEnsureCloneRequest;
+      const { repo, githubToken } = body as AgentEnsureCloneRequest;
       requireString(repo, 'repo');
-      await checkouts.clone(repo);
+      await checkouts.clone(repo, githubToken);
       return { ok: true };
     }
     case 'worktree': {
-      const { repo, key, branch, baseBranch } = body as AgentWorktreeRequest;
+      const { repo, key, branch, baseBranch, githubToken } = body as AgentWorktreeRequest;
       requireString(repo, 'repo');
       requireString(key, 'key');
       requireString(branch, 'branch');
       requireString(baseBranch, 'baseBranch');
-      const cwd = await checkouts.addWorktree(repo, key, branch, baseBranch);
+      const cwd = await checkouts.addWorktree(repo, key, branch, baseBranch, githubToken);
       return { cwd } satisfies AgentWorktreeResponse;
     }
     case 'worktree-at': {
-      const { repo, key, branch } = body as AgentWorktreeAtRequest;
+      const { repo, key, branch, githubToken } = body as AgentWorktreeAtRequest;
       requireString(repo, 'repo');
       requireString(key, 'key');
       requireString(branch, 'branch');
-      const cwd = await checkouts.addWorktreeAtBranch(repo, key, branch);
+      const cwd = await checkouts.addWorktreeAtBranch(repo, key, branch, githubToken);
       return { cwd } satisfies AgentWorktreeResponse;
     }
     case 'remove-worktree': {
@@ -348,11 +350,11 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       return { ok: true };
     }
     case 'push': {
-      const { repo, cwd, branch } = body as AgentPushRequest;
+      const { repo, cwd, branch, githubToken } = body as AgentPushRequest;
       requireString(repo, 'repo');
       requireString(cwd, 'cwd');
       requireString(branch, 'branch');
-      await checkouts.push(repo, cwd, branch);
+      await checkouts.push(repo, cwd, branch, githubToken);
       return { ok: true };
     }
     default:

@@ -29,6 +29,13 @@ export interface AgentHealth {
   readonly maxRuns: number;
   /** Protocol version so companiond can refuse an incompatible agent. */
   readonly protocol: number;
+  /**
+   * Model provider names configured in this runner's moxxy home. Placement
+   * matches a run's model against these so work lands on a machine that can
+   * serve it. Absent on older agents — companiond treats that as unknown
+   * (assume capable).
+   */
+  readonly providers?: readonly string[];
 }
 
 export const RUNNER_AGENT_PROTOCOL = 1;
@@ -78,23 +85,34 @@ export interface AgentCloneStatusResponse {
   readonly cloneDir: string;
 }
 
-/** POST /agent/git/ensure-clone — clone if missing (repo cred rides the agent). */
+/**
+ * POST /agent/git/ensure-clone — clone if missing.
+ *
+ * `githubToken` on this and the other network-touching git requests is the
+ * hub's configured GitHub credential, sent per call so the agent needs no
+ * GitHub setup of its own. The agent holds it in memory only for that one git
+ * invocation (same ephemeral-credential-helper hygiene as Checkouts). A
+ * COMPANION_RUNNER_GITHUB_TOKEN set on the agent's machine overrides it.
+ */
 export interface AgentEnsureCloneRequest {
   readonly repo: string;
+  readonly githubToken?: string;
 }
 
-/** POST /agent/git/worktree — create a fresh branch off a base. */
+/** POST /agent/git/worktree — create a fresh branch off a base (fetches). */
 export interface AgentWorktreeRequest {
   readonly repo: string;
   readonly key: string;
   readonly branch: string;
   readonly baseBranch: string;
+  readonly githubToken?: string;
 }
 /** POST /agent/git/worktree-at — check out at an existing remote branch (PR head). */
 export interface AgentWorktreeAtRequest {
   readonly repo: string;
   readonly key: string;
   readonly branch: string;
+  readonly githubToken?: string;
 }
 export interface AgentWorktreeResponse {
   /** Agent-local worktree path — becomes the run's cwd (opaque to companiond). */
@@ -120,6 +138,7 @@ export interface AgentPushRequest {
   readonly repo: string;
   readonly cwd: string;
   readonly branch: string;
+  readonly githubToken?: string;
 }
 /** POST /agent/git/remove-worktree */
 export interface AgentRemoveWorktreeRequest {
