@@ -1,13 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { IssueRecord, PipelineRecord, RepoRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
-import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
-import { ListFooter, PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
-import { useHashParams } from '../lib/hashParams.js';
-import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, Tabs, TriageLegend, TriageStateIcon, timeAgo, type ContextMenuState, type MenuAction } from '../components/ui.js';
-
-type IssueTab = 'open' | 'closed';
+import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
+import { ListFooter } from '../lib/paging.js';
+import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, Tabs, TriageLegend, TriageStateIcon, timeAgo } from '../components/ui.js';
 
 /**
  * Issues across every repo of the active workspace. Server-paged: only the
@@ -17,169 +11,49 @@ export function IssuesAreaPage(): JSX.Element {
   const { current } = useWorkspace();
   // Key data fetching on the id, not the object — a background workspaces
   // refresh must not restart the list (it read as an infinite loading loop).
-  const workspaceId = current?.id;
-  const { can } = useAuth();
-  // Tab and filters ride the URL (#/issues?state=closed&author=__me) so back
-  // navigation works and a filtered view is a shareable link.
-  const [params, setParam] = useHashParams();
-  const tab: IssueTab = params.get('state') === 'closed' ? 'closed' : 'open';
-  const setTab = (t: IssueTab): void => setParam('state', t === 'open' ? null : t);
-  // Remember the tab so breadcrumbs from a detail view return to it.
-  useEffect(() => {
-    sessionStorage.setItem('companion.tab:#/issues', tab);
-  }, [tab]);
-
-  const [search, setSearch] = useState(() => params.get('q') ?? '');
-  const repoFilter = params.get('repo') ?? 'all';
-  const authorFilter = params.get('author') ?? 'all';
-  const assigneeFilter = params.get('assignee') ?? 'all';
-  const labelFilter = params.get('label') ?? 'all';
-  const triageFilter = params.get('triage') ?? 'all';
-  const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
-  // Back/forward or a pasted link updates the search box too.
-  useEffect(() => {
-    const urlQ = params.get('q') ?? '';
-    setSearch((s) => (s.trim() === urlQ ? s : urlQ));
-  }, [params]);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({
-    authors: [],
-    assignees: [],
-    labels: [],
-  });
-  const [counts, setCounts] = useState<{ open: number; closed: number }>({ open: 0, closed: 0 });
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    api
-      .workspaceRepos(workspaceId)
-      .then(({ repos }) => setRepos(repos))
-      .catch(() => setRepos([]));
-  }, [workspaceId]);
-
-  // Bulk actions: select open issues, then run a pipeline or AI triage on all.
-  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [bulkPipeline, setBulkPipeline] = useState('');
-  const [bulkRunning, setBulkRunning] = useState<string | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const canRunPipelines = can('pipelines:run');
-  const canActIssues = can('issues:act');
-  // Row quick actions (hover ⋯ or right-click) + transient confirmations.
-  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
-  useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 4000);
-    return () => clearTimeout(t);
-  }, [flash]);
-
-  useEffect(() => {
-    if (!workspaceId || !can('pipelines:read')) return;
-    api
-      .workspacePipelines(workspaceId)
-      .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'issue')))
-      .catch(() => setPipelines([]));
-  }, [workspaceId, can]);
-
-  useEffect(() => {
-    setSelected(new Set());
-  }, [tab, workspaceId]);
-
-  const toggleSelected = (key: string): void => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const runBulkWith = async (fn: (issue: IssueRecord) => Promise<unknown>, noun: string): Promise<void> => {
-    if (selected.size === 0) return;
-    const targets = issues.filter((i) => selected.has(`${i.repo}#${i.number}`));
-    const failures: string[] = [];
-    for (let i = 0; i < targets.length; i++) {
-      const issue = targets[i]!;
-      setBulkRunning(`${i + 1}/${targets.length}`);
-      try {
-        await fn(issue);
-      } catch {
-        failures.push(`#${issue.number}`);
-      }
-    }
-    setBulkRunning(null);
-    setSelected(new Set());
-    if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
-    else setFlash(`${noun} started for ${targets.length} issue${targets.length === 1 ? '' : 's'}`);
-  };
-
-  /** One-off row action with a transient confirmation. */
-  const quick = async (fn: () => Promise<unknown>, done: string): Promise<void> => {
-    setBulkError(null);
-    try {
-      await fn();
-      setFlash(done);
-    } catch (err) {
-      setBulkError(String(err));
-    }
-  };
-
-  const rowActions = (issue: IssueRecord): MenuAction[] => [
-    ...(canActIssues && issue.state === 'open'
-      ? [
-          {
-            label: 'Run AI triage',
-            onSelect: () => void quick(() => api.triageIssue(issue.repo, issue.number), `Triage queued for #${issue.number}`),
-          },
-          {
-            label: 'Fix with agent',
-            onSelect: () => void quick(() => api.fixIssue(issue.repo, issue.number), `Fix run started for #${issue.number}`),
-          },
-        ]
-      : []),
-    ...(canRunPipelines && issue.state === 'open'
-      ? pipelines.map((pl) => ({
-          label: `Run pipeline: ${pl.name}`,
-          onSelect: () =>
-            void quick(() => api.runPipelineOnIssue(issue.repo, issue.number, pl.id), `${pl.name} started for #${issue.number}`),
-        }))
-      : []),
-    { label: 'Open on GitHub', href: issue.url, external: true },
-  ];
-
-  const q = useDebounced(search.trim());
-  // Mirror the debounced query into the URL without spamming history.
-  useEffect(() => {
-    setParam('q', q || null, { replace: true });
-  }, [q, setParam]);
-  const fetchPage = useCallback(
-    async (offset: number) => {
-      if (!workspaceId) return { items: [], total: 0 };
-      const page = await api.workspaceIssues(workspaceId, tab, {
-        q: q || undefined,
-        repo: repoFilter === 'all' ? undefined : repoFilter,
-        author: authorFilter === 'all' ? undefined : authorFilter,
-        assignee: assigneeFilter === 'all' ? undefined : assigneeFilter,
-        label: labelFilter === 'all' ? undefined : labelFilter,
-        triage: triageFilter === 'all' ? undefined : triageFilter,
-        limit: PAGE_SIZE,
-        offset,
-      });
-      setCounts(page.counts);
-      setFacets(page.facets);
-      return { items: page.issues, total: page.total };
-    },
-    [workspaceId, tab, q, repoFilter, authorFilter, assigneeFilter, labelFilter, triageFilter],
-  );
-  const { items: issues, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
-  const activeFilters = [repoFilter, authorFilter, assigneeFilter, labelFilter, triageFilter].filter((f) => f !== 'all').length;
-
-  useEffect(() => {
-    return onServerMessage((msg) => {
-      if (msg.t === 'issues.changed' || msg.t === 'triage.changed') reload();
-    });
-  }, [reload]);
+  const s = useWorkspaceIssues(current?.id);
+  const {
+    tab,
+    setTab,
+    search,
+    setSearch,
+    setFilter,
+    clearFilters,
+    activeFilters,
+    repos,
+    facets,
+    counts,
+    issues,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    error,
+    canActIssues,
+    canRunPipelines,
+    pipelines,
+    selected,
+    toggleSelected,
+    selectAllLoaded,
+    clearSelected,
+    bulkPipeline,
+    setBulkPipeline,
+    bulkRunning,
+    bulkAiTriage,
+    bulkRunPipeline,
+    rowActions,
+    ctx,
+    setCtx,
+    flash,
+    bulkError,
+  } = s;
+  const {
+    repo: repoFilter,
+    author: authorFilter,
+    assignee: assigneeFilter,
+    label: labelFilter,
+    triage: triageFilter,
+  } = s.filters;
 
   if (!current) return <EmptyState title="No workspace selected" />;
 
@@ -199,16 +73,7 @@ export function IssuesAreaPage(): JSX.Element {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <FiltersPopover
-              active={activeFilters}
-              onClear={() => {
-                setParam('repo', null);
-                setParam('author', null);
-                setParam('assignee', null);
-                setParam('label', null);
-                setParam('triage', null);
-              }}
-            >
+            <FiltersPopover active={activeFilters} onClear={clearFilters}>
               {repos.length > 1 ? (
                 <FilterField label="Repository">
                   <Dropdown
@@ -289,22 +154,15 @@ export function IssuesAreaPage(): JSX.Element {
       {tab === 'open' && (canActIssues || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
           <span className="text-[13px] font-medium tabular-nums">{selected.size} selected</span>
-          <button
-            className="linkish text-xs"
-            onClick={() => setSelected(new Set(issues.map((i) => `${i.repo}#${i.number}`)))}
-          >
+          <button className="linkish text-xs" onClick={selectAllLoaded}>
             select all loaded
           </button>
-          <button className="linkish text-xs" onClick={() => setSelected(new Set())}>
+          <button className="linkish text-xs" onClick={clearSelected}>
             clear
           </button>
           <span className="flex-1" />
           {canActIssues ? (
-            <button
-              className="btn-ghost"
-              disabled={bulkRunning !== null}
-              onClick={() => void runBulkWith((i) => api.triageIssue(i.repo, i.number), 'AI triage')}
-            >
+            <button className="btn-ghost" disabled={bulkRunning !== null} onClick={bulkAiTriage}>
               AI triage {selected.size}
             </button>
           ) : null}
@@ -323,11 +181,7 @@ export function IssuesAreaPage(): JSX.Element {
                   </option>
                 ))}
               </select>
-              <button
-                className="btn"
-                disabled={!bulkPipeline || bulkRunning !== null}
-                onClick={() => void runBulkWith((i) => api.runPipelineOnIssue(i.repo, i.number, bulkPipeline), 'Pipeline')}
-              >
+              <button className="btn" disabled={!bulkPipeline || bulkRunning !== null} onClick={bulkRunPipeline}>
                 {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} issue${selected.size === 1 ? '' : 's'}`}
               </button>
             </>
@@ -339,8 +193,8 @@ export function IssuesAreaPage(): JSX.Element {
 
       {issues.length === 0 && !loading ? (
         <EmptyState
-          title={q || repoFilter !== 'all' ? 'No issues match the filters' : `No ${tab} issues`}
-          hint={!q && repoFilter === 'all' ? 'Connect repositories to this workspace to start syncing issues.' : undefined}
+          title={search.trim() || repoFilter !== 'all' ? 'No issues match the filters' : `No ${tab} issues`}
+          hint={!search.trim() && repoFilter === 'all' ? 'Connect repositories to this workspace to start syncing issues.' : undefined}
         />
       ) : (
         <>
