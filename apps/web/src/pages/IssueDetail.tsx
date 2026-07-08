@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { IssueRecord, TriageResult } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
-import { useAuth } from '../lib/auth.js';
+import { api } from '../lib/api.js';
+import { useIssue } from '../hooks/useIssue.js';
 import { Markdown } from '../components/Markdown.js';
 import { AgentActivity } from '../components/AgentActivity.js';
 import { AccountPicker } from '../components/AccountPicker.js';
@@ -9,57 +9,9 @@ import { CommentsSection } from '../components/Comments.js';
 import { ActionMenu, AiActionMenu, Page, CopyText, GitHubUser, MetaItem, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '../components/ui.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
-  const { can } = useAuth();
-  const [issue, setIssue] = useState<IssueRecord | null>(null);
-  const [triage, setTriage] = useState<TriageResult | null>(null);
-  const [triaging, setTriaging] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { issue, triage, error, refresh, canAct, triaging, startTriage, fixing, startFix, busy, setIssueState } =
+    useIssue(repo, number);
   const { confirmDanger, confirmElement } = useConfirm();
-  const canAct = can('issues:act');
-
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const { issue, triage } = await api.getIssue(repo, number);
-      setIssue(issue);
-      setTriage(triage);
-      if (triage && (triage.status === 'pending' || triage.status === 'applied')) setTriaging(false);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [repo, number]);
-
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if ((msg.t === 'triage.changed' || msg.t === 'issues.changed') && msg.repo === repo) void refresh();
-    });
-  }, [refresh, repo]);
-
-  const startTriage = async (): Promise<void> => {
-    setTriaging(true);
-    setError(null);
-    try {
-      await api.triageIssue(repo, number);
-    } catch (err) {
-      setTriaging(false);
-      setError(String(err));
-    }
-  };
-
-  const [fixing, setFixing] = useState(false);
-  const startFix = async (): Promise<void> => {
-    setError(null);
-    setFixing(true);
-    try {
-      const { run } = await api.fixIssue(repo, number);
-      // Land on the animated PR-preview view, not the raw run transcript.
-      location.hash = `#/runs/${run.id}/preview`;
-    } catch (err) {
-      setError(String(err));
-      setFixing(false);
-    }
-  };
 
   const toggleState = async (): Promise<void> => {
     if (!issue) return;
@@ -73,16 +25,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
       }))
     )
       return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.setIssueState(repo, number, next);
-      await refresh();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
+    await setIssueState(next);
   };
 
   if (!issue) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;

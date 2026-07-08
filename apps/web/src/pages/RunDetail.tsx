@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskRequest, ModelCatalog, RunRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
-import { emptyFold, foldEvent, foldMany, type FoldState } from '../transcript/fold.js';
+import { useEffect, useState } from 'react';
+import type { ModelCatalog, RunRecord } from '@companion/contract';
+import { api } from '../lib/api.js';
+import { useRun } from '../hooks/useRun.js';
 import { Transcript } from '../transcript/Transcript.js';
 import { AskSheet } from '../components/AskSheet.js';
 import { Markdown } from '../components/Markdown.js';
@@ -10,119 +10,12 @@ import { ActionMenu } from '../components/ui.js';
 import { statusBadge } from './RunsPage.js';
 
 export function RunDetail({ runId }: { runId: string }): JSX.Element {
-  const [run, setRun] = useState<RunRecord | null>(null);
-  const [asks, setAsks] = useState<AskRequest[]>([]);
-  const [fold, setFold] = useState<FoldState>(emptyFold);
-  const [busy, setBusy] = useState(false);
-  const [lifecycle, setLifecycle] = useState<'resuming' | 'stopping' | null>(null);
-  const [activeTurn, setActiveTurn] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { run, setRun, asks, fold, activeTurn, error, runnerNames, lifecycle, busy, refresh, lifecycleAction, sendPrompt, respondAsk, abort } =
+    useRun(runId);
   const [draft, setDraft] = useState('');
-  const [runnerNames, setRunnerNames] = useState<ReadonlyMap<string, string> | null>(null);
-  const foldRef = useRef(fold);
-  foldRef.current = fold;
-
-  // Resolve the runner id to its display name — fetched once, and only when
-  // the run is pinned to an explicit runner. Viewers without runners:manage
-  // fall back to showing the raw id.
-  useEffect(() => {
-    if (!run?.runnerId || runnerNames) return;
-    let alive = true;
-    api
-      .listRunners()
-      .then(({ runners }) => alive && setRunnerNames(new Map(runners.map((r) => [r.id, r.name]))))
-      .catch(() => alive && setRunnerNames(new Map()));
-    return () => {
-      alive = false;
-    };
-  }, [run?.runnerId, runnerNames]);
-
-  const refresh = useCallback(async () => {
-    try {
-      const { run, pendingAsks } = await api.getRun(runId);
-      setRun(run);
-      setAsks(pendingAsks);
-      const segment = await api.history(runId, null, 300);
-      const next = foldMany(emptyFold(), segment.events);
-      setFold({ ...next });
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [runId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    return onServerMessage((msg) => {
-      if ('runId' in msg && msg.runId !== runId) return;
-      switch (msg.t) {
-        case 'event': {
-          const next = foldEvent(foldRef.current, msg.event);
-          setFold({ ...next });
-          break;
-        }
-        case 'turn':
-          setActiveTurn(msg.phase === 'started' ? (msg.turnId ?? 'turn') : null);
-          break;
-        case 'ask':
-          setAsks((prev) =>
-            prev.some((a) => a.requestId === msg.ask.requestId) ? prev : [...prev, msg.ask],
-          );
-          break;
-        case 'askResolved':
-          setAsks((prev) => prev.filter((a) => a.requestId !== msg.requestId));
-          break;
-        case 'run.changed':
-          setRun(msg.run);
-          break;
-        default:
-          break;
-      }
-    });
-  }, [runId]);
-
-  // Resume/Stop spawn or reap gateway processes — a resume can take a while
-  // (moxxy serve + gateway boot), so the button must show progress and any
-  // refusal (live-run cap, missing providers) must land in the error bar.
-  const lifecycleAction = async (action: 'resume' | 'stop'): Promise<void> => {
-    if (lifecycle) return;
-    setLifecycle(action === 'resume' ? 'resuming' : 'stopping');
-    setError(null);
-    try {
-      if (action === 'resume') await api.resumeRun(runId);
-      else await api.stopRun(runId);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLifecycle(null);
-    }
-  };
 
   const send = async (): Promise<void> => {
-    const prompt = draft.trim();
-    if (!prompt || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.prompt(runId, prompt);
-      setDraft('');
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const respondAsk = async (requestId: string, response: Record<string, unknown>): Promise<void> => {
-    try {
-      await api.respondAsk(runId, requestId, response);
-      setAsks((prev) => prev.filter((a) => a.requestId !== requestId));
-    } catch (err) {
-      setError(String(err));
-    }
+    if (await sendPrompt(draft)) setDraft('');
   };
 
   return (
@@ -189,7 +82,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
             }}
           />
           {activeTurn ? (
-            <button className="btn-danger-ghost" onClick={() => void api.abort(runId)} aria-label="Abort the running turn">
+            <button className="btn-danger-ghost" onClick={abort} aria-label="Abort the running turn">
               Abort
             </button>
           ) : (
