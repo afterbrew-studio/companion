@@ -210,7 +210,7 @@ function CreateProposalModal({
 }
 
 /** Leading state at a glance: spinner while agents work, colored glyph otherwise. */
-function ProposalStateIcon({ status }: { status: ProposalRecord['status'] }): JSX.Element {
+function ProposalStateIcon({ status, failedImplementing }: { status: ProposalRecord['status']; failedImplementing: boolean }): JSX.Element {
   if (status === 'analyzing' || status === 'implementing') {
     return (
       <Tooltip content={status === 'analyzing' ? 'Agent is analyzing feasibility' : 'Agent is implementing'}>
@@ -222,7 +222,11 @@ function ProposalStateIcon({ status }: { status: ProposalRecord['status'] }): JS
     status === 'implemented'
       ? { label: 'Implemented', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' }
       : status === 'rejected' || status === 'failed'
-        ? { label: status === 'failed' ? 'Analysis failed' : 'Rejected', cls: 'text-red-600 dark:text-red-400', glyph: 'm5.5 5.5 5 5M10.5 5.5l-5 5' }
+        ? {
+            label: status === 'rejected' ? 'Rejected' : failedImplementing ? 'Implementation failed' : 'Analysis failed',
+            cls: 'text-red-600 dark:text-red-400',
+            glyph: 'm5.5 5.5 5 5M10.5 5.5l-5 5',
+          }
         : status === 'analyzed' || status === 'review'
           ? { label: status === 'review' ? 'Ready for review' : 'Analyzed — awaiting approval', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' }
           : { label: 'Draft', cls: 'text-zinc-400 dark:text-zinc-500', glyph: 'M5 8h6' };
@@ -294,7 +298,7 @@ function ProposalCard({
   return (
     <article className="card" aria-label={proposal.title}>
       <div className="flex items-center gap-2.5">
-        <ProposalStateIcon status={proposal.status} />
+        <ProposalStateIcon status={proposal.status} failedImplementing={proposal.implementRunId !== null} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{proposal.title}</div>
           <div className="dim mt-0.5 truncate text-xs">

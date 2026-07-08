@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SpaServerMessage } from '@companion/contract';
+import type { RunStatus, SpaServerMessage } from '@companion/contract';
 import { log } from './log.js';
 import { loadDaemonConfig, paths } from './config.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from './moxxy/cli.js';
@@ -27,6 +27,9 @@ import { Skills } from './skills/skills.js';
 import { Specs } from './specs/specs.js';
 import { Docs } from './docs/docs.js';
 import { Assistant } from './assistant/assistant.js';
+
+/** Run statuses that end a run without producing a PR — proposals unstick on these. */
+const TERMINAL_FAIL = new Set<RunStatus>(['failed', 'stopped', 'abandoned', 'interrupted']);
 
 async function main(): Promise<void> {
   const config = loadDaemonConfig();
@@ -84,8 +87,9 @@ async function main(): Promise<void> {
   let proposalsRef: Proposals | null = null;
   const broadcast: (msg: SpaServerMessage) => void = (msg) => {
     hub.broadcast(msg);
-    if (msg.t === 'run.changed' && msg.run.status === 'review') {
-      proposalsRef?.onRunReview(msg.run.id);
+    if (msg.t === 'run.changed') {
+      if (msg.run.status === 'review') proposalsRef?.onRunReview(msg.run.id);
+      else if (TERMINAL_FAIL.has(msg.run.status)) proposalsRef?.onRunFailed(msg.run.id);
     }
   };
 

@@ -132,6 +132,20 @@ export class Proposals {
       }
     }
   }
+
+  /**
+   * Called when an implement run ends without producing a PR (failed, stopped,
+   * abandoned, interrupted). Without this the proposal is stuck spinning on
+   * "implementing" forever even though its run is long dead.
+   */
+  onRunFailed(runId: string): void {
+    for (const proposal of this.store.proposals.list()) {
+      if (proposal.implementRunId === runId && (proposal.status === 'implementing' || proposal.status === 'review')) {
+        this.store.proposals.update(proposal.id, { status: 'failed' });
+        this.broadcast({ t: 'proposals.changed' });
+      }
+    }
+  }
 }
 
 function analysisPrompt(proposal: ProposalRecord): string {
