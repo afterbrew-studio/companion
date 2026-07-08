@@ -1,4 +1,3 @@
-import { useWorkspace } from '../lib/workspace.js';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { ListFooter } from '../lib/paging.js';
 import { Page, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
@@ -8,11 +7,9 @@ import { Page, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, E
  * the visible window is loaded; search and filters run in the database.
  */
 export function PrsAreaPage(): JSX.Element {
-  const { current } = useWorkspace();
-  // Key data fetching on the id, not the object — a background workspaces
-  // refresh must not restart the list (it read as an infinite loading loop).
-  const s = useWorkspacePrs(current?.id);
+  const s = useWorkspacePrs();
   const {
+    current,
     tab,
     setTab,
     search,

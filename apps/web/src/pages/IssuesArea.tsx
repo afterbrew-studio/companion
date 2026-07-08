@@ -1,4 +1,3 @@
-import { useWorkspace } from '../lib/workspace.js';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { ListFooter } from '../lib/paging.js';
 import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, Tabs, TriageLegend, TriageStateIcon, timeAgo } from '../components/ui.js';
@@ -8,11 +7,9 @@ import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, Fi
  * visible window is loaded; search and filters run in the database.
  */
 export function IssuesAreaPage(): JSX.Element {
-  const { current } = useWorkspace();
-  // Key data fetching on the id, not the object — a background workspaces
-  // refresh must not restart the list (it read as an infinite loading loop).
-  const s = useWorkspaceIssues(current?.id);
+  const s = useWorkspaceIssues();
   const {
+    current,
     tab,
     setTab,
     search,

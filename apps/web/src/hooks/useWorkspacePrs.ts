@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PipelineRecord, PrRecord, RepoRecord } from '@companion/contract';
+import type { PipelineRecord, PrRecord, RepoRecord, WorkspaceRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { useWorkspace } from '../lib/workspace.js';
 import { PAGE_SIZE, useInfiniteList } from '../lib/paging.js';
 import type { ContextMenuState, MenuAction } from '../components/ui.js';
 import { useHashTab } from './useHashTab.js';
@@ -25,6 +26,7 @@ const FILTER_KEYS = ['repo', 'author', 'assignee', 'decision', 'review', 'draft'
  * presentation over this.
  */
 export interface UseWorkspacePrs {
+  readonly current: WorkspaceRecord | null;
   readonly tab: PrTab;
   readonly setTab: (t: PrTab) => void;
   readonly search: string;
@@ -68,7 +70,9 @@ export interface UseWorkspacePrs {
 
 const prKey = (pr: PrRecord): string => `${pr.repo}#${pr.number}`;
 
-export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePrs {
+export function useWorkspacePrs(): UseWorkspacePrs {
+  const { current } = useWorkspace();
+  const workspaceId = current?.id;
   const { can } = useAuth();
   const canRunPipelines = can('pipelines:run');
   const canActPrs = can('prs:act');
@@ -169,6 +173,7 @@ export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePr
   ];
 
   return {
+    current,
     tab,
     setTab,
     search,

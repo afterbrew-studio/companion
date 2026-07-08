@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { IssueRecord, PipelineRecord, RepoRecord } from '@companion/contract';
+import type { IssueRecord, PipelineRecord, RepoRecord, WorkspaceRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { useWorkspace } from '../lib/workspace.js';
 import { PAGE_SIZE, useInfiniteList } from '../lib/paging.js';
 import type { ContextMenuState, MenuAction } from '../components/ui.js';
 import { useHashTab } from './useHashTab.js';
@@ -25,6 +26,7 @@ const FILTER_KEYS = ['repo', 'author', 'assignee', 'label', 'triage'] as const;
  * presentation over this.
  */
 export interface UseWorkspaceIssues {
+  readonly current: WorkspaceRecord | null;
   readonly tab: IssueTab;
   readonly setTab: (t: IssueTab) => void;
   readonly search: string;
@@ -68,7 +70,9 @@ export interface UseWorkspaceIssues {
 
 const issueKey = (i: IssueRecord): string => `${i.repo}#${i.number}`;
 
-export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspaceIssues {
+export function useWorkspaceIssues(): UseWorkspaceIssues {
+  const { current } = useWorkspace();
+  const workspaceId = current?.id;
   const { can } = useAuth();
   const canRunPipelines = can('pipelines:run');
   const canActIssues = can('issues:act');
@@ -177,6 +181,7 @@ export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspac
   ];
 
   return {
+    current,
     tab,
     setTab,
     search,
