@@ -15,8 +15,14 @@ services:
       COMPANION_PORT: 8901
     volumes:
       - companion-data:/data
+      # moxxy's daily home holds the provider credentials (vault). Companion's
+      # isolated home under /data symlinks to it, so this MUST persist too —
+      # otherwise every redeploy wipes the vault and moxxy loses its providers
+      # ("no credentials" / "No active provider").
+      - companion-moxxy:/root/.moxxy
       # Optional: mount your host SSH config if private Git remotes should use SSH.
       # - ~/.ssh:/root/.ssh:ro
 
 volumes:
   companion-data:
+  companion-moxxy:

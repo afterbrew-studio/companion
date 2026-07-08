@@ -27,8 +27,12 @@ COPY --from=build /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps ./apps
 COPY --from=build /app/packages ./packages
+# /data      — Companion's own state (db, isolated moxxy home, clones).
+# /root/.moxxy — moxxy's daily home holding the provider credentials (vault),
+#                which /data/moxxy-home symlinks to. Both must persist across
+#                redeploys or moxxy loses its providers.
 EXPOSE 8901
-VOLUME ["/data"]
+VOLUME ["/data", "/root/.moxxy"]
 # Liveness probe (Coolify and plain Docker both honor it). The slim image has
 # no curl/wget; node's fetch does the job.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

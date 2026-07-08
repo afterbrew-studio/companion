@@ -464,8 +464,10 @@ function RunnerModal({
   };
 
   return (
-    <Modal title={runner ? `Edit ${runner.name}` : 'Add machine'} onClose={onClose}>
-      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
+    <Modal wide={!!savedId} title={runner ? `Edit ${runner.name}` : 'Add machine'} onClose={onClose}>
+      <form className="flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
+        <div className={savedId ? 'grid gap-x-6 gap-y-3 md:grid-cols-2' : 'flex flex-col gap-3'}>
+          <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1 text-sm">
           <span className="dim">Name</span>
           <input
@@ -558,10 +560,11 @@ function RunnerModal({
             onChange={(e) => setMaxRuns(e.target.value)}
           />
         </label>
+          </div>
 
-        {/* Model pins: available once the runner exists and has been probed. */}
+        {/* Model pins fill the second column once the runner exists and is probed. */}
         {savedId ? (
-          <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-6 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <legend className="text-sm font-medium">Model pins</legend>
               <button type="button" className="btn-ghost text-xs" disabled={testing} onClick={() => void testConnection()}>
@@ -575,6 +578,7 @@ function RunnerModal({
             <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
           </fieldset>
         ) : null}
+        </div>
 
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
@@ -652,11 +656,15 @@ function ModelPinsEditor({
   };
 
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className="flex flex-col gap-2">
       {RUNNER_PINNABLE_KINDS.map((kind) => (
-        <label key={kind} className="flex flex-col gap-1 text-xs">
-          <span className="dim">{PIN_LABELS[kind]}</span>
-          <select className="input py-1.5 text-sm" value={pins[kind] ?? ''} onChange={(e) => set(kind, e.target.value)}>
+        <label key={kind} className="flex items-center justify-between gap-2 text-xs">
+          <span className="dim min-w-0 flex-1 truncate">{PIN_LABELS[kind]}</span>
+          <select
+            className="input w-40 shrink-0 py-1.5 text-sm"
+            value={pins[kind] ?? ''}
+            onChange={(e) => set(kind, e.target.value)}
+          >
             <option value="">Runner default</option>
             {models.map((m) => (
               <option key={m.id} value={m.id}>
