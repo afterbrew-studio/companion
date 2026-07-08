@@ -41,7 +41,7 @@ export class TriageStore {
     return rows.map(triageRowToResult);
   }
 
-  /** Pending triage verdicts across a workspace's repos — the review inbox. */
+  /** Pending triage verdicts across a workspace's repos — used by the digest/briefing. */
   listWorkspacePending(workspaceId: string): TriageResult[] {
     const rows = this.db
       .prepare(

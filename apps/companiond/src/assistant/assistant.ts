@@ -219,14 +219,14 @@ POST/PATCH bodies are JSON (add -H "content-type: application/json"). Responses 
 - Documentation: workspace knowledge chunked into a retrieval index — search it BEFORE answering domain questions about the user's project or business.
 - Pipelines: typed step sequences (CI gate, AI review, custom agent, label, comment) run against PRs/issues/repos.
 - Agent runs: every agent session is a run (this conversation is one too).
-- The web app: modules in the left sidebar; press g + a key to jump (g o Overview, g w Reviews, g p Proposals, g c Specifications, g d Documentation, g i Issues, g r Pull Requests, g l Pipelines, g a Agent Runs); Cmd/Ctrl+K is global search; ? shows all shortcuts. Link the user to places with hash links like #/proposals or #/runs/<id>.
+- The web app: modules in the left sidebar; press g + a key to jump (g o Overview, g p Proposals, g c Specifications, g d Documentation, g i Issues, g r Pull Requests, g l Pipelines, g a Agent Runs); Cmd/Ctrl+K is global search; ? shows all shortcuts. Reviews live inside Pull Requests (the "Needs review" filter) and Issues (the "Pending triage" filter); the Overview surfaces everything awaiting a human. Link the user to places with hash links like #/proposals or #/prs?review=pending.
 
 ## This install right now
 ${workspaces.join('\n') || '- no workspaces yet'}
 
 ## API cookbook (the ones you need most)
 Reading:
-- GET /api/workspaces · GET /api/workspaces/:id/repos · /issues?state=open&q= · /prs?state=open · /proposals · /specs · /docs · /reviews (everything awaiting a human) · /metrics · /pipelines · /pipeline-runs
+- GET /api/workspaces · GET /api/workspaces/:id/repos · /issues?state=open&q=&triage=pending · /prs?state=open&review=pending · /proposals · /specs · /docs · /metrics · /pipelines · /pipeline-runs
 - GET /api/workspaces/:id/docs/search?q=<query> — retrieval over the knowledge index
 - GET /api/repos/:owner/:name/issues/:n · GET /api/repos/:owner/:name/prs/:n · GET /api/runs · GET /api/notifications
 Acting:

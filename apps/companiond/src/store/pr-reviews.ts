@@ -31,7 +31,7 @@ export class PrReviewsStore {
     return row ? prReviewRowToResult(row) : undefined;
   }
 
-  /** Pending AI PR reviews across a workspace's repos — the review inbox. */
+  /** Pending AI PR reviews across a workspace's repos — used by the digest/briefing. */
   listWorkspacePending(workspaceId: string): PrReviewResult[] {
     const rows = this.db
       .prepare(

@@ -51,7 +51,6 @@ import type {
   WorkspaceMember,
   WorkspaceMemberCandidate,
   WorkspaceMetrics,
-  WorkspaceReviews,
   WorkspaceRecord,
   WorkspaceVisibility,
 } from '@companion/contract';
@@ -261,7 +260,6 @@ export const api = {
   workspaceProposals: (id: string) =>
     request<{ proposals: ProposalRecord[] }>(`/api/workspaces/${id}/proposals`),
   workspaceMetrics: (id: string) => request<{ metrics: WorkspaceMetrics }>(`/api/workspaces/${id}/metrics`),
-  workspaceReviews: (id: string) => request<WorkspaceReviews>(`/api/workspaces/${id}/reviews`),
   workspacePipelines: (id: string) =>
     request<{ pipelines: PipelineRecord[]; stepDefinitions: StepDefinitionRecord[] }>(
       `/api/workspaces/${id}/pipelines`,

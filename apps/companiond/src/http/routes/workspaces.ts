@@ -238,29 +238,6 @@ export function workspaceRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
-    /** The review inbox: everything awaiting a human decision in this workspace. */
-    route({
-      method: 'GET',
-      path: '/api/workspaces/:id/reviews',
-      access: 'runs:read',
-      handler: ({ params, user }) => {
-        requireWorkspace(user, params.id);
-        const repoNames = new Set(deps.store.repos.listByWorkspace(params.id).map((r) => r.full_name));
-        const runs = deps.orchestrator
-          .listRuns()
-          .filter((r) => r.status === 'review' && r.repo !== null && repoNames.has(r.repo));
-        const prReviews = deps.store.prReviews.listWorkspacePending(params.id).map((review) => ({
-          review,
-          title: deps.store.prs.get(review.repo, review.prNumber)?.title ?? `PR #${review.prNumber}`,
-        }));
-        const triage = deps.store.triage.listWorkspacePending(params.id).map((t) => ({
-          triage: t,
-          title: deps.store.issues.get(t.repo, t.issueNumber)?.title ?? `Issue #${t.issueNumber}`,
-        }));
-        return { runs, prReviews, triage };
-      },
-    }),
-
     route({
       method: 'GET',
       path: '/api/workspaces/:id/metrics',

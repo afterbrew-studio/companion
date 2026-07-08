@@ -20,7 +20,6 @@ import { DigestPage } from './pages/Digest.js';
 import { ProposalsPage } from './pages/Proposals.js';
 import { SpecsPage } from './pages/Specs.js';
 import { DocsPage } from './pages/Docs.js';
-import { ReviewsPage } from './pages/Reviews.js';
 import { IssuesAreaPage } from './pages/IssuesArea.js';
 import { PrsAreaPage } from './pages/PrsArea.js';
 import { PipelinesPage } from './pages/Pipelines.js';
@@ -849,7 +848,6 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
 
   if (path.startsWith('/digest')) return guard(can('reports:read'), <DigestPage />);
-  if (path.startsWith('/reviews')) return guard(can('runs:read'), <ReviewsPage />);
   if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
   if (path.startsWith('/specs')) return guard(can('specs:read'), <SpecsPage />);
   if (path.startsWith('/docs')) return guard(can('docs:read'), <DocsPage />);

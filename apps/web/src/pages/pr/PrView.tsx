@@ -159,8 +159,8 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
     <header>
       {review ? (
         <nav className="dim mb-1 text-[13px]" aria-label="Breadcrumb">
-          <a href="#/reviews" className="hover:underline">
-            Reviews
+          <a href="#/prs" className="hover:underline">
+            Pull Requests
           </a>{' '}
           / {pr.repo} / #{pr.number}
         </nav>
