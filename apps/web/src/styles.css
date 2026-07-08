@@ -58,11 +58,43 @@
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-zinc-500;
   }
+  /* Scrollbars: thin, quiet, monochrome pills on a transparent track — the
+     2px transparent border insets the thumb so it reads as a slim capsule. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-zinc-300) transparent;
+  }
+  :root.dark * {
+    scrollbar-color: var(--color-zinc-700) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-zinc-300);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-zinc-400);
+  }
+  :root.dark ::-webkit-scrollbar-thumb {
+    background-color: var(--color-zinc-700);
+  }
+  :root.dark ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-zinc-600);
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-default disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white;
+    @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-default disabled:opacity-50 dark:bg-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-600;
   }
   .btn-danger {
     @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-red-600 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-default disabled:opacity-50 dark:bg-red-500 dark:hover:bg-red-400;
@@ -319,6 +351,14 @@
     border-radius: inherit;
     background: linear-gradient(90deg, transparent, rgb(16 185 129 / 0.85), transparent);
     animation: ppv-shimmer-move 1.4s ease-in-out infinite;
+  }
+  /* Pending AI review — a very subtle green attention pulse on the card border. */
+  @keyframes review-attn {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0); }
+    50% { box-shadow: 0 0 0 3px rgb(16 185 129 / 0.14); }
+  }
+  .review-attn {
+    animation: review-attn 2.8s ease-in-out infinite;
   }
   @keyframes rise-in {
     from {

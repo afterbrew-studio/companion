@@ -3,20 +3,15 @@ import { DiffView } from '../../components/DiffView.js';
 import { ChevronDown, Spinner } from '../../components/ui.js';
 
 /**
- * The PR's diff, loaded lazily. `fetchDiff` must be stable (memoize at the call
- * site) so the fetch runs once. In the review view the diff is supporting
- * material, so it starts collapsed behind a disclosure.
+ * The PR's diff, loaded lazily and collapsed by default: the header shows the
+ * files-changed count and the added/removed line totals, and expands to the
+ * full diff on click. `fetchDiff` must be stable (memoize at the call site) so
+ * the fetch runs once.
  */
-export function PrChanges({
-  fetchDiff,
-  collapsible = false,
-}: {
-  fetchDiff: () => Promise<string>;
-  collapsible?: boolean;
-}): JSX.Element {
+export function PrChanges({ fetchDiff }: { fetchDiff: () => Promise<string> }): JSX.Element {
   const [diff, setDiff] = useState<string | null>(null);
   const [error, setError] = useState(false);
-  const [open, setOpen] = useState(!collapsible);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -30,38 +25,56 @@ export function PrChanges({
     };
   }, [fetchDiff]);
 
-  const body =
-    error ? (
-      <div className="banner-warn mt-2.5">Couldn't load the diff for this pull request.</div>
-    ) : diff === null ? (
-      <div className="dim mt-2.5 flex items-center gap-2 py-4 text-sm">
-        <Spinner /> Loading the diff…
-      </div>
-    ) : diff.trim() ? (
-      <div className="mt-2.5">
-        <DiffView diff={diff} />
-      </div>
-    ) : (
-      <div className="banner-warn mt-2.5">No file changes in this pull request.</div>
-    );
+  const stat = diff ? diffStat(diff) : null;
+  const hasChanges = !!stat && stat.files > 0;
 
   return (
     <section className="card" aria-label="Changed files">
-      {collapsible ? (
-        <button
-          type="button"
-          className="flex w-full cursor-pointer items-center gap-2 text-left"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-        >
-          <strong className="text-sm">Changed files</strong>
-          <span className="flex-1" />
-          <ChevronDown open={open} className="dim size-4 shrink-0" />
-        </button>
-      ) : (
+      <button
+        type="button"
+        className={`flex w-full items-center gap-2.5 text-left ${hasChanges ? 'cursor-pointer' : 'cursor-default'}`}
+        onClick={() => hasChanges && setOpen((v) => !v)}
+        aria-expanded={open}
+        disabled={!hasChanges}
+      >
         <strong className="text-sm">Changed files</strong>
-      )}
-      {open ? body : null}
+        {diff === null && !error ? (
+          <span className="dim flex items-center gap-1.5">
+            <Spinner /> loading…
+          </span>
+        ) : null}
+        {error ? <span className="badge-danger">unavailable</span> : null}
+        {stat && stat.files > 0 ? (
+          <span className="flex items-center gap-2.5 text-xs">
+            <span className="dim tabular-nums">
+              {stat.files} file{stat.files === 1 ? '' : 's'}
+            </span>
+            <span className="font-medium text-emerald-600 tabular-nums dark:text-emerald-400">+{stat.added}</span>
+            <span className="font-medium text-red-600 tabular-nums dark:text-red-400">−{stat.removed}</span>
+          </span>
+        ) : null}
+        {stat && stat.files === 0 ? <span className="dim">no file changes</span> : null}
+        <span className="flex-1" />
+        {hasChanges ? <ChevronDown open={open} className="dim size-4 shrink-0" /> : null}
+      </button>
+
+      {open && diff && diff.trim() ? (
+        <div className="mt-3">
+          <DiffView diff={diff} />
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function diffStat(diff: string): { files: number; added: number; removed: number } {
+  let files = 0;
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) files++;
+    else if (line.startsWith('+') && !line.startsWith('+++')) added++;
+    else if (line.startsWith('-') && !line.startsWith('---')) removed++;
+  }
+  return { files, added, removed };
 }

@@ -72,7 +72,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
             </>
           )}
 
-          <PrChanges fetchDiff={fetchDiff} collapsible={review} />
+          <PrChanges fetchDiff={fetchDiff} />
 
           <PrChecks
             repo={repo}
@@ -236,6 +236,7 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
 function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
   return (
     <aside className="flex flex-col gap-4 text-[13px] lg:sticky lg:top-4" aria-label="Pull request details">
+      {/* Short scalar facts read best as an aligned label/value grid. */}
       <div className="card flex flex-col gap-3">
         <Row label="Status">
           <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
@@ -257,43 +258,48 @@ function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
             </span>
           </Row>
         ) : null}
-        <Row label="Branch">
-          <CopyText value={pr.headRef} title={`Copy branch "${pr.headRef}"`} className="min-w-0">
-            <code className="truncate text-xs">
-              {pr.headRef} → {pr.baseRef}
+      </div>
+
+      {/* Branch and target on their own lines — each truncates with the full ref on hover. */}
+      <div className="card flex flex-col gap-3">
+        <Block label="Branch">
+          <CopyText value={pr.headRef} title={`Copy "${pr.headRef}"`} className="max-w-full">
+            <code className="block min-w-0 truncate font-mono text-xs" title={pr.headRef}>
+              {pr.headRef}
             </code>
           </CopyText>
-        </Row>
+        </Block>
+        <Block label="Target">
+          <code className="block truncate font-mono text-xs" title={pr.baseRef}>
+            {pr.baseRef}
+          </code>
+        </Block>
       </div>
 
       <div className="card flex flex-col gap-3">
-        <Row label="Author">
+        <Block label="Author">
           <GitHubUser login={pr.author} className="text-zinc-700 dark:text-zinc-300" />
-        </Row>
-        <Row label="Assignees">
-          {pr.assignees.length > 0 ? (
-            <span className="flex flex-wrap gap-x-2 gap-y-1">
+        </Block>
+        {pr.assignees.length > 0 ? (
+          <Block label="Assignees">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
               {pr.assignees.map((a) => (
                 <GitHubUser key={a} login={a} className="text-zinc-700 dark:text-zinc-300" />
               ))}
-            </span>
-          ) : (
-            <span className="dim">No one</span>
-          )}
-        </Row>
-        <Row label="Labels">
-          {pr.labels.length > 0 ? (
-            <span className="flex flex-wrap gap-1.5">
+            </div>
+          </Block>
+        ) : null}
+        {pr.labels.length > 0 ? (
+          <Block label="Labels">
+            <div className="flex flex-wrap gap-1.5">
               {pr.labels.map((l) => (
-                <span key={l} className="badge">
+                <span key={l} className="chip" title={l}>
                   {l}
                 </span>
               ))}
-            </span>
-          ) : (
-            <span className="dim">None</span>
-          )}
-        </Row>
+            </div>
+          </Block>
+        ) : null}
       </div>
 
       <div className="card flex flex-col gap-2 text-xs">
@@ -316,11 +322,22 @@ function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
   );
 }
 
+/** Inline label/value row — for short scalar facts. */
 function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <div className="flex items-start gap-3">
       <span className="dim w-16 shrink-0 pt-0.5 text-xs font-medium tracking-wide uppercase">{label}</span>
       <span className="min-w-0 flex-1">{children}</span>
+    </div>
+  );
+}
+
+/** Stacked label-above-value block — for wide values (branches, chips, people). */
+function Block({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="min-w-0">
+      <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">{label}</div>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }

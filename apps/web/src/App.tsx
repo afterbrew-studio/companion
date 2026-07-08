@@ -26,7 +26,7 @@ import { PrsAreaPage } from './pages/PrsArea.js';
 import { PipelinesPage } from './pages/Pipelines.js';
 import { RunsPage } from './pages/RunsPage.js';
 import { RunDetail } from './pages/RunDetail.js';
-import { PrPreview } from './pages/PrPreview.js';
+import { PrBuild } from './pages/pr/PrBuild.js';
 import { PrView } from './pages/pr/PrView.js';
 import { IssueDetail } from './pages/IssueDetail.js';
 import { ReposPage } from './pages/ReposPage.js';
@@ -311,7 +311,7 @@ function Shell(): JSX.Element {
                       rail ? 'justify-center px-0' : 'px-2.5'
                     } ${
                       active
-                        ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-100 dark:text-zinc-900'
+                        ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
                         : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
                     }`}
                   >
@@ -330,7 +330,7 @@ function Shell(): JSX.Element {
                         <span className="flex-1 truncate">{m.label}</span>
                         <kbd
                           className={`hidden rounded px-1 font-mono text-[10px] lg:inline ${
-                            active ? 'bg-white/20 dark:bg-zinc-900/10' : 'text-zinc-400 dark:text-zinc-500'
+                            active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
                           }`}
                           aria-hidden
                         >
@@ -838,7 +838,7 @@ function Route({ hash }: { hash: string }): JSX.Element {
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
 
   let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)\/preview$/);
-  if (m) return guard(can('runs:read'), <PrPreview key={m[1]} runId={m[1]!} />);
+  if (m) return guard(can('runs:read'), <PrBuild key={m[1]} runId={m[1]!} />);
   m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
   if (m) return guard(can('runs:read'), <RunDetail key={m[1]} runId={m[1]!} />);
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);

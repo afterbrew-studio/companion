@@ -35,13 +35,17 @@ export function PrReview({
   const v = review.verdict;
   const pending = review.status === 'pending';
   const hero = emphasis === 'hero';
-  const border = hero
-    ? 'border-accent-500/50 bg-gradient-to-b from-accent-500/5 to-transparent'
-    : review.status === 'applied'
-      ? 'border-emerald-500/60'
-      : review.status === 'dismissed'
-        ? 'border-zinc-300 dark:border-zinc-700'
-        : 'border-amber-500/60';
+  // A pending review needs the reviewer's attention — green, gently pulsing.
+  const attn = pending && canAct;
+  const border = attn
+    ? 'review-attn border-emerald-500/60 bg-gradient-to-b from-emerald-500/[0.06] to-transparent'
+    : hero
+      ? 'border-accent-500/50 bg-gradient-to-b from-accent-500/5 to-transparent'
+      : review.status === 'applied'
+        ? 'border-emerald-500/60'
+        : review.status === 'dismissed'
+          ? 'border-zinc-300 dark:border-zinc-700'
+          : 'border-amber-500/60';
 
   return (
     <section className={`anim-in rounded-2xl border p-5 ${border}`} aria-label="AI review">
@@ -56,17 +60,6 @@ export function PrReview({
         <span className="flex-1" />
         {review.status === 'applied' ? <span className="badge-ok">posted</span> : null}
         {review.status === 'dismissed' ? <span className="badge">dismissed</span> : null}
-        {pending && canAct ? (
-          <>
-            <AccountPicker value={actAs} onChange={setActAs} />
-            <button className="btn" disabled={busy} onClick={() => onApply(actAs || undefined)}>
-              {busy ? 'Posting…' : 'Post review to GitHub'}
-            </button>
-            <button className="btn-ghost" disabled={busy} onClick={onDismiss}>
-              Dismiss
-            </button>
-          </>
-        ) : null}
       </div>
 
       {v ? (
@@ -98,6 +91,19 @@ export function PrReview({
       ) : (
         <p className="error-bar mt-3">{review.error ?? 'no verdict'}</p>
       )}
+
+      {pending && canAct ? (
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
+          <span className="dim mr-auto text-xs">Posts to GitHub as</span>
+          <AccountPicker value={actAs} onChange={setActAs} />
+          <button className="btn-ghost" disabled={busy} onClick={onDismiss}>
+            Dismiss
+          </button>
+          <button className="btn" disabled={busy} onClick={() => onApply(actAs || undefined)}>
+            {busy ? 'Posting…' : 'Post review to GitHub'}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

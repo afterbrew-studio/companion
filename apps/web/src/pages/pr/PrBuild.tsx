@@ -1,97 +1,61 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { RunRecord } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
-import { emptyFold, foldEvent, foldMany, type Block, type FoldState } from '../transcript/fold.js';
-import { DiffView } from '../components/DiffView.js';
-import { Markdown } from '../components/Markdown.js';
-import { Page, PageLoading, Spinner } from '../components/ui.js';
+import { api } from '../../lib/api.js';
+import type { Block } from '../../transcript/fold.js';
+import { Markdown } from '../../components/Markdown.js';
+import { Page, PageLoading, Spinner, timeAgo } from '../../components/ui.js';
+import { usePrBuild, type BuildPhase, type UsePrBuild } from './usePrBuild.js';
+import { PrChanges } from './PrChanges.js';
 
 /**
- * The agentic "pull request in the making" view — a focused, animated take on a
- * fix/implement run: the agent builds the change live, then the proposed PR
- * (diff + summary) is previewed for one-click creation. The raw transcript
- * still lives at #/runs/:id for when you want the full trace.
+ * A pull request as an agent builds it: the same view shell as {@link PrView},
+ * but sourced from a run. It fills in as the work lands — animated while the
+ * agent works, the proposed change once it's ready, then a link to the opened
+ * PR. The raw transcript still lives at #/runs/:id.
  */
-type Phase = 'loading' | 'building' | 'ready' | 'shipped' | 'failed';
+export function PrBuild({ runId }: { runId: string }): JSX.Element {
+  const build = usePrBuild(runId);
+  const fetchDiff = useCallback(() => api.runDiff(runId).then((r) => r.diff), [runId]);
 
-export function PrPreview({ runId }: { runId: string }): JSX.Element {
-  const [run, setRun] = useState<RunRecord | null>(null);
-  const [fold, setFold] = useState<FoldState>(emptyFold);
-  const [error, setError] = useState<string | null>(null);
-  const foldRef = useRef(fold);
-  foldRef.current = fold;
-
-  const refresh = useCallback(async () => {
-    try {
-      const { run } = await api.getRun(runId);
-      setRun(run);
-      const segment = await api.history(runId, null, 300);
-      setFold({ ...foldMany(emptyFold(), segment.events) });
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [runId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    return onServerMessage((msg) => {
-      if ('runId' in msg && msg.runId !== runId) return;
-      if (msg.t === 'event') setFold({ ...foldEvent(foldRef.current, msg.event) });
-      else if (msg.t === 'run.changed') setRun(msg.run);
-    });
-  }, [runId]);
-
-  if (error && !run) {
+  if (build.error && !build.run) {
     return (
       <Page>
-        <div className="error-bar">{error}</div>
+        <div className="error-bar">{build.error}</div>
       </Page>
     );
   }
-  if (!run) return <PageLoading label="Loading pull request…" />;
-
-  const phase: Phase =
-    run.status === 'completed'
-      ? 'shipped'
-      : run.status === 'review'
-        ? 'ready'
-        : run.status === 'running' || run.status === 'provisioning' || run.status === 'queued'
-          ? 'building'
-          : // failed / interrupted / stopped / abandoned — the run ended without a PR.
-            'failed';
+  if (!build.run) return <PageLoading label="Loading pull request…" />;
+  const run = build.run;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-6">
-      <header className="mb-5 flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="dim text-[11px] font-medium tracking-widest uppercase">Pull request</div>
-          <h1 className="mt-0.5 truncate text-xl leading-snug font-semibold">{run.title}</h1>
-          {run.branch ? (
-            <div className="dim mt-1 flex items-center gap-1.5 text-xs">
-              <BranchIcon />
-              <code className="font-mono">{run.branch}</code>
-              {run.repo ? <span>· {run.repo}</span> : null}
-            </div>
-          ) : null}
+    <Page className="anim-in">
+      <header>
+        <div className="dim text-[11px] font-medium tracking-widest uppercase">Pull request</div>
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+          <h1 className="min-w-0 flex-1 text-xl leading-snug font-semibold">{run.title}</h1>
+          <a className="btn-ghost shrink-0" href={`#/runs/${run.id}`} title="Open the full agent transcript">
+            Full run
+          </a>
         </div>
-        <a className="btn-ghost shrink-0" href={`#/runs/${run.id}`} title="Open the full agent transcript">
-          Full run
-        </a>
       </header>
 
-      {phase === 'building' ? (
-        <BuildingStage run={run} blocks={fold.blocks} />
-      ) : phase === 'ready' ? (
-        <ReadyStage run={run} onChange={refresh} />
-      ) : phase === 'shipped' ? (
-        <ShippedStage run={run} />
-      ) : (
-        <FailedStage run={run} />
-      )}
-    </div>
+      <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
+        <div className="flex min-w-0 flex-col gap-4">
+          {build.phase === 'building' ? (
+            <BuildingStage run={run} blocks={build.blocks} />
+          ) : build.phase === 'ready' ? (
+            <ReadyStage build={build} run={run} fetchDiff={fetchDiff} />
+          ) : build.phase === 'shipped' ? (
+            <ShippedStage run={run} />
+          ) : (
+            <FailedStage build={build} run={run} />
+          )}
+          {build.error ? <div className="error-bar">{build.error}</div> : null}
+        </div>
+
+        <BuildSidebar run={run} phase={build.phase} />
+      </div>
+    </Page>
   );
 }
 
@@ -111,7 +75,7 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
   const activity = recentActivity(blocks);
 
   return (
-    <section className="anim-in">
+    <section className="anim-in flex flex-col gap-6">
       <div className="ppv-hero relative overflow-hidden rounded-2xl border border-accent-500/40 bg-gradient-to-b from-accent-500/10 to-transparent p-8 text-center">
         <div className="ppv-orb mx-auto flex size-16 items-center justify-center rounded-2xl bg-accent-500/15 text-accent-600 dark:text-accent-400">
           <SparkIcon />
@@ -123,8 +87,8 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
         <div className="ppv-shimmer mx-auto mt-5 h-1 w-56 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" />
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        {/* Left: the high-level stepper, in a card matching the activity feed. */}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        {/* Left: the high-level stepper. */}
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
           <div className="dim border-b border-zinc-200 px-3.5 py-2 text-[11px] font-medium tracking-widest uppercase dark:border-zinc-800">
             Progress
@@ -154,9 +118,7 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
                     {state === 'done' ? <CheckIcon /> : state === 'active' ? <Spinner /> : i + 1}
                   </span>
                   <span className="min-w-0 pt-0.5">
-                    <span className={`block text-[13px] ${state === 'pending' ? 'dim' : 'font-medium'}`}>
-                      {step.label}
-                    </span>
+                    <span className={`block text-[13px] ${state === 'pending' ? 'dim' : 'font-medium'}`}>{step.label}</span>
                     <span className={`block text-xs ${state === 'active' ? 'dim' : 'text-zinc-400 dark:text-zinc-600'}`}>
                       {step.desc}
                     </span>
@@ -230,72 +192,39 @@ function firstLine(text: string): string {
 
 // ---------- ready (diff preview + create PR) ------------------------------------
 
-function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise<void> }): JSX.Element {
-  const [diff, setDiff] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'create' | 'discard' | 'refine' | null>(null);
+function ReadyStage({
+  build,
+  run,
+  fetchDiff,
+}: {
+  build: UsePrBuild;
+  run: RunRecord;
+  fetchDiff: () => Promise<string>;
+}): JSX.Element {
   const [prompt, setPrompt] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .runDiff(run.id)
-      .then((r) => alive && setDiff(r.diff))
-      .catch((err) => alive && setError(String(err)));
-    return () => {
-      alive = false;
-    };
-  }, [run.id]);
 
   const create = async (): Promise<void> => {
     // Reserve the tab in the click gesture so it isn't popup-blocked after the
     // await; we stay on this page and the PR opens beside it.
     const tab = window.open('', '_blank');
-    setBusy('create');
-    setError(null);
-    try {
-      const { prUrl } = await api.approvePr(run.id);
-      if (tab) tab.location.href = prUrl;
-      else window.open(prUrl, '_blank');
-      await onChange();
-    } catch (err) {
+    const url = await build.createPr();
+    if (url) {
+      if (tab) tab.location.href = url;
+      else window.open(url, '_blank');
+    } else {
       tab?.close();
-      setError(String(err));
-    } finally {
-      setBusy(null);
     }
   };
 
   const discard = async (): Promise<void> => {
     if (!confirm('Discard this pull request and its branch? The work is lost.')) return;
-    setBusy('discard');
-    try {
-      await api.discardRun(run.id);
-      await onChange();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(null);
-    }
+    await build.discard();
   };
 
   const refine = async (): Promise<void> => {
-    const text = prompt.trim();
-    if (!text) return;
-    setBusy('refine');
-    setError(null);
-    try {
-      await api.prompt(run.id, text);
-      setPrompt('');
-      await onChange();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(null);
-    }
+    await build.refine(prompt);
+    setPrompt('');
   };
-
-  const stats = diff ? diffStat(diff) : null;
 
   return (
     <section className="anim-in flex flex-col gap-4">
@@ -308,14 +237,13 @@ function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise
             <h2 className="text-sm font-semibold">Ready to open</h2>
             <p className="dim text-xs">
               The agent finished on <code className="font-mono">{run.branch}</code>
-              {stats ? ` · ${stats.files} file${stats.files === 1 ? '' : 's'} changed` : ''}
             </p>
           </div>
-          <button className="btn" disabled={busy !== null || diff === null} onClick={() => void create()}>
-            {busy === 'create' ? 'Opening…' : 'Create pull request'}
+          <button className="btn" disabled={build.busy !== null} onClick={() => void create()}>
+            {build.busy === 'create' ? 'Opening…' : 'Create pull request'}
           </button>
-          <button className="btn-danger-ghost" disabled={busy !== null} onClick={() => void discard()}>
-            {busy === 'discard' ? 'Discarding…' : 'Discard'}
+          <button className="btn-danger-ghost" disabled={build.busy !== null} onClick={() => void discard()}>
+            {build.busy === 'discard' ? 'Discarding…' : 'Discard'}
           </button>
         </div>
         {run.outcome ? (
@@ -326,18 +254,7 @@ function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise
         ) : null}
       </div>
 
-      <div>
-        <div className="dim mb-1.5 text-[11px] font-medium tracking-widest uppercase">Proposed change</div>
-        {diff === null ? (
-          <div className="dim flex items-center gap-2 py-6 text-sm">
-            <Spinner /> Loading the diff…
-          </div>
-        ) : diff.trim() ? (
-          <DiffView diff={diff} />
-        ) : (
-          <div className="banner-warn">The agent produced no changes.</div>
-        )}
-      </div>
+      <PrChanges fetchDiff={fetchDiff} />
 
       <div className="rounded-xl border border-zinc-300 p-2 focus-within:border-zinc-500 dark:border-zinc-700 dark:focus-within:border-zinc-400">
         <div className="dim px-1 pt-0.5 text-xs">Not quite right? Ask the agent to refine — it keeps the same branch.</div>
@@ -346,7 +263,7 @@ function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise
             className="max-h-32 min-h-9 flex-1 resize-none border-none bg-transparent px-1.5 py-1 text-[13px] outline-none placeholder:text-zinc-400"
             placeholder="e.g. also add a test for the edge case"
             value={prompt}
-            disabled={busy !== null}
+            disabled={build.busy !== null}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -355,19 +272,13 @@ function ReadyStage({ run, onChange }: { run: RunRecord; onChange: () => Promise
               }
             }}
           />
-          <button className="btn-ghost" disabled={busy !== null || !prompt.trim()} onClick={() => void refine()}>
-            {busy === 'refine' ? 'Sending…' : 'Refine'}
+          <button className="btn-ghost" disabled={build.busy !== null || !prompt.trim()} onClick={() => void refine()}>
+            {build.busy === 'refine' ? 'Sending…' : 'Refine'}
           </button>
         </div>
       </div>
-
-      {error ? <div className="error-bar">{error}</div> : null}
     </section>
   );
-}
-
-function diffStat(diff: string): { files: number } {
-  return { files: (diff.match(/^diff --git /gm) ?? []).length };
 }
 
 // ---------- shipped / failed ----------------------------------------------------
@@ -392,24 +303,14 @@ function ShippedStage({ run }: { run: RunRecord }): JSX.Element {
   );
 }
 
-function FailedStage({ run }: { run: RunRecord }): JSX.Element {
-  const [busy, setBusy] = useState(false);
+function FailedStage({ build, run }: { build: UsePrBuild; run: RunRecord }): JSX.Element {
   const [gone, setGone] = useState(false);
   const cancelled =
-    run.status === 'stopped' ||
-    run.status === 'abandoned' ||
-    /abort|cancel/i.test(run.outcome ?? '');
+    run.status === 'stopped' || run.status === 'abandoned' || /abort|cancel/i.test(run.outcome ?? '');
 
   const discard = async (): Promise<void> => {
-    setBusy(true);
-    try {
-      await api.discardRun(run.id);
-      setGone(true);
-    } catch {
-      // leave the branch; the full run view can retry
-    } finally {
-      setBusy(false);
-    }
+    await build.discard();
+    setGone(true);
   };
 
   return (
@@ -442,12 +343,70 @@ function FailedStage({ run }: { run: RunRecord }): JSX.Element {
           Open the full run
         </a>
         {run.branch && !gone ? (
-          <button className="btn-danger-ghost" disabled={busy} onClick={() => void discard()}>
-            {busy ? 'Discarding…' : 'Discard branch'}
+          <button className="btn-danger-ghost" disabled={build.busy !== null} onClick={() => void discard()}>
+            {build.busy === 'discard' ? 'Discarding…' : 'Discard branch'}
           </button>
         ) : null}
       </div>
     </section>
+  );
+}
+
+// ---------- build metadata rail -------------------------------------------------
+
+function BuildSidebar({ run, phase }: { run: RunRecord; phase: BuildPhase }): JSX.Element {
+  const status =
+    phase === 'building'
+      ? { label: 'Building', cls: 'badge-warn' }
+      : phase === 'ready'
+        ? { label: 'Ready to open', cls: 'badge-accent' }
+        : phase === 'shipped'
+          ? { label: 'Opened', cls: 'badge-ok' }
+          : { label: 'Ended', cls: 'badge' };
+
+  return (
+    <aside className="flex flex-col gap-4 text-[13px] lg:sticky lg:top-4" aria-label="Build details">
+      <div className="card flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <span className="dim w-16 shrink-0 text-xs font-medium tracking-wide uppercase">Status</span>
+          <span className={status.cls}>{status.label}</span>
+        </div>
+        {run.branch ? (
+          <div className="min-w-0">
+            <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">Branch</div>
+            <code className="block truncate font-mono text-xs" title={run.branch}>
+              {run.branch}
+            </code>
+          </div>
+        ) : null}
+        {run.repo ? (
+          <div className="min-w-0">
+            <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">Repository</div>
+            <code className="block truncate font-mono text-xs" title={run.repo}>
+              {run.repo}
+            </code>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card flex flex-col gap-2 text-xs">
+        <div className="flex justify-between gap-2">
+          <span className="dim">Started</span>
+          <span>{timeAgo(run.createdAt)}</span>
+        </div>
+        {run.model ? (
+          <div className="flex justify-between gap-2">
+            <span className="dim">Model</span>
+            <span className="truncate" title={run.model}>
+              {run.model}
+            </span>
+          </div>
+        ) : null}
+        <a className="linkish mt-1 text-xs" href={`#/runs/${run.id}`}>
+          Open full run →
+        </a>
+      </div>
+    </aside>
   );
 }
 
@@ -464,16 +423,6 @@ function CheckIcon({ large }: { large?: boolean } = {}): JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={large ? 'size-7' : 'size-3.5'} aria-hidden>
       <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function BranchIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className="size-3.5" aria-hidden>
-      <circle cx="4" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="4" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="12" cy="5" r="1.6" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M4 5.6v4.8M5.6 4H9a2 2 0 0 1 2 2v.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }
