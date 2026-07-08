@@ -3,6 +3,7 @@ export * from './auth.js';
 export * from './workspaces.js';
 export * from './checks.js';
 export * from './pipelines.js';
+export * from './runner-agent.js';
 
 import type { AskRequest, MoxxyEvent } from './moxxy.js';
 import type { ChecksSnapshot } from './checks.js';
@@ -40,6 +41,8 @@ export interface RunRecord {
   readonly prUrl: string | null;
   /** Per-run model override; null rides the daemon default. */
   readonly model: string | null;
+  /** Runner (machine) this run executes on; null = the built-in local runner. */
+  readonly runnerId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** True while a gateway process is attached (live transcript available). */
@@ -77,6 +80,87 @@ export interface RepoRecord {
   readonly webhookConfigured: boolean;
   /** Pinned GitHub account for this repo's posting/actions; null = purpose bindings. */
   readonly githubAccountId: string | null;
+  /** Preferred runner for this repo's agent work; null = auto-place among eligible. */
+  readonly runnerId: string | null;
+}
+
+// ---------- Runners (execution machines) ---------------------------------------
+
+export type RunnerKind = 'local' | 'remote';
+
+/**
+ * A runner's availability. `shared` runners can execute work for any
+ * workspace; `delegated` runners only serve the workspaces explicitly assigned
+ * to them (RunnerRecord.workspaceIds).
+ */
+export type RunnerScope = 'shared' | 'delegated';
+
+export type RunnerStatus = 'online' | 'degraded' | 'offline' | 'unknown';
+
+/** Live health of a runner, refreshed by the daemon's health poller. */
+export interface RunnerHealth {
+  readonly status: RunnerStatus;
+  /** moxxy CLI version the runner reports (remote agents echo their own). */
+  readonly moxxyVersion: string | null;
+  readonly moxxyCompatible: boolean;
+  /** Gateways currently attached on this runner. */
+  readonly liveRuns: number;
+  /** Max concurrent live runs the runner accepts. */
+  readonly maxRuns: number;
+  /** Last successful probe (epoch ms), null if never reached. */
+  readonly lastSeenAt: number | null;
+  /** Human detail for the degraded/offline case. */
+  readonly detail: string | null;
+}
+
+/**
+ * An execution host. The built-in `local` runner (id `runner-local`) always
+ * exists, is `shared`, and cannot be deleted — it is companiond's own machine.
+ * `remote` runners are other machines running the companion-runner agent,
+ * reached at `endpoint` with a bearer `token` (write-only; never returned).
+ */
+export interface RunnerRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: RunnerKind;
+  /** Agent base URL for remote runners (e.g. https://box.internal:8920); null for local. */
+  readonly endpoint: string | null;
+  /** True once a token is stored (the token itself never leaves the daemon). */
+  readonly hasToken: boolean;
+  readonly scope: RunnerScope;
+  /** Workspaces this runner serves when `delegated` (ignored when `shared`). */
+  readonly workspaceIds: ReadonlyArray<string>;
+  readonly maxRuns: number;
+  /** Admin can disable a runner without deleting it — placement skips it. */
+  readonly enabled: boolean;
+  readonly health: RunnerHealth;
+  readonly createdAt: number;
+}
+
+export interface CreateRunnerRequest {
+  readonly name: string;
+  readonly endpoint: string;
+  readonly token: string;
+  readonly scope?: RunnerScope;
+  readonly workspaceIds?: ReadonlyArray<string>;
+  readonly maxRuns?: number;
+}
+
+export interface UpdateRunnerRequest {
+  readonly name?: string;
+  readonly endpoint?: string;
+  /** New bearer token; omit to keep the current one. */
+  readonly token?: string;
+  readonly scope?: RunnerScope;
+  readonly workspaceIds?: ReadonlyArray<string>;
+  readonly maxRuns?: number;
+  readonly enabled?: boolean;
+}
+
+/** Result of probing a runner's endpoint (the "Test connection" action). */
+export interface RunnerProbeResult {
+  readonly ok: boolean;
+  readonly health: RunnerHealth;
 }
 
 export interface IssueRecord {
@@ -515,4 +599,5 @@ export type SpaServerMessage =
   | { readonly t: 'docs.changed' }
   | { readonly t: 'reports.changed' }
   | { readonly t: 'notifications.changed' }
+  | { readonly t: 'runners.changed' }
   | { readonly t: 'hello'; readonly version: string };

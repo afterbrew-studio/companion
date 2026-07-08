@@ -20,6 +20,7 @@ import type { Skills } from '../skills/skills.js';
 import type { Specs } from '../specs/specs.js';
 import type { Docs } from '../docs/docs.js';
 import type { Assistant } from '../assistant/assistant.js';
+import type { Runners } from '../runners/registry.js';
 
 /** Everything the route modules can reach — injected once at boot. */
 export interface ApiDeps {
@@ -47,4 +48,5 @@ export interface ApiDeps {
   readonly specs: Specs;
   readonly docs: Docs;
   readonly assistant: Assistant;
+  readonly runners: Runners;
 }

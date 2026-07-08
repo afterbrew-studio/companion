@@ -5,6 +5,10 @@ import type {
   AskRequest,
   AuthState,
   BriefingCadence,
+  CreateRunnerRequest,
+  RunnerProbeResult,
+  RunnerRecord,
+  UpdateRunnerRequest,
   ChecksSummary,
   CommentRecord,
   CreateUserRequest,
@@ -430,6 +434,16 @@ export const api = {
   removeGithubAccount: (id: string) => del<{ ok: true }>(`/api/github/accounts/${id}`),
   setRepoGithubAccount: (fullName: string, accountId: string | null) =>
     patch<{ repo: RepoRecord }>(`/api/repos/${fullName}/github-account`, { accountId }),
+  setRepoRunner: (fullName: string, runnerId: string | null) =>
+    patch<{ repo: RepoRecord }>(`/api/repos/${fullName}/runner`, { runnerId }),
+
+  // runners (execution machines)
+  listRunners: () => request<{ runners: RunnerRecord[] }>('/api/runners'),
+  createRunner: (body: CreateRunnerRequest) => post<{ runner: RunnerRecord }>('/api/runners', body),
+  updateRunner: (id: string, body: UpdateRunnerRequest) =>
+    patch<{ runner: RunnerRecord }>(`/api/runners/${id}`, body),
+  deleteRunner: (id: string) => del<{ ok: true }>(`/api/runners/${id}`),
+  probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
 
   // notifications
   listNotifications: (workspaceId?: string) =>

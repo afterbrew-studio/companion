@@ -231,6 +231,24 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       updated_at   INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_docs_workspace ON docs(workspace_id);
+
+    CREATE TABLE IF NOT EXISTS runners (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      endpoint      TEXT,
+      token         TEXT,
+      scope         TEXT NOT NULL DEFAULT 'shared',
+      max_runs      INTEGER NOT NULL DEFAULT 3,
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runner_workspaces (
+      runner_id    TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      PRIMARY KEY (runner_id, workspace_id)
+    );
   `);
   // Chunk index for the built-in local-bm25 embedder. FTS5 ships in the
   // bundled SQLite; if a custom build lacks it, docs still work — search
@@ -275,6 +293,8 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE docs ADD COLUMN path TEXT`,
     `ALTER TABLE specs ADD COLUMN drift_note TEXT`,
     `ALTER TABLE repos ADD COLUMN auto_merge INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE runs ADD COLUMN runner_id TEXT`,
+    `ALTER TABLE repos ADD COLUMN runner_id TEXT`,
   ]) {
     try {
       db.exec(ddl);

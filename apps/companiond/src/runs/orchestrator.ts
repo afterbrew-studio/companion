@@ -15,20 +15,25 @@ import type {
 } from '@companion/contract';
 import { log } from '../log.js';
 import { paths, type DaemonConfig } from '../config.js';
-import { GatewayPool } from '../moxxy/gateway-pool.js';
-import { readSessionHistory } from '../moxxy/history.js';
+import type { Checkouts } from '../git/checkouts.js';
+import type { MoxxyCli } from '../moxxy/cli.js';
+import { Runners } from '../runners/registry.js';
+import type { RunnerBackend, RunnerEventSink } from '../runners/backend.js';
 import { Store, rowToRun } from '../store/db.js';
 
 /** Hard per-run output-token ceiling (goal mode upstream is uncapped). */
 const MAX_RUN_OUTPUT_TOKENS = 400_000;
 
 /**
- * Run lifecycle owner. A "run" is one moxxy session (one MOXXY_SESSION_ID);
- * live runs have a serve+gateway process pair attached, reaped runs keep their
- * transcript readable from the session JSONL on disk.
+ * Run lifecycle owner. A "run" is one moxxy session (one MOXXY_SESSION_ID)
+ * executing on some runner (machine). Live runs have a serve+gateway pair
+ * attached on their runner; reaped runs keep their transcript readable from
+ * the session JSONL on that runner's disk. The Orchestrator never talks to a
+ * gateway directly — it goes through the run's RunnerBackend, so local and
+ * remote execution are indistinguishable to everything above it.
  */
-export class Orchestrator {
-  private readonly pool: GatewayPool;
+export class Orchestrator implements RunnerEventSink {
+  readonly runners: Runners;
   private readonly pendingAsks = new Map<string, Map<string, AskRequest>>();
   /** waitForTurn resolvers, keyed by runId. */
   private readonly turnWaiters = new Map<string, Set<() => void>>();
@@ -38,67 +43,70 @@ export class Orchestrator {
   constructor(
     private readonly store: Store,
     private readonly config: DaemonConfig,
-    private readonly moxxyCliPath: string,
+    checkouts: Checkouts,
+    moxxyCli: MoxxyCli | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {
-    this.pool = new GatewayPool(
-      {
-        onEvent: (runId, event) => this.onEvent(runId, event),
-        onTurnComplete: (runId, turnId) => {
-          this.broadcast({ t: 'turn', runId, phase: 'complete', turnId });
-          const waiters = this.turnWaiters.get(runId);
-          if (waiters) {
-            for (const resolve of [...waiters]) resolve();
-            waiters.clear();
-          }
-          // Autonomous goal runs land in review when their driving turn ends.
-          const row = this.store.runs.get(runId);
-          if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
-            this.setStatus(runId, 'review');
-            this.emitRunChanged(runId);
-          }
-        },
-        onAsk: (runId, ask) => {
-          // Unattended runs must never park on a human. Tools without a
-          // declared allow-policy (e.g. Glob on moxxy 0.26.0) reach the ask
-          // path; auto-allow them — the real fences are the isolated
-          // clone/worktree cwd and the permissions.json deny rules.
-          // Attended kinds (interactive chats, the AI Help assistant) keep the
-          // human in the loop: their asks park in the UI.
-          const row = this.store.runs.get(runId);
-          const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
-          if (row && !attended && ask.kind === 'permission') {
-            log.info('auto-allowing ask for unattended run', {
-              runId,
-              tool: ask.tool?.name,
-            });
-            void this.respondAsk(runId, ask.requestId, { mode: 'allow' }).catch(() => undefined);
-            return;
-          }
-          this.asksFor(runId).set(ask.requestId, ask);
-          this.broadcast({ t: 'ask', runId, ask });
-          this.notifyRun(runId, 'action_required', 'Agent needs your input');
-        },
-        onAskResolved: (runId, requestId) => {
-          this.asksFor(runId).delete(requestId);
-          this.broadcast({ t: 'askResolved', runId, requestId });
-        },
-        onGone: (runId) => {
-          this.pendingAsks.delete(runId);
-          const waiters = this.turnWaiters.get(runId);
-          if (waiters) {
-            for (const resolve of [...waiters]) resolve();
-            waiters.clear();
-          }
-          const row = this.store.runs.get(runId);
-          if (row && (row.status === 'running' || row.status === 'provisioning')) {
-            this.setStatus(runId, 'stopped');
-          }
-          this.emitRunChanged(runId);
-        },
-      },
-      config.maxLiveRuns,
-    );
+    this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast);
+  }
+
+  /** The backend a run executes on (its runner, or local). */
+  private backend(runId: string): RunnerBackend {
+    return this.runners.backendForRun(this.store.runs.get(runId)?.runner_id ?? null);
+  }
+
+  // ---------- RunnerEventSink (fed by every backend, local or remote) ----------
+
+  onTurnComplete(runId: string, turnId?: string): void {
+    this.broadcast({ t: 'turn', runId, phase: 'complete', turnId });
+    const waiters = this.turnWaiters.get(runId);
+    if (waiters) {
+      for (const resolve of [...waiters]) resolve();
+      waiters.clear();
+    }
+    // Autonomous goal runs land in review when their driving turn ends.
+    const row = this.store.runs.get(runId);
+    if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
+      this.setStatus(runId, 'review');
+      this.emitRunChanged(runId);
+    }
+  }
+
+  onAsk(runId: string, ask: AskRequest): void {
+    // Unattended runs must never park on a human. Tools without a declared
+    // allow-policy (e.g. Glob on moxxy 0.26.0) reach the ask path; auto-allow
+    // them — the real fences are the isolated clone/worktree cwd and the
+    // permissions.json deny rules. Attended kinds (interactive chats, the AI
+    // Help assistant) keep the human in the loop: their asks park in the UI.
+    const row = this.store.runs.get(runId);
+    const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
+    if (row && !attended && ask.kind === 'permission') {
+      log.info('auto-allowing ask for unattended run', { runId, tool: ask.tool?.name });
+      void this.respondAsk(runId, ask.requestId, { mode: 'allow' }).catch(() => undefined);
+      return;
+    }
+    this.asksFor(runId).set(ask.requestId, ask);
+    this.broadcast({ t: 'ask', runId, ask });
+    this.notifyRun(runId, 'action_required', 'Agent needs your input');
+  }
+
+  onAskResolved(runId: string, requestId: string): void {
+    this.asksFor(runId).delete(requestId);
+    this.broadcast({ t: 'askResolved', runId, requestId });
+  }
+
+  onGone(runId: string): void {
+    this.pendingAsks.delete(runId);
+    const waiters = this.turnWaiters.get(runId);
+    if (waiters) {
+      for (const resolve of [...waiters]) resolve();
+      waiters.clear();
+    }
+    const row = this.store.runs.get(runId);
+    if (row && (row.status === 'running' || row.status === 'provisioning')) {
+      this.setStatus(runId, 'stopped');
+    }
+    this.emitRunChanged(runId);
   }
 
   /** Boot-time recovery: daemon died with children; rows are the truth. */
@@ -115,19 +123,28 @@ export class Orchestrator {
     }
   }
 
+  start(): void {
+    this.runners.start();
+  }
+
   async shutdown(): Promise<void> {
-    await this.pool.stopAll();
+    this.runners.stop();
+    await this.runners.localBackend.stopAll();
   }
 
   // ---------- queries -----------------------------------------------------------
 
+  private isLive(runId: string): boolean {
+    return this.backend(runId).isLive(runId);
+  }
+
   listRuns(): RunRecord[] {
-    return this.store.runs.list().map((row) => rowToRun(row, this.pool.get(row.id) !== undefined));
+    return this.store.runs.list().map((row) => rowToRun(row, this.isLive(row.id)));
   }
 
   getRun(runId: string): RunRecord | null {
     const row = this.store.runs.get(runId);
-    return row ? rowToRun(row, this.pool.get(runId) !== undefined) : null;
+    return row ? rowToRun(row, this.isLive(runId)) : null;
   }
 
   pendingAsksFor(runId: string): AskRequest[] {
@@ -139,7 +156,11 @@ export class Orchestrator {
   async createRun(opts: {
     kind?: RunKind;
     title?: string;
+    /** Prepared working dir (a worktree on the run's runner). When set,
+     *  `runnerId` MUST identify the runner that owns it. */
     cwd?: string;
+    /** Runner the run executes on; undefined = place by repo. */
+    runnerId?: string | null;
     repo?: string | null;
     issueNumber?: number | null;
     proposalId?: string | null;
@@ -149,9 +170,17 @@ export class Orchestrator {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
     const kind: RunKind = opts.kind ?? 'interactive';
-    // Each run gets its own cwd so concurrent agents never share a directory.
-    const cwd = opts.cwd ?? join(paths.scratch(), id);
-    mkdirSync(cwd, { recursive: true });
+    // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
+    // worktree/clone from a one-shot) pins to the local runner; otherwise pick
+    // a runner for the repo and let its backend allocate a scratch dir.
+    const runnerId =
+      opts.runnerId !== undefined
+        ? opts.runnerId
+        : opts.cwd !== undefined
+          ? null
+          : this.runners.place(opts.repo ?? null);
+    const backend = this.runners.backend(runnerId);
+    const cwd = opts.cwd ?? (await backend.scratchDir(id));
     this.store.runs.insert({
       id,
       kind,
@@ -164,6 +193,7 @@ export class Orchestrator {
       branch: opts.branch ?? null,
       prUrl: null,
       model: opts.model ?? this.pinnedModel(opts.kind ?? 'interactive'),
+      runnerId,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,
@@ -173,7 +203,7 @@ export class Orchestrator {
     this.broadcast({ t: 'runs.changed' });
 
     try {
-      await this.pool.spawn({ runId: id, cwd, moxxyCliPath: this.moxxyCliPath });
+      await backend.spawn(id, cwd);
       this.setStatus(id, 'running');
     } catch (err) {
       this.setStatus(id, 'failed', String(err));
@@ -188,10 +218,9 @@ export class Orchestrator {
   async resumeRun(runId: string): Promise<RunRecord> {
     const row = this.store.runs.get(runId);
     if (!row) throw new Error(`unknown run: ${runId}`);
-    if (!this.pool.get(runId)) {
-      mkdirSync(row.cwd, { recursive: true });
+    if (!this.isLive(runId)) {
       try {
-        await this.pool.spawn({ runId, cwd: row.cwd, moxxyCliPath: this.moxxyCliPath });
+        await this.backend(runId).spawn(runId, row.cwd);
       } catch (err) {
         log.warn('resume failed', { runId, err: String(err) });
         throw new Error(`could not resume: ${err instanceof Error ? err.message : String(err)}`);
@@ -205,8 +234,7 @@ export class Orchestrator {
   }
 
   async stopRun(runId: string): Promise<void> {
-    const handle = this.pool.get(runId);
-    if (handle) await handle.stop();
+    await this.backend(runId).stop(runId);
     const row = this.store.runs.get(runId);
     if (row && row.status === 'running') this.setStatus(runId, 'stopped');
     this.emitRunChanged(runId);
@@ -249,21 +277,21 @@ export class Orchestrator {
   // ---------- interaction -----------------------------------------------------------
 
   async sendPrompt(runId: string, prompt: string, model?: string): Promise<{ turnId: string }> {
-    const handle = this.requireLive(runId);
+    const backend = this.requireLive(runId);
     // Per-turn pin > the run's persisted override > the daemon default.
     let chosen = model ?? this.store.runs.get(runId)?.model ?? this.config.defaultModel;
     // Disabled selections quietly ride the daemon default instead of erroring.
     if (chosen !== this.config.defaultModel && this.disabledModels().has(chosen)) {
       chosen = this.config.defaultModel;
     }
-    const result = await handle.client.runTurn({ prompt, model: chosen });
+    const result = await backend.runTurn(runId, { prompt, model: chosen });
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
   }
 
   async setGoalMode(runId: string): Promise<void> {
-    await this.requireLive(runId).client.setMode('goal');
+    await this.requireLive(runId).setMode(runId, 'goal');
   }
 
   // ---------- model switching -----------------------------------------------------
@@ -303,8 +331,7 @@ export class Orchestrator {
   async modelCatalog(runId: string): Promise<ModelCatalog> {
     const disabledProviders = this.disabledProviders();
     const disabledModels = this.disabledModels();
-    const handle = this.requireLive(runId);
-    const info = (await handle.client.sessionInfo()) as {
+    const info = (await this.requireLive(runId).sessionInfo(runId)) as {
       activeProvider?: unknown;
       providers?: unknown;
       readyProviders?: unknown;
@@ -362,7 +389,7 @@ export class Orchestrator {
     defaultModel: string;
     fresh: boolean;
   }> {
-    const liveId = this.pool.liveIds()[0];
+    const liveId = this.runners.localBackend.liveIds()[0];
     if (liveId) {
       try {
         const catalog = await this.modelCatalog(liveId);
@@ -400,19 +427,17 @@ export class Orchestrator {
     this.lastCatalogProbeAt = Date.now();
     const job = (async () => {
       const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
-      const cwd = paths.scratch();
-      mkdirSync(cwd, { recursive: true });
+      // The catalog probe is a local convenience — spawn on the local backend.
+      const local = this.runners.localBackend;
       try {
-        await this.pool.spawn({ runId: probeId, cwd, moxxyCliPath: this.moxxyCliPath });
+        const cwd = await local.scratchDir(probeId);
+        await local.spawn(probeId, cwd);
         await this.modelCatalog(probeId); // success path writes the cache
         log.info('model catalog probed via temporary gateway');
       } catch (err) {
         log.warn('model catalog probe failed', { err: String(err) });
       } finally {
-        await this.pool
-          .get(probeId)
-          ?.stop()
-          .catch(() => undefined);
+        await local.stop(probeId).catch(() => undefined);
       }
     })();
     this.catalogProbe = job.finally(() => {
@@ -429,17 +454,17 @@ export class Orchestrator {
    */
   async setRunModel(runId: string, model: string | null, provider?: string): Promise<RunRecord> {
     if (!this.store.runs.get(runId)) throw new Error(`unknown run: ${runId}`);
-    const handle = this.pool.get(runId);
-    if (handle?.client.isOpen) {
+    if (this.isLive(runId)) {
+      const backend = this.backend(runId);
       if (provider) {
-        await handle.client
-          .setProvider(provider)
-          .catch(() => handle.client.runCommand('provider', provider))
+        await backend
+          .setProvider(runId, provider)
+          .catch(() => backend.runCommand(runId, 'provider', provider))
           .catch((err) => log.warn('provider switch failed', { runId, provider, err: String(err) }));
       }
-      await handle.client
-        .setModel(model)
-        .catch(() => (model ? handle.client.runCommand('model', model) : undefined))
+      await backend
+        .setModel(runId, model)
+        .catch(() => (model ? backend.runCommand(runId, 'model', model) : undefined))
         .catch((err) => log.warn('session model sync failed', { runId, err: String(err) }));
     }
     this.store.runs.setModel(runId, model);
@@ -448,7 +473,7 @@ export class Orchestrator {
   }
 
   async abortTurn(runId: string, turnId?: string): Promise<void> {
-    await this.requireLive(runId).client.abortTurn(turnId);
+    await this.requireLive(runId).abortTurn(runId, turnId);
   }
 
   async respondAsk(
@@ -456,14 +481,12 @@ export class Orchestrator {
     requestId: string,
     response: { mode?: 'allow' | 'allow_session' | 'allow_always' | 'deny'; optionId?: string; text?: string },
   ): Promise<void> {
-    await this.requireLive(runId).client.respondAsk(requestId, response);
+    await this.requireLive(runId).respondAsk(runId, requestId, response);
     this.asksFor(runId).delete(requestId);
   }
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
-    const handle = this.pool.get(runId);
-    if (handle?.client.isOpen) return handle.client.loadHistory(runId, before, limit);
-    return readSessionHistory(runId, before, limit);
+    return this.backend(runId).loadHistory(runId, before, limit);
   }
 
   // ---------- autonomous runs ---------------------------------------------------------
@@ -553,7 +576,7 @@ export class Orchestrator {
 
   // ---------- internals -----------------------------------------------------------
 
-  private onEvent(runId: string, event: MoxxyEvent): void {
+  onEvent(runId: string, event: MoxxyEvent): void {
     if (event.type === 'provider_response') {
       const input = numberField(event, 'inputTokens');
       const output = numberField(event, 'outputTokens');
@@ -583,12 +606,13 @@ export class Orchestrator {
     this.broadcast({ t: 'event', runId, event });
   }
 
-  private requireLive(runId: string) {
-    const handle = this.pool.get(runId);
-    if (!handle || !handle.client.isOpen) {
+  /** The run's backend, asserting a live gateway is attached. */
+  private requireLive(runId: string): RunnerBackend {
+    const backend = this.backend(runId);
+    if (!backend.isLive(runId)) {
       throw new Error(`run ${runId} has no live gateway (resume it first)`);
     }
-    return handle;
+    return backend;
   }
 
   private asksFor(runId: string): Map<string, AskRequest> {

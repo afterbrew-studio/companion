@@ -127,6 +127,13 @@ const icons = {
       <path d="M16 5.5a3.5 3.5 0 0 1 0 6.6M17.5 14.5c2.1.8 3.5 2.9 3.5 5.5" />
     </svg>
   ),
+  runners: (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+      <rect x="3" y="4" width="18" height="7" rx="1.5" />
+      <rect x="3" y="13" width="18" height="7" rx="1.5" />
+      <path d="M6.5 7.5h.01M6.5 16.5h.01" />
+    </svg>
+  ),
 };
 
 export const MODULES: readonly AppModule[] = [
@@ -255,6 +262,15 @@ export const MODULES: readonly AppModule[] = [
     permission: 'settings:manage',
     section: 'admin',
     icon: icons.github,
+  },
+  {
+    key: 'runners',
+    label: 'Runners',
+    hash: '#/runners',
+    shortcut: 'n',
+    permission: 'runners:manage',
+    section: 'admin',
+    icon: icons.runners,
   },
   {
     key: 'users',

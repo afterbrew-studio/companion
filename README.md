@@ -11,7 +11,7 @@ Everything is scoped to a **workspace** (a named group of repositories). Each wo
 - **Pull Requests** — review PRs, inspect CI status, and run manual or automatic pipelines.
 - **Pipelines** — compose typed steps such as CI gates, AI review, custom agent runs, labels, and comments.
 - **Agent Runs** — monitor every moxxy-backed run and its lifecycle.
-- **Automations, Repositories, Settings, and Users** — configure workspace behavior and access.
+- **Automations, Repositories, Settings, Users, and Runners** — configure workspace behavior, access, and execution machines.
 
 Auth and RBAC are built in. The three roles are `admin` (everything), `maintainer` (day-to-day repo work), and `business` (proposals only). Every REST route declares the permission it requires, and the SPA hides modules the signed-in role cannot use.
 
@@ -23,11 +23,31 @@ moxxy is an **external runtime**, not a package dependency in this repository. C
 
 Every agent run uses its own `moxxy serve` + gateway process pair under an isolated `MOXXY_HOME` inside Companion's data directory (`~/.companion/moxxy-home` by default, `/data/moxxy-home` in Docker). This keeps Companion sessions separate from the user's normal moxxy desktop/TUI/CLI sessions.
 
+### Runners (multi-machine execution)
+
+A **runner** is a machine that executes agent work. Companion ships with the built-in **local runner** — the machine `companiond` runs on — and can attach any number of **remote runners**: other machines running the `companion-runner` agent, reached over the network with a bearer token.
+
+Each runner is either **shared** (eligible for any workspace) or **delegated** (serves only the workspaces you assign it), and repos can pin a preferred runner. When an agent run starts, Companion places it on an eligible, online runner and prepares its git worktree there, so the whole run — gateway, clone, worktree, and session history — lives on one machine. The local execution path is unchanged; remote runners are entirely additive. Manage them in the admin **Runners** module.
+
+The agent publishes as a standalone package — a machine needs only Node and the moxxy CLI, not a Companion checkout. To attach one, install it, check it's ready, start it, and register the endpoint + token in Runners:
+
+```sh
+npm i -g @moxxy/companion-runner
+companion-runner setup   # installs the moxxy CLI if missing, imports providers
+
+COMPANION_RUNNER_TOKEN=<shared-secret> \
+COMPANION_RUNNER_GITHUB_TOKEN=<pat-for-clone-push> \
+companion-runner
+```
+
+`companion-runner doctor` reports what a box still needs. See `apps/companion-runner/README.md` for the full environment. (In a monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.)
+
 ## Repository layout
 
-- `apps/companiond` — local daemon: typed route registry + RBAC, auth sessions, run orchestration, gateway pool, GitHub sync/checks, pipeline engine, SQLite store, HTTP+WS server.
+- `apps/companiond` — local daemon: typed route registry + RBAC, auth sessions, run orchestration, the runner registry (local + remote backends) and placement, GitHub sync/checks, pipeline engine, SQLite store, HTTP+WS server.
+- `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companiond` over HTTP+WS.
 - `apps/web` — React SPA served by companiond in production and by Vite in development.
-- `packages/contract` — shared domain types, RBAC permissions, REST DTOs, pipeline step unions, and the moxxy gateway wire subset.
+- `packages/contract` — shared domain types, RBAC permissions, REST DTOs, pipeline step unions, the moxxy gateway wire subset, and the runner-agent protocol.
 
 ## Prerequisites
 

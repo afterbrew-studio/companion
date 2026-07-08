@@ -7,6 +7,7 @@ import { ChevronDown, Dropdown, Modal } from './components/ui.js';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
 import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
+import { Onboarding, hasOnboarded, hasUnseenOnboarding, type OnboardingMode } from './components/Onboarding.js';
 import { Inbox } from './components/Inbox.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { MODULES } from './modules.js';
@@ -30,6 +31,7 @@ import { SkillsPage } from './pages/Skills.js';
 import { GithubAccountsPage } from './pages/GithubAccounts.js';
 import { ProvidersPage } from './pages/Providers.js';
 import { AutomationsPage } from './pages/Automations.js';
+import { RunnersPage } from './pages/Runners.js';
 import { SettingsPage } from './pages/Settings.js';
 
 function useHashRoute(): string {
@@ -151,6 +153,12 @@ function Shell(): JSX.Element {
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // Onboarding: the full tour on first entry; a "what's new" popup when new
+  // steps have shipped since the user last looked; replayable (full) from the
+  // shortcuts help.
+  const [tour, setTour] = useState<OnboardingMode | null>(() =>
+    !hasOnboarded() ? 'full' : hasUnseenOnboarding(can) ? 'whatsnew' : null,
+  );
   // Mounted on first open and kept alive: the conversation (and the exit
   // slide animation) survive closing the panel.
   const [assistantMounted, setAssistantMounted] = useState(false);
@@ -275,7 +283,12 @@ function Shell(): JSX.Element {
               {!rail && foldedSections.has(section)
                 ? null
                 : modules.map((m) => {
-                const active = hash.startsWith(m.hash) || (m.key === 'overview' && hash === '#/');
+                // Boundary-aware match: #/runners must not light up #/runs.
+                const active =
+                  hash === m.hash ||
+                  hash.startsWith(`${m.hash}/`) ||
+                  hash.startsWith(`${m.hash}?`) ||
+                  (m.key === 'overview' && hash === '#/');
                 return (
                   <a
                     key={m.key}
@@ -373,7 +386,17 @@ function Shell(): JSX.Element {
         </ErrorBoundary>
       ) : null}
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
-      {helpOpen ? <ShortcutHelp targets={shortcutTargets} onClose={() => setHelpOpen(false)} /> : null}
+      {helpOpen ? (
+        <ShortcutHelp
+          targets={shortcutTargets}
+          onClose={() => setHelpOpen(false)}
+          onReplayTour={() => {
+            setHelpOpen(false);
+            setTour('full');
+          }}
+        />
+      ) : null}
+      {tour ? <Onboarding mode={tour} onClose={() => setTour(null)} /> : null}
     </div>
   );
 }
@@ -634,7 +657,11 @@ function crumbsFor(path: string): Array<{ label: string; href?: string }> {
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
   if (m) return [{ label: 'Pull Requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
-  const mod = MODULES.find((mm) => path.startsWith(mm.hash.slice(1)));
+  // Boundary-aware match: /runners must not resolve to the Agent Runs module.
+  const mod = MODULES.find((mm) => {
+    const base = mm.hash.slice(1);
+    return path === base || path.startsWith(`${base}/`);
+  });
   return [{ label: mod?.label ?? 'Overview' }];
 }
 
@@ -769,6 +796,8 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (path.startsWith('/issues')) return guard(can('issues:read'), <IssuesAreaPage />);
   if (path.startsWith('/prs')) return guard(can('prs:read'), <PrsAreaPage />);
   if (path.startsWith('/pipelines')) return guard(can('pipelines:read'), <PipelinesPage />);
+  // Admin route, but it must sit before /runs — that prefix would swallow it.
+  if (path.startsWith('/runners')) return guard(can('runners:manage'), <RunnersPage />);
   if (path.startsWith('/runs')) return guard(can('runs:read'), <RunsPage />);
   if (path.startsWith('/automations')) return guard(can('automations:manage'), <AutomationsPage />);
   if (path.startsWith('/repos')) return guard(can('repos:manage'), <ReposPage />);

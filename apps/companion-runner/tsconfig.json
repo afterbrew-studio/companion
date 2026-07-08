@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The runner reuses companiond's proven modules via relative imports
+    // (../companiond/src/...), so the program spans two app directories.
+    // No rootDir: tsc computes the common source root (apps/) and emits
+    // dist/companion-runner/src/... + dist/companiond/src/... side by side.
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

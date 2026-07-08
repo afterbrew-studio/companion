@@ -81,8 +81,9 @@ async function main(): Promise<void> {
   };
 
   const checkouts = new Checkouts(() => ghAccounts.tokenFor('runs') ?? store.settings.get('github_token'));
-  const orchestrator = new Orchestrator(store, config, moxxyCli?.path ?? 'moxxy', broadcast);
+  const orchestrator = new Orchestrator(store, config, checkouts, moxxyCli, broadcast);
   orchestrator.recover();
+  orchestrator.start();
   const dangling = store.proposals.resetDangling();
   if (dangling > 0) log.info(`reset ${dangling} proposal(s) stuck in 'analyzing' from previous daemon life`);
   const danglingSpecs = store.specs.resetDangling();
@@ -94,7 +95,7 @@ async function main(): Promise<void> {
   sync.start();
   const triage = new Triage(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), broadcast);
   const prReviews = new PrReviews(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), prChecks, broadcast);
-  const fixes = new Fixes(store, orchestrator, checkouts, () => ghAccounts.clientFor('runs'), prChecks, broadcast);
+  const fixes = new Fixes(store, orchestrator, () => ghAccounts.clientFor('runs'), prChecks, broadcast);
   const proposals = new Proposals(store, orchestrator, fixes, checkouts, broadcast);
   proposalsRef = proposals;
   const pipelines = new Pipelines(
@@ -155,6 +156,7 @@ async function main(): Promise<void> {
       specs,
       docs,
       assistant,
+      runners: orchestrator.runners,
     },
     hub,
     staticDir: existsSync(join(builtSpa, 'index.html')) ? builtSpa : undefined,

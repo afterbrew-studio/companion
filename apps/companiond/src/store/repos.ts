@@ -71,6 +71,10 @@ export class ReposStore {
     this.db.prepare(`UPDATE repos SET github_account_id = ? WHERE full_name = ?`).run(accountId, fullName);
   }
 
+  setRunner(fullName: string, runnerId: string | null): void {
+    this.db.prepare(`UPDATE repos SET runner_id = ? WHERE full_name = ?`).run(runnerId, fullName);
+  }
+
   get(fullName: string): RepoRow | undefined {
     return this.db.prepare(`SELECT * FROM repos WHERE full_name = ?`).get(fullName) as RepoRow | undefined;
   }
@@ -92,6 +96,7 @@ export interface RepoRow {
   name: string;
   workspace_id: string;
   github_account_id: string | null;
+  runner_id: string | null;
   default_branch: string;
   private: number;
   clone_ready: number;
@@ -107,6 +112,7 @@ export interface RepoRow {
 export function rowToRepo(row: RepoRow): RepoRecord {
   return {
     githubAccountId: row.github_account_id ?? null,
+    runnerId: row.runner_id ?? null,
     fullName: row.full_name,
     owner: row.owner,
     name: row.name,

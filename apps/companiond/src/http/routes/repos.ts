@@ -127,6 +127,23 @@ export function repoRoutes(deps: ApiDeps): CompiledRoute[] {
       },
     }),
 
+    /** Pin (or clear) the runner this repo's agent work prefers. */
+    route({
+      method: 'PATCH',
+      path: '/api/repos/:owner/:name/runner',
+      access: 'repos:manage',
+      body: z.object({ runnerId: z.string().max(60).nullable() }),
+      handler: ({ params, body }) => {
+        const { fullName } = requireRepo(params.owner, params.name);
+        if (body.runnerId && !deps.runners.get(body.runnerId)) {
+          throw notFound(`unknown runner: ${body.runnerId}`);
+        }
+        deps.store.repos.setRunner(fullName, body.runnerId);
+        deps.broadcast({ t: 'repos.changed' });
+        return { repo: rowToRepo(deps.store.repos.get(fullName)!) };
+      },
+    }),
+
     /** Kick a platform pipeline against this repo (no issue/PR payload). */
     route({
       method: 'POST',

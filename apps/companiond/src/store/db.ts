@@ -18,6 +18,7 @@ import { DocsStore } from './docs.js';
 import { PipelinesStore } from './pipelines.js';
 import { ReportsStore } from './reports.js';
 import { NotificationsStore } from './notifications.js';
+import { RunnersStore } from './runners.js';
 
 /**
  * Companion's domain store. Rows are the source of truth for run/proposal
@@ -48,6 +49,7 @@ export class Store {
   public readonly pipelines: PipelinesStore;
   public readonly reports: ReportsStore;
   public readonly notifications: NotificationsStore;
+  public readonly runners: RunnersStore;
 
   constructor(file = paths.db()) {
     this.db = new Database(file);
@@ -70,6 +72,7 @@ export class Store {
     this.pipelines = new PipelinesStore(this.db);
     this.reports = new ReportsStore(this.db);
     this.notifications = new NotificationsStore(this.db);
+    this.runners = new RunnersStore(this.db);
     this.workspaces.ensureDefault();
   }
 
@@ -81,3 +84,4 @@ export class Store {
 export { rowToRun, type RunRow } from './runs.js';
 export { rowToRepo, type RepoRow } from './repos.js';
 export type { GithubAccountRow } from './github-accounts.js';
+export { LOCAL_RUNNER_ID, type RunnerRow } from './runners.js';

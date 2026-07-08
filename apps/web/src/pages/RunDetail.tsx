@@ -18,8 +18,24 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [runnerNames, setRunnerNames] = useState<ReadonlyMap<string, string> | null>(null);
   const foldRef = useRef(fold);
   foldRef.current = fold;
+
+  // Resolve the runner id to its display name — fetched once, and only when
+  // the run is pinned to an explicit runner. Viewers without runners:manage
+  // fall back to showing the raw id.
+  useEffect(() => {
+    if (!run?.runnerId || runnerNames) return;
+    let alive = true;
+    api
+      .listRunners()
+      .then(({ runners }) => alive && setRunnerNames(new Map(runners.map((r) => [r.id, r.name]))))
+      .catch(() => alive && setRunnerNames(new Map()));
+    return () => {
+      alive = false;
+    };
+  }, [run?.runnerId, runnerNames]);
 
   const refresh = useCallback(async () => {
     try {
@@ -121,6 +137,11 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
                 {formatTokens(fold.inputTokens + run.inputTokens)} in ·{' '}
                 {formatTokens(fold.outputTokens + run.outputTokens)} out
               </span>
+              {run.runnerId ? (
+                <span className="dim" title="Machine executing this run">
+                  on {runnerNames?.get(run.runnerId) ?? run.runnerId}
+                </span>
+              ) : null}
             </div>
           ) : null}
         </div>

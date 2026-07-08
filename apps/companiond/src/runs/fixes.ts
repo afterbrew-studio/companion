@@ -1,9 +1,9 @@
 import type { PrRecord, RunRecord, SpaServerMessage } from '@companion/contract';
 import type { Store } from '../store/db.js';
 import type { Orchestrator } from './orchestrator.js';
-import type { Checkouts } from '../git/checkouts.js';
 import type { GitHubClient } from '../github/client.js';
 import type { PrChecks } from '../prs/checks.js';
+import type { RunnerBackend } from '../runners/backend.js';
 
 const MAX_DIFF_CHARS = 60_000;
 
@@ -13,25 +13,32 @@ const MAX_DIFF_CHARS = 60_000;
  * fresh-branch runs (fix an issue, implement a proposal) open a NEW PR on
  * approval; PR-branch runs (repair failing checks, address review feedback)
  * continue an EXISTING PR's branch and push straight to it.
+ *
+ * The worktree lives on the run's placed runner (local or remote): placement
+ * happens up front, the worktree + clone are prepared through that runner's
+ * backend, and diff/commit/push route back to the same backend so the whole
+ * fix executes on one machine.
  */
 export class Fixes {
   constructor(
     private readonly store: Store,
     private readonly orchestrator: Orchestrator,
-    private readonly checkouts: Checkouts,
     private readonly github: () => GitHubClient | null,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
+
+  /** Backend a completed/queued run's worktree lives on. */
+  private backendForRun(runnerId: string | null): RunnerBackend {
+    return this.orchestrator.runners.backend(runnerId);
+  }
 
   async startFix(repo: string, issueNumber: number): Promise<RunRecord> {
     const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
     const repoRow = this.store.repos.get(repo);
     if (!repoRow) throw new Error(`unknown repo ${repo}`);
-    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    // Create the run row first so the worktree can be named after it.
     const run = await this.createGoalRun({
       kind: 'fix',
       title: `Fix #${issueNumber}: ${issue.title.slice(0, 60)}`,
@@ -45,8 +52,9 @@ export class Fixes {
   }
 
   /**
-   * Shared goal-run bootstrap for fixes and proposal implementations:
-   * worktree + branch → run with cwd=worktree → goal mode → objective prompt.
+   * Shared goal-run bootstrap for fixes and proposal implementations: place →
+   * ensure clone + worktree on the chosen runner → run with cwd=worktree →
+   * goal mode → objective prompt.
    */
   async createGoalRun(opts: {
     kind: 'fix' | 'implement';
@@ -60,13 +68,21 @@ export class Fixes {
   }): Promise<RunRecord> {
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
+    const runnerId = this.orchestrator.runners.place(opts.repo);
+    const backend = this.backendForRun(runnerId);
+    await backend.ensureClone(opts.repo);
+    const cwd = await backend.addWorktree(
+      opts.repo,
+      `${opts.kind}-${suffix}-${Math.random().toString(36).slice(2, 8)}`,
+      branch,
+      opts.baseBranch,
+    );
 
     const run = await this.orchestrator.createRun({
       kind: opts.kind,
       title: opts.title,
-      // Temporary cwd; replaced by the worktree before the gateway spawns? No —
-      // the worktree must exist first, so we create it named after a fresh id.
-      cwd: await this.checkouts.addWorktree(opts.repo, `${opts.kind}-${suffix}-${Math.random().toString(36).slice(2, 8)}`, branch, opts.baseBranch),
+      runnerId,
+      cwd,
       repo: opts.repo,
       issueNumber: opts.issueNumber ?? null,
       proposalId: opts.proposalId ?? null,
@@ -127,16 +143,18 @@ export class Fixes {
     if (!pr.headRef) throw new Error('PR has no head branch');
     const client = this.github();
     if (!client) throw new Error('GitHub is not configured');
-    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     return { pr, client };
   }
 
   /** Worktree AT the PR head; the run carries the PR so approve pushes to it. */
   private async createPrBranchRun(pr: PrRecord, title: string, objective: string): Promise<RunRecord> {
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
+    const runnerId = this.orchestrator.runners.place(pr.repo);
+    const backend = this.backendForRun(runnerId);
     let cwd: string;
     try {
-      cwd = await this.checkouts.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef);
+      await backend.ensureClone(pr.repo);
+      cwd = await backend.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef);
     } catch (err) {
       throw new Error(
         `could not check out ${pr.headRef} from origin — fork-branch PRs are not supported yet (${err instanceof Error ? err.message.split('\n')[0] : String(err)})`,
@@ -145,6 +163,7 @@ export class Fixes {
     const run = await this.orchestrator.createRun({
       kind: 'fix',
       title,
+      runnerId,
       cwd,
       repo: pr.repo,
       issueNumber: pr.number,
@@ -165,7 +184,7 @@ export class Fixes {
     // PR-branch runs diff against the PR head (only the agent's delta);
     // fresh-branch runs diff against the default branch.
     const base = run.pr_url && run.branch ? run.branch : (repoRow?.default_branch ?? 'main');
-    const diff = await this.checkouts.diffVsBase(run.cwd, base);
+    const diff = await this.backendForRun(run.runner_id).diffVsBase(run.cwd, base);
     return { diff, branch: run.branch };
   }
 
@@ -181,8 +200,9 @@ export class Fixes {
     const client = this.github();
     if (!client) throw new Error('GitHub is not configured');
 
-    await this.checkouts.commitAll(run.cwd, opts.title ?? run.title);
-    await this.checkouts.push(run.repo, run.cwd, run.branch);
+    const backend = this.backendForRun(run.runner_id);
+    await backend.commitAll(run.cwd, opts.title ?? run.title);
+    await backend.push(run.repo, run.cwd, run.branch);
 
     if (run.pr_url) {
       this.orchestrator.markRun(runId, 'completed', `pushed to ${run.branch} (${run.pr_url})`);
@@ -216,7 +236,7 @@ export class Fixes {
     if (!run) throw new Error('run not found');
     await this.orchestrator.stopRun(runId).catch(() => undefined);
     if (run.repo && run.cwd.includes('worktrees')) {
-      await this.checkouts.removeWorktree(run.repo, run.cwd);
+      await this.backendForRun(run.runner_id).removeWorktree(run.repo, run.cwd).catch(() => undefined);
     }
     this.orchestrator.markRun(runId, 'abandoned', 'discarded by user');
   }

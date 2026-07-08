@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GitHubAccountRecord, RepoRecord, WorkspaceRecord } from '@companion/contract';
+import type { GitHubAccountRecord, RepoRecord, RunnerRecord, WorkspaceRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
@@ -15,6 +15,7 @@ export function ReposPage(): JSX.Element {
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
+  const [runners, setRunners] = useState<RunnerRecord[]>([]);
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,10 @@ export function ReposPage(): JSX.Element {
       .listGithubAccounts()
       .then((r) => setAccounts(r.accounts))
       .catch(() => setAccounts([]));
+    api
+      .listRunners()
+      .then((r) => setRunners(r.runners))
+      .catch(() => setRunners([]));
     return onServerMessage((msg) => {
       if (msg.t === 'repos.changed' || msg.t === 'workspaces.changed') void refresh();
     });
@@ -72,7 +77,7 @@ export function ReposPage(): JSX.Element {
       {repos.length > 0 ? (
         <div className="flex flex-col gap-3">
           {repos.map((repo) => (
-            <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} accounts={accounts} onChange={refresh} onError={setError} />
+            <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} accounts={accounts} runners={runners} onChange={refresh} onError={setError} />
           ))}
         </div>
       ) : (
@@ -120,12 +125,14 @@ function RepoCard({
   repo,
   workspaces,
   accounts,
+  runners,
   onChange,
   onError,
 }: {
   repo: RepoRecord;
   workspaces: readonly WorkspaceRecord[];
   accounts: readonly GitHubAccountRecord[];
+  runners: readonly RunnerRecord[];
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
@@ -229,6 +236,27 @@ function RepoCard({
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.login}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {/* A pin is pointless while only the local runner exists — hide it. */}
+        {runners.length > 1 ? (
+          <label className="dim flex items-center gap-1.5 text-xs">
+            runs on
+            <select
+              className="input py-1.5"
+              value={repo.runnerId ?? ''}
+              disabled={busy}
+              aria-label={`Runner executing agent work for ${repo.fullName}`}
+              title="Agent runs for this repo execute on this machine"
+              onChange={(e) => void act(() => api.setRepoRunner(repo.fullName, e.target.value || null))()}
+            >
+              <option value="">auto (place among eligible)</option>
+              {runners.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
                 </option>
               ))}
             </select>

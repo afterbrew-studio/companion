@@ -31,6 +31,7 @@ export type Permission =
   | 'automations:manage'
   | 'reports:read'
   | 'skills:manage'
+  | 'runners:manage'
   | 'settings:manage'
   | 'users:manage';
 
@@ -58,6 +59,7 @@ const ALL_PERMISSIONS: readonly Permission[] = [
   'automations:manage',
   'reports:read',
   'skills:manage',
+  'runners:manage',
   'settings:manage',
   'users:manage',
 ];
@@ -70,7 +72,11 @@ const ALL_PERMISSIONS: readonly Permission[] = [
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: ALL_PERMISSIONS,
   maintainer: ALL_PERMISSIONS.filter(
-    (p) => p !== 'settings:manage' && p !== 'workspaces:manage' && p !== 'users:manage',
+    (p) =>
+      p !== 'settings:manage' &&
+      p !== 'workspaces:manage' &&
+      p !== 'users:manage' &&
+      p !== 'runners:manage',
   ),
   business: ['workspaces:read', 'repos:read', 'proposals:read', 'proposals:create', 'specs:read', 'docs:read'],
 };

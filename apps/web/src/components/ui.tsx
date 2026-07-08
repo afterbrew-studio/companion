@@ -950,6 +950,71 @@ export function ActionMenu({ actions, label = 'More actions' }: { actions: MenuA
   );
 }
 
+/**
+ * ✦ AI menu: every agent action in a toolbar behind one sparkle trigger —
+ * the emerald accent marks it as AI, same as the AI Help header button.
+ */
+export function AiActionMenu({
+  actions,
+  busy = false,
+  label = 'AI actions',
+}: {
+  actions: MenuAction[];
+  /** An action is in flight — the sparkle becomes a spinner. */
+  busy?: boolean;
+  label?: string;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors ${
+          open
+            ? 'border-emerald-500/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+            : 'border-emerald-500/40 text-emerald-600 hover:border-emerald-500/70 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
+        }`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {busy ? (
+          <Spinner />
+        ) : (
+          <svg viewBox="0 0 20 20" fill="none" className="size-4" aria-hidden>
+            <path
+              d="M10 2.5l1.7 4.3 4.3 1.7-4.3 1.7L10 14.5 8.3 10.2 4 8.5l4.3-1.7L10 2.5z"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinejoin="round"
+            />
+            <path d="M15.5 12.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" fill="currentColor" stroke="none" />
+          </svg>
+        )}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label={label}
+          className="absolute top-full right-0 z-30 mt-1.5 w-60 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <MenuItems actions={actions} onClose={() => setOpen(false)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const PR_STATE_GLYPHS = {
   pr: (
     <>

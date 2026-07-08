@@ -97,9 +97,11 @@ export function useAppShortcuts(targets: readonly ShortcutTarget[]): {
 export function ShortcutHelp({
   targets,
   onClose,
+  onReplayTour,
 }: {
   targets: readonly ShortcutTarget[];
   onClose: () => void;
+  onReplayTour?: () => void;
 }): JSX.Element {
   return (
     <div
@@ -127,6 +129,13 @@ export function ShortcutHelp({
           <ShortcutRow keys={['?']} label="Toggle this help" />
           <ShortcutRow keys={['Esc']} label="Close dialogs" />
         </dl>
+        {onReplayTour ? (
+          <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <button className="linkish text-sm" onClick={onReplayTour}>
+              Replay the welcome tour
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

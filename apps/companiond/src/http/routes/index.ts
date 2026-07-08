@@ -16,6 +16,7 @@ import { runRoutes } from './runs.js';
 import { notificationRoutes } from './notifications.js';
 import { generateRoutes } from './generate.js';
 import { githubRoutes } from './github.js';
+import { runnerRoutes } from './runners.js';
 
 /**
  * The whole API is the concatenation of per-module route registries. Adding a
@@ -40,5 +41,6 @@ export function buildRoutes(deps: ApiDeps): CompiledRoute[] {
     ...notificationRoutes(deps),
     ...generateRoutes(deps),
     ...githubRoutes(deps),
+    ...runnerRoutes(deps),
   ];
 }

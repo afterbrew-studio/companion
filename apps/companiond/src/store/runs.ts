@@ -8,10 +8,15 @@ export class RunsStore {
   insert(run: Omit<RunRecord, 'live'>): void {
     this.db
       .prepare(
-        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, created_at, updated_at, input_tokens, output_tokens, outcome)
-         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
+        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, created_at, updated_at, input_tokens, output_tokens, outcome)
+         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
       .run(run);
+  }
+
+  /** Set the run's cwd + runner after placement (before the gateway spawns). */
+  setPlacement(id: string, runnerId: string | null, cwd: string): void {
+    this.db.prepare(`UPDATE runs SET runner_id = ?, cwd = ?, updated_at = ? WHERE id = ?`).run(runnerId, cwd, Date.now(), id);
   }
 
   setModel(id: string, model: string | null): void {
@@ -73,6 +78,7 @@ export interface RunRow {
   branch: string | null;
   pr_url: string | null;
   model: string | null;
+  runner_id: string | null;
   created_at: number;
   updated_at: number;
   input_tokens: number;
@@ -93,6 +99,7 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     branch: row.branch,
     prUrl: row.pr_url,
     model: row.model,
+    runnerId: row.runner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     live,

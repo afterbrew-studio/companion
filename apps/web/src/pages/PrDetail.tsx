@@ -15,7 +15,7 @@ import { Markdown } from '../components/Markdown.js';
 import { AgentActivity } from '../components/AgentActivity.js';
 import { AccountPicker } from '../components/AccountPicker.js';
 import { CommentsSection } from '../components/Comments.js';
-import { ActionMenu, ChevronDown, Page, ChecksBadge, CopyText, GitHubUser, PageLoading, PrStateIcon, Spinner, pipelineStatusBadge, timeAgo, useConfirm } from '../components/ui.js';
+import { ActionMenu, AiActionMenu, ChevronDown, Page, ChecksBadge, CopyText, GitHubUser, Modal, PageLoading, PrStateIcon, Spinner, pipelineStatusBadge, timeAgo, useConfirm, type MenuAction } from '../components/ui.js';
 
 export function PrDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
   const { can } = useAuth();
@@ -28,6 +28,7 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
   const [analyzing, setAnalyzing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [agentBusy, setAgentBusy] = useState<'checks' | 'reviews' | null>(null);
+  const [runningPipeline, setRunningPipeline] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const canAct = can('prs:act');
@@ -98,6 +99,34 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
 
   if (!pr) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;
 
+  // Every agent trigger lives behind the one sparkle menu — the toolbar stays
+  // three elements no matter how many AI actions apply.
+  const aiActions: MenuAction[] = [];
+  if (canAct) {
+    aiActions.push({
+      label: analyzing ? 'Reviewing…' : review ? 'Re-run AI review' : 'AI review',
+      disabled: analyzing,
+      onSelect: () => void analyze(),
+    });
+    if (pr.state === 'open' && pr.checks?.state === 'failing') {
+      aiActions.push({
+        label: 'Fix failing checks',
+        disabled: agentBusy !== null,
+        onSelect: () => void startAgent('checks')(),
+      });
+    }
+    if (pr.state === 'open' && pr.reviewDecision === 'changes_requested') {
+      aiActions.push({
+        label: 'Address review feedback',
+        disabled: agentBusy !== null,
+        onSelect: () => void startAgent('reviews')(),
+      });
+    }
+  }
+  if (can('pipelines:run') && pr.state === 'open' && pipelines.length > 0) {
+    aiActions.push({ label: 'Run pipeline…', onSelect: () => setRunningPipeline(true) });
+  }
+
   return (
     <Page className="anim-in">
       <header>
@@ -109,40 +138,12 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
             {pr.title}
           </h1>
           <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Pull request actions">
-            {canAct ? (
-              <button className="btn" disabled={analyzing} onClick={() => void analyze()}>
-                {analyzing ? (
-                  <>
-                    <Spinner /> Reviewing…
-                  </>
-                ) : review ? (
-                  'Re-review'
-                ) : (
-                  'AI review'
-                )}
-              </button>
-            ) : null}
-            {canAct && pr.state === 'open' && pr.checks?.state === 'failing' ? (
-              <button className="btn-ghost" disabled={agentBusy !== null} onClick={() => void startAgent('checks')()}>
-                {agentBusy === 'checks' ? (
-                  <>
-                    <Spinner /> Starting…
-                  </>
-                ) : (
-                  '✦ Fix failing checks'
-                )}
-              </button>
-            ) : null}
-            {canAct && pr.state === 'open' && pr.reviewDecision === 'changes_requested' ? (
-              <button className="btn-ghost" disabled={agentBusy !== null} onClick={() => void startAgent('reviews')()}>
-                {agentBusy === 'reviews' ? (
-                  <>
-                    <Spinner /> Starting…
-                  </>
-                ) : (
-                  '✦ Address review feedback'
-                )}
-              </button>
+            {aiActions.length > 0 ? (
+              <AiActionMenu
+                label="AI actions"
+                busy={analyzing || agentBusy !== null}
+                actions={aiActions}
+              />
             ) : null}
             <a className="btn-ghost" href={pr.url} target="_blank" rel="noreferrer">
               GitHub ↗
@@ -208,17 +209,25 @@ export function PrDetail({ repo, number }: { repo: string; number: number }): JS
         {pr.body ? <Markdown text={pr.body} /> : <span className="dim text-sm">(no description)</span>}
       </article>
 
-      <ChecksPanel repo={repo} number={number} canAct={canAct} ciAnalysis={ciAnalysis} />
-
-      <PipelinesPanel
+      <ChecksPanel
         repo={repo}
         number={number}
-        prOpen={pr.state === 'open'}
-        pipelines={pipelines}
-        runs={pipelineRuns}
-        canRun={can('pipelines:run')}
-        onError={setError}
+        canAct={canAct}
+        ciAnalysis={ciAnalysis}
+        onFixChecks={canAct && pr.state === 'open' ? () => void startAgent('checks')() : null}
       />
+
+      <PipelinesPanel runs={pipelineRuns} />
+
+      {runningPipeline ? (
+        <RunPipelineModal
+          repo={repo}
+          number={number}
+          pipelines={pipelines}
+          onClose={() => setRunningPipeline(false)}
+          onError={setError}
+        />
+      ) : null}
 
       <AgentActivity repo={repo} issueNumber={number} />
 
@@ -259,11 +268,14 @@ function ChecksPanel({
   number,
   canAct,
   ciAnalysis,
+  onFixChecks,
 }: {
   repo: string;
   number: number;
   canAct: boolean;
   ciAnalysis: ReportRecord | null;
+  /** Starts the repair agent; null when the PR can't take one (closed, no rights). */
+  onFixChecks: (() => void) | null;
 }): JSX.Element {
   const [checks, setChecks] = useState<ChecksSummary | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -301,47 +313,62 @@ function ChecksPanel({
 
   const sorted = checks ? [...checks.runs].sort((a, b) => Number(checkOutcome(b).failed) - Number(checkOutcome(a).failed)) : [];
 
+  const expandable = Boolean(checks && checks.runs.length > 0);
+  const aiActions: MenuAction[] =
+    canAct && checks && checks.failed > 0
+      ? [
+          {
+            label: analyzing ? 'Investigating…' : 'Analyze failures with AI',
+            disabled: analyzing,
+            onSelect: () => void analyzeFailures(),
+          },
+          ...(onFixChecks ? [{ label: 'Fix failing checks', onSelect: onFixChecks }] : []),
+        ]
+      : [];
+
   return (
     <section className="card mt-4" aria-label="CI pipelines">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <strong className="text-sm">CI pipelines</strong>
-        {state === 'loading' ? (
-          <span className="dim flex items-center gap-1.5">
-            <Spinner /> checking…
-          </span>
-        ) : null}
-        {state === 'error' ? <span className="badge-danger">status unavailable</span> : null}
-        {state === 'ready' && checks ? (
-          checks.state === 'none' ? (
-            <span className="dim">no pipelines reported for this commit</span>
-          ) : (
-            <>
-              <ChecksBadge checks={checks} />
-              <span className="dim">
-                {checks.passed} passed · {checks.failed} failed · {checks.pending} running
-              </span>
-            </>
-          )
-        ) : null}
-        <span className="flex-1" />
-        {checks && checks.failed > 0 && canAct ? (
-          <button className="btn" disabled={analyzing} onClick={() => void analyzeFailures()}>
-            {analyzing ? (
-              <>
-                <Spinner /> Investigating…
-              </>
+      <div className="flex items-center gap-2">
+        {/* The whole title row is the expand/collapse control. */}
+        <button
+          type="button"
+          className={`flex min-w-0 flex-1 flex-wrap items-center gap-2.5 text-left ${expandable ? 'cursor-pointer' : 'cursor-default'}`}
+          onClick={() => expandable && setOpen((v) => !v)}
+          aria-expanded={open}
+          disabled={!expandable}
+        >
+          <strong className="text-sm">CI pipelines</strong>
+          {state === 'loading' ? (
+            <span className="dim flex items-center gap-1.5">
+              <Spinner /> checking…
+            </span>
+          ) : null}
+          {state === 'error' ? <span className="badge-danger">status unavailable</span> : null}
+          {state === 'ready' && checks ? (
+            checks.state === 'none' ? (
+              <span className="dim">no pipelines reported for this commit</span>
             ) : (
-              'Analyze failures with AI'
-            )}
-          </button>
-        ) : null}
-        {checks && checks.runs.length > 0 ? (
-          <button className="linkish text-sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-            {open ? 'hide' : `show ${checks.runs.length} checks`}
-          </button>
-        ) : null}
-        <button className="btn-ghost" onClick={load} aria-label="Refresh CI status">
-          Refresh
+              <>
+                <ChecksBadge checks={checks} />
+                <span className="dim">
+                  {checks.passed} passed · {checks.failed} failed · {checks.pending} running
+                </span>
+              </>
+            )
+          ) : null}
+          {expandable ? <ChevronDown open={open} className="dim size-4 shrink-0" /> : null}
+        </button>
+        {aiActions.length > 0 ? <AiActionMenu label="AI actions for failing checks" busy={analyzing} actions={aiActions} /> : null}
+        <button className="btn-ghost w-9 shrink-0 justify-center px-0" onClick={load} aria-label="Refresh CI status" title="Refresh">
+          <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
+            <path
+              d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
       </div>
 
@@ -394,42 +421,15 @@ function ChecksPanel({
 
 // ---------- user pipelines -------------------------------------------------------
 
-function PipelinesPanel({
-  repo,
-  number,
-  prOpen,
-  pipelines,
-  runs,
-  canRun,
-  onError,
-}: {
-  repo: string;
-  number: number;
-  prOpen: boolean;
-  pipelines: PipelineRecord[];
-  runs: PipelineRunRecord[];
-  canRun: boolean;
-  onError: (e: string) => void;
-}): JSX.Element | null {
-  const [selected, setSelected] = useState('');
-  const [busy, setBusy] = useState(false);
+/**
+ * Past pipeline runs against this PR. Starting one lives in the header's AI
+ * menu ("Run pipeline…"); with no runs the section renders nothing at all —
+ * an empty picker isn't worth the space.
+ */
+function PipelinesPanel({ runs }: { runs: PipelineRunRecord[] }): JSX.Element | null {
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  if (pipelines.length === 0 && runs.length === 0) return null;
-
-  const run = async (): Promise<void> => {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      await api.runPipeline(repo, number, selected);
-    } catch (err) {
-      onError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const canStart = canRun && prOpen && pipelines.length > 0;
+  if (runs.length === 0) return null;
 
   return (
     <section className="card mt-4 p-0" aria-label="Pipelines">
@@ -442,73 +442,104 @@ function PipelinesPanel({
         ) : null}
       </div>
 
-      {runs.length > 0 ? (
-        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-          {runs.map((r) => (
-            <li key={r.id} className="anim-in">
-              <button
-                className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                onClick={() => setExpanded((v) => (v === r.id ? null : r.id))}
-                aria-expanded={expanded === r.id}
-              >
-                {r.status === 'running' ? <Spinner /> : null}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium">{r.pipelineName}</span>
-                  <span className="dim mt-0.5 block text-xs">
-                    {r.trigger === 'pr-opened' ? 'auto-run on PR open' : 'manual run'} · {timeAgo(r.createdAt)}
-                  </span>
+      <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+        {runs.map((r) => (
+          <li key={r.id} className="anim-in">
+            <button
+              className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
+              onClick={() => setExpanded((v) => (v === r.id ? null : r.id))}
+              aria-expanded={expanded === r.id}
+            >
+              {r.status === 'running' ? <Spinner /> : null}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium">{r.pipelineName}</span>
+                <span className="dim mt-0.5 block text-xs">
+                  {r.trigger === 'pr-opened' ? 'auto-run on PR open' : 'manual run'} · {timeAgo(r.createdAt)}
                 </span>
-                <span className={pipelineStatusBadge(r.status)}>{r.status}</span>
-                <ChevronDown open={expanded === r.id} className="dim size-4 shrink-0" />
-              </button>
-              {expanded === r.id ? (
-                <ol
-                  className="flex flex-col gap-2 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800/60 dark:bg-zinc-900/40"
-                  aria-label="Step results"
-                >
-                  {r.steps.map((s, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[13px]">
-                      <span className={pipelineStatusBadge(s.status)}>{s.status}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium">{s.name}</div>
-                        {s.summary ? <div className="dim">{s.summary}</div> : null}
-                        {s.detail ? (
-                          <details className="mt-0.5">
-                            <summary className="dim cursor-pointer text-xs">detail</summary>
-                            <div className="mt-1 max-h-48 overflow-y-auto">
-                              <Markdown text={s.detail} />
-                            </div>
-                          </details>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-            </li>
-          ))}
+              </span>
+              <span className={pipelineStatusBadge(r.status)}>{r.status}</span>
+              <ChevronDown open={expanded === r.id} className="dim size-4 shrink-0" />
+            </button>
+            {expanded === r.id ? (
+              <ol
+                className="flex flex-col gap-2 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800/60 dark:bg-zinc-900/40"
+                aria-label="Step results"
+              >
+                {r.steps.map((s, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[13px]">
+                    <span className={pipelineStatusBadge(s.status)}>{s.status}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{s.name}</div>
+                      {s.summary ? <div className="dim">{s.summary}</div> : null}
+                      {s.detail ? (
+                        <details className="mt-0.5">
+                          <summary className="dim cursor-pointer text-xs">detail</summary>
+                          <div className="mt-1 max-h-48 overflow-y-auto">
+                            <Markdown text={s.detail} />
+                          </div>
+                        </details>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </li>
+        ))}
         </ul>
-      ) : (
-        <p className="dim px-4 py-6 text-center text-[13px]">
-          {canStart ? 'No pipeline has run against this PR yet — pick one below to start.' : 'No pipeline has run against this PR yet.'}
-        </p>
-      )}
+    </section>
+  );
+}
 
-      {canStart ? (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <select
-            className="input py-1.5"
-            aria-label="Pipeline to run"
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            <option value="">Choose a pipeline…</option>
+/** Pick a pipeline and run it against this PR (reached from the ✦ menu). */
+function RunPipelineModal({
+  repo,
+  number,
+  pipelines,
+  onClose,
+  onError,
+}: {
+  repo: string;
+  number: number;
+  pipelines: PipelineRecord[];
+  onClose: () => void;
+  onError: (e: string) => void;
+}): JSX.Element {
+  const [selected, setSelected] = useState(pipelines[0]?.id ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const run = async (): Promise<void> => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      await api.runPipeline(repo, number, selected);
+      onClose();
+    } catch (err) {
+      onError(String(err));
+      setBusy(false);
+    }
+  };
+
+  const chosen = pipelines.find((p) => p.id === selected);
+
+  return (
+    <Modal title={`Run pipeline on PR #${number}`} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="dim">Pipeline</span>
+          <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)} autoFocus>
             {pipelines.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
+        </label>
+        {chosen?.description ? <p className="dim text-[13px]">{chosen.description}</p> : null}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
           <button className="btn" disabled={!selected || busy} onClick={() => void run()}>
             {busy ? (
               <>
@@ -519,8 +550,8 @@ function PipelinesPanel({
             )}
           </button>
         </div>
-      ) : null}
-    </section>
+      </div>
+    </Modal>
   );
 }
 
