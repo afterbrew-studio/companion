@@ -70,8 +70,8 @@ const ALL_PERMISSIONS: readonly Permission[] = [
  * The capability grid. admin: everything. maintainer: day-to-day operation of
  * every area except instance administration (settings, users, runners, and
  * public-workspace lifecycle) — but they CAN create private workspaces they
- * own (workspaces:create). business: proposals only (plus the reads needed to
- * file one).
+ * own (workspaces:create). business: proposals plus authoring the product
+ * grounding — specifications and documentation — that agents work from.
  */
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: ALL_PERMISSIONS,
@@ -82,7 +82,16 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
       p !== 'users:manage' &&
       p !== 'runners:manage',
   ),
-  business: ['workspaces:read', 'repos:read', 'proposals:read', 'proposals:create', 'specs:read', 'docs:read'],
+  business: [
+    'workspaces:read',
+    'repos:read',
+    'proposals:read',
+    'proposals:create',
+    'specs:read',
+    'specs:manage',
+    'docs:read',
+    'docs:manage',
+  ],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {
