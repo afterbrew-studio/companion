@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   GitHubAccountRecord,
   RepoRecord,
   RunnerRecord,
-  WorkspaceMember,
   WorkspaceMemberCandidate,
   WorkspaceRecord,
   WorkspaceVisibility,
 } from '@companion/contract';
-import { api, onServerMessage } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
 import { useReposAdmin } from '../hooks/useReposAdmin.js';
+import { useWorkspaceMembers } from '../hooks/useWorkspaceMembers.js';
 import { useIntent } from '../lib/intents.js';
 import { useDebounced } from '../lib/paging.js';
 import { Page, EmptyState, LockIcon, Modal, PageHeader, Spinner, timeAgo, useConfirm } from '../components/ui.js';
@@ -571,38 +571,7 @@ function Avatar({ name, className = 'size-7' }: { name: string; className?: stri
 
 /** Invite/remove members of a private workspace (owner + admins). */
 function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Element {
-  const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const { members } = await api.listWorkspaceMembers(workspace.id);
-      setMembers(members);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [workspace.id]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const add = async (username: string): Promise<void> => {
-    setError(null);
-    const { members } = await api.addWorkspaceMember(workspace.id, username);
-    setMembers(members);
-  };
-
-  const remove = async (name: string): Promise<void> => {
-    setError(null);
-    try {
-      const { members } = await api.removeWorkspaceMember(workspace.id, name);
-      setMembers(members);
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
+  const { members, error, setError, add, remove } = useWorkspaceMembers(workspace.id);
   const count = members?.length ?? 0;
 
   return (
