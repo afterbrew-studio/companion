@@ -2,18 +2,27 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PipelineRecord, PrRecord, RepoRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
-import { useHashParams } from '../lib/hashParams.js';
+import { PAGE_SIZE, useInfiniteList } from '../lib/paging.js';
 import type { ContextMenuState, MenuAction } from '../components/ui.js';
+import { useHashTab } from './useHashTab.js';
+import { useHashFilters } from './useHashFilters.js';
+import { useHashSearch } from './useHashSearch.js';
+import { useSelection } from './useSelection.js';
+import { useFlash } from './useFlash.js';
+import { useBulkRunner } from './useBulkRunner.js';
+import { useWorkspaceRepos } from './useWorkspaceRepos.js';
+import { useWorkspacePipelines } from './useWorkspacePipelines.js';
 
 export type PrTab = 'open' | 'merged' | 'closed';
 
+const TABS = ['open', 'merged', 'closed'] as const;
 const FILTER_KEYS = ['repo', 'author', 'assignee', 'decision', 'review', 'draft'] as const;
 
 /**
- * All of the Pull Requests list's business logic — URL-driven filters, the
- * server-paged infinite list, bulk selection + actions, and per-row quick
- * actions. The page is presentation over this.
+ * The Pull Requests list's business logic, composed from atomic hooks — hash
+ * tab/filters/search, workspace repos + pipelines, bulk selection + runner,
+ * flash — plus the server-paged fetch and per-row actions. The page is pure
+ * presentation over this.
  */
 export interface UseWorkspacePrs {
   readonly tab: PrTab;
@@ -57,78 +66,27 @@ export interface UseWorkspacePrs {
   readonly bulkError: string | null;
 }
 
+const prKey = (pr: PrRecord): string => `${pr.repo}#${pr.number}`;
+
 export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePrs {
   const { can } = useAuth();
-  const [params, setParam] = useHashParams();
-  const stateParam = params.get('state');
-  const tab: PrTab = stateParam === 'merged' || stateParam === 'closed' ? stateParam : 'open';
-  const setTab = (t: PrTab): void => setParam('state', t === 'open' ? null : t);
-  useEffect(() => {
-    sessionStorage.setItem('companion.tab:#/prs', tab);
-  }, [tab]);
-
-  const [search, setSearch] = useState(() => params.get('q') ?? '');
-  const filters = {
-    repo: params.get('repo') ?? 'all',
-    author: params.get('author') ?? 'all',
-    assignee: params.get('assignee') ?? 'all',
-    decision: params.get('decision') ?? 'all',
-    review: params.get('review') ?? 'all',
-    draft: params.get('draft') ?? 'all',
-  };
-  const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
-  const clearFilters = (): void => {
-    for (const k of FILTER_KEYS) setParam(k, null);
-  };
-  useEffect(() => {
-    const urlQ = params.get('q') ?? '';
-    setSearch((s) => (s.trim() === urlQ ? s : urlQ));
-  }, [params]);
-
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
-  const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    api
-      .workspaceRepos(workspaceId)
-      .then(({ repos }) => setRepos(repos))
-      .catch(() => setRepos([]));
-  }, [workspaceId]);
-
-  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [bulkPipeline, setBulkPipeline] = useState('');
-  const [bulkRunning, setBulkRunning] = useState<string | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
   const canRunPipelines = can('pipelines:run');
   const canActPrs = can('prs:act');
 
-  useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 4000);
-    return () => clearTimeout(t);
-  }, [flash]);
+  const [tab, setTab] = useHashTab(TABS, 'open', 'companion.tab:#/prs');
+  const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(FILTER_KEYS);
+  const { search, setSearch, q } = useHashSearch();
 
-  useEffect(() => {
-    if (!workspaceId || !can('pipelines:read')) return;
-    api
-      .workspacePipelines(workspaceId)
-      .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'pr')))
-      .catch(() => setPipelines([]));
-  }, [workspaceId, can]);
+  const repos = useWorkspaceRepos(workspaceId);
+  const pipelines = useWorkspacePipelines(workspaceId, 'pr');
+  const selection = useSelection(`${tab}:${workspaceId}`);
+  const { flash, show } = useFlash();
+  const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
-  useEffect(() => {
-    setSelected(new Set());
-  }, [tab, workspaceId]);
-
-  const q = useDebounced(search.trim());
-  useEffect(() => {
-    setParam('q', q || null, { replace: true });
-  }, [q, setParam]);
+  const [bulkPipeline, setBulkPipeline] = useState('');
+  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
+  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
+  const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
 
   const fetchPage = useCallback(
     async (offset: number) => {
@@ -152,7 +110,6 @@ export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePr
     [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.decision, filters.review, filters.draft],
   );
   const { items: prs, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
-  const activeFilters = FILTER_KEYS.map((k) => filters[k]).filter((f) => f !== 'all').length;
 
   useEffect(() => {
     return onServerMessage((msg) => {
@@ -160,46 +117,35 @@ export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePr
     });
   }, [reload]);
 
-  const toggleSelected = (key: string): void => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+  const bulkAiReview = (): void => {
+    const targets = prs.filter((pr) => selection.has(prKey(pr)));
+    void runBulk(targets, (pr) => api.analyzePr(pr.repo, pr.number), {
+      label: (pr) => `#${pr.number}`,
+      onSettled: (total, failures) => {
+        selection.clear();
+        if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+        else show(`AI review started for ${total} PR${total === 1 ? '' : 's'}`);
+      },
     });
   };
-  const selectAllLoaded = (): void => setSelected(new Set(prs.map((pr) => `${pr.repo}#${pr.number}`)));
-  const clearSelected = (): void => setSelected(new Set());
-
-  const runBulkWith = async (fn: (pr: PrRecord) => Promise<unknown>, noun: string): Promise<void> => {
-    if (selected.size === 0) return;
-    const targets = prs.filter((pr) => selected.has(`${pr.repo}#${pr.number}`));
-    const failures: string[] = [];
-    for (let i = 0; i < targets.length; i++) {
-      const pr = targets[i]!;
-      setBulkRunning(`${i + 1}/${targets.length}`);
-      try {
-        await fn(pr);
-      } catch {
-        failures.push(`#${pr.number}`);
-      }
-    }
-    setBulkRunning(null);
-    setSelected(new Set());
-    if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
-    else setFlash(`${noun} started for ${targets.length} PR${targets.length === 1 ? '' : 's'}`);
-  };
-  const bulkAiReview = (): void => void runBulkWith((pr) => api.analyzePr(pr.repo, pr.number), 'AI review');
   const bulkRunPipeline = (): void => {
     if (!bulkPipeline) return;
-    void runBulkWith((pr) => api.runPipeline(pr.repo, pr.number, bulkPipeline), 'Pipeline');
+    const targets = prs.filter((pr) => selection.has(prKey(pr)));
+    void runBulk(targets, (pr) => api.runPipeline(pr.repo, pr.number, bulkPipeline), {
+      label: (pr) => `#${pr.number}`,
+      onSettled: (total, failures) => {
+        selection.clear();
+        if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+        else show(`Pipeline started for ${total} PR${total === 1 ? '' : 's'}`);
+      },
+    });
   };
 
   const quick = async (fn: () => Promise<unknown>, done: string): Promise<void> => {
     setBulkError(null);
     try {
       await fn();
-      setFlash(done);
+      show(done);
     } catch (err) {
       setBulkError(String(err));
     }
@@ -243,10 +189,10 @@ export function useWorkspacePrs(workspaceId: string | undefined): UseWorkspacePr
     canActPrs,
     canRunPipelines,
     pipelines,
-    selected,
-    toggleSelected,
-    selectAllLoaded,
-    clearSelected,
+    selected: selection.selected,
+    toggleSelected: selection.toggle,
+    selectAllLoaded: () => selection.selectAll(prs.map(prKey)),
+    clearSelected: selection.clear,
     bulkPipeline,
     setBulkPipeline,
     bulkRunning,

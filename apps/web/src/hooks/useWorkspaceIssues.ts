@@ -2,18 +2,27 @@ import { useCallback, useEffect, useState } from 'react';
 import type { IssueRecord, PipelineRecord, RepoRecord } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { PAGE_SIZE, useDebounced, useInfiniteList } from '../lib/paging.js';
-import { useHashParams } from '../lib/hashParams.js';
+import { PAGE_SIZE, useInfiniteList } from '../lib/paging.js';
 import type { ContextMenuState, MenuAction } from '../components/ui.js';
+import { useHashTab } from './useHashTab.js';
+import { useHashFilters } from './useHashFilters.js';
+import { useHashSearch } from './useHashSearch.js';
+import { useSelection } from './useSelection.js';
+import { useFlash } from './useFlash.js';
+import { useBulkRunner } from './useBulkRunner.js';
+import { useWorkspaceRepos } from './useWorkspaceRepos.js';
+import { useWorkspacePipelines } from './useWorkspacePipelines.js';
 
 export type IssueTab = 'open' | 'closed';
 
+const TABS = ['open', 'closed'] as const;
 const FILTER_KEYS = ['repo', 'author', 'assignee', 'label', 'triage'] as const;
 
 /**
- * All of the Issues list's business logic — URL-driven filters, the server-paged
- * infinite list, bulk selection + AI triage, and per-row quick actions. The page
- * is presentation over this.
+ * The Issues list's business logic, composed from atomic hooks — hash
+ * tab/filters/search, workspace repos + pipelines, bulk selection + runner,
+ * flash — plus the server-paged fetch and per-row actions. The page is pure
+ * presentation over this.
  */
 export interface UseWorkspaceIssues {
   readonly tab: IssueTab;
@@ -57,80 +66,31 @@ export interface UseWorkspaceIssues {
   readonly bulkError: string | null;
 }
 
+const issueKey = (i: IssueRecord): string => `${i.repo}#${i.number}`;
+
 export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspaceIssues {
   const { can } = useAuth();
-  const [params, setParam] = useHashParams();
-  const tab: IssueTab = params.get('state') === 'closed' ? 'closed' : 'open';
-  const setTab = (t: IssueTab): void => setParam('state', t === 'open' ? null : t);
-  useEffect(() => {
-    sessionStorage.setItem('companion.tab:#/issues', tab);
-  }, [tab]);
+  const canRunPipelines = can('pipelines:run');
+  const canActIssues = can('issues:act');
 
-  const [search, setSearch] = useState(() => params.get('q') ?? '');
-  const filters = {
-    repo: params.get('repo') ?? 'all',
-    author: params.get('author') ?? 'all',
-    assignee: params.get('assignee') ?? 'all',
-    label: params.get('label') ?? 'all',
-    triage: params.get('triage') ?? 'all',
-  };
-  const setFilter = (key: string) => (value: string) => setParam(key, value === 'all' ? null : value);
-  const clearFilters = (): void => {
-    for (const k of FILTER_KEYS) setParam(k, null);
-  };
-  useEffect(() => {
-    const urlQ = params.get('q') ?? '';
-    setSearch((s) => (s.trim() === urlQ ? s : urlQ));
-  }, [params]);
+  const [tab, setTab] = useHashTab(TABS, 'open', 'companion.tab:#/issues');
+  const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(FILTER_KEYS);
+  const { search, setSearch, q } = useHashSearch();
 
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
+  const repos = useWorkspaceRepos(workspaceId);
+  const pipelines = useWorkspacePipelines(workspaceId, 'issue');
+  const selection = useSelection(`${tab}:${workspaceId}`);
+  const { flash, show } = useFlash();
+  const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
+
+  const [bulkPipeline, setBulkPipeline] = useState('');
+  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
   const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({
     authors: [],
     assignees: [],
     labels: [],
   });
   const [counts, setCounts] = useState<{ open: number; closed: number }>({ open: 0, closed: 0 });
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    api
-      .workspaceRepos(workspaceId)
-      .then(({ repos }) => setRepos(repos))
-      .catch(() => setRepos([]));
-  }, [workspaceId]);
-
-  const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [bulkPipeline, setBulkPipeline] = useState('');
-  const [bulkRunning, setBulkRunning] = useState<string | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
-  const canRunPipelines = can('pipelines:run');
-  const canActIssues = can('issues:act');
-
-  useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 4000);
-    return () => clearTimeout(t);
-  }, [flash]);
-
-  useEffect(() => {
-    if (!workspaceId || !can('pipelines:read')) return;
-    api
-      .workspacePipelines(workspaceId)
-      .then((r) => setPipelines(r.pipelines.filter((pl) => pl.type === 'issue')))
-      .catch(() => setPipelines([]));
-  }, [workspaceId, can]);
-
-  useEffect(() => {
-    setSelected(new Set());
-  }, [tab, workspaceId]);
-
-  const q = useDebounced(search.trim());
-  useEffect(() => {
-    setParam('q', q || null, { replace: true });
-  }, [q, setParam]);
 
   const fetchPage = useCallback(
     async (offset: number) => {
@@ -153,7 +113,6 @@ export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspac
     [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.label, filters.triage],
   );
   const { items: issues, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
-  const activeFilters = FILTER_KEYS.map((k) => filters[k]).filter((f) => f !== 'all').length;
 
   useEffect(() => {
     return onServerMessage((msg) => {
@@ -161,46 +120,35 @@ export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspac
     });
   }, [reload]);
 
-  const toggleSelected = (key: string): void => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+  const bulkAiTriage = (): void => {
+    const targets = issues.filter((i) => selection.has(issueKey(i)));
+    void runBulk(targets, (i) => api.triageIssue(i.repo, i.number), {
+      label: (i) => `#${i.number}`,
+      onSettled: (total, failures) => {
+        selection.clear();
+        if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+        else show(`Triage started for ${total} issue${total === 1 ? '' : 's'}`);
+      },
     });
   };
-  const selectAllLoaded = (): void => setSelected(new Set(issues.map((i) => `${i.repo}#${i.number}`)));
-  const clearSelected = (): void => setSelected(new Set());
-
-  const runBulkWith = async (fn: (issue: IssueRecord) => Promise<unknown>, noun: string): Promise<void> => {
-    if (selected.size === 0) return;
-    const targets = issues.filter((i) => selected.has(`${i.repo}#${i.number}`));
-    const failures: string[] = [];
-    for (let i = 0; i < targets.length; i++) {
-      const issue = targets[i]!;
-      setBulkRunning(`${i + 1}/${targets.length}`);
-      try {
-        await fn(issue);
-      } catch {
-        failures.push(`#${issue.number}`);
-      }
-    }
-    setBulkRunning(null);
-    setSelected(new Set());
-    if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
-    else setFlash(`${noun} started for ${targets.length} issue${targets.length === 1 ? '' : 's'}`);
-  };
-  const bulkAiTriage = (): void => void runBulkWith((issue) => api.triageIssue(issue.repo, issue.number), 'Triage');
   const bulkRunPipeline = (): void => {
     if (!bulkPipeline) return;
-    void runBulkWith((issue) => api.runPipelineOnIssue(issue.repo, issue.number, bulkPipeline), 'Pipeline');
+    const targets = issues.filter((i) => selection.has(issueKey(i)));
+    void runBulk(targets, (i) => api.runPipelineOnIssue(i.repo, i.number, bulkPipeline), {
+      label: (i) => `#${i.number}`,
+      onSettled: (total, failures) => {
+        selection.clear();
+        if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
+        else show(`Pipeline started for ${total} issue${total === 1 ? '' : 's'}`);
+      },
+    });
   };
 
   const quick = async (fn: () => Promise<unknown>, done: string): Promise<void> => {
     setBulkError(null);
     try {
       await fn();
-      setFlash(done);
+      show(done);
     } catch (err) {
       setBulkError(String(err));
     }
@@ -249,10 +197,10 @@ export function useWorkspaceIssues(workspaceId: string | undefined): UseWorkspac
     canActIssues,
     canRunPipelines,
     pipelines,
-    selected,
-    toggleSelected,
-    selectAllLoaded,
-    clearSelected,
+    selected: selection.selected,
+    toggleSelected: selection.toggle,
+    selectAllLoaded: () => selection.selectAll(issues.map(issueKey)),
+    clearSelected: selection.clear,
     bulkPipeline,
     setBulkPipeline,
     bulkRunning,
