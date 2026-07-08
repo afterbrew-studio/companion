@@ -9,6 +9,7 @@ import type {
   RunRecord,
   WeeklyCounts,
   WorkspaceMetrics,
+  WorkspaceReviews,
 } from '@companion/contract';
 import { api, onServerMessage } from '../lib/api.js';
 import { useWorkspace } from '../lib/workspace.js';
@@ -29,12 +30,14 @@ export function DashboardPage(): JSX.Element {
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const [metrics, setMetrics] = useState<WorkspaceMetrics | null>(null);
+  const [reviews, setReviews] = useState<WorkspaceReviews | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!current) return;
     try {
-      const [i, p, pr, r, plr, rp, m, rep] = await Promise.all([
+      const emptyReviews: WorkspaceReviews = { runs: [], prReviews: [], triage: [] };
+      const [i, p, pr, r, plr, rp, m, rep, rev] = await Promise.all([
         api.workspaceIssues(current.id, 'open'),
         api.workspacePrs(current.id),
         api.workspaceProposals(current.id),
@@ -43,6 +46,7 @@ export function DashboardPage(): JSX.Element {
         api.workspaceRepos(current.id),
         api.workspaceMetrics(current.id),
         api.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
+        api.workspaceReviews(current.id).catch(() => emptyReviews),
       ]);
       setIssues(i.issues);
       setPrs(p.prs);
@@ -52,6 +56,7 @@ export function DashboardPage(): JSX.Element {
       setRepos(rp.repos);
       setMetrics(m.metrics);
       setReports(rep.reports);
+      setReviews(rev);
       setError(null);
     } catch (err) {
       setError(String(err));
@@ -69,7 +74,8 @@ export function DashboardPage(): JSX.Element {
         msg.t === 'run.changed' ||
         msg.t === 'pipelineRuns.changed' ||
         msg.t === 'repos.changed' ||
-        msg.t === 'reports.changed'
+        msg.t === 'reports.changed' ||
+        msg.t === 'triage.changed'
       ) {
         void refresh();
       }
@@ -93,6 +99,11 @@ export function DashboardPage(): JSX.Element {
   const liveRuns = runs.filter((r) => r.live && (r.repo === null || wsRepoNames.has(r.repo)));
   const reviewRuns = runs.filter((r) => r.status === 'review' && (r.repo === null || wsRepoNames.has(r.repo)));
   const actionableProposals = proposals.filter((p) => p.status === 'analyzed' || p.status === 'review');
+  // Pending human decisions from the review inbox: AI PR reviews and triage verdicts.
+  const prReviewsPending = reviews?.prReviews ?? [];
+  const triagePending = reviews?.triage ?? [];
+  const attentionCount =
+    reviewRuns.length + prReviewsPending.length + triagePending.length + failingPrs.length + actionableProposals.length;
 
   // Backlog trends reconstructed from weekly nets (current value, walking back).
   const issueBacklog = metrics
@@ -180,6 +191,38 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(run.updatedAt)}</span>
               </a>
             ))}
+            {prReviewsPending.slice(0, 6).map(({ review, title }) => (
+              <a
+                key={review.id}
+                href={`#/repos/${review.repo}/prs/${review.prNumber}`}
+                className="row-link"
+              >
+                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{title}</span>
+                  <span className="dim block truncate text-xs">
+                    AI review awaiting your decision · #{review.prNumber} · {review.repo.split('/')[1]}
+                  </span>
+                </span>
+                <span className="dim shrink-0">{timeAgo(review.createdAt)}</span>
+              </a>
+            ))}
+            {triagePending.slice(0, 6).map(({ triage, title }) => (
+              <a
+                key={triage.id}
+                href={`#/repos/${triage.repo}/issues/${triage.issueNumber}`}
+                className="row-link"
+              >
+                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{title}</span>
+                  <span className="dim block truncate text-xs">
+                    triage awaiting your decision · #{triage.issueNumber} · {triage.repo.split('/')[1]}
+                  </span>
+                </span>
+                <span className="dim shrink-0">{timeAgo(triage.createdAt)}</span>
+              </a>
+            ))}
             {failingPrs.slice(0, 6).map((pr) => (
               <a key={`${pr.repo}#${pr.number}`} href={`#/repos/${pr.repo}/prs/${pr.number}`} className="row-link">
                 <ChecksBadge checks={pr.checks} />
@@ -204,8 +247,8 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(p.updatedAt)}</span>
               </a>
             ))}
-            {reviewRuns.length + failingPrs.length + actionableProposals.length === 0 ? (
-              <div className="dim px-4 py-6 text-center text-sm">Nothing waiting on you. ✨</div>
+            {attentionCount === 0 ? (
+              <div className="dim px-4 py-6 text-center text-sm">Nothing waiting on you.</div>
             ) : null}
           </div>
         </section>

@@ -129,8 +129,12 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
           homeDir: home.homeDir,
           homeReady: home.homeReady,
           providersImported: home.providersImported,
-          githubConfigured: deps.github() !== null,
-          githubUser: deps.githubUser(),
+          // Instance-level health: is GitHub set up at all? Independent of who is
+          // viewing (per-user account resolution must not flip the health dot).
+          githubConfigured: deps.githubAccounts.list().some((a) => a.purposes.includes('fetch')),
+          githubUser:
+            (deps.githubAccounts.list().find((a) => a.ownerId === null && a.purposes.includes('fetch')) ??
+              deps.githubAccounts.list().find((a) => a.purposes.includes('fetch')))?.login ?? null,
         };
       },
     }),
