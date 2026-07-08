@@ -16,14 +16,15 @@ export class GithubAccountsStore {
     purposes: readonly string[];
     scope: GitHubAccountScope;
     workspaceIds: readonly string[];
+    ownerId: string | null;
     createdAt: number;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO github_accounts (id, login, token, purposes, scope, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO github_accounts (id, login, token, purposes, scope, owner_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(a.id, a.login, a.token, JSON.stringify(a.purposes), a.scope, a.createdAt);
+      .run(a.id, a.login, a.token, JSON.stringify(a.purposes), a.scope, a.ownerId, a.createdAt);
     this.setWorkspaces(a.id, a.workspaceIds);
   }
 
@@ -35,6 +36,7 @@ export class GithubAccountsStore {
       token: string;
       purposes: string;
       scope: GitHubAccountScope;
+      owner_id: string | null;
       created_at: number;
     }>;
     return rows.map((r) => ({
@@ -44,6 +46,7 @@ export class GithubAccountsStore {
       purposes: JSON.parse(r.purposes) as GitHubPurpose[],
       scope: r.scope,
       workspaceIds: r.scope === 'delegated' ? this.workspaceIds(r.id) : [],
+      ownerId: r.owner_id,
       createdAt: r.created_at,
     }));
   }
@@ -111,5 +114,6 @@ export interface GithubAccountRow {
   purposes: GitHubPurpose[];
   scope: GitHubAccountScope;
   workspaceIds: string[];
+  ownerId: string | null;
   createdAt: number;
 }

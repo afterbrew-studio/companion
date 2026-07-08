@@ -8,6 +8,7 @@ import type {
 } from '@companion/contract';
 import { GITHUB_PURPOSES } from '@companion/contract';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
 import { useIntent } from '../lib/intents.js';
 import { Page, EmptyState, Modal, PageHeader, Switch, timeAgo, useConfirm } from '../components/ui.js';
 
@@ -25,6 +26,11 @@ const PURPOSE_META: Record<GitHubPurpose, { label: string; hint: string }> = {
  * Delegated accounts only act for repos in their workspaces.
  */
 export function GithubAccountsPage(): JSX.Element {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const canManage = (a: GitHubAccountRecord): boolean => isAdmin || a.ownerId === user?.username;
+  const ownerLabel = (a: GitHubAccountRecord): string =>
+    a.ownerId === null ? 'shared default' : a.ownerId === user?.username ? 'your account' : `owned by @${a.ownerId}`;
   const [accounts, setAccounts] = useState<GitHubAccountRecord[] | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [status, setStatus] = useState<MoxxyStatus | null>(null);
@@ -94,9 +100,11 @@ export function GithubAccountsPage(): JSX.Element {
       <PageHeader
         title="GitHub accounts"
         subtitle={
-          status?.githubConfigured
-            ? `Connected — fetches run as ${status.githubUser ?? '…'}. Unbound purposes fall back to the first account.`
-            : 'Connect fine-grained PATs and bind each account to what it does.'
+          isAdmin
+            ? status?.githubConfigured
+              ? `Connected — default fetches run as ${status.githubUser ?? '…'}. Your own actions use your account when connected.`
+              : 'Connect fine-grained PATs — shared defaults for the instance, or your own account for your actions.'
+            : 'Connect your own GitHub account — your issue comments, reviews, and merges act as you. Unconnected, they use the shared default.'
         }
         actions={
           <button className="btn" onClick={() => setAdding(true)}>
@@ -118,49 +126,68 @@ export function GithubAccountsPage(): JSX.Element {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {accounts.map((a) => (
-            <article key={a.id} className="card" aria-label={a.login || 'validating account'}>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
-                  <GitHubIcon />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
-                  <div className="dim text-xs">
-                    connected {timeAgo(a.createdAt)} ·{' '}
-                    {a.scope === 'shared'
-                      ? 'shared'
-                      : `delegated to ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
-                  </div>
-                </div>
-                <button className="btn-danger-ghost" onClick={() => void remove(a)}>
-                  Disconnect
-                </button>
-              </div>
-              <div className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800/60 dark:border-zinc-800">
-                {GITHUB_PURPOSES.map((purpose) => (
-                  <div key={purpose} className="flex items-center gap-3 px-3.5 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-medium">{PURPOSE_META[purpose].label}</div>
-                      <p className="dim mt-0.5">{PURPOSE_META[purpose].hint}</p>
+          {accounts.map((a) => {
+            const manageable = canManage(a);
+            return (
+              <article key={a.id} className="card" aria-label={a.login || 'validating account'}>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                    <GitHubIcon />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{a.login || 'validating…'}</span>
+                      <span className={a.ownerId === null ? 'badge-ok' : 'badge'}>{ownerLabel(a)}</span>
                     </div>
-                    <Switch
-                      label={`${PURPOSE_META[purpose].label} via ${a.login}`}
-                      checked={a.purposes.includes(purpose)}
-                      onChange={() => void togglePurpose(a, purpose)}
-                    />
+                    <div className="dim text-xs">
+                      connected {timeAgo(a.createdAt)} ·{' '}
+                      {a.scope === 'shared'
+                        ? 'shared'
+                        : `delegated to ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
+                    </div>
                   </div>
-                ))}
-              </div>
-              <ScopeEditor account={a} workspaces={workspaces} onError={setError} onSaved={refresh} />
-            </article>
-          ))}
+                  {manageable ? (
+                    <button className="btn-danger-ghost" onClick={() => void remove(a)}>
+                      Disconnect
+                    </button>
+                  ) : null}
+                </div>
+                {manageable ? (
+                  <>
+                    <div className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800/60 dark:border-zinc-800">
+                      {GITHUB_PURPOSES.map((purpose) => (
+                        <div key={purpose} className="flex items-center gap-3 px-3.5 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium">{PURPOSE_META[purpose].label}</div>
+                            <p className="dim mt-0.5">{PURPOSE_META[purpose].hint}</p>
+                          </div>
+                          <Switch
+                            label={`${PURPOSE_META[purpose].label} via ${a.login}`}
+                            checked={a.purposes.includes(purpose)}
+                            onChange={() => void togglePurpose(a, purpose)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <ScopeEditor account={a} workspaces={workspaces} onError={setError} onSaved={refresh} />
+                  </>
+                ) : (
+                  // Read-only: a shared default (or another user's account, for admins is manageable).
+                  <p className="dim mt-2 text-xs">
+                    The shared default — your own actions use it unless you connect your own account. Handles{' '}
+                    {a.purposes.map((p) => PURPOSE_META[p].label.toLowerCase()).join(', ') || 'nothing'}.
+                  </p>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
 
       {adding ? (
         <ConnectAccountModal
           workspaces={workspaces}
+          isAdmin={isAdmin}
           onClose={() => setAdding(false)}
           onDone={() => {
             setAdding(false);
@@ -267,10 +294,12 @@ function ScopeEditor({
 
 function ConnectAccountModal({
   workspaces,
+  isAdmin,
   onClose,
   onDone,
 }: {
   workspaces: readonly WorkspaceRecord[];
+  isAdmin: boolean;
   onClose: () => void;
   onDone: () => void;
 }): JSX.Element {
@@ -278,6 +307,8 @@ function ConnectAccountModal({
   const [purposes, setPurposes] = useState<readonly GitHubPurpose[]>(GITHUB_PURPOSES);
   const [scope, setScope] = useState<GitHubAccountScope>('shared');
   const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>([]);
+  // Admins default to a shared instance default; a maintainer's account is always personal.
+  const [shared, setShared] = useState(isAdmin);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -292,7 +323,7 @@ function ConnectAccountModal({
     setBusy(true);
     setError(null);
     try {
-      await api.addGithubAccount(token.trim(), purposes, scope, scope === 'delegated' ? workspaceIds : []);
+      await api.addGithubAccount(token.trim(), purposes, scope, scope === 'delegated' ? workspaceIds : [], isAdmin && shared);
       onDone();
     } catch (err) {
       setError(String(err));
@@ -303,6 +334,26 @@ function ConnectAccountModal({
   return (
     <Modal title="Connect a GitHub account" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
+        {isAdmin ? (
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="dim mb-1 text-sm">Ownership</legend>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="radio" name="own" checked={shared} onChange={() => setShared(true)} />
+              Shared default
+              <span className="dim text-xs">— the instance-wide fallback everyone's actions use</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="radio" name="own" checked={!shared} onChange={() => setShared(false)} />
+              My account
+              <span className="dim text-xs">— only my own actions act as this account</span>
+            </label>
+          </fieldset>
+        ) : (
+          <p className="dim text-xs">
+            This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges act
+            as you. Other work still uses the shared default.
+          </p>
+        )}
         <label className="flex flex-col gap-1 text-sm">
           <span className="dim">
             Fine-grained PAT — Contents / Issues / Pull requests read-write, Metadata read

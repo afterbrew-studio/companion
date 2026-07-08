@@ -548,6 +548,12 @@ export interface GitHubAccountRecord {
   readonly scope: GitHubAccountScope;
   /** Workspaces this account serves when `delegated` (ignored when `shared`). */
   readonly workspaceIds: ReadonlyArray<string>;
+  /**
+   * User who connected/owns this account. A user's own account is preferred
+   * when they invoke an action; null = a shared default account (admin-managed)
+   * used as the fallback for everyone.
+   */
+  readonly ownerId: string | null;
   readonly createdAt: number;
 }
 

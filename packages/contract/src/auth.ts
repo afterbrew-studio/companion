@@ -34,6 +34,7 @@ export type Permission =
   | 'skills:manage'
   | 'runners:manage'
   | 'settings:manage'
+  | 'github:connect'
   | 'users:manage';
 
 const ALL_PERMISSIONS: readonly Permission[] = [
@@ -63,6 +64,7 @@ const ALL_PERMISSIONS: readonly Permission[] = [
   'skills:manage',
   'runners:manage',
   'settings:manage',
+  'github:connect',
   'users:manage',
 ];
 

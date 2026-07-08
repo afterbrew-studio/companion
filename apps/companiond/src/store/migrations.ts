@@ -198,6 +198,7 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
       token      TEXT NOT NULL,
       purposes   TEXT NOT NULL DEFAULT '[]',
       scope      TEXT NOT NULL DEFAULT 'shared',
+      owner_id   TEXT,
       created_at INTEGER NOT NULL
     );
 
@@ -324,6 +325,7 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     `ALTER TABLE runners ADD COLUMN model_pins TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE runners ADD COLUMN catalog TEXT`,
     `ALTER TABLE runs ADD COLUMN user_id TEXT`,
+    `ALTER TABLE github_accounts ADD COLUMN owner_id TEXT`,
   ]) {
     try {
       db.exec(ddl);

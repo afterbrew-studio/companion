@@ -275,7 +275,7 @@ export const MODULES: readonly AppModule[] = [
     label: 'GitHub',
     hash: '#/github',
     shortcut: 'h',
-    permission: 'settings:manage',
+    permission: 'github:connect',
     section: 'admin',
     icon: icons.github,
   },

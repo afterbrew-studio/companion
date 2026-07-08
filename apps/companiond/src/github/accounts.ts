@@ -6,25 +6,28 @@ import {
   type GitHubPurpose,
 } from '@companion/contract';
 import { log } from '../log.js';
+import { currentUser } from '../http/request-context.js';
 import { GitHubClient } from './client.js';
 import type { Store } from '../store/db.js';
 import type { GithubAccountRow } from '../store/github-accounts.js';
 
+/** Optional resolution context. `username` overrides the request-scoped invoker. */
+type ResolveCtx = { repo?: string; accountId?: string; username?: string | null };
+
 /**
- * Registry of connected GitHub accounts (PATs), each bound to one or more
- * purposes: 'fetch' (sync + checks), 'runs' (agent clones/pushes), 'pipelines'
- * (posting reviews/labels/comments), 'webhooks' — and to where it may act:
- * `shared` accounts serve any workspace, `delegated` accounts only the
- * workspaces assigned to them. `clientFor(purpose, ctx)` resolves among the
- * accounts eligible for the repo's workspace, preferring ones delegated to it,
- * so a single shared account behaves exactly like before.
+ * Registry of connected GitHub accounts (PATs). Each is bound to purposes
+ * ('fetch' | 'runs' | 'pipelines' | 'webhooks'), to where it may act (shared |
+ * delegated), and to an owner. A user's OWN account is preferred when they
+ * invoke an action; everything else falls back to the shared default accounts
+ * (ownerId null) an admin manages. Resolution order: explicit accountId → the
+ * invoking user's own eligible account → repo pin → shared default.
  */
 export class GitHubAccounts {
   private readonly clients = new Map<string, GitHubClient>();
 
   constructor(private readonly store: Store) {}
 
-  /** One-time adoption of the legacy single PAT (settings table) into the registry. */
+  /** One-time adoption of the legacy single PAT into the registry as a shared default. */
   migrateLegacyToken(): void {
     const token = this.store.settings.get('github_token');
     if (!token || this.store.githubAccounts.list().length > 0) return;
@@ -36,9 +39,9 @@ export class GitHubAccounts {
       purposes: GITHUB_PURPOSES,
       scope: 'shared',
       workspaceIds: [],
+      ownerId: null,
       createdAt: Date.now(),
     });
-    // The token was validated when it was saved; fill the login lazily.
     new GitHubClient(token)
       .viewer()
       .then((v) => this.store.githubAccounts.update(id, { login: v.login }))
@@ -47,16 +50,7 @@ export class GitHubAccounts {
   }
 
   list(): GitHubAccountRecord[] {
-    return this.store.githubAccounts
-      .list()
-      .map(({ id, login, purposes, scope, workspaceIds, createdAt }) => ({
-        id,
-        login,
-        purposes,
-        scope,
-        workspaceIds,
-        createdAt,
-      }));
+    return this.store.githubAccounts.list().map(toRecord);
   }
 
   /** Validate the token, then insert (or replace the token of the same login). */
@@ -65,6 +59,7 @@ export class GitHubAccounts {
     purposes: readonly GitHubPurpose[],
     scope: GitHubAccountScope = 'shared',
     workspaceIds: readonly string[] = [],
+    ownerId: string | null = null,
   ): Promise<GitHubAccountRecord> {
     const client = new GitHubClient(token);
     const viewer = await client.viewer();
@@ -72,13 +67,14 @@ export class GitHubAccounts {
     if (existing) {
       this.store.githubAccounts.update(existing.id, { token, purposes, scope, workspaceIds });
       this.clients.set(existing.id, client);
-      return { id: existing.id, login: viewer.login, purposes, scope, workspaceIds, createdAt: existing.createdAt };
+      // Ownership stays with whoever first connected the account.
+      return toRecord({ ...existing, login: viewer.login, purposes: [...purposes], scope, workspaceIds: [...workspaceIds] });
     }
     const id = `gha-${randomUUID().slice(0, 12)}`;
     const createdAt = Date.now();
-    this.store.githubAccounts.insert({ id, login: viewer.login, token, purposes, scope, workspaceIds, createdAt });
+    this.store.githubAccounts.insert({ id, login: viewer.login, token, purposes, scope, workspaceIds, ownerId, createdAt });
     this.clients.set(id, client);
-    return { id, login: viewer.login, purposes, scope, workspaceIds, createdAt };
+    return { id, login: viewer.login, purposes: [...purposes], scope, workspaceIds: [...workspaceIds], ownerId, createdAt };
   }
 
   update(
@@ -89,8 +85,12 @@ export class GitHubAccounts {
     if (!row) throw new Error(`unknown GitHub account: ${id}`);
     this.store.githubAccounts.update(id, fields);
     const updated = this.store.githubAccounts.list().find((a) => a.id === id) ?? row;
-    const { login, purposes, scope, workspaceIds, createdAt } = updated;
-    return { id, login, purposes, scope, workspaceIds, createdAt };
+    return toRecord(updated);
+  }
+
+  /** The stored row (owner check for management gates). */
+  row(id: string): GithubAccountRow | undefined {
+    return this.store.githubAccounts.list().find((a) => a.id === id);
   }
 
   remove(id: string): void {
@@ -98,12 +98,7 @@ export class GitHubAccounts {
     this.clients.delete(id);
   }
 
-  /**
-   * Resolution order: explicit account override (per action) → repo pin →
-   * purpose binding among the accounts eligible for the repo's workspace
-   * (delegated-to-it first, then shared) → first eligible account.
-   */
-  clientFor(purpose: GitHubPurpose, ctx?: { repo?: string; accountId?: string }): GitHubClient | null {
+  clientFor(purpose: GitHubPurpose, ctx?: ResolveCtx): GitHubClient | null {
     const row = this.rowFor(purpose, ctx);
     if (!row) return null;
     let client = this.clients.get(row.id);
@@ -114,7 +109,7 @@ export class GitHubAccounts {
     return client;
   }
 
-  tokenFor(purpose: GitHubPurpose, ctx?: { repo?: string; accountId?: string }): string | null {
+  tokenFor(purpose: GitHubPurpose, ctx?: ResolveCtx): string | null {
     return this.rowFor(purpose, ctx)?.token ?? null;
   }
 
@@ -123,33 +118,59 @@ export class GitHubAccounts {
     return login ? login : null;
   }
 
-  private rowFor(purpose: GitHubPurpose, ctx?: { repo?: string; accountId?: string }): GithubAccountRow | undefined {
+  private rowFor(purpose: GitHubPurpose, ctx?: ResolveCtx): GithubAccountRow | undefined {
     const rows = this.store.githubAccounts.list();
     if (ctx?.accountId) {
       const explicit = rows.find((r) => r.id === ctx.accountId);
       if (explicit) return explicit;
     }
     const repoRow = ctx?.repo ? this.store.repos.get(ctx.repo) : undefined;
+    const workspaceId = repoRow?.workspace_id ?? null;
+    const eligibleHere = (r: GithubAccountRow): boolean =>
+      r.scope === 'shared' || (workspaceId !== null && r.workspaceIds.includes(workspaceId));
+
+    // 1. The invoking user's own account, if it holds the purpose and is
+    //    eligible here — a maintainer acts as themselves when they've connected.
+    const username = ctx?.username ?? currentUser()?.username ?? null;
+    if (username) {
+      const mine = rows.find((r) => r.ownerId === username && r.purposes.includes(purpose) && eligibleHere(r));
+      if (mine) return mine;
+    }
+
+    // 2. Repo pin (an admin forcing a specific account for this repo).
     if (repoRow?.github_account_id) {
       const pinned = rows.find((r) => r.id === repoRow.github_account_id);
       if (pinned) return pinned;
     }
-    // Eligibility by workspace, delegated-to-it before shared so a delegated
-    // account wins its own workspace. A repo whose workspace has no eligible
-    // account gets none — delegation is isolation, same as runners. Calls with
-    // no repo context are instance-level: shared accounts serve them, falling
-    // back to all accounts so an all-delegated install keeps status/sync alive.
-    const workspaceId = repoRow?.workspace_id ?? null;
+
+    // 3. Shared default accounts (ownerId null) eligible for the workspace —
+    //    delegated-to-it before shared. Falls back to all accounts when no
+    //    shared default exists, so a single personal account still serves as
+    //    the default (backward compatible).
+    const defaults = rows.filter((r) => r.ownerId === null);
+    const pool = defaults.length > 0 ? defaults : rows;
     let eligible: GithubAccountRow[];
     if (workspaceId) {
       eligible = [
-        ...rows.filter((r) => r.scope === 'delegated' && r.workspaceIds.includes(workspaceId)),
-        ...rows.filter((r) => r.scope === 'shared'),
+        ...pool.filter((r) => r.scope === 'delegated' && r.workspaceIds.includes(workspaceId)),
+        ...pool.filter((r) => r.scope === 'shared'),
       ];
     } else {
-      const shared = rows.filter((r) => r.scope === 'shared');
-      eligible = shared.length > 0 ? shared : rows;
+      const shared = pool.filter((r) => r.scope === 'shared');
+      eligible = shared.length > 0 ? shared : pool;
     }
     return eligible.find((r) => r.purposes.includes(purpose)) ?? eligible[0];
   }
+}
+
+function toRecord(r: GithubAccountRow): GitHubAccountRecord {
+  return {
+    id: r.id,
+    login: r.login,
+    purposes: r.purposes,
+    scope: r.scope,
+    workspaceIds: r.workspaceIds,
+    ownerId: r.ownerId,
+    createdAt: r.createdAt,
+  };
 }

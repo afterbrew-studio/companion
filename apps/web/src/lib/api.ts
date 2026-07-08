@@ -449,7 +449,8 @@ export const api = {
     purposes: readonly GitHubPurpose[],
     scope: GitHubAccountScope = 'shared',
     workspaceIds: readonly string[] = [],
-  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds }),
+    shared = false,
+  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds, shared }),
   updateGithubAccount: (
     id: string,
     fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import type { AuthUser, Permission } from '@companion/contract';
 import { AuthError, type Auth } from '../auth/auth.js';
+import { withRequestUser } from './request-context.js';
 import { log } from '../log.js';
 
 /**
@@ -156,7 +157,11 @@ export class Router {
           params[key] = decodeURIComponent(match[i + 1] ?? '');
         });
         const rawBody = method === 'GET' ? {} : await readBody(req);
-        const result = await r.run(params, url.searchParams, rawBody, user, token);
+        // Run the handler with the caller as the request-scoped invoking user,
+        // so per-user resolvers (e.g. GitHub "act as my account") can find them.
+        const result = await withRequestUser(user, () =>
+          r.run(params, url.searchParams, rawBody, user, token),
+        );
         if (result instanceof Reply) return json(res, result.status, result.body);
         return json(res, 200, result);
       }
