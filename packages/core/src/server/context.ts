@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
-import type { Logger } from '@companion/services';
+import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleManifest } from '../manifest.js';
 import type { CompiledRoute } from './router.js';
 import type { Migration } from './migration-runner.js';
@@ -17,6 +17,7 @@ import type { RbacReader } from './rbac-grid.js';
 export interface ModuleContext {
   readonly db: Database.Database;
   readonly log: Logger;
+  readonly config: DaemonConfig;
   readonly services: ServiceRegistry;
   readonly bus: ServerBus;
   readonly broadcast: (msg: SpaServerMessage) => void;

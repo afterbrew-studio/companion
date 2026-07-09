@@ -8,3 +8,4 @@ export * from './lib/log.js';
 export * from './lib/model-json.js';
 export * from './http/request-context.js';
 export * from './store/util.js';
+export * from './config.js';

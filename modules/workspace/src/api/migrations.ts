@@ -24,6 +24,17 @@ export default defineMigrations([
           PRIMARY KEY (workspace_id, username)
         );
         CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(username);
+        CREATE TABLE IF NOT EXISTS notifications (
+          id           TEXT PRIMARY KEY,
+          workspace_id TEXT,
+          kind         TEXT NOT NULL,
+          title        TEXT NOT NULL,
+          body         TEXT NOT NULL DEFAULT '',
+          href         TEXT,
+          read_at      INTEGER,
+          created_at   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
       `);
       for (const ddl of [
         `ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`,
@@ -37,7 +48,9 @@ export default defineMigrations([
       }
     },
     down: (db) => {
-      db.exec(`DROP TABLE IF EXISTS workspace_members; DROP TABLE IF EXISTS workspaces;`);
+      db.exec(
+        `DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS workspace_members; DROP TABLE IF EXISTS workspaces;`,
+      );
     },
   },
 ]);

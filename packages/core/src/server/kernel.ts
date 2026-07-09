@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
-import type { Logger } from '@companion/services';
+import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleId, ModuleManifest } from '../manifest.js';
 import { DynamicRouter } from './router.js';
 import { ServiceRegistry } from './service-registry.js';
@@ -20,6 +20,7 @@ export interface InstalledModule {
 export interface KernelOptions {
   readonly db: Database.Database;
   readonly log: Logger;
+  readonly config: DaemonConfig;
   readonly modules: readonly InstalledModule[];
   /** Browser push, backed by the app's WebSocket hub. */
   readonly broadcast: (msg: SpaServerMessage) => void;
@@ -87,6 +88,7 @@ export class ModuleKernel {
     this.ctx = {
       db: this.db,
       log: this.log,
+      config: opts.config,
       services: this.services,
       bus: this.bus,
       broadcast: opts.broadcast,
