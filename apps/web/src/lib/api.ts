@@ -25,6 +25,7 @@ import type {
   NotificationRecord,
   NotificationSettings,
   ProfileResponse,
+  RunSettings,
   UpdateProfileRequest,
   GitHubAccountRecord,
   GitHubAccountScope,
@@ -495,6 +496,11 @@ export const api = {
   getNotificationSettings: () => request<NotificationSettings>('/api/settings/notifications'),
   setNotificationSettings: (defaultScope: NotificationSettings['defaultScope']) =>
     put<NotificationSettings>('/api/settings/notifications', { defaultScope }),
+
+  // instance run-scheduling settings (admin)
+  getRunSettings: () => request<RunSettings>('/api/settings/runs'),
+  setRunSettings: (reservedRunnerSlots: number) =>
+    put<RunSettings>('/api/settings/runs', { reservedRunnerSlots }),
 
   // AI generation (bounded companion runner turns)
   generateSkill: (instructions: string) =>

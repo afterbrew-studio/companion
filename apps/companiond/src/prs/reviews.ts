@@ -58,6 +58,7 @@ export class PrReviews {
       issueNumber: prNumber,
       prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, clippedDiff, describeChecks(checksSummary)),
       timeoutMs: 8 * 60_000,
+      resume: { type: 'pr-review', args: { repo, number: prNumber } },
     });
 
     let verdict: PrReviewVerdict | null = null;
@@ -174,6 +175,7 @@ export class PrReviews {
       issueNumber: prNumber,
       prompt: ciAnalysisPrompt(pr.title, pr.headRef, failing, clipped),
       timeoutMs: 10 * 60_000,
+      resume: { type: 'ci-analysis', args: { repo, number: prNumber } },
     });
     if (!finalMessage?.trim()) throw new Error('CI analysis produced no report');
 

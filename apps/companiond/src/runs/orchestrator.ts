@@ -33,12 +33,31 @@ interface QueueItem {
   title: string;
   repo: string | null;
   issueNumber: number | null;
+  priority: number;
   enqueuedAt: number;
+  /** How to replay this entry after a restart; absent = not persisted. */
+  resume?: { type: string; args: Record<string, unknown> };
   /** Acquire a slot and run the job (resolves/rejects the caller's promise). */
   start: () => void;
   /** Reject the caller's promise; used when cancelled before it starts. */
   cancel: () => void;
 }
+
+/**
+ * Default scheduling weight per kind — higher jumps ahead in the queue. Code
+ * changes a human is waiting on (fix/implement) outrank review/triage, which
+ * outrank background reports; interactive chats sit lowest so they never delay
+ * automated work. Users can still reorder manually.
+ */
+const KIND_PRIORITY: Record<RunKind, number> = {
+  fix: 70,
+  implement: 70,
+  triage: 50,
+  analysis: 50,
+  report: 30,
+  interactive: 10,
+  assistant: 10,
+};
 
 /**
  * Run lifecycle owner. A "run" is one moxxy session (one MOXXY_SESSION_ID)
@@ -58,6 +77,8 @@ export class Orchestrator implements RunnerEventSink {
   // the user can reorder and cancel.
   private oneShotActive = 0;
   private readonly oneShotQueue: QueueItem[] = [];
+  /** Per-kind replayers used to re-dispatch persisted queue entries on boot. */
+  private readonly resumers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
 
   constructor(
     private readonly store: Store,
@@ -209,6 +230,19 @@ export class Orchestrator implements RunnerEventSink {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
     const kind: RunKind = opts.kind ?? 'interactive';
+    // Reserve slots for automated work: attended chats (interactive / AI Help)
+    // may not consume the last `reservedRunnerSlots` of the combined capacity,
+    // so triage/review/fix always have room. Always leaves at least one chat
+    // slot even on a single-runner install.
+    if (kind === 'interactive' || kind === 'assistant') {
+      const capacity = Math.max(1, this.runners.totalCapacity());
+      const reserved = Math.min(capacity - 1, Math.max(0, this.reservedRunnerSlots()));
+      if (this.store.runs.activeInteractiveCount() >= capacity - reserved) {
+        throw new Error(
+          `All runner slots are busy and ${reserved} ${reserved === 1 ? 'is' : 'are'} reserved for automated work — close a chat or try again shortly.`,
+        );
+      }
+    }
     // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
     // worktree/clone from a one-shot) pins to the local runner; otherwise pick
     // a ready runner for the repo and let its backend allocate a scratch dir.
@@ -653,6 +687,12 @@ export class Orchestrator implements RunnerEventSink {
     issueNumber?: number | null;
     prompt: string;
     timeoutMs?: number;
+    /**
+     * Makes the queued entry survive a restart: on boot the named resumer is
+     * re-invoked with these args (it rebuilds the prompt and re-enqueues). Omit
+     * for work that can't be replayed from args alone (e.g. pipeline steps).
+     */
+    resume?: { type: string; args: Record<string, unknown> };
   }): Promise<{ runId: string; finalMessage: string | null }> {
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
       const run = await this.createRun(opts);
@@ -694,6 +734,7 @@ export class Orchestrator implements RunnerEventSink {
         title: opts.title,
         repo: opts.repo ?? null,
         issueNumber: opts.issueNumber ?? null,
+        resume: opts.resume,
       },
       job,
     );
@@ -708,17 +749,26 @@ export class Orchestrator implements RunnerEventSink {
    * queue — batches now fan out across the whole pool.
    */
   private scheduleOneShot<T>(
-    meta: { kind: RunKind; title: string; repo: string | null; issueNumber: number | null },
+    meta: {
+      kind: RunKind;
+      title: string;
+      repo: string | null;
+      issueNumber: number | null;
+      resume?: { type: string; args: Record<string, unknown> };
+    },
     job: () => Promise<T>,
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      const priority = KIND_PRIORITY[meta.kind] ?? 40;
       const item: QueueItem = {
         id: `q-${randomUUID().slice(0, 12)}`,
         kind: meta.kind,
         title: meta.title,
         repo: meta.repo,
         issueNumber: meta.issueNumber,
+        priority,
         enqueuedAt: Date.now(),
+        resume: meta.resume,
         start: () => {
           this.oneShotActive++;
           void job()
@@ -730,7 +780,10 @@ export class Orchestrator implements RunnerEventSink {
         },
         cancel: () => reject(new Error('run cancelled before it started')),
       };
-      this.oneShotQueue.push(item);
+      // Insert by priority: ahead of everything strictly lower, behind equal or
+      // higher (FIFO within a weight). Manual reordering can still override.
+      const at = this.oneShotQueue.findIndex((q) => q.priority < priority);
+      this.oneShotQueue.splice(at < 0 ? this.oneShotQueue.length : at, 0, item);
       this.pumpQueue();
       this.broadcastQueue();
     });
@@ -747,7 +800,65 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   private broadcastQueue(): void {
+    this.persistQueue();
     this.broadcast({ t: 'queue.changed' });
+  }
+
+  /** Mirror the waiting queue (replayable entries only) to the DB for restart. */
+  private persistQueue(): void {
+    try {
+      this.store.runQueue.replaceAll(
+        this.oneShotQueue
+          .filter((q) => q.resume)
+          .map((q) => ({
+            id: q.id,
+            kind: q.kind,
+            title: q.title,
+            repo: q.repo,
+            issueNumber: q.issueNumber,
+            priority: q.priority,
+            resumeType: q.resume!.type,
+            resumeArgs: q.resume!.args,
+            enqueuedAt: q.enqueuedAt,
+          })),
+      );
+    } catch (err) {
+      log.warn('failed to persist run queue', { err: String(err) });
+    }
+  }
+
+  /** Register how a persisted queue entry of `type` is re-dispatched on boot. */
+  registerResumer(type: string, fn: (args: Record<string, unknown>) => Promise<unknown>): void {
+    this.resumers.set(type, fn);
+  }
+
+  /**
+   * Re-dispatch work that was still waiting when the daemon last stopped. Reads
+   * the persisted queue, clears it, then re-invokes each entry's resumer (which
+   * rebuilds the prompt and re-enqueues fresh). Entries whose resumer isn't
+   * registered are dropped with a log. Call once, after services are wired.
+   */
+  resumePersistedQueue(): void {
+    const entries = this.store.runQueue.list();
+    if (entries.length === 0) return;
+    this.store.runQueue.clear();
+    log.info(`resuming ${entries.length} queued run(s) from the previous daemon life`);
+    for (const e of entries) {
+      const resumer = this.resumers.get(e.resumeType);
+      if (!resumer) {
+        log.warn(`no resumer for queued ${e.resumeType} — dropping`, { title: e.title });
+        continue;
+      }
+      void resumer(e.resumeArgs).catch((err) =>
+        log.warn(`failed to resume queued ${e.resumeType}`, { title: e.title, err: String(err) }),
+      );
+    }
+  }
+
+  /** Slots kept free from attended chats for automated work (instance setting). */
+  private reservedRunnerSlots(): number {
+    const raw = Number(this.store.settings.get('reservedRunnerSlots'));
+    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 1;
   }
 
   /** The scheduler's live state for the UI: running count, capacity, and the line. */
@@ -762,6 +873,7 @@ export class Orchestrator implements RunnerEventSink {
         title: q.title,
         repo: q.repo,
         issueNumber: q.issueNumber,
+        priority: q.priority,
         enqueuedAt: q.enqueuedAt,
       })),
     };

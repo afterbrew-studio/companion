@@ -75,6 +75,8 @@ export interface QueuedRunEntry {
   readonly title: string;
   readonly repo: string | null;
   readonly issueNumber: number | null;
+  /** Scheduling weight — higher starts sooner; sets the initial place in line. */
+  readonly priority: number;
   readonly enqueuedAt: number;
 }
 

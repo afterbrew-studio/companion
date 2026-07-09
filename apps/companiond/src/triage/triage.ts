@@ -52,6 +52,7 @@ export class Triage {
       issueNumber,
       prompt: buildTriagePrompt(issue, openIssues),
       timeoutMs: 6 * 60_000,
+      resume: { type: 'triage', args: { repo, number: issueNumber } },
     });
 
     let verdict: TriageVerdict | null = null;

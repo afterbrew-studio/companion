@@ -19,6 +19,7 @@ import { PipelinesStore } from './pipelines.js';
 import { ReportsStore } from './reports.js';
 import { NotificationsStore } from './notifications.js';
 import { RunnersStore } from './runners.js';
+import { RunQueueStore } from './run-queue.js';
 
 /**
  * Companion's domain store. Rows are the source of truth for run/proposal
@@ -50,6 +51,7 @@ export class Store {
   public readonly reports: ReportsStore;
   public readonly notifications: NotificationsStore;
   public readonly runners: RunnersStore;
+  public readonly runQueue: RunQueueStore;
 
   constructor(file = paths.db()) {
     this.db = new Database(file);
@@ -73,6 +75,7 @@ export class Store {
     this.reports = new ReportsStore(this.db);
     this.notifications = new NotificationsStore(this.db);
     this.runners = new RunnersStore(this.db);
+    this.runQueue = new RunQueueStore(this.db);
     this.workspaces.ensureDefault();
   }
 

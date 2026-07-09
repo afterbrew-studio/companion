@@ -152,6 +152,17 @@ async function main(): Promise<void> {
     broadcast,
   );
   automations.start();
+
+  // Replay unattended work that was still queued when the daemon last stopped.
+  // Each resumer rebuilds the prompt from stored args and re-enqueues fresh.
+  const num = (a: Record<string, unknown>, k: string): number => Number(a[k]);
+  const str = (a: Record<string, unknown>, k: string): string => String(a[k]);
+  orchestrator.registerResumer('triage', (a) => triage.triageIssue(str(a, 'repo'), num(a, 'number')));
+  orchestrator.registerResumer('pr-review', (a) => prReviews.analyzePr(str(a, 'repo'), num(a, 'number')));
+  orchestrator.registerResumer('ci-analysis', (a) =>
+    prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number')),
+  );
+  orchestrator.resumePersistedQueue();
   // Re-expose the public webhook URL if the user had the tunnel enabled.
   webhookTunnel.restore();
   const skills = new Skills();

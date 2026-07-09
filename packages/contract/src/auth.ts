@@ -227,3 +227,13 @@ export interface UpdateAccountRequest {
 export interface NotificationSettings {
   readonly defaultScope: NotificationScope;
 }
+
+/** Instance-wide run-scheduling settings (admin-managed). */
+export interface RunSettings {
+  /**
+   * Runner slots kept free from attended chats (interactive / AI Help) so
+   * automated work — triage, review, fixes — always has room. Clamped so at
+   * least one chat slot remains.
+   */
+  readonly reservedRunnerSlots: number;
+}

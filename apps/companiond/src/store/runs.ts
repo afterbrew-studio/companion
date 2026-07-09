@@ -72,6 +72,19 @@ export class RunsStore {
     return counts;
   }
 
+  /** Live attended chats (interactive + AI Help) that currently hold a slot. */
+  activeInteractiveCount(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM runs
+           WHERE kind IN ('interactive', 'assistant')
+             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db
