@@ -1,4 +1,6 @@
-import type { Role } from '@companion/types';
+// Brings module-core's ServiceMap { core: Auth } + permission augmentations
+// (module-workspace dependsOn core, and calls Auth via ctx.services.get('core')).
+import '@companion/module-core/contract';
 import type { WorkspacesStore } from '../api/workspaces-store.js';
 import type { NotificationsService } from '../api/notifications-service.js';
 
@@ -7,24 +9,6 @@ import type { NotificationsService } from '../api/notifications-service.js';
  * (the scoping key every workspace-scoped table filters on) + dashboard metrics
  * + the notification inbox (workspace-scoped, so it lives with access control).
  */
-
-/**
- * The slice of module-core's Auth this module resolves via `ctx.services.get('core')`
- * — used for the member-candidate user search and the "does this user exist" check.
- *
- * NOTE (compile-time visibility shim): module-workspace `dependsOn` module-core,
- * but `@companion/module-core` is not a wired package dependency yet, so the
- * `ServiceMap { core: Auth }` augmentation module-core normally carries (via a
- * side-effect `import '@companion/module-core/contract'`) is not visible here.
- * This declares only the Auth surface this module calls; when module-core becomes
- * a real dependency, delete this and import its contract for the full `Auth` type.
- */
-export interface CoreAuthService {
-  searchUsers(opts: { q?: string; role?: string; limit?: number; offset?: number }): {
-    readonly users: ReadonlyArray<{ readonly username: string; readonly displayName: string; readonly disabled: boolean }>;
-  };
-  userRole(username: string): Role | undefined;
-}
 
 declare module '@companion/contracts' {
   interface PermissionRegistry {
@@ -41,8 +25,6 @@ declare module '@companion/contracts' {
     workspace: WorkspacesStore;
     /** The inbox emitter + reader; the kernel's `ctx.notify` proxy resolves here. */
     notifications: NotificationsService;
-    /** module-core's Auth (cross-module dependency) — visibility shim, see above. */
-    core: CoreAuthService;
   }
 }
 
