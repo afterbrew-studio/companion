@@ -136,6 +136,41 @@ export default defineRoutes((ctx) => {
       },
     }),
 
+    // ---------- modules (runtime toggles; the SPA bootstraps from the list) ----------
+    route({
+      method: 'GET',
+      path: '/api/modules',
+      access: 'any',
+      handler: () => ({ modules: ctx.modules.list() }),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/modules/:id/enable',
+      access: 'settings:manage',
+      handler: async ({ params }) => {
+        await ctx.modules.enable(params.id);
+        return { modules: ctx.modules.list() };
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/modules/:id/disable',
+      access: 'settings:manage',
+      handler: async ({ params }) => {
+        await ctx.modules.disable(params.id);
+        return { modules: ctx.modules.list() };
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/modules/:id/uninstall',
+      access: 'settings:manage',
+      handler: async ({ params }) => {
+        await ctx.modules.uninstall(params.id);
+        return { modules: ctx.modules.list() };
+      },
+    }),
+
     // ---------- self-service account + profile (any signed-in user) ----------
     route({
       method: 'GET',

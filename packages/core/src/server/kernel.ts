@@ -8,7 +8,7 @@ import { ServerBus } from './bus.js';
 import { MigrationRunner } from './migration-runner.js';
 import { RbacGrid } from './rbac-grid.js';
 import type { NotificationEmitter, SettingsRegistry } from './capabilities.js';
-import type { ModuleContext, ServerModule } from './context.js';
+import type { ModuleContext, ModuleListing, ServerModule } from './context.js';
 import type { WsScopeRegistry } from './ws-hub.js';
 import { HttpError } from './router.js';
 
@@ -28,17 +28,6 @@ export interface KernelOptions {
   readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
   /** The hub's scope-resolver registry (per-message visibility). */
   readonly ws: WsScopeRegistry;
-}
-
-/** Public shape of a module for `GET /api/modules` (no code loaded). */
-export interface ModuleInfo {
-  readonly id: ModuleId;
-  readonly title: string;
-  readonly version: string;
-  readonly dependsOn: readonly ModuleId[];
-  readonly required: boolean;
-  readonly enabled: boolean;
-  readonly permissions: readonly string[];
 }
 
 interface ModuleRow {
@@ -101,6 +90,12 @@ export class ModuleKernel {
       settings,
       rbac: this.rbac,
       ws: opts.ws,
+      modules: {
+        list: () => this.moduleList(),
+        enable: (id) => this.enable(id),
+        disable: (id) => this.disable(id),
+        uninstall: (id) => this.uninstall(id),
+      },
       isEnabled: (id) => this.isEnabled(id),
     };
     // The router needs an authenticator, wired once module-core provides it (boot()).
@@ -118,6 +113,11 @@ export class ModuleKernel {
     return this.authenticator;
   }
 
+  /** Token → user for the WS hub's upgrade path; null before boot completes. */
+  verifyToken(token: string | null): ReturnType<Authenticator['verify']> {
+    return this.authenticator?.verify(token) ?? null;
+  }
+
   isEnabled(id: ModuleId): boolean {
     const row = this.row(id);
     return !!row && row.enabled === 1;
@@ -127,7 +127,7 @@ export class ModuleKernel {
     return this.db.prepare(`SELECT * FROM modules WHERE id = ?`).get(id) as ModuleRow | undefined;
   }
 
-  moduleList(): ModuleInfo[] {
+  moduleList(): ModuleListing[] {
     return [...this.installed.values()].map((m) => {
       const row = this.row(m.manifest.id);
       return {

@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
 import type { DaemonConfig, Logger } from '@companion/services';
-import type { ModuleManifest } from '../manifest.js';
+import type { ModuleManifest, ModuleId } from '../manifest.js';
 import type { CompiledRoute } from './router.js';
 import type { Migration } from './migration-runner.js';
 import type { ServiceRegistry } from './service-registry.js';
@@ -31,7 +31,28 @@ export interface ModuleContext {
   readonly rbac: RbacReader;
   /** Per-message WS visibility: modules register scope resolvers in onEnable. */
   readonly ws: WsScopeRegistry;
+  /** Kernel lifecycle control — module-core's Modules admin surface drives this. */
+  readonly modules: KernelControl;
   readonly isEnabled: (moduleId: string) => boolean;
+}
+
+/** The runtime toggle surface the kernel exposes to modules (via ctx.modules). */
+export interface KernelControl {
+  list(): readonly ModuleListing[];
+  enable(id: ModuleId): Promise<void>;
+  disable(id: ModuleId): Promise<void>;
+  uninstall(id: ModuleId): Promise<void>;
+}
+
+/** One installed module for GET /api/modules (manifest + live state; no code loaded). */
+export interface ModuleListing {
+  readonly id: ModuleId;
+  readonly title: string;
+  readonly version: string;
+  readonly dependsOn: readonly ModuleId[];
+  readonly required: boolean;
+  readonly enabled: boolean;
+  readonly permissions: readonly string[];
 }
 
 export interface BackgroundJob {
