@@ -150,7 +150,15 @@ export class Runners {
     // A runner is usable only if it has a credential-ready provider (its
     // catalog says so). Unknown catalog (never probed) stays optimistic.
     const ready = (row: RunnerRow): boolean => this.hasReadyProvider(row);
-    const load = (row: RunnerRow): number => this.backend(row.id).liveIds().length / Math.max(1, row.max_runs);
+    // Load counts runs already assigned to a runner (provisioning included), not
+    // just spawned gateways — so a batch placed back-to-back spreads instead of
+    // piling onto whichever runner currently shows zero live gateways.
+    const active = this.store.runs.activeCountsByRunner();
+    const load = (row: RunnerRow): number => {
+      const assigned = active.get(row.id === LOCAL_RUNNER_ID ? null : row.id) ?? 0;
+      const live = this.backend(row.id).liveIds().length;
+      return Math.max(assigned, live) / Math.max(1, row.max_runs);
+    };
 
     if (pinned) {
       // An explicit repo pin wins, but not over a runner that can't run anything.
@@ -168,6 +176,24 @@ export class Runners {
     };
     const chosen = usable.find(served) ?? usable[0];
     return this.normalize(chosen?.id ?? LOCAL_RUNNER_ID);
+  }
+
+  /**
+   * Combined concurrent-run capacity across every enabled, online runner
+   * (shared + dedicated) — the ceiling the orchestrator schedules unattended
+   * runs against. The local runner always counts, so this is at least its cap.
+   */
+  totalCapacity(): number {
+    const online = (row: RunnerRow): boolean => {
+      const h = this.health.get(row.id);
+      // Unprobed (unknown) runners count optimistically, matching placement.
+      return !h || h.status === 'online' || h.status === 'degraded' || h.status === 'unknown';
+    };
+    let sum = 0;
+    for (const row of this.store.runners.list()) {
+      if (row.enabled === 1 && online(row)) sum += Math.max(0, row.max_runs);
+    }
+    return sum;
   }
 
   /** Advertised providers of a runner (null = unknown); null id = local. */

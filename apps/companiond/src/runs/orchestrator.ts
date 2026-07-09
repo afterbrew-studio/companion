@@ -38,8 +38,10 @@ export class Orchestrator implements RunnerEventSink {
   private readonly pendingAsks = new Map<string, Map<string, AskRequest>>();
   /** waitForTurn resolvers, keyed by runId. */
   private readonly turnWaiters = new Map<string, Set<() => void>>();
-  /** Sequential queue for unattended runs so batches respect the pool cap. */
-  private queue: Promise<unknown> = Promise.resolve();
+  // Unattended runs schedule against the runners' combined capacity (shared +
+  // dedicated): up to that many run at once, the rest wait for a free slot.
+  private oneShotActive = 0;
+  private readonly oneShotWaiters: Array<() => void> = [];
 
   constructor(
     private readonly store: Store,
@@ -661,9 +663,42 @@ export class Orchestrator implements RunnerEventSink {
         await this.stopRun(run.id).catch(() => undefined);
       }
     };
-    const result = this.queue.then(job, job);
-    this.queue = result.catch(() => undefined);
-    return result;
+    return this.scheduleOneShot(job);
+  }
+
+  /**
+   * Run `job` once a slot is free, bounding concurrency to the runners' combined
+   * capacity (re-read each attempt so it tracks runners coming and going). This
+   * replaces the old one-at-a-time queue — batches now fan out across the pool
+   * instead of running strictly serially.
+   */
+  private scheduleOneShot<T>(job: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const attempt = (): void => {
+        if (this.oneShotActive >= Math.max(1, this.runners.totalCapacity())) {
+          this.oneShotWaiters.push(attempt);
+          return;
+        }
+        this.oneShotActive++;
+        void job()
+          .then(resolve, reject)
+          .finally(() => {
+            this.oneShotActive--;
+            this.drainOneShotWaiters();
+          });
+      };
+      attempt();
+    });
+  }
+
+  /** Admit as many queued jobs as current capacity allows (it may have grown). */
+  private drainOneShotWaiters(): void {
+    while (
+      this.oneShotWaiters.length > 0 &&
+      this.oneShotActive < Math.max(1, this.runners.totalCapacity())
+    ) {
+      this.oneShotWaiters.shift()!();
+    }
   }
 
   async finalAssistantMessage(runId: string): Promise<string | null> {
