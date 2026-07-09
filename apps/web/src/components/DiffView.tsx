@@ -76,6 +76,86 @@ function Counts({ adds, dels }: { adds: number; dels: number }): JSX.Element {
   );
 }
 
+// ---------- file tree --------------------------------------------------------
+// The sidebar shows the changed files as a directory tree (basenames indented
+// under their folders) instead of a flat list of middle-truncated paths.
+
+interface DirNode {
+  readonly type: 'dir';
+  readonly name: string;
+  /** Full path of this directory, used as a stable collapse key. */
+  readonly path: string;
+  children: TreeNode[];
+}
+interface FileNode {
+  readonly type: 'file';
+  readonly name: string;
+  readonly path: string;
+  /** Index into the flat `files` array — what selection refers to. */
+  readonly index: number;
+  readonly adds: number;
+  readonly dels: number;
+}
+type TreeNode = DirNode | FileNode;
+
+function buildTree(files: DiffFile[]): TreeNode[] {
+  const root: DirNode = { type: 'dir', name: '', path: '', children: [] };
+  files.forEach((f, index) => {
+    const full = f.path || 'changes';
+    const parts = full.split('/');
+    const fileName = parts.pop()!;
+    let dir = root;
+    let acc = '';
+    for (const seg of parts) {
+      acc = acc ? `${acc}/${seg}` : seg;
+      let next = dir.children.find((c): c is DirNode => c.type === 'dir' && c.name === seg);
+      if (!next) {
+        next = { type: 'dir', name: seg, path: acc, children: [] };
+        dir.children.push(next);
+      }
+      dir = next;
+    }
+    dir.children.push({ type: 'file', name: fileName, path: full, index, adds: f.adds, dels: f.dels });
+  });
+  normalize(root);
+  return root.children;
+}
+
+/** Collapse single-child directory chains (a/ → b/ → file becomes "a/b") and sort. */
+function normalize(dir: DirNode): void {
+  for (const c of dir.children) if (c.type === 'dir') normalize(c);
+  dir.children = dir.children.map((c) => {
+    if (c.type !== 'dir') return c;
+    let node = c;
+    while (node.children.length === 1 && node.children[0]!.type === 'dir') {
+      const only = node.children[0] as DirNode;
+      node = { type: 'dir', name: `${node.name}/${only.name}`, path: only.path, children: only.children };
+    }
+    return node;
+  });
+  dir.children.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)));
+}
+
+interface TreeRow {
+  readonly depth: number;
+  readonly node: TreeNode;
+}
+function flattenTree(nodes: TreeNode[], collapsed: ReadonlySet<string>, depth = 0, out: TreeRow[] = []): TreeRow[] {
+  for (const n of nodes) {
+    out.push({ depth, node: n });
+    if (n.type === 'dir' && !collapsed.has(n.path)) flattenTree(n.children, collapsed, depth + 1, out);
+  }
+  return out;
+}
+
+function Caret({ open }: { open: boolean }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" className={`size-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
+      <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function FileLines({ file }: { file: DiffFile }): JSX.Element {
   return (
     <div className="min-w-0 flex-1 overflow-auto font-mono text-xs leading-5">
@@ -100,30 +180,60 @@ function Browser({
   heightCls: string;
 }): JSX.Element {
   const file = files[Math.min(selected, files.length - 1)]!;
+  const tree = useMemo(() => buildTree(files), [files]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const rows = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
+  const toggleDir = (path: string): void =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
   return (
     <div className={`flex min-h-0 ${heightCls}`}>
       {files.length > 1 ? (
         <nav
-          className="w-56 shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60"
+          className="w-56 shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 py-1 dark:border-zinc-800 dark:bg-zinc-900/60"
           aria-label="Changed files"
         >
-          {files.map((f, i) => (
-            <button
-              key={`${f.path}#${i}`}
-              className={`flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors ${
-                i === selected
-                  ? 'bg-white font-medium dark:bg-zinc-800'
-                  : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
-              }`}
-              onClick={() => onSelect(i)}
-              title={f.path}
-            >
-              <code className="min-w-0 flex-1 truncate text-[11px]" dir="rtl">
-                {f.path || 'changes'}
-              </code>
-              <Counts adds={f.adds} dels={f.dels} />
-            </button>
-          ))}
+          {rows.map(({ depth, node }) => {
+            const pad = { paddingLeft: `${6 + depth * 12}px` };
+            if (node.type === 'dir') {
+              return (
+                <button
+                  key={`d:${node.path}`}
+                  type="button"
+                  className="dim flex w-full cursor-pointer items-center gap-1 py-1 pr-2 text-left transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
+                  style={pad}
+                  onClick={() => toggleDir(node.path)}
+                  title={node.path}
+                  aria-expanded={!collapsed.has(node.path)}
+                >
+                  <Caret open={!collapsed.has(node.path)} />
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{node.name}</span>
+                </button>
+              );
+            }
+            return (
+              <button
+                key={`f:${node.index}`}
+                type="button"
+                className={`flex w-full cursor-pointer items-center gap-2 py-1 pr-2 text-left transition-colors ${
+                  node.index === selected
+                    ? 'bg-white font-medium dark:bg-zinc-800'
+                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+                }`}
+                style={pad}
+                onClick={() => onSelect(node.index)}
+                title={node.path}
+              >
+                <span className="min-w-0 flex-1 truncate text-[11px]">{node.name}</span>
+                <Counts adds={node.adds} dels={node.dels} />
+              </button>
+            );
+          })}
         </nav>
       ) : null}
       <FileLines file={file} />
