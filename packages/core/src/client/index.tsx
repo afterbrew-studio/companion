@@ -77,3 +77,9 @@ export const defineNav = (e: readonly NavEntry[]): readonly NavEntry[] => e;
 export const defineClientRoutes = (r: readonly ClientRoute[]): readonly ClientRoute[] => r;
 export const defineSlots = (s: readonly SlotContribution[]): readonly SlotContribution[] => s;
 export const defineClientModule = (m: WebModule): WebModule => m;
+
+// ---- the web host: single-socket net core, live loop, route matcher, module host ----
+export * from './net.js';
+export * from './live.js';
+export * from './router.js';
+export * from './modules-provider.js';

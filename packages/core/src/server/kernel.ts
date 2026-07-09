@@ -89,6 +89,7 @@ export class ModuleKernel {
       db: this.db,
       log: this.log,
       config: opts.config,
+      fts: this.migrations.fts,
       services: this.services,
       bus: this.bus,
       broadcast: opts.broadcast,

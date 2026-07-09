@@ -1,6 +1,7 @@
 import type { GithubTokenSource } from '../contract/index.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
+import type { RunsStore } from './runs-store.js';
 import type { WebhookTunnel } from './webhook-tunnel.js';
 import type { Skills } from './skills.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -22,6 +23,8 @@ export class OperateService {
     readonly moxxyCli: MoxxyCli | null,
     readonly webhookTunnel: WebhookTunnel,
     readonly skills: Skills,
+    /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
+    readonly runsStore: RunsStore,
     private readonly tokenSource: { current: GithubTokenSource },
   ) {}
 

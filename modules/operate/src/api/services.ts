@@ -58,6 +58,6 @@ export default defineServices(async (ctx) => {
 
   ctx.services.register(
     'operate',
-    new OperateService(orchestrator, orchestrator.runners, checkouts, moxxyCli, webhookTunnel, skills, tokenSource),
+    new OperateService(orchestrator, orchestrator.runners, checkouts, moxxyCli, webhookTunnel, skills, store.runs, tokenSource),
   );
 });

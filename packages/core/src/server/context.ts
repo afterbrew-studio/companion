@@ -18,6 +18,8 @@ export interface ModuleContext {
   readonly db: Database.Database;
   readonly log: Logger;
   readonly config: DaemonConfig;
+  /** SQLite FTS5 availability (probed once at bootstrap) — search features degrade without it. */
+  readonly fts: { readonly available: boolean };
   readonly services: ServiceRegistry;
   readonly bus: ServerBus;
   readonly broadcast: (msg: SpaServerMessage) => void;
