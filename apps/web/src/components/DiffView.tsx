@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { languageForPath, highlightLine } from '../lib/highlight.js';
 
 /**
  * Unified-diff browser: a sidebar of changed files (with +/− counts) next to
@@ -157,13 +158,28 @@ function Caret({ open }: { open: boolean }): JSX.Element {
 }
 
 function FileLines({ file }: { file: DiffFile }): JSX.Element {
+  const lang = useMemo(() => languageForPath(file.path), [file.path]);
   return (
     <div className="min-w-0 flex-1 overflow-auto font-mono text-xs leading-5">
-      {file.lines.map((line, li) => (
-        <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
-          {line.text || ' '}
-        </div>
-      ))}
+      {file.lines.map((line, li) => {
+        // Hunk/meta lines are diff chrome, not source — leave them unhighlighted.
+        if (line.kind === 'hunk' || line.kind === 'meta') {
+          return (
+            <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
+              {line.text || ' '}
+            </div>
+          );
+        }
+        // Split the +/−/space marker from the code so highlighting sees only source.
+        const marker = line.text.slice(0, 1);
+        const code = line.text.slice(1);
+        return (
+          <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
+            <span className="select-none">{marker || ' '}</span>
+            <span dangerouslySetInnerHTML={{ __html: highlightLine(code, lang) }} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -173,16 +189,20 @@ function Browser({
   selected,
   onSelect,
   heightCls,
+  resizable = false,
 }: {
   files: DiffFile[];
   selected: number;
   onSelect: (i: number) => void;
   heightCls: string;
+  /** Full-screen mode: let the user drag the file-list / preview split. */
+  resizable?: boolean;
 }): JSX.Element {
   const file = files[Math.min(selected, files.length - 1)]!;
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const rows = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
+  const [navWidth, setNavWidth] = useState(224); // matches w-56
   const toggleDir = (path: string): void =>
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -191,11 +211,29 @@ function Browser({
       return next;
     });
 
+  const startResize = (e: React.PointerEvent): void => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = navWidth;
+    const max = Math.max(280, Math.min(window.innerWidth - 320, window.innerWidth * 0.7));
+    const onMove = (ev: PointerEvent): void =>
+      setNavWidth(Math.min(Math.max(startW + ev.clientX - startX, 160), max));
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    document.body.style.userSelect = 'none';
+  };
+
   return (
     <div className={`flex min-h-0 ${heightCls}`}>
       {files.length > 1 ? (
         <nav
-          className="w-56 shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 py-1 dark:border-zinc-800 dark:bg-zinc-900/60"
+          className={`shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 py-1 dark:border-zinc-800 dark:bg-zinc-900/60 ${resizable ? '' : 'w-56'}`}
+          style={resizable ? { width: navWidth } : undefined}
           aria-label="Changed files"
         >
           {rows.map(({ depth, node }) => {
@@ -235,6 +273,15 @@ function Browser({
             );
           })}
         </nav>
+      ) : null}
+      {resizable && files.length > 1 ? (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className="w-1 shrink-0 cursor-col-resize bg-zinc-200 transition-colors hover:bg-[#3987e5] dark:bg-zinc-800"
+          onPointerDown={startResize}
+          title="Drag to resize"
+        />
       ) : null}
       <FileLines file={file} />
     </div>
@@ -312,7 +359,7 @@ export function DiffView({ diff, className = '' }: { diff: string; className?: s
               aria-label="Diff full screen"
             >
               {toolbar}
-              <Browser files={files} selected={sel} onSelect={setSelected} heightCls="flex-1" />
+              <Browser files={files} selected={sel} onSelect={setSelected} heightCls="flex-1" resizable />
             </div>,
             document.body,
           )
