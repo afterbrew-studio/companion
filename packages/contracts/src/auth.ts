@@ -17,6 +17,6 @@ export interface AuthUser {
  */
 export interface Authenticator {
   verify(token: string | null): AuthUser | null;
-  /** Throw (401/403) unless `user` holds `access`. Never called for `public`. */
-  require(user: AuthUser | null, access: Exclude<RouteAccess, 'public'>, permission: Permission): void;
+  /** Throw (401/403) unless `user` holds `permission`. Never called for public/any routes. */
+  require(user: AuthUser | null, permission: Permission): void;
 }

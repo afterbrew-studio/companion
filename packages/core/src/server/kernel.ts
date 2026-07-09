@@ -100,7 +100,7 @@ export class ModuleKernel {
     this.router = new DynamicRouter(
       {
         verify: (token) => this.requireAuth().verify(token),
-        require: (user, access, permission) => this.requireAuth().require(user, access, permission),
+        require: (user, permission) => this.requireAuth().require(user, permission),
       },
       this.log,
     );

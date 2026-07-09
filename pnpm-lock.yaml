@@ -171,16 +171,28 @@ importers:
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@companion/services':
+        specifier: workspace:*
+        version: link:../../packages/services
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
+      better-sqlite3:
+        specifier: ^12.2.0
+        version: 12.11.1
       react:
         specifier: ^18.3.1
         version: 18.3.1

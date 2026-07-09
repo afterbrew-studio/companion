@@ -67,11 +67,15 @@ write(
       dependencies: {
         '@companion/contracts': 'workspace:*',
         '@companion/core': 'workspace:*',
+        '@companion/services': 'workspace:*',
         '@companion/types': 'workspace:*',
+        zod: '^3.24.0',
       },
       devDependencies: {
+        '@types/better-sqlite3': '^7.6.12',
         '@types/node': '^22.10.0',
         '@types/react': '^18.3.12',
+        'better-sqlite3': '^12.2.0',
         react: '^18.3.1',
         typescript: '^5.8.0',
       },

@@ -178,7 +178,7 @@ export class DynamicRouter {
           if (r.access === 'any') {
             if (!user) throw new HttpError(401, 'authentication required');
           } else {
-            this.auth.require(user, r.access, r.access as Permission);
+            this.auth.require(user, r.access as Permission);
           }
         }
 
