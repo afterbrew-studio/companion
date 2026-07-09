@@ -85,6 +85,23 @@ export class RunsStore {
     ).n;
   }
 
+  /**
+   * Live runs that DON'T flow through the unattended queue — attended chats plus
+   * fix/implement runs started directly. The scheduler adds these to its own
+   * in-flight count so it never overcommits the runner pool.
+   */
+  activeNonQueueCount(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM runs
+           WHERE kind IN ('interactive', 'assistant', 'fix', 'implement')
+             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db

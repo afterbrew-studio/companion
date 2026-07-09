@@ -59,6 +59,14 @@ const KIND_PRIORITY: Record<RunKind, number> = {
   assistant: 10,
 };
 
+/** Stable identity for a resume descriptor (key order independent). */
+function resumeKeyOf(resume: { type: string; args: Record<string, unknown> }): string {
+  const parts = Object.keys(resume.args)
+    .sort()
+    .map((k) => `${k}=${String(resume.args[k])}`);
+  return `${resume.type}:${parts.join('&')}`;
+}
+
 /**
  * Run lifecycle owner. A "run" is one moxxy session (one MOXXY_SESSION_ID)
  * executing on some runner (machine). Live runs have a serve+gateway pair
@@ -79,6 +87,12 @@ export class Orchestrator implements RunnerEventSink {
   private readonly oneShotQueue: QueueItem[] = [];
   /** Per-kind replayers used to re-dispatch persisted queue entries on boot. */
   private readonly resumers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+  /**
+   * On boot, the persisted (priority, enqueuedAt) for each entry being resumed,
+   * keyed by resume type+args. The re-dispatched item adopts these so the queue
+   * order — including manual reordering — is reproduced exactly after a restart.
+   */
+  private pendingResume = new Map<string, { priority: number; enqueuedAt: number }>();
 
   constructor(
     private readonly store: Store,
@@ -759,7 +773,13 @@ export class Orchestrator implements RunnerEventSink {
     job: () => Promise<T>,
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const priority = KIND_PRIORITY[meta.kind] ?? 40;
+      // A resumed entry adopts its persisted weight + enqueue time so the queue
+      // order (priority + any manual reordering) is reproduced across restarts,
+      // regardless of the order resumers happen to re-enqueue in.
+      const resumeKey = meta.resume ? resumeKeyOf(meta.resume) : null;
+      const restored = resumeKey ? this.pendingResume.get(resumeKey) : undefined;
+      if (resumeKey && restored) this.pendingResume.delete(resumeKey);
+      const priority = restored?.priority ?? KIND_PRIORITY[meta.kind] ?? 40;
       const item: QueueItem = {
         id: `q-${randomUUID().slice(0, 12)}`,
         kind: meta.kind,
@@ -767,7 +787,7 @@ export class Orchestrator implements RunnerEventSink {
         repo: meta.repo,
         issueNumber: meta.issueNumber,
         priority,
-        enqueuedAt: Date.now(),
+        enqueuedAt: restored?.enqueuedAt ?? Date.now(),
         resume: meta.resume,
         start: () => {
           this.oneShotActive++;
@@ -780,19 +800,29 @@ export class Orchestrator implements RunnerEventSink {
         },
         cancel: () => reject(new Error('run cancelled before it started')),
       };
-      // Insert by priority: ahead of everything strictly lower, behind equal or
-      // higher (FIFO within a weight). Manual reordering can still override.
-      const at = this.oneShotQueue.findIndex((q) => q.priority < priority);
-      this.oneShotQueue.splice(at < 0 ? this.oneShotQueue.length : at, 0, item);
+      this.oneShotQueue.push(item);
+      this.sortQueue();
       this.pumpQueue();
       this.broadcastQueue();
     });
   }
 
-  /** Start as many queued jobs as the current combined capacity allows. */
+  /** Order the waiting queue: higher weight first, then earliest enqueued. */
+  private sortQueue(): void {
+    this.oneShotQueue.sort((a, b) => b.priority - a.priority || a.enqueuedAt - b.enqueuedAt);
+  }
+
+  /**
+   * Start as many queued jobs as free capacity allows. Occupancy is this
+   * scheduler's in-flight jobs PLUS runs that bypass the queue (attended chats,
+   * fix/implement started directly) — otherwise the queue would overcommit the
+   * pool whenever chats are already holding slots.
+   */
   private pumpQueue(): void {
     let started = false;
-    while (this.oneShotQueue.length > 0 && this.oneShotActive < Math.max(1, this.runners.totalCapacity())) {
+    const capacity = Math.max(1, this.runners.totalCapacity());
+    const nonQueue = this.store.runs.activeNonQueueCount();
+    while (this.oneShotQueue.length > 0 && this.oneShotActive + nonQueue < capacity) {
       this.oneShotQueue.shift()!.start();
       started = true;
     }
@@ -842,6 +872,14 @@ export class Orchestrator implements RunnerEventSink {
     const entries = this.store.runQueue.list();
     if (entries.length === 0) return;
     this.store.runQueue.clear();
+    // Remember each entry's persisted order so the re-dispatched item reclaims
+    // its exact place, no matter what order the async resumers re-enqueue in.
+    this.pendingResume = new Map(
+      entries.map((e) => [
+        resumeKeyOf({ type: e.resumeType, args: e.resumeArgs }),
+        { priority: e.priority, enqueuedAt: e.enqueuedAt },
+      ]),
+    );
     log.info(`resuming ${entries.length} queued run(s) from the previous daemon life`);
     for (const e of entries) {
       const resumer = this.resumers.get(e.resumeType);
@@ -879,14 +917,21 @@ export class Orchestrator implements RunnerEventSink {
     };
   }
 
-  /** Move a waiting entry one step up or down the line. */
+  /**
+   * Move a waiting entry one step up or down. Swaps the two items' sort keys
+   * (priority + enqueuedAt) rather than just their array slots, so the manual
+   * order is encoded in persisted fields and survives a restart.
+   */
   moveQueued(id: string, direction: 'up' | 'down'): boolean {
     const i = this.oneShotQueue.findIndex((q) => q.id === id);
     if (i < 0) return false;
     const j = direction === 'up' ? i - 1 : i + 1;
     if (j < 0 || j >= this.oneShotQueue.length) return false;
-    const q = this.oneShotQueue;
-    [q[i], q[j]] = [q[j]!, q[i]!];
+    const a = this.oneShotQueue[i]!;
+    const b = this.oneShotQueue[j]!;
+    [a.priority, b.priority] = [b.priority, a.priority];
+    [a.enqueuedAt, b.enqueuedAt] = [b.enqueuedAt, a.enqueuedAt];
+    this.sortQueue();
     this.broadcastQueue();
     return true;
   }
