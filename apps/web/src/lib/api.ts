@@ -41,6 +41,7 @@ import type {
   RepoRecord,
   Role,
   RunRecord,
+  RunQueueSnapshot,
   SpecRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
@@ -513,6 +514,10 @@ export const api = {
 
   // runs
   listRuns: () => request<{ runs: RunRecord[] }>('/api/runs'),
+  runQueue: () => request<{ queue: RunQueueSnapshot }>('/api/runs/queue'),
+  moveQueued: (id: string, direction: 'up' | 'down') =>
+    post<{ queue: RunQueueSnapshot }>(`/api/runs/queue/${id}/move`, { direction }),
+  cancelQueued: (id: string) => del<{ queue: RunQueueSnapshot }>(`/api/runs/queue/${id}`),
   createRun: (title?: string) => post<{ run: RunRecord }>('/api/runs', { title }),
   getRun: (id: string) => request<{ run: RunRecord; pendingAsks: AskRequest[] }>(`/api/runs/${id}`),
   history: (id: string, before: number | null, limit = 300) =>

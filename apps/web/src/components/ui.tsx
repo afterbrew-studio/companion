@@ -1334,6 +1334,29 @@ export function CommentCount({ count }: { count: number }): JSX.Element {
   );
 }
 
+/** A small chip flagging an in-progress or queued agent action on a row. */
+export function AiActivityChip({ activity }: { activity: 'running' | 'queued' }): JSX.Element {
+  const running = activity === 'running';
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+        running
+          ? 'bg-[#2a78d6]/10 text-[#2a78d6] dark:bg-[#3987e5]/15 dark:text-[#5aa2f0]'
+          : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+      }`}
+      title={running ? 'An agent is working on this' : 'Waiting for a runner slot'}
+    >
+      <span
+        className={`size-1.5 rounded-full ${
+          running ? 'animate-pulse bg-[#2a78d6] motion-reduce:animate-none dark:bg-[#3987e5]' : 'bg-zinc-400'
+        }`}
+        aria-hidden
+      />
+      {running ? 'AI running' : 'AI queued'}
+    </span>
+  );
+}
+
 /** One `label: value` cell in a detail view's metadata strip. */
 export function MetaItem({ label, children }: { label: string; children: ReactNode }): JSX.Element {
   return (

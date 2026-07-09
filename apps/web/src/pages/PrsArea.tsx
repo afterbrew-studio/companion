@@ -1,6 +1,7 @@
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
+import { useAiActivity } from '../hooks/useAiActivity.js';
 import { ListFooter } from '../lib/paging.js';
-import { Page, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
+import { Page, AiActivityChip, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
 
 /**
  * Pull requests across every repo of the active workspace. Server-paged: only
@@ -8,6 +9,7 @@ import { Page, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, E
  */
 export function PrsAreaPage(): JSX.Element {
   const s = useWorkspacePrs();
+  const aiActivity = useAiActivity();
   const {
     current,
     tab,
@@ -255,6 +257,9 @@ export function PrsAreaPage(): JSX.Element {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
                   <span className="truncate font-medium">{pr.title}</span>
+                  {aiActivity.get(`${pr.repo}#${pr.number}`) ? (
+                    <AiActivityChip activity={aiActivity.get(`${pr.repo}#${pr.number}`)!} />
+                  ) : null}
                   {pr.review ? (
                     <span className={`shrink-0 ${pr.review === 'applied' ? 'badge-ok' : 'badge-warn'}`}>
                       review {pr.review}

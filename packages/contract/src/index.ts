@@ -62,6 +62,32 @@ export interface RunRecord {
   readonly outcome: string | null;
 }
 
+/**
+ * An unattended run waiting for a runner slot. It has no run row yet — it
+ * becomes a real run only once it starts — so the queue is its own list the
+ * user can watch, reorder, and cancel while runners are busy.
+ */
+export interface QueuedRunEntry {
+  readonly id: string;
+  /** 0-based place in line. */
+  readonly position: number;
+  readonly kind: RunKind;
+  readonly title: string;
+  readonly repo: string | null;
+  readonly issueNumber: number | null;
+  readonly enqueuedAt: number;
+}
+
+/** The run scheduler's live state: how many are running vs the combined cap. */
+export interface RunQueueSnapshot {
+  /** Runs currently executing (against the combined runner capacity). */
+  readonly active: number;
+  /** Combined capacity across enabled, online runners (shared + dedicated). */
+  readonly capacity: number;
+  /** Waiting entries, in the order they will start. */
+  readonly entries: readonly QueuedRunEntry[];
+}
+
 // ---------- GitHub domain -----------------------------------------------------
 
 export interface RepoRecord {
@@ -655,6 +681,7 @@ export type SpaServerMessage =
   | { readonly t: 'askResolved'; readonly runId: string; readonly requestId: string }
   | { readonly t: 'run.changed'; readonly run: RunRecord }
   | { readonly t: 'runs.changed' }
+  | { readonly t: 'queue.changed' }
   | { readonly t: 'repos.changed' }
   | { readonly t: 'workspaces.changed' }
   | { readonly t: 'issues.changed'; readonly repo: string }

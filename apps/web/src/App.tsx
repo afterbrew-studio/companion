@@ -11,6 +11,7 @@ import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { Onboarding, hasOnboarded, hasUnseenOnboarding, type OnboardingMode } from './components/Onboarding.js';
 import { Inbox } from './components/Inbox.js';
+import { RunQueueIndicator } from './components/RunQueue.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { MODULES } from './modules.js';
 import { LoginPage } from './pages/Login.js';
@@ -848,6 +849,7 @@ function TopBar({
           ⌘K
         </kbd>
       </button>
+      <RunQueueIndicator />
       <Inbox />
       <AgentsStatus />
       <AssistantButton open={assistantOpen} onClick={onToggleAssistant} />

@@ -10,6 +10,7 @@ import type {
   ModelCatalogProvider,
   MoxxyEvent,
   RunKind,
+  RunQueueSnapshot,
   RunRecord,
   SpaServerMessage,
 } from '@companion/contract';
@@ -25,6 +26,20 @@ import { Store, rowToRun } from '../store/db.js';
 /** Hard per-run output-token ceiling (goal mode upstream is uncapped). */
 const MAX_RUN_OUTPUT_TOKENS = 400_000;
 
+/** A queued unattended job: display metadata plus its start/cancel handles. */
+interface QueueItem {
+  id: string;
+  kind: RunKind;
+  title: string;
+  repo: string | null;
+  issueNumber: number | null;
+  enqueuedAt: number;
+  /** Acquire a slot and run the job (resolves/rejects the caller's promise). */
+  start: () => void;
+  /** Reject the caller's promise; used when cancelled before it starts. */
+  cancel: () => void;
+}
+
 /**
  * Run lifecycle owner. A "run" is one moxxy session (one MOXXY_SESSION_ID)
  * executing on some runner (machine). Live runs have a serve+gateway pair
@@ -39,9 +54,10 @@ export class Orchestrator implements RunnerEventSink {
   /** waitForTurn resolvers, keyed by runId. */
   private readonly turnWaiters = new Map<string, Set<() => void>>();
   // Unattended runs schedule against the runners' combined capacity (shared +
-  // dedicated): up to that many run at once, the rest wait for a free slot.
+  // dedicated): up to that many run at once, the rest wait in a visible queue
+  // the user can reorder and cancel.
   private oneShotActive = 0;
-  private readonly oneShotWaiters: Array<() => void> = [];
+  private readonly oneShotQueue: QueueItem[] = [];
 
   constructor(
     private readonly store: Store,
@@ -207,13 +223,16 @@ export class Orchestrator implements RunnerEventSink {
     const model =
       opts.model ?? this.runners.modelPinFor(runnerId, kind) ?? this.pinnedModel(kind);
     const backend = this.runners.backend(runnerId);
-    const cwd = opts.cwd ?? (await backend.scratchDir(id));
+    // Reserve the slot atomically: persist the provisioning row (carrying
+    // runner_id) BEFORE the first await, so a concurrent createRun's placement
+    // counts this run and spreads instead of overshooting one runner's cap.
+    // The scratch dir is allocated after; setPlacement backfills the real cwd.
     this.store.runs.insert({
       id,
       kind,
       status: 'provisioning',
       title: opts.title ?? 'New run',
-      cwd,
+      cwd: opts.cwd ?? '',
       repo: opts.repo ?? null,
       issueNumber: opts.issueNumber ?? null,
       proposalId: opts.proposalId ?? null,
@@ -229,6 +248,12 @@ export class Orchestrator implements RunnerEventSink {
       outcome: null,
     });
     this.broadcast({ t: 'runs.changed' });
+
+    let cwd = opts.cwd;
+    if (cwd === undefined) {
+      cwd = await backend.scratchDir(id);
+      this.store.runs.setPlacement(id, runnerId, cwd);
+    }
 
     try {
       await backend.spawn(id, cwd);
@@ -663,42 +688,105 @@ export class Orchestrator implements RunnerEventSink {
         await this.stopRun(run.id).catch(() => undefined);
       }
     };
-    return this.scheduleOneShot(job);
+    return this.scheduleOneShot(
+      {
+        kind: opts.kind,
+        title: opts.title,
+        repo: opts.repo ?? null,
+        issueNumber: opts.issueNumber ?? null,
+      },
+      job,
+    );
   }
 
+  // ---------- run queue -------------------------------------------------------
+
   /**
-   * Run `job` once a slot is free, bounding concurrency to the runners' combined
-   * capacity (re-read each attempt so it tracks runners coming and going). This
-   * replaces the old one-at-a-time queue — batches now fan out across the pool
-   * instead of running strictly serially.
+   * Enqueue an unattended job. It starts immediately if the combined runner
+   * capacity has a free slot; otherwise it waits in a visible queue (reorderable
+   * and cancellable) and starts when a slot frees. Replaces the old serial
+   * queue — batches now fan out across the whole pool.
    */
-  private scheduleOneShot<T>(job: () => Promise<T>): Promise<T> {
+  private scheduleOneShot<T>(
+    meta: { kind: RunKind; title: string; repo: string | null; issueNumber: number | null },
+    job: () => Promise<T>,
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const attempt = (): void => {
-        if (this.oneShotActive >= Math.max(1, this.runners.totalCapacity())) {
-          this.oneShotWaiters.push(attempt);
-          return;
-        }
-        this.oneShotActive++;
-        void job()
-          .then(resolve, reject)
-          .finally(() => {
-            this.oneShotActive--;
-            this.drainOneShotWaiters();
-          });
+      const item: QueueItem = {
+        id: `q-${randomUUID().slice(0, 12)}`,
+        kind: meta.kind,
+        title: meta.title,
+        repo: meta.repo,
+        issueNumber: meta.issueNumber,
+        enqueuedAt: Date.now(),
+        start: () => {
+          this.oneShotActive++;
+          void job()
+            .then(resolve, reject)
+            .finally(() => {
+              this.oneShotActive--;
+              this.pumpQueue();
+            });
+        },
+        cancel: () => reject(new Error('run cancelled before it started')),
       };
-      attempt();
+      this.oneShotQueue.push(item);
+      this.pumpQueue();
+      this.broadcastQueue();
     });
   }
 
-  /** Admit as many queued jobs as current capacity allows (it may have grown). */
-  private drainOneShotWaiters(): void {
-    while (
-      this.oneShotWaiters.length > 0 &&
-      this.oneShotActive < Math.max(1, this.runners.totalCapacity())
-    ) {
-      this.oneShotWaiters.shift()!();
+  /** Start as many queued jobs as the current combined capacity allows. */
+  private pumpQueue(): void {
+    let started = false;
+    while (this.oneShotQueue.length > 0 && this.oneShotActive < Math.max(1, this.runners.totalCapacity())) {
+      this.oneShotQueue.shift()!.start();
+      started = true;
     }
+    if (started) this.broadcastQueue();
+  }
+
+  private broadcastQueue(): void {
+    this.broadcast({ t: 'queue.changed' });
+  }
+
+  /** The scheduler's live state for the UI: running count, capacity, and the line. */
+  queueSnapshot(): RunQueueSnapshot {
+    return {
+      active: this.oneShotActive,
+      capacity: Math.max(1, this.runners.totalCapacity()),
+      entries: this.oneShotQueue.map((q, i) => ({
+        id: q.id,
+        position: i,
+        kind: q.kind,
+        title: q.title,
+        repo: q.repo,
+        issueNumber: q.issueNumber,
+        enqueuedAt: q.enqueuedAt,
+      })),
+    };
+  }
+
+  /** Move a waiting entry one step up or down the line. */
+  moveQueued(id: string, direction: 'up' | 'down'): boolean {
+    const i = this.oneShotQueue.findIndex((q) => q.id === id);
+    if (i < 0) return false;
+    const j = direction === 'up' ? i - 1 : i + 1;
+    if (j < 0 || j >= this.oneShotQueue.length) return false;
+    const q = this.oneShotQueue;
+    [q[i], q[j]] = [q[j]!, q[i]!];
+    this.broadcastQueue();
+    return true;
+  }
+
+  /** Drop a waiting entry before it starts; its caller sees a cancellation. */
+  cancelQueued(id: string): boolean {
+    const i = this.oneShotQueue.findIndex((q) => q.id === id);
+    if (i < 0) return false;
+    const [item] = this.oneShotQueue.splice(i, 1);
+    item!.cancel();
+    this.broadcastQueue();
+    return true;
   }
 
   async finalAssistantMessage(runId: string): Promise<string | null> {

@@ -1,6 +1,7 @@
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
+import { useAiActivity } from '../hooks/useAiActivity.js';
 import { ListFooter } from '../lib/paging.js';
-import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, Tabs, TriageLegend, TriageStateIcon, timeAgo } from '../components/ui.js';
+import { Page, AiActivityChip, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, Tabs, TriageLegend, TriageStateIcon, timeAgo } from '../components/ui.js';
 
 /**
  * Issues across every repo of the active workspace. Server-paged: only the
@@ -8,6 +9,7 @@ import { Page, AssigneeNote, CommentCount, ContextMenu, Dropdown, EmptyState, Fi
  */
 export function IssuesAreaPage(): JSX.Element {
   const s = useWorkspaceIssues();
+  const aiActivity = useAiActivity();
   const {
     current,
     tab,
@@ -239,6 +241,9 @@ export function IssuesAreaPage(): JSX.Element {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
                   <span className="truncate font-medium">{issue.title}</span>
+                  {aiActivity.get(`${issue.repo}#${issue.number}`) ? (
+                    <AiActivityChip activity={aiActivity.get(`${issue.repo}#${issue.number}`)!} />
+                  ) : null}
                 </span>
                 <span className="dim mt-0.5 flex items-center gap-1.5 text-xs">
                   <span className="min-w-0 truncate">
