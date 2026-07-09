@@ -18,7 +18,11 @@ import type {
 export class WorkspacesStore {
   constructor(private readonly db: Database.Database) {}
 
-  /** Every install has at least one workspace; orphan repos are adopted into it. */
+  /**
+   * Every install has at least one workspace. (Orphan-repo adoption — the
+   * legacy second half of this method — lives with module-code, the repos
+   * owner: its table doesn't exist yet when this module constructs.)
+   */
   ensureDefault(): void {
     const count = this.db.prepare(`SELECT COUNT(*) AS n FROM workspaces`).get() as { n: number };
     if (count.n === 0) {
@@ -26,8 +30,6 @@ export class WorkspacesStore {
         .prepare(`INSERT INTO workspaces (id, name, slug, description, created_at) VALUES (?, ?, ?, ?, ?)`)
         .run('ws-default', 'Default', 'default', 'Default workspace', Date.now());
     }
-    const first = this.db.prepare(`SELECT id FROM workspaces ORDER BY created_at LIMIT 1`).get() as { id: string };
-    this.db.prepare(`UPDATE repos SET workspace_id = ? WHERE workspace_id IS NULL`).run(first.id);
   }
 
   private readonly selectCols = `SELECT w.*,

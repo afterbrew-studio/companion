@@ -243,6 +243,24 @@ export class ModuleKernel {
     this.opts.broadcast({ t: 'modules.changed' });
   }
 
+  /**
+   * Graceful process shutdown: stop jobs + run onDisable for every enabled
+   * module in REVERSE topo order (dependents wind down before their
+   * dependencies), WITHOUT flipping enabled flags — state stays durable for the
+   * next boot. The app closes the DB afterwards.
+   */
+  async shutdown(): Promise<void> {
+    const order = this.topoSort(this.enabledIds()).reverse();
+    for (const id of order) {
+      this.stopJobs(id);
+      try {
+        await this.loaded.get(id)?.lifecycle?.onDisable?.(this.ctx);
+      } catch (err) {
+        this.log.warn(`module '${id}' onDisable failed during shutdown`, { err: String(err) });
+      }
+    }
+  }
+
   // ---- internals ----
 
   private enabledIds(): ModuleId[] {

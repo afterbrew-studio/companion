@@ -1,11 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { log } from '../log.js';
-import { Router, readRawBody } from './router.js';
-import { buildRoutes } from './routes/index.js';
-import type { ApiDeps } from './deps.js';
-import type { SpaHub } from './spa-ws.js';
+import { log } from '@companion/services';
+import { readRawBody, type ModuleKernel, type WsHub } from '@companion/core/server';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -19,21 +16,21 @@ const MIME: Record<string, string> = {
 };
 
 /**
- * The one companiond server: /api REST (typed route table + RBAC), /ws SPA
- * socket (upgrade, session-token auth), GitHub webhooks (HMAC auth), and the
- * built SPA as static files (dev uses Vite with a proxy instead). By default
- * it binds 127.0.0.1; Docker sets the host to 0.0.0.0 so published ports work.
+ * The one api server: /api REST (the kernel's dynamic route table + RBAC),
+ * /ws SPA socket (upgrade, session-token auth), GitHub webhooks (HMAC auth),
+ * and the built SPA as static files (dev uses Vite with a proxy instead). By
+ * default it binds 127.0.0.1; Docker sets the host to 0.0.0.0 so published
+ * ports work.
  */
 export function startHttpServer(opts: {
   host: string;
   port: number;
-  deps: ApiDeps;
-  hub: SpaHub;
+  kernel: ModuleKernel;
+  hub: WsHub;
   /** Directory of the built SPA (apps/web/dist); optional in dev. */
   staticDir?: string;
 }): Promise<Server> {
-  const { host, port, deps, hub, staticDir } = opts;
-  const router = new Router(buildRoutes(deps), deps.auth);
+  const { host, port, kernel, hub, staticDir } = opts;
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
@@ -44,16 +41,22 @@ export function startHttpServer(opts: {
       return;
     }
     if (path.startsWith('/api/')) {
-      void router.dispatch(req, res);
+      void kernel.router.dispatch(req, res);
       return;
     }
     // GitHub webhook deliveries: HMAC over the RAW body, so this route never
     // goes through the JSON parser. No bearer — the signature IS the auth.
     const webhook = path.match(/^\/webhooks\/github\/([\w.-]+)\/([\w.-]+)$/);
     if (webhook && req.method === 'POST') {
+      const automations = kernel.services.tryGet('automations');
+      if (!automations) {
+        res.writeHead(503, { 'content-type': 'text/plain' });
+        res.end('automations module disabled');
+        return;
+      }
       void readRawBody(req)
         .then((raw) => {
-          const result = deps.automations.handleDelivery(`${webhook[1]}/${webhook[2]}`, req.headers, raw);
+          const result = automations.automations.handleDelivery(`${webhook[1]}/${webhook[2]}`, req.headers, raw);
           res.writeHead(result.status, { 'content-type': 'text/plain' });
           res.end(result.body);
         })
@@ -68,7 +71,7 @@ export function startHttpServer(opts: {
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain' });
-    res.end('companiond: no static bundle (use the Vite dev server)');
+    res.end('companion api: no static bundle (use the Vite dev server)');
   });
 
   server.on('upgrade', (req, socket, head) => hub.handleUpgrade(req, socket, head));

@@ -17,9 +17,15 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
     devDependencies:
-      '@companion/contract':
+      '@companion/module-operate':
         specifier: workspace:*
-        version: link:../../packages/contract
+        version: link:../../modules/operate
+      '@companion/services':
+        specifier: workspace:*
+        version: link:../../packages/services
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -38,27 +44,39 @@ importers:
 
   apps/companiond:
     dependencies:
-      '@companion/contract':
+      '@companion/contracts':
         specifier: workspace:*
-        version: link:../../packages/contract
-      '@moxxy/plugin-tunnel-proxy':
-        specifier: ^0.29.0
-        version: 0.29.0(zod@3.25.76)
-      '@moxxy/sdk':
-        specifier: ^0.29.0
-        version: 0.29.0(zod@3.25.76)
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/module-admin':
+        specifier: workspace:*
+        version: link:../../modules/admin
+      '@companion/module-automations':
+        specifier: workspace:*
+        version: link:../../modules/automations
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../../modules/code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../../modules/core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../../modules/operate
+      '@companion/module-plan':
+        specifier: workspace:*
+        version: link:../../modules/plan
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../../modules/workspace
+      '@companion/services':
+        specifier: workspace:*
+        version: link:../../packages/services
       better-sqlite3:
         specifier: ^12.2.0
         version: 12.11.1
-      jsonrepair:
-        specifier: ^3.15.0
-        version: 3.15.0
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
-      zod:
-        specifier: ^3.24.0
-        version: 3.25.76
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
@@ -66,9 +84,6 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
-      '@types/ws':
-        specifier: ^8.5.13
-        version: 8.18.1
       tsx:
         specifier: ^4.19.0
         version: 4.23.0

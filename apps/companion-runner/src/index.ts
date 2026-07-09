@@ -5,16 +5,16 @@ import './bootstrap.js';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { paths } from '../../companiond/src/config.js';
-import { Checkouts } from '../../companiond/src/git/checkouts.js';
-import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../../companiond/src/moxxy/cli.js';
-import { GatewayPool } from '../../companiond/src/moxxy/gateway-pool.js';
+import { paths } from '@companion/services';
+import { Checkouts } from '@companion/module-operate/exec';
+import { detectMoxxyCli, MIN_MOXXY_VERSION } from '@companion/module-operate/exec';
+import { GatewayPool } from '@companion/module-operate/exec';
 import {
   healCredentialLinks,
   homeStatus,
   importProvidersFromDailyMoxxy,
   seedPermissionDenyRules,
-} from '../../companiond/src/moxxy/home.js';
+} from '@companion/module-operate/exec';
 import { removePidFile, startBackground, statusBackground, stopBackground, writePidFile } from './background.js';
 import { loadRunnerConfig } from './config.js';
 import { log } from './log.js';

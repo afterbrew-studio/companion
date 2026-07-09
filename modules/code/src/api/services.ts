@@ -29,6 +29,17 @@ export default defineServices((ctx) => {
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
 
+  // Adopt orphan repos into the oldest workspace — the legacy second half of
+  // workspace's ensureDefault(), relocated to the repos owner (our migration
+  // has just run, and workspace's table migrated before ours in topo order).
+  ctx.db
+    .prepare(
+      `UPDATE repos SET workspace_id =
+         (SELECT id FROM workspaces ORDER BY created_at LIMIT 1)
+       WHERE workspace_id IS NULL`,
+    )
+    .run();
+
   // Stores, in the legacy store/db.ts construction order.
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);

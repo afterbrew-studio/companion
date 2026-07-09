@@ -1,172 +1,39 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { RunStatus, SpaServerMessage } from '@companion/contract';
-import { log } from './log.js';
-import { loadDaemonConfig, paths } from './config.js';
-import { detectMoxxyCli, MIN_MOXXY_VERSION } from './moxxy/cli.js';
-import { healCredentialLinks, seedPermissionDenyRules } from './moxxy/home.js';
-import { Auth } from './auth/auth.js';
-import { Orchestrator } from './runs/orchestrator.js';
-import { Fixes } from './runs/fixes.js';
-import { Store } from './store/db.js';
-import { SpaHub } from './http/spa-ws.js';
+import Database from 'better-sqlite3';
+import { loadDaemonConfig, log, paths } from '@companion/services';
+import { ModuleKernel, WsHub } from '@companion/core/server';
+import { MODULES } from './modules.js';
 import { startHttpServer } from './http/server.js';
-import { GitHubClient } from './github/client.js';
-import { GitHubAccounts } from './github/accounts.js';
-import { GitHubSync } from './github/sync.js';
-import { Checkouts } from './git/checkouts.js';
-import { Triage } from './triage/triage.js';
-import { PrReviews } from './prs/reviews.js';
-import { PrChecks } from './prs/checks.js';
-import { Proposals } from './proposals/proposals.js';
-import { Pipelines } from './pipelines/pipelines.js';
-import { Automations } from './automations/automations.js';
-import { WebhookTunnel } from './moxxy/webhook-tunnel.js';
-import { Skills } from './skills/skills.js';
-import { Specs } from './specs/specs.js';
-import { Docs } from './docs/docs.js';
-import { Assistant } from './assistant/assistant.js';
 
-/** Run statuses that end a run without producing a PR — proposals unstick on these. */
-const TERMINAL_FAIL = new Set<RunStatus>(['failed', 'stopped', 'abandoned', 'interrupted']);
-
+/**
+ * The api daemon's composition root — now just: config, database, WebSocket
+ * hub, kernel boot over the static module registry, HTTP server, shutdown.
+ * Everything domain-shaped (services, routes, migrations, permissions, jobs,
+ * cross-module reactions) lives in the modules the kernel loads.
+ */
 async function main(): Promise<void> {
   const config = loadDaemonConfig();
-  seedPermissionDenyRules();
-  healCredentialLinks();
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
   log.info(`default agent model: ${config.defaultModel}`);
 
-  const moxxyCli = await detectMoxxyCli(paths.moxxyHome(), config.moxxyCliPath);
-  if (!moxxyCli) {
-    log.warn(
-      `moxxy CLI not found on PATH — install it with: npm i -g @moxxy/cli  (>= ${MIN_MOXXY_VERSION}). ` +
-        'companiond starts anyway; runs will fail until moxxy is installed.',
-    );
-  } else if (!moxxyCli.compatible) {
-    log.warn(`installed moxxy ${moxxyCli.version} is older than ${MIN_MOXXY_VERSION}; upgrade with: npm i -g @moxxy/cli`);
-  } else {
-    log.info(`moxxy ${moxxyCli.version} at ${moxxyCli.path}`);
-  }
+  const db = new Database(paths.db());
+  db.pragma('journal_mode = WAL');
 
-  const store = new Store();
-  const auth = new Auth(store);
-  // Legacy .env accounts seed an EMPTY user store once; afterwards the Users
-  // module owns accounts. A clean install with no .env runs SPA onboarding.
-  auth.seedFromEnv(config.users);
-  if (auth.setupNeeded()) {
-    log.info('no accounts yet — first-boot onboarding is waiting in the browser');
-  }
-  // These let the hub scope run-stream messages to users who may see the run —
-  // repo access for repo runs, owner-only for attended chats. `orchestrator` is
-  // created below; the closures only run at broadcast time, so the forward
-  // reference is safe.
-  const hub: SpaHub = new SpaHub(
-    (token) => auth.verify(token),
-    (runId) => {
-      const r = orchestrator.getRun(runId);
-      return r ? { repo: r.repo, kind: r.kind, userId: r.userId } : null;
-    },
-    (username, info) => {
-      const u = store.users.get(username);
-      if (!u) return false;
-      if (u.role === 'admin') return true;
-      if (info.kind === 'interactive' || info.kind === 'assistant') return info.userId === username;
-      if (info.repo) {
-        return store.workspaces.canAccessRepo(
-          { username: u.username, displayName: u.displayName, role: u.role },
-          info.repo,
-        );
-      }
-      return true;
-    },
-  );
-  // Wrapped so domain modules can react to run lifecycle broadcasts
-  // (an implement run reaching review flips its proposal to review too).
-  let proposalsRef: Proposals | null = null;
-  const broadcast: (msg: SpaServerMessage) => void = (msg) => {
-    hub.broadcast(msg);
-    if (msg.t === 'run.changed') {
-      if (msg.run.status === 'review') proposalsRef?.onRunReview(msg.run.id);
-      else if (TERMINAL_FAIL.has(msg.run.status)) proposalsRef?.onRunFailed(msg.run.id);
-    }
-  };
-
-  // GitHub accounts registry: each PAT is bound to purposes (fetch, runs,
-  // pipelines, webhooks); consumers resolve a client per purpose. The legacy
-  // single settings-table token migrates into the registry on first boot.
-  const ghAccounts = new GitHubAccounts(store);
-  ghAccounts.migrateLegacyToken();
-  const github = (): GitHubClient | null => ghAccounts.clientFor('fetch');
-  const setGithubToken = async (token: string): Promise<{ login: string }> => {
-    // Onboarding path: the first token gets every purpose; rebinding happens
-    // in Settings → GitHub accounts.
-    const account = await ghAccounts.add(token, ['fetch', 'runs', 'pipelines', 'webhooks']);
-    store.settings.set('github_token', token);
-    broadcast({ t: 'repos.changed' });
-    return { login: account.login };
-  };
-
-  const checkouts = new Checkouts(() => ghAccounts.tokenFor('runs') ?? store.settings.get('github_token'));
-  // Remote runner agents get the same credential with each network git call,
-  // resolved per repo so account pins apply — no GitHub setup on their box.
-  const githubTokenFor = (repo: string): string | null =>
-    ghAccounts.tokenFor('runs', { repo }) ?? store.settings.get('github_token') ?? null;
-  const orchestrator = new Orchestrator(store, config, checkouts, moxxyCli, broadcast, githubTokenFor);
-  orchestrator.recover();
-  orchestrator.start();
-  const dangling = store.proposals.resetDangling();
-  if (dangling > 0) log.info(`reset ${dangling} proposal(s) stuck in 'analyzing' from previous daemon life`);
-  const danglingSpecs = store.specs.resetDangling();
-  if (danglingSpecs > 0) log.info(`marked ${danglingSpecs} spec(s) stuck in 'generating' as failed from previous daemon life`);
-  const sync = new GitHubSync(store, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
-  const prChecks = new PrChecks(store, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
-  // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
-  sync.onSynced = (repo) => prChecks.refreshOpenPrs(repo);
-  sync.start();
-  const triage = new Triage(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), broadcast);
-  const prReviews = new PrReviews(store, orchestrator, checkouts, (ctx) => ghAccounts.clientFor('pipelines', ctx), prChecks, broadcast);
-  const fixes = new Fixes(store, orchestrator, (repo) => ghAccounts.clientFor('runs', { repo }), prChecks, broadcast);
-  const proposals = new Proposals(store, orchestrator, fixes, checkouts, broadcast);
-  proposalsRef = proposals;
-  const pipelines = new Pipelines(
-    { store, orchestrator, checkouts, github: (ctx) => ghAccounts.clientFor('pipelines', ctx), checks: prChecks, reviews: prReviews },
-    broadcast,
-  );
-  const specs = new Specs(store, orchestrator, checkouts, proposals, (repo) => ghAccounts.clientFor('fetch', { repo }), broadcast);
-  const docs = new Docs(store, orchestrator, checkouts, broadcast);
-  const webhookTunnel = new WebhookTunnel(store, config.port);
-  const automations = new Automations(
-    store,
-    orchestrator,
-    triage,
-    prReviews,
-    prChecks,
-    pipelines,
-    sync,
-    checkouts,
-    webhookTunnel,
-    specs,
-    (repo) => ghAccounts.clientFor('pipelines', { repo }),
-    broadcast,
-  );
-  automations.start();
-
-  // Replay unattended work that was still queued when the daemon last stopped.
-  // Each resumer rebuilds the prompt from stored args and re-enqueues fresh.
-  const num = (a: Record<string, unknown>, k: string): number => Number(a[k]);
-  const str = (a: Record<string, unknown>, k: string): string => String(a[k]);
-  orchestrator.registerResumer('triage', (a) => triage.triageIssue(str(a, 'repo'), num(a, 'number')));
-  orchestrator.registerResumer('pr-review', (a) => prReviews.analyzePr(str(a, 'repo'), num(a, 'number')));
-  orchestrator.registerResumer('ci-analysis', (a) =>
-    prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number')),
-  );
-  orchestrator.resumePersistedQueue();
-  // Re-expose the public webhook URL if the user had the tunnel enabled.
-  webhookTunnel.restore();
-  const skills = new Skills();
-  const assistant = new Assistant(store, orchestrator, auth, config);
+  // The hub authenticates upgrades through the kernel (module-core's Auth once
+  // booted); the kernel pushes through the hub. Both closures run post-boot.
+  const hub: WsHub = new WsHub((token) => kernel.verifyToken(token));
+  const kernel = new ModuleKernel({
+    db,
+    log,
+    config,
+    modules: MODULES,
+    broadcast: (msg) => hub.broadcast(msg),
+    pushToUser: (username, msg) => hub.sendToUser(username, msg),
+    ws: hub,
+  });
+  await kernel.boot();
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.
   const here = dirname(fileURLToPath(import.meta.url));
@@ -174,34 +41,7 @@ async function main(): Promise<void> {
   const server = await startHttpServer({
     host: config.host,
     port: config.port,
-    deps: {
-      config,
-      auth,
-      broadcast,
-      pushToUser: (username, msg) => hub.sendToUser(username, msg),
-      orchestrator,
-      moxxyCli,
-      store,
-      github,
-      githubUser: () => ghAccounts.loginFor('fetch'),
-      githubAccounts: ghAccounts,
-      setGithubToken,
-      sync,
-      checkouts,
-      triage,
-      prReviews,
-      prChecks,
-      fixes,
-      proposals,
-      pipelines,
-      automations,
-      webhookTunnel,
-      skills,
-      specs,
-      docs,
-      assistant,
-      runners: orchestrator.runners,
-    },
+    kernel,
     hub,
     staticDir: existsSync(join(builtSpa, 'index.html')) ? builtSpa : undefined,
   });
@@ -213,13 +53,10 @@ async function main(): Promise<void> {
     log.info('shutting down…');
     const force = setTimeout(() => process.exit(0), 6_000);
     force.unref();
-    sync.stop();
-    automations.stop();
-    webhookTunnel.close();
-    await orchestrator.shutdown();
+    await kernel.shutdown();
     hub.close();
     server.close();
-    store.close();
+    db.close();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
