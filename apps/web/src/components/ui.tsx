@@ -1334,26 +1334,53 @@ export function CommentCount({ count }: { count: number }): JSX.Element {
   );
 }
 
-/** A small chip flagging an in-progress or queued agent action on a row. */
-export function AiActivityChip({ activity }: { activity: 'running' | 'queued' }): JSX.Element {
-  const running = activity === 'running';
+/**
+ * A subtle inline marker (colored dot + label) for a row's meta line, e.g. an
+ * in-progress agent action or a review/risk signal. Sits in the dim metadata
+ * strip rather than crowding the title.
+ */
+export function MetaSignal({
+  tone,
+  label,
+  pulse,
+  title,
+}: {
+  tone: 'blue' | 'amber' | 'red' | 'green' | 'zinc';
+  label: string;
+  pulse?: boolean;
+  title?: string;
+}): JSX.Element {
+  const text: Record<string, string> = {
+    blue: 'text-[#2a78d6] dark:text-[#5aa2f0]',
+    amber: 'text-amber-600 dark:text-amber-400',
+    red: 'text-red-600 dark:text-red-400',
+    green: 'text-emerald-600 dark:text-emerald-400',
+    zinc: 'text-zinc-500 dark:text-zinc-400',
+  };
+  const dot: Record<string, string> = {
+    blue: 'bg-[#2a78d6] dark:bg-[#5aa2f0]',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+    green: 'bg-emerald-500',
+    zinc: 'bg-zinc-400',
+  };
   return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-        running
-          ? 'bg-[#2a78d6]/10 text-[#2a78d6] dark:bg-[#3987e5]/15 dark:text-[#5aa2f0]'
-          : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
-      }`}
-      title={running ? 'An agent is working on this' : 'Waiting for a runner slot'}
-    >
+    <span className={`inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${text[tone]}`} title={title}>
       <span
-        className={`size-1.5 rounded-full ${
-          running ? 'animate-pulse bg-[#2a78d6] motion-reduce:animate-none dark:bg-[#3987e5]' : 'bg-zinc-400'
-        }`}
+        className={`size-1.5 rounded-full ${dot[tone]} ${pulse ? 'animate-pulse motion-reduce:animate-none' : ''}`}
         aria-hidden
       />
-      {running ? 'AI running' : 'AI queued'}
+      {label}
     </span>
+  );
+}
+
+/** In-progress / queued agent action marker for a row's meta line. */
+export function AiActivityChip({ activity }: { activity: 'running' | 'queued' }): JSX.Element {
+  return activity === 'running' ? (
+    <MetaSignal tone="blue" label="AI running" pulse title="An agent is working on this" />
+  ) : (
+    <MetaSignal tone="zinc" label="AI queued" title="Waiting for a runner slot" />
   );
 }
 

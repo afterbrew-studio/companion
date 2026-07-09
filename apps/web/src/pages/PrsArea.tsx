@@ -1,7 +1,7 @@
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { useAiActivity } from '../hooks/useAiActivity.js';
 import { ListFooter } from '../lib/paging.js';
-import { Page, AiActivityChip, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
+import { Page, AiActivityChip, AssigneeNote, ChecksBadge, CommentCount, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, GitHubUser, LabelChips, MetaSignal, PageHeader, PrStateIcon, Tabs, timeAgo } from '../components/ui.js';
 
 /**
  * Pull requests across every repo of the active workspace. Server-paged: only
@@ -255,31 +255,27 @@ export function PrsAreaPage(): JSX.Element {
               ) : null}
               <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
               <span className="min-w-0 flex-1">
-                <span className="flex items-baseline gap-2">
-                  <span className="truncate font-medium">{pr.title}</span>
-                  {aiActivity.get(`${pr.repo}#${pr.number}`) ? (
-                    <AiActivityChip activity={aiActivity.get(`${pr.repo}#${pr.number}`)!} />
-                  ) : null}
-                  {pr.review ? (
-                    <span className={`shrink-0 ${pr.review === 'applied' ? 'badge-ok' : 'badge-warn'}`}>
-                      review {pr.review}
-                    </span>
-                  ) : null}
-                  {pr.reviewRisk ? (
-                    <span
-                      className={`shrink-0 ${
-                        pr.reviewRisk === 'low' ? 'badge-ok' : pr.reviewRisk === 'medium' ? 'badge-warn' : 'badge-danger'
-                      }`}
-                    >
-                      risk {pr.reviewRisk}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="dim mt-0.5 flex items-center gap-1.5 text-xs">
+                <span className="block truncate font-medium">{pr.title}</span>
+                <span className="dim mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                   <span className="min-w-0 truncate">
                     {repos.length > 1 ? `${pr.repo.split('/')[1]} · ` : ''}#{pr.number} ·{' '}
                     <GitHubUser login={pr.author} />
                   </span>
+                  {aiActivity.get(`${pr.repo}#${pr.number}`) ? (
+                    <AiActivityChip activity={aiActivity.get(`${pr.repo}#${pr.number}`)!} />
+                  ) : null}
+                  {pr.reviewRisk ? (
+                    <MetaSignal
+                      tone={pr.reviewRisk === 'low' ? 'green' : pr.reviewRisk === 'medium' ? 'amber' : 'red'}
+                      label={`${pr.reviewRisk} risk`}
+                    />
+                  ) : null}
+                  {pr.review ? (
+                    <MetaSignal
+                      tone={pr.review === 'applied' ? 'green' : 'zinc'}
+                      label={`review ${pr.review}`}
+                    />
+                  ) : null}
                   <AssigneeNote assignees={pr.assignees} />
                   <LabelChips labels={pr.labels} />
                 </span>
