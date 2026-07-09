@@ -133,7 +133,11 @@ export function issueRoutes(deps: ApiDeps): CompiledRoute[] {
       access: 'issues:act',
       body: applyTriageSchema,
       handler: async ({ params, query, body }) => {
-        await deps.triage.apply(params.id, { comment: body.comment, accountId: query.get('account') ?? undefined });
+        const { repo, number } = await deps.triage.apply(params.id, {
+          comment: body.comment,
+          accountId: query.get('account') ?? undefined,
+        });
+        await deps.sync.syncIssue(repo, number);
         return { ok: true };
       },
     }),

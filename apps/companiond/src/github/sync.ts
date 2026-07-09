@@ -55,6 +55,35 @@ export class GitHubSync {
     this.broadcast({ t: 'prs.changed', repo: fullName });
   }
 
+  /**
+   * Re-pull ONE pull request from GitHub and refresh the cache. Callers await
+   * this right after a mutating action (merge, close, apply review) so the UI
+   * reflects the real state immediately instead of waiting for the next full
+   * sync. Best-effort: a fetch failure leaves the cache untouched.
+   */
+  async syncPr(fullName: string, number: number): Promise<void> {
+    const client = this.client(fullName);
+    if (!client) return;
+    try {
+      this.store.prs.upsert(mapPull(fullName, await client.pull(fullName, number)));
+      this.broadcast({ t: 'prs.changed', repo: fullName });
+    } catch (err) {
+      log.warn(`single PR sync failed for ${fullName}#${number}`, { err: String(err) });
+    }
+  }
+
+  /** Re-pull ONE issue from GitHub and refresh the cache (see syncPr). */
+  async syncIssue(fullName: string, number: number): Promise<void> {
+    const client = this.client(fullName);
+    if (!client) return;
+    try {
+      this.store.issues.upsert(mapIssue(fullName, await client.issue(fullName, number)));
+      this.broadcast({ t: 'issues.changed', repo: fullName });
+    } catch (err) {
+      log.warn(`single issue sync failed for ${fullName}#${number}`, { err: String(err) });
+    }
+  }
+
   async syncRepo(fullName: string): Promise<{ issues: number; prs: number }> {
     const client = this.client(fullName);
     if (!client) throw new Error('GitHub is not configured (set a PAT in Settings)');

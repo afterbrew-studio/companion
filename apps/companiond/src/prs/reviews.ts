@@ -85,7 +85,7 @@ export class PrReviews {
   }
 
   /** Post the verdict to GitHub as a PR review. */
-  async apply(id: string, accountId?: string): Promise<void> {
+  async apply(id: string, accountId?: string): Promise<{ repo: string; number: number }> {
     const result = this.store.prReviews.get(id);
     if (!result?.verdict) throw new Error('review not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`review is ${result.status}, not pending`);
@@ -120,6 +120,7 @@ export class PrReviews {
     }
     this.store.prReviews.update(id, 'applied');
     this.broadcast({ t: 'prs.changed', repo: result.repo });
+    return { repo: result.repo, number: result.prNumber };
   }
 
   dismiss(id: string): void {
@@ -134,14 +135,14 @@ export class PrReviews {
     if (!client) throw new Error('GitHub is not configured');
     const result = await client.mergePr(repo, prNumber, method);
     if (!result.merged) throw new Error(result.message || 'merge refused by GitHub');
-    this.broadcast({ t: 'prs.changed', repo });
+    // The caller (route) re-pulls the PR from GitHub so the cache — and thus the
+    // UI — reflects the merged state immediately, not on the next full sync.
   }
 
   async close(repo: string, prNumber: number): Promise<void> {
     const client = this.github({ repo });
     if (!client) throw new Error('GitHub is not configured');
     await client.closePr(repo, prNumber);
-    this.broadcast({ t: 'prs.changed', repo });
   }
 
   /**

@@ -90,6 +90,16 @@ export class GitHubClient {
     return collected;
   }
 
+  /** One PR's current state — used to refresh the cache right after an action. */
+  async pull(fullName: string, number: number): Promise<GhPull> {
+    return this.get<GhPull>(`/repos/${fullName}/pulls/${number}`);
+  }
+
+  /** One issue's current state — used to refresh the cache right after an action. */
+  async issue(fullName: string, number: number): Promise<GhIssue> {
+    return this.get<GhIssue>(`/repos/${fullName}/issues/${number}`);
+  }
+
   async issueComments(fullName: string, issueNumber: number): Promise<Array<{ user: { login: string } | null; body: string; created_at: string }>> {
     return this.get(`/repos/${fullName}/issues/${issueNumber}/comments?per_page=50`);
   }
