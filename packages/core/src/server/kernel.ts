@@ -159,7 +159,7 @@ export class ModuleKernel {
     for (const id of enabled) {
       const mod = this.loaded.get(id)!;
       if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
-      mod.registerServices?.(this.ctx);
+      await mod.registerServices?.(this.ctx);
     }
 
     // module-core (required, first) provides the authenticator the router uses.
@@ -192,7 +192,7 @@ export class ModuleKernel {
     const mod = this.loaded.get(id) ?? (await inst.load());
     this.loaded.set(id, mod);
     if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
-    mod.registerServices?.(this.ctx);
+    await mod.registerServices?.(this.ctx);
     if (mod.routes) this.router.mount(id, mod.routes(this.ctx));
     this.setEnabled(id, true);
     this.rebuildGrid(this.topoSort(this.enabledIds()));

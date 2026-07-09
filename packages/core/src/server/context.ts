@@ -43,7 +43,7 @@ export interface LifecycleHooks {
   readonly jobs?: readonly BackgroundJob[];
 }
 
-export type ServiceFactory = (ctx: ModuleContext) => void;
+export type ServiceFactory = (ctx: ModuleContext) => void | Promise<void>;
 export type RouteFactory = (ctx: ModuleContext) => readonly CompiledRoute[];
 
 /** The `/api` barrel of a module — its whole server surface. */
@@ -51,7 +51,7 @@ export interface ServerModule {
   readonly manifest: ModuleManifest;
   readonly acl?: ModuleAcl;
   readonly migrations?: readonly Migration[];
-  /** Construct services + `ctx.services.register(id, instance)`. Runs in topo order. */
+  /** Construct services + `ctx.services.register(id, instance)`. Runs (awaited) in topo order. */
   readonly registerServices?: ServiceFactory;
   readonly routes?: RouteFactory;
   readonly lifecycle?: LifecycleHooks;

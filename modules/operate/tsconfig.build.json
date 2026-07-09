@@ -13,7 +13,8 @@
   "include": [
     "src/module.ts",
     "src/contract",
-    "src/api"
+    "src/api",
+    "src/exec"
   ],
   "exclude": [
     "src/client"

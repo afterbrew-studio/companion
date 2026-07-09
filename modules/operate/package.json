@@ -17,6 +17,10 @@
       "types": "./dist/api/index.d.ts",
       "default": "./dist/api/index.js"
     },
+    "./exec": {
+      "types": "./dist/exec/index.d.ts",
+      "default": "./dist/exec/index.js"
+    },
     "./client": {
       "source": "./src/client/index.tsx"
     }
@@ -29,6 +33,8 @@
   "dependencies": {
     "@companion/contracts": "workspace:*",
     "@companion/core": "workspace:*",
+    "@companion/module-core": "workspace:*",
+    "@companion/module-workspace": "workspace:*",
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
     "@moxxy/plugin-tunnel-proxy": "^0.29.0",

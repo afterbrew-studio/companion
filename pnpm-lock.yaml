@@ -161,6 +161,15 @@ importers:
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../operate
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@companion/services':
         specifier: workspace:*
         version: link:../../packages/services
@@ -235,6 +244,12 @@ importers:
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@companion/services':
         specifier: workspace:*
         version: link:../../packages/services
@@ -287,6 +302,18 @@ importers:
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../operate
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@companion/services':
         specifier: workspace:*
         version: link:../../packages/services
