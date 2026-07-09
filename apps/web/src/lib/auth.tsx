@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AuthUser, InstanceBranding, Permission } from '@companion/contract';
+import type { AuthUser, InstanceBranding, NotificationScope, Permission } from '@companion/contract';
 import { auth as authApi, onAuthChanged, connectWs } from './api.js';
 
 interface AuthState {
@@ -8,6 +8,8 @@ interface AuthState {
   /** Clean install: first-boot onboarding must run before anything else. */
   readonly needsSetup: boolean;
   readonly permissions: readonly Permission[];
+  /** Effective inbox scope (per-user override ?? instance default). */
+  readonly notificationScope: NotificationScope;
   /** Instance branding (name/logo); available pre-login. */
   readonly branding: InstanceBranding;
   /** Local update after saving branding in Settings — no refetch needed. */
@@ -23,6 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
+  const [notificationScope, setNotificationScope] = useState<NotificationScope>('workspace');
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
 
   // The uploaded logo becomes the favicon (falling back to the bundled letter
@@ -58,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       const session = await authApi.me();
       setUser(session.user);
       setPermissions(session.permissions);
+      setNotificationScope(session.notificationScope);
       connectWs();
     } catch {
       // 401 handling in api.ts already cleared the token.
@@ -82,7 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const can = useCallback((p: Permission) => permissions.includes(p), [permissions]);
 
   return (
-    <AuthContext.Provider value={{ user, needsSetup, permissions, branding, setBranding, can, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, needsSetup, permissions, notificationScope, branding, setBranding, can, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

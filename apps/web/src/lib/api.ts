@@ -20,7 +20,12 @@ import type {
   LoginResponse,
   ModelCatalog,
   ModelCatalogProvider,
+  AccountInfo,
+  UpdateAccountRequest,
   NotificationRecord,
+  NotificationSettings,
+  ProfileResponse,
+  UpdateProfileRequest,
   GitHubAccountRecord,
   GitHubAccountScope,
   GitHubPurpose,
@@ -478,6 +483,17 @@ export const api = {
   markNotificationRead: (id: string) => post<{ ok: true }>(`/api/notifications/${id}/read`),
   markAllNotificationsRead: (workspaceId?: string) =>
     post<{ ok: true }>(`/api/notifications/read-all${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`),
+
+  // the signed-in user's own settings
+  getProfile: () => request<ProfileResponse>('/api/profile'),
+  updateProfile: (body: UpdateProfileRequest) => put<ProfileResponse>('/api/profile', body),
+  getAccount: () => request<{ account: AccountInfo }>('/api/account'),
+  updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
+
+  // instance notification defaults (admin)
+  getNotificationSettings: () => request<NotificationSettings>('/api/settings/notifications'),
+  setNotificationSettings: (defaultScope: NotificationSettings['defaultScope']) =>
+    put<NotificationSettings>('/api/settings/notifications', { defaultScope }),
 
   // AI generation (bounded companion runner turns)
   generateSkill: (instructions: string) =>

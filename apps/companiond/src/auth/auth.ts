@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   hasPermission,
   ROLE_PERMISSIONS,
+  type AccountInfo,
   type AuthUser,
   type Permission,
   type Role,
@@ -140,7 +141,45 @@ export class Auth {
   }
 
   sessionInfo(user: AuthUser): SessionInfo {
-    return { user, permissions: ROLE_PERMISSIONS[user.role] };
+    return {
+      user,
+      permissions: ROLE_PERMISSIONS[user.role],
+      notificationScope: this.store.settings.resolveNotificationScope(user.username),
+    };
+  }
+
+  // ---------- self-service account (any signed-in user) -----------------------
+
+  /** The caller's own account — never includes the password hash. */
+  ownAccount(username: string): AccountInfo {
+    const account = this.store.users.get(username);
+    if (!account) throw new AuthError(`user ${username} not found`, 403);
+    return { username: account.username, displayName: account.displayName, email: account.email, role: account.role };
+  }
+
+  /**
+   * A user editing their own account: display name and email apply directly;
+   * a new password requires the current one. Role/disabled are off-limits here
+   * (that stays admin-only). The current session survives a password change.
+   */
+  updateOwnAccount(
+    username: string,
+    fields: { displayName?: string; email?: string; currentPassword?: string; newPassword?: string },
+  ): AccountInfo {
+    const account = this.store.users.get(username);
+    if (!account) throw new AuthError(`user ${username} not found`, 403);
+    if (fields.newPassword !== undefined) {
+      if (!fields.currentPassword || !verifyPassword(fields.currentPassword, account.passwordHash)) {
+        throw new AuthError('current password is incorrect', 403);
+      }
+    }
+    this.store.users.update(username, {
+      displayName: fields.displayName?.trim(),
+      email: fields.email,
+      passwordHash: fields.newPassword ? hashPassword(fields.newPassword) : undefined,
+    });
+    log.info('account updated', { username, password: fields.newPassword !== undefined });
+    return this.ownAccount(username);
   }
 
   // ---------- user management (admin) -----------------------------------------

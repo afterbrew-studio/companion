@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
-import type { MoxxyStatus } from '@companion/contract';
-import { api } from '../lib/api.js';
+import { useEffect, useRef, useState } from 'react';
+import type { MoxxyStatus, NotificationScope } from '@companion/contract';
+import { api, refreshAuth } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useMoxxyStatus } from '../hooks/useMoxxyStatus.js';
-import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
-import { Page, Dropdown, PageHeader, Section } from '../components/ui.js';
+import { Page, PageHeader, Section, Switch } from '../components/ui.js';
 
 /** Reduce an uploaded logo to a small inline data URL before it hits the DB. */
 async function fileToLogoDataUrl(file: File): Promise<string> {
@@ -49,7 +48,33 @@ export function SettingsPage(): JSX.Element {
   const fileInput = useRef<HTMLInputElement>(null);
   const brandDirty = (name.trim() || null) !== (branding.name ?? null) || logo !== branding.logo;
 
-  const [theme, setTheme] = useState<ThemePref>(getThemePref);
+  // Instance-wide inbox default. Each user can override it in their profile;
+  // this is only the fallback for anyone who hasn't.
+  const [defaultScope, setDefaultScope] = useState<NotificationScope | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .getNotificationSettings()
+      .then((s) => alive && setDefaultScope(s.defaultScope))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const saveScope = async (next: NotificationScope): Promise<void> => {
+    const prev = defaultScope;
+    setDefaultScope(next);
+    try {
+      await api.setNotificationSettings(next);
+      // Re-resolve the session so an admin who inherits the default sees their
+      // own inbox update immediately.
+      refreshAuth();
+    } catch (err) {
+      setDefaultScope(prev);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const onLogoFile = async (file: File | undefined): Promise<void> => {
     if (!file) return;
@@ -151,21 +176,23 @@ export function SettingsPage(): JSX.Element {
         </div>
       </Section>
 
-      <Section title="Appearance" description="Theme is a per-browser preference; it applies immediately.">
-        <div className="card flex flex-wrap items-center gap-3">
-          <span className="text-[13px] font-medium">Theme</span>
-          <Dropdown
-            ariaLabel="Theme"
-            value={theme}
-            onChange={(v) => {
-              setTheme(v as ThemePref);
-              setThemePref(v as ThemePref);
-            }}
-            options={[
-              { value: 'system', label: 'System' },
-              { value: 'light', label: 'Light' },
-              { value: 'dark', label: 'Dark' },
-            ]}
+      <Section
+        title="Notifications"
+        description="The default inbox scope for everyone. Each user can override it under their own profile."
+      >
+        <div className="card flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium">Show notifications from all workspaces by default</div>
+            <p className="dim mt-0.5 text-[13px]">
+              Off — the inbox is scoped to the workspace you have open (plus instance-wide events). On — it
+              aggregates every workspace a user can access.
+            </p>
+          </div>
+          <Switch
+            label="Show notifications from all workspaces by default"
+            checked={defaultScope === 'global'}
+            disabled={defaultScope === null}
+            onChange={(v) => void saveScope(v ? 'global' : 'workspace')}
           />
         </div>
       </Section>

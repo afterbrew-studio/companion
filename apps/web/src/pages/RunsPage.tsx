@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { RunKind, RunRecord, RunStatus } from '@companion/contract';
 import { api } from '../lib/api.js';
 import { useRuns } from '../hooks/useRuns.js';
+import { useWorkspace } from '../lib/workspace.js';
+import { useWorkspaceRepos } from '../hooks/useWorkspaceRepos.js';
 import { Page, PageHeader, EmptyState, Spinner, timeAgo } from '../components/ui.js';
 import { facet, useListFilter, ListFilterToolbar, type FilterSelectField } from '../lib/list-filter.js';
 
@@ -47,7 +49,15 @@ function matchesStatus(run: RunRecord, bucket: string): boolean {
 }
 
 export function RunsPage(): JSX.Element {
-  const { runs, error, setError } = useRuns();
+  const { runs: allRuns, error, setError } = useRuns();
+  const { current } = useWorkspace();
+  const wsRepos = useWorkspaceRepos(current?.id);
+  // Scope to the active workspace: runs on its repos, plus instance-wide runs
+  // (AI Help, reports, interactive chats) that belong to no workspace.
+  const runs = useMemo(() => {
+    const names = new Set(wsRepos.map((r) => r.fullName));
+    return allRuns.filter((r) => r.repo === null || names.has(r.repo));
+  }, [allRuns, wsRepos]);
   const [creating, setCreating] = useState(false);
 
   const createRun = async (): Promise<void> => {

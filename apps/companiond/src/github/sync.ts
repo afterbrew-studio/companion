@@ -93,8 +93,17 @@ export class GitHubSync {
       else this.store.issues.upsert(mapIssue(fullName, item));
     }
     this.store.repos.setSynced(fullName);
-    if (issues.length > 0) this.broadcast({ t: 'issues.changed', repo: fullName });
-    if (pulls.length > 0) this.broadcast({ t: 'prs.changed', repo: fullName });
+    // Announce "changed" only for items updated since the LAST successful sync —
+    // not the wider `since` fetch window (which overlaps by 5m for clock-skew
+    // safety). Using the fetch window here would re-announce already-seen items
+    // on the next tick, so the nav "New" badge would never settle after you
+    // opened the list. Pulls are fetched in full every tick, so the same gate
+    // keeps a repo with open PRs from reporting activity forever.
+    const prevSync = repoRow?.last_sync_at ?? 0;
+    const issuesChanged = issues.some((i) => !i.pull_request && Date.parse(i.updated_at) > prevSync);
+    const prsChanged = pulls.some((p) => Date.parse(p.updated_at) > prevSync);
+    if (issuesChanged) this.broadcast({ t: 'issues.changed', repo: fullName });
+    if (prsChanged) this.broadcast({ t: 'prs.changed', repo: fullName });
     this.broadcast({ t: 'repos.changed' });
     if (this.onSynced) {
       void this.onSynced(fullName).catch((err) =>

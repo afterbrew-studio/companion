@@ -104,7 +104,7 @@ export function ReposPage(): JSX.Element {
           onDeleted={() => {
             setManaging(false);
             const next = workspaces.find((w) => w.id !== current.id);
-            if (next) setCurrent(next.id);
+            if (next) setCurrent(next.id, { navigate: false });
             void refreshWorkspaces();
           }}
         />

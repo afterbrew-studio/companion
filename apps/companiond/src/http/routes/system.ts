@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { MoxxyStatus } from '@companion/contract';
+import type { MoxxyStatus, NotificationSettings } from '@companion/contract';
 import { configuredProviderNames, homeStatus, importProvidersFromDailyMoxxy } from '../../moxxy/home.js';
 import { route, notFound, type CompiledRoute } from '../router.js';
 import type { ApiDeps } from '../deps.js';
@@ -95,6 +95,27 @@ export function systemRoutes(deps: ApiDeps): CompiledRoute[] {
         return {
           pins: Object.fromEntries(RUN_KINDS.map((k) => [k, deps.store.settings.get(`modelPin:${k}`) || null])),
         };
+      },
+    }),
+
+    route({
+      // Instance inbox default; each user may override it in their profile.
+      method: 'GET',
+      path: '/api/settings/notifications',
+      access: 'settings:manage',
+      handler: (): NotificationSettings => ({
+        defaultScope: deps.store.settings.notificationDefaultScope(),
+      }),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/api/settings/notifications',
+      access: 'settings:manage',
+      body: z.object({ defaultScope: z.enum(['workspace', 'global']) }),
+      handler: ({ body }): NotificationSettings => {
+        deps.store.settings.setNotificationDefaultScope(body.defaultScope);
+        return { defaultScope: deps.store.settings.notificationDefaultScope() };
       },
     }),
 

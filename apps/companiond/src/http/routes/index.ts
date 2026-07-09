@@ -1,6 +1,7 @@
 import type { CompiledRoute } from '../router.js';
 import type { ApiDeps } from '../deps.js';
 import { authRoutes } from './auth.js';
+import { profileRoutes } from './profile.js';
 import { userRoutes } from './users.js';
 import { systemRoutes } from './system.js';
 import { workspaceRoutes } from './workspaces.js';
@@ -26,6 +27,7 @@ import { runnerRoutes } from './runners.js';
 export function buildRoutes(deps: ApiDeps): CompiledRoute[] {
   return [
     ...authRoutes(deps),
+    ...profileRoutes(deps),
     ...userRoutes(deps),
     ...systemRoutes(deps),
     ...workspaceRoutes(deps),
