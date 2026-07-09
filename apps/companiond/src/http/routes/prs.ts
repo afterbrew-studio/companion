@@ -167,6 +167,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         await deps.prReviews.merge(fullName, pr.number, body.method);
+        // Recalculate state from GitHub before returning so the UI updates now.
+        await deps.sync.syncPr(fullName, pr.number);
         return { ok: true };
       },
     }),
@@ -178,6 +180,7 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         await deps.prReviews.close(fullName, pr.number);
+        await deps.sync.syncPr(fullName, pr.number);
         return { ok: true };
       },
     }),
@@ -211,7 +214,8 @@ export function prRoutes(deps: ApiDeps): CompiledRoute[] {
       path: '/api/pr-reviews/:id/apply',
       access: 'prs:act',
       handler: async ({ params, query }) => {
-        await deps.prReviews.apply(params.id, query.get('account') ?? undefined);
+        const { repo, number } = await deps.prReviews.apply(params.id, query.get('account') ?? undefined);
+        await deps.sync.syncPr(repo, number);
         return { ok: true };
       },
     }),

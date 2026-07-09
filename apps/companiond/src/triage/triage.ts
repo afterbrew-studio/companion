@@ -52,6 +52,7 @@ export class Triage {
       issueNumber,
       prompt: buildTriagePrompt(issue, openIssues),
       timeoutMs: 6 * 60_000,
+      resume: { type: 'triage', args: { repo, number: issueNumber } },
     });
 
     let verdict: TriageVerdict | null = null;
@@ -80,7 +81,7 @@ export class Triage {
   }
 
   /** Apply a pending verdict to GitHub: labels + (optional) draft reply comment. */
-  async apply(id: string, opts: { comment: boolean; accountId?: string }): Promise<void> {
+  async apply(id: string, opts: { comment: boolean; accountId?: string }): Promise<{ repo: string; number: number }> {
     const result = this.findTriage(id);
     if (!result || !result.verdict) throw new Error('triage result not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`triage is ${result.status}, not pending`);
@@ -102,6 +103,7 @@ export class Triage {
 
     this.store.triage.update(id, 'applied');
     this.broadcast({ t: 'triage.changed', repo: result.repo });
+    return { repo: result.repo, number: result.issueNumber };
   }
 
   dismiss(id: string): void {

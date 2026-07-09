@@ -59,6 +59,36 @@ export function runRoutes(deps: ApiDeps): CompiledRoute[] {
         created({ run: await deps.orchestrator.createRun({ ...body, userId: user?.username ?? null }) }),
     }),
 
+    // The scheduler's live state — running count, combined capacity, and the
+    // waiting line. Must precede /api/runs/:id so "queue" isn't read as an id.
+    route({
+      method: 'GET',
+      path: '/api/runs/queue',
+      access: 'runs:read',
+      handler: () => ({ queue: deps.orchestrator.queueSnapshot() }),
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/runs/queue/:id/move',
+      access: 'runs:act',
+      body: z.object({ direction: z.enum(['up', 'down']) }),
+      handler: ({ params, body }) => {
+        deps.orchestrator.moveQueued(params.id, body.direction);
+        return { queue: deps.orchestrator.queueSnapshot() };
+      },
+    }),
+
+    route({
+      method: 'DELETE',
+      path: '/api/runs/queue/:id',
+      access: 'runs:act',
+      handler: ({ params }) => {
+        deps.orchestrator.cancelQueued(params.id);
+        return { queue: deps.orchestrator.queueSnapshot() };
+      },
+    }),
+
     route({
       method: 'GET',
       path: '/api/runs/:id',

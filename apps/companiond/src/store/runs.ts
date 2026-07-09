@@ -55,6 +55,53 @@ export class RunsStore {
       .all(limit) as RunRow[];
   }
 
+  /**
+   * Non-terminal run counts per runner (key: runner_id, null = local). Used by
+   * placement so a batch spreads across runners by the runs already assigned to
+   * each — not just the gateways that have actually spawned yet.
+   */
+  activeCountsByRunner(): Map<string | null, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT runner_id AS r, COUNT(*) AS n FROM runs
+         WHERE status IN ('provisioning', 'running', 'idle', 'review') GROUP BY runner_id`,
+      )
+      .all() as Array<{ r: string | null; n: number }>;
+    const counts = new Map<string | null, number>();
+    for (const row of rows) counts.set(row.r, row.n);
+    return counts;
+  }
+
+  /** Live attended chats (interactive + AI Help) that currently hold a slot. */
+  activeInteractiveCount(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM runs
+           WHERE kind IN ('interactive', 'assistant')
+             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
+  /**
+   * Live runs that DON'T flow through the unattended queue — attended chats plus
+   * fix/implement runs started directly. The scheduler adds these to its own
+   * in-flight count so it never overcommits the runner pool.
+   */
+  activeNonQueueCount(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM runs
+           WHERE kind IN ('interactive', 'assistant', 'fix', 'implement')
+             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db

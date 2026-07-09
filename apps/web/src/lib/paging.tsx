@@ -40,7 +40,15 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
   const load = useCallback(
     (offset: number) => {
       const mySeq = ++seq.current;
-      setState((prev) => ({ ...prev, loading: true, error: null }));
+      // Only show the loading state when there's nothing to show yet (first load
+      // or a page append). A background reload (offset 0 with rows already on
+      // screen — e.g. a prs.changed refresh) keeps the current rows so the list
+      // doesn't flash/flicker; they swap in place when the new data arrives.
+      setState((prev) => ({
+        ...prev,
+        loading: offset === 0 ? prev.items.length === 0 : true,
+        error: null,
+      }));
       fetchPage(offset)
         .then(({ items, total }) => {
           if (seq.current !== mySeq) return;

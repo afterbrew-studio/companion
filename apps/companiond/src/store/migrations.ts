@@ -222,6 +222,20 @@ export function migrate(db: Database.Database): { ftsReady: boolean } {
     CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
   `);
   db.exec(`
+    CREATE TABLE IF NOT EXISTS run_queue (
+      id           TEXT PRIMARY KEY,
+      position     INTEGER NOT NULL,
+      kind         TEXT NOT NULL,
+      title        TEXT NOT NULL,
+      repo         TEXT,
+      issue_number INTEGER,
+      priority     INTEGER NOT NULL,
+      resume_type  TEXT NOT NULL,
+      resume_args  TEXT NOT NULL DEFAULT '{}',
+      enqueued_at  INTEGER NOT NULL
+    );
+  `);
+  db.exec(`
     CREATE TABLE IF NOT EXISTS specs (
       id              TEXT PRIMARY KEY,
       repo            TEXT NOT NULL,

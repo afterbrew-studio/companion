@@ -20,7 +20,13 @@ import type {
   LoginResponse,
   ModelCatalog,
   ModelCatalogProvider,
+  AccountInfo,
+  UpdateAccountRequest,
   NotificationRecord,
+  NotificationSettings,
+  ProfileResponse,
+  RunSettings,
+  UpdateProfileRequest,
   GitHubAccountRecord,
   GitHubAccountScope,
   GitHubPurpose,
@@ -36,6 +42,7 @@ import type {
   RepoRecord,
   Role,
   RunRecord,
+  RunQueueSnapshot,
   SpecRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
@@ -479,6 +486,22 @@ export const api = {
   markAllNotificationsRead: (workspaceId?: string) =>
     post<{ ok: true }>(`/api/notifications/read-all${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`),
 
+  // the signed-in user's own settings
+  getProfile: () => request<ProfileResponse>('/api/profile'),
+  updateProfile: (body: UpdateProfileRequest) => put<ProfileResponse>('/api/profile', body),
+  getAccount: () => request<{ account: AccountInfo }>('/api/account'),
+  updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
+
+  // instance notification defaults (admin)
+  getNotificationSettings: () => request<NotificationSettings>('/api/settings/notifications'),
+  setNotificationSettings: (defaultScope: NotificationSettings['defaultScope']) =>
+    put<NotificationSettings>('/api/settings/notifications', { defaultScope }),
+
+  // instance run-scheduling settings (admin)
+  getRunSettings: () => request<RunSettings>('/api/settings/runs'),
+  setRunSettings: (reservedRunnerSlots: number) =>
+    put<RunSettings>('/api/settings/runs', { reservedRunnerSlots }),
+
   // AI generation (bounded companion runner turns)
   generateSkill: (instructions: string) =>
     post<{ draft: { name: string; content: string } }>('/api/skills/generate', { instructions }),
@@ -497,6 +520,10 @@ export const api = {
 
   // runs
   listRuns: () => request<{ runs: RunRecord[] }>('/api/runs'),
+  runQueue: () => request<{ queue: RunQueueSnapshot }>('/api/runs/queue'),
+  moveQueued: (id: string, direction: 'up' | 'down') =>
+    post<{ queue: RunQueueSnapshot }>(`/api/runs/queue/${id}/move`, { direction }),
+  cancelQueued: (id: string) => del<{ queue: RunQueueSnapshot }>(`/api/runs/queue/${id}`),
   createRun: (title?: string) => post<{ run: RunRecord }>('/api/runs', { title }),
   getRun: (id: string) => request<{ run: RunRecord; pendingAsks: AskRequest[] }>(`/api/runs/${id}`),
   history: (id: string, before: number | null, limit = 300) =>

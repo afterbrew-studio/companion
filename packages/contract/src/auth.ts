@@ -173,4 +173,67 @@ export interface LoginResponse {
 export interface SessionInfo {
   readonly user: AuthUser;
   readonly permissions: readonly Permission[];
+  /** Effective inbox scope for this user (per-user override ?? instance default). */
+  readonly notificationScope: NotificationScope;
+}
+
+// ---------- Preferences --------------------------------------------------------
+
+/**
+ * How the inbox is scoped. `workspace` (the default): only the active
+ * workspace's notifications, plus instance-wide ones. `global`: notifications
+ * from every workspace the user can access.
+ */
+export type NotificationScope = 'workspace' | 'global';
+
+/** A user's own editable settings, distinct from the admin-managed account. */
+export interface UserProfile {
+  /** Inbox scope override; null = inherit the instance default. */
+  readonly notificationScope: NotificationScope | null;
+}
+
+/** GET /api/profile — the user's overrides plus the defaults a null falls back to. */
+export interface ProfileResponse {
+  readonly profile: UserProfile;
+  readonly defaults: { readonly notificationScope: NotificationScope };
+}
+
+export interface UpdateProfileRequest {
+  /** null clears the override so the instance default applies again. */
+  readonly notificationScope?: NotificationScope | null;
+}
+
+/** The signed-in user's own account, as shown on their profile page. */
+export interface AccountInfo {
+  readonly username: string;
+  readonly displayName: string;
+  readonly email: string;
+  /** Read-only here — only an admin can change a role. */
+  readonly role: Role;
+}
+
+/**
+ * Self-service account edit. Display name / email apply directly; changing the
+ * password requires the current one.
+ */
+export interface UpdateAccountRequest {
+  readonly displayName?: string;
+  readonly email?: string;
+  readonly currentPassword?: string;
+  readonly newPassword?: string;
+}
+
+/** Instance-wide notification defaults (admin-managed). */
+export interface NotificationSettings {
+  readonly defaultScope: NotificationScope;
+}
+
+/** Instance-wide run-scheduling settings (admin-managed). */
+export interface RunSettings {
+  /**
+   * Runner slots kept free from attended chats (interactive / AI Help) so
+   * automated work — triage, review, fixes — always has room. Clamped so at
+   * least one chat slot remains.
+   */
+  readonly reservedRunnerSlots: number;
 }

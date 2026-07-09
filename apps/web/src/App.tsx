@@ -3,6 +3,7 @@ import type { MoxxyStatus, WorkspaceVisibility } from '@companion/contract';
 import { api, onServerMessage, onWsState, type WsState } from './lib/api.js';
 import { AuthProvider, useAuth } from './lib/auth.js';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
+import { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
 import { useIntent, runIntent } from './lib/intents.js';
 import { ChevronDown, Dropdown, LockIcon, Modal } from './components/ui.js';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
@@ -10,6 +11,7 @@ import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { Onboarding, hasOnboarded, hasUnseenOnboarding, type OnboardingMode } from './components/Onboarding.js';
 import { Inbox } from './components/Inbox.js';
+import { RunQueueIndicator } from './components/RunQueue.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { MODULES } from './modules.js';
 import { LoginPage } from './pages/Login.js';
@@ -35,6 +37,8 @@ import { ProvidersPage } from './pages/Providers.js';
 import { AutomationsPage } from './pages/Automations.js';
 import { RunnersPage } from './pages/Runners.js';
 import { SettingsPage } from './pages/Settings.js';
+import { ProfilePage } from './pages/Profile.js';
+import { InboxPage } from './pages/Inbox.js';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(location.hash || '#/overview');
@@ -173,40 +177,65 @@ function Shell(): JSX.Element {
       setAssistantOpen((o) => !o);
     }
   };
-  // Areas with activity since you last looked (dot on the nav item).
+  // Areas with unseen activity, badged in the nav. Scoped and persisted PER
+  // workspace: issues/prs activity in another workspace's repos must not light
+  // up the one you're looking at, and the marks survive a reload.
+  const { current } = useWorkspace();
+  const workspaceId = current?.id ?? null;
+  const wsRepos = useWorkspaceRepos(current?.id);
+  const repoSet = useMemo(() => new Set(wsRepos.map((r) => r.fullName)), [wsRepos]);
+  const freshKey = workspaceId ? `companion.fresh:${workspaceId}` : null;
+
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+
+  // Load the active workspace's stored marks when it changes.
+  useEffect(() => {
+    if (!freshKey) {
+      setFresh(new Set());
+      return;
+    }
+    try {
+      setFresh(new Set(JSON.parse(localStorage.getItem(freshKey) ?? '[]') as string[]));
+    } catch {
+      setFresh(new Set());
+    }
+  }, [freshKey]);
+
+  const mutateFresh = (fn: (prev: Set<string>) => void): void => {
+    setFresh((prev) => {
+      const next = new Set(prev);
+      fn(next);
+      if (next.size === prev.size && [...next].every((a) => prev.has(a))) return prev;
+      if (freshKey) localStorage.setItem(freshKey, JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   useEffect(() => {
     return onServerMessage((msg) => {
-      const area =
-        msg.t === 'proposals.changed'
-          ? 'proposals'
-          : msg.t === 'specs.changed'
-            ? 'specs'
-            : msg.t === 'docs.changed'
-              ? 'docs'
-              : msg.t === 'issues.changed'
-                ? 'issues'
-                : msg.t === 'prs.changed'
-                  ? 'prs'
-                  : null;
+      let area: string | null = null;
+      // Only issues/prs carry a repo, so only those can be workspace-scoped —
+      // ignore ones outside the active workspace. Proposals/specs/docs events
+      // are instance-global and always count.
+      if (msg.t === 'issues.changed' || msg.t === 'prs.changed') {
+        if (!repoSet.has(msg.repo)) return;
+        area = msg.t === 'issues.changed' ? 'issues' : 'prs';
+      } else if (msg.t === 'proposals.changed') area = 'proposals';
+      else if (msg.t === 'specs.changed') area = 'specs';
+      else if (msg.t === 'docs.changed') area = 'docs';
       if (!area || location.hash.startsWith(`#/${area}`)) return;
-      setFresh((prev) => (prev.has(area) ? prev : new Set(prev).add(area)));
+      mutateFresh((next) => next.add(area!));
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoSet, freshKey]);
 
-  // Visiting an area clears its dot.
+  // Visiting an area clears its mark.
   useEffect(() => {
     const path = hash.replace(/^#/, '').split('?')[0] ?? '';
     const area = ['proposals', 'specs', 'docs', 'issues', 'prs'].find((a) => path.startsWith(`/${a}`));
-    if (!area) return;
-    setFresh((prev) => {
-      if (!prev.has(area)) return prev;
-      const next = new Set(prev);
-      next.delete(area);
-      return next;
-    });
-  }, [hash]);
+    if (area) mutateFresh((next) => next.delete(area));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash, freshKey]);
 
   // Cmd/Ctrl+K opens the global search palette from anywhere.
   useEffect(() => {
@@ -316,7 +345,9 @@ function Shell(): JSX.Element {
                   >
                     <span className="relative shrink-0">
                       {m.icon}
-                      {fresh.has(m.key) ? (
+                      {/* Collapsed rail has no room for a label — a corner dot is
+                          the only affordance; the expanded row uses a pill. */}
+                      {rail && fresh.has(m.key) ? (
                         <span
                           className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-[#2a78d6] ring-2 ring-zinc-50 dark:bg-[#3987e5] dark:ring-zinc-900"
                           role="status"
@@ -327,14 +358,24 @@ function Shell(): JSX.Element {
                     {rail ? null : (
                       <>
                         <span className="flex-1 truncate">{m.label}</span>
-                        <kbd
-                          className={`hidden rounded px-1 font-mono text-[10px] lg:inline ${
-                            active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
-                          }`}
-                          aria-hidden
-                        >
-                          g{m.shortcut}
-                        </kbd>
+                        {fresh.has(m.key) ? (
+                          <span
+                            className="rounded-full bg-[#2a78d6] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase dark:bg-[#3987e5]"
+                            role="status"
+                            aria-label={`New activity in ${m.label}`}
+                          >
+                            New
+                          </span>
+                        ) : (
+                          <kbd
+                            className={`hidden rounded px-1 font-mono text-[10px] lg:inline ${
+                              active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
+                            }`}
+                            aria-hidden
+                          >
+                            g{m.shortcut}
+                          </kbd>
+                        )}
                       </>
                     )}
                   </a>
@@ -346,20 +387,34 @@ function Shell(): JSX.Element {
 
         <div className={`border-t border-zinc-200 py-3 dark:border-zinc-800 ${rail ? 'px-2' : 'px-4'}`}>
           {rail ? (
-            <button
-              className="btn-ghost w-full justify-center"
-              onClick={() => void logout()}
-              aria-label="Sign out"
-              title={`Sign out ${user?.displayName ?? ''}`}
-            >
-              <SignOutIcon />
-            </button>
+            <div className="flex flex-col items-center gap-1">
+              <a
+                href="#/profile"
+                className="flex size-9 items-center justify-center rounded-lg bg-zinc-200 text-[13px] font-semibold uppercase transition-colors hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                aria-label="Open your profile"
+                title={`${user?.displayName ?? ''} — open your profile`}
+              >
+                {(user?.displayName ?? '?').slice(0, 1)}
+              </a>
+              <button
+                className="btn-ghost w-full justify-center"
+                onClick={() => void logout()}
+                aria-label="Sign out"
+                title={`Sign out ${user?.displayName ?? ''}`}
+              >
+                <SignOutIcon />
+              </button>
+            </div>
           ) : (
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
+            <div className="-mx-2 flex items-center gap-1">
+              <a
+                href="#/profile"
+                className="dim min-w-0 flex-1 cursor-pointer rounded-lg px-2 py-1.5 text-zinc-700 transition-colors hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                title="Open your profile"
+              >
                 <div className="truncate text-[13px] font-medium">{user?.displayName}</div>
-                <div className="dim text-[11px] capitalize">{user?.role}</div>
-              </div>
+                <div className="text-[11px] capitalize">{user?.role}</div>
+              </a>
               <button
                 className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={() => void logout()}
@@ -711,6 +766,9 @@ function crumbsFor(path: string): Array<{ label: string; href?: string }> {
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
   if (m) return [{ label: 'Pull Requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
+  // Standalone pages outside the module registry.
+  if (path === '/inbox') return [{ label: 'Inbox' }];
+  if (path === '/profile') return [{ label: 'Your profile' }];
   // Boundary-aware match: /runners must not resolve to the Agent Runs module.
   const mod = MODULES.find((mm) => {
     const base = mm.hash.slice(1);
@@ -791,6 +849,7 @@ function TopBar({
           ⌘K
         </kbd>
       </button>
+      <RunQueueIndicator />
       <Inbox />
       <AgentsStatus />
       <AssistantButton open={assistantOpen} onClick={onToggleAssistant} />
@@ -864,6 +923,9 @@ function Route({ hash }: { hash: string }): JSX.Element {
   if (path.startsWith('/providers')) return guard(can('settings:manage'), <ProvidersPage />);
   if (path.startsWith('/users')) return guard(can('users:manage'), <UsersPage />);
   if (path.startsWith('/settings')) return guard(can('settings:manage'), <SettingsPage />);
+  // Every signed-in user has their own profile and inbox.
+  if (path.startsWith('/profile')) return <ProfilePage />;
+  if (path.startsWith('/inbox')) return guard(can('workspaces:read'), <InboxPage />);
   if (path === '/' || path.startsWith('/overview')) return guard(can('issues:read'), <DashboardPage />);
   return <NotFoundPage path={path} />;
 }

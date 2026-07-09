@@ -13,7 +13,12 @@ interface WorkspaceState {
   readonly workspaces: readonly WorkspaceRecord[];
   /** null while the list is loading or empty. */
   readonly current: WorkspaceRecord | null;
-  readonly setCurrent: (id: string) => void;
+  /**
+   * Switch the active workspace. A genuine switch lands on that workspace's
+   * Overview; pass `{ navigate: false }` to stay put (e.g. a fallback after
+   * deleting the current workspace from an admin page).
+   */
+  readonly setCurrent: (id: string, opts?: { navigate?: boolean }) => void;
   readonly refresh: () => Promise<void>;
 }
 
@@ -44,9 +49,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }): JSX.El
 
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0] ?? null;
 
-  const setCurrent = useCallback((id: string) => {
+  const setCurrent = useCallback((id: string, opts?: { navigate?: boolean }) => {
+    setCurrentId((prev) => {
+      // Switching workspaces is a context change — land on the new workspace's
+      // Overview so scoped areas (and its inbox) reflect the switch immediately.
+      if (id !== prev && opts?.navigate !== false) location.hash = '#/overview';
+      return id;
+    });
     localStorage.setItem(CURRENT_KEY, id);
-    setCurrentId(id);
   }, []);
 
   return (
