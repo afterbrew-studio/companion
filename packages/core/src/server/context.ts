@@ -8,6 +8,7 @@ import type { ServiceRegistry } from './service-registry.js';
 import type { ServerBus } from './bus.js';
 import type { NotificationEmitter, SettingsRegistry } from './capabilities.js';
 import type { RbacReader } from './rbac-grid.js';
+import type { WsScopeRegistry } from './ws-hub.js';
 
 /**
  * What every server-side module factory receives — replaces the flat `ApiDeps`
@@ -28,6 +29,8 @@ export interface ModuleContext {
   readonly settings: SettingsRegistry;
   /** The live effective RBAC grid (module-core's Auth reads this). */
   readonly rbac: RbacReader;
+  /** Per-message WS visibility: modules register scope resolvers in onEnable. */
+  readonly ws: WsScopeRegistry;
   readonly isEnabled: (moduleId: string) => boolean;
 }
 

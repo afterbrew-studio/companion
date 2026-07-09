@@ -10,4 +10,5 @@ export * from './migration-runner.js';
 export * from './rbac-grid.js';
 export * from './capabilities.js';
 export * from './context.js';
+export * from './ws-hub.js';
 export * from './kernel.js';

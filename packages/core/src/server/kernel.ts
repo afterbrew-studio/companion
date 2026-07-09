@@ -9,6 +9,7 @@ import { MigrationRunner } from './migration-runner.js';
 import { RbacGrid } from './rbac-grid.js';
 import type { NotificationEmitter, SettingsRegistry } from './capabilities.js';
 import type { ModuleContext, ServerModule } from './context.js';
+import type { WsScopeRegistry } from './ws-hub.js';
 import { HttpError } from './router.js';
 
 /** A compiled-in module: its cheap static manifest + a lazy loader for the heavy /api barrel. */
@@ -25,6 +26,8 @@ export interface KernelOptions {
   /** Browser push, backed by the app's WebSocket hub. */
   readonly broadcast: (msg: SpaServerMessage) => void;
   readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
+  /** The hub's scope-resolver registry (per-message visibility). */
+  readonly ws: WsScopeRegistry;
 }
 
 /** Public shape of a module for `GET /api/modules` (no code loaded). */
@@ -97,6 +100,7 @@ export class ModuleKernel {
       notify,
       settings,
       rbac: this.rbac,
+      ws: opts.ws,
       isEnabled: (id) => this.isEnabled(id),
     };
     // The router needs an authenticator, wired once module-core provides it (boot()).
