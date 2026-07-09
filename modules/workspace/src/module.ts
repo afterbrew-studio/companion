@@ -6,4 +6,6 @@ export default defineManifest({
   version: '0.1.0',
   required: true,
   dependsOn: ['core'],
+  permissions: ['workspaces:read', 'workspaces:create', 'workspaces:manage'],
+  messages: ['workspaces.changed'],
 });
