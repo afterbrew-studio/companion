@@ -35,10 +35,19 @@ export default defineMigrations([
           created_at   INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+        CREATE TABLE IF NOT EXISTS reports (
+          id         TEXT PRIMARY KEY,
+          repo       TEXT,
+          kind       TEXT NOT NULL,
+          title      TEXT NOT NULL,
+          body       TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
       `);
       for (const ddl of [
         `ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`,
         `ALTER TABLE workspaces ADD COLUMN owner_id TEXT`,
+        `ALTER TABLE reports ADD COLUMN issue_number INTEGER`,
       ]) {
         try {
           db.exec(ddl);
@@ -49,7 +58,7 @@ export default defineMigrations([
     },
     down: (db) => {
       db.exec(
-        `DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS workspace_members; DROP TABLE IF EXISTS workspaces;`,
+        `DROP TABLE IF EXISTS reports; DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS workspace_members; DROP TABLE IF EXISTS workspaces;`,
       );
     },
   },

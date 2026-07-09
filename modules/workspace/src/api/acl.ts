@@ -7,10 +7,11 @@ export default defineAcl({
     { id: 'workspaces:read', title: 'View workspaces' },
     { id: 'workspaces:create', title: 'Create private workspaces' },
     { id: 'workspaces:manage', title: 'Manage all workspaces' },
+    { id: 'reports:read', title: 'View digests and reports' },
   ],
   grants: {
     admin: '*',
-    maintainer: ['workspaces:read', 'workspaces:create'],
+    maintainer: ['workspaces:read', 'workspaces:create', 'reports:read'],
     business: ['workspaces:read'],
   },
 });

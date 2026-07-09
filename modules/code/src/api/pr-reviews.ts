@@ -187,9 +187,7 @@ export class PrReviews {
       body: finalMessage.trim(),
       createdAt: Date.now(),
     });
-    // reports.changed belongs to the reports owner (automations — not yet
-    // carved, so the tag isn't in the message registry); until that carve the
-    // prs.changed broadcast below is what refreshes the PR detail view.
+    this.broadcast({ t: 'reports.changed' });
     this.broadcast({ t: 'prs.changed', repo });
   }
 

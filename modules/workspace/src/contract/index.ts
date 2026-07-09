@@ -3,11 +3,13 @@
 import '@companion/module-core/contract';
 import type { WorkspacesStore } from '../api/workspaces-store.js';
 import type { NotificationsService } from '../api/notifications-service.js';
+import type { ReportsStore } from '../api/reports-store.js';
 
 /**
  * module-workspace contract slice — workspaces + membership + access-control
  * (the scoping key every workspace-scoped table filters on) + dashboard metrics
- * + the notification inbox (workspace-scoped, so it lives with access control).
+ * + the notification inbox (workspace-scoped, so it lives with access control)
+ * + the generated-reports store (digests, sweeps, ci-analyses, briefings).
  */
 
 declare module '@companion/contracts' {
@@ -15,16 +17,20 @@ declare module '@companion/contracts' {
     'workspaces:read': true;
     'workspaces:create': true;
     'workspaces:manage': true;
+    'reports:read': true;
   }
   interface ServerMessageRegistry {
     'workspaces.changed': Record<never, never>;
     'notifications.changed': Record<never, never>;
+    'reports.changed': Record<never, never>;
   }
   interface ServiceMap {
     /** The access-control owner; consumers scope through it (never raw SQL against workspaces). */
     workspace: WorkspacesStore;
     /** The inbox emitter + reader; the kernel's `ctx.notify` proxy resolves here. */
     notifications: NotificationsService;
+    /** Generated digests/analyses; producer modules (code, automations) write through this. */
+    reports: ReportsStore;
   }
 }
 
@@ -98,6 +104,19 @@ export interface WorkspaceMetrics {
   readonly prsClosed7d: number;
   readonly prsClosedPrev7d: number;
   readonly weekly: ReadonlyArray<WeeklyCounts>;
+}
+
+// ---------- reports ----------
+
+export interface ReportRecord {
+  readonly id: string;
+  readonly repo: string | null;
+  /** Issue/PR number this report is about (ci-analysis), if any. */
+  readonly issueNumber: number | null;
+  readonly kind: 'digest' | 'stale-sweep' | 'webhook' | 'ci-analysis' | 'briefing';
+  readonly title: string;
+  readonly body: string;
+  readonly createdAt: number;
 }
 
 // ---------- notifications ----------

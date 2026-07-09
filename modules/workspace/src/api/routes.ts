@@ -26,6 +26,7 @@ export default defineRoutes((ctx) => {
   const workspaces = ctx.services.get('workspace');
   const auth = ctx.services.get('core');
   const notifications = ctx.services.get('notifications');
+  const reports = ctx.services.get('reports');
 
   // Access gate: a private workspace the user isn't in reads as "not found" —
   // membership is hidden, so its existence is too.
@@ -239,6 +240,15 @@ export default defineRoutes((ctx) => {
         ctx.broadcast({ t: 'notifications.changed' });
         return { ok: true };
       },
+    }),
+
+    // ---------- reports -----------------------------------------------------------
+
+    route({
+      method: 'GET',
+      path: '/api/reports',
+      access: 'reports:read',
+      handler: () => ({ reports: reports.list() }),
     }),
   ];
 });

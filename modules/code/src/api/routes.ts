@@ -11,7 +11,6 @@ import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
 import { PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
-import { ReportsLite } from './code-store.js';
 import type { GitHubClient } from './github-client.js';
 
 // ---------- repos ----------
@@ -107,8 +106,8 @@ export default defineRoutes((ctx) => {
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);
   const pipelinesStore = new PipelinesStore(ctx.db);
-  // Reports are automations-owned; the guarded lite accessor degrades to null.
-  const reports = new ReportsLite(ctx.db);
+  // Reports are workspace-owned; module-workspace registers the store below us.
+  const reports = ctx.services.get('reports');
 
   /** The legacy `deps.github` closure: the default fetch-purpose client. */
   const github = (): GitHubClient | null => code.githubAccounts.clientFor('fetch');

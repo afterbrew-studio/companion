@@ -39,7 +39,6 @@ export default defineServices((ctx) => {
   const pipelinesStore = new PipelinesStore(ctx.db);
 
   const store = new CodeStore({
-    db: ctx.db,
     repos: reposStore,
     issues: issuesStore,
     prs: prsStore,
@@ -50,6 +49,9 @@ export default defineServices((ctx) => {
     settings,
     workspaces: workspace,
     runs: operate.runsStore,
+    // module-workspace registers below code in the dependency order, so the
+    // reports store is always present when code is enabled.
+    reports: ctx.services.get('reports'),
     notify: ctx.notify,
   });
 
