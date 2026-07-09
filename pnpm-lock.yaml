@@ -113,7 +113,226 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)
 
+  modules/admin:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/code:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/core:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/operate:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/plan:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/workspace:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/contract:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/contracts:
+    dependencies:
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/core:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@companion/services':
+        specifier: workspace:*
+        version: link:../services
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../types
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      better-sqlite3:
+        specifier: ^12.2.0
+        version: 12.11.1
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/services:
+    dependencies:
+      '@companion/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@companion/types':
+        specifier: workspace:*
+        version: link:../types
+      jsonrepair:
+        specifier: ^3.15.0
+        version: 3.15.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/types:
     devDependencies:
       typescript:
         specifier: ^5.8.0
