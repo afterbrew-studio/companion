@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { BaseNotificationKind, NotificationEmitter } from '@companion/core/server';
+import { legacyNotifications, type NotificationEmitter } from '@companion/core/server';
 import type { ServiceMap } from '@companion/contracts';
 import type { ProposalRecord } from '@companion/module-plan/contract';
 import type { IssuesStore, PrsStore, ReposStore, RunsStore } from './cross-types.js';
@@ -76,18 +76,6 @@ export class AutomationsStore {
     },
   };
 
-  /** Legacy insert shape; the emitter mints id/createdAt, so extras are ignored. */
-  readonly notifications = {
-    insert: (n: {
-      id?: string;
-      workspaceId: string | null;
-      kind: BaseNotificationKind;
-      title: string;
-      body?: string;
-      href?: string | null;
-      createdAt?: number;
-    }): void => {
-      this.notify.emit({ kind: n.kind, workspaceId: n.workspaceId, title: n.title, body: n.body, href: n.href });
-    },
-  };
+  /** Legacy `notifications.insert({...})` call shape, routed through the shared emitter. */
+  readonly notifications = legacyNotifications(() => this.notify);
 }

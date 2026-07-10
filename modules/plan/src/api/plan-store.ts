@@ -1,4 +1,4 @@
-import type { BaseNotificationKind, NotificationEmitter } from '@companion/core/server';
+import { legacyNotifications, type NotificationEmitter } from '@companion/core/server';
 import type { ProposalsStore } from './proposals-store.js';
 import type { SpecsStore } from './specs-store.js';
 import type { DocsStore } from './docs-store.js';
@@ -40,18 +40,6 @@ export class PlanStore {
     this.notify = opts.notify;
   }
 
-  /** Legacy insert shape; the emitter mints id/createdAt, so extras are ignored. */
-  readonly notifications = {
-    insert: (n: {
-      id?: string;
-      workspaceId: string | null;
-      kind: BaseNotificationKind;
-      title: string;
-      body?: string;
-      href?: string | null;
-      createdAt?: number;
-    }): void => {
-      this.notify.emit({ kind: n.kind, workspaceId: n.workspaceId, title: n.title, body: n.body, href: n.href });
-    },
-  };
+  /** Legacy `notifications.insert({...})` call shape, routed through the shared emitter. */
+  readonly notifications = legacyNotifications(() => this.notify);
 }

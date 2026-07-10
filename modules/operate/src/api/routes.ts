@@ -74,25 +74,12 @@ const modelPinsSchema = z.object({
 export default defineRoutes((ctx) => {
   const op = ctx.services.get('operate');
   const settings = ctx.services.get('settings');
-  const workspace = ctx.services.get('workspace');
 
-  // Visibility:
-  //  - Attended chats (interactive / AI Help) are PRIVATE to their owner
-  //    (and admins) — one maintainer must not see another's AI Help.
-  //  - Runs tied to a repo inherit that repo's workspace access.
-  //  - Other repo-less runs (automated one-shots) stay visible to runs:read.
-  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => {
-    if (!user) return false;
-    if (user.role === 'admin') return true;
-    if (run.kind === 'interactive' || run.kind === 'assistant') return run.userId === user.username;
-    if (run.repo) return workspace.canAccessRepo(user, run.repo);
-    return true;
-  };
-  const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => {
-    const run = op.orchestrator.getRun(id);
-    if (!run || !canSeeRun(user, run)) throw notFound(`run ${id} not found`);
-    return run;
-  };
+  // Run-stream visibility is a security rule with a single owner: the operate
+  // service (see OperateService.canSeeRun). Routes here — and module-code's
+  // fix-flow routes, and the WS scope resolver — all delegate to it.
+  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => op.canSeeRun(user, run);
+  const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => op.requireRunAccess(user, id);
 
   return [
     // ---------- runs -------------------------------------------------------------

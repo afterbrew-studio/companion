@@ -1,5 +1,5 @@
 import { defineServices } from '@companion/core/server';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { AuthUser, SpaServerMessage } from '@companion/contracts';
 import { paths } from '@companion/services';
 import type { GithubTokenSource } from '../contract/index.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
@@ -56,8 +56,23 @@ export default defineServices(async (ctx) => {
   const webhookTunnel = new WebhookTunnel(settings, ctx.config.port);
   const skills = new Skills();
 
+  // Run visibility gates on repo→workspace access; resolve workspace lazily so
+  // the live instance is always used (operate dependsOn workspace).
+  const canAccessRepo = (user: AuthUser, repo: string): boolean =>
+    ctx.services.get('workspace').canAccessRepo(user, repo);
+
   ctx.services.register(
     'operate',
-    new OperateService(orchestrator, orchestrator.runners, checkouts, moxxyCli, webhookTunnel, skills, store.runs, tokenSource),
+    new OperateService(
+      orchestrator,
+      orchestrator.runners,
+      checkouts,
+      moxxyCli,
+      webhookTunnel,
+      skills,
+      store.runs,
+      tokenSource,
+      canAccessRepo,
+    ),
   );
 });

@@ -29,15 +29,12 @@ export function createRunScopeResolver(ctx: ModuleContext): ScopeResolver {
     return info;
   };
 
+  // Delegates to the single owner of run visibility (OperateService.canSeeRun);
+  // only the username→role lift is local to the socket path.
   const canSee = (username: string, info: RunVisibility): boolean => {
     const role = ctx.services.get('core').userRole(username);
     if (!role) return false;
-    if (role === 'admin') return true;
-    if (info.kind === 'interactive' || info.kind === 'assistant') return info.userId === username;
-    if (info.repo) {
-      return ctx.services.get('workspace').canAccessRepo({ username, displayName: username, role }, info.repo);
-    }
-    return true;
+    return ctx.services.get('operate').canSeeRun({ username, displayName: username, role }, info);
   };
 
   return (msg) => {

@@ -79,6 +79,14 @@ export class ReposStore {
     return this.db.prepare(`SELECT * FROM repos WHERE full_name = ?`).get(fullName) as RepoRow | undefined;
   }
 
+  /** The repo as its cross-module DTO (openIssues 0 — callers with the count fill
+   *  it in). Lets other modules avoid re-implementing the row→RepoRecord mapper,
+   *  which is code-owned and can't be imported across the /api boundary. */
+  getRecord(fullName: string): RepoRecord | undefined {
+    const row = this.get(fullName);
+    return row ? rowToRepo(row) : undefined;
+  }
+
   list(): RepoRow[] {
     return this.db.prepare(`SELECT * FROM repos ORDER BY full_name`).all() as RepoRow[];
   }

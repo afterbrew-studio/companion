@@ -158,22 +158,9 @@ export default defineRoutes((ctx) => {
     return row;
   };
 
-  // Run visibility for the fix-flow routes (same rule as operate's routes):
-  //  - Attended chats (interactive / AI Help) are PRIVATE to their owner.
-  //  - Runs tied to a repo inherit that repo's workspace access.
-  //  - Other repo-less runs (automated one-shots) stay visible to runs:read.
-  const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => {
-    if (!user) return false;
-    if (user.role === 'admin') return true;
-    if (run.kind === 'interactive' || run.kind === 'assistant') return run.userId === user.username;
-    if (run.repo) return workspace.canAccessRepo(user, run.repo);
-    return true;
-  };
-  const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => {
-    const run = operate.orchestrator.getRun(id);
-    if (!run || !canSeeRun(user, run)) throw notFound(`run ${id} not found`);
-    return run;
-  };
+  // Run visibility for the fix-flow routes: the single owner of this security
+  // rule is the operate service (OperateService.canSeeRun) — delegate to it.
+  const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => operate.requireRunAccess(user, id);
 
   /** Agents auto-discover moxxy-home skills; tell the generator what exists. */
   const skillsNote = (): string => {

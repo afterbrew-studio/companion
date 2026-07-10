@@ -1,10 +1,8 @@
 import { z } from 'zod';
 import { defineRoutes, route, notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
-import type { RepoRecord } from '@companion/module-code/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import '../contract/index.js';
-import type { RepoRow } from './cross-types.js';
 
 const automationSchema = z.object({
   autoTriage: z.boolean().optional(),
@@ -40,34 +38,6 @@ const uiSchema = z
     intent: z.enum(['new-workspace', 'connect-repo', 'connect-github']).optional(),
   })
   .refine((v) => v.hash || v.intent, 'provide a hash to navigate or an intent to open');
-
-/**
- * Local copy of module-code's row → DTO mapper: the automation-switch route
- * answers with the updated RepoRecord, but the mapper lives in code's /api
- * (never importable across modules) and its contract carries only the DTO.
- * Keep in sync with modules/code/src/api/repos-store.ts.
- */
-function rowToRepo(row: RepoRow): RepoRecord {
-  return {
-    githubAccountId: row.github_account_id ?? null,
-    runnerId: row.runner_id ?? null,
-    fullName: row.full_name,
-    owner: row.owner,
-    name: row.name,
-    workspaceId: row.workspace_id,
-    defaultBranch: row.default_branch,
-    private: row.private === 1,
-    cloneReady: row.clone_ready === 1,
-    lastSyncAt: row.last_sync_at,
-    openIssues: 0, // filled by callers that have the count
-    autoTriage: row.auto_triage === 1,
-    digestEnabled: row.digest_enabled === 1,
-    staleSweepEnabled: row.stale_enabled === 1,
-    prGateEnabled: row.pr_gate === 1,
-    autoMergeEnabled: row.auto_merge === 1,
-    webhookConfigured: row.webhook_secret !== null,
-  };
-}
 
 /**
  * The reactor domain's HTTP surface: the per-repo automation switches and
@@ -116,7 +86,7 @@ export default defineRoutes((ctx) => {
         if (body.prGate !== undefined) code.repos.setAutomation(fullName, 'pr_gate', body.prGate);
         if (body.autoMerge !== undefined) code.repos.setAutomation(fullName, 'auto_merge', body.autoMerge);
         ctx.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(code.repos.get(fullName)!) };
+        return { repo: code.repos.getRecord(fullName)! };
       },
     }),
 
