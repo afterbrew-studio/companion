@@ -32,6 +32,7 @@
     "@companion/module-core": "workspace:*",
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
+    "@companion/ui": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

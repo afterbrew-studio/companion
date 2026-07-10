@@ -83,3 +83,8 @@ export * from './net.js';
 export * from './live.js';
 export * from './router.js';
 export * from './modules-provider.js';
+
+// ---- client logic primitives shared across module slices ----
+export * from './intents.js';
+export * from './links.js';
+export * from './use-bulk-runner.js';

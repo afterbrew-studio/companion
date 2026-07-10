@@ -172,6 +172,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -224,6 +227,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -310,6 +316,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -353,6 +362,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@moxxy/plugin-tunnel-proxy':
         specifier: ^0.29.0
         version: 0.29.0(zod@3.25.76)
@@ -417,6 +429,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -457,6 +472,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
