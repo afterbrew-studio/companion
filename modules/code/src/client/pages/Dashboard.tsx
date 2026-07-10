@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { pipelineRunHref, reportHref, runHref } from '@companion/core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
-import { EmptyState, ErrorBar, ListCard, Page, PageHeader, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
+import { EmptyState, ErrorBar, InlineLoading, ListCard, Page, PageHeader, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
 import { ChecksBadge } from '../widgets.js';
@@ -51,48 +51,58 @@ export function DashboardPage(): JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Overview" subtitle={`${workspaceName} — ${repos.length} repositories`} />
+      <PageHeader
+        title="Overview"
+        subtitle={repos ? `${workspaceName} — ${repos.length} repositories` : workspaceName}
+      />
       <ErrorBar error={error} />
 
+      {/* Each tile shows an ellipsis until its own feed lands. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <StatTile
           label="Open issues"
-          value={openIssueCount}
+          value={openIssueCount ?? '…'}
           href="#/issues"
           delta={issueBacklogDelta}
           trend={issueBacklog ?? undefined}
         />
         <StatTile
           label="Open PRs"
-          value={openPrs.length}
+          value={openPrs?.length ?? '…'}
           href="#/prs"
           delta={prBacklogDelta}
           trend={prBacklog ?? undefined}
         />
         <StatTile
           label="Failing CI"
-          value={failingPrs.length}
-          tone={failingPrs.length > 0 ? 'danger' : 'ok'}
-          hint={failingPrs.length > 0 ? 'pull requests with red pipelines' : 'all pipelines green'}
+          value={failingPrs?.length ?? '…'}
+          tone={failingPrs && failingPrs.length > 0 ? 'danger' : 'ok'}
+          hint={
+            failingPrs ? (failingPrs.length > 0 ? 'pull requests with red pipelines' : 'all pipelines green') : undefined
+          }
           href="#/prs"
         />
         <StatTile
           label="Live agents"
-          value={liveRuns.length}
-          tone={liveRuns.length > 0 ? 'ok' : 'default'}
+          value={liveRuns?.length ?? '…'}
+          tone={liveRuns && liveRuns.length > 0 ? 'ok' : 'default'}
           href="#/runs"
         />
         <StatTile
           label="Proposals to act on"
-          value={actionableProposals.length}
-          tone={actionableProposals.length > 0 ? 'warn' : 'default'}
+          value={actionableProposals?.length ?? '…'}
+          tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
           href="#/proposals"
         />
       </div>
 
-      {metrics ? <MetricsSection metrics={metrics} /> : null}
+      {metrics ? <MetricsSection metrics={metrics} /> : <LoadingSection title="Velocity" label="Crunching weekly velocity…" />}
 
-      <UsageSection runs={workspaceRuns} />
+      {workspaceRuns ? (
+        <UsageSection runs={workspaceRuns} />
+      ) : (
+        <LoadingSection title="Agent usage" label="Adding up token spend…" />
+      )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section aria-labelledby="needs-attention">
@@ -100,7 +110,12 @@ export function DashboardPage(): JSX.Element {
             Needs attention
           </h2>
           <ListCard>
-            {reviewRuns.map((run) => (
+            {attentionCount === null ? (
+              <div className="px-4 py-6">
+                <InlineLoading label="Checking what needs you…" />
+              </div>
+            ) : null}
+            {reviewRuns?.map((run) => (
               <a key={run.id} href={`#/runs/${run.id}/preview`} className="row-link">
                 <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
@@ -110,7 +125,7 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(run.updatedAt)}</span>
               </a>
             ))}
-            {prReviewsPending.slice(0, 6).map((pr) => (
+            {prReviewsPending?.slice(0, 6).map((pr) => (
               <a
                 key={`rev-${pr.repo}#${pr.number}`}
                 href={`#/repos/${pr.repo}/prs/${pr.number}/review`}
@@ -126,7 +141,7 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(pr.updatedAt)}</span>
               </a>
             ))}
-            {triagePending.slice(0, 6).map((issue) => (
+            {triagePending?.slice(0, 6).map((issue) => (
               <a
                 key={`tri-${issue.repo}#${issue.number}`}
                 href={`#/repos/${issue.repo}/issues/${issue.number}`}
@@ -142,7 +157,7 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(issue.updatedAt)}</span>
               </a>
             ))}
-            {failingPrs.slice(0, 6).map((pr) => (
+            {failingPrs?.slice(0, 6).map((pr) => (
               <a key={`${pr.repo}#${pr.number}`} href={`#/repos/${pr.repo}/prs/${pr.number}`} className="row-link">
                 <ChecksBadge checks={pr.checks} />
                 <span className="min-w-0 flex-1">
@@ -154,7 +169,7 @@ export function DashboardPage(): JSX.Element {
                 <span className="dim shrink-0">{timeAgo(pr.updatedAt)}</span>
               </a>
             ))}
-            {actionableProposals.slice(0, 6).map((p) => (
+            {actionableProposals?.slice(0, 6).map((p) => (
               <a key={p.id} href="#/proposals" className="row-link">
                 <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
@@ -176,10 +191,30 @@ export function DashboardPage(): JSX.Element {
           <h2 id="live-activity" className="mb-2 text-sm font-semibold">
             Live activity & AI actions
           </h2>
-          <ActivityFeed runs={workspaceRuns} pipelineRuns={pipelineRuns} reports={workspaceReports} />
+          {workspaceRuns && pipelineRuns && workspaceReports ? (
+            <ActivityFeed runs={workspaceRuns} pipelineRuns={pipelineRuns} reports={workspaceReports} />
+          ) : (
+            <ListCard>
+              <div className="px-4 py-6">
+                <InlineLoading label="Fetching the feed…" />
+              </div>
+            </ListCard>
+          )}
         </section>
       </div>
     </Page>
+  );
+}
+
+/** A section still waiting on its own feed — header renders, body is a loader. */
+function LoadingSection({ title, label }: { title: string; label: string }): JSX.Element {
+  return (
+    <section className="mt-6">
+      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
+      <div className="card">
+        <InlineLoading label={label} />
+      </div>
+    </section>
   );
 }
 

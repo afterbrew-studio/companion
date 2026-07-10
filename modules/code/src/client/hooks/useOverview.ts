@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage, request } from '@companion/core/client';
+import type { SpaServerMessage } from '@companion/contracts';
+import { request, useLive } from '@companion/core/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
@@ -35,30 +36,33 @@ interface Delta {
 
 /**
  * All of the workspace Overview's data — the raw feeds, the live refresh, and
- * every derived "needs a human" queue and backlog trend. The page is pure
- * presentation over this.
+ * every derived "needs a human" queue and backlog trend. Every feed is `null`
+ * until its own request lands, so the page renders per-section loaders and
+ * fills in as responses arrive instead of popping in whole once the slowest
+ * request resolves. The page is pure presentation over this.
  */
 export interface UseOverview {
   readonly hasWorkspace: boolean;
   readonly workspaceName: string;
   readonly error: string | null;
 
-  readonly repos: RepoRecord[];
+  readonly repos: RepoRecord[] | null;
   readonly metrics: WorkspaceMetrics | null;
   /** Runs and reports already scoped to this workspace's repos (or instance-wide). */
-  readonly workspaceRuns: RunRecord[];
-  readonly workspaceReports: ReportRecord[];
-  readonly pipelineRuns: PipelineRunRecord[];
+  readonly workspaceRuns: RunRecord[] | null;
+  readonly workspaceReports: ReportRecord[] | null;
+  readonly pipelineRuns: PipelineRunRecord[] | null;
 
-  readonly openIssueCount: number;
-  readonly openPrs: PrRecord[];
-  readonly failingPrs: PrRecord[];
-  readonly liveRuns: RunRecord[];
-  readonly reviewRuns: RunRecord[];
-  readonly actionableProposals: OverviewProposal[];
-  readonly prReviewsPending: PrRecord[];
-  readonly triagePending: IssueRecord[];
-  readonly attentionCount: number;
+  readonly openIssueCount: number | null;
+  readonly openPrs: PrRecord[] | null;
+  readonly failingPrs: PrRecord[] | null;
+  readonly liveRuns: RunRecord[] | null;
+  readonly reviewRuns: RunRecord[] | null;
+  readonly actionableProposals: OverviewProposal[] | null;
+  readonly prReviewsPending: PrRecord[] | null;
+  readonly triagePending: IssueRecord[] | null;
+  /** Null while any of the attention feeds is still loading. */
+  readonly attentionCount: number | null;
 
   readonly issueBacklog: number[] | null;
   readonly prBacklog: number[] | null;
@@ -66,121 +70,151 @@ export interface UseOverview {
   readonly prBacklogDelta: Delta | undefined;
 }
 
-export function useOverview(): UseOverview {
-  const { current } = useWorkspace();
-  const [issues, setIssues] = useState<IssueRecord[]>([]);
-  const [prs, setPrs] = useState<PrRecord[]>([]);
-  const [proposals, setProposals] = useState<OverviewProposal[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [pipelineRuns, setPipelineRuns] = useState<PipelineRunRecord[]>([]);
-  const [reports, setReports] = useState<ReportRecord[]>([]);
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
-  const [metrics, setMetrics] = useState<WorkspaceMetrics | null>(null);
-  const [prReviewsPending, setPrReviewsPending] = useState<PrRecord[]>([]);
-  const [triagePending, setTriagePending] = useState<IssueRecord[]>([]);
-  const [error, setError] = useState<string | null>(null);
+// Stable fetchers (useFeed keys its refresh on identity — an inline arrow
+// would refetch every render). Reports stay best-effort, as before.
+const fetchOpenIssues = (id: string): Promise<IssueRecord[]> => api.workspaceIssues(id, 'open').then((r) => r.issues);
+const fetchPrs = (id: string): Promise<PrRecord[]> => api.workspacePrs(id).then((r) => r.prs);
+const fetchProposals = (id: string): Promise<OverviewProposal[]> => workspaceProposals(id).then((r) => r.proposals);
+const fetchRuns = (): Promise<RunRecord[]> => operateApi.listRuns().then((r) => r.runs);
+const fetchPipelineRuns = (id: string): Promise<PipelineRunRecord[]> => api.workspacePipelineRuns(id).then((r) => r.runs);
+const fetchRepos = (id: string): Promise<RepoRecord[]> => api.workspaceRepos(id).then((r) => r.repos);
+const fetchMetrics = (id: string): Promise<WorkspaceMetrics> => workspaceApi.workspaceMetrics(id).then((r) => r.metrics);
+const fetchReports = (): Promise<ReportRecord[]> =>
+  workspaceApi
+    .listReports()
+    .then((r) => r.reports)
+    .catch(() => []);
+const fetchPendingReviews = (id: string): Promise<PrRecord[]> =>
+  api.workspacePrs(id, 'open', { review: 'pending', limit: 50 }).then((r) => r.prs);
+const fetchPendingTriage = (id: string): Promise<IssueRecord[]> =>
+  api.workspaceIssues(id, 'open', { triage: 'pending', limit: 50 }).then((r) => r.issues);
 
+/**
+ * One Overview feed: loads on mount, refetches on its matching WS messages,
+ * `data` is null until the first response (and again on workspace switch).
+ */
+function useFeed<T>(
+  id: string | null,
+  fetcher: (ws: string) => Promise<T>,
+  when: (msg: SpaServerMessage) => boolean,
+): { data: T | null; error: string | null } {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Workspace switch: back to the loader.
+  useEffect(() => {
+    setData(null);
+    setError(null);
+  }, [id]);
   const refresh = useCallback(async () => {
-    if (!current) return;
+    if (!id) return;
     try {
-      const [i, p, pr, r, plr, rp, m, rep, pendRev, pendTri] = await Promise.all([
-        api.workspaceIssues(current.id, 'open'),
-        api.workspacePrs(current.id),
-        workspaceProposals(current.id),
-        operateApi.listRuns(),
-        api.workspacePipelineRuns(current.id),
-        api.workspaceRepos(current.id),
-        workspaceApi.workspaceMetrics(current.id),
-        workspaceApi.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
-        api.workspacePrs(current.id, 'open', { review: 'pending', limit: 50 }),
-        api.workspaceIssues(current.id, 'open', { triage: 'pending', limit: 50 }),
-      ]);
-      setIssues(i.issues);
-      setPrs(p.prs);
-      setProposals(pr.proposals);
-      setRuns(r.runs);
-      setPipelineRuns(plr.runs);
-      setRepos(rp.repos);
-      setMetrics(m.metrics);
-      setReports(rep.reports);
-      setPrReviewsPending(pendRev.prs);
-      setTriagePending(pendTri.issues);
+      setData(await fetcher(id));
       setError(null);
     } catch (err) {
       setError(String(err));
     }
-  }, [current]);
+  }, [id, fetcher]);
+  useLive(refresh, when);
+  return { data, error };
+}
 
-  useEffect(() => {
-    void refresh();
-    return onServerMessage((msg) => {
-      if (
-        msg.t === 'issues.changed' ||
-        msg.t === 'prs.changed' ||
-        // FLAG: plan's message literal — not in code's visible union (plan depends on us).
-        (msg.t as string) === 'proposals.changed' ||
-        msg.t === 'runs.changed' ||
-        msg.t === 'run.changed' ||
-        msg.t === 'pipelineRuns.changed' ||
-        msg.t === 'repos.changed' ||
-        msg.t === 'reports.changed' ||
-        msg.t === 'triage.changed'
-      ) {
-        void refresh();
-      }
-    });
-  }, [refresh]);
+export function useOverview(): UseOverview {
+  const { current } = useWorkspace();
+  const id = current?.id ?? null;
 
-  const wsRepoNames = new Set(repos.map((r) => r.fullName));
-  const inWorkspace = (repo: string | null): boolean => repo === null || wsRepoNames.has(repo);
-  const openPrs = prs.filter((p) => p.state === 'open');
-  const failingPrs = openPrs.filter((p) => p.checks?.state === 'failing');
-  const liveRuns = runs.filter((r) => r.live && inWorkspace(r.repo));
-  const reviewRuns = runs.filter((r) => r.status === 'review' && inWorkspace(r.repo));
-  const actionableProposals = proposals.filter((p) => p.status === 'analyzed' || p.status === 'review');
+  // Ten independent feeds, each with a precise refresh predicate — a
+  // reports.changed no longer refetches issues, and a slow metrics query
+  // never holds back the queues.
+  const issues = useFeed(id, fetchOpenIssues, (m) => m.t === 'issues.changed' || m.t === 'triage.changed');
+  const prs = useFeed(id, fetchPrs, (m) => m.t === 'prs.changed');
+  // FLAG: plan's message literal — not in code's visible union (plan depends on us).
+  const proposals = useFeed(id, fetchProposals, (m) => (m.t as string) === 'proposals.changed');
+  const runs = useFeed(id, fetchRuns, (m) => m.t === 'runs.changed' || m.t === 'run.changed');
+  const pipelineRuns = useFeed(id, fetchPipelineRuns, (m) => m.t === 'pipelineRuns.changed');
+  const repos = useFeed(id, fetchRepos, (m) => m.t === 'repos.changed');
+  const metrics = useFeed(
+    id,
+    fetchMetrics,
+    (m) => m.t === 'issues.changed' || m.t === 'prs.changed' || m.t === 'repos.changed',
+  );
+  const reports = useFeed(id, fetchReports, (m) => m.t === 'reports.changed');
+  const pendingReviews = useFeed(id, fetchPendingReviews, (m) => m.t === 'prs.changed');
+  const pendingTriage = useFeed(id, fetchPendingTriage, (m) => m.t === 'triage.changed' || m.t === 'issues.changed');
+
+  const error =
+    issues.error ??
+    prs.error ??
+    proposals.error ??
+    runs.error ??
+    pipelineRuns.error ??
+    repos.error ??
+    metrics.error ??
+    pendingReviews.error ??
+    pendingTriage.error ??
+    null;
+
+  // Workspace scoping needs the repo list — run-derived slices hold until both landed.
+  const wsRepoNames = repos.data ? new Set(repos.data.map((r) => r.fullName)) : null;
+  const inWorkspace = (repo: string | null): boolean => repo === null || (wsRepoNames?.has(repo) ?? false);
+  const scopedRuns = runs.data && wsRepoNames ? runs.data.filter((r) => inWorkspace(r.repo)) : null;
+  const openPrs = prs.data?.filter((p) => p.state === 'open') ?? null;
+  const failingPrs = openPrs?.filter((p) => p.checks?.state === 'failing') ?? null;
+  const liveRuns = scopedRuns?.filter((r) => r.live) ?? null;
+  const reviewRuns = scopedRuns?.filter((r) => r.status === 'review') ?? null;
+  const actionableProposals = proposals.data?.filter((p) => p.status === 'analyzed' || p.status === 'review') ?? null;
   const attentionCount =
-    reviewRuns.length + prReviewsPending.length + triagePending.length + failingPrs.length + actionableProposals.length;
+    reviewRuns && pendingReviews.data && pendingTriage.data && failingPrs && actionableProposals
+      ? reviewRuns.length +
+        pendingReviews.data.length +
+        pendingTriage.data.length +
+        failingPrs.length +
+        actionableProposals.length
+      : null;
 
-  const issueBacklog = metrics
-    ? backlogTrend(metrics.weekly, issues.length, (w) => w.issuesOpened, (w) => w.issuesClosed)
-    : null;
-  const prBacklog = metrics
-    ? backlogTrend(metrics.weekly, openPrs.length, (w) => w.prsOpened, (w) => w.prsClosed)
-    : null;
-  const issueBacklogDelta = metrics
-    ? {
-        current: issues.length,
-        previous: Math.max(0, issues.length - (metrics.issuesOpened7d - metrics.issuesClosed7d)),
-        period: 'vs 7 days ago',
-        upIsGood: false,
-      }
-    : undefined;
-  const prBacklogDelta = metrics
-    ? {
-        current: openPrs.length,
-        previous: Math.max(0, openPrs.length - (metrics.prsOpened7d - metrics.prsClosed7d)),
-        period: 'vs 7 days ago',
-        upIsGood: false,
-      }
-    : undefined;
+  const issueBacklog =
+    metrics.data && issues.data
+      ? backlogTrend(metrics.data.weekly, issues.data.length, (w) => w.issuesOpened, (w) => w.issuesClosed)
+      : null;
+  const prBacklog =
+    metrics.data && openPrs
+      ? backlogTrend(metrics.data.weekly, openPrs.length, (w) => w.prsOpened, (w) => w.prsClosed)
+      : null;
+  const issueBacklogDelta =
+    metrics.data && issues.data
+      ? {
+          current: issues.data.length,
+          previous: Math.max(0, issues.data.length - (metrics.data.issuesOpened7d - metrics.data.issuesClosed7d)),
+          period: 'vs 7 days ago',
+          upIsGood: false,
+        }
+      : undefined;
+  const prBacklogDelta =
+    metrics.data && openPrs
+      ? {
+          current: openPrs.length,
+          previous: Math.max(0, openPrs.length - (metrics.data.prsOpened7d - metrics.data.prsClosed7d)),
+          period: 'vs 7 days ago',
+          upIsGood: false,
+        }
+      : undefined;
 
   return {
     hasWorkspace: !!current,
     workspaceName: current?.name ?? '',
     error,
-    repos,
-    metrics,
-    workspaceRuns: runs.filter((r) => inWorkspace(r.repo)),
-    workspaceReports: reports.filter((r) => inWorkspace(r.repo)),
-    pipelineRuns,
-    openIssueCount: issues.length,
+    repos: repos.data,
+    metrics: metrics.data,
+    workspaceRuns: scopedRuns,
+    workspaceReports: reports.data && wsRepoNames ? reports.data.filter((r) => inWorkspace(r.repo)) : null,
+    pipelineRuns: pipelineRuns.data,
+    openIssueCount: issues.data?.length ?? null,
     openPrs,
     failingPrs,
     liveRuns,
     reviewRuns,
     actionableProposals,
-    prReviewsPending,
-    triagePending,
+    prReviewsPending: pendingReviews.data,
+    triagePending: pendingTriage.data,
     attentionCount,
     issueBacklog,
     prBacklog,
