@@ -134,11 +134,44 @@ function Shell(): JSX.Element {
     });
   };
 
+  // Hover peek: resting the pointer on the collapsed rail slides the full
+  // sidebar over the content — the layout keeps the rail width, so nothing
+  // reflows — and it slides back out on leave. `peek` drives the width/overlay;
+  // the content flips back to icons only after the slide-out finishes, so
+  // labels are revealed and re-clipped by the moving edge instead of popping.
+  const [peek, setPeek] = useState(false);
+  const [peekContent, setPeekContent] = useState(false);
+  const peekTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
+  const schedulePeek = (on: boolean): void => {
+    window.clearTimeout(peekTimer.current);
+    if (on === peek) return;
+    if (on) {
+      // Enter delay so brushing past the rail doesn't flap it open.
+      peekTimer.current = window.setTimeout(() => {
+        setPeek(true);
+        setPeekContent(true);
+      }, 150);
+    } else {
+      peekTimer.current = window.setTimeout(() => {
+        setPeek(false);
+        peekTimer.current = window.setTimeout(() => setPeekContent(false), 220);
+      }, 200);
+    }
+  };
+  const endPeek = (): void => {
+    window.clearTimeout(peekTimer.current);
+    setPeek(false);
+    setPeekContent(false);
+  };
+
   // Icon-only rail applies to the desktop collapsed state; the mobile drawer
-  // always shows full content.
-  const rail = collapsed && !mobileOpen;
+  // always shows full content, and so does an in-flight hover peek.
+  const rail = collapsed && !mobileOpen && !peekContent;
+  const peeking = collapsed && peek;
 
   const toggleSidebar = (): void => {
+    endPeek();
     if (window.matchMedia('(min-width: 768px)').matches) {
       setCollapsed((c) => {
         localStorage.setItem('companion.sidebar', c ? 'expanded' : 'collapsed');
@@ -303,9 +336,17 @@ function Shell(): JSX.Element {
         <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden onClick={() => setMobileOpen(false)} />
       ) : null}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 transition-[width,transform] duration-200 ease-in-out motion-reduce:transition-none md:static md:translate-x-0 dark:border-zinc-800 dark:bg-zinc-900 md:dark:bg-zinc-900/60 ${
+        onMouseEnter={collapsed ? () => schedulePeek(true) : undefined}
+        onMouseLeave={collapsed ? () => schedulePeek(false) : undefined}
+        onFocusCapture={collapsed ? () => schedulePeek(true) : undefined}
+        onBlurCapture={collapsed ? () => schedulePeek(false) : undefined}
+        className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 transition-[width,transform,margin,box-shadow] duration-200 ease-in-out motion-reduce:transition-none md:relative md:translate-x-0 dark:border-zinc-800 dark:bg-zinc-900 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${collapsed ? 'md:w-16' : 'md:w-56'}`}
+        } ${collapsed && !peeking ? 'md:w-16' : 'md:w-56'} ${
+          // While peeking, the extra width overlays the content (negative
+          // margin keeps the flex slot at rail width) and the bg goes opaque.
+          peeking ? 'md:-mr-40 md:shadow-xl' : 'md:dark:bg-zinc-900/60'
+        }`}
       >
         <Brand rail={rail} />
 
