@@ -1,10 +1,13 @@
 @import 'tailwindcss';
 
-/* Workspace sources outside this app's root — the shared ui kit, the framework's
- * client host (ModulesProvider, NavIcon, OnboardingArt, lazy views), and every
- * module's client slice — so their utility classes are generated too. */
-@source "../../../packages/ui/src/**/*.{ts,tsx}";
-@source "../../../packages/core/src/client/**/*.{ts,tsx}";
+/* Workspace sources outside this app's root. Tailwind v4 auto-detects content
+ * under the app, but the framework packages and modules are reached via
+ * node_modules symlinks, so they must be named. Broad globs — ALL package src +
+ * every module's client slice — so a class rendered anywhere in the workspace is
+ * generated, and moving a component between packages never silently drops its
+ * styles. (Scanning class-free files, e.g. contracts/services, is cheap and
+ * harmless — Tailwind only emits utilities for tokens that match.) */
+@source "../../../packages/*/src/**/*.{ts,tsx}";
 @source "../../../modules/*/src/client/**/*.{ts,tsx}";
 
 /*
