@@ -410,7 +410,7 @@ function RunnerModal({
         setTestNote(
           made.catalog && made.catalog.providers.some((p) => p.ready)
             ? 'Connected — pin models per action below, or leave them on the runner default.'
-            : 'Connected, but no ready provider was found on this machine. Configure a provider there, then re-test.',
+            : 'Connected, but no provider with credentials was found on this machine. Configure a provider there, then fetch models.',
         );
         setBusy(false);
       }
@@ -420,7 +420,9 @@ function RunnerModal({
     }
   };
 
-  const testConnection = async (): Promise<void> => {
+  // Probe the runner and pull its model catalog into the pin dropdowns. Doubles
+  // as a reachability check — the note reports what came back (or why nothing did).
+  const fetchModels = async (): Promise<void> => {
     if (!savedId) return;
     setTesting(true);
     setTestNote(null);
@@ -428,11 +430,14 @@ function RunnerModal({
     try {
       const result = await api.probeRunner(savedId);
       setCatalog(result.catalog);
-      const ready = result.catalog?.providers.filter((p) => p.ready).length ?? 0;
+      const ready = (result.catalog?.providers ?? []).filter((p) => p.ready);
+      const modelCount = new Set(ready.flatMap((p) => p.models.map((m) => m.id))).size;
       setTestNote(
-        result.ok
-          ? `Reachable — ${ready} provider${ready === 1 ? '' : 's'} with credentials.`
-          : (result.health.detail ?? 'unreachable'),
+        !result.ok
+          ? (result.health.detail ?? 'unreachable')
+          : modelCount > 0
+            ? `${modelCount} model${modelCount === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'}.`
+            : 'Reachable, but no provider with credentials was found on this machine.',
       );
     } catch (err) {
       setTestNote(String(err));
@@ -545,8 +550,8 @@ function RunnerModal({
           <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-6 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <legend className="text-sm font-medium">Model pins</legend>
-              <button type="button" className="btn-ghost text-xs" disabled={testing} onClick={() => void testConnection()}>
-                {testing ? 'Testing…' : 'Test connection'}
+              <button type="button" className="btn-ghost text-xs" disabled={testing} onClick={() => void fetchModels()}>
+                {testing ? 'Fetching…' : 'Fetch models'}
               </button>
             </div>
             <p className="dim text-xs">
