@@ -13,6 +13,7 @@ RUN apt-get update \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY modules ./modules
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
@@ -27,6 +28,7 @@ COPY --from=build /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps ./apps
 COPY --from=build /app/packages ./packages
+COPY --from=build /app/modules ./modules
 # /data      — Companion's own state (db, isolated moxxy home, clones).
 # /root/.moxxy — moxxy's daily home holding the provider credentials (vault),
 #                which /data/moxxy-home symlinks to. Both must persist across
