@@ -2,7 +2,22 @@ import { useState } from 'react';
 import { useIntent } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import { EmptyState, ErrorBar, Eyebrow, Field, FormActions, ListCard, Modal, Page, PageHeader, Switch, timeAgo, useConfirm } from '@companion/ui';
+import {
+  Dropdown,
+  EmptyState,
+  ErrorBar,
+  Eyebrow,
+  Field,
+  FormActions,
+  ListCard,
+  Modal,
+  Page,
+  PageHeader,
+  SettingRow,
+  Switch,
+  timeAgo,
+  useConfirm,
+} from '@companion/ui';
 import type { GitHubAccountRecord, GitHubAccountScope, GitHubPurpose } from '../../contract/index.js';
 import { GITHUB_PURPOSES } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
@@ -108,14 +123,11 @@ export function GithubAccountsPage(): JSX.Element {
                     <GitHubIcon />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">{a.login || 'validating…'}</span>
-                      <span className={a.ownerId === null ? 'badge-ok' : 'badge'}>{ownerLabel(a)}</span>
-                    </div>
+                    <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
                     <div className="dim text-xs">
-                      connected {timeAgo(a.createdAt)} ·{' '}
+                      {ownerLabel(a)} · connected {timeAgo(a.createdAt)} ·{' '}
                       {a.scope === 'shared'
-                        ? 'shared'
+                        ? 'acts for any workspace'
                         : `delegated to ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
                     </div>
                   </div>
@@ -126,24 +138,18 @@ export function GithubAccountsPage(): JSX.Element {
                   ) : null}
                 </div>
                 {manageable ? (
-                  <>
-                    <ListCard subtle className="mt-3">
-                      {GITHUB_PURPOSES.map((purpose) => (
-                        <div key={purpose} className="flex items-center gap-3 px-3.5 py-2.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-medium">{PURPOSE_META[purpose].label}</div>
-                            <p className="dim mt-0.5">{PURPOSE_META[purpose].hint}</p>
-                          </div>
-                          <Switch
-                            label={`${PURPOSE_META[purpose].label} via ${a.login}`}
-                            checked={a.purposes.includes(purpose)}
-                            onChange={() => void togglePurpose(a, purpose)}
-                          />
-                        </div>
-                      ))}
-                    </ListCard>
+                  <ListCard subtle className="mt-3">
+                    {GITHUB_PURPOSES.map((purpose) => (
+                      <PurposeRow
+                        key={purpose}
+                        purpose={purpose}
+                        checked={a.purposes.includes(purpose)}
+                        switchLabel={`${PURPOSE_META[purpose].label} via ${a.login}`}
+                        onChange={() => void togglePurpose(a, purpose)}
+                      />
+                    ))}
                     <ScopeEditor account={a} workspaces={workspaces} onError={setError} onSaved={refresh} />
-                  </>
+                  </ListCard>
                 ) : (
                   // Read-only: a shared default (or another user's account, for admins is manageable).
                   <p className="dim mt-2 text-xs">
@@ -174,9 +180,10 @@ export function GithubAccountsPage(): JSX.Element {
 }
 
 /**
- * Where the account may act, saved on change. Flipping to "delegated" waits
- * for the first workspace pick before saving — the server (rightly) rejects a
- * delegated account with no workspaces.
+ * Where the account may act — one more row in the account's settings list,
+ * saved on change. Flipping to "delegated" waits for the first workspace pick
+ * before saving — the server (rightly) rejects a delegated account with no
+ * workspaces.
  */
 function ScopeEditor({
   account,
@@ -214,69 +221,40 @@ function ScopeEditor({
   };
 
   return (
-    <div className="mt-3">
-      <FieldGroup label="Available to">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <OptionRow
-            active={!showWorkspaces}
-            control={
-              <input
-                type="radio"
-                name={`scope-${account.id}`}
-                className="accent-emerald-600"
-                checked={!showWorkspaces}
-                onChange={() => {
-                  setPendingDelegated(false);
-                  if (delegated) void save('shared', []);
-                  else onError(null);
-                }}
-              />
+    <>
+      <SettingRow
+        className="px-3.5 py-2.5"
+        title="Available to"
+        description={showWorkspaces ? 'Only the workspaces picked below.' : 'Acts for any workspace.'}
+      >
+        <Dropdown
+          className="w-40"
+          ariaLabel={`Where ${account.login || 'this account'} may act`}
+          value={showWorkspaces ? 'delegated' : 'shared'}
+          onChange={(v) => {
+            if (v === 'shared') {
+              setPendingDelegated(false);
+              if (delegated) void save('shared', []);
+              else onError(null);
+            } else {
+              onError(null);
+              setPendingDelegated(true);
             }
-            title="Shared"
-            hint="Acts for any workspace."
-          />
-          <OptionRow
-            active={showWorkspaces}
-            control={
-              <input
-                type="radio"
-                name={`scope-${account.id}`}
-                className="accent-emerald-600"
-                checked={showWorkspaces}
-                onChange={() => {
-                  onError(null);
-                  setPendingDelegated(true);
-                }}
-              />
-            }
-            title="Delegated"
-            hint="Only the workspaces picked below."
+          }}
+          options={SCOPE_OPTIONS}
+        />
+      </SettingRow>
+      {showWorkspaces ? (
+        <div className="px-3.5 py-2.5">
+          <WorkspaceChecklist
+            workspaces={workspaces}
+            selected={account.workspaceIds}
+            onToggle={toggleWorkspace}
+            note={pendingDelegated && !delegated ? 'Pick at least one workspace to delegate this account.' : undefined}
           />
         </div>
-        {showWorkspaces ? (
-          <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
-            {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
-            {pendingDelegated && !delegated ? (
-              <span className="dim px-1 pt-1 text-xs">Pick at least one workspace to delegate this account.</span>
-            ) : null}
-            {workspaces.map((w) => (
-              <label
-                key={w.id}
-                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-              >
-                <input
-                  type="checkbox"
-                  className="accent-emerald-600"
-                  checked={account.workspaceIds.includes(w.id)}
-                  onChange={(e) => toggleWorkspace(w.id, e.target.checked)}
-                />
-                {w.name}
-              </label>
-            ))}
-          </div>
-        ) : null}
-      </FieldGroup>
-    </div>
+      ) : null}
+    </>
   );
 }
 
@@ -345,88 +323,57 @@ function ConnectAccountModal({
         {/* Two columns: what the account DOES (left) vs who it IS + where it applies (right). */}
         <div className="grid gap-x-6 gap-y-5 md:grid-cols-2">
           <FieldGroup label="This account handles">
-            <div className="flex flex-col gap-2">
+            <ListCard subtle>
               {GITHUB_PURPOSES.map((purpose) => (
-                <OptionRow
+                <PurposeRow
                   key={purpose}
-                  active={purposes.includes(purpose)}
-                  control={
-                    <input
-                      type="checkbox"
-                      className="accent-emerald-600"
-                      checked={purposes.includes(purpose)}
-                      onChange={(e) =>
-                        setPurposes((prev) => (e.target.checked ? [...prev, purpose] : prev.filter((p) => p !== purpose)))
-                      }
-                    />
+                  purpose={purpose}
+                  checked={purposes.includes(purpose)}
+                  switchLabel={PURPOSE_META[purpose].label}
+                  onChange={(on) =>
+                    setPurposes((prev) => (on ? [...prev, purpose] : prev.filter((p) => p !== purpose)))
                   }
-                  title={PURPOSE_META[purpose].label}
-                  hint={PURPOSE_META[purpose].hint}
                 />
               ))}
-            </div>
+            </ListCard>
           </FieldGroup>
 
           <div className="flex flex-col gap-5">
             {isAdmin ? (
               <FieldGroup label="Ownership">
-                <div className="flex flex-col gap-2">
-                  <OptionRow
-                    active={shared}
-                    control={<input type="radio" name="own" className="accent-emerald-600" checked={shared} onChange={() => setShared(true)} />}
-                    title="Shared default"
-                    hint="The instance-wide fallback everyone's actions use."
-                  />
-                  <OptionRow
-                    active={!shared}
-                    control={<input type="radio" name="own" className="accent-emerald-600" checked={!shared} onChange={() => setShared(false)} />}
-                    title="My account"
-                    hint="Only my own actions act as this account."
-                  />
-                </div>
+                <Dropdown
+                  ariaLabel="Ownership"
+                  value={shared ? 'shared' : 'personal'}
+                  onChange={(v) => setShared(v === 'shared')}
+                  options={[
+                    { value: 'shared', label: 'Shared default', hint: "The instance-wide fallback everyone's actions use." },
+                    { value: 'personal', label: 'My account', hint: 'Only my own actions act as this account.' },
+                  ]}
+                />
+                <span className="dim text-xs leading-relaxed">
+                  {shared ? "The instance-wide fallback everyone's actions use." : 'Only your own actions act as this account.'}
+                </span>
               </FieldGroup>
             ) : (
-              <p className="dim rounded-lg bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed dark:bg-zinc-900/50">
+              <p className="dim well text-xs leading-relaxed">
                 This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges
                 act as you. Other work still uses the shared default.
               </p>
             )}
 
             <FieldGroup label="Available to">
-              <div className="flex flex-col gap-2">
-                <OptionRow
-                  active={scope === 'shared'}
-                  control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'shared'} onChange={() => setScope('shared')} />}
-                  title="Shared"
-                  hint="Acts for any workspace."
-                />
-                <OptionRow
-                  active={scope === 'delegated'}
-                  control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />}
-                  title="Delegated"
-                  hint="Only the workspaces picked below."
-                />
-              </div>
+              <Dropdown ariaLabel="Available to" value={scope} onChange={setScope} options={SCOPE_OPTIONS} />
+              <span className="dim text-xs leading-relaxed">
+                {scope === 'shared' ? 'Acts for any workspace.' : 'Pick the workspaces this account may act for.'}
+              </span>
               {scope === 'delegated' ? (
-                <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
-                  {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
-                  {workspaces.map((w) => (
-                    <label
-                      key={w.id}
-                      className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-                    >
-                      <input
-                        type="checkbox"
-                        className="accent-emerald-600"
-                        checked={workspaceIds.includes(w.id)}
-                        onChange={(e) =>
-                          setWorkspaceIds((prev) => (e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id)))
-                        }
-                      />
-                      {w.name}
-                    </label>
-                  ))}
-                </div>
+                <WorkspaceChecklist
+                  workspaces={workspaces}
+                  selected={workspaceIds}
+                  onToggle={(id, on) =>
+                    setWorkspaceIds((prev) => (on ? [...prev, id] : prev.filter((w) => w !== id)))
+                  }
+                />
               ) : null}
             </FieldGroup>
           </div>
@@ -460,33 +407,56 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-/** A selectable option: control + stacked title/hint in a card that highlights
- *  when active (works for radio or checkbox — the title never wraps into the hint). */
-function OptionRow({
-  active,
-  control,
-  title,
-  hint,
+const SCOPE_OPTIONS = [
+  { value: 'shared', label: 'Shared', hint: 'Acts for any workspace.' },
+  { value: 'delegated', label: 'Delegated', hint: 'Only the workspaces picked below.' },
+] as const satisfies ReadonlyArray<{ value: GitHubAccountScope; label: string; hint: string }>;
+
+/** One purpose row for the account's settings list: name + meaning, toggle trailing. */
+function PurposeRow({
+  purpose,
+  checked,
+  switchLabel,
+  onChange,
 }: {
-  active: boolean;
-  control: React.ReactNode;
-  title: string;
-  hint: string;
+  purpose: GitHubPurpose;
+  checked: boolean;
+  switchLabel: string;
+  onChange: (on: boolean) => void;
 }): JSX.Element {
   return (
-    <label
-      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors ${
-        active
-          ? 'border-emerald-500/50 bg-emerald-500/[0.06]'
-          : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40'
-      }`}
-    >
-      <span className="mt-0.5 shrink-0">{control}</span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="dim text-xs leading-relaxed">{hint}</span>
-      </span>
-    </label>
+    <SettingRow className="px-3.5 py-2.5" title={PURPOSE_META[purpose].label} description={PURPOSE_META[purpose].hint}>
+      <Switch label={switchLabel} checked={checked} onChange={onChange} />
+    </SettingRow>
+  );
+}
+
+/** Bordered scrolling workspace multi-pick shared by the modal and the inline editor. */
+function WorkspaceChecklist({
+  workspaces,
+  selected,
+  onToggle,
+  note,
+}: {
+  workspaces: readonly WorkspaceRecord[];
+  selected: readonly string[];
+  onToggle: (id: string, checked: boolean) => void;
+  note?: string;
+}): JSX.Element {
+  return (
+    <div className="flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+      {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
+      {note ? <span className="dim px-1 pt-1 text-xs">{note}</span> : null}
+      {workspaces.map((w) => (
+        <label
+          key={w.id}
+          className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+        >
+          <input type="checkbox" checked={selected.includes(w.id)} onChange={(e) => onToggle(w.id, e.target.checked)} />
+          {w.name}
+        </label>
+      ))}
+    </div>
   );
 }
 
