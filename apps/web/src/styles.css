@@ -335,7 +335,7 @@
 
 /* Motion: entrance + shimmer, disabled for reduced-motion users. */
 @media (prefers-reduced-motion: no-preference) {
-  /* PR preview (agentic "pull request in the making") animations. */
+  /* Agentic build/loader views (PR preview, digest live) animations. */
   @keyframes ppv-float {
     0%, 100% { transform: translateY(0) scale(1); }
     50% { transform: translateY(-4px) scale(1.03); }

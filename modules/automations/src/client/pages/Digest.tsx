@@ -36,13 +36,13 @@ export function DigestPage(): JSX.Element {
     setSending(true);
     setError(null);
     try {
-      // Returns immediately; the agent works in the background. Keep the local
-      // busy state up briefly to bridge the gap until the live run appears.
+      // Returns immediately; the agent works in the background. Hand over to
+      // the live loader page, which follows the run as it appears and lands.
       await automationsApi.digestNow(selected);
-      await refresh();
-      window.setTimeout(() => setSending(false), 5000);
+      window.location.hash = `#/digest/${selected}/live`;
     } catch (err) {
       setError(String(err));
+    } finally {
       setSending(false);
     }
   };
@@ -87,11 +87,9 @@ export function DigestPage(): JSX.Element {
               Reading tracker state and the clone; the digest lands here in a few minutes.
             </span>
           </span>
-          {liveRun ? (
-            <a className="btn-ghost shrink-0" href={`#/runs/${liveRun.id}`}>
-              Watch live
-            </a>
-          ) : null}
+          <a className="btn-ghost shrink-0" href={`#/digest/${selected}/live`}>
+            Watch live
+          </a>
         </div>
       ) : null}
 
