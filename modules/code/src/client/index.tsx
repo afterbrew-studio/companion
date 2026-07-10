@@ -1,8 +1,23 @@
 import { defineClientModule } from '@companion/core/client';
 import manifest from '../module.js';
+import { nav, sections } from './nav.js';
+import { routes } from './routes.js';
+
+/**
+ * The `/client` barrel — module-code's web surface: the Code sidebar group +
+ * issues/PRs/pipelines/repos/github/overview routes, the GitHub-flavored
+ * widget set, and the pieces downstream modules reach by name.
+ */
 
 export * from './widgets.js';
+export { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
+export { CommentsSection } from './components/Comments.js';
+export { AccountPicker } from './components/AccountPicker.js';
+export { codeApi } from './api.js';
 
 export default defineClientModule({
   manifest,
+  sections,
+  nav,
+  routes,
 });

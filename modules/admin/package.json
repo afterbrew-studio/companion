@@ -30,6 +30,7 @@
     "@companion/contracts": "workspace:*",
     "@companion/core": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-operate": "workspace:*",
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
     "@companion/ui": "workspace:*",
