@@ -24,8 +24,8 @@ export class LocalRunnerBackend implements RunnerBackend {
     id: string,
     private readonly checkouts: Checkouts,
     private readonly moxxyCliPath: string,
-    private readonly moxxyVersion: string | null,
-    private readonly moxxyCompatible: boolean,
+    private moxxyVersion: string | null,
+    private moxxyCompatible: boolean,
     maxLive: number,
     sink: RunnerEventSink,
   ) {
@@ -41,6 +41,12 @@ export class LocalRunnerBackend implements RunnerBackend {
       },
       maxLive,
     );
+  }
+
+  /** After an in-place CLI upgrade: health re-advertises without a daemon restart. */
+  updateMoxxyCli(version: string | null, compatible: boolean): void {
+    this.moxxyVersion = version;
+    this.moxxyCompatible = compatible;
   }
 
   async probe(): Promise<RunnerHealth> {

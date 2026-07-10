@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
 import type { MoxxyStatus, RunRecord, RunSettings } from '../contract/index.js';
+import { paths } from '@companion/services';
 import { configuredProviderNames, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
+import { upgradeMoxxyCli } from '../exec/cli.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 // ---------- runs ----------
@@ -418,6 +420,27 @@ export default defineRoutes((ctx) => {
       access: 'settings:manage',
       body: importSchema,
       handler: ({ body }) => importProvidersFromDailyMoxxy(body.sourceHome),
+    }),
+
+    route({
+      // In-place `npm i -g @moxxy/cli@latest`, then re-detect. Works as the
+      // initial install too (same command) when no CLI was found at boot.
+      method: 'POST',
+      path: '/api/moxxy/upgrade-cli',
+      access: 'settings:manage',
+      handler: async () => {
+        const previous = op.moxxyCli?.version ?? null;
+        let cli;
+        try {
+          cli = await upgradeMoxxyCli(paths.moxxyHome(), ctx.config.moxxyCliPath);
+        } catch (err) {
+          throw badRequest(`npm install failed: ${String(err).slice(0, 400)}`);
+        }
+        if (!cli) throw badRequest('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
+        op.setMoxxyCli(cli);
+        ctx.log.info('moxxy CLI upgraded', { previous, version: cli.version, compatible: cli.compatible });
+        return { previous, version: cli.version, compatible: cli.compatible };
+      },
     }),
 
     // ---------- skills ------------------------------------------------------------

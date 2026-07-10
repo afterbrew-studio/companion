@@ -4,11 +4,11 @@ import { useAuth } from '@companion/module-core/client';
 import { useMoxxyStatus } from '@companion/module-operate/client';
 import {
   Avatar,
-  DetailGrid,
-  DetailRow,
   ErrorBar,
   Field,
   InlineLoading,
+  ListCard,
+  MetaSignal,
   Page,
   PageHeader,
   Section,
@@ -53,6 +53,8 @@ export function SettingsPage(): JSX.Element {
   const { status, error, setError, refresh } = useMoxxyStatus();
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: string[]; missing: string[] } | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeResult, setUpgradeResult] = useState<string | null>(null);
 
   // Branding draft; Save pushes it to the daemon and into the auth context.
   const [name, setName] = useState(branding.name ?? '');
@@ -150,6 +152,27 @@ export function SettingsPage(): JSX.Element {
       setError(String(err));
     } finally {
       setImporting(false);
+    }
+  };
+
+  // In-place `npm i -g @moxxy/cli@latest`; the daemon re-detects and the local
+  // runner re-advertises, so a refresh is all the UI needs afterwards.
+  const upgradeCli = async (): Promise<void> => {
+    setUpgrading(true);
+    setError(null);
+    setUpgradeResult(null);
+    try {
+      const r = await api.upgradeMoxxyCli();
+      setUpgradeResult(
+        r.previous === r.version
+          ? `Already the latest (v${r.version}).`
+          : `Upgraded ${r.previous ? `v${r.previous} → ` : 'to '}v${r.version}. Live runs keep their gateway; new runs use it.`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setUpgrading(false);
     }
   };
 
@@ -251,65 +274,95 @@ export function SettingsPage(): JSX.Element {
       </Section>
 
       <Section title="moxxy runtime" description="The CLI and home directory agent runs execute against.">
-        <div className="card" aria-labelledby="moxxy-heading">
-          {status ? (
-            <DetailGrid>
-              <DetailRow label="CLI">
-                {status.cliPath ? (
-                  <>
-                    <code>{status.cliPath}</code>{' '}
-                    <span className={status.compatible ? 'badge-ok' : 'badge-danger'}>
-                      {status.cliVersion} {status.compatible ? '' : '(too old)'}
-                    </span>
-                  </>
-                ) : (
-                  <span className="badge-danger">not found — npm i -g @moxxy/cli</span>
-                )}
-              </DetailRow>
-              <DetailRow label="Home">
-                <code>{status.homeDir}</code>{' '}
-                <span className={status.homeReady ? 'badge-ok' : 'badge-warn'}>
-                  {status.homeReady ? 'ready' : 'not ready'}
+        {status ? (
+          <ListCard subtle>
+            <SettingRow
+              className="px-3.5 py-2.5"
+              title={
+                <span className="flex flex-wrap items-center gap-2">
+                  CLI
+                  {status.cliPath ? (
+                    <MetaSignal
+                      tone={status.compatible ? 'green' : 'red'}
+                      label={`v${status.cliVersion}${status.compatible ? '' : ' — too old'}`}
+                    />
+                  ) : (
+                    <MetaSignal tone="red" label="not found" />
+                  )}
                 </span>
-              </DetailRow>
-              <DetailRow label="Providers">
-                <div className="flex flex-wrap items-center gap-2">
-                  {status.providersImported ? <span className="badge-ok">imported</span> : null}
-                  <button
-                    className={status.providersImported ? 'btn-ghost' : 'btn'}
-                    disabled={importing}
-                    onClick={() => void reimport()}
-                    title="Copies config.yaml and re-links providers.json / vault to ~/.moxxy (shared token rotation)"
-                  >
-                    {importing ? 'Importing…' : status.providersImported ? 'Re-import from ~/.moxxy' : 'Import from ~/.moxxy'}
-                  </button>
-                </div>
-              </DetailRow>
-            </DetailGrid>
-          ) : (
+              }
+              description={
+                <>
+                  <code className="code-inline">{status.cliPath ?? 'npm i -g @moxxy/cli'}</code>
+                  {upgradeResult ? (
+                    <span role="status"> · {upgradeResult}</span>
+                  ) : null}
+                </>
+              }
+            >
+              <button
+                className={status.compatible ? 'btn-ghost' : 'btn'}
+                disabled={upgrading}
+                onClick={() => void upgradeCli()}
+                title="Runs npm i -g @moxxy/cli@latest on the daemon's machine"
+              >
+                {upgrading ? 'Upgrading…' : status.cliPath ? 'Upgrade to latest' : 'Install CLI'}
+              </button>
+            </SettingRow>
+            <SettingRow
+              className="px-3.5 py-2.5"
+              title={
+                <span className="flex flex-wrap items-center gap-2">
+                  Home
+                  <MetaSignal tone={status.homeReady ? 'green' : 'amber'} label={status.homeReady ? 'ready' : 'not ready'} />
+                </span>
+              }
+              description={<code className="code-inline">{status.homeDir}</code>}
+            />
+            <SettingRow
+              className="px-3.5 py-2.5"
+              title={
+                <span className="flex flex-wrap items-center gap-2">
+                  Providers
+                  {status.providersImported ? <MetaSignal tone="green" label="imported" /> : null}
+                </span>
+              }
+              description="Copies config.yaml and re-links providers.json / vault from ~/.moxxy."
+            >
+              <button
+                className={status.providersImported ? 'btn-ghost' : 'btn'}
+                disabled={importing}
+                onClick={() => void reimport()}
+              >
+                {importing ? 'Importing…' : status.providersImported ? 'Re-import from ~/.moxxy' : 'Import from ~/.moxxy'}
+              </button>
+            </SettingRow>
+          </ListCard>
+        ) : (
+          <div className="card">
             <InlineLoading />
-          )}
-          {importResult ? (
-            <div className="banner-info mb-0" role="status">
-              <span className="min-w-0">
-                {importResult.imported.length > 0 ? (
-                  <>
-                    Imported: <code className="text-xs">{importResult.imported.join(', ')}</code>.{' '}
-                  </>
-                ) : (
-                  'Nothing imported. '
-                )}
-                {importResult.missing.length > 0 ? (
-                  <>
-                    Missing in <code className="text-xs">~/.moxxy</code>:{' '}
-                    <code className="text-xs">{importResult.missing.join(', ')}</code>.{' '}
-                  </>
-                ) : null}
-                Live runs keep their old credentials — new runs pick this up.
-              </span>
-            </div>
-          ) : null}
-        </div>
+          </div>
+        )}
+        {importResult ? (
+          <div className="banner-info mb-0" role="status">
+            <span className="min-w-0">
+              {importResult.imported.length > 0 ? (
+                <>
+                  Imported: <code className="text-xs">{importResult.imported.join(', ')}</code>.{' '}
+                </>
+              ) : (
+                'Nothing imported. '
+              )}
+              {importResult.missing.length > 0 ? (
+                <>
+                  Missing in <code className="text-xs">~/.moxxy</code>:{' '}
+                  <code className="text-xs">{importResult.missing.join(', ')}</code>.{' '}
+                </>
+              ) : null}
+              Live runs keep their old credentials — new runs pick this up.
+            </span>
+          </div>
+        ) : null}
       </Section>
     </Page>
   );

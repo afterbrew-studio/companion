@@ -12,6 +12,8 @@ import type { InstanceBranding, NotificationSettings } from '../contract/index.j
 
 export const adminApi = {
   importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
+  upgradeMoxxyCli: () =>
+    post<{ previous: string | null; version: string; compatible: boolean }>('/api/moxxy/upgrade-cli'),
   setGithubToken: (t: string) => post<{ login: string }>('/api/settings/github', { token: t }),
   setBranding: (branding: { name: string | null; logo: string | null }) =>
     put<{ branding: InstanceBranding }>('/api/settings/branding', branding),

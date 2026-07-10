@@ -34,6 +34,16 @@ export async function detectMoxxyCli(moxxyHome: string, explicitPath?: string): 
   }
 }
 
+/**
+ * In-place global upgrade: npm replaces the bin symlink's target, so the path
+ * already resolved at boot keeps working — only version/compatibility change.
+ * Returns the fresh detection (null if the CLI still can't be found after).
+ */
+export async function upgradeMoxxyCli(moxxyHome: string, explicitPath?: string): Promise<MoxxyCli | null> {
+  await execFileP('npm', ['install', '-g', '@moxxy/cli@latest'], { timeout: 180_000 });
+  return detectMoxxyCli(moxxyHome, explicitPath);
+}
+
 /** `moxxy --version` prints a banner; the version is on its own line. */
 function parseVersion(stdout: string): string | null {
   const match = stdout.match(/moxxy\s+(\d+\.\d+\.\d+)/);

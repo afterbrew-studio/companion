@@ -25,7 +25,7 @@ export class OperateService {
     readonly orchestrator: Orchestrator,
     readonly runners: Runners,
     readonly checkouts: Checkouts,
-    readonly moxxyCli: MoxxyCli | null,
+    public moxxyCli: MoxxyCli | null,
     readonly webhookTunnel: WebhookTunnel,
     readonly skills: Skills,
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
@@ -36,6 +36,16 @@ export class OperateService {
     private readonly canAccessRepo: (user: AuthUser, repo: string) => boolean,
   ) {
     this.defaultTokenSource = tokenSource.current;
+  }
+
+  /**
+   * After an in-place CLI upgrade: refresh the boot-time detection so
+   * /api/status and the local runner's advertised version reflect the new
+   * install. The spawn path is unchanged — npm swaps the bin symlink target.
+   */
+  setMoxxyCli(cli: MoxxyCli | null): void {
+    this.moxxyCli = cli;
+    this.runners.localBackend.updateMoxxyCli(cli?.version ?? null, cli?.compatible ?? false);
   }
 
   /**
