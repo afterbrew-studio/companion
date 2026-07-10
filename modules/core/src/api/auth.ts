@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Authenticator, AuthUser, Permission } from '@companion/contracts';
 import type { Role } from '@companion/types';
-import type { RbacReader } from '@companion/core/server';
+import { StatusError, type RbacReader } from '@companion/core/server';
 import type { AccountInfo, SessionInfo, UserRecord } from '../contract/index.js';
 import type { UsersStore } from './users-store.js';
 import type { SessionsStore } from './sessions-store.js';
@@ -18,12 +18,11 @@ export interface SeedUser {
   readonly role: Role;
 }
 
-export class AuthError extends Error {
-  constructor(
-    message: string,
-    readonly status: 401 | 403,
-  ) {
-    super(message);
+/** Extends the kernel's StatusError so the router forwards its 401/403 (only
+ *  framework errors status-map; a GitHubError's upstream status becomes a 500). */
+export class AuthError extends StatusError {
+  constructor(message: string, status: 401 | 403) {
+    super(status, message);
   }
 }
 

@@ -24,8 +24,12 @@ export default defineJobs({
   },
   onDisable: async (ctx) => {
     const op = ctx.services.get('operate');
-    ctx.ws.unregisterScopeResolver('operate');
+    // Shut down FIRST, while the scope resolver is still registered: shutdown
+    // stops live runs and broadcasts their final run.changed, and those must
+    // stay visibility-scoped (a private run's record must not fan out to every
+    // socket). Only then remove the resolver.
     await op.orchestrator.shutdown();
+    ctx.ws.unregisterScopeResolver('operate');
     op.webhookTunnel.close();
   },
 });

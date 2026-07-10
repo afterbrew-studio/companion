@@ -16,6 +16,9 @@ import type { MoxxyCli } from '../exec/cli.js';
  * code depends on operate, never the reverse).
  */
 export class OperateService {
+  /** The built-in settings-key resolver, restored when module-code disables. */
+  private readonly defaultTokenSource: GithubTokenSource;
+
   constructor(
     readonly orchestrator: Orchestrator,
     readonly runners: Runners,
@@ -26,11 +29,19 @@ export class OperateService {
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
     readonly runsStore: RunsStore,
     private readonly tokenSource: { current: GithubTokenSource },
-  ) {}
+  ) {
+    this.defaultTokenSource = tokenSource.current;
+  }
 
   /** module-code plugs its account-aware resolver in at onEnable. */
   setGithubTokenSource(source: GithubTokenSource): void {
     this.tokenSource.current = source;
+  }
+
+  /** module-code restores the built-in resolver at onDisable, so a disabled (or
+   *  uninstalled) code module's account registry stops governing git credentials. */
+  resetGithubTokenSource(): void {
+    this.tokenSource.current = this.defaultTokenSource;
   }
 
   /** The current git-credential source (default: the legacy settings key). */

@@ -23,7 +23,14 @@ type ParamNames<P extends string> = P extends `${string}:${infer Param}/${infer 
 
 export type PathParams<P extends string> = { readonly [K in ParamNames<P>]: string };
 
-export class HttpError extends Error {
+/**
+ * Base for errors whose HTTP status the dispatcher is allowed to forward to the
+ * client. ONLY subclasses of this (HttpError here, module-core's AuthError)
+ * status-map; any other thrown error — e.g. a GitHubError carrying an upstream
+ * 401/403 — becomes a logged 500, so a rejected PAT can never masquerade as a
+ * Companion session-expiry / RBAC denial.
+ */
+export class StatusError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -31,6 +38,8 @@ export class HttpError extends Error {
     super(message);
   }
 }
+
+export class HttpError extends StatusError {}
 
 export const notFound = (what: string): HttpError => new HttpError(404, what);
 export const badRequest = (why: string): HttpError => new HttpError(400, why);
@@ -121,10 +130,7 @@ function compilePath(path: string): { regex: RegExp; keys: string[] } {
 /** An error carrying an HTTP status (AuthError, HttpError, …) — duck-typed so
  *  core need not import each module's error class. */
 function statusOf(err: unknown): number | null {
-  if (err && typeof (err as { status?: unknown }).status === 'number') {
-    return (err as { status: number }).status;
-  }
-  return null;
+  return err instanceof StatusError ? err.status : null;
 }
 
 export class DynamicRouter {
@@ -147,10 +153,17 @@ export class DynamicRouter {
     this.recompute();
   }
 
-  /** Move a module's routes to the disabled set (their paths answer 503). */
-  unmount(moduleId: string, keepDisabledRoutes: readonly CompiledRoute[]): void {
+  /** Move a module's (already-tagged) routes to the disabled set — their paths answer 503. */
+  unmount(moduleId: string): void {
+    const routes = this.mounted.get(moduleId);
     this.mounted.delete(moduleId);
-    if (keepDisabledRoutes.length) this.disabled.set(moduleId, keepDisabledRoutes);
+    if (routes?.length) this.disabled.set(moduleId, routes);
+    this.recompute();
+  }
+
+  /** Drop a module's disabled-set patterns entirely — an uninstalled path is 404, not 503. */
+  forget(moduleId: string): void {
+    this.disabled.delete(moduleId);
     this.recompute();
   }
 

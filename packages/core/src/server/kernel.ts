@@ -51,6 +51,8 @@ export class ModuleKernel {
   private readonly installed = new Map<ModuleId, InstalledModule>();
   private readonly loaded = new Map<ModuleId, ServerModule>();
   private readonly jobTimers = new Map<ModuleId, NodeJS.Timeout[]>();
+  /** Modules with an enable/disable/uninstall transition in flight (reentrancy guard). */
+  private readonly inFlight = new Set<ModuleId>();
 
   readonly services = new ServiceRegistry();
   readonly bus = new ServerBus();
@@ -67,15 +69,25 @@ export class ModuleKernel {
     for (const m of opts.modules) this.installed.set(m.manifest.id, m);
     this.migrations = new MigrationRunner(this.db, this.log);
 
-    // notify/settings proxy to module-core's registered services (present because
-    // module-core is required and activates first).
+    // `settings` is provided by module-core, `notifications` by module-workspace —
+    // both required, so these resolve for the whole normal lifetime. If a target
+    // is somehow absent (a boot-order bug), fail LOUDLY rather than silently drop.
     const notify: NotificationEmitter = {
-      emit: (n) => (this.services.raw('notifications') as NotificationEmitter | undefined)?.emit(n),
+      emit: (n) => {
+        const svc = this.services.raw('notifications') as NotificationEmitter | undefined;
+        if (!svc) return void this.log.error('ctx.notify.emit before the notifications service registered', { n });
+        svc.emit(n);
+      },
+    };
+    const settingsSvc = (): SettingsRegistry | undefined => {
+      const svc = this.services.raw('settings') as SettingsRegistry | undefined;
+      if (!svc) this.log.error('ctx.settings used before the settings service registered');
+      return svc;
     };
     const settings: SettingsRegistry = {
-      get: (k) => (this.services.raw('settings') as SettingsRegistry | undefined)?.get(k) ?? null,
-      set: (k, v) => (this.services.raw('settings') as SettingsRegistry | undefined)?.set(k, v),
-      delete: (k) => (this.services.raw('settings') as SettingsRegistry | undefined)?.delete(k),
+      get: (k) => settingsSvc()?.get(k) ?? null,
+      set: (k, v) => settingsSvc()?.set(k, v),
+      delete: (k) => settingsSvc()?.delete(k),
     };
     this.ctx = {
       db: this.db,
@@ -128,7 +140,9 @@ export class ModuleKernel {
   }
 
   moduleList(): ModuleListing[] {
-    return [...this.installed.values()].map((m) => {
+    return [...this.installed.values()]
+      .filter((m) => this.row(m.manifest.id)?.installed !== 0)
+      .map((m) => {
       const row = this.row(m.manifest.id);
       return {
         id: m.manifest.id,
@@ -146,13 +160,16 @@ export class ModuleKernel {
   async boot(): Promise<void> {
     const now = Date.now();
     for (const m of this.installed.values()) {
+      // A newly compiled-in module is installed + enabled by default; ON CONFLICT
+      // preserves an existing row's installed/enabled (only `required` may change
+      // across builds), so a disabled or uninstalled module never resurrects.
       this.db
         .prepare(
           `INSERT INTO modules (id, installed, enabled, version, required, installed_at, updated_at)
-           VALUES (?, 1, ?, 0, ?, ?, ?)
+           VALUES (?, 1, 1, 0, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET required = excluded.required, updated_at = excluded.updated_at`,
         )
-        .run(m.manifest.id, m.manifest.required ? 1 : 1, m.manifest.required ? 1 : 0, now, now);
+        .run(m.manifest.id, m.manifest.required ? 1 : 0, now, now);
     }
 
     const enabled = this.topoSort(this.enabledIds());
@@ -164,7 +181,9 @@ export class ModuleKernel {
     for (const id of enabled) {
       const mod = this.loaded.get(id)!;
       if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
+      this.services.setActiveModule(id);
       await mod.registerServices?.(this.ctx);
+      this.services.setActiveModule(null);
     }
 
     // module-core (required, first) provides the authenticator the router uses.
@@ -191,20 +210,30 @@ export class ModuleKernel {
     const inst = this.installed.get(id);
     if (!inst) throw new HttpError(404, `unknown module: ${id}`);
     if (this.isEnabled(id)) return;
+    if (this.inFlight.has(id)) throw new HttpError(409, `module '${id}' is busy`);
     for (const dep of inst.manifest.dependsOn ?? []) {
       if (!this.isEnabled(dep)) throw new HttpError(409, `enable dependency '${dep}' first`);
     }
-    const mod = this.loaded.get(id) ?? (await inst.load());
-    this.loaded.set(id, mod);
-    if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
-    await mod.registerServices?.(this.ctx);
-    if (mod.routes) this.router.mount(id, mod.routes(this.ctx));
-    this.setEnabled(id, true);
-    this.rebuildGrid(this.topoSort(this.enabledIds()));
-    await mod.lifecycle?.onEnable?.(this.ctx);
-    await mod.lifecycle?.postActivate?.(this.ctx);
-    this.startJobs(id);
-    this.opts.broadcast({ t: 'modules.changed' });
+    this.inFlight.add(id);
+    try {
+      const mod = this.loaded.get(id) ?? (await inst.load());
+      this.loaded.set(id, mod);
+      if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
+      this.services.setActiveModule(id);
+      await mod.registerServices?.(this.ctx);
+      this.services.setActiveModule(null);
+      if (mod.routes) this.router.mount(id, mod.routes(this.ctx));
+      // enable doubles as (re-)install: a module enabled after uninstall is now installed again.
+      this.markState(id, { installed: true, enabled: true });
+      this.rebuildGrid(this.topoSort(this.enabledIds()));
+      await mod.lifecycle?.onEnable?.(this.ctx);
+      await mod.lifecycle?.postActivate?.(this.ctx);
+      this.startJobs(id);
+      this.opts.broadcast({ t: 'modules.changed' });
+    } finally {
+      this.services.setActiveModule(null);
+      this.inFlight.delete(id);
+    }
   }
 
   async disable(id: ModuleId): Promise<void> {
@@ -212,35 +241,55 @@ export class ModuleKernel {
     if (!inst) throw new HttpError(404, `unknown module: ${id}`);
     if (inst.manifest.required) throw new HttpError(403, `module '${id}' is required`);
     if (!this.isEnabled(id)) return;
+    if (this.inFlight.has(id)) throw new HttpError(409, `module '${id}' is busy`);
     const dependents = [...this.installed.values()].filter(
       (m) => this.isEnabled(m.manifest.id) && (m.manifest.dependsOn ?? []).includes(id),
     );
     if (dependents.length) {
       throw new HttpError(409, `disable dependents first: ${dependents.map((d) => d.manifest.id).join(', ')}`);
     }
-    const mod = this.loaded.get(id);
-    this.stopJobs(id);
-    await mod?.lifecycle?.onDisable?.(this.ctx);
-    this.router.unmount(id, mod?.routes ? mod.routes(this.ctx) : []);
-    this.services.revoke(id);
-    this.setEnabled(id, false);
-    this.rebuildGrid(this.topoSort(this.enabledIds()));
-    this.opts.broadcast({ t: 'modules.changed' });
+    this.inFlight.add(id);
+    try {
+      const mod = this.loaded.get(id);
+      this.stopJobs(id);
+      // Stop serving BEFORE teardown: the module's paths answer 503 immediately,
+      // so a request can't reach a half-shut-down service during a long onDisable
+      // (e.g. operate awaiting orchestrator.shutdown()).
+      this.router.unmount(id);
+      this.markState(id, { enabled: false });
+      this.rebuildGrid(this.topoSort(this.enabledIds()));
+      await mod?.lifecycle?.onDisable?.(this.ctx);
+      this.services.revokeModule(id);
+      this.opts.broadcast({ t: 'modules.changed' });
+    } finally {
+      this.inFlight.delete(id);
+    }
   }
 
   async uninstall(id: ModuleId): Promise<void> {
     const inst = this.installed.get(id);
     if (!inst) throw new HttpError(404, `unknown module: ${id}`);
     if (this.isEnabled(id)) throw new HttpError(409, `disable '${id}' before uninstalling`);
-    const mod = this.loaded.get(id) ?? (await inst.load());
+    if (this.inFlight.has(id)) throw new HttpError(409, `module '${id}' is busy`);
+    this.inFlight.add(id);
     try {
-      if (mod.migrations?.length) this.migrations.migrateDown(id, mod.migrations, 0);
-    } catch {
-      if (mod.purge) mod.purge(this.db);
-      else throw new HttpError(409, `module '${id}' is irreversible and defines no purge()`);
+      const mod = this.loaded.get(id) ?? (await inst.load());
+      try {
+        if (mod.migrations?.length) this.migrations.migrateDown(id, mod.migrations, 0);
+      } catch {
+        if (mod.purge) mod.purge(this.db);
+        else throw new HttpError(409, `module '${id}' is irreversible and defines no purge()`);
+      }
+      // Clean slate so a later re-enable re-runs migrations from scratch, and the
+      // module's paths become 404 (genuinely gone), not 503 (merely disabled). Keep
+      // the row as installed=0 so boot's reconcile does NOT re-adopt/resurrect it.
+      this.migrations.clearLedger(id);
+      this.router.forget(id);
+      this.markState(id, { installed: false, enabled: false, version: 0 });
+      this.opts.broadcast({ t: 'modules.changed' });
+    } finally {
+      this.inFlight.delete(id);
     }
-    this.db.prepare(`DELETE FROM modules WHERE id = ?`).run(id);
-    this.opts.broadcast({ t: 'modules.changed' });
   }
 
   /**
@@ -264,11 +313,35 @@ export class ModuleKernel {
   // ---- internals ----
 
   private enabledIds(): ModuleId[] {
-    return (this.db.prepare(`SELECT id FROM modules WHERE enabled = 1`).all() as { id: string }[]).map((r) => r.id);
+    const rows = this.db.prepare(`SELECT id FROM modules WHERE enabled = 1`).all() as { id: string }[];
+    return rows
+      .map((r) => r.id)
+      .filter((id) => {
+        if (this.installed.has(id)) return true;
+        // A stale row for a module no longer compiled into this build — skip it
+        // (loading it would crash boot) rather than dereference undefined.
+        this.log.warn(`enabled module '${id}' is not in the compiled registry — skipping`);
+        return false;
+      });
   }
 
-  private setEnabled(id: ModuleId, enabled: boolean): void {
-    this.db.prepare(`UPDATE modules SET enabled = ?, updated_at = ? WHERE id = ?`).run(enabled ? 1 : 0, Date.now(), id);
+  /** Partial UPDATE of a module row's durable state. */
+  private markState(id: ModuleId, s: { installed?: boolean; enabled?: boolean; version?: number }): void {
+    const sets = ['updated_at = @now'];
+    const args: Record<string, number | string> = { id, now: Date.now() };
+    if (s.installed !== undefined) {
+      sets.push('installed = @installed');
+      args.installed = s.installed ? 1 : 0;
+    }
+    if (s.enabled !== undefined) {
+      sets.push('enabled = @enabled');
+      args.enabled = s.enabled ? 1 : 0;
+    }
+    if (s.version !== undefined) {
+      sets.push('version = @version');
+      args.version = s.version;
+    }
+    this.db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = @id`).run(args);
   }
 
   private rebuildGrid(enabled: readonly ModuleId[]): void {
@@ -283,7 +356,14 @@ export class ModuleKernel {
   private startJobs(id: ModuleId): void {
     const jobs = this.loaded.get(id)?.lifecycle?.jobs ?? [];
     const timers = jobs.map((j) => {
-      const t = setInterval(() => void j.run(this.ctx), j.everyMs);
+      const t = setInterval(() => {
+        try {
+          const r = j.run(this.ctx);
+          if (r instanceof Promise) r.catch((err) => this.log.error(`job '${j.id}' failed`, err));
+        } catch (err) {
+          this.log.error(`job '${j.id}' failed`, err);
+        }
+      }, j.everyMs);
       t.unref?.();
       return t;
     });
@@ -298,10 +378,15 @@ export class ModuleKernel {
   /** Kahn topological sort over `dependsOn`; throws on a cycle or a missing/disabled required dep. */
   private topoSort(ids: readonly ModuleId[]): ModuleId[] {
     const set = new Set(ids);
+    // Every REQUIRED installed module must be in the enabled set (this iterates
+    // the registry, not `ids`, so a disabled required module is actually caught).
+    for (const inst of this.installed.values()) {
+      if (inst.manifest.required && !set.has(inst.manifest.id)) {
+        throw new Error(`required module '${inst.manifest.id}' is disabled`);
+      }
+    }
     for (const id of ids) {
-      const inst = this.installed.get(id);
-      if (inst?.manifest.required && !set.has(id)) throw new Error(`required module '${id}' is disabled`);
-      for (const dep of inst?.manifest.dependsOn ?? []) {
+      for (const dep of this.installed.get(id)?.manifest.dependsOn ?? []) {
         if (!set.has(dep)) throw new Error(`module '${id}' depends on disabled/missing '${dep}'`);
       }
     }

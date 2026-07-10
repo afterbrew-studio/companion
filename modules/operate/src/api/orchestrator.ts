@@ -854,37 +854,49 @@ export class Orchestrator implements RunnerEventSink {
     }
   }
 
-  /** Register how a persisted queue entry of `type` is re-dispatched on boot. */
+  /**
+   * Register how a persisted queue entry of `type` is re-dispatched. Registering
+   * also replays any matching work still waiting in the durable queue, so a
+   * module enabled AFTER operate (e.g. module-code re-enabled at runtime) picks
+   * up its own persisted entries instead of leaving them stranded.
+   */
   registerResumer(type: string, fn: (args: Record<string, unknown>) => Promise<unknown>): void {
     this.resumers.set(type, fn);
+    this.replayResumable();
   }
 
   /**
    * Re-dispatch work that was still waiting when the daemon last stopped. Reads
-   * the persisted queue, clears it, then re-invokes each entry's resumer (which
-   * rebuilds the prompt and re-enqueues fresh). Entries whose resumer isn't
-   * registered are dropped with a log. Call once, after services are wired.
+   * the persisted queue and re-invokes each entry's resumer (which rebuilds the
+   * prompt and re-enqueues fresh). Entries whose resumer isn't registered YET are
+   * KEPT in the durable queue — their owning module isn't enabled — and replay
+   * when it registers (never silently dropped). Call after services are wired.
    */
   resumePersistedQueue(): void {
+    const total = this.store.runQueue.list().length;
+    if (total === 0) return;
+    log.info(`resuming persisted run queue (${total} entr${total === 1 ? 'y' : 'ies'})`);
+    this.replayResumable();
+    const remaining = this.store.runQueue.list().length;
+    if (remaining > 0) log.info(`${remaining} queued run(s) await a not-yet-enabled module's resumer`);
+  }
+
+  /** Re-dispatch every queued entry whose resumer is registered; keep the rest persisted. */
+  private replayResumable(): void {
     const entries = this.store.runQueue.list();
-    if (entries.length === 0) return;
-    this.store.runQueue.clear();
-    // Remember each entry's persisted order so the re-dispatched item reclaims
-    // its exact place, no matter what order the async resumers re-enqueue in.
-    this.pendingResume = new Map(
-      entries.map((e) => [
-        resumeKeyOf({ type: e.resumeType, args: e.resumeArgs }),
-        { priority: e.priority, enqueuedAt: e.enqueuedAt },
-      ]),
-    );
-    log.info(`resuming ${entries.length} queued run(s) from the previous daemon life`);
-    for (const e of entries) {
-      const resumer = this.resumers.get(e.resumeType);
-      if (!resumer) {
-        log.warn(`no resumer for queued ${e.resumeType} — dropping`, { title: e.title });
-        continue;
-      }
-      void resumer(e.resumeArgs).catch((err) =>
+    const resumable = entries.filter((e) => this.resumers.has(e.resumeType));
+    if (resumable.length === 0) return;
+    // Keep unresumable entries in their persisted order; only the resumable ones
+    // leave the durable queue as they re-dispatch.
+    this.store.runQueue.replaceAll(entries.filter((e) => !this.resumers.has(e.resumeType)));
+    for (const e of resumable) {
+      // Remember each entry's persisted order so the re-dispatched item reclaims
+      // its exact place, no matter what order the async resumers re-enqueue in.
+      this.pendingResume.set(resumeKeyOf({ type: e.resumeType, args: e.resumeArgs }), {
+        priority: e.priority,
+        enqueuedAt: e.enqueuedAt,
+      });
+      void this.resumers.get(e.resumeType)!(e.resumeArgs).catch((err) =>
         log.warn(`failed to resume queued ${e.resumeType}`, { title: e.title, err: String(err) }),
       );
     }

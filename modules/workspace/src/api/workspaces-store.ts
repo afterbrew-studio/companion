@@ -32,31 +32,41 @@ export class WorkspacesStore {
     }
   }
 
-  private readonly selectCols = `SELECT w.*,
+  // repo_count reads the code-owned `repos` table; the bare variant (0 repos) is
+  // the graceful fallback when module-code is uninstalled — the REQUIRED
+  // workspace listing must never crash on a missing foreign table.
+  private readonly selectFull = `SELECT w.*,
     (SELECT COUNT(*) FROM repos r WHERE r.workspace_id = w.id) AS repo_count,
     (SELECT COUNT(*) FROM workspace_members m WHERE m.workspace_id = w.id) AS member_count
     FROM workspaces w`;
+  private readonly selectBare = `SELECT w.*, 0 AS repo_count,
+    (SELECT COUNT(*) FROM workspace_members m WHERE m.workspace_id = w.id) AS member_count
+    FROM workspaces w`;
+
+  private queryWorkspaces(tail: string, ...args: unknown[]): WorkspaceRow[] {
+    try {
+      return this.db.prepare(`${this.selectFull} ${tail}`).all(...args) as WorkspaceRow[];
+    } catch {
+      return this.db.prepare(`${this.selectBare} ${tail}`).all(...args) as WorkspaceRow[];
+    }
+  }
 
   list(): WorkspaceRecord[] {
-    const rows = this.db.prepare(`${this.selectCols} ORDER BY w.created_at`).all() as WorkspaceRow[];
-    return rows.map(workspaceRowToRecord);
+    return this.queryWorkspaces(`ORDER BY w.created_at`).map(workspaceRowToRecord);
   }
 
   listFor(user: AuthUser): WorkspaceRecord[] {
     if (user.role === 'admin') return this.list();
-    const rows = this.db
-      .prepare(
-        `${this.selectCols}
-         WHERE w.visibility = 'public'
-            OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)
-         ORDER BY w.created_at`,
-      )
-      .all(user.username) as WorkspaceRow[];
-    return rows.map(workspaceRowToRecord);
+    return this.queryWorkspaces(
+      `WHERE w.visibility = 'public'
+          OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)
+       ORDER BY w.created_at`,
+      user.username,
+    ).map(workspaceRowToRecord);
   }
 
   get(id: string): WorkspaceRecord | undefined {
-    const row = this.db.prepare(`${this.selectCols} WHERE w.id = ?`).get(id) as WorkspaceRow | undefined;
+    const row = this.queryWorkspaces(`WHERE w.id = ?`, id)[0];
     return row ? workspaceRowToRecord(row) : undefined;
   }
 
@@ -163,13 +173,18 @@ export class WorkspacesStore {
   }
 
   private repoVisibility(fullName: string): { id: string; visibility: string; owner_id: string | null } | undefined {
-    return this.db
-      .prepare(
-        `SELECT w.id, w.visibility, w.owner_id
-         FROM repos r JOIN workspaces w ON w.id = r.workspace_id
-         WHERE r.full_name = ?`,
-      )
-      .get(fullName) as { id: string; visibility: string; owner_id: string | null } | undefined;
+    try {
+      return this.db
+        .prepare(
+          `SELECT w.id, w.visibility, w.owner_id
+           FROM repos r JOIN workspaces w ON w.id = r.workspace_id
+           WHERE r.full_name = ?`,
+        )
+        .get(fullName) as { id: string; visibility: string; owner_id: string | null } | undefined;
+    } catch {
+      // module-code (repos owner) uninstalled — no repos to scope.
+      return undefined;
+    }
   }
 
   /** Can this user see a repo? Follows its workspace's access rule. */
@@ -187,18 +202,22 @@ export class WorkspacesStore {
 
   /** Counters + weekly open/close velocity for a workspace's dashboard. */
   metrics(workspaceId: string, weeks = 12): WorkspaceMetrics {
-    const issues = this.db
-      .prepare(
-        `SELECT i.state, i.created_at, i.closed_at FROM issues i
-         JOIN repos r ON r.full_name = i.repo WHERE r.workspace_id = ?`,
-      )
-      .all(workspaceId) as Array<{ state: string; created_at: number; closed_at: number | null }>;
-    const prs = this.db
-      .prepare(
-        `SELECT p.state, p.created_at, p.closed_at FROM prs p
-         JOIN repos r ON r.full_name = p.repo WHERE r.workspace_id = ?`,
-      )
-      .all(workspaceId) as Array<{ state: string; created_at: number; closed_at: number | null }>;
+    // issues/prs/repos are code-owned; if module-code is uninstalled the JOINs
+    // fail — degrade to empty series rather than crash the dashboard.
+    const rollup = (table: 'issues' | 'prs'): Array<{ state: string; created_at: number; closed_at: number | null }> => {
+      try {
+        return this.db
+          .prepare(
+            `SELECT t.state, t.created_at, t.closed_at FROM ${table} t
+             JOIN repos r ON r.full_name = t.repo WHERE r.workspace_id = ?`,
+          )
+          .all(workspaceId) as Array<{ state: string; created_at: number; closed_at: number | null }>;
+      } catch {
+        return [];
+      }
+    };
+    const issues = rollup('issues');
+    const prs = rollup('prs');
 
     const monday = new Date();
     monday.setHours(0, 0, 0, 0);

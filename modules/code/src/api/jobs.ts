@@ -5,8 +5,9 @@ import { defineJobs } from '@companion/core/server';
  * git-credential resolver is PLUGGED INTO the execution plane (inversion of
  * control — operate never imports code), the orchestrator's replay resumers
  * are registered before operate's postActivate resumes the persisted queue,
- * and the GitHub poller starts. Disable stops the poller and is enough: the
- * token source falls back to operate's default (the legacy settings key).
+ * and the GitHub poller starts. Disable stops the poller AND restores operate's
+ * default token source, so a disabled/uninstalled code module's account
+ * registry no longer governs clones/pushes.
  */
 export default defineJobs({
   onEnable: (ctx) => {
@@ -43,5 +44,8 @@ export default defineJobs({
   },
   onDisable: (ctx) => {
     ctx.services.get('code').sync.stop();
+    // Unplug our account-aware resolver so operate falls back to its built-in
+    // settings-key source (our github_accounts table may be uninstalled next).
+    ctx.services.get('operate').resetGithubTokenSource();
   },
 });

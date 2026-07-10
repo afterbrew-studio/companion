@@ -95,6 +95,13 @@ export class MigrationRunner {
     }
   }
 
+  /** Forget a module's applied-migration history — so a re-enable after uninstall
+   *  re-runs its migrations from scratch (the purge path drops tables without
+   *  unrecording, and even the clean down path is belt-and-braced here). */
+  clearLedger(moduleId: string): void {
+    this.db.prepare(`DELETE FROM module_migrations WHERE module_id = ?`).run(moduleId);
+  }
+
   /** Mark v1 applied WITHOUT executing — the adopt path for an existing DB whose
    *  tables already match today's shape. */
   adopt(moduleId: string, version: number, name: string): void {
