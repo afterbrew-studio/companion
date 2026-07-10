@@ -1,8 +1,10 @@
 @import 'tailwindcss';
 
-/* Workspace sources outside this app's root — the shared ui kit and every
+/* Workspace sources outside this app's root — the shared ui kit, the framework's
+ * client host (ModulesProvider, NavIcon, OnboardingArt, lazy views), and every
  * module's client slice — so their utility classes are generated too. */
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
+@source "../../../packages/core/src/client/**/*.{ts,tsx}";
 @source "../../../modules/*/src/client/**/*.{ts,tsx}";
 
 /*
