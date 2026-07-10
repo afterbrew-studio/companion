@@ -87,7 +87,8 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
   const { branding } = useAuth();
   const name = branding.name?.trim() || 'Companion';
   return (
-    <div className={`flex items-center gap-2 pt-4 pb-2 ${rail ? 'justify-center px-2' : 'px-4'}`}>
+    // Same padding in both modes — the logo must not move when the rail peeks open.
+    <div className="flex items-center gap-2 px-4 pt-4 pb-2">
       {branding.logo ? (
         <img src={branding.logo} alt="" className="size-7 shrink-0 rounded-lg object-cover" />
       ) : (
@@ -386,9 +387,7 @@ function Shell(): JSX.Element {
                     href={m.hash}
                     aria-current={active ? 'page' : undefined}
                     title={rail ? m.label : undefined}
-                    className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
-                      rail ? 'justify-center px-0' : 'px-2.5'
-                    } ${
+                    className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] ${
                       active
                         ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
                         : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
@@ -436,25 +435,21 @@ function Shell(): JSX.Element {
           ))}
         </nav>
 
-        <div className={`border-t border-zinc-200 py-3 dark:border-zinc-800 ${rail ? 'px-2' : 'px-4'}`}>
+        <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           {rail ? (
-            <div className="flex flex-col items-center gap-1">
+            // Icon-only: just the profile glyph, sitting where the expanded row
+            // starts — sign out lives in the expanded (or peeked) sidebar.
+            <div className="-mx-2">
               <a
                 href="#/profile"
-                className="flex size-9 items-center justify-center rounded-lg bg-zinc-200 text-[13px] font-semibold uppercase transition-colors hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                className="flex w-fit items-center rounded-lg p-1.5 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
                 aria-label="Open your profile"
                 title={`${user?.displayName ?? ''} — open your profile`}
               >
-                {(user?.displayName ?? '?').slice(0, 1)}
+                <span className="flex size-8 items-center justify-center rounded-lg bg-zinc-200 text-[13px] font-semibold uppercase dark:bg-zinc-800">
+                  {(user?.displayName ?? '?').slice(0, 1)}
+                </span>
               </a>
-              <button
-                className="btn-ghost w-full justify-center"
-                onClick={() => void logout()}
-                aria-label="Sign out"
-                title={`Sign out ${user?.displayName ?? ''}`}
-              >
-                <SignOutIcon />
-              </button>
             </div>
           ) : (
             <div className="-mx-2 flex items-center gap-1">
@@ -551,7 +546,7 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
       <div className="px-2.5 pt-3 pb-1">
         <button
           type="button"
-          className="flex h-12 w-full cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
+          className="flex h-12 w-full cursor-pointer items-center rounded-lg px-2 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
           title={current ? `Workspace: ${current.name} — expand to switch` : 'Expand the sidebar to pick a workspace'}
           onClick={onExpand}
         >
