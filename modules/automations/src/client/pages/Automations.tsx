@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@companion/core/client';
 import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
-import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch } from '@companion/ui';
+import type { ReportRecord } from '@companion/module-workspace/contract';
+import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@companion/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';
@@ -21,6 +22,17 @@ export function AutomationsPage(): JSX.Element {
 
   const repoNames = new Set(repos.map((r) => r.fullName));
   const workspaceReports = reports.filter((r) => r.repo === null || repoNames.has(r.repo));
+  // One collapsed group per source, newest-first: each repo, plus "Workspace"
+  // for repo-less reports (briefings). The feed arrives newest-first already.
+  const byRepo = new Map<string | null, ReportRecord[]>();
+  for (const r of workspaceReports) {
+    const group = byRepo.get(r.repo) ?? [];
+    group.push(r);
+    byRepo.set(r.repo, group);
+  }
+  const reportGroups = [...byRepo.entries()]
+    .map(([repo, group]) => ({ repo, group }))
+    .sort((a, b) => (b.group[0]?.createdAt ?? 0) - (a.group[0]?.createdAt ?? 0));
 
   return (
     <Page>
@@ -59,8 +71,25 @@ export function AutomationsPage(): JSX.Element {
           <EmptyState title="No reports yet" hint="Enable a daily digest or stale sweep above and reports will land here." />
         ) : (
           <div className="flex flex-col gap-2.5">
-            {workspaceReports.map((r) => (
-              <ReportCard key={r.id} report={r} showRepo />
+            {reportGroups.map(({ repo, group }) => (
+              <details key={repo ?? 'workspace'} className="card">
+                <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm select-none">
+                  <strong className="min-w-0 flex-1 truncate">{repo ?? 'Workspace'}</strong>
+                  {[...new Set(group.map((r) => r.kind))].map((kind) => (
+                    <span key={kind} className="badge">
+                      {kind}
+                    </span>
+                  ))}
+                  <span className="dim">
+                    {group.length} · {timeAgo(group[0]!.createdAt)}
+                  </span>
+                </summary>
+                <div className="mt-2.5 flex flex-col gap-2 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
+                  {group.map((r) => (
+                    <ReportCard key={r.id} report={r} />
+                  ))}
+                </div>
+              </details>
             ))}
           </div>
         )}
@@ -279,9 +308,11 @@ function RepoAutomation({
 
   return (
     <article className="card" aria-label={repo.fullName}>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2.5">
         <strong className="text-sm">{repo.fullName}</strong>
-        {repo.webhookConfigured ? <span className="badge-ok">webhook active</span> : null}
+        {repo.webhookConfigured ? (
+          <MetaSignal tone="green" label="webhook active" title="Receiving GitHub deliveries for this repo" />
+        ) : null}
       </div>
 
       <ListCard subtle className="mt-3">
