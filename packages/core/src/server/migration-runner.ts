@@ -23,8 +23,8 @@ const BOOTSTRAP = `
     enabled      INTEGER NOT NULL DEFAULT 1,
     version      INTEGER NOT NULL DEFAULT 0,
     required     INTEGER NOT NULL DEFAULT 0,
-    installed_at INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    installed_at INTEGER NOT NULL DEFAULT 0,
+    updated_at   INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS module_migrations (
     module_id  TEXT NOT NULL,
@@ -34,6 +34,34 @@ const BOOTSTRAP = `
     PRIMARY KEY (module_id, version)
   );
 `;
+
+/**
+ * Additive reconcile for the bootstrap `modules` table: a DB created by an
+ * earlier build may lack a column added later (the kernel tables have no
+ * versioned migration of their own — `CREATE TABLE IF NOT EXISTS` won't alter an
+ * existing table). Each ALTER is idempotent — a "duplicate column" throw means
+ * it's already there — mirroring the per-module v1 adopt. Every column carries a
+ * DEFAULT so the ADD succeeds against a populated table; the reconcile INSERT in
+ * the kernel then fills real values.
+ */
+const MODULE_COLUMNS: readonly string[] = [
+  `ALTER TABLE modules ADD COLUMN installed INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE modules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE modules ADD COLUMN version INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE modules ADD COLUMN required INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE modules ADD COLUMN installed_at INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE modules ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`,
+];
+
+function reconcileBootstrap(db: Database.Database): void {
+  for (const ddl of MODULE_COLUMNS) {
+    try {
+      db.exec(ddl);
+    } catch (err) {
+      if (!String(err).includes('duplicate column')) throw err;
+    }
+  }
+}
 
 /**
  * Per-module migration ledger with rollback. `migrateUp` applies pending steps
@@ -49,6 +77,7 @@ export class MigrationRunner {
     private readonly log: Logger,
   ) {
     db.exec(BOOTSTRAP);
+    reconcileBootstrap(db);
     this.fts = { available: probeFts(db) };
   }
 
