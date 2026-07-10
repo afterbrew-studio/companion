@@ -98,7 +98,7 @@ export class Orchestrator implements RunnerEventSink {
     checkouts: Checkouts,
     moxxyCli: MoxxyCli | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
-    githubTokenFor: (repo: string) => string | null = () => null,
+    githubTokenFor: (repo: string) => Promise<string | null> | string | null = () => null,
     private readonly moduleConfig: ModuleConfigAccessor = { values: () => ({}), get: () => null },
   ) {
     this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast, githubTokenFor);

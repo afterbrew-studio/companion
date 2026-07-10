@@ -53,7 +53,7 @@ export class Runners {
     private readonly sink: RunnerEventSink,
     private readonly broadcast: (msg: SpaServerMessage) => void,
     /** Hub GitHub credential remote agents receive with network git calls. */
-    private readonly githubTokenFor: (repo: string) => string | null = () => null,
+    private readonly githubTokenFor: (repo: string) => Promise<string | null> | string | null = () => null,
   ) {
     this.local = new LocalRunnerBackend(
       LOCAL_RUNNER_ID,

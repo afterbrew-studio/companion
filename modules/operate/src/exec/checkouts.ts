@@ -23,7 +23,17 @@ export class Checkouts {
   /** Per-repo mutex: `git worktree add` / fetch mutate shared .git state. */
   private readonly locks = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly token: () => string | null) {}
+  /**
+   * The thunk resolves PER REPO (so delegated accounts and repo pins apply to
+   * clones/fetches, not just API calls) and may be async (an access-verified
+   * resolver probes GitHub). Only network operations resolve it.
+   */
+  constructor(private readonly token: (fullName: string) => Promise<string | null> | string | null) {}
+
+  /** The credential a network operation runs with: resolver first, caller fallback second. */
+  private async creds(fullName: string, fallback?: string): Promise<string | null> {
+    return (await this.token(fullName)) ?? fallback?.trim() ?? null;
+  }
 
   cloneDir(fullName: string): string {
     const [owner, name] = fullName.split('/');
@@ -39,14 +49,18 @@ export class Checkouts {
       const dir = this.cloneDir(fullName);
       if (existsSync(join(dir, '.git'))) return;
       mkdirSync(dir, { recursive: true });
-      await this.git(['clone', '--quiet', `https://github.com/${fullName}.git`, dir], undefined, token);
+      await this.git(
+        ['clone', '--quiet', `https://github.com/${fullName}.git`, dir],
+        undefined,
+        await this.creds(fullName, token),
+      );
       log.info(`cloned ${fullName}`);
     });
   }
 
   async fetch(fullName: string, token?: string): Promise<void> {
-    await this.locked(fullName, () =>
-      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName), token),
+    await this.locked(fullName, async () =>
+      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName), await this.creds(fullName, token)),
     );
   }
 
@@ -60,7 +74,7 @@ export class Checkouts {
   ): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone, token);
+      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone, await this.creds(fullName, token));
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', branch, wt, `origin/${baseBranch}`], clone);
       // Keep run scaffolding (agent notes etc.) out of accidental commits.
@@ -80,7 +94,7 @@ export class Checkouts {
   async addWorktreeAtBranch(fullName: string, runId: string, branch: string, token?: string): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', branch], clone, token);
+      await this.git(['fetch', '--quiet', 'origin', branch], clone, await this.creds(fullName, token));
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', `companion/${runId}`, wt, `origin/${branch}`], clone);
       await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
@@ -130,8 +144,8 @@ export class Checkouts {
   }
 
   async push(fullName: string, worktree: string, branch: string, token?: string): Promise<void> {
-    await this.locked(fullName, () =>
-      this.git(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], worktree, token),
+    await this.locked(fullName, async () =>
+      this.git(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], worktree, await this.creds(fullName, token)),
     );
   }
 
@@ -153,9 +167,9 @@ export class Checkouts {
   private git(
     args: string[],
     cwd: string | undefined,
-    fallbackToken?: string,
+    /** Already-resolved credential (network operations only — see creds()). */
+    token?: string | null,
   ): Promise<{ stdout: string; stderr: string }> {
-    const token = this.token() ?? fallbackToken?.trim() ?? null;
     // Ephemeral credential helper: git asks it for credentials; it answers with
     // the PAT from env. Nothing token-shaped touches disk or process args.
     // The leading empty helper CLEARS inherited helpers (osxkeychain etc.) —

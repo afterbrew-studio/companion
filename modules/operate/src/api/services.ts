@@ -43,8 +43,8 @@ export default defineServices(async (ctx) => {
   const tokenSource: { current: GithubTokenSource } = {
     current: { tokenFor: () => settings.get('github_token') },
   };
-  const githubTokenFor = (repo: string): string | null =>
-    tokenSource.current.tokenFor(repo) ?? settings.get('github_token');
+  const githubTokenFor = async (repo: string): Promise<string | null> =>
+    (await tokenSource.current.tokenFor(repo)) ?? settings.get('github_token');
 
   // run.changed fans out to browsers AND to the server bus, replacing the
   // legacy composition root's hard-coded proposals forward-ref: reacting
@@ -66,7 +66,8 @@ export default defineServices(async (ctx) => {
     ctx.log.info(`moxxy ${moxxyCli.version} at ${moxxyCli.path}`);
   }
 
-  const checkouts = new Checkouts(() => tokenSource.current.tokenFor() ?? settings.get('github_token'));
+  // Per-repo resolution, so delegated accounts / repo pins govern clones too.
+  const checkouts = new Checkouts(githubTokenFor);
   const store = new OperateStore(ctx.db, settings, ctx.notify);
   const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
   const webhookTunnel = new WebhookTunnel(() => ctx.moduleConfig.get('webhookTunnel') === true, ctx.config.port);

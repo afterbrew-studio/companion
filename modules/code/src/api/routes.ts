@@ -11,6 +11,7 @@ import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
 import { PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
+import { GitHubError } from './github-client.js';
 import type { GitHubClient } from './github-client.js';
 
 // ---------- repos ----------
@@ -209,14 +210,34 @@ export default defineRoutes((ctx) => {
       access: 'repos:manage',
       body: addRepoSchema,
       handler: async ({ body, user }) => {
-        const client = github();
-        if (!client) throw badRequest('GitHub is not configured (set a PAT first)');
         const ws = workspace.get(body.workspaceId);
         if (!ws) throw badRequest(`workspace ${body.workspaceId} not found`);
         if (!workspace.canAccess(user!, ws)) {
           throw forbidden('you cannot add repos to that workspace');
         }
-        const meta = await client.repo(body.fullName);
+        // Resolve WITH the target workspace (the repo row doesn't exist yet) so
+        // accounts delegated to it compete, access-verified when several could act.
+        const { row: account, tried } = await code.githubAccounts.verifiedRowFor('fetch', body.fullName, {
+          workspaceId: body.workspaceId,
+        });
+        if (!account) {
+          throw badRequest(
+            tried.length > 0
+              ? `none of the connected GitHub accounts (${tried.join(', ')}) can access ${body.fullName} — connect one with access, or grant it to an existing account`
+              : 'GitHub is not configured (connect an account first)',
+          );
+        }
+        let meta;
+        try {
+          meta = await code.githubAccounts.clientOf(account).repo(body.fullName);
+        } catch (err) {
+          if (err instanceof GitHubError && [401, 403, 404].includes(err.status)) {
+            throw badRequest(
+              `GitHub account '${account.login || account.id}' cannot access ${body.fullName} — check the repository name, or connect an account that has access`,
+            );
+          }
+          throw err;
+        }
         code.repos.upsert({
           fullName: meta.full_name,
           owner: meta.owner.login,

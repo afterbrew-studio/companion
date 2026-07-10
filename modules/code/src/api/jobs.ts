@@ -15,10 +15,13 @@ export default defineJobs({
     const operate = ctx.services.get('operate');
 
     // Git credentials for clones/worktrees/pushes and remote runner agents,
-    // resolved per repo so account pins and workspace delegation apply.
+    // resolved per repo so account pins and workspace delegation apply — and
+    // access-VERIFIED when several accounts compete, so the account that can
+    // actually see the repo is the one that clones it.
     // Mirrors the legacy githubTokenFor closure + the /api/status github fields.
     operate.setGithubTokenSource({
-      tokenFor: (repo) => code.githubAccounts.tokenFor('runs', repo ? { repo } : undefined) ?? null,
+      tokenFor: (repo) =>
+        repo ? code.githubAccounts.verifiedTokenFor('runs', repo) : (code.githubAccounts.tokenFor('runs') ?? null),
       login: () => {
         const list = code.githubAccounts.list();
         return (

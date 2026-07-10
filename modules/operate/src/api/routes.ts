@@ -378,7 +378,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/status',
       access: 'any',
-      handler: (): MoxxyStatus => {
+      handler: async (): Promise<MoxxyStatus> => {
         const home = homeStatus();
         const tokens = op.githubTokens();
         return {
@@ -390,7 +390,7 @@ export default defineRoutes((ctx) => {
           providersImported: home.providersImported,
           // Instance-level health: is GitHub set up at all? Independent of who is
           // viewing (per-user account resolution must not flip the health dot).
-          githubConfigured: (tokens.login?.() ?? null) !== null || tokens.tokenFor() !== null,
+          githubConfigured: (tokens.login?.() ?? null) !== null || (await tokens.tokenFor()) !== null,
           githubUser: tokens.login?.() ?? null,
         };
       },
