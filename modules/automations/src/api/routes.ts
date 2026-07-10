@@ -97,13 +97,8 @@ export default defineRoutes((ctx) => {
 
   // Access gate: a private workspace the user isn't in reads as "not found" —
   // membership is hidden, so its existence is too.
-  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord => {
-    const ws = workspace.get(id);
-    if (!ws || !user || !workspace.canAccess(user, ws)) {
-      throw notFound(`workspace ${id} not found`);
-    }
-    return ws;
-  };
+  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
+    workspace.requireAccessible(user, id);
 
   return [
     // ---------- per-repo automation switches + webhook receiver -------------------

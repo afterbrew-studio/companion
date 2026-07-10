@@ -30,13 +30,8 @@ export default defineRoutes((ctx) => {
 
   // Access gate: a private workspace the user isn't in reads as "not found" —
   // membership is hidden, so its existence is too.
-  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord => {
-    const ws = workspaces.get(id);
-    if (!ws || !user || !workspaces.canAccess(user, ws)) {
-      throw notFound(`workspace ${id} not found`);
-    }
-    return ws;
-  };
+  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
+    workspaces.requireAccessible(user, id);
   // Manage gate (rename/delete/members): owner or admin only.
   const requireManage = (user: AuthUser | null, id: string): WorkspaceRecord => {
     const ws = requireWorkspace(user, id);

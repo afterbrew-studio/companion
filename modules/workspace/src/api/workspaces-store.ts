@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { AuthUser } from '@companion/contracts';
+import { notFound } from '@companion/core/server';
 import type {
   WorkspaceMember,
   WorkspaceMemberRole,
@@ -155,6 +156,24 @@ export class WorkspacesStore {
   canAccessWorkspace(user: AuthUser, id: string): boolean {
     const ws = this.get(id);
     return ws ? this.canAccess(user, ws) : false;
+  }
+
+  /**
+   * The single "accessible or not-found" gate every workspace-scoped feed uses
+   * (workspace + code + plan + automations routes) — a private workspace's
+   * existence must read as 404 to non-members, so this hides both cases.
+   */
+  requireAccessible(user: AuthUser | null, id: string): WorkspaceRecord {
+    const ws = this.get(id);
+    if (!ws || !user || !this.canAccess(user, ws)) throw notFound(`workspace ${id} not found`);
+    return ws;
+  }
+
+  /** Existence-only gate (no access check) — for feeds already gated elsewhere. */
+  requireExists(id: string): WorkspaceRecord {
+    const ws = this.get(id);
+    if (!ws) throw notFound(`workspace ${id} not found`);
+    return ws;
   }
 
   canManage(user: AuthUser, ws: WorkspaceRecord): boolean {

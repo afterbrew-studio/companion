@@ -109,20 +109,10 @@ export default defineRoutes((ctx) => {
 
   // Access gate for the workspace proposals feed: a private workspace the user
   // isn't in reads as "not found" — same helper as module-workspace's routes.
-  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord => {
-    const ws = workspace.get(id);
-    if (!ws || !user || !workspace.canAccess(user, ws)) {
-      throw notFound(`workspace ${id} not found`);
-    }
-    return ws;
-  };
-
+  const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
+    workspace.requireAccessible(user, id);
   // The spec/doc routes only assert existence (legacy behavior).
-  const requireWorkspaceExists = (id: string): WorkspaceRecord => {
-    const ws = workspace.get(id);
-    if (!ws) throw notFound(`workspace ${id} not found`);
-    return ws;
-  };
+  const requireWorkspaceExists = (id: string): WorkspaceRecord => workspace.requireExists(id);
 
   return [
     // ---------- proposals ----------------------------------------------------------
