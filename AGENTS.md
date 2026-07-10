@@ -50,7 +50,7 @@ Code invoke them as subagents; in other tools, use the file as the system prompt
 Companion is a self-hosted engineering dashboard that drives GitHub repos with
 [moxxy](https://github.com/moxxy-ai/moxxy) agents. It's a pnpm monorepo, all ESM,
 strict TypeScript: `packages/contract` (shared types — the spine),
-`apps/companiond` (SQLite + typed HTTP/WS daemon), `apps/web` (React 18 + Vite +
+`apps/api` (SQLite + typed HTTP/WS daemon), `apps/web` (React 18 + Vite +
 Tailwind SPA, hash-routed), `apps/companion-runner` (remote execution agent).
 `moxxy` is an external CLI runtime, **never** a package dependency.
 
@@ -78,7 +78,7 @@ platform and the existing `ui.tsx` kit. See `companion-verification`.
 
 ```sh
 pnpm install      # corepack enable first; pnpm 10, Node >= 20
-pnpm dev          # companiond :8901 + Vite :5173 (proxies /api, /ws)
+pnpm dev          # companion-api :8901 + Vite :5173 (proxies /api, /ws)
 pnpm build        # tsc across the workspace (+ vite build for web)
 pnpm typecheck    # the quality gate
 ```

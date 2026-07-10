@@ -37,4 +37,4 @@ VOLUME ["/data", "/root/.moxxy"]
 # no curl/wget; node's fetch does the job.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.COMPANION_PORT||8901)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["pnpm", "--filter", "companiond", "start"]
+CMD ["pnpm", "--filter", "companion-api", "start"]

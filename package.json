@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter companiond --filter companion-web dev",
+    "dev": "pnpm --parallel --filter companion-api --filter companion-web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

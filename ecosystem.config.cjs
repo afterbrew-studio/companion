@@ -1,11 +1,11 @@
 /**
  * pm2 process file for production: `pnpm prod` builds everything and
- * (re)starts the suite under pm2. companiond serves the built SPA from
+ * (re)starts the suite under pm2. the api daemon serves the built SPA from
  * apps/web/dist itself and embeds the local runner, so one process is the
  * whole suite.
  *
  * Configuration (COMPANION_HOST / COMPANION_PORT / admin credentials / …)
- * comes from companiond's layered env: process env > ./.env > ~/.companion/.env.
+ * comes from the api daemon's layered env: process env > ./.env > ~/.companion/.env.
  *
  * To survive reboots: pm2 save && pm2 startup
  */
@@ -13,7 +13,7 @@ module.exports = {
   apps: [
     {
       name: 'companion',
-      script: 'apps/companiond/dist/index.js',
+      script: 'apps/api/dist/index.js',
       cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',

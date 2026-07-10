@@ -5,7 +5,7 @@ import type { ClientLoader } from '@companion/core/client';
  * modules. The ModulesProvider fetches GET /api/modules and dynamic-imports
  * ONLY the enabled modules' `/client` chunks (Vite code-splits one per module;
  * a disabled module's JS is never fetched). Installing a new module = one entry
- * here (+ one in apps/companiond/src/modules.ts) + a rebuild.
+ * here (+ one in apps/api/src/modules.ts) + a rebuild.
  */
 export const CLIENT_LOADERS: Readonly<Record<string, ClientLoader>> = {
   core: () => import('@companion/module-core/client'),
