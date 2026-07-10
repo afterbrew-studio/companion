@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { refreshAuth } from '@companion/core/client';
+import { ApiError, refreshAuth } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useMoxxyStatus } from '@companion/module-operate/client';
 import {
@@ -14,6 +14,7 @@ import {
   Section,
   SettingRow,
   Switch,
+  useConfirm,
 } from '@companion/ui';
 import type { NotificationScope } from '../../contract/index.js';
 import { adminApi as api } from '../api.js';
@@ -49,8 +50,9 @@ async function fileToLogoDataUrl(file: File): Promise<string> {
 
 /** Instance administration: branding, appearance, moxxy runtime. */
 export function SettingsPage(): JSX.Element {
-  const { branding, setBranding } = useAuth();
+  const { branding, setBranding, logout } = useAuth();
   const { status, error, setError, refresh } = useMoxxyStatus();
+  const { confirmDanger, confirmElement } = useConfirm();
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: string[]; missing: string[] } | null>(null);
   const [upgrading, setUpgrading] = useState(false);
@@ -89,6 +91,51 @@ export function SettingsPage(): JSX.Element {
       setDefaultScope(prev);
       setError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  // Wipe-and-restart: the daemon acknowledges, drops the recreate marker and
+  // exits; its supervisor restarts it onto a fresh database. We poll the public
+  // state endpoint until it's back, then drop the (now-invalid) session and
+  // reload into first-boot setup.
+  const [recreating, setRecreating] = useState(false);
+  const recreate = async (): Promise<void> => {
+    const ok = await confirmDanger({
+      title: 'Recreate database',
+      message:
+        'Every user, workspace, repository connection, run and setting on this instance will be permanently deleted, and first-boot setup will run again. Repository clones on disk are kept.',
+      confirmLabel: 'Recreate database',
+    });
+    if (!ok) return;
+    setRecreating(true);
+    setError(null);
+    try {
+      await api.recreateDb();
+    } catch (err) {
+      // A real rejection (403, 404) stops here; a dropped connection just means
+      // the daemon is already going down — proceed to waiting for it.
+      if (err instanceof ApiError) {
+        setError(err.message);
+        setRecreating(false);
+        return;
+      }
+    }
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        const res = await fetch('/api/auth/state');
+        if (res.ok) {
+          await logout().catch(() => undefined);
+          location.hash = '';
+          location.reload();
+          return;
+        }
+      } catch {
+        // still restarting
+      }
+    }
+    setRecreating(false);
+    setError('The daemon did not come back within two minutes — restart it manually, then reload this page.');
   };
 
   const onLogoFile = async (file: File | undefined): Promise<void> => {
@@ -318,6 +365,24 @@ export function SettingsPage(): JSX.Element {
           </div>
         ) : null}
       </Section>
+
+      <Section title="Danger zone" description="Destructive instance-level operations. There is no undo.">
+        <div className="card">
+          <SettingRow
+            title="Recreate database"
+            description={
+              recreating
+                ? 'Waiting for the daemon to come back with a fresh database…'
+                : 'Deletes every user, workspace, repository connection, run and setting, then restarts into first-boot setup.'
+            }
+          >
+            <button className="btn-danger" disabled={recreating} onClick={() => void recreate()}>
+              {recreating ? 'Restarting…' : 'Recreate database…'}
+            </button>
+          </SettingRow>
+        </div>
+      </Section>
+      {confirmElement}
     </Page>
   );
 }

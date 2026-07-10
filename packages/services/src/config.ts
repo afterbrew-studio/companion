@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Role } from '@companion/types';
@@ -25,6 +25,30 @@ export const paths = {
   db: (): string => join(companionHome(), 'companion.db'),
   daemonConfig: (): string => join(companionHome(), 'companiond.json'),
   envFile: (): string => join(companionHome(), '.env'),
+  /** Marker requesting a fresh database on the NEXT boot (see requestDbRecreate). */
+  recreateDbMarker: (): string => join(companionHome(), 'recreate-db'),
+};
+
+/**
+ * Database recreation is a two-phase contract between the admin surface and
+ * the daemon's composition root: a live process cannot delete the SQLite file
+ * under its own open handle, so the route drops a marker and exits gracefully;
+ * the supervisor restarts the daemon and the next boot — BEFORE opening the
+ * database — consumes the marker by deleting the db files. A fresh database
+ * then runs first-boot setup (or re-seeds env-configured accounts).
+ */
+export const requestDbRecreate = (): void => {
+  mkdirSync(companionHome(), { recursive: true });
+  writeFileSync(paths.recreateDbMarker(), String(Date.now()), 'utf8');
+};
+
+/** Boot-time half: if a recreation was requested, wipe the db (+WAL/SHM) and the marker. */
+export const consumePendingDbRecreate = (): boolean => {
+  if (!existsSync(paths.recreateDbMarker())) return false;
+  for (const file of [paths.db(), `${paths.db()}-wal`, `${paths.db()}-shm`, paths.recreateDbMarker()]) {
+    rmSync(file, { force: true });
+  }
+  return true;
 };
 
 /** Model every agent run defaults to (overridable per prompt / via env). */

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineRoutes, route } from '@companion/core/server';
+import { requestDbRecreate } from '@companion/services';
 import type {
   NotificationScope,
   NotificationSettings,
@@ -44,6 +45,25 @@ export default defineRoutes((ctx) => {
       handler: ({ body }): NotificationSettings => {
         ctx.settings.set('notifications.defaultScope', body.defaultScope);
         return { defaultScope: notificationDefaultScope() };
+      },
+    }),
+
+    route({
+      // The nuclear option: wipe the database and start over. Drops the
+      // recreate marker and exits through the normal SIGTERM path — the
+      // supervisor restarts the daemon, whose boot deletes the db files before
+      // opening a fresh one (see consumePendingDbRecreate). First-boot setup
+      // runs again; env-seeded accounts re-seed. Clones/worktrees are kept
+      // (they're caches — re-added repos adopt them).
+      method: 'POST',
+      path: '/api/settings/recreate-db',
+      access: 'settings:manage',
+      handler: ({ user }) => {
+        ctx.log.warn(`database recreation requested by ${user?.username ?? 'unknown'} — restarting`);
+        requestDbRecreate();
+        // Let the response flush before the shutdown starts tearing down.
+        setTimeout(() => process.kill(process.pid, 'SIGTERM'), 300).unref();
+        return { ok: true as const };
       },
     }),
 

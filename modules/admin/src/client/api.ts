@@ -21,4 +21,7 @@ export const adminApi = {
   getNotificationSettings: () => request<NotificationSettings>('/api/settings/notifications'),
   setNotificationSettings: (defaultScope: NotificationSettings['defaultScope']) =>
     put<NotificationSettings>('/api/settings/notifications', { defaultScope }),
+
+  /** Wipe the database and restart the daemon into first-boot setup. */
+  recreateDb: () => post<{ ok: true }>('/api/settings/recreate-db'),
 };

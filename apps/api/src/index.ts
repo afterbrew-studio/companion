@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { loadDaemonConfig, log, paths } from '@companion/services';
+import { consumePendingDbRecreate, loadDaemonConfig, log, paths } from '@companion/services';
 import { ModuleKernel, WsHub } from '@companion/core/server';
 import { MODULES } from './modules.js';
 import { startHttpServer } from './http/server.js';
@@ -17,6 +17,11 @@ async function main(): Promise<void> {
   const config = loadDaemonConfig();
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
   log.info(`default agent model: ${config.defaultModel}`);
+
+  // An admin-requested database recreation is honored here, before the handle
+  // opens: the previous process dropped the marker and exited; this boot starts
+  // from a clean slate and first-boot setup runs again.
+  if (consumePendingDbRecreate()) log.warn('recreate-db marker found — starting with a fresh database');
 
   const db = new Database(paths.db());
   db.pragma('journal_mode = WAL');
