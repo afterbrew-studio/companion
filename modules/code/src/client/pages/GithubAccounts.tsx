@@ -214,54 +214,69 @@ function ScopeEditor({
   };
 
   return (
-    <fieldset className="mt-3 flex flex-col gap-1.5">
-      <legend className="dim mb-1 text-sm">Available to</legend>
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input
-          type="radio"
-          name={`scope-${account.id}`}
-          checked={!showWorkspaces}
-          onChange={() => {
-            setPendingDelegated(false);
-            if (delegated) void save('shared', []);
-            else onError(null);
-          }}
-        />
-        Shared
-        <span className="dim text-xs">— acts for any workspace</span>
-      </label>
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input
-          type="radio"
-          name={`scope-${account.id}`}
-          checked={showWorkspaces}
-          onChange={() => {
-            onError(null);
-            setPendingDelegated(true);
-          }}
-        />
-        Delegated
-        <span className="dim text-xs">— only the workspaces picked below</span>
-      </label>
-      {showWorkspaces ? (
-        <div className="ml-6 flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-          {workspaces.length === 0 ? <span className="dim text-sm">No workspaces found.</span> : null}
-          {pendingDelegated && !delegated ? (
-            <span className="dim text-xs">Pick at least one workspace to delegate this account.</span>
-          ) : null}
-          {workspaces.map((w) => (
-            <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
+    <div className="mt-3">
+      <Section label="Available to">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <OptionRow
+            active={!showWorkspaces}
+            control={
               <input
-                type="checkbox"
-                checked={account.workspaceIds.includes(w.id)}
-                onChange={(e) => toggleWorkspace(w.id, e.target.checked)}
+                type="radio"
+                name={`scope-${account.id}`}
+                className="accent-emerald-600"
+                checked={!showWorkspaces}
+                onChange={() => {
+                  setPendingDelegated(false);
+                  if (delegated) void save('shared', []);
+                  else onError(null);
+                }}
               />
-              {w.name}
-            </label>
-          ))}
+            }
+            title="Shared"
+            hint="Acts for any workspace."
+          />
+          <OptionRow
+            active={showWorkspaces}
+            control={
+              <input
+                type="radio"
+                name={`scope-${account.id}`}
+                className="accent-emerald-600"
+                checked={showWorkspaces}
+                onChange={() => {
+                  onError(null);
+                  setPendingDelegated(true);
+                }}
+              />
+            }
+            title="Delegated"
+            hint="Only the workspaces picked below."
+          />
         </div>
-      ) : null}
-    </fieldset>
+        {showWorkspaces ? (
+          <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+            {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
+            {pendingDelegated && !delegated ? (
+              <span className="dim px-1 pt-1 text-xs">Pick at least one workspace to delegate this account.</span>
+            ) : null}
+            {workspaces.map((w) => (
+              <label
+                key={w.id}
+                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+              >
+                <input
+                  type="checkbox"
+                  className="accent-emerald-600"
+                  checked={account.workspaceIds.includes(w.id)}
+                  onChange={(e) => toggleWorkspace(w.id, e.target.checked)}
+                />
+                {w.name}
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </Section>
+    </div>
   );
 }
 
@@ -306,33 +321,12 @@ function ConnectAccountModal({
 
   return (
     <Modal title="Connect a GitHub account" onClose={onClose}>
-      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        {isAdmin ? (
-          <fieldset className="flex flex-col gap-1.5">
-            <legend className="dim mb-1 text-sm">Ownership</legend>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input type="radio" name="own" checked={shared} onChange={() => setShared(true)} />
-              Shared default
-              <span className="dim text-xs">— the instance-wide fallback everyone's actions use</span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input type="radio" name="own" checked={!shared} onChange={() => setShared(false)} />
-              My account
-              <span className="dim text-xs">— only my own actions act as this account</span>
-            </label>
-          </fieldset>
-        ) : (
-          <p className="dim text-xs">
-            This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges act
-            as you. Other work still uses the shared default.
-          </p>
-        )}
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">
-            Fine-grained PAT — Contents / Issues / Pull requests read-write, Metadata read
-          </span>
+      <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
+        {/* Fine-grained PAT — the one required field, up top. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Fine-grained personal access token</span>
           <input
-            className="input"
+            className="input font-mono"
             type="password"
             required
             placeholder="github_pat_…"
@@ -340,58 +334,96 @@ function ConnectAccountModal({
             onChange={(e) => setToken(e.target.value)}
             autoFocus
           />
+          <span className="dim text-xs leading-relaxed">
+            Needs Contents, Issues, and Pull requests <span className="font-medium">read-write</span>, plus Metadata read.
+          </span>
         </label>
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className="dim mb-1 text-sm">This account handles</legend>
-          {GITHUB_PURPOSES.map((purpose) => (
-            <label key={purpose} className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={purposes.includes(purpose)}
-                onChange={(e) =>
-                  setPurposes((prev) =>
-                    e.target.checked ? [...prev, purpose] : prev.filter((p) => p !== purpose),
-                  )
-                }
+
+        {isAdmin ? (
+          <Section label="Ownership">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <OptionRow
+                active={shared}
+                control={<input type="radio" name="own" className="accent-emerald-600" checked={shared} onChange={() => setShared(true)} />}
+                title="Shared default"
+                hint="The instance-wide fallback everyone's actions use."
               />
-              {PURPOSE_META[purpose].label}
-              <span className="dim text-xs">— {PURPOSE_META[purpose].hint}</span>
-            </label>
-          ))}
-        </fieldset>
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className="dim mb-1 text-sm">Available to</legend>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="radio" name="scope" checked={scope === 'shared'} onChange={() => setScope('shared')} />
-            Shared
-            <span className="dim text-xs">— acts for any workspace</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="radio" name="scope" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />
-            Delegated
-            <span className="dim text-xs">— only the workspaces picked below</span>
-          </label>
-        </fieldset>
-        {scope === 'delegated' ? (
-          <fieldset className="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-            <legend className="dim px-1">Workspaces</legend>
-            {workspaces.length === 0 ? <span className="dim">No workspaces found.</span> : null}
-            {workspaces.map((w) => (
-              <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={workspaceIds.includes(w.id)}
-                  onChange={(e) =>
-                    setWorkspaceIds((prev) =>
-                      e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id),
-                    )
-                  }
-                />
-                {w.name}
-              </label>
+              <OptionRow
+                active={!shared}
+                control={<input type="radio" name="own" className="accent-emerald-600" checked={!shared} onChange={() => setShared(false)} />}
+                title="My account"
+                hint="Only my own actions act as this account."
+              />
+            </div>
+          </Section>
+        ) : (
+          <p className="dim rounded-lg bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed dark:bg-zinc-900/50">
+            This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges act
+            as you. Other work still uses the shared default.
+          </p>
+        )}
+
+        <Section label="This account handles">
+          <div className="flex flex-col gap-2">
+            {GITHUB_PURPOSES.map((purpose) => (
+              <OptionRow
+                key={purpose}
+                active={purposes.includes(purpose)}
+                control={
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={purposes.includes(purpose)}
+                    onChange={(e) =>
+                      setPurposes((prev) => (e.target.checked ? [...prev, purpose] : prev.filter((p) => p !== purpose)))
+                    }
+                  />
+                }
+                title={PURPOSE_META[purpose].label}
+                hint={PURPOSE_META[purpose].hint}
+              />
             ))}
-          </fieldset>
-        ) : null}
+          </div>
+        </Section>
+
+        <Section label="Available to">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <OptionRow
+              active={scope === 'shared'}
+              control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'shared'} onChange={() => setScope('shared')} />}
+              title="Shared"
+              hint="Acts for any workspace."
+            />
+            <OptionRow
+              active={scope === 'delegated'}
+              control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />}
+              title="Delegated"
+              hint="Only the workspaces picked below."
+            />
+          </div>
+          {scope === 'delegated' ? (
+            <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+              {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
+              {workspaces.map((w) => (
+                <label
+                  key={w.id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={workspaceIds.includes(w.id)}
+                    onChange={(e) =>
+                      setWorkspaceIds((prev) => (e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id)))
+                    }
+                  />
+                  {w.name}
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </Section>
+
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -407,6 +439,46 @@ function ConnectAccountModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** A titled form group with a small uppercase section header. */
+function Section({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[11px] font-semibold tracking-wider text-zinc-500 uppercase dark:text-zinc-400">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** A selectable option: control + stacked title/hint in a card that highlights
+ *  when active (works for radio or checkbox — the title never wraps into the hint). */
+function OptionRow({
+  active,
+  control,
+  title,
+  hint,
+}: {
+  active: boolean;
+  control: React.ReactNode;
+  title: string;
+  hint: string;
+}): JSX.Element {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors ${
+        active
+          ? 'border-emerald-500/50 bg-emerald-500/[0.06]'
+          : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40'
+      }`}
+    >
+      <span className="mt-0.5 shrink-0">{control}</span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="dim text-xs leading-relaxed">{hint}</span>
+      </span>
+    </label>
   );
 }
 
