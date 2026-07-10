@@ -62,6 +62,27 @@ export interface SlotContribution {
   readonly component: ComponentType<Record<string, unknown>>;
 }
 
+/**
+ * One card in the welcome tour / "what's new" popup. A module contributes the
+ * step for its own feature — with its OWN (compile-checked) permission, so there
+ * is no cross-module permission cast — and the host aggregates them by `order`
+ * into a single narrative. `art` draws inside the shared `OnboardingArt` frame.
+ */
+export interface OnboardingStep {
+  readonly key: string;
+  /** Position in the tour (ascending). Leave gaps so modules can slot between. */
+  readonly order: number;
+  /** Hide unless the viewer holds this permission (the contributing module's own). */
+  readonly need?: Permission;
+  readonly title: string;
+  readonly body: string;
+  readonly chips?: readonly string[];
+  readonly art: (playing: boolean) => ReactNode;
+  /** If this is the most-advanced step the viewer can act on, the finish button
+   *  deep-links here (lowest-order eligible step wins). */
+  readonly cta?: { readonly label: string; readonly href: string };
+}
+
 /** The `/client` barrel of a module. */
 export interface WebModule {
   readonly manifest: ModuleManifest;
@@ -69,6 +90,7 @@ export interface WebModule {
   readonly nav?: readonly NavEntry[];
   readonly routes?: readonly ClientRoute[];
   readonly slots?: readonly SlotContribution[];
+  readonly onboarding?: readonly OnboardingStep[];
 }
 
 // ---- registrants ----
@@ -76,7 +98,18 @@ export const defineSections = (s: readonly NavSection[]): readonly NavSection[] 
 export const defineNav = (e: readonly NavEntry[]): readonly NavEntry[] => e;
 export const defineClientRoutes = (r: readonly ClientRoute[]): readonly ClientRoute[] => r;
 export const defineSlots = (s: readonly SlotContribution[]): readonly SlotContribution[] => s;
+export const defineOnboarding = (s: readonly OnboardingStep[]): readonly OnboardingStep[] => s;
 export const defineClientModule = (m: WebModule): WebModule => m;
+
+/** The shared 120×90 illustration frame every onboarding step draws inside, so a
+ *  module's tour art matches the tour's visual language (emerald, ob-* motion). */
+export function OnboardingArt({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <svg viewBox="0 0 120 90" fill="none" className="h-36 w-auto text-emerald-600 dark:text-emerald-400" aria-hidden>
+      {children}
+    </svg>
+  );
+}
 
 // ---- the web host: single-socket net core, live loop, route matcher, module host ----
 export * from './net.js';

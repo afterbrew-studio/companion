@@ -5,6 +5,7 @@ import '../contract/index.js';
 import manifest from '../module.js';
 import { nav, sections } from './nav.js';
 import { routes } from './routes.js';
+import { onboarding } from './onboarding.js';
 
 /**
  * The `/client` barrel — module-operate's web surface: agent runs + the run
@@ -33,4 +34,5 @@ export default defineClientModule({
   sections,
   nav,
   routes,
+  onboarding,
 });

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { request, onServerMessage } from './net.js';
 import { compileRoutes } from './router.js';
-import type { ClientRoute, NavEntry, NavSection, SlotContribution, WebModule } from './index.js';
+import type { ClientRoute, NavEntry, NavSection, OnboardingStep, SlotContribution, WebModule } from './index.js';
 
 /**
  * The web module host. Fetches the installed-module catalog, dynamic-imports
@@ -39,6 +39,8 @@ export interface KernelState {
   readonly routes: readonly ClientRoute[];
   /** Contributions for a named in-page slot, sorted by order. */
   slots(name: string): readonly SlotContribution[];
+  /** Welcome-tour steps from all enabled modules, ordered into one narrative. */
+  readonly onboarding: readonly OnboardingStep[];
 }
 
 const KernelContext = createContext<KernelState | null>(null);
@@ -92,11 +94,13 @@ export function ModulesProvider(props: {
     const nav: NavEntry[] = [];
     const routes: ClientRoute[] = [];
     const slotMap = new Map<string, SlotContribution[]>();
+    const onboarding: OnboardingStep[] = [];
     const byOrder = <T extends { readonly order?: number }>(a: T, b: T): number => (a.order ?? 0) - (b.order ?? 0);
     for (const mod of modules) {
       for (const s of mod.sections ?? []) if (!sections.has(s.id)) sections.set(s.id, s);
       nav.push(...(mod.nav ?? []));
       routes.push(...(mod.routes ?? []));
+      onboarding.push(...(mod.onboarding ?? []));
       for (const s of mod.slots ?? []) {
         const list = slotMap.get(s.slot) ?? [];
         list.push(s);
@@ -113,6 +117,7 @@ export function ModulesProvider(props: {
       nav: [...nav].sort(byOrder),
       routes: compileRoutes(routes),
       slots: (name) => slotMap.get(name) ?? [],
+      onboarding: [...onboarding].sort((a, b) => a.order - b.order),
     };
   }, [descriptors, modules, ready]);
 

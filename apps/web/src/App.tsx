@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { MoxxyStatus } from '@companion/module-operate/contract';
 import type { WorkspaceVisibility } from '@companion/module-workspace/contract';
 import {
@@ -151,10 +151,16 @@ function Shell(): JSX.Element {
   const [assistantOpen, setAssistantOpen] = useState(false);
   // Onboarding: the full tour on first entry; a "what's new" popup when new
   // steps have shipped since the user last looked; replayable (full) from the
-  // shortcuts help.
-  const [tour, setTour] = useState<OnboardingMode | null>(() =>
-    !hasOnboarded() ? 'full' : hasUnseenOnboarding(can) ? 'whatsnew' : null,
-  );
+  // shortcuts help. Steps come from the modules, so the decision waits until the
+  // catalog has loaded (kernel.ready) — otherwise "what's new" would see zero
+  // steps and never fire. Decided once per session.
+  const [tour, setTour] = useState<OnboardingMode | null>(null);
+  const tourDecided = useRef(false);
+  useEffect(() => {
+    if (tourDecided.current || !kernel.ready) return;
+    tourDecided.current = true;
+    setTour(!hasOnboarded() ? 'full' : hasUnseenOnboarding(kernel.onboarding, can) ? 'whatsnew' : null);
+  }, [kernel.ready, kernel.onboarding, can]);
   // Mounted on first open and kept alive: the conversation (and the exit
   // slide animation) survive closing the panel.
   const [assistantMounted, setAssistantMounted] = useState(false);
@@ -455,7 +461,7 @@ function Shell(): JSX.Element {
           }}
         />
       ) : null}
-      {tour ? <Onboarding mode={tour} onClose={() => setTour(null)} /> : null}
+      {tour ? <Onboarding steps={kernel.onboarding} mode={tour} onClose={() => setTour(null)} /> : null}
     </div>
   );
 }

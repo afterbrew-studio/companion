@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { OnboardingStep } from '@companion/core/client';
 import type { Permission } from '@companion/contracts';
 import { useAuth } from '../lib/auth.js';
 
@@ -9,21 +10,16 @@ import { useAuth } from '../lib/auth.js';
  *  - `whatsnew` — only the steps a returning user hasn't seen yet, shown once
  *    when new steps appear (i.e. after a feature ships a new step).
  *
- * Extending it is one entry: append a `Step` to `STEPS` with a fresh `key`.
- * Existing users automatically get a "What's new" popup for just that step;
- * brand-new users get it inline in the full tour. Steps are role-aware (a step
- * whose `need` permission the user lacks is dropped), and the last step
- * deep-links to the most useful next action. Seen step keys are remembered in
- * localStorage, so the tracking survives new steps being added later.
+ * The steps are NOT defined here: each module contributes its own step (with its
+ * own compile-checked permission) via `defineOnboarding`, and the shell hands us
+ * `useKernel().onboarding` — already ordered and covering only enabled modules.
+ * A new feature ships its step in its own module and existing users get a
+ * "What's new" popup for it automatically. Steps are role-aware (a step whose
+ * `need` permission the user lacks is dropped), and the finish button deep-links
+ * to the most useful next action. Seen step keys are remembered in localStorage.
  */
 
 const SEEN_KEY = 'companion.onboarding.seen';
-
-// The tour spans other modules' features, and their permission ids are not in
-// core's compile-time registry (each module augments it from its own contract
-// slice), so cross-module keys are asserted here. A user who lacks one — or
-// whose install has that module disabled — simply never sees the step.
-const perm = (p: string): Permission => p as Permission;
 
 function seenKeys(): Set<string> {
   try {
@@ -40,103 +36,45 @@ export function hasOnboarded(): boolean {
 
 export type OnboardingMode = 'full' | 'whatsnew';
 
-export interface Step {
-  readonly key: string;
-  /** Hide this step unless the user holds the permission. */
-  readonly need?: Permission;
-  readonly title: string;
-  readonly body: string;
-  readonly chips?: ReadonlyArray<string>;
-  readonly art: (playing: boolean) => JSX.Element;
-}
-
-const STEPS: readonly Step[] = [
-  {
-    key: 'welcome',
-    title: 'Welcome to Companion',
-    body: 'Your repositories, run by AI agents. Companion triages issues, reviews pull requests, drafts specs and docs, and turns ideas into merged PRs — with you in control at every step.',
-    art: (playing) => <MascotArt playing={playing} />,
-  },
-  {
-    key: 'workspaces',
-    need: perm('workspaces:manage'),
-    title: 'Start with a workspace',
-    body: 'Workspaces group related repositories — Proposals, Issues, and Pull Requests are all scoped to the one you have active. Create and switch workspaces from the switcher at the top of the sidebar, or press ⌘K and search “Create workspace”.',
-    chips: ['Sidebar → Workspace', '⌘K → Create workspace'],
-    art: (playing) => <WorkspaceArt playing={playing} />,
-  },
-  {
-    key: 'connect',
-    need: 'settings:manage',
-    title: 'Connect GitHub, add repositories',
-    body: 'Connect a GitHub account, then add repositories into the active workspace from the Repositories page — or press ⌘K and search “Connect repository”. Companion syncs issues and PRs and clones each repo so agents can work on it.',
-    chips: ['Settings → GitHub', 'Repositories', '⌘K → Connect repository'],
-    art: (playing) => <LinkArt playing={playing} />,
-  },
-  {
-    key: 'plan',
-    need: perm('proposals:read'),
-    title: 'Plan: proposals, specs & docs',
-    body: 'Describe a change in plain language — an agent assesses feasibility, then implements it into a PR. Specifications ground that work in how your code should behave; documentation is indexed so every agent knows your project.',
-    chips: ['Proposals', 'Specifications', 'Documentation'],
-    art: (playing) => <PlanArt playing={playing} />,
-  },
-  {
-    key: 'code',
-    need: perm('prs:read'),
-    title: 'Code: issues, PRs & pipelines',
-    body: 'Triage issues, review pull requests with CI context, and let agents fix failing checks or address review feedback right on the branch. Compose pipelines from typed steps to automate it all.',
-    chips: ['Issues', 'Pull Requests', 'Pipelines'],
-    art: (playing) => <CodeArt playing={playing} />,
-  },
-  {
-    key: 'assistant',
-    title: 'AI Help — your platform copilot',
-    body: 'The sparkle in the top-right corner opens AI Help. Ask it anything about your workspace, or just tell it what to do — run a pipeline, find an issue, file a proposal — and it does it, scoped to your access.',
-    chips: ['Top-right ✦'],
-    art: (playing) => <SparkArt playing={playing} />,
-  },
-  {
-    key: 'runners',
-    need: perm('runners:manage'),
-    title: 'Scale across machines',
-    body: 'Agent work runs on this machine by default. Attach more machines as runners — shared across workspaces or delegated to specific ones — to run more agents in parallel.',
-    chips: ['Runners'],
-    art: (playing) => <RunnersArt playing={playing} />,
-  },
-];
-
-/** The best first action for the role, shown as the finish CTA. */
-function finishCta(can: (p: Permission) => boolean): { label: string; href: string } {
-  if (can('settings:manage')) return { label: 'Connect GitHub', href: '#/github' };
-  if (can(perm('proposals:create'))) return { label: 'Write a proposal', href: '#/proposals' };
-  return { label: 'Go to Overview', href: '#/overview' };
-}
-
 /** Steps this role can see. */
-function visibleSteps(can: (p: Permission) => boolean): Step[] {
-  return STEPS.filter((s) => !s.need || can(s.need));
+function visibleSteps(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): OnboardingStep[] {
+  return steps.filter((s) => !s.need || can(s.need));
+}
+
+/** The best first action for the role: the lowest-order visible step that
+ *  declares a `cta`, else the Overview. */
+function finishCta(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): { label: string; href: string } {
+  const step = visibleSteps(steps, can).find((s) => s.cta);
+  return step?.cta ?? { label: 'Go to Overview', href: '#/overview' };
 }
 
 /** Role-visible steps a returning user hasn't been shown yet (new features). */
-export function hasUnseenOnboarding(can: (p: Permission) => boolean): boolean {
+export function hasUnseenOnboarding(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): boolean {
   if (!hasOnboarded()) return false;
   const seen = seenKeys();
-  return visibleSteps(can).some((s) => !seen.has(s.key));
+  return visibleSteps(steps, can).some((s) => !seen.has(s.key));
 }
 
-export function Onboarding({ mode, onClose }: { mode: OnboardingMode; onClose: () => void }): JSX.Element {
+export function Onboarding({
+  steps,
+  mode,
+  onClose,
+}: {
+  steps: readonly OnboardingStep[];
+  mode: OnboardingMode;
+  onClose: () => void;
+}): JSX.Element {
   const { can, user } = useAuth();
-  const all = visibleSteps(can);
+  const all = visibleSteps(steps, can);
   const seen = seenKeys();
   // Full tour shows everything; "what's new" shows only the unseen steps (and
   // never renders empty — App gates on hasUnseenOnboarding first).
-  const steps = mode === 'whatsnew' ? all.filter((s) => !seen.has(s.key)) : all;
+  const shown = mode === 'whatsnew' ? all.filter((s) => !seen.has(s.key)) : all;
   const [i, setI] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const step = steps[Math.min(i, steps.length - 1)]!;
-  const last = i === steps.length - 1;
-  const cta = finishCta(can);
+  const step = shown[Math.min(i, shown.length - 1)]!;
+  const last = i === shown.length - 1;
+  const cta = finishCta(steps, can);
 
   const finish = (): void => {
     // Everything this role can currently see is now "seen" — so the next new
@@ -208,7 +146,7 @@ export function Onboarding({ mode, onClose }: { mode: OnboardingMode; onClose: (
           <div className="mt-5 flex items-center gap-3">
             {/* Progress dots */}
             <div className="flex flex-1 items-center gap-1.5" aria-hidden>
-              {steps.map((s, n) => (
+              {shown.map((s, n) => (
                 <button
                   key={s.key}
                   className={`h-1.5 rounded-full transition-all ${
@@ -250,98 +188,5 @@ export function Onboarding({ mode, onClose }: { mode: OnboardingMode; onClose: (
         </div>
       </div>
     </div>
-  );
-}
-
-// ---------- animated step illustrations ----------------------------------------
-// Each is a small self-contained SVG; the `ob-*` classes animate under
-// prefers-reduced-motion: no-preference and are otherwise static.
-
-function stage(children: JSX.Element): JSX.Element {
-  return (
-    <svg viewBox="0 0 120 90" fill="none" className="h-36 w-auto text-emerald-600 dark:text-emerald-400" aria-hidden>
-      {children}
-    </svg>
-  );
-}
-
-function MascotArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g className={playing ? 'ob-float' : ''} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="60" cy="80" rx="20" ry="3" className="ob-shadow" fill="currentColor" stroke="none" opacity="0.18" />
-      <path d="M44 30 L39 16 L54 24" />
-      <path d="M76 30 L81 16 L66 24" />
-      <rect x="36" y="28" width="48" height="34" rx="12" />
-      <circle className="ob-eye" cx="52" cy="45" r="3.6" fill="currentColor" stroke="none" />
-      <circle className="ob-eye" cx="68" cy="45" r="3.6" fill="currentColor" stroke="none" />
-      <path d="M54 53q6 4 12 0" />
-    </g>,
-  );
-}
-
-function WorkspaceArt({ playing }: { playing: boolean }): JSX.Element {
-  // A workspace folder gathering three repo tiles that settle in.
-  return stage(
-    <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M26 34h14l4-6h30a4 4 0 0 1 4 4v30a4 4 0 0 1-4 4H26a4 4 0 0 1-4-4V38a4 4 0 0 1 4-4z" />
-      <rect className={playing ? 'ob-tile' : ''} x="34" y="42" width="12" height="10" rx="2" />
-      <rect className={playing ? 'ob-tile ob-tile-2' : ''} x="54" y="42" width="12" height="10" rx="2" />
-      <rect className={playing ? 'ob-tile ob-tile-3' : ''} x="44" y="56" width="12" height="10" rx="2" />
-    </g>,
-  );
-}
-
-function LinkArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="38" cy="45" r="12" />
-      <circle cx="82" cy="45" r="12" />
-      <path className={playing ? 'ob-dash' : ''} d="M50 45h20" strokeDasharray="4 4" />
-      <path d="M34 45h8M78 45h8" />
-    </g>,
-  );
-}
-
-function PlanArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="30" y="22" width="34" height="46" rx="4" />
-      <path d="M37 34h20M37 42h20M37 50h12" className={playing ? 'ob-write' : ''} />
-      <path d="M72 30l14 4-4 14-14-4z" className={playing ? 'ob-float' : ''} />
-      <path d="M75 36l8 2" />
-    </g>,
-  );
-}
-
-function CodeArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="34" cy="30" r="5" />
-      <circle cx="34" cy="62" r="5" />
-      <circle cx="84" cy="62" r="5" />
-      <path d="M34 35v22M60 30h14a4 4 0 0 1 4 4v23" />
-      <path className={playing ? 'ob-check' : ''} d="M50 46l6 6 12-13" stroke="currentColor" strokeWidth="2.6" />
-    </g>,
-  );
-}
-
-function SparkArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g className={playing ? 'ob-pulse' : ''} stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round">
-      <path d="M60 24l5 14 14 5-14 5-5 14-5-14-14-5 14-5z" fill="currentColor" fillOpacity="0.12" />
-      <path d="M82 52l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5z" fill="currentColor" stroke="none" />
-    </g>,
-  );
-}
-
-function RunnersArt({ playing }: { playing: boolean }): JSX.Element {
-  return stage(
-    <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="30" y="24" width="60" height="16" rx="3" />
-      <rect x="30" y="48" width="60" height="16" rx="3" />
-      <circle className={playing ? 'ob-blink' : ''} cx="38" cy="32" r="2.2" fill="currentColor" stroke="none" />
-      <circle className={playing ? 'ob-blink ob-blink-2' : ''} cx="38" cy="56" r="2.2" fill="currentColor" stroke="none" />
-      <path d="M48 32h32M48 56h32" opacity="0.5" />
-    </g>,
   );
 }
