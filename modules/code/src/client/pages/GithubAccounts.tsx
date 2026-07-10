@@ -13,6 +13,7 @@ import {
   Modal,
   Page,
   PageHeader,
+  RowsSkeleton,
   SettingRow,
   Switch,
   timeAgo,
@@ -102,7 +103,11 @@ export function GithubAccountsPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {accounts === null ? null : accounts.length === 0 ? (
+      {accounts === null ? (
+        <div className="card">
+          <RowsSkeleton rows={2} />
+        </div>
+      ) : accounts.length === 0 ? (
         <EmptyState
           title="No GitHub accounts connected"
           hint="Connect a fine-grained PAT with Contents / Issues / Pull requests read-write and Metadata read."

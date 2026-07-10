@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { pipelineRunHref, reportHref, runHref } from '@companion/core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
-import { EmptyState, ErrorBar, InlineLoading, ListCard, Page, PageHeader, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
+import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
 import { ChecksBadge } from '../widgets.js';
@@ -57,25 +57,29 @@ export function DashboardPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {/* Each tile shows an ellipsis until its own feed lands. */}
+      {/* Every tile renders its frame immediately; the value is a skeleton
+          until that tile's own feed lands. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <StatTile
           label="Open issues"
-          value={openIssueCount ?? '…'}
+          loading={openIssueCount === null}
+          value={openIssueCount ?? 0}
           href="#/issues"
           delta={issueBacklogDelta}
           trend={issueBacklog ?? undefined}
         />
         <StatTile
           label="Open PRs"
-          value={openPrs?.length ?? '…'}
+          loading={openPrs === null}
+          value={openPrs?.length ?? 0}
           href="#/prs"
           delta={prBacklogDelta}
           trend={prBacklog ?? undefined}
         />
         <StatTile
           label="Failing CI"
-          value={failingPrs?.length ?? '…'}
+          loading={failingPrs === null}
+          value={failingPrs?.length ?? 0}
           tone={failingPrs && failingPrs.length > 0 ? 'danger' : 'ok'}
           hint={
             failingPrs ? (failingPrs.length > 0 ? 'pull requests with red pipelines' : 'all pipelines green') : undefined
@@ -84,25 +88,23 @@ export function DashboardPage(): JSX.Element {
         />
         <StatTile
           label="Live agents"
-          value={liveRuns?.length ?? '…'}
+          loading={liveRuns === null}
+          value={liveRuns?.length ?? 0}
           tone={liveRuns && liveRuns.length > 0 ? 'ok' : 'default'}
           href="#/runs"
         />
         <StatTile
           label="Proposals to act on"
-          value={actionableProposals?.length ?? '…'}
+          loading={actionableProposals === null}
+          value={actionableProposals?.length ?? 0}
           tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
           href="#/proposals"
         />
       </div>
 
-      {metrics ? <MetricsSection metrics={metrics} /> : <LoadingSection title="Velocity" label="Crunching weekly velocity…" />}
+      <MetricsSection metrics={metrics} />
 
-      {workspaceRuns ? (
-        <UsageSection runs={workspaceRuns} />
-      ) : (
-        <LoadingSection title="Agent usage" label="Adding up token spend…" />
-      )}
+      <UsageSection runs={workspaceRuns} />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section aria-labelledby="needs-attention">
@@ -110,11 +112,7 @@ export function DashboardPage(): JSX.Element {
             Needs attention
           </h2>
           <ListCard>
-            {attentionCount === null ? (
-              <div className="px-4 py-6">
-                <InlineLoading label="Checking what needs you…" />
-              </div>
-            ) : null}
+            {attentionCount === null ? <RowsSkeleton rows={3} /> : null}
             {reviewRuns?.map((run) => (
               <a key={run.id} href={`#/runs/${run.id}/preview`} className="row-link">
                 <StatusDot tone="amber" />
@@ -195,26 +193,12 @@ export function DashboardPage(): JSX.Element {
             <ActivityFeed runs={workspaceRuns} pipelineRuns={pipelineRuns} reports={workspaceReports} />
           ) : (
             <ListCard>
-              <div className="px-4 py-6">
-                <InlineLoading label="Fetching the feed…" />
-              </div>
+              <RowsSkeleton rows={5} />
             </ListCard>
           )}
         </section>
       </div>
     </Page>
-  );
-}
-
-/** A section still waiting on its own feed — header renders, body is a loader. */
-function LoadingSection({ title, label }: { title: string; label: string }): JSX.Element {
-  return (
-    <section className="mt-6">
-      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
-      <div className="card">
-        <InlineLoading label={label} />
-      </div>
-    </section>
   );
 }
 
@@ -325,7 +309,25 @@ function formatTokens(n: number): string {
  * Sessions + token spend for this workspace. The gateway does not report money,
  * so tokens are the cost proxy; per-session bars use dataviz sequential slot 1.
  */
-function UsageSection({ runs }: { runs: RunRecord[] }): JSX.Element | null {
+function UsageSection({ runs }: { runs: RunRecord[] | null }): JSX.Element | null {
+  if (runs === null) {
+    return (
+      <section className="mt-6" aria-labelledby="usage-heading" aria-busy>
+        <h2 id="usage-heading" className="mb-2 text-sm font-semibold">
+          Agent usage
+        </h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Sessions" loading value={0} />
+          <StatTile label="Tokens in" loading value={0} />
+          <StatTile label="Tokens out" loading value={0} />
+          <StatTile label="Avg tokens / session" loading value={0} />
+        </div>
+        <div className="mt-3">
+          <ChartSkeleton title="Tokens per session" />
+        </div>
+      </section>
+    );
+  }
   if (runs.length === 0) return null;
   const totalIn = runs.reduce((acc, r) => acc + r.inputTokens, 0);
   const totalOut = runs.reduce((acc, r) => acc + r.outputTokens, 0);
@@ -386,7 +388,26 @@ const CLOSED = 'fill-[#1baf7a] dark:fill-[#199e70]';
 const OPENED_SWATCH = 'bg-[#2a78d6] dark:bg-[#3987e5]';
 const CLOSED_SWATCH = 'bg-[#1baf7a] dark:bg-[#199e70]';
 
-function MetricsSection({ metrics }: { metrics: WorkspaceMetrics }): JSX.Element {
+function MetricsSection({ metrics }: { metrics: WorkspaceMetrics | null }): JSX.Element {
+  if (metrics === null) {
+    return (
+      <section className="mt-6" aria-labelledby="metrics-heading" aria-busy>
+        <h2 id="metrics-heading" className="mb-2 text-sm font-semibold">
+          Velocity
+        </h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Issues opened · 7d" loading value={0} />
+          <StatTile label="Issues closed · 7d" loading value={0} />
+          <StatTile label="PRs opened · 7d" loading value={0} />
+          <StatTile label="PRs closed · 7d" loading value={0} />
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <ChartSkeleton title="Issues — opened vs closed by week" />
+          <ChartSkeleton title="Pull requests — opened vs closed by week" />
+        </div>
+      </section>
+    );
+  }
   const weekly = metrics.weekly;
   // Rolling 7-day deltas: immune to the partial-calendar-week distortion.
   const rolling = (current: number, previous: number, upIsGood: boolean) => ({

@@ -14,6 +14,7 @@ import {
   ListFooter,
   Page,
   PageHeader,
+  RowsSkeleton,
   SearchInput,
   Tabs,
   timeAgo,
@@ -208,6 +209,7 @@ export function IssuesAreaPage(): JSX.Element {
       ) : (
         <>
         <ListCard className="mt-3" ariaLabel="Issue list">
+          {loading && issues.length === 0 ? <RowsSkeleton rows={6} /> : null}
           {issues.map((issue) => (
             <a
               key={`${issue.repo}#${issue.number}`}

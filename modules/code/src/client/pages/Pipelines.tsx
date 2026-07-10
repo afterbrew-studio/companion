@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, Section, useConfirm } from '@companion/ui';
+import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@companion/ui';
 import type {
   PipelineRecord,
   PipelineStep,
@@ -63,7 +63,7 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
 }
 
 export function PipelinesPage(): JSX.Element {
-  const { current, pipelines, stepDefs, error, setError, refresh } = usePipelines();
+  const { current, pipelines, stepDefs, loaded, error, setError, refresh } = usePipelines();
   const { can } = useAuth();
   const [editing, setEditing] = useState<PipelineRecord | 'new' | null>(null);
   const [editingDef, setEditingDef] = useState<StepDefinitionRecord | 'new' | null>(null);
@@ -97,6 +97,11 @@ export function PipelinesPage(): JSX.Element {
       <ErrorBar error={error} />
 
       <div className="flex flex-col gap-3">
+        {!loaded ? (
+          <div className="card">
+            <RowsSkeleton rows={2} />
+          </div>
+        ) : null}
         {pipelines.map((p) => (
           <article key={p.id} className="card" aria-label={p.name}>
             <div className="flex flex-wrap items-center gap-2">
@@ -160,7 +165,7 @@ export function PipelinesPage(): JSX.Element {
           </article>
         ))}
       </div>
-      {pipelines.length === 0 ? (
+      {loaded && pipelines.length === 0 ? (
         <EmptyState
           title="No pipelines yet"
           hint="A pipeline is an ordered set of steps — CI gate, AI review, custom agents, labels, comments — that you run against pull requests."
@@ -178,7 +183,12 @@ export function PipelinesPage(): JSX.Element {
         title="Custom step library"
         description="Reusable steps shared by every pipeline in this workspace. Editing a library step updates all pipelines that reference it."
       >
-        {stepDefs.length === 0 ? (
+        {!loaded ? (
+          <div className="card">
+            <RowsSkeleton rows={2} />
+          </div>
+        ) : null}
+        {loaded && stepDefs.length === 0 ? (
           <EmptyState
             title="No custom steps yet"
             hint="Custom steps let you reuse an agent prompt or gate across pipelines."

@@ -15,6 +15,8 @@ import { codeApi as api } from '../api.js';
 export function useReposAdmin(): {
   current: WorkspaceRecord | null;
   repos: RepoRecord[];
+  /** False until the first fetch lands — the page shows skeletons, not "no repos". */
+  loaded: boolean;
   accounts: GitHubAccountRecord[];
   runners: RunnerRecord[];
   error: string | null;
@@ -23,6 +25,7 @@ export function useReposAdmin(): {
 } {
   const { current } = useWorkspace();
   const [repos, setRepos] = useState<RepoRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
   const [runners, setRunners] = useState<RunnerRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +38,8 @@ export function useReposAdmin(): {
       setError(null);
     } catch (err) {
       setError(String(err));
+    } finally {
+      setLoaded(true);
     }
   }, [current]);
   useLive(refresh, (msg) => msg.t === 'repos.changed' || msg.t === 'workspaces.changed');
@@ -50,5 +55,5 @@ export function useReposAdmin(): {
       .catch(() => setRunners([]));
   }, []);
 
-  return { current, repos, accounts, runners, error, setError, refresh };
+  return { current, repos, loaded, accounts, runners, error, setError, refresh };
 }

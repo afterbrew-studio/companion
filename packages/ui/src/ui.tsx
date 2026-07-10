@@ -350,6 +350,7 @@ export function StatTile({
   tone = 'default',
   delta,
   trend,
+  loading = false,
 }: {
   label: string;
   value: string | number;
@@ -358,6 +359,8 @@ export function StatTile({
   tone?: 'default' | 'ok' | 'warn' | 'danger';
   delta?: StatDelta;
   trend?: ReadonlyArray<number>;
+  /** The tile's own feed hasn't landed yet: label renders, value is a skeleton. */
+  loading?: boolean;
 }): JSX.Element {
   const toneClass =
     tone === 'danger'
@@ -373,9 +376,13 @@ export function StatTile({
         <div className="dim min-w-0 truncate text-xs" title={label}>
           {label}
         </div>
-        {delta ? <DeltaChip delta={delta} /> : null}
+        {!loading && delta ? <DeltaChip delta={delta} /> : null}
       </div>
-      <div className={`mt-1.5 text-3xl leading-none font-semibold ${toneClass}`}>{value}</div>
+      {loading ? (
+        <Skeleton className="mt-1.5 h-[30px] w-12" />
+      ) : (
+        <div className={`mt-1.5 text-3xl leading-none font-semibold ${toneClass}`}>{value}</div>
+      )}
       {hint ? (
         // Secondary detail stays off the tile face; it fades in on hover/focus.
         <div
@@ -554,6 +561,41 @@ export function Spinner(): JSX.Element {
 /** Shimmering placeholder line for content that is still loading. */
 export function Skeleton({ className = '' }: { className?: string }): JSX.Element {
   return <span className={`skeleton ${className}`} aria-hidden />;
+}
+
+/** N placeholder rows for a list still waiting on its feed (drop inside ListCard). */
+export function RowsSkeleton({ rows = 4 }: { rows?: number }): JSX.Element {
+  return (
+    <div aria-hidden className="flex flex-col">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-2.5 px-4 py-3">
+          <Skeleton className="size-2 shrink-0 rounded-full" />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-2/3" />
+            <Skeleton className="h-3 w-2/5" />
+          </span>
+          <Skeleton className="h-3 w-10 shrink-0" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A pleasant deterministic bar series for chart placeholders.
+const CHART_SKELETON_BARS = [35, 60, 45, 80, 55, 70, 40, 65, 50, 75, 45, 60];
+
+/** Placeholder for a chart card still waiting on its feed. */
+export function ChartSkeleton({ title }: { title: string }): JSX.Element {
+  return (
+    <figure className="card" aria-hidden>
+      <figcaption className="dim text-[13px] font-medium">{title}</figcaption>
+      <div className="mt-3 flex h-28 items-end gap-1.5">
+        {CHART_SKELETON_BARS.map((h, i) => (
+          <span key={i} className="skeleton flex-1 rounded-sm" style={{ height: `${h}%` }} />
+        ))}
+      </div>
+    </figure>
+  );
 }
 
 /** Spinner + label for inline loading moments (list refresh, side panels). */

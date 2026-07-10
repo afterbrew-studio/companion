@@ -13,6 +13,8 @@ export function usePipelines(): {
   current: WorkspaceRecord | null;
   pipelines: PipelineRecord[];
   stepDefs: StepDefinitionRecord[];
+  /** False until the first fetch lands — the page shows skeletons, not "no pipelines". */
+  loaded: boolean;
   error: string | null;
   setError: (e: string | null) => void;
   refresh: () => Promise<void>;
@@ -20,6 +22,7 @@ export function usePipelines(): {
   const { current } = useWorkspace();
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [stepDefs, setStepDefs] = useState<StepDefinitionRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -31,10 +34,12 @@ export function usePipelines(): {
       setError(null);
     } catch (err) {
       setError(String(err));
+    } finally {
+      setLoaded(true);
     }
   }, [current]);
 
   useLive(refresh, (msg) => msg.t === 'pipelines.changed');
 
-  return { current, pipelines, stepDefs, error, setError, refresh };
+  return { current, pipelines, stepDefs, loaded, error, setError, refresh };
 }

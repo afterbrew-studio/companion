@@ -17,6 +17,7 @@ import {
   Modal,
   Page,
   PageHeader,
+  RowsSkeleton,
   Spinner,
   timeAgo,
   useConfirm,
@@ -36,7 +37,7 @@ export function ReposPage(): JSX.Element {
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
   // Admins manage any workspace; an owner manages their own (public or private).
   const canManageCurrent = can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username);
-  const { repos, accounts, runners, error, setError, refresh } = useReposAdmin();
+  const { repos, loaded, accounts, runners, error, setError, refresh } = useReposAdmin();
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
 
@@ -76,7 +77,11 @@ export function ReposPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {repos.length > 0 ? (
+      {!loaded ? (
+        <div className="card">
+          <RowsSkeleton rows={3} />
+        </div>
+      ) : repos.length > 0 ? (
         <div className="flex flex-col gap-3">
           {repos.map((repo) => (
             <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} accounts={accounts} runners={runners} onChange={refresh} onError={setError} />

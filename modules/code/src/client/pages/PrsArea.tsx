@@ -15,6 +15,7 @@ import {
   MetaSignal,
   Page,
   PageHeader,
+  RowsSkeleton,
   SearchInput,
   Tabs,
   timeAgo,
@@ -225,6 +226,7 @@ export function PrsAreaPage(): JSX.Element {
         />
       ) : (
         <ListCard className="mt-3" ariaLabel="Pull request list">
+          {loading && prs.length === 0 ? <RowsSkeleton rows={6} /> : null}
           {prs.map((pr) => (
             <a
               key={`${pr.repo}#${pr.number}`}
