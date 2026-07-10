@@ -40,12 +40,31 @@ COMPANION_RUNNER_TOKEN=<shared-secret> companion-runner --background
 
 No GitHub credential is needed on the box — Companion sends its own configured GitHub token with each clone and push (set `COMPANION_RUNNER_GITHUB_TOKEN` to override with a machine-specific PAT). `companion-runner doctor` reports what a box still needs; `status`/`stop` manage a background runner. See `apps/companion-runner/README.md` for the full environment. (In a monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.)
 
+### Modular framework
+
+Companion is built as a **modular framework**. A small framework core
+(`@companion/core`) hosts feature **modules** — one per domain (`core`,
+`workspace`, `operate`, `code`, `plan`, `automations`, `admin`) under `modules/*`
+— that are **loaded, migrated, permissioned, and toggled at runtime**. Each
+module ships its own tables (with per-module migrations + rollback), REST/WS
+routes, RBAC permissions, background jobs, and web pages, and declares which
+other modules it depends on. The kernel reconciles the installed set on boot,
+activates modules in dependency order, and lets an admin enable/disable/uninstall
+any non-required module live from the **Modules** page — its API flips to `503`,
+its nav and routes disappear, and its permissions drop from the grid, with no
+restart. Installing a new module is one entry in each app's module registry.
+
+**To build a module, read [`modules/README.md`](modules/README.md)** — the
+complete authoring guide — or invoke the `companion-build-module` skill /
+`module-builder` agent.
+
 ## Repository layout
 
-- `apps/api` — local daemon: typed route registry + RBAC, auth sessions, run orchestration, the runner registry (local + remote backends) and placement, GitHub sync/checks, pipeline engine, SQLite store, HTTP+WS server.
+- `apps/api` — the daemon: boots the **kernel** (`@companion/core`), holds the static module registry, and runs the HTTP/WS server. Feature logic lives in the modules it loads, not here.
+- `apps/web` — the React/Vite SPA **shell**: `ModulesProvider` + the single-socket net layer. It hosts and presents modules' client slices; it contains no feature pages of its own.
 - `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companion-api` over HTTP+WS.
-- `apps/web` — React SPA served by companion-api in production and by Vite in development.
-- `packages/contract` — shared domain types, RBAC permissions, REST DTOs, pipeline step unions, the moxxy gateway wire subset, and the runner-agent protocol.
+- `packages/*` — the framework: `@companion/types` (primitives), `@companion/contracts` (the open RBAC/WS/service registries), `@companion/services` (base store/service utils), `@companion/core` (the kernel + registrant API + client host), `@companion/ui` (design-system kit).
+- `modules/*` — the feature domains, one `@companion/module-<id>` package each. See [`modules/README.md`](modules/README.md).
 
 ## Prerequisites
 
