@@ -320,9 +320,9 @@ function ConnectAccountModal({
   };
 
   return (
-    <Modal title="Connect a GitHub account" onClose={onClose}>
+    <Modal wide title="Connect a GitHub account" onClose={onClose}>
       <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
-        {/* Fine-grained PAT — the one required field, up top. */}
+        {/* Fine-grained PAT — the one required field, spanning the top. */}
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Fine-grained personal access token</span>
           <input
@@ -339,90 +339,95 @@ function ConnectAccountModal({
           </span>
         </label>
 
-        {isAdmin ? (
-          <Section label="Ownership">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <OptionRow
-                active={shared}
-                control={<input type="radio" name="own" className="accent-emerald-600" checked={shared} onChange={() => setShared(true)} />}
-                title="Shared default"
-                hint="The instance-wide fallback everyone's actions use."
-              />
-              <OptionRow
-                active={!shared}
-                control={<input type="radio" name="own" className="accent-emerald-600" checked={!shared} onChange={() => setShared(false)} />}
-                title="My account"
-                hint="Only my own actions act as this account."
-              />
-            </div>
-          </Section>
-        ) : (
-          <p className="dim rounded-lg bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed dark:bg-zinc-900/50">
-            This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges act
-            as you. Other work still uses the shared default.
-          </p>
-        )}
-
-        <Section label="This account handles">
-          <div className="flex flex-col gap-2">
-            {GITHUB_PURPOSES.map((purpose) => (
-              <OptionRow
-                key={purpose}
-                active={purposes.includes(purpose)}
-                control={
-                  <input
-                    type="checkbox"
-                    className="accent-emerald-600"
-                    checked={purposes.includes(purpose)}
-                    onChange={(e) =>
-                      setPurposes((prev) => (e.target.checked ? [...prev, purpose] : prev.filter((p) => p !== purpose)))
-                    }
-                  />
-                }
-                title={PURPOSE_META[purpose].label}
-                hint={PURPOSE_META[purpose].hint}
-              />
-            ))}
-          </div>
-        </Section>
-
-        <Section label="Available to">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <OptionRow
-              active={scope === 'shared'}
-              control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'shared'} onChange={() => setScope('shared')} />}
-              title="Shared"
-              hint="Acts for any workspace."
-            />
-            <OptionRow
-              active={scope === 'delegated'}
-              control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />}
-              title="Delegated"
-              hint="Only the workspaces picked below."
-            />
-          </div>
-          {scope === 'delegated' ? (
-            <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
-              {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
-              {workspaces.map((w) => (
-                <label
-                  key={w.id}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-                >
-                  <input
-                    type="checkbox"
-                    className="accent-emerald-600"
-                    checked={workspaceIds.includes(w.id)}
-                    onChange={(e) =>
-                      setWorkspaceIds((prev) => (e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id)))
-                    }
-                  />
-                  {w.name}
-                </label>
+        {/* Two columns: what the account DOES (left) vs who it IS + where it applies (right). */}
+        <div className="grid gap-x-6 gap-y-5 md:grid-cols-2">
+          <Section label="This account handles">
+            <div className="flex flex-col gap-2">
+              {GITHUB_PURPOSES.map((purpose) => (
+                <OptionRow
+                  key={purpose}
+                  active={purposes.includes(purpose)}
+                  control={
+                    <input
+                      type="checkbox"
+                      className="accent-emerald-600"
+                      checked={purposes.includes(purpose)}
+                      onChange={(e) =>
+                        setPurposes((prev) => (e.target.checked ? [...prev, purpose] : prev.filter((p) => p !== purpose)))
+                      }
+                    />
+                  }
+                  title={PURPOSE_META[purpose].label}
+                  hint={PURPOSE_META[purpose].hint}
+                />
               ))}
             </div>
-          ) : null}
-        </Section>
+          </Section>
+
+          <div className="flex flex-col gap-5">
+            {isAdmin ? (
+              <Section label="Ownership">
+                <div className="flex flex-col gap-2">
+                  <OptionRow
+                    active={shared}
+                    control={<input type="radio" name="own" className="accent-emerald-600" checked={shared} onChange={() => setShared(true)} />}
+                    title="Shared default"
+                    hint="The instance-wide fallback everyone's actions use."
+                  />
+                  <OptionRow
+                    active={!shared}
+                    control={<input type="radio" name="own" className="accent-emerald-600" checked={!shared} onChange={() => setShared(false)} />}
+                    title="My account"
+                    hint="Only my own actions act as this account."
+                  />
+                </div>
+              </Section>
+            ) : (
+              <p className="dim rounded-lg bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed dark:bg-zinc-900/50">
+                This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges
+                act as you. Other work still uses the shared default.
+              </p>
+            )}
+
+            <Section label="Available to">
+              <div className="flex flex-col gap-2">
+                <OptionRow
+                  active={scope === 'shared'}
+                  control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'shared'} onChange={() => setScope('shared')} />}
+                  title="Shared"
+                  hint="Acts for any workspace."
+                />
+                <OptionRow
+                  active={scope === 'delegated'}
+                  control={<input type="radio" name="scope" className="accent-emerald-600" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />}
+                  title="Delegated"
+                  hint="Only the workspaces picked below."
+                />
+              </div>
+              {scope === 'delegated' ? (
+                <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+                  {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
+                  {workspaces.map((w) => (
+                    <label
+                      key={w.id}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-emerald-600"
+                        checked={workspaceIds.includes(w.id)}
+                        onChange={(e) =>
+                          setWorkspaceIds((prev) => (e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id)))
+                        }
+                      />
+                      {w.name}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </Section>
+          </div>
+        </div>
 
         {error ? <div className="error-bar">{error}</div> : null}
         <div className="flex justify-end gap-2">
