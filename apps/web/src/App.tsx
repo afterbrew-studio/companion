@@ -87,8 +87,7 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
   const { branding } = useAuth();
   const name = branding.name?.trim() || 'Companion';
   return (
-    // Same padding in both modes — the logo must not move on collapse/expand.
-    <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+    <div className={`flex items-center gap-2 pt-4 pb-2 ${rail ? 'justify-center px-2' : 'px-4'}`}>
       {branding.logo ? (
         <img src={branding.logo} alt="" className="size-7 shrink-0 rounded-lg object-cover" />
       ) : (
@@ -357,7 +356,9 @@ function Shell(): JSX.Element {
                     onMouseLeave={rail ? () => setRailTip(null) : undefined}
                     onFocus={rail ? (e) => showRailTip(e, m.label) : undefined}
                     onBlur={rail ? () => setRailTip(null) : undefined}
-                    className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] ${
+                    className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
+                      rail ? 'justify-center px-0' : 'px-2.5'
+                    } ${
                       active
                         ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
                         : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
@@ -407,9 +408,9 @@ function Shell(): JSX.Element {
 
         <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           {rail ? (
-            // Icon-only: just the profile glyph, sitting where the expanded row
-            // starts — sign out lives in the expanded sidebar.
-            <div className="-mx-2">
+            // Icon-only: just the profile glyph, centered — sign out lives in
+            // the expanded sidebar.
+            <div className="-mx-2 flex justify-center">
               <a
                 href="#/profile"
                 className="flex w-fit items-center rounded-lg p-1.5 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
