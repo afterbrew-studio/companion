@@ -52,9 +52,4 @@ export const workspaceApi = {
 
   // reports
   listReports: () => request<{ reports: ReportRecord[] }>('/api/reports'),
-
-  // Kick off an on-demand digest run. The route is SERVED by module-automations
-  // (which depends on us) — only the URL is shared here, no import, no cycle.
-  // Keep in sync with automations' `/api/repos/:owner/:name/digest-now` route.
-  digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
 };

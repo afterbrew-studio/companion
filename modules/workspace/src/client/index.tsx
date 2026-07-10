@@ -5,8 +5,8 @@ import { routes } from './routes.js';
 
 /**
  * The `/client` barrel — module-workspace's web surface: the workspace provider
- * the shell wraps the app in, the header inbox bell, plus the Digest/Inbox
- * routes and the Workspace sidebar group. Vite reads this as source.
+ * the shell wraps the app in, the header inbox bell, plus the Inbox route and
+ * the Workspace sidebar group. Vite reads this as source.
  */
 
 // The shell (and other modules) reach these by name — everything else is routed.

@@ -1,34 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { request, useLive } from '@companion/core/client';
-import type { ReportRecord, WorkspaceRecord } from '../../contract/index.js';
-import { workspaceApi } from '../api.js';
-import { useWorkspace } from '../lib/workspace.js';
-import { useWorkspaceRepos, type WorkspaceRepoLite } from './useWorkspaceRepos.js';
-
-/**
- * CYCLE NOTE: agent runs are module-operate's domain and operate depends on
- * workspace, so this module can import neither its `RunRecord` nor its api
- * slice. The Digest page only needs to spot a live report run, so we call
- * operate's `/api/runs` route directly, typed structurally to those fields.
- * Keep in sync with module-operate's run DTO and route.
- */
-export interface RunLite {
-  readonly id: string;
-  readonly kind: string;
-  readonly repo: string | null;
-  readonly live: boolean;
-}
+import { useLive } from '@companion/core/client';
+import type { RepoRecord } from '@companion/module-code/contract';
+import { useWorkspaceRepos } from '@companion/module-code/client';
+import type { RunRecord } from '@companion/module-operate/contract';
+import { operateApi } from '@companion/module-operate/client';
+import type { ReportRecord, WorkspaceRecord } from '@companion/module-workspace/contract';
+import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
 
 /**
  * The Daily Digest page's data: the workspace repos (the digest is per-repo),
  * the report + run feeds, and the currently-selected repo — which defaults to
- * the first repo and follows the live repo list. Kept live.
+ * the first repo and follows the live repo list. Kept live. Each feed is read
+ * through its owning module's api slice — automations sits at the top of the
+ * module graph, so code/operate/workspace are all legal imports.
  */
 export function useDigest(): {
   current: WorkspaceRecord | null;
-  repos: WorkspaceRepoLite[];
+  repos: RepoRecord[];
   reports: ReportRecord[];
-  runs: RunLite[];
+  runs: RunRecord[];
   selected: string | null;
   setSelected: (repo: string | null) => void;
   loaded: boolean;
@@ -39,7 +29,7 @@ export function useDigest(): {
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
   const [reports, setReports] = useState<ReportRecord[]>([]);
-  const [runs, setRuns] = useState<RunLite[]>([]);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +39,7 @@ export function useDigest(): {
     try {
       const [rep, r] = await Promise.all([
         workspaceApi.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
-        request<{ runs: RunLite[] }>('/api/runs').catch(() => ({ runs: [] as RunLite[] })),
+        operateApi.listRuns().catch(() => ({ runs: [] as RunRecord[] })),
       ]);
       setReports(rep.reports);
       setRuns(r.runs);
@@ -61,12 +51,7 @@ export function useDigest(): {
     }
   }, [current]);
 
-  // `runs.changed`/`run.changed` are module-operate's messages — invisible to
-  // this compilation, so match them as plain strings.
-  useLive(
-    refresh,
-    (msg) => msg.t === 'reports.changed' || (msg.t as string) === 'runs.changed' || (msg.t as string) === 'run.changed',
-  );
+  useLive(refresh, (msg) => msg.t === 'reports.changed' || msg.t === 'runs.changed' || msg.t === 'run.changed');
 
   // Default to the first repo; keep the pick valid as the repo list changes.
   useEffect(() => {

@@ -1,15 +1,8 @@
 import { useState } from 'react';
-import type { Permission } from '@companion/contracts';
 import { EmptyState, Markdown, Page, PageHeader, Section, Spinner, timeAgo } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
-import { workspaceApi } from '../api.js';
+import { automationsApi } from '../api.js';
 import { useDigest } from '../hooks/useDigest.js';
-
-// CYCLE NOTE: `automations:manage` is module-automations' permission and
-// automations depends on workspace, so its registration is invisible to this
-// compilation. Widen the literal instead of importing the contract. Keep in
-// sync with module-automations' manifest.
-const AUTOMATIONS_MANAGE = 'automations:manage' as unknown as Permission;
 
 /**
  * Daily Digest: the AI review of a repository — what shipped, what failed,
@@ -44,7 +37,7 @@ export function DigestPage(): JSX.Element {
     try {
       // Returns immediately; the agent works in the background. Keep the local
       // busy state up briefly to bridge the gap until the live run appears.
-      await workspaceApi.digestNow(selected);
+      await automationsApi.digestNow(selected);
       await refresh();
       window.setTimeout(() => setSending(false), 5000);
     } catch (err) {
@@ -74,7 +67,7 @@ export function DigestPage(): JSX.Element {
                 ))}
               </select>
             ) : null}
-            {can(AUTOMATIONS_MANAGE) && selected ? (
+            {can('automations:manage') && selected ? (
               <button className="btn" disabled={generating} onClick={() => void generate()}>
                 {generating ? 'Reviewing…' : 'Generate digest'}
               </button>
@@ -126,14 +119,14 @@ export function DigestPage(): JSX.Element {
         <EmptyState
           title="No digest yet"
           hint={
-            can(AUTOMATIONS_MANAGE)
+            can('automations:manage')
               ? 'Generate your first digest above, or enable the daily schedule under Automations.'
               : 'Digests appear here once a maintainer generates one or the daily schedule runs.'
           }
         />
       )}
 
-      {repo && can(AUTOMATIONS_MANAGE) && !repo.digestEnabled ? (
+      {repo && can('automations:manage') && !repo.digestEnabled ? (
         <p className="dim mt-3 text-[13px]">
           Want this every morning without clicking?{' '}
           <a className="underline" href="#/automations">
