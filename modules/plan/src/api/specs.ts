@@ -363,7 +363,6 @@ export class Specs {
         href: '#/specs',
         createdAt: Date.now(),
       });
-      this.broadcast({ t: 'notifications.changed' });
       this.broadcast({ t: 'specs.changed' });
     }
   }

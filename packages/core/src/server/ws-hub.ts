@@ -3,6 +3,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AuthUser, SpaServerMessage } from '@companion/contracts';
 import { log } from '@companion/services';
+import { APP_VERSION } from '../manifest.js';
 
 /**
  * The single WebSocket the browser SPA holds. The daemon multiplexes every
@@ -59,7 +60,7 @@ export class WsHub implements WsScopeRegistry {
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       this.owner.set(ws, user.username);
       this.wss.emit('connection', ws, req);
-      this.send(ws, { t: 'hello', version: '0.3.0' });
+      this.send(ws, { t: 'hello', version: APP_VERSION });
     });
   }
 

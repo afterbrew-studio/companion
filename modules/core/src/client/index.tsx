@@ -19,6 +19,9 @@ export { SetupPage } from './pages/Setup.js';
 export { Onboarding, hasOnboarded, hasUnseenOnboarding } from './components/Onboarding.js';
 export type { OnboardingMode } from './components/Onboarding.js';
 export { authApi, coreApi, modulesApi } from './api.js';
+// Theme is instance/user chrome owned by identity; the app shell calls initTheme
+// at boot and the Profile page reads/writes the preference — one source.
+export { initTheme, getThemePref, setThemePref, type ThemePref } from './lib/theme.js';
 
 export default defineClientModule({
   manifest,

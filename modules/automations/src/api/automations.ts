@@ -356,7 +356,6 @@ export class Automations {
       href: '#/automations',
       createdAt: Date.now(),
     });
-    this.broadcast({ t: 'notifications.changed' });
   }
 
   private readonly digestsInFlight = new Set<string>();
@@ -525,7 +524,6 @@ export class Automations {
       href,
       createdAt: Date.now(),
     });
-    this.broadcast({ t: 'notifications.changed' });
   }
 
   /** Automation failures must be visible in the inbox, not just a daemon log line. */
@@ -540,7 +538,6 @@ export class Automations {
       href,
       createdAt: Date.now(),
     });
-    this.broadcast({ t: 'notifications.changed' });
   }
 }
 

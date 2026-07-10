@@ -203,29 +203,30 @@ function Shell(): JSX.Element {
 
   useEffect(() => {
     return onServerMessage((msg) => {
-      let area: string | null = null;
-      // Only issues/prs carry a repo, so only those can be workspace-scoped —
-      // ignore ones outside the active workspace. Proposals/specs/docs events
-      // are instance-global and always count.
+      // issues/prs carry a repo, so they're workspace-scoped — ignore events for
+      // repos outside the active workspace. (This is the one shell-specific case;
+      // it needs repoSet, which a module can't know.)
       if (msg.t === 'issues.changed' || msg.t === 'prs.changed') {
         if (!repoSet.has(msg.repo)) return;
-        area = msg.t === 'issues.changed' ? 'issues' : 'prs';
-      } else if (msg.t === 'proposals.changed') area = 'proposals';
-      else if (msg.t === 'specs.changed') area = 'specs';
-      else if (msg.t === 'docs.changed') area = 'docs';
-      if (!area || location.hash.startsWith(`#/${area}`)) return;
-      mutateFresh((next) => next.add(area!));
+        const area = msg.t === 'issues.changed' ? 'issues' : 'prs';
+        if (!location.hash.startsWith(`#/${area}`)) mutateFresh((next) => next.add(area));
+        return;
+      }
+      // Everything else: the OWNING nav entry declares when it's fresh via
+      // NavEntry.freshOn — no hardcoded per-area list in the shell.
+      for (const m of kernel.nav) {
+        if (m.freshOn?.(msg) && !location.hash.startsWith(m.hash)) mutateFresh((next) => next.add(m.key));
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoSet, freshKey]);
+  }, [repoSet, freshKey, kernel.nav]);
 
-  // Visiting an area clears its mark.
+  // Visiting an area clears its mark (any nav entry whose hash we're under).
   useEffect(() => {
-    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    const area = ['proposals', 'specs', 'docs', 'issues', 'prs'].find((a) => path.startsWith(`/${a}`));
-    if (area) mutateFresh((next) => next.delete(area));
+    const entry = kernel.nav.find((m) => hash === m.hash || hash.startsWith(`${m.hash}/`) || hash.startsWith(`${m.hash}?`));
+    if (entry && fresh.has(entry.key)) mutateFresh((next) => next.delete(entry.key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash, freshKey]);
+  }, [hash, freshKey, kernel.nav]);
 
   // Cmd/Ctrl+K opens the global search palette from anywhere.
   useEffect(() => {
@@ -900,7 +901,7 @@ function RouterView({ hash }: { hash: string }): JSX.Element {
   if (!kernel.ready) return <PageLoading />;
   const hit = matchRoute(kernel.routes, path);
   if (!hit) return <NotFoundPage path={path} />;
-  if (hit.route.permission && !can(hit.route.permission)) return guard(false, <span />);
+  if (hit.route.permission && !can(hit.route.permission)) return <NoAccess />;
   const Page = hit.route.component;
   return (
     <Suspense fallback={<PageLoading />}>
@@ -909,8 +910,7 @@ function RouterView({ hash }: { hash: string }): JSX.Element {
   );
 }
 
-function guard(allowed: boolean, page: JSX.Element): JSX.Element {
-  if (allowed) return page;
+function NoAccess(): JSX.Element {
   return (
     <div className="mx-auto max-w-md px-6 py-16 text-center">
       <h1 className="text-lg font-semibold">No access</h1>

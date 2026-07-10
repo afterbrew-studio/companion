@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { APP_VERSION } from '@companion/core';
 import { defineRoutes, route, created } from '@companion/core/server';
 import { AuthError } from './auth.js';
 import type { AccountInfo, AuthState, LoginResponse, ProfileResponse, SessionInfo } from '../contract/index.js';
@@ -56,7 +57,7 @@ export default defineRoutes((ctx) => {
       access: 'public',
       handler: (): AuthState => ({
         setup: auth.setupNeeded(),
-        version: '0.3.0',
+        version: APP_VERSION,
         branding: { name: settings.get('branding.name') || null, logo: settings.get('branding.logo') || null },
       }),
     }),

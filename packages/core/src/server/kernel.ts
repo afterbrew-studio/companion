@@ -135,25 +135,32 @@ export class ModuleKernel {
     return !!row && row.enabled === 1;
   }
 
+  private rowStmt?: import('better-sqlite3').Statement;
   private row(id: ModuleId): ModuleRow | undefined {
-    return this.db.prepare(`SELECT * FROM modules WHERE id = ?`).get(id) as ModuleRow | undefined;
+    this.rowStmt ??= this.db.prepare(`SELECT * FROM modules WHERE id = ?`);
+    return this.rowStmt.get(id) as ModuleRow | undefined;
   }
 
   moduleList(): ModuleListing[] {
+    // One scan into a map, not a prepared-per-row N+1 (this endpoint is hit at
+    // bootstrap and again on every modules.changed by every client).
+    const rows = new Map(
+      (this.db.prepare(`SELECT * FROM modules`).all() as ModuleRow[]).map((r) => [r.id, r]),
+    );
     return [...this.installed.values()]
-      .filter((m) => this.row(m.manifest.id)?.installed !== 0)
+      .filter((m) => rows.get(m.manifest.id)?.installed !== 0)
       .map((m) => {
-      const row = this.row(m.manifest.id);
-      return {
-        id: m.manifest.id,
-        title: m.manifest.title,
-        version: m.manifest.version,
-        dependsOn: m.manifest.dependsOn ?? [],
-        required: !!m.manifest.required,
-        enabled: row ? row.enabled === 1 : false,
-        permissions: m.manifest.permissions ?? [],
-      };
-    });
+        const row = rows.get(m.manifest.id);
+        return {
+          id: m.manifest.id,
+          title: m.manifest.title,
+          version: m.manifest.version,
+          dependsOn: m.manifest.dependsOn ?? [],
+          required: !!m.manifest.required,
+          enabled: row ? row.enabled === 1 : false,
+          permissions: m.manifest.permissions ?? [],
+        };
+      });
   }
 
   /** Reconcile the installed set into the `modules` table, then activate the enabled set. */
@@ -173,7 +180,10 @@ export class ModuleKernel {
     }
 
     const enabled = this.topoSort(this.enabledIds());
-    for (const id of enabled) this.loaded.set(id, await this.installed.get(id)!.load());
+    // Loads are independent (only the activation phases below are ordered), so
+    // overlap the dynamic imports instead of paying their sum on cold start.
+    const mods = await Promise.all(enabled.map((id) => this.installed.get(id)!.load()));
+    enabled.forEach((id, i) => this.loaded.set(id, mods[i]!));
 
     // Grid must be live before any request is served, so Auth sees the perms.
     this.rebuildGrid(enabled);

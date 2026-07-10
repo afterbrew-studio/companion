@@ -4,6 +4,9 @@
  * `@companion/module-<id>/manifest`, so `GET /api/modules` and the dependency
  * graph resolve without importing any module's code.
  */
+/** The instance version reported to clients (WS hello + /api/auth/state). One source. */
+export const APP_VERSION = '0.3.0';
+
 export type ModuleId = string;
 
 export interface ModuleManifest {

@@ -1,34 +1,26 @@
-import { useCallback, useState } from 'react';
-import { useLive, type ModuleDescriptor } from '@companion/core/client';
+import { useState } from 'react';
+import { useKernel, type ModuleDescriptor } from '@companion/core/client';
 import { Page, PageHeader, Section, Switch } from '@companion/ui';
 import { modulesApi } from '../api.js';
 
 /**
- * Runtime module toggles (admin). The kernel broadcasts `modules.changed` after
- * every enable/disable, so this list — like the sidebar — stays live across
- * browsers; required modules (identity, workspace scoping) cannot be turned off.
+ * Runtime module toggles (admin). The catalog comes from the kernel host
+ * (ModulesProvider already fetches it and refreshes on `modules.changed`), so
+ * this page — like the sidebar — stays live across browsers without its own
+ * fetch; required modules (identity, workspace scoping) cannot be turned off.
  */
 export function ModulesPage(): JSX.Element {
-  const [modules, setModules] = useState<readonly ModuleDescriptor[]>([]);
+  const modules = useKernel().descriptors;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const { modules } = await modulesApi.list();
-      setModules(modules);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-  useLive(refresh, (msg) => msg.t === 'modules.changed');
 
   const toggle = async (mod: ModuleDescriptor): Promise<void> => {
     setBusy(mod.id);
     setError(null);
     try {
-      const { modules } = await (mod.enabled ? modulesApi.disable(mod.id) : modulesApi.enable(mod.id));
-      setModules(modules);
+      // The kernel broadcasts modules.changed on success; ModulesProvider
+      // refetches and this list updates through useKernel().
+      await (mod.enabled ? modulesApi.disable(mod.id) : modulesApi.enable(mod.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

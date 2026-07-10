@@ -376,7 +376,6 @@ export class Orchestrator implements RunnerEventSink {
       href: this.runHref(run),
       createdAt: Date.now(),
     });
-    this.broadcast({ t: 'notifications.changed' });
   }
 
   /**
