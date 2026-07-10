@@ -1,4 +1,4 @@
-import { defineNav, defineSections } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@companion/core/client';
 
 /**
  * module-plan's sidebar contributions: the Plan group with its proposals /
@@ -6,32 +6,24 @@ import { defineNav, defineSections } from '@companion/core/client';
  * modules.tsx registry.
  */
 
-const stroke = {
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.7,
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
-} as const;
-
 const icons = {
   proposals: (
-    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+    <NavIcon>
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
       <circle cx="12" cy="12" r="3.5" />
-    </svg>
+    </NavIcon>
   ),
   specs: (
-    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+    <NavIcon>
       <path d="M6 3h9l4 4v14H6a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 6 3z" />
       <path d="M15 3v4h4M8.5 11h7M8.5 14.5h7M8.5 18h4" />
-    </svg>
+    </NavIcon>
   ),
   docs: (
-    <svg viewBox="0 0 24 24" className="size-4" aria-hidden {...stroke}>
+    <NavIcon>
       <path d="M12 6.5C10.5 5 8.5 4.5 5.5 4.5c-1 0-2 .15-3 .5v14c1-.35 2-.5 3-.5 3 0 5 .5 6.5 2 1.5-1.5 3.5-2 6.5-2 1 0 2 .15 3 .5v-14c-1-.35-2-.5-3-.5-3 0-5 .5-6.5 2z" />
       <path d="M12 6.5v14" />
-    </svg>
+    </NavIcon>
   ),
 };
 

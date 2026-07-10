@@ -89,3 +89,4 @@ export * from './modules-provider.js';
 export * from './intents.js';
 export * from './links.js';
 export * from './use-bulk-runner.js';
+export * from './nav-icon.js';

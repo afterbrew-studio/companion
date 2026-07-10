@@ -4,10 +4,11 @@ import { request, useLive } from '@companion/core/client';
 /**
  * The active workspace's repositories, kept live (reloads on repos.changed).
  *
- * DUPLICATED from `apps/web/src/hooks/useWorkspaceRepos.ts` — keep in sync.
+ * Intentionally NOT shared with `modules/code/src/client/hooks/useWorkspaceRepos.ts`.
  * The canonical hook (and the `/api/workspaces/:id/repos` route + the
- * `repos.changed` message) belongs to module-code, which depends on operate,
- * so operate cannot import it without a cycle. RunsPage only scopes runs by
+ * `repos.changed` message) belongs to module-code, which depends on operate, so
+ * operate cannot import it without a client-side cycle, and hoisting it into the
+ * framework would leak code's API surface into core. RunsPage only scopes runs by
  * repo name, so the repo shape is structural (`fullName` only) rather than
  * module-code's `RepoRecord`, and the `repos.changed` comparison is widened —
  * that literal is not in operate's visible message union.

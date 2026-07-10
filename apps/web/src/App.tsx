@@ -629,12 +629,17 @@ function NewWorkspaceModal({
  * healthy, amber when partially degraded, red when the daemon is unreachable.
  * Hover or focus expands the popover with the individual statuses.
  */
-function AgentsStatus(): JSX.Element {
+function AgentsStatus(): JSX.Element | null {
+  // moxxy status + live agents are operate's domain; with operate disabled its
+  // /api/moxxy/status 503s, which must NOT read as "daemon unreachable" (a red
+  // dot). The whole widget belongs to operate — hide it, don't alarm.
+  const operateEnabled = useKernel().descriptors.some((m) => m.id === 'operate' && m.enabled);
   const [status, setStatus] = useState<MoxxyStatus | null>(null);
   const [ws, setWs] = useState<WsState>('offline');
   const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
+    if (!operateEnabled) return;
     let alive = true;
     operateApi
       .listRuns()
@@ -655,9 +660,10 @@ function AgentsStatus(): JSX.Element {
       alive = false;
       off();
     };
-  }, []);
+  }, [operateEnabled]);
 
   useEffect(() => {
+    if (!operateEnabled) return;
     let alive = true;
     const load = (): void => {
       operateApi
@@ -677,7 +683,9 @@ function AgentsStatus(): JSX.Element {
       offWs();
       offMsg();
     };
-  }, []);
+  }, [operateEnabled]);
+
+  if (!operateEnabled) return null;
 
   const moxxyOk = Boolean(status && status.cliPath && status.compatible && status.homeReady);
   const moxxyTitle = !status
