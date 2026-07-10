@@ -1,44 +1,36 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { MoxxyStatus, WorkspaceVisibility } from '@companion/contract';
-import { api, onServerMessage, onWsState, type WsState } from './lib/api.js';
-import { AuthProvider, useAuth } from './lib/auth.js';
-import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
-import { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
-import { useIntent, runIntent } from './lib/intents.js';
-import { ChevronDown, Dropdown, LockIcon, Modal } from './components/ui.js';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import type { MoxxyStatus } from '@companion/module-operate/contract';
+import type { WorkspaceVisibility } from '@companion/module-workspace/contract';
+import {
+  ModulesProvider,
+  useKernel,
+  matchRoute,
+  onServerMessage,
+  onWsState,
+  runIntent,
+  useIntent,
+  type NavEntry,
+  type WsState,
+} from '@companion/core/client';
+import {
+  AuthProvider,
+  useAuth,
+  LoginPage,
+  SetupPage,
+  Onboarding,
+  hasOnboarded,
+  hasUnseenOnboarding,
+  type OnboardingMode,
+} from '@companion/module-core/client';
+import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi } from '@companion/module-workspace/client';
+import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
+import { useWorkspaceRepos } from '@companion/module-code/client';
+import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
+import { ChevronDown, Dropdown, LockIcon, Modal, PageLoading } from '@companion/ui';
 import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
-import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
-import { Onboarding, hasOnboarded, hasUnseenOnboarding, type OnboardingMode } from './components/Onboarding.js';
-import { Inbox } from './components/Inbox.js';
-import { RunQueueIndicator } from './components/RunQueue.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
-import { MODULES } from './modules.js';
-import { LoginPage } from './pages/Login.js';
-import { SetupPage } from './pages/Setup.js';
-import { UsersPage } from './pages/Users.js';
-import { DashboardPage } from './pages/Dashboard.js';
-import { DigestPage } from './pages/Digest.js';
-import { ProposalsPage } from './pages/Proposals.js';
-import { SpecsPage } from './pages/Specs.js';
-import { DocsPage } from './pages/Docs.js';
-import { IssuesAreaPage } from './pages/IssuesArea.js';
-import { PrsAreaPage } from './pages/PrsArea.js';
-import { PipelinesPage } from './pages/Pipelines.js';
-import { RunsPage } from './pages/RunsPage.js';
-import { RunDetail } from './pages/RunDetail.js';
-import { PrBuild } from './pages/pr/PrBuild.js';
-import { PrView } from './pages/pr/PrView.js';
-import { IssueDetail } from './pages/IssueDetail.js';
-import { ReposPage } from './pages/ReposPage.js';
-import { SkillsPage } from './pages/Skills.js';
-import { GithubAccountsPage } from './pages/GithubAccounts.js';
-import { ProvidersPage } from './pages/Providers.js';
-import { AutomationsPage } from './pages/Automations.js';
-import { RunnersPage } from './pages/Runners.js';
-import { SettingsPage } from './pages/Settings.js';
-import { ProfilePage } from './pages/Profile.js';
-import { InboxPage } from './pages/Inbox.js';
+import { CLIENT_LOADERS } from './modules.js';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(location.hash || '#/overview');
@@ -72,18 +64,12 @@ function Gate(): JSX.Element {
   if (user === null) return <LoginPage />;
   return (
     <WorkspaceProvider>
-      <Shell />
+      <ModulesProvider loaders={CLIENT_LOADERS}>
+        <Shell />
+      </ModulesProvider>
     </WorkspaceProvider>
   );
 }
-
-const SECTION_LABELS: Record<string, string> = {
-  workspace: 'Workspace',
-  plan: 'Plan',
-  code: 'Code',
-  operate: 'Operate',
-  admin: 'Admin',
-};
 
 /** Sidebar brand block: instance logo + name, falling back to the letter tile. */
 function Brand({ rail }: { rail: boolean }): JSX.Element {
@@ -106,15 +92,16 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 function Shell(): JSX.Element {
   const { user, can, logout, branding } = useAuth();
   const hash = useHashRoute();
+  const kernel = useKernel();
 
   // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
   useEffect(() => {
     const name = branding.name?.trim() || 'Companion';
-    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/')
+    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav)
       .map((c) => c.label)
       .join(' · ');
     document.title = labels ? `${labels} · ${name}` : name;
-  }, [hash, branding]);
+  }, [hash, branding, kernel.nav]);
   const [collapsed, setCollapsed] = useState(localStorage.getItem('companion.sidebar') === 'collapsed');
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -151,9 +138,12 @@ function Shell(): JSX.Element {
     }
   };
 
-  const visibleModules = useMemo(() => MODULES.filter((m) => can(m.permission)), [can]);
+  const visibleModules = useMemo(() => kernel.nav.filter((m) => can(m.permission)), [kernel.nav, can]);
   const shortcutTargets = useMemo(
-    () => visibleModules.map((m) => ({ key: m.shortcut, label: m.label, hash: m.hash })),
+    () =>
+      visibleModules
+        .filter((m) => m.shortcut)
+        .map((m) => ({ key: m.shortcut!, label: m.label, hash: m.hash })),
     [visibleModules],
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
@@ -272,13 +262,15 @@ function Shell(): JSX.Element {
     }
   }, [hash, visibleModules, can]);
 
+  // Group entries into the shared, ordered section namespace the enabled
+  // modules declared (module ≠ group); empty groups don't render.
   const sections = useMemo(() => {
-    const grouped = new Map<string, typeof visibleModules>();
+    const grouped = new Map<string, NavEntry[]>();
     for (const m of visibleModules) {
       grouped.set(m.section, [...(grouped.get(m.section) ?? []), m]);
     }
-    return [...grouped.entries()];
-  }, [visibleModules]);
+    return kernel.sections.filter((s) => grouped.has(s.id)).map((s) => [s, grouped.get(s.id)!] as const);
+  }, [kernel.sections, visibleModules]);
 
   return (
     <div className="flex h-full">
@@ -303,7 +295,7 @@ function Shell(): JSX.Element {
 
         <nav className="flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
           {sections.map(([section, modules], si) => (
-            <div key={section} className="mt-3">
+            <div key={section.id} className="mt-3">
               {rail ? (
                 <div className="mx-2 flex h-5 items-center" aria-hidden>
                   {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
@@ -312,15 +304,15 @@ function Shell(): JSX.Element {
                 <button
                   type="button"
                   className="dim flex h-5 w-full cursor-pointer items-end justify-between px-2 pb-1 text-[10px] font-medium tracking-widest uppercase transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
-                  onClick={() => toggleSection(section)}
-                  aria-expanded={!foldedSections.has(section)}
+                  onClick={() => toggleSection(section.id)}
+                  aria-expanded={!foldedSections.has(section.id)}
                 >
-                  {SECTION_LABELS[section]}
-                  <ChevronDown open={!foldedSections.has(section)} className="size-3" />
+                  {section.label}
+                  <ChevronDown open={!foldedSections.has(section.id)} className="size-3" />
                 </button>
               )}
               {/* The icon rail ignores folding — hiding icons there saves nothing. */}
-              {!rail && foldedSections.has(section)
+              {!rail && foldedSections.has(section.id)
                 ? null
                 : modules.map((m) => {
                 // Boundary-aware match: #/runners must not light up #/runs.
@@ -441,7 +433,7 @@ function Shell(): JSX.Element {
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
           {/* Keyed by route: navigating away from a crashed page recovers it. */}
           <ErrorBoundary area="this page" resetKey={hash}>
-            <Route hash={hash} />
+            <RouterView hash={hash} />
           </ErrorBoundary>
         </main>
       </div>
@@ -566,7 +558,7 @@ function NewWorkspaceModal({
     setBusy(true);
     setError(null);
     try {
-      const { workspace } = await api.createWorkspace(name.trim(), { visibility });
+      const { workspace } = await workspaceApi.createWorkspace(name.trim(), { visibility });
       onCreated(workspace.id);
     } catch (err) {
       setError(String(err));
@@ -643,7 +635,7 @@ function AgentsStatus(): JSX.Element {
 
   useEffect(() => {
     let alive = true;
-    api
+    operateApi
       .listRuns()
       .then(({ runs }) => {
         if (alive) setLiveIds(new Set(runs.filter((r) => r.live).map((r) => r.id)));
@@ -667,7 +659,7 @@ function AgentsStatus(): JSX.Element {
   useEffect(() => {
     let alive = true;
     const load = (): void => {
-      api
+      operateApi
         .status()
         .then((s) => alive && setStatus(s))
         .catch(() => alive && setStatus(null));
@@ -759,7 +751,7 @@ function listBackHref(base: '#/prs' | '#/issues'): string {
 }
 
 /** Route-derived crumbs: module label first, then detail segments. */
-function crumbsFor(path: string): Array<{ label: string; href?: string }> {
+function crumbsFor(path: string, nav: readonly NavEntry[]): Array<{ label: string; href?: string }> {
   let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
   if (m) return [{ label: 'Agent Runs', href: '#/runs' }, { label: m[1]! }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
@@ -770,7 +762,7 @@ function crumbsFor(path: string): Array<{ label: string; href?: string }> {
   if (path === '/inbox') return [{ label: 'Inbox' }];
   if (path === '/profile') return [{ label: 'Your profile' }];
   // Boundary-aware match: /runners must not resolve to the Agent Runs module.
-  const mod = MODULES.find((mm) => {
+  const mod = nav.find((mm) => {
     const base = mm.hash.slice(1);
     return path === base || path.startsWith(`${base}/`);
   });
@@ -794,8 +786,9 @@ function TopBar({
   assistantOpen: boolean;
   onToggleAssistant: () => void;
 }): JSX.Element {
+  const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
-  const crumbs = crumbsFor(path);
+  const crumbs = crumbsFor(path, kernel.nav);
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800">
       <button
@@ -891,43 +884,29 @@ function StatusDot({
   );
 }
 
-function Route({ hash }: { hash: string }): JSX.Element {
+/**
+ * The data-driven router: matches the hash against the enabled modules'
+ * compiled route table (whole-segment specificity — declaration order is
+ * irrelevant), guards by permission, and lazy-loads the page chunk under
+ * Suspense. A path no enabled module claims is a 404.
+ */
+function RouterView({ hash }: { hash: string }): JSX.Element {
   const { can } = useAuth();
+  const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
-
-  let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)\/preview$/);
-  if (m) return guard(can('runs:read'), <PrBuild key={m[1]} runId={m[1]!} />);
-  m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
-  if (m) return guard(can('runs:read'), <RunDetail key={m[1]} runId={m[1]!} />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
-  if (m) return guard(can('issues:read'), <IssueDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)\/review$/);
-  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} mode="review" />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
-  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
-
-  if (path.startsWith('/digest')) return guard(can('reports:read'), <DigestPage />);
-  if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
-  if (path.startsWith('/specs')) return guard(can('specs:read'), <SpecsPage />);
-  if (path.startsWith('/docs')) return guard(can('docs:read'), <DocsPage />);
-  if (path.startsWith('/issues')) return guard(can('issues:read'), <IssuesAreaPage />);
-  if (path.startsWith('/prs')) return guard(can('prs:read'), <PrsAreaPage />);
-  if (path.startsWith('/pipelines')) return guard(can('pipelines:read'), <PipelinesPage />);
-  // Admin route, but it must sit before /runs — that prefix would swallow it.
-  if (path.startsWith('/runners')) return guard(can('runners:manage'), <RunnersPage />);
-  if (path.startsWith('/runs')) return guard(can('runs:read'), <RunsPage />);
-  if (path.startsWith('/automations')) return guard(can('automations:manage'), <AutomationsPage />);
-  if (path.startsWith('/repos')) return guard(can('repos:manage'), <ReposPage />);
-  if (path.startsWith('/skills')) return guard(can('skills:manage'), <SkillsPage />);
-  if (path.startsWith('/github')) return guard(can('github:connect'), <GithubAccountsPage />);
-  if (path.startsWith('/providers')) return guard(can('settings:manage'), <ProvidersPage />);
-  if (path.startsWith('/users')) return guard(can('users:manage'), <UsersPage />);
-  if (path.startsWith('/settings')) return guard(can('settings:manage'), <SettingsPage />);
-  // Every signed-in user has their own profile and inbox.
-  if (path.startsWith('/profile')) return <ProfilePage />;
-  if (path.startsWith('/inbox')) return guard(can('workspaces:read'), <InboxPage />);
-  if (path === '/' || path.startsWith('/overview')) return guard(can('issues:read'), <DashboardPage />);
-  return <NotFoundPage path={path} />;
+  const query = useMemo(() => new URLSearchParams(hash.split('?')[1] ?? ''), [hash]);
+  // First paint: the shell renders instantly; routes resolve when the enabled
+  // modules' (tiny) client chunks land.
+  if (!kernel.ready) return <PageLoading />;
+  const hit = matchRoute(kernel.routes, path);
+  if (!hit) return <NotFoundPage path={path} />;
+  if (hit.route.permission && !can(hit.route.permission)) return guard(false, <span />);
+  const Page = hit.route.component;
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <Page params={hit.params} query={query} />
+    </Suspense>
+  );
 }
 
 function guard(allowed: boolean, page: JSX.Element): JSX.Element {

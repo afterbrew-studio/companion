@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@companion/contract": "workspace:*",
+    "@companion/contracts": "workspace:*",
     "@companion/core": "workspace:*",
     "@companion/module-admin": "workspace:*",
     "@companion/module-automations": "workspace:*",

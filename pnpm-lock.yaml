@@ -93,9 +93,9 @@ importers:
 
   apps/web:
     dependencies:
-      '@companion/contract':
+      '@companion/contracts':
         specifier: workspace:*
-        version: link:../../packages/contract
+        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -497,12 +497,6 @@ importers:
       react:
         specifier: ^18.3.1
         version: 18.3.1
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-
-  packages/contract:
-    devDependencies:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
