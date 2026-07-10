@@ -13,6 +13,7 @@ import {
   request,
   setToken,
 } from '@companion/core/client';
+import type { ModuleConfigState } from '@companion/core';
 import type { ModuleDescriptor, PageQuery } from '@companion/core/client';
 import type {
   AccountInfo,
@@ -83,9 +84,16 @@ export const coreApi = {
   updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
 };
 
-// runtime module toggles (admin) — the Modules page drives the kernel with these
+// runtime module lifecycle + config (admin) — the Modules page drives the kernel with these
 export const modulesApi = {
   list: () => request<{ modules: ModuleDescriptor[] }>('/api/modules'),
+  install: (id: string, config?: Record<string, unknown>) =>
+    post<{ modules: ModuleDescriptor[] }>(`/api/modules/${id}/install`, config ? { config } : {}),
   enable: (id: string) => post<{ modules: ModuleDescriptor[] }>(`/api/modules/${id}/enable`),
   disable: (id: string) => post<{ modules: ModuleDescriptor[] }>(`/api/modules/${id}/disable`),
+  uninstall: (id: string) => post<{ modules: ModuleDescriptor[] }>(`/api/modules/${id}/uninstall`),
+  // config values are redacted server-side: secret values never cross the wire
+  getConfig: (id: string) => request<ModuleConfigState>(`/api/modules/${id}/config`),
+  setConfig: (id: string, config: Record<string, unknown>) =>
+    put<ModuleConfigState>(`/api/modules/${id}/config`, { config }),
 };

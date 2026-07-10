@@ -5,3 +5,4 @@
  * host + client registrants are `@companion/core/client`.
  */
 export * from './manifest.js';
+export * from './module-config.js';

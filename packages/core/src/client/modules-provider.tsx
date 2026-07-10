@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { ModuleConfigField } from '../module-config.js';
 import { request, onServerMessage } from './net.js';
 import { compileRoutes } from './router.js';
 import type { ClientRoute, NavEntry, NavSection, OnboardingStep, SlotContribution, WebModule } from './index.js';
@@ -11,21 +12,27 @@ import type { ClientRoute, NavEntry, NavSection, OnboardingStep, SlotContributio
  * NOT happen here — the shell presents nav/routes filtered by `can()`.
  */
 
-/** One installed module as reported by GET /api/modules (no code loaded). */
+/** One catalog module as reported by GET /api/modules (no code loaded) — mirrors ModuleListing. */
 export interface ModuleDescriptor {
   readonly id: string;
   readonly title: string;
   readonly version: string;
   readonly dependsOn: readonly string[];
   readonly required: boolean;
+  /** false ⇒ "Available": compiled into the app but not adopted (no tables, no routes). */
+  readonly installed: boolean;
   readonly enabled: boolean;
+  /** Every required config field has a stored value or a default. */
+  readonly configured: boolean;
   readonly permissions: readonly string[];
+  /** The declared config field spec (metadata only — never values). */
+  readonly config: readonly ModuleConfigField[];
 }
 
 export type ClientLoader = () => Promise<{ readonly default: WebModule }>;
 
 export interface KernelState {
-  /** All installed modules (enabled or not) — feeds the Modules admin page. */
+  /** The whole compiled catalog (installed or merely available) — feeds the Modules admin page. */
   readonly descriptors: readonly ModuleDescriptor[];
   /** Loaded, enabled client modules. */
   readonly modules: readonly WebModule[];

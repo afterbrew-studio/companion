@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
 import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleManifest, ModuleId } from '../manifest.js';
+import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigState } from '../module-config.js';
 import type { CompiledRoute } from './router.js';
 import type { CompiledRawRoute } from './raw-router.js';
 import type { Migration } from './migration-runner.js';
@@ -28,6 +29,8 @@ export interface ModuleContext {
   readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
   readonly notify: NotificationEmitter;
   readonly settings: SettingsRegistry;
+  /** This module's own declared config — read-only, live, defaults merged. */
+  readonly moduleConfig: ModuleConfigAccessor;
   /** The live effective RBAC grid (module-core's Auth reads this). */
   readonly rbac: RbacReader;
   /** Per-message WS visibility: modules register scope resolvers in onEnable. */
@@ -40,20 +43,32 @@ export interface ModuleContext {
 /** The runtime toggle surface the kernel exposes to modules (via ctx.modules). */
 export interface KernelControl {
   list(): readonly ModuleListing[];
+  /** Validate + persist `config`, then activate. The only path from "Available" to installed. */
+  install(id: ModuleId, config?: Readonly<Record<string, unknown>>): Promise<void>;
   enable(id: ModuleId): Promise<void>;
   disable(id: ModuleId): Promise<void>;
   uninstall(id: ModuleId): Promise<void>;
+  /** Stored config, redacted — secret values never leave the kernel. */
+  getConfig(id: ModuleId): ModuleConfigState;
+  /** Validated partial update: omitted key = unchanged, `null` = clear, secrets reject `''`. */
+  setConfig(id: ModuleId, patch: Readonly<Record<string, unknown>>): void;
 }
 
-/** One installed module for GET /api/modules (manifest + live state; no code loaded). */
+/** One catalog module for GET /api/modules (manifest + live state; no code loaded). */
 export interface ModuleListing {
   readonly id: ModuleId;
   readonly title: string;
   readonly version: string;
   readonly dependsOn: readonly ModuleId[];
   readonly required: boolean;
+  /** false ⇒ "Available": in the compiled catalog but not adopted (no tables, no routes). */
+  readonly installed: boolean;
   readonly enabled: boolean;
+  /** Every required config field has a stored value or a default. */
+  readonly configured: boolean;
   readonly permissions: readonly string[];
+  /** The declared config field spec (metadata only — never values). */
+  readonly config: readonly ModuleConfigField[];
 }
 
 export interface BackgroundJob {

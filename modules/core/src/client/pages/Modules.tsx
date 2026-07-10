@@ -1,26 +1,41 @@
 import { useState } from 'react';
 import { useKernel, type ModuleDescriptor } from '@companion/core/client';
-import { ErrorBar, ListCard, Page, PageHeader, Section, Switch } from '@companion/ui';
+import type { ModuleConfigState, ModuleConfigValue } from '@companion/core';
+import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@companion/ui';
 import { modulesApi } from '../api.js';
+import { ModuleConfigForm } from '../components/ModuleConfigForm.js';
 
 /**
- * Runtime module toggles (admin). The catalog comes from the kernel host
+ * Runtime module lifecycle (admin). The catalog comes from the kernel host
  * (ModulesProvider already fetches it and refreshes on `modules.changed`), so
  * this page — like the sidebar — stays live across browsers without its own
- * fetch; required modules (identity, workspace scoping) cannot be turned off.
+ * fetch. Installed modules toggle/configure/uninstall; "Available" ones (in the
+ * compiled catalog, not adopted) install here — collecting their declared
+ * config first when they have one.
  */
 export function ModulesPage(): JSX.Element {
   const modules = useKernel().descriptors;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirmDanger, confirmElement } = useConfirm();
 
-  const toggle = async (mod: ModuleDescriptor): Promise<void> => {
-    setBusy(mod.id);
+  // The config modal: install collects values before adoption; configure edits
+  // stored ones (fetched on open — the page never holds values it doesn't need).
+  const [target, setTarget] = useState<{ mod: ModuleDescriptor; mode: 'install' | 'configure' } | null>(null);
+  const [targetState, setTargetState] = useState<ModuleConfigState | undefined>(undefined);
+  const [modalBusy, setModalBusy] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  const installed = modules.filter((m) => m.installed);
+  const available = modules.filter((m) => !m.installed);
+
+  const run = async (id: string, op: () => Promise<unknown>): Promise<void> => {
+    setBusy(id);
     setError(null);
     try {
       // The kernel broadcasts modules.changed on success; ModulesProvider
       // refetches and this list updates through useKernel().
-      await (mod.enabled ? modulesApi.disable(mod.id) : modulesApi.enable(mod.id));
+      await op();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -28,32 +43,82 @@ export function ModulesPage(): JSX.Element {
     }
   };
 
+  const toggle = (m: ModuleDescriptor): Promise<void> =>
+    run(m.id, () => (m.enabled ? modulesApi.disable(m.id) : modulesApi.enable(m.id)));
+
+  const uninstall = async (m: ModuleDescriptor): Promise<void> => {
+    const ok = await confirmDanger({
+      title: `Uninstall ${m.title}`,
+      message: `This removes all of ${m.title}'s data and configuration. The module stays in the catalog and can be reinstalled from scratch.`,
+      confirmLabel: 'Uninstall',
+    });
+    if (ok) await run(m.id, () => modulesApi.uninstall(m.id));
+  };
+
+  const openInstall = (m: ModuleDescriptor): void | Promise<void> => {
+    if (m.config.length === 0) return run(m.id, () => modulesApi.install(m.id));
+    setTarget({ mod: m, mode: 'install' });
+    setTargetState(undefined);
+    setModalError(null);
+  };
+
+  const openConfigure = async (m: ModuleDescriptor): Promise<void> => {
+    setTarget({ mod: m, mode: 'configure' });
+    setTargetState(undefined);
+    setModalError(null);
+    try {
+      setTargetState(await modulesApi.getConfig(m.id));
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const submitModal = async (patch: Record<string, ModuleConfigValue | null>): Promise<void> => {
+    if (!target) return;
+    setModalBusy(true);
+    setModalError(null);
+    try {
+      if (target.mode === 'install') {
+        // Clearing is meaningless before anything is stored — drop the nulls.
+        const config = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== null));
+        await modulesApi.install(target.mod.id, config);
+      } else if (Object.keys(patch).length) {
+        await modulesApi.setConfig(target.mod.id, patch);
+      }
+      setTarget(null);
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModalBusy(false);
+    }
+  };
+
   return (
     <Page>
-      <PageHeader title="Modules" subtitle="The feature modules installed on this instance" />
+      <PageHeader title="Modules" subtitle="The feature modules available on this instance" />
       <ErrorBar error={error} />
 
       <Section
         title="Installed"
-        description="Disabling a module hides its pages and stops its services. Modules that others depend on can only be disabled once their dependents are off."
+        description="Disabling a module hides its pages and stops its services but keeps its data. Modules that others depend on can only be disabled once their dependents are off."
       >
         <ListCard>
-          {modules.map((m) => (
-            <div key={m.id} className="flex items-center gap-3 px-4 py-3">
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline gap-1.5">
-                  <span className="truncate font-medium">{m.title}</span>
-                  <span className="dim text-xs">v{m.version}</span>
-                  {m.required ? <span className="badge shrink-0">required</span> : null}
-                </span>
-                <span className="dim mt-0.5 block truncate text-xs">
-                  {m.id}
-                  {m.dependsOn.length > 0 ? <> · depends on {m.dependsOn.join(', ')}</> : null}
-                </span>
-              </span>
+          {installed.map((m) => (
+            <div key={m.id} className="flex items-center gap-1.5 px-4 py-3">
+              <ModuleInfo mod={m} />
+              {m.config.length > 0 ? (
+                <IconButton label={`Configure ${m.title}`} disabled={busy === m.id} onClick={() => void openConfigure(m)}>
+                  <SlidersIcon />
+                </IconButton>
+              ) : null}
+              {!m.enabled && !m.required ? (
+                <IconButton label={`Uninstall ${m.title}`} danger disabled={busy === m.id} onClick={() => void uninstall(m)}>
+                  <TrashIcon />
+                </IconButton>
+              ) : null}
               <Switch
                 checked={m.enabled}
-                disabled={m.required || busy === m.id}
+                disabled={m.required || busy === m.id || (!m.enabled && !m.configured)}
                 label={`${m.enabled ? 'Disable' : 'Enable'} ${m.title}`}
                 onChange={() => void toggle(m)}
               />
@@ -61,6 +126,82 @@ export function ModulesPage(): JSX.Element {
           ))}
         </ListCard>
       </Section>
+
+      {available.length > 0 ? (
+        <Section
+          title="Available"
+          description="Part of this build but not installed — installing runs the module's migrations and enables it. Modules that need configuration ask for it first."
+        >
+          <ListCard subtle>
+            {available.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 px-4 py-3">
+                <ModuleInfo mod={m} />
+                <button className="btn" disabled={busy === m.id} onClick={() => void openInstall(m)}>
+                  {busy === m.id ? 'Installing…' : 'Install'}
+                </button>
+              </div>
+            ))}
+          </ListCard>
+        </Section>
+      ) : null}
+
+      {target ? (
+        <Modal
+          title={`${target.mode === 'install' ? 'Install' : 'Configure'} ${target.mod.title}`}
+          onClose={() => setTarget(null)}
+        >
+          {target.mode === 'configure' && targetState === undefined && modalError === null ? (
+            <p className="dim py-4 text-center text-sm">Loading…</p>
+          ) : (
+            <ModuleConfigForm
+              fields={target.mod.config}
+              state={targetState}
+              busy={modalBusy}
+              error={modalError}
+              submitLabel={target.mode === 'install' ? 'Install' : 'Save'}
+              onSubmit={(patch) => void submitModal(patch)}
+              onCancel={() => setTarget(null)}
+            />
+          )}
+        </Modal>
+      ) : null}
+      {confirmElement}
     </Page>
+  );
+}
+
+function ModuleInfo({ mod }: { mod: ModuleDescriptor }): JSX.Element {
+  return (
+    <span className="min-w-0 flex-1">
+      <span className="flex items-baseline gap-1.5">
+        <span className="truncate font-medium">{mod.title}</span>
+        <span className="dim text-xs">v{mod.version}</span>
+        {mod.required ? <span className="badge shrink-0">required</span> : null}
+        {mod.installed && !mod.configured ? <span className="badge shrink-0">needs configuration</span> : null}
+      </span>
+      <span className="dim mt-0.5 block truncate text-xs">
+        {mod.id}
+        {mod.dependsOn.length > 0 ? <> · depends on {mod.dependsOn.join(', ')}</> : null}
+      </span>
+    </span>
+  );
+}
+
+function SlidersIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="size-4" aria-hidden>
+      <path d="M4 6h8M16 6h4M4 12h2M10 12h10M4 18h12" />
+      <circle cx="14" cy="6" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <circle cx="18" cy="18" r="2" />
+    </svg>
+  );
+}
+
+function TrashIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="size-4" aria-hidden>
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6" />
+    </svg>
   );
 }

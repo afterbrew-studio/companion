@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useLive } from '@companion/core/client';
 import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
-import { CopyText, EmptyState, ErrorBar, ListCard, Page, PageHeader, Section, SettingRow, Switch } from '@companion/ui';
+import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch } from '@companion/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';
@@ -31,7 +32,7 @@ export function AutomationsPage(): JSX.Element {
 
       <WorkspaceBriefingCard workspaceId={current.id} onError={setError} onSent={refresh} />
 
-      <WebhookTunnelCard onError={setError} />
+      <WebhookTunnelCard />
 
       <div className="mt-3 flex flex-col gap-3">
         {repos.map((repo) => (
@@ -146,45 +147,39 @@ function WorkspaceBriefingCard({
 }
 
 /**
- * Instance-wide switch: expose the webhook receiver publicly through moxxy's
- * proxy relay so GitHub can deliver without a user-managed tunnel.
+ * Instance-wide tunnel status (read-only here): the toggle is operate's
+ * `webhookTunnel` module config, edited under Modules → Operate → Configure.
+ * Config changes broadcast `modules.changed`, so the card follows edits live.
  */
-function WebhookTunnelCard({ onError }: { onError: (e: string) => void }): JSX.Element | null {
+function WebhookTunnelCard(): JSX.Element | null {
   const [tunnel, setTunnel] = useState<WebhookTunnelState | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    api
-      .webhookTunnel()
-      .then(setTunnel)
-      .catch(() => setTunnel(null));
-  }, []);
+  const refresh = useCallback(
+    () =>
+      api
+        .webhookTunnel()
+        .then(setTunnel)
+        .catch(() => setTunnel(null)),
+    [],
+  );
+  useLive(refresh, (msg) => msg.t === 'modules.changed');
 
   if (!tunnel) return null;
-
-  const toggle = async (enabled: boolean): Promise<void> => {
-    setBusy(true);
-    try {
-      setTunnel(await api.setWebhookTunnel(enabled));
-    } catch (err) {
-      onError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <article className="card mt-3" aria-label="Public webhook delivery">
       <SettingRow
-        title="Public webhook delivery"
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            Public webhook delivery
+            <MetaSignal tone={tunnel.enabled ? 'green' : 'zinc'} label={tunnel.enabled ? 'on' : 'off'} />
+          </span>
+        }
         description="Routes GitHub deliveries through the moxxy proxy — no tunnel or port-forward of your own needed. The URL is stable across restarts."
       >
-        <Switch
-          label="Public webhook delivery via moxxy proxy"
-          checked={tunnel.enabled}
-          disabled={busy}
-          onChange={(v) => void toggle(v)}
-        />
+        <a className="btn-ghost" href="#/modules">
+          Configure in Modules
+        </a>
       </SettingRow>
       {tunnel.enabled ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2.5 text-[13px] dark:border-zinc-800">

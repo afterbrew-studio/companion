@@ -37,5 +37,9 @@ export interface ServiceMap {}
 /**
  * Server-internal typed event bus (distinct from browser `broadcast`). Modules
  * augment with their event payloads: `interface BusEvents { 'run.changed': RunRecord }`.
+ * The kernel declares its own events as base members.
  */
-export interface BusEvents {}
+export interface BusEvents {
+  /** Kernel: a module's stored configuration changed (install seed, config PUT, adoption). */
+  readonly 'module-config.changed': { readonly moduleId: string; readonly keys: readonly string[] };
+}

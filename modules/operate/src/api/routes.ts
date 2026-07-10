@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
-import type { MoxxyStatus, RunRecord, RunSettings } from '../contract/index.js';
+import type { MoxxyStatus, RunRecord } from '../contract/index.js';
 import { paths } from '@companion/services';
 import { configuredProviderNames, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
@@ -371,26 +371,8 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    route({
-      // Run scheduling: how many runner slots to keep free from attended chats.
-      method: 'GET',
-      path: '/api/settings/runs',
-      access: 'settings:manage',
-      handler: (): RunSettings => ({
-        reservedRunnerSlots: Number(settings.get('reservedRunnerSlots') ?? 1),
-      }),
-    }),
-
-    route({
-      method: 'PUT',
-      path: '/api/settings/runs',
-      access: 'settings:manage',
-      body: z.object({ reservedRunnerSlots: z.number().int().min(0).max(64) }),
-      handler: ({ body }): RunSettings => {
-        settings.set('reservedRunnerSlots', String(body.reservedRunnerSlots));
-        return { reservedRunnerSlots: Number(settings.get('reservedRunnerSlots') ?? 1) };
-      },
-    }),
+    // Run scheduling (reserved runner slots) moved to module config — the
+    // Modules page edits it via PUT /api/modules/operate/config.
 
     route({
       method: 'GET',

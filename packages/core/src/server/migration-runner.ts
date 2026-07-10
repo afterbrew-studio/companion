@@ -33,6 +33,13 @@ const BOOTSTRAP = `
     applied_at INTEGER NOT NULL,
     PRIMARY KEY (module_id, version)
   );
+  CREATE TABLE IF NOT EXISTS module_config (
+    module_id  TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (module_id, key)
+  );
 `;
 
 /**

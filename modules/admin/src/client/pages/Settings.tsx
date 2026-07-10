@@ -91,31 +91,6 @@ export function SettingsPage(): JSX.Element {
     }
   };
 
-  // Reserved runner slots (kept free from attended chats for automated work).
-  const [reserved, setReserved] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    api
-      .getRunSettings()
-      .then((s) => alive && setReserved(s.reservedRunnerSlots))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const saveReserved = async (next: number): Promise<void> => {
-    const prev = reserved;
-    setReserved(next);
-    try {
-      const s = await api.setRunSettings(next);
-      setReserved(s.reservedRunnerSlots);
-    } catch (err) {
-      setReserved(prev);
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
   const onLogoFile = async (file: File | undefined): Promise<void> => {
     if (!file) return;
     setError(null);
@@ -250,28 +225,7 @@ export function SettingsPage(): JSX.Element {
         </div>
       </Section>
 
-      <Section
-        title="Agent runs"
-        description="Unattended runs (triage, review, fixes) share the runners' combined capacity and queue when it's full. Reserve slots so chats can't crowd out automated work."
-      >
-        <div className="card">
-          <SettingRow
-            title={<label htmlFor="reserved-slots">Runner slots reserved for automated work</label>}
-            description="Attended chats (interactive & AI Help) won't use these slots. At least one chat slot always remains."
-          >
-            <input
-              id="reserved-slots"
-              type="number"
-              min={0}
-              max={64}
-              className="input w-20"
-              value={reserved ?? ''}
-              disabled={reserved === null}
-              onChange={(e) => void saveReserved(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-            />
-          </SettingRow>
-        </div>
-      </Section>
+      {/* Run scheduling (reserved runner slots) lives in module config now — Modules → Operate → Configure. */}
 
       <Section title="moxxy runtime" description="The CLI and home directory agent runs execute against.">
         {status ? (

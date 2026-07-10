@@ -22,6 +22,22 @@ export default defineServices(async (ctx) => {
   healCredentialLinks();
 
   const settings = ctx.services.get('settings');
+
+  // One-time adoption of the pre-framework settings keys into module config
+  // (via ctx.modules.setConfig — the kernel validates and encodes). Deleting the
+  // legacy keys makes this run once ever.
+  const legacySlots = settings.get('reservedRunnerSlots');
+  const legacyTunnel = settings.get('webhookTunnel');
+  if (legacySlots !== null || legacyTunnel !== null) {
+    const patch: Record<string, unknown> = {};
+    const n = Math.floor(Number(legacySlots));
+    if (legacySlots !== null && Number.isFinite(n)) patch.reservedRunnerSlots = Math.min(64, Math.max(0, n));
+    if (legacyTunnel !== null) patch.webhookTunnel = legacyTunnel === 'on';
+    if (Object.keys(patch).length) ctx.modules.setConfig('operate', patch);
+    settings.delete('reservedRunnerSlots');
+    settings.delete('webhookTunnel');
+  }
+
   // Git credentials: module-code plugs its account-aware resolver in at its
   // onEnable; until then (or with code disabled) the legacy settings key serves.
   const tokenSource: { current: GithubTokenSource } = {
@@ -52,8 +68,8 @@ export default defineServices(async (ctx) => {
 
   const checkouts = new Checkouts(() => tokenSource.current.tokenFor() ?? settings.get('github_token'));
   const store = new OperateStore(ctx.db, settings, ctx.notify);
-  const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor);
-  const webhookTunnel = new WebhookTunnel(settings, ctx.config.port);
+  const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
+  const webhookTunnel = new WebhookTunnel(() => ctx.moduleConfig.get('webhookTunnel') === true, ctx.config.port);
   const skills = new Skills();
 
   // Run visibility gates on repo→workspace access; resolve workspace lazily so

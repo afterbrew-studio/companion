@@ -5,10 +5,10 @@ import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/co
 
 /**
  * module-automations' REST surface, carved from the legacy `lib/api.ts`: the
- * per-repo automation switches + webhook receivers, the instance-wide tunnel
- * toggle, the on-demand digest/stale-sweep/briefing kicks, and AI Help (the
- * per-user conversation run). HTTP + token plumbing lives in
- * `@companion/core/client`; every DTO is owned by the module it belongs to.
+ * per-repo automation switches + webhook receivers, the tunnel status readout,
+ * the on-demand digest/stale-sweep/briefing kicks, and AI Help (the per-user
+ * conversation run). HTTP + token plumbing lives in `@companion/core/client`;
+ * every DTO is owned by the module it belongs to.
  */
 
 export const automationsApi = {
@@ -21,8 +21,8 @@ export const automationsApi = {
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
   /** Read-only: never (re-)enables the receiver. */
   getWebhook: (fullName: string) => request<{ webhook: WebhookInfo | null }>(`/api/repos/${fullName}/webhook`),
+  /** Status only — the toggle is operate's `webhookTunnel` module config (Modules page). */
   webhookTunnel: () => request<WebhookTunnelState>('/api/webhooks/tunnel'),
-  setWebhookTunnel: (enabled: boolean) => put<WebhookTunnelState>('/api/webhooks/tunnel', { enabled }),
   digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
   staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
 

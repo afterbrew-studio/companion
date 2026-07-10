@@ -12,24 +12,24 @@ const LABEL = 'gh';
  * `/webhooks/github/...` receiver without the user running their own tunnel.
  *
  * The subdomain derives from a persisted keypair, so the public URL is stable
- * across restarts; enablement is remembered in settings and restored on boot.
+ * across restarts. Enablement is the module-config flag (the truth this class
+ * reconciles against): `restore()` re-opens on boot, and operate's bus
+ * subscription reconciles on config changes — so an open that failed once
+ * self-heals on the next boot instead of silently flipping the flag off.
  */
 export class WebhookTunnel {
   private handle: TunnelHandle | null = null;
   private opening: Promise<string> | null = null;
 
   constructor(
-    private readonly settings: { get(key: string): string | null; set(key: string, value: string): void },
+    /** The `webhookTunnel` module-config flag (live read). */
+    readonly enabled: () => boolean,
     private readonly port: number,
   ) {}
 
   /** Public base URL when the tunnel is up (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
   url(): string | null {
     return this.handle?.url ?? null;
-  }
-
-  enabled(): boolean {
-    return this.settings.get('webhookTunnel') === 'on';
   }
 
   /** Absolute delivery URL for a receiver path, when the tunnel is up. */
@@ -53,7 +53,6 @@ export class WebhookTunnel {
       });
       const handle = await provider.open({ host: '127.0.0.1', port: this.port, label: LABEL });
       this.handle = handle;
-      this.settings.set('webhookTunnel', 'on');
       log.info('webhook tunnel up', { url: handle.url });
       return handle.url;
     })();
@@ -65,7 +64,9 @@ export class WebhookTunnel {
   }
 
   async stop(): Promise<void> {
-    this.settings.set('webhookTunnel', '');
+    // Let an in-flight open land first, or its handle would be assigned after
+    // the teardown and leak a public tunnel past a disable.
+    if (this.opening) await this.opening.catch(() => undefined);
     const h = this.handle;
     this.handle = null;
     if (h) await h.close();
@@ -78,8 +79,13 @@ export class WebhookTunnel {
   }
 
   close(): void {
-    const h = this.handle;
-    this.handle = null;
-    if (h) void h.close();
+    const drain = this.opening ?? Promise.resolve();
+    void drain
+      .catch(() => undefined)
+      .then(() => {
+        const h = this.handle;
+        this.handle = null;
+        if (h) void h.close();
+      });
   }
 }

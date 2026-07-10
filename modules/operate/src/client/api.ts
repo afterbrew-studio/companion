@@ -7,7 +7,6 @@ import type {
   MoxxyStatus,
   RunQueueSnapshot,
   RunRecord,
-  RunSettings,
   RunnerProbeResult,
   RunnerRecord,
   SkillFile,
@@ -74,11 +73,6 @@ export const operateApi = {
     request<{ pins: Record<string, string | null>; defaultModel: string }>('/api/settings/model-pins'),
   setModelPins: (pins: Record<string, string | null>) =>
     put<{ pins: Record<string, string | null> }>('/api/settings/model-pins', { pins }),
-
-  // instance run-scheduling settings (admin)
-  getRunSettings: () => request<RunSettings>('/api/settings/runs'),
-  setRunSettings: (reservedRunnerSlots: number) =>
-    put<RunSettings>('/api/settings/runs', { reservedRunnerSlots }),
 
   // skills
   listSkills: () => request<{ skills: SkillFile[] }>('/api/skills'),

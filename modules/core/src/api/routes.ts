@@ -171,6 +171,32 @@ export default defineRoutes((ctx) => {
         return { modules: ctx.modules.list() };
       },
     }),
+    route({
+      method: 'POST',
+      path: '/api/modules/:id/install',
+      access: 'settings:manage',
+      body: z.object({ config: z.record(z.unknown()).optional() }),
+      handler: async ({ params, body }) => {
+        await ctx.modules.install(params.id, body.config);
+        return { modules: ctx.modules.list() };
+      },
+    }),
+    route({
+      method: 'GET',
+      path: '/api/modules/:id/config',
+      access: 'settings:manage',
+      handler: ({ params }) => ctx.modules.getConfig(params.id),
+    }),
+    route({
+      method: 'PUT',
+      path: '/api/modules/:id/config',
+      access: 'settings:manage',
+      body: z.object({ config: z.record(z.unknown()) }),
+      handler: ({ params, body }) => {
+        ctx.modules.setConfig(params.id, body.config);
+        return ctx.modules.getConfig(params.id);
+      },
+    }),
 
     // ---------- self-service account + profile (any signed-in user) ----------
     route({

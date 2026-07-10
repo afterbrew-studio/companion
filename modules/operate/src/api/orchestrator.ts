@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AskRequest, HistorySegment, MoxxyEvent } from '@companion/types';
+import type { ModuleConfigAccessor } from '@companion/core';
 import type { SpaServerMessage } from '@companion/contracts';
 import type { NotificationKind } from '@companion/module-workspace/contract';
 import type {
@@ -98,6 +99,7 @@ export class Orchestrator implements RunnerEventSink {
     moxxyCli: MoxxyCli | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
     githubTokenFor: (repo: string) => string | null = () => null,
+    private readonly moduleConfig: ModuleConfigAccessor = { values: () => ({}), get: () => null },
   ) {
     this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast, githubTokenFor);
   }
@@ -901,10 +903,10 @@ export class Orchestrator implements RunnerEventSink {
     }
   }
 
-  /** Slots kept free from attended chats for automated work (instance setting). */
+  /** Slots kept free from attended chats for automated work (module config, live). */
   private reservedRunnerSlots(): number {
-    const raw = Number(this.store.settings.get('reservedRunnerSlots'));
-    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 1;
+    const v = this.moduleConfig.get('reservedRunnerSlots');
+    return typeof v === 'number' ? v : 1;
   }
 
   /** The scheduler's live state for the UI: running count, capacity, and the line. */

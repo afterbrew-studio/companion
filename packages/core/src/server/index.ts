@@ -8,6 +8,7 @@ export * from './raw-router.js';
 export * from './service-registry.js';
 export * from './bus.js';
 export * from './migration-runner.js';
+export * from './module-config-store.js';
 export * from './rbac-grid.js';
 export * from './capabilities.js';
 export * from './context.js';

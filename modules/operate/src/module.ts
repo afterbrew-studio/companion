@@ -11,6 +11,26 @@ export default defineManifest({
   title: 'Operate',
   version: '0.1.0',
   dependsOn: ['workspace', 'core'],
+  config: [
+    {
+      key: 'reservedRunnerSlots',
+      label: 'Reserved runner slots',
+      kind: 'number',
+      description:
+        'Runner slots kept free from attended chats so automated work (triage, review, fixes) always has room. At least one chat slot always remains.',
+      default: 1,
+      min: 0,
+      max: 64,
+    },
+    {
+      key: 'webhookTunnel',
+      label: 'Public webhook delivery',
+      kind: 'boolean',
+      description:
+        'Expose the GitHub webhook receiver through the moxxy proxy relay — no self-managed tunnel needed. The public URL is stable across restarts.',
+      default: false,
+    },
+  ],
   permissions: ['runs:read', 'runs:act', 'runners:manage', 'skills:manage'],
   messages: [
     'event',

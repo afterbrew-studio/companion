@@ -122,26 +122,13 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    /** Instance-wide public webhook delivery over moxxy's proxy relay. */
+    /** Instance-wide public webhook delivery over moxxy's proxy relay (read-only —
+     *  the toggle is operate's `webhookTunnel` module config, edited on the Modules page). */
     route({
       method: 'GET',
       path: '/api/webhooks/tunnel',
       access: 'automations:manage',
       handler: () => ({ enabled: operate.webhookTunnel.enabled(), url: operate.webhookTunnel.url() }),
-    }),
-
-    route({
-      method: 'PUT',
-      path: '/api/webhooks/tunnel',
-      access: 'automations:manage',
-      body: z.object({ enabled: z.boolean() }),
-      handler: async ({ body }) => {
-        if (body.enabled) await operate.webhookTunnel.start();
-        else await operate.webhookTunnel.stop();
-        // Per-repo webhook URLs shown in the UI change with the tunnel.
-        ctx.broadcast({ t: 'repos.changed' });
-        return { enabled: operate.webhookTunnel.enabled(), url: operate.webhookTunnel.url() };
-      },
     }),
 
     route({

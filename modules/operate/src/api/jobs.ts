@@ -9,10 +9,25 @@ import { createRunScopeResolver } from './ws-scope.js';
  * here (and unregisters on disable), so private-workspace output and one
  * user's AI-Help chat never reach other users' sockets.
  */
+let offConfigChanged: (() => void) | null = null;
+
 export default defineJobs({
   onEnable: (ctx) => {
     const op = ctx.services.get('operate');
     ctx.ws.registerScopeResolver('operate', createRunScopeResolver(ctx));
+    // Reconcile the tunnel with its config flag whenever the admin edits it
+    // (the Modules page writes config; nothing calls start/stop directly). The
+    // broadcast fires only after the open/close SETTLES — that's when the
+    // public URL exists (or is gone), which is what the readout cards show.
+    offConfigChanged = ctx.bus.on('module-config.changed', ({ moduleId, keys }) => {
+      if (moduleId !== 'operate' || !keys.includes('webhookTunnel')) return;
+      const tunnel = ctx.services.get('operate').webhookTunnel;
+      void (async () => {
+        if (tunnel.enabled()) await tunnel.start();
+        else await tunnel.stop();
+        ctx.broadcast({ t: 'modules.changed' });
+      })().catch((err) => ctx.log.warn('webhook tunnel reconcile failed', { err: String(err) }));
+    });
     op.orchestrator.recover();
     op.orchestrator.start();
   },
@@ -30,6 +45,8 @@ export default defineJobs({
     // socket). Only then remove the resolver.
     await op.orchestrator.shutdown();
     ctx.ws.unregisterScopeResolver('operate');
+    offConfigChanged?.();
+    offConfigChanged = null;
     op.webhookTunnel.close();
   },
 });

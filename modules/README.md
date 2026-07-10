@@ -176,6 +176,53 @@ enabled module depends on (409). Cross-domain **reactions** (reacting to another
 module's event) are **soft** — do them via `ctx.bus` / `ctx.services.tryGet`, not
 `dependsOn`, so they don't create load-order cycles.
 
+### Module configuration (`config`) and the install lifecycle
+
+A module declares the settings it needs from the user as a **declarative field
+list** on the manifest — pure data, not zod — so the kernel can serve the spec
+from `GET /api/modules` and the Modules page can render an install/configure
+form **without loading any module code**. The server derives the real zod
+validator from it (`fieldSchema` in `@companion/core/server`).
+
+```ts
+config: [
+  { key: 'apiUrl',  label: 'API URL',   kind: 'text',   required: true, pattern: '^https://' },
+  { key: 'apiToken', label: 'API token', kind: 'secret', required: true },
+  { key: 'pollMinutes', label: 'Poll interval (min)', kind: 'number', default: 15, min: 1, max: 120 },
+  { key: 'tunnel', label: 'Public delivery', kind: 'boolean', default: false },
+  { key: 'mode', label: 'Mode', kind: 'select', default: 'safe',
+    options: [{ value: 'safe', label: 'Safe' }, { value: 'yolo', label: 'YOLO' }] },
+],
+autoInstall: false,   // optional: land as "Available" instead of auto-installing
+```
+
+- **Kinds**: `text` (`min`/`max` length, `pattern`), `secret`, `number`
+  (integer, `min`/`max`), `boolean`, `select` (`options`). `required` fields
+  must hold a value (or a `default`) before the module can be installed/enabled.
+- **The catalog lifecycle**: a compiled-in module is *Available → installed →
+  enabled*. At boot a **new** module auto-installs + enables unless
+  `autoInstall: false` or it has a required config field without a default —
+  then it waits under "Available" on the Modules page, where installing
+  collects its config first (`POST /api/modules/:id/install`). `uninstall`
+  runs `down()` migrations AND wipes the module's config, returning it to
+  Available. Existing rows are never resurrected or re-policied by boot.
+- **Reading config**: `ctx.moduleConfig.get(key)` / `.values()` — read-only,
+  **live** (each call reads the store), defaults merged. Values are written only
+  through the kernel (`PUT /api/modules/:id/config` from the Modules page, or
+  `ctx.modules.setConfig` for one-time adoptions). Tolerate `null` from `get`:
+  an upgrade can add a required field to an already-enabled module (boot never
+  blocks on config; the UI badges "needs configuration" instead).
+- **Reacting to edits**: a config write emits the `module-config.changed`
+  bus event (`{ moduleId, keys }`) and broadcasts `modules.changed`. Subscribe
+  in `onEnable` (unsubscribe in `onDisable`) and gate on the keys you care
+  about if a running service must reconcile — see operate's webhook tunnel in
+  `modules/operate/src/api/jobs.ts`.
+- **Secrets** (`kind: 'secret'`): the value never leaves the daemon — `GET
+  .../config` returns only a set/unset flag (redaction by omission), the form
+  sends a replacement or the explicit `null` to clear, an empty string is
+  rejected, and `default` is forbidden (the spec is visible to any signed-in
+  user).
+
 ---
 
 ## 5. The contract slice — `src/contract/index.ts`
@@ -241,6 +288,7 @@ the old god-object. The pieces you get:
 | `broadcast(msg)` / `pushToUser(name, msg)` | browser push over the WebSocket hub. |
 | `notify` | the shared notification emitter (`ctx.notify.emit({...})`). |
 | `settings` | namespaced key/value over the core-owned `settings` table. |
+| `moduleConfig` | THIS module's declared config (§4): `get(key)` / `values()`, read-only, live, defaults merged. |
 | `rbac` | the live effective RBAC grid reader (`ctx.rbac.has(role, perm)`). |
 | `ws` | the WS scope-resolver registry — register per-message visibility in `onEnable`. |
 | `modules` / `isEnabled` | kernel lifecycle control + enabled-checks. |
@@ -512,9 +560,11 @@ place the apps name a module:
   to `CLIENT_LOADERS`.
 - `pnpm-workspace.yaml` already globs `modules/*`, so `pnpm install` links it.
 
-The kernel reconciles the new module into the `modules` table on next boot
-(installed + enabled by default) and activates it in dependency order. No other
-edits — there is no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
+The kernel reconciles the new module into the `modules` table on next boot —
+installed + enabled by default, or waiting under "Available" on the Modules page
+when the manifest says `autoInstall: false` or declares required config without
+defaults (§4) — and activates it in dependency order. No other edits — there is
+no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
 
 ---
 
@@ -554,6 +604,9 @@ edits — there is no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
       `tryGet`/`ctx.bus` (soft reaction) — never a raw foreign JOIN, never assume
       a service/permission is present from its type.
 - [ ] `onDisable` releases everything `onEnable` claimed (bus, ws, timers, sockets).
+- [ ] User-tunable settings are manifest `config` fields (§4) read via
+      `ctx.moduleConfig` — not ad-hoc `ctx.settings` keys with hand-rolled
+      routes/UI. Secrets use `kind: 'secret'` so redaction is structural.
 - [ ] Don't add an npm dependency without justifying it — reach for the platform
       and `@companion/ui` first.
 
