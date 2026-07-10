@@ -48,6 +48,17 @@ export class GitHubClient {
     return this.get<{ login: string }>('/user');
   }
 
+  /** Repositories the token can see (owner/collaborator/org), newest push first, paged. */
+  async viewerRepos(maxPages = 3): Promise<GhRepoSummary[]> {
+    const collected: GhRepoSummary[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.get<GhRepoSummary[]>(`/user/repos?per_page=100&sort=pushed&direction=desc&page=${page}`);
+      collected.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return collected;
+  }
+
   async repo(fullName: string): Promise<{
     full_name: string;
     default_branch: string;
@@ -239,6 +250,14 @@ export class GitHubClient {
     }
     return new GitHubError(`GitHub ${path}: ${message}`, res.status);
   }
+}
+
+export interface GhRepoSummary {
+  full_name: string;
+  private: boolean;
+  description: string | null;
+  pushed_at: string | null;
+  archived: boolean;
 }
 
 export interface GhIssue {

@@ -13,6 +13,7 @@ import type {
   PrFileChange,
   PrRecord,
   PrReviewResult,
+  RepoCandidate,
   RepoRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
@@ -32,6 +33,9 @@ export const codeApi = {
   listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
   addRepo: (fullName: string, workspaceId: string) =>
     post<{ repo: RepoRecord }>('/api/repos', { fullName, workspaceId }),
+  /** Repos the reachable GitHub accounts can see — feeds the add-repo picker. */
+  repoCandidates: (workspaceId: string) =>
+    request<{ candidates: RepoCandidate[] }>(`/api/github/repo-candidates?workspaceId=${encodeURIComponent(workspaceId)}`),
   removeRepo: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}`),
   moveRepo: (fullName: string, workspaceId: string) =>
     post<{ repo: RepoRecord }>(`/api/repos/${fullName}/workspace`, { workspaceId }),

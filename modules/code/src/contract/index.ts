@@ -71,6 +71,16 @@ export interface RepoRecord {
   readonly runnerId: string | null;
 }
 
+/** A repository a reachable GitHub account can see — the add-repo picker feed. */
+export interface RepoCandidate {
+  readonly fullName: string;
+  readonly private: boolean;
+  readonly description: string | null;
+  readonly pushedAt: number | null;
+  /** Login of the account that sees it (highest-precedence when several do). */
+  readonly accountLogin: string;
+}
+
 export interface IssueRecord {
   readonly repo: string;
   readonly number: number;

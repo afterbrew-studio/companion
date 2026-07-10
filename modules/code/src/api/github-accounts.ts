@@ -4,6 +4,7 @@ import {
   type GitHubAccountRecord,
   type GitHubAccountScope,
   type GitHubPurpose,
+  type RepoCandidate,
 } from '../contract/index.js';
 import { log, currentUser } from '@companion/services';
 import { GitHubClient, GitHubError } from './github-client.js';
@@ -158,6 +159,43 @@ export class GitHubAccounts {
     ctx?: Omit<ResolveCtx, 'repo'>,
   ): Promise<string | null> {
     return (await this.verifiedRowFor(purpose, fullName, ctx)).row?.token ?? null;
+  }
+
+  /**
+   * The add-repo picker feed: repositories visible to the accounts the invoking
+   * user may act with in this workspace (fetch purpose), deduped by full name
+   * with the highest-precedence account winning, newest push first. Browsing is
+   * best-effort — an account that errors (revoked token, rate limit) is skipped.
+   */
+  async repoCandidates(workspaceId: string): Promise<RepoCandidate[]> {
+    // Cap the fan-out: beyond the top few accounts the union stops adding reach.
+    const rows = this.candidatesFor('fetch', { workspaceId }).slice(0, 3);
+    const listed = await Promise.all(
+      rows.map(async (row) => {
+        try {
+          return { row, repos: await this.clientOf(row).viewerRepos() };
+        } catch (err) {
+          log.warn('listing repos failed for GitHub account', { login: row.login || row.id, err: String(err) });
+          return { row, repos: [] };
+        }
+      }),
+    );
+    const seen = new Set<string>();
+    const out: RepoCandidate[] = [];
+    for (const { row, repos } of listed) {
+      for (const r of repos) {
+        if (r.archived || seen.has(r.full_name)) continue;
+        seen.add(r.full_name);
+        out.push({
+          fullName: r.full_name,
+          private: r.private,
+          description: r.description,
+          pushedAt: r.pushed_at ? Date.parse(r.pushed_at) : null,
+          accountLogin: row.login || row.id,
+        });
+      }
+    }
+    return out.sort((a, b) => (b.pushedAt ?? 0) - (a.pushedAt ?? 0));
   }
 
   /** Does this account see the repo? Probes `GET /repos/:fullName`, TTL-cached. */

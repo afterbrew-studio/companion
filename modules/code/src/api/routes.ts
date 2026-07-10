@@ -204,6 +204,20 @@ export default defineRoutes((ctx) => {
       },
     }),
 
+    /** The add-repo picker feed: repos the reachable GitHub accounts can see. */
+    route({
+      method: 'GET',
+      path: '/api/github/repo-candidates',
+      access: 'repos:manage',
+      handler: async ({ query, user }) => {
+        const workspaceId = query.get('workspaceId') ?? '';
+        const ws = workspace.get(workspaceId);
+        if (!ws) throw badRequest('workspaceId is required');
+        if (!workspace.canAccess(user!, ws)) throw forbidden('you cannot add repos to that workspace');
+        return { candidates: await code.githubAccounts.repoCandidates(workspaceId) };
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/api/repos',

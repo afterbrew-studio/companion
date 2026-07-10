@@ -22,7 +22,7 @@ import {
   useConfirm,
   useDebounced,
 } from '@companion/ui';
-import type { GitHubAccountRecord, RepoRecord } from '../../contract/index.js';
+import type { GitHubAccountRecord, RepoCandidate, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useReposAdmin } from '../hooks/useReposAdmin.js';
 
@@ -97,6 +97,7 @@ export function ReposPage(): JSX.Element {
       {adding ? (
         <AddRepoModal
           workspace={current}
+          existing={repos}
           onClose={() => setAdding(false)}
           onDone={() => {
             setAdding(false);
@@ -357,25 +358,52 @@ function TransferRepoModal({
   );
 }
 
+/** `owner/name` from anything a user pastes: shorthand, an https URL, or git@ SSH. */
+function parseRepoInput(raw: string): string | null {
+  const s = raw.trim();
+  const m =
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/?#].*)?$/i.exec(s) ??
+    /^git@github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(s) ??
+    /^([\w.-]+)\/([\w.-]+?)(?:\.git)?$/.exec(s);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
 function AddRepoModal({
   workspace,
+  existing,
   onClose,
   onDone,
 }: {
   workspace: WorkspaceRecord;
+  existing: readonly RepoRecord[];
   onClose: () => void;
   onDone: () => void;
 }): JSX.Element {
-  const [fullName, setFullName] = useState('');
+  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<RepoCandidate[] | null>(null);
+  const [browseFailed, setBrowseFailed] = useState(false);
 
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
+  const parsed = parseRepoInput(input);
+  const connected = new Set(existing.map((r) => r.fullName));
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .repoCandidates(workspace.id)
+      .then((r) => alive && setCandidates(r.candidates))
+      .catch(() => alive && (setBrowseFailed(true), setCandidates([])));
+    return () => {
+      alive = false;
+    };
+  }, [workspace.id]);
+
+  const connect = async (fullName: string): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      await api.addRepo(fullName.trim(), workspace.id);
+      await api.addRepo(fullName, workspace.id);
       onDone();
     } catch (err) {
       setError(String(err));
@@ -383,20 +411,88 @@ function AddRepoModal({
     }
   };
 
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!parsed) {
+      setError('Enter owner/name or a GitHub repository URL.');
+      return;
+    }
+    await connect(parsed);
+  };
+
+  // The one input does both: paste a URL/shorthand, or type to filter the list.
+  const filter = (parsed ?? input).trim().toLowerCase();
+  const matches = (candidates ?? []).filter((c) => !filter || c.fullName.toLowerCase().includes(filter));
+
   return (
     <Modal title={`Connect a repository — ${workspace.name}`} onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Field label="Repository (owner/name)">
+        <Field label="Repository">
           <input
             className="input"
-            required
-            pattern="[\w.-]+/[\w.-]+"
-            placeholder="vercel/next.js"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
+            placeholder="owner/name or https://github.com/owner/name"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
             autoFocus
           />
         </Field>
+        {parsed && parsed !== input.trim() ? (
+          <p className="dim -mt-1.5 text-xs">
+            Connects <strong>{parsed}</strong>
+          </p>
+        ) : null}
+
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="dim border-b border-zinc-200 px-3 py-2 text-[10px] font-medium tracking-widest uppercase dark:border-zinc-800">
+            From your GitHub
+          </div>
+          {candidates === null ? (
+            <div className="dim flex items-center gap-2 px-3 py-3 text-[13px]">
+              <Spinner /> Loading your repositories…
+            </div>
+          ) : matches.length === 0 ? (
+            <p className="dim px-3 py-3 text-[13px]">
+              {browseFailed || candidates.length === 0 ? (
+                <>
+                  Nothing to browse —{' '}
+                  <a className="linkish" href="#/github">
+                    connect a GitHub account
+                  </a>{' '}
+                  with access, or type the repository above.
+                </>
+              ) : (
+                'No match in your repositories — type the exact owner/name above.'
+              )}
+            </p>
+          ) : (
+            <ul className="max-h-56 overflow-y-auto p-1.5" aria-label="Your repositories">
+              {matches.slice(0, 50).map((c) => {
+                const done = connected.has(c.fullName);
+                return (
+                  <li key={c.fullName}>
+                    <button
+                      type="button"
+                      disabled={busy || done}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-zinc-100 disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-zinc-800"
+                      title={done ? 'Already connected to this workspace' : `Connect ${c.fullName}`}
+                      onClick={() => void connect(c.fullName)}
+                    >
+                      <span className="min-w-0 flex-1 leading-tight">
+                        <span className="block truncate text-[13px] font-medium">{c.fullName}</span>
+                        {c.description ? <span className="dim block truncate text-xs">{c.description}</span> : null}
+                      </span>
+                      {c.private ? <span className="badge shrink-0">private</span> : null}
+                      <span className="dim shrink-0 text-xs">
+                        {done ? 'connected' : c.pushedAt ? timeAgo(c.pushedAt) : ''}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
         <p className="dim text-[13px]">
           The repo connects into <strong>{workspace.name}</strong> — the active workspace. You can move it later from
           its row.
@@ -406,7 +502,7 @@ function AddRepoModal({
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" type="submit" disabled={busy || !fullName.trim()}>
+          <button className="btn" type="submit" disabled={busy || !parsed}>
             {busy ? 'Connecting…' : 'Connect'}
           </button>
         </FormActions>
