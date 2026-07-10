@@ -87,7 +87,7 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
   const { branding } = useAuth();
   const name = branding.name?.trim() || 'Companion';
   return (
-    // Same padding in both modes — the logo must not move when the rail peeks open.
+    // Same padding in both modes — the logo must not move on collapse/expand.
     <div className="flex items-center gap-2 px-4 pt-4 pb-2">
       {branding.logo ? (
         <img src={branding.logo} alt="" className="size-7 shrink-0 rounded-lg object-cover" />
@@ -135,44 +135,18 @@ function Shell(): JSX.Element {
     });
   };
 
-  // Hover peek: resting the pointer on the collapsed rail slides the full
-  // sidebar over the content — the layout keeps the rail width, so nothing
-  // reflows — and it slides back out on leave. `peek` drives the width/overlay;
-  // the content flips back to icons only after the slide-out finishes, so
-  // labels are revealed and re-clipped by the moving edge instead of popping.
-  const [peek, setPeek] = useState(false);
-  const [peekContent, setPeekContent] = useState(false);
-  const peekTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
-  const schedulePeek = (on: boolean): void => {
-    window.clearTimeout(peekTimer.current);
-    if (on === peek) return;
-    if (on) {
-      // Enter delay so brushing past the rail doesn't flap it open.
-      peekTimer.current = window.setTimeout(() => {
-        setPeek(true);
-        setPeekContent(true);
-      }, 150);
-    } else {
-      peekTimer.current = window.setTimeout(() => {
-        setPeek(false);
-        peekTimer.current = window.setTimeout(() => setPeekContent(false), 220);
-      }, 200);
-    }
-  };
-  const endPeek = (): void => {
-    window.clearTimeout(peekTimer.current);
-    setPeek(false);
-    setPeekContent(false);
-  };
-
   // Icon-only rail applies to the desktop collapsed state; the mobile drawer
-  // always shows full content, and so does an in-flight hover peek.
-  const rail = collapsed && !mobileOpen && !peekContent;
-  const peeking = collapsed && peek;
+  // always shows full content. Rail items get a styled tooltip: one shared
+  // fixed-position element OUTSIDE the aside, so its overflow can't clip it.
+  const rail = collapsed && !mobileOpen;
+  const [railTip, setRailTip] = useState<{ top: number; left: number; label: string } | null>(null);
+  const showRailTip = (e: React.MouseEvent | React.FocusEvent, label: string): void => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setRailTip({ top: r.top + r.height / 2, left: r.right + 10, label });
+  };
 
   const toggleSidebar = (): void => {
-    endPeek();
+    setRailTip(null);
     if (window.matchMedia('(min-width: 768px)').matches) {
       setCollapsed((c) => {
         localStorage.setItem('companion.sidebar', c ? 'expanded' : 'collapsed');
@@ -337,17 +311,9 @@ function Shell(): JSX.Element {
         <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden onClick={() => setMobileOpen(false)} />
       ) : null}
       <aside
-        onMouseEnter={collapsed ? () => schedulePeek(true) : undefined}
-        onMouseLeave={collapsed ? () => schedulePeek(false) : undefined}
-        onFocusCapture={collapsed ? () => schedulePeek(true) : undefined}
-        onBlurCapture={collapsed ? () => schedulePeek(false) : undefined}
-        className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 transition-[width,transform,margin,box-shadow] duration-200 ease-in-out motion-reduce:transition-none md:relative md:translate-x-0 dark:border-zinc-800 dark:bg-zinc-900 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 transition-[width,transform] duration-200 ease-in-out motion-reduce:transition-none md:static md:translate-x-0 dark:border-zinc-800 dark:bg-zinc-900 md:dark:bg-zinc-900/60 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${collapsed && !peeking ? 'md:w-16' : 'md:w-56'} ${
-          // While peeking, the extra width overlays the content (negative
-          // margin keeps the flex slot at rail width) and the bg goes opaque.
-          peeking ? 'md:-mr-40 md:shadow-xl' : 'md:dark:bg-zinc-900/60'
-        }`}
+        } ${collapsed ? 'md:w-16' : 'md:w-56'}`}
       >
         <Brand rail={rail} />
 
@@ -386,7 +352,11 @@ function Shell(): JSX.Element {
                     key={m.key}
                     href={m.hash}
                     aria-current={active ? 'page' : undefined}
-                    title={rail ? m.label : undefined}
+                    aria-label={rail ? m.label : undefined}
+                    onMouseEnter={rail ? (e) => showRailTip(e, m.label) : undefined}
+                    onMouseLeave={rail ? () => setRailTip(null) : undefined}
+                    onFocus={rail ? (e) => showRailTip(e, m.label) : undefined}
+                    onBlur={rail ? () => setRailTip(null) : undefined}
                     className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] ${
                       active
                         ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
@@ -438,7 +408,7 @@ function Shell(): JSX.Element {
         <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           {rail ? (
             // Icon-only: just the profile glyph, sitting where the expanded row
-            // starts — sign out lives in the expanded (or peeked) sidebar.
+            // starts — sign out lives in the expanded sidebar.
             <div className="-mx-2">
               <a
                 href="#/profile"
@@ -473,6 +443,16 @@ function Shell(): JSX.Element {
           )}
         </div>
       </aside>
+
+      {railTip ? (
+        <div
+          role="tooltip"
+          className="anim-in pointer-events-none fixed z-50 -translate-y-1/2 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-zinc-700 shadow-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          style={{ top: railTip.top, left: railTip.left }}
+        >
+          {railTip.label}
+        </div>
+      ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
