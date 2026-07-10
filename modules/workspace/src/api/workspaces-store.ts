@@ -33,11 +33,12 @@ export class WorkspacesStore {
     }
   }
 
-  // repo_count reads the code-owned `repos` table; the bare variant (0 repos) is
-  // the graceful fallback when module-code is uninstalled — the REQUIRED
-  // workspace listing must never crash on a missing foreign table.
+  // repo_count reads code's published `v_repos` view (never its raw table); the
+  // bare variant (0 repos) is the graceful fallback when module-code is
+  // uninstalled and the view is gone — the REQUIRED workspace listing must never
+  // crash on a missing foreign relation.
   private readonly selectFull = `SELECT w.*,
-    (SELECT COUNT(*) FROM repos r WHERE r.workspace_id = w.id) AS repo_count,
+    (SELECT COUNT(*) FROM v_repos r WHERE r.workspace_id = w.id) AS repo_count,
     (SELECT COUNT(*) FROM workspace_members m WHERE m.workspace_id = w.id) AS member_count
     FROM workspaces w`;
   private readonly selectBare = `SELECT w.*, 0 AS repo_count,
@@ -196,12 +197,12 @@ export class WorkspacesStore {
       return this.db
         .prepare(
           `SELECT w.id, w.visibility, w.owner_id
-           FROM repos r JOIN workspaces w ON w.id = r.workspace_id
+           FROM v_repos r JOIN workspaces w ON w.id = r.workspace_id
            WHERE r.full_name = ?`,
         )
         .get(fullName) as { id: string; visibility: string; owner_id: string | null } | undefined;
     } catch {
-      // module-code (repos owner) uninstalled — no repos to scope.
+      // module-code (repos owner) uninstalled — its v_repos view is gone.
       return undefined;
     }
   }
