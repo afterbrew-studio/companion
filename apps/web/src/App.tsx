@@ -317,7 +317,7 @@ function Shell(): JSX.Element {
       >
         <Brand rail={rail} />
 
-        <WorkspaceSwitcher rail={rail} onExpand={toggleSidebar} />
+        <WorkspaceSwitcher rail={rail} />
 
         <nav className="flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
           {sections.map(([section, modules], si) => (
@@ -495,11 +495,10 @@ function Shell(): JSX.Element {
 
 /**
  * The whole section is the click target: avatar tile + caption + name opens a
- * searchable workspace menu. Rail mode shows only the avatar tile (same
- * vertical footprint, so collapsing never makes the nav below jump); clicking
- * it expands the sidebar.
+ * searchable workspace menu. Rail mode renders an empty slot of the same
+ * vertical footprint, so collapsing never makes the nav below jump.
  */
-function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => void }): JSX.Element {
+function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
   const { workspaces, current, setCurrent, refresh } = useWorkspace();
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
@@ -522,16 +521,11 @@ function WorkspaceSwitcher({ rail, onExpand }: { rail: boolean; onExpand: () => 
     </span>
   );
   if (rail) {
+    // Collapsed: no glyph — just hold the switcher's slot so the nav below
+    // doesn't shift; the ⌘K "Create workspace" intent stays live.
     return (
       <div className="px-2.5 pt-3 pb-1">
-        <button
-          type="button"
-          className="flex h-12 w-full cursor-pointer items-center rounded-lg px-2 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
-          title={current ? `Workspace: ${current.name} — expand to switch` : 'Expand the sidebar to pick a workspace'}
-          onClick={onExpand}
-        >
-          {avatar}
-        </button>
+        <div className="h-12" aria-hidden />
         {createModal}
       </div>
     );
