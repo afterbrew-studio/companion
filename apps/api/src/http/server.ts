@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { log } from '@companion/services';
-import { readRawBody, type ModuleKernel, type WsHub } from '@companion/core/server';
+import type { ModuleKernel, WsHub } from '@companion/core/server';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -44,26 +44,17 @@ export function startHttpServer(opts: {
       void kernel.router.dispatch(req, res);
       return;
     }
-    // GitHub webhook deliveries: HMAC over the RAW body, so this route never
-    // goes through the JSON parser. No bearer — the signature IS the auth.
-    const webhook = path.match(/^\/webhooks\/github\/([\w.-]+)\/([\w.-]+)$/);
-    if (webhook && req.method === 'POST') {
-      const automations = kernel.services.tryGet('automations');
-      if (!automations) {
-        res.writeHead(503, { 'content-type': 'text/plain' });
-        res.end('automations module disabled');
-        return;
-      }
-      void readRawBody(req)
-        .then((raw) => {
-          const result = automations.automations.handleDelivery(`${webhook[1]}/${webhook[2]}`, req.headers, raw);
-          res.writeHead(result.status, { 'content-type': 'text/plain' });
-          res.end(result.body);
-        })
-        .catch((err) => {
-          res.writeHead(400, { 'content-type': 'text/plain' });
-          res.end(String(err));
-        });
+    // Raw-body routes (webhooks) — self-authenticating, byte-exact bodies, owned
+    // by whichever module registered them. The shell stays module-agnostic: it
+    // asks the kernel's raw router, which 503s a disabled owner's path and
+    // reports "not handled" for anything else so we fall through to static.
+    if (kernel.rawRouter.active) {
+      void kernel.rawRouter.tryDispatch(req, res).then((handled) => {
+        if (handled) return;
+        if (staticDir) return serveStatic(staticDir, path, res);
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('companion api: no static bundle (use the Vite dev server)');
+      });
       return;
     }
     if (staticDir) {

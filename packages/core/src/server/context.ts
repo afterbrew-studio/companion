@@ -3,6 +3,7 @@ import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/cont
 import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleManifest, ModuleId } from '../manifest.js';
 import type { CompiledRoute } from './router.js';
+import type { CompiledRawRoute } from './raw-router.js';
 import type { Migration } from './migration-runner.js';
 import type { ServiceRegistry } from './service-registry.js';
 import type { ServerBus } from './bus.js';
@@ -71,6 +72,7 @@ export interface LifecycleHooks {
 
 export type ServiceFactory = (ctx: ModuleContext) => void | Promise<void>;
 export type RouteFactory = (ctx: ModuleContext) => readonly CompiledRoute[];
+export type RawRouteFactory = (ctx: ModuleContext) => readonly CompiledRawRoute[];
 
 /** The `/api` barrel of a module — its whole server surface. */
 export interface ServerModule {
@@ -80,6 +82,8 @@ export interface ServerModule {
   /** Construct services + `ctx.services.register(id, instance)`. Runs (awaited) in topo order. */
   readonly registerServices?: ServiceFactory;
   readonly routes?: RouteFactory;
+  /** Byte-body, self-authenticating endpoints (webhooks) — outside the JSON router + RBAC. */
+  readonly rawRoutes?: RawRouteFactory;
   readonly lifecycle?: LifecycleHooks;
   /** module-core only: the authenticator the kernel wires into the router. */
   readonly provideAuthenticator?: (ctx: ModuleContext) => Authenticator;
@@ -92,5 +96,6 @@ export const defineAcl = (a: ModuleAcl): ModuleAcl => a;
 export const defineMigrations = (m: readonly Migration[]): readonly Migration[] => m;
 export const defineServices = (f: ServiceFactory): ServiceFactory => f;
 export const defineRoutes = (f: RouteFactory): RouteFactory => f;
+export const defineRawRoutes = (f: RawRouteFactory): RawRouteFactory => f;
 export const defineJobs = (h: LifecycleHooks): LifecycleHooks => h;
 export const defineApiModule = (m: ServerModule): ServerModule => m;

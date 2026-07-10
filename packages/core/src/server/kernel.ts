@@ -3,6 +3,7 @@ import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/cont
 import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleId, ModuleManifest } from '../manifest.js';
 import { DynamicRouter } from './router.js';
+import { RawRouter } from './raw-router.js';
 import { ServiceRegistry } from './service-registry.js';
 import { ServerBus } from './bus.js';
 import { MigrationRunner } from './migration-runner.js';
@@ -59,6 +60,8 @@ export class ModuleKernel {
   readonly migrations: MigrationRunner;
   readonly rbac = new RbacGrid();
   readonly router: DynamicRouter;
+  /** Byte-body, self-authenticating routes (webhooks) — the app shell dispatches these. */
+  readonly rawRouter: RawRouter;
 
   private authenticator: Authenticator | null = null;
   private readonly ctx: ModuleContext;
@@ -110,6 +113,7 @@ export class ModuleKernel {
       },
       isEnabled: (id) => this.isEnabled(id),
     };
+    this.rawRouter = new RawRouter(this.log);
     // The router needs an authenticator, wired once module-core provides it (boot()).
     this.router = new DynamicRouter(
       {
@@ -206,6 +210,7 @@ export class ModuleKernel {
     for (const id of enabled) {
       const mod = this.loaded.get(id)!;
       if (mod.routes) this.router.mount(id, mod.routes(this.ctx));
+      if (mod.rawRoutes) this.rawRouter.mount(id, mod.rawRoutes(this.ctx));
     }
     for (const id of enabled) await this.loaded.get(id)!.lifecycle?.onEnable?.(this.ctx);
     // Single post-activation pass: resumers fire only after every module subscribed.
@@ -233,6 +238,7 @@ export class ModuleKernel {
       await mod.registerServices?.(this.ctx);
       this.services.setActiveModule(null);
       if (mod.routes) this.router.mount(id, mod.routes(this.ctx));
+      if (mod.rawRoutes) this.rawRouter.mount(id, mod.rawRoutes(this.ctx));
       // enable doubles as (re-)install: a module enabled after uninstall is now installed again.
       this.markState(id, { installed: true, enabled: true });
       this.rebuildGrid(this.topoSort(this.enabledIds()));
@@ -266,6 +272,7 @@ export class ModuleKernel {
       // so a request can't reach a half-shut-down service during a long onDisable
       // (e.g. operate awaiting orchestrator.shutdown()).
       this.router.unmount(id);
+      this.rawRouter.unmount(id);
       this.markState(id, { enabled: false });
       this.rebuildGrid(this.topoSort(this.enabledIds()));
       await mod?.lifecycle?.onDisable?.(this.ctx);
@@ -295,6 +302,7 @@ export class ModuleKernel {
       // the row as installed=0 so boot's reconcile does NOT re-adopt/resurrect it.
       this.migrations.clearLedger(id);
       this.router.forget(id);
+      this.rawRouter.forget(id);
       this.markState(id, { installed: false, enabled: false, version: 0 });
       this.opts.broadcast({ t: 'modules.changed' });
     } finally {

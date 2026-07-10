@@ -4,6 +4,7 @@
  * the server-side registrant API a module's `/api` slice is authored against.
  */
 export * from './router.js';
+export * from './raw-router.js';
 export * from './service-registry.js';
 export * from './bus.js';
 export * from './migration-runner.js';

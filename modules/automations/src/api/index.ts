@@ -3,6 +3,7 @@ import manifest from '../module.js';
 import acl from './acl.js';
 import registerServices from './services.js';
 import routes from './routes.js';
+import rawRoutes from './raw-routes.js';
 import lifecycle from './jobs.js';
 
 /**
@@ -16,5 +17,6 @@ export default defineApiModule({
   acl,
   registerServices,
   routes,
+  rawRoutes,
   lifecycle,
 });
