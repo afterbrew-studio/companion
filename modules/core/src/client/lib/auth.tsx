@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AuthUser, Permission } from '@companion/contracts';
-import { connectWs, onAuthChanged } from '@companion/core/client';
+import { connectWs, onAuthChanged, onServerMessage } from '@companion/core/client';
 import type { InstanceBranding, NotificationScope } from '../../contract/index.js';
 import { authApi } from '../api.js';
 
@@ -74,7 +74,17 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
   useEffect(() => {
     void resolve();
-    return onAuthChanged(() => void resolve());
+    const offAuth = onAuthChanged(() => void resolve());
+    // Enabling/disabling a module rebuilds the server RBAC grid; re-resolve the
+    // session so can() reflects the new permissions (a just-enabled module's nav
+    // + routes appear) without a manual reload.
+    const offModules = onServerMessage((msg) => {
+      if (msg.t === 'modules.changed') void resolve();
+    });
+    return () => {
+      offAuth();
+      offModules();
+    };
   }, [resolve]);
 
   const login = useCallback(async (username: string, password: string) => {

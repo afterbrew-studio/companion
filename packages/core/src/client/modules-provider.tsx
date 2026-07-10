@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { request, onServerMessage } from './net.js';
 import { compileRoutes } from './router.js';
 import type { ClientRoute, NavEntry, NavSection, SlotContribution, WebModule } from './index.js';
@@ -50,18 +50,32 @@ export function ModulesProvider(props: {
   const [descriptors, setDescriptors] = useState<readonly ModuleDescriptor[]>([]);
   const [modules, setModules] = useState<readonly WebModule[]>([]);
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Bumped per load; a stale (slower) load discards its result so an out-of-order
+  // response can't overwrite a newer catalog.
+  const seq = useRef(0);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     const load = async (): Promise<void> => {
-      const { modules: catalog } = await request<{ modules: ModuleDescriptor[] }>('/api/modules');
-      if (!alive) return;
-      setDescriptors(catalog);
-      const enabled = catalog.filter((m) => m.enabled && props.loaders[m.id]);
-      const loaded = await Promise.all(enabled.map((m) => props.loaders[m.id]!().then((mod) => mod.default)));
-      if (!alive) return;
-      setModules(loaded);
-      setReady(true);
+      const mine = ++seq.current;
+      try {
+        const { modules: catalog } = await request<{ modules: ModuleDescriptor[] }>('/api/modules');
+        if (!alive || mine !== seq.current) return;
+        const enabled = catalog.filter((m) => m.enabled && props.loaders[m.id]);
+        const loaded = await Promise.all(enabled.map((m) => props.loaders[m.id]!().then((mod) => mod.default)));
+        if (!alive || mine !== seq.current) return;
+        setDescriptors(catalog);
+        setModules(loaded);
+        setError(null);
+        setReady(true);
+      } catch (err) {
+        if (!alive || mine !== seq.current) return;
+        // Don't strand the shell on a spinner: surface the failure so the user
+        // can retry (transient daemon blip, or a chunk 404 after a redeploy).
+        setError(err instanceof Error ? err.message : String(err));
+      }
     };
     void load();
     const off = onServerMessage((msg) => {
@@ -71,13 +85,14 @@ export function ModulesProvider(props: {
       alive = false;
       off();
     };
-  }, [props.loaders]);
+  }, [props.loaders, attempt]);
 
   const state = useMemo<KernelState>(() => {
     const sections = new Map<string, NavSection>();
     const nav: NavEntry[] = [];
     const routes: ClientRoute[] = [];
     const slotMap = new Map<string, SlotContribution[]>();
+    const byOrder = <T extends { readonly order?: number }>(a: T, b: T): number => (a.order ?? 0) - (b.order ?? 0);
     for (const mod of modules) {
       for (const s of mod.sections ?? []) if (!sections.has(s.id)) sections.set(s.id, s);
       nav.push(...(mod.nav ?? []));
@@ -88,8 +103,8 @@ export function ModulesProvider(props: {
         slotMap.set(s.slot, list);
       }
     }
-    const byOrder = <T extends { readonly order?: number }>(a: T, b: T): number =>
-      (a.order ?? 0) - (b.order ?? 0);
+    // Sort each slot list ONCE here, so slots(name) is a cheap lookup per render.
+    for (const list of slotMap.values()) list.sort(byOrder);
     return {
       descriptors,
       modules,
@@ -97,9 +112,27 @@ export function ModulesProvider(props: {
       sections: [...sections.values()].sort((a, b) => a.order - b.order),
       nav: [...nav].sort(byOrder),
       routes: compileRoutes(routes),
-      slots: (name) => (slotMap.get(name) ?? []).sort(byOrder),
+      slots: (name) => slotMap.get(name) ?? [],
     };
   }, [descriptors, modules, ready]);
+
+  if (!ready && error !== null) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <div className="text-lg font-semibold">Couldn&apos;t load the workspace</div>
+        <p className="dim max-w-sm text-sm">{error}</p>
+        <button
+          className="btn"
+          onClick={() => {
+            setError(null);
+            setAttempt((a) => a + 1);
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return <KernelContext.Provider value={state}>{props.children}</KernelContext.Provider>;
 }

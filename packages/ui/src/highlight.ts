@@ -19,32 +19,53 @@ import yaml from 'highlight.js/lib/languages/yaml';
  * and the diff viewer both draw from it, so the language set and token classes
  * (styled in styles.css, light + dark) stay in one place. `core` keeps the
  * bundle to the languages we actually register.
+ *
+ * Registration is LAZY (on first highlight), so this module has NO import-time
+ * side effects and Rollup can tree-shake the whole highlight.js graph out of any
+ * chunk that references only the light helpers (or the code barrel) but never
+ * actually renders code — keeping it off the eager shell bundle.
  */
 
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('diff', diff);
-hljs.registerLanguage('dockerfile', dockerfile);
-hljs.registerLanguage('go', go);
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('markdown', markdown);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('rust', rust);
-hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('yaml', yaml);
-hljs.registerAliases(['sh', 'zsh', 'shell'], { languageName: 'bash' });
-hljs.registerAliases(['js', 'jsx', 'mjs'], { languageName: 'javascript' });
-hljs.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
-hljs.registerAliases(['yml'], { languageName: 'yaml' });
-hljs.registerAliases(['html'], { languageName: 'xml' });
-hljs.registerAliases(['py'], { languageName: 'python' });
-hljs.registerAliases(['patch'], { languageName: 'diff' });
-hljs.registerAliases(['md'], { languageName: 'markdown' });
+let registered = false;
+function ensureRegistered(): void {
+  if (registered) return;
+  registered = true;
+  hljs.registerLanguage('bash', bash);
+  hljs.registerLanguage('css', css);
+  hljs.registerLanguage('diff', diff);
+  hljs.registerLanguage('dockerfile', dockerfile);
+  hljs.registerLanguage('go', go);
+  hljs.registerLanguage('javascript', javascript);
+  hljs.registerLanguage('json', json);
+  hljs.registerLanguage('markdown', markdown);
+  hljs.registerLanguage('python', python);
+  hljs.registerLanguage('rust', rust);
+  hljs.registerLanguage('sql', sql);
+  hljs.registerLanguage('typescript', typescript);
+  hljs.registerLanguage('xml', xml);
+  hljs.registerLanguage('yaml', yaml);
+  hljs.registerAliases(['sh', 'zsh', 'shell'], { languageName: 'bash' });
+  hljs.registerAliases(['js', 'jsx', 'mjs'], { languageName: 'javascript' });
+  hljs.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
+  hljs.registerAliases(['yml'], { languageName: 'yaml' });
+  hljs.registerAliases(['html'], { languageName: 'xml' });
+  hljs.registerAliases(['py'], { languageName: 'python' });
+  hljs.registerAliases(['patch'], { languageName: 'diff' });
+  hljs.registerAliases(['md'], { languageName: 'markdown' });
+}
 
-export { hljs };
+/** Highlight a whole code block to safe HTML; null when the language is unknown. */
+export function highlightCode(code: string, lang: string): string | null {
+  ensureRegistered();
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang }).value;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 // Extension → language, limited to what we register (anything else stays plain).
 const EXT_LANG: Record<string, string> = {
@@ -81,6 +102,7 @@ const EXT_LANG: Record<string, string> = {
 
 /** The registered hljs language for a file path, or '' when we don't know it. */
 export function languageForPath(path: string): string {
+  ensureRegistered();
   const base = (path.split('/').pop() ?? '').toLowerCase();
   if (base === 'dockerfile' || base.endsWith('.dockerfile')) return 'dockerfile';
   const ext = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1) : '';
@@ -99,6 +121,7 @@ function escapeHtml(s: string): string {
  * constructs. Unknown language (or any failure) → escaped plain text.
  */
 export function highlightLine(code: string, lang: string): string {
+  ensureRegistered();
   if (lang && hljs.getLanguage(lang)) {
     try {
       return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;

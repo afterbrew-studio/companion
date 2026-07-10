@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
-import { hljs } from './highlight.js';
+import { highlightCode } from './highlight.js';
 
 /**
  * Small, safe GitHub-flavored-ish markdown renderer. Emits React nodes (never
@@ -12,17 +12,13 @@ import { hljs } from './highlight.js';
  */
 
 function CodeBlock({ lang, code }: { lang: string; code: string }): JSX.Element {
-  if (lang && hljs.getLanguage(lang)) {
-    try {
-      const html = hljs.highlight(code, { language: lang }).value;
-      return (
-        <pre className="md-code">
-          <code dangerouslySetInnerHTML={{ __html: html }} />
-        </pre>
-      );
-    } catch {
-      // fall through to plain text
-    }
+  const html = highlightCode(code, lang);
+  if (html !== null) {
+    return (
+      <pre className="md-code">
+        <code dangerouslySetInnerHTML={{ __html: html }} />
+      </pre>
+    );
   }
   return (
     <pre className="md-code">

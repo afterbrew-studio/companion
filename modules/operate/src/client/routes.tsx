@@ -1,9 +1,4 @@
-import { lazy, type ComponentType } from 'react';
-import { defineClientRoutes, type RouteProps } from '@companion/core/client';
-
-/** React.lazy over a named page export, widened to the RouteProps contract. */
-const page = (load: () => Promise<ComponentType<RouteProps>>): ComponentType<RouteProps> =>
-  lazy(async () => ({ default: await load() }));
+import { defineClientRoutes, page, lazyView, type RouteProps } from '@companion/core/client';
 
 export const routes = defineClientRoutes([
   {
@@ -11,14 +6,12 @@ export const routes = defineClientRoutes([
     permission: 'runs:read',
     // Legacy App.tsx remounted the detail page on run switch (key={runId}) so
     // transcript state never bleeds between runs — the wrapper keeps that.
-    component: page(() =>
-      import('./pages/RunDetail.js').then(
-        (m) =>
-          function RunDetailRoute({ params }: RouteProps): JSX.Element {
-            return <m.RunDetail key={params.runId} runId={params.runId!} />;
-          },
-      ),
-    ),
+    component: lazyView(async () => {
+      const { RunDetail } = await import('./pages/RunDetail.js');
+      return {
+        default: ({ params }: RouteProps): JSX.Element => <RunDetail key={params.runId} runId={params.runId!} />,
+      };
+    }),
   },
   {
     match: { prefix: '/runners' },

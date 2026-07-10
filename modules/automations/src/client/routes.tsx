@@ -1,9 +1,4 @@
-import { lazy, type ComponentType } from 'react';
-import { defineClientRoutes, type RouteProps } from '@companion/core/client';
-
-/** React.lazy over a named page export, widened to the RouteProps contract. */
-const page = (load: () => Promise<ComponentType<RouteProps>>): ComponentType<RouteProps> =>
-  lazy(async () => ({ default: await load() }));
+import { defineClientRoutes, page } from '@companion/core/client';
 
 export const routes = defineClientRoutes([
   {

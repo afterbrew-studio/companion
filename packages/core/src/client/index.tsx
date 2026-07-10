@@ -82,6 +82,7 @@ export const defineClientModule = (m: WebModule): WebModule => m;
 export * from './net.js';
 export * from './live.js';
 export * from './router.js';
+export * from './lazy.js';
 export * from './modules-provider.js';
 
 // ---- client logic primitives shared across module slices ----

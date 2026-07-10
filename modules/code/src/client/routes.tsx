@@ -1,27 +1,22 @@
-import { lazy, type ComponentType } from 'react';
-import { defineClientRoutes, type RouteProps } from '@companion/core/client';
-
-/** React.lazy over a named page export, widened to the RouteProps contract. */
-const page = (load: () => Promise<ComponentType<RouteProps>>): ComponentType<RouteProps> =>
-  lazy(async () => ({ default: await load() }));
+import { defineClientRoutes, page, lazyView, type RouteProps } from '@companion/core/client';
 
 // Detail pages take typed props; wrap them so RouteProps params feed through
 // with the legacy key-remount semantics (switching targets remounts the page).
-const IssueDetailRoute = lazy(async () => {
+const IssueDetailRoute = lazyView(async () => {
   const { IssueDetail } = await import('./pages/IssueDetail.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => (
     <IssueDetail key={`${params.repo}#${params.number}`} repo={params.repo!} number={Number(params.number)} />
   );
   return { default: Wrapped };
 });
-const PrViewRoute = lazy(async () => {
+const PrViewRoute = lazyView(async () => {
   const { PrView } = await import('./pages/pr/PrView.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => (
     <PrView key={`${params.repo}#${params.number}#${params.mode ?? ''}`} repo={params.repo!} number={Number(params.number)} mode={params.mode === 'review' ? 'review' : undefined} />
   );
   return { default: Wrapped };
 });
-const PrBuildRoute = lazy(async () => {
+const PrBuildRoute = lazyView(async () => {
   const { PrBuild } = await import('./pages/pr/PrBuild.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => <PrBuild key={params.runId} runId={params.runId!} />;
   return { default: Wrapped };
