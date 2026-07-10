@@ -84,14 +84,22 @@ Match that voice. A comment that restates the next line is noise; delete it.
 
 - **React 18 function components** returning `JSX.Element`. Data comes from a
   hook; the page is presentation + actions.
-- **Reuse `components/ui.tsx`.** `Page`, `PageHeader`, `Section`, `StatTile`,
-  `Modal`, `Dropdown`, `Tabs`, `Switch`, `EmptyState`, `Spinner`, `ActionMenu`,
-  `ContextMenu`, `Tooltip`, `CopyText`, `timeAgo`, badges. Don't hand-roll a
-  modal/dropdown/spinner — import the existing one.
+- **Reuse `@companion/ui`** (`packages/ui`). Layout: `Page`, `PageHeader`,
+  `Section`, `ListCard`, `CardActions`, `StatTile`, `EmptyState`, `DetailGrid`/
+  `DetailRow`, `Breadcrumb`, `Eyebrow`. Overlays/controls: `Modal`, `Dropdown`,
+  `Tabs`, `Switch`, `ActionMenu`, `ContextMenu`, `Tooltip`, `useConfirm`.
+  Forms: `Field`, `FormActions`, `Checkbox`, `SearchInput`, `SettingRow`,
+  `ErrorBar`. Status: `StatusDot`, `StatusGlyph`, `OutcomeDot`, `MetaSignal`,
+  `CountBadge`, `Spinner`, `InlineLoading`, `Avatar`. Icons: `SparkleIcon`,
+  `CloseIcon`, `SearchIcon`, `KebabIcon`, `ChevronDown`; `IconButton` for any
+  icon-only button; `aiAccentClass` for AI triggers; `CopyText`, `timeAgo`,
+  `formatTokens`. Don't hand-roll a modal/dropdown/spinner/field/icon-button —
+  import the existing one.
 - **Tailwind v4** utility classes + a few project classes from `styles.css`
-  (`dim`, `card`, `input`, `error-bar`, `size-4`). Always style both themes
-  (`dark:` variants). Icons are inline `<svg viewBox="0 0 24 24" className="size-4">`
-  with the shared `stroke` config in `modules.tsx`.
+  (`dim`, `card`, `input`, `input-sm`, `error-bar`, `well`, `code-inline`,
+  badges/chips, `row-link`). Always style both themes (`dark:` variants).
+  Utilities override component classes (`card p-0` works). New icons go in
+  `packages/ui/src/icons.tsx`, not inline paths copied between pages.
 - **No router library.** Routing is `location.hash` + the `Route()` switch in
   `App.tsx`; deep-linkable list state lives in the hash via `useHash*` helpers.
 - **The live loop** is `useLive(refresh, when)` from `lib/live.ts` — load now,

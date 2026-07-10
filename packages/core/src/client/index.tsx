@@ -1,0 +1,125 @@
+import type { ComponentType, ReactNode } from 'react';
+import type { Permission, SpaServerMessage } from '@companion/contracts';
+import type { ModuleManifest } from '../manifest.js';
+
+/**
+ * `@companion/core/client` — the client-side registrant API a module's `/client`
+ * slice is authored against. The web host (ModulesProvider, route compiler, the
+ * single-socket net layer, `useLive`) is added here during the web rewire; it is
+ * consumed only by `apps/web` and module hooks. Vite reads this as source.
+ */
+
+/** Sidebar groups — a shared, ordered namespace addressed by id (module ≠ group). */
+export type SectionId = 'workspace' | 'plan' | 'code' | 'operate' | 'admin' | (string & {});
+
+export interface NavSection {
+  readonly id: SectionId;
+  readonly label: string;
+  readonly order: number;
+  readonly permission?: Permission;
+}
+
+export interface NavEntry {
+  readonly key: string;
+  readonly label: string;
+  readonly hash: string;
+  readonly section: SectionId;
+  readonly permission: Permission;
+  readonly icon: ReactNode;
+  /** `g` + this key jumps to the entry. */
+  readonly shortcut?: string;
+  readonly order?: number;
+  /** Nest under another entry (by its key). */
+  readonly parent?: string;
+  /** Nav "new activity" badge: a marker string on a matching live message, else null. */
+  readonly freshOn?: (msg: SpaServerMessage) => string | null;
+}
+
+/** Whole-segment route matching — no manual ordering (kills the /runners-vs-/runs hazard). */
+export type RouteMatch =
+  | { readonly exact: string }
+  | { readonly prefix: string }
+  | { readonly regex: RegExp; params(m: RegExpMatchArray): Record<string, string> };
+
+export interface RouteProps {
+  readonly params: Record<string, string>;
+  readonly query: URLSearchParams;
+}
+
+export interface ClientRoute {
+  readonly match: RouteMatch;
+  readonly permission?: Permission;
+  /** Lazy so each heavy page is its own Vite chunk. */
+  readonly component: ComponentType<RouteProps>;
+}
+
+/** Render INTO another module's page (extension point) via inversion of control. */
+export interface SlotContribution {
+  readonly slot: string;
+  readonly key: string;
+  readonly order?: number;
+  readonly permission?: Permission;
+  readonly component: ComponentType<Record<string, unknown>>;
+}
+
+/**
+ * One card in the welcome tour / "what's new" popup. A module contributes the
+ * step for its own feature — with its OWN (compile-checked) permission, so there
+ * is no cross-module permission cast — and the host aggregates them by `order`
+ * into a single narrative. `art` draws inside the shared `OnboardingArt` frame.
+ */
+export interface OnboardingStep {
+  readonly key: string;
+  /** Position in the tour (ascending). Leave gaps so modules can slot between. */
+  readonly order: number;
+  /** Hide unless the viewer holds this permission (the contributing module's own). */
+  readonly need?: Permission;
+  readonly title: string;
+  readonly body: string;
+  readonly chips?: readonly string[];
+  readonly art: (playing: boolean) => ReactNode;
+  /** If this is the most-advanced step the viewer can act on, the finish button
+   *  deep-links here (lowest-order eligible step wins). */
+  readonly cta?: { readonly label: string; readonly href: string };
+}
+
+/** The `/client` barrel of a module. */
+export interface WebModule {
+  readonly manifest: ModuleManifest;
+  readonly sections?: readonly NavSection[];
+  readonly nav?: readonly NavEntry[];
+  readonly routes?: readonly ClientRoute[];
+  readonly slots?: readonly SlotContribution[];
+  readonly onboarding?: readonly OnboardingStep[];
+}
+
+// ---- registrants ----
+export const defineSections = (s: readonly NavSection[]): readonly NavSection[] => s;
+export const defineNav = (e: readonly NavEntry[]): readonly NavEntry[] => e;
+export const defineClientRoutes = (r: readonly ClientRoute[]): readonly ClientRoute[] => r;
+export const defineSlots = (s: readonly SlotContribution[]): readonly SlotContribution[] => s;
+export const defineOnboarding = (s: readonly OnboardingStep[]): readonly OnboardingStep[] => s;
+export const defineClientModule = (m: WebModule): WebModule => m;
+
+/** The shared 120×90 illustration frame every onboarding step draws inside, so a
+ *  module's tour art matches the tour's visual language (emerald, ob-* motion). */
+export function OnboardingArt({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <svg viewBox="0 0 120 90" fill="none" className="h-36 w-auto text-emerald-600 dark:text-emerald-400" aria-hidden>
+      {children}
+    </svg>
+  );
+}
+
+// ---- the web host: single-socket net core, live loop, route matcher, module host ----
+export * from './net.js';
+export * from './live.js';
+export * from './router.js';
+export * from './lazy.js';
+export * from './modules-provider.js';
+
+// ---- client logic primitives shared across module slices ----
+export * from './intents.js';
+export * from './links.js';
+export * from './use-bulk-runner.js';
+export * from './nav-icon.js';

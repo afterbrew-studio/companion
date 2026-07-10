@@ -1,11 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // The runner reuses companiond's proven modules via relative imports
-    // (../companiond/src/...), so the program spans two app directories.
-    // No rootDir: tsc computes the common source root (apps/) and emits
-    // dist/companion-runner/src/... + dist/companiond/src/... side by side.
+    // Execution primitives come from @companion/module-operate/exec (and
+    // paths/config from @companion/services) as workspace packages, so the
+    // program is self-rooted again; esbuild bundles everything into one file.
     "outDir": "dist",
+    "rootDir": "src",
     "types": ["node"]
   },
   "include": ["src"]

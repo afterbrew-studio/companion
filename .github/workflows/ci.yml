@@ -27,6 +27,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Build first (topological order — @companion/contract emits its types
-      # before companiond/web typecheck against them), then typecheck all.
+      # before api/web typecheck against them), then typecheck all.
       - run: pnpm -r build
       - run: pnpm -r typecheck

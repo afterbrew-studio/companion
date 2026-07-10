@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { IssueRecord, Permission, PrRecord, RepoRecord, RunRecord } from '@companion/contract';
-import { api } from '../lib/api.js';
-import { useAuth } from '../lib/auth.js';
-import { useWorkspace } from '../lib/workspace.js';
-import { runIntent, type Intent } from '../lib/intents.js';
-import { MODULES } from '../modules.js';
+import type { Permission } from '@companion/contracts';
+import type { IssueRecord, PrRecord, RepoRecord } from '@companion/module-code/contract';
+import type { RunRecord } from '@companion/module-operate/contract';
+import { SearchIcon } from '@companion/ui';
+import { runIntent, useKernel, type Intent } from '@companion/core/client';
+import { useAuth } from '@companion/module-core/client';
+import { useWorkspace } from '@companion/module-workspace/client';
+import { codeApi } from '@companion/module-code/client';
+import { operateApi } from '@companion/module-operate/client';
 
 /**
  * Cmd/Ctrl+K palette: fuzzy-ish jump to pages, workspaces, repos, issues, PRs,
@@ -57,6 +60,7 @@ const COMMANDS: readonly Command[] = [
 
 export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Element {
   const { can } = useAuth();
+  const kernel = useKernel();
   const { workspaces, current, setCurrent } = useWorkspace();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -74,11 +78,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
       p.then((v) => alive && set(v)).catch(() => undefined);
     };
     if (current) {
-      grab(api.workspaceIssues(current.id, 'open'), (r) => setIssues(r.issues));
-      grab(api.workspacePrs(current.id), (r) => setPrs(r.prs.filter((p) => p.state === 'open')));
+      grab(codeApi.workspaceIssues(current.id, 'open'), (r) => setIssues(r.issues));
+      grab(codeApi.workspacePrs(current.id), (r) => setPrs(r.prs.filter((p) => p.state === 'open')));
     }
-    grab(api.listRuns(), (r) => setRuns(r.runs));
-    grab(api.listRepos(), (r) => setRepos(r.repos));
+    grab(operateApi.listRuns(), (r) => setRuns(r.runs));
+    grab(codeApi.listRepos(), (r) => setRepos(r.repos));
     return () => {
       alive = false;
     };
@@ -108,13 +112,15 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         })),
       ),
       ...cap(
-        MODULES.filter((m) => can(m.permission) && match(m.label)).map((m) => ({
-          id: `page-${m.key}`,
-          group: 'Pages',
-          label: m.label,
-          hint: `g${m.shortcut}`,
-          run: () => go(m.hash),
-        })),
+        kernel.nav
+          .filter((m) => can(m.permission) && match(m.label))
+          .map((m) => ({
+            id: `page-${m.key}`,
+            group: 'Pages',
+            label: m.label,
+            hint: m.shortcut ? `g${m.shortcut}` : undefined,
+            run: () => go(m.hash),
+          })),
       ),
       ...cap(
         workspaces
@@ -176,7 +182,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
       ),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, can, workspaces, current, repos, issues, prs, runs]);
+  }, [query, can, kernel.nav, workspaces, current, repos, issues, prs, runs]);
 
   useEffect(() => {
     setActive(0);
@@ -220,7 +226,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-2.5 border-b border-zinc-200 px-4 dark:border-zinc-800">
-          <SearchIcon />
+          <SearchIcon className="dim size-4" />
           <input
             ref={inputRef}
             type="search"
@@ -269,11 +275,3 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
   );
 }
 
-export function SearchIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className="dim size-4 shrink-0" aria-hidden>
-      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}

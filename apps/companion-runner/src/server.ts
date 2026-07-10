@@ -25,14 +25,14 @@ import {
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
   type AgentWriteFileRequest,
-} from '@companion/contract';
-import { paths } from '../../companiond/src/config.js';
-import type { Checkouts } from '../../companiond/src/git/checkouts.js';
-import { configuredProviderNames } from '../../companiond/src/moxxy/home.js';
-import type { MoxxyCli } from '../../companiond/src/moxxy/cli.js';
-import type { GatewayClient } from '../../companiond/src/moxxy/gateway-client.js';
-import type { GatewayPool } from '../../companiond/src/moxxy/gateway-pool.js';
-import { readSessionHistory } from '../../companiond/src/moxxy/history.js';
+} from '@companion/types';
+import { paths } from '@companion/services';
+import type { Checkouts } from '@companion/module-operate/exec';
+import { configuredProviderNames } from '@companion/module-operate/exec';
+import type { MoxxyCli } from '@companion/module-operate/exec';
+import type { GatewayClient } from '@companion/module-operate/exec';
+import type { GatewayPool } from '@companion/module-operate/exec';
+import { readSessionHistory } from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**

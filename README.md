@@ -25,7 +25,7 @@ Every agent run uses its own `moxxy serve` + gateway process pair under an isola
 
 ### Runners (multi-machine execution)
 
-A **runner** is a machine that executes agent work. Companion ships with the built-in **local runner** — the machine `companiond` runs on — and can attach any number of **remote runners**: other machines running the `companion-runner` agent, reached over the network with a bearer token.
+A **runner** is a machine that executes agent work. Companion ships with the built-in **local runner** — the machine `companion-api` runs on — and can attach any number of **remote runners**: other machines running the `companion-runner` agent, reached over the network with a bearer token.
 
 Each runner is either **shared** (eligible for any workspace) or **delegated** (serves only the workspaces you assign it), and repos can pin a preferred runner. When an agent run starts, Companion places it on an eligible, online runner and prepares its git worktree there, so the whole run — gateway, clone, worktree, and session history — lives on one machine. Placement is **provider-aware**: runners advertise the model providers configured in their moxxy home, Companion prefers a runner that can serve the run's pinned/default model, never places work on a runner with no providers at all, and if a run still lands where its model isn't available, that turn quietly rides the runner's own default model instead of failing. The local execution path is unchanged; remote runners are entirely additive. Manage them in the admin **Runners** module.
 
@@ -40,12 +40,31 @@ COMPANION_RUNNER_TOKEN=<shared-secret> companion-runner --background
 
 No GitHub credential is needed on the box — Companion sends its own configured GitHub token with each clone and push (set `COMPANION_RUNNER_GITHUB_TOKEN` to override with a machine-specific PAT). `companion-runner doctor` reports what a box still needs; `status`/`stop` manage a background runner. See `apps/companion-runner/README.md` for the full environment. (In a monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.)
 
+### Modular framework
+
+Companion is built as a **modular framework**. A small framework core
+(`@companion/core`) hosts feature **modules** — one per domain (`core`,
+`workspace`, `operate`, `code`, `plan`, `automations`, `admin`) under `modules/*`
+— that are **loaded, migrated, permissioned, and toggled at runtime**. Each
+module ships its own tables (with per-module migrations + rollback), REST/WS
+routes, RBAC permissions, background jobs, and web pages, and declares which
+other modules it depends on. The kernel reconciles the installed set on boot,
+activates modules in dependency order, and lets an admin enable/disable/uninstall
+any non-required module live from the **Modules** page — its API flips to `503`,
+its nav and routes disappear, and its permissions drop from the grid, with no
+restart. Installing a new module is one entry in each app's module registry.
+
+**To build a module, read [`modules/README.md`](modules/README.md)** — the
+complete authoring guide — or invoke the `companion-build-module` skill /
+`module-builder` agent.
+
 ## Repository layout
 
-- `apps/companiond` — local daemon: typed route registry + RBAC, auth sessions, run orchestration, the runner registry (local + remote backends) and placement, GitHub sync/checks, pipeline engine, SQLite store, HTTP+WS server.
-- `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companiond` over HTTP+WS.
-- `apps/web` — React SPA served by companiond in production and by Vite in development.
-- `packages/contract` — shared domain types, RBAC permissions, REST DTOs, pipeline step unions, the moxxy gateway wire subset, and the runner-agent protocol.
+- `apps/api` — the daemon: boots the **kernel** (`@companion/core`), holds the static module registry, and runs the HTTP/WS server. Feature logic lives in the modules it loads, not here.
+- `apps/web` — the React/Vite SPA **shell**: `ModulesProvider` + the single-socket net layer. It hosts and presents modules' client slices; it contains no feature pages of its own.
+- `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companion-api` over HTTP+WS.
+- `packages/*` — the framework: `@companion/types` (primitives), `@companion/contracts` (the open RBAC/WS/service registries), `@companion/services` (base store/service utils), `@companion/core` (the kernel + registrant API + client host), `@companion/ui` (design-system kit).
+- `modules/*` — the feature domains, one `@companion/module-<id>` package each. See [`modules/README.md`](modules/README.md).
 
 ## Prerequisites
 
@@ -80,7 +99,7 @@ No GitHub credential is needed on the box — Companion sends its own configured
    pnpm dev
    ```
 
-   This runs companiond on <http://127.0.0.1:8901> and Vite on <http://127.0.0.1:5173>. Vite proxies `/api` and `/ws` to companiond.
+   This runs companion-api on <http://127.0.0.1:8901> and Vite on <http://127.0.0.1:5173>. Vite proxies `/api` and `/ws` to companion-api.
 
 4. Open <http://127.0.0.1:5173> and sign in with the seeded admin account, or complete first-boot onboarding.
 
@@ -128,7 +147,7 @@ The image installs `@moxxy/cli` globally so agent runs can start inside the cont
 
 ### Deploying with Coolify
 
-The image is self-contained (companiond + built SPA + git + moxxy CLI) and ships a `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can gate deploys on it. Point Coolify at the repository and either build pack works:
+The image is self-contained (companion-api + built SPA + git + moxxy CLI) and ships a `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can gate deploys on it. Point Coolify at the repository and either build pack works:
 
 - **Dockerfile** — port `8901`; add a persistent storage mount at `/data`.
 - **Docker Compose** — uses `docker-compose.yml` as is (the `.env` file is optional; the named `companion-data` volume persists `/data`).
@@ -149,19 +168,19 @@ Common variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `COMPANION_HOST` | `127.0.0.1` | HTTP and WebSocket bind host. Docker Compose sets this to `0.0.0.0` for published ports. |
-| `COMPANION_PORT` | `8901` | HTTP and WebSocket port for companiond. |
+| `COMPANION_PORT` | `8901` | HTTP and WebSocket port for companion-api. |
 | `COMPANION_HOME` | `~/.companion` | Data directory for the SQLite DB, cloned repos, worktrees, and isolated moxxy home. |
 | `COMPANION_MODEL` | `gpt-5.5` | Default model passed to agent runs. |
 | `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. |
 | `COMPANION_MAINTAINER_USER` / `COMPANION_MAINTAINER_PASSWORD` | unset | Optional seed maintainer account. |
 | `COMPANION_BUSINESS_USER` / `COMPANION_BUSINESS_PASSWORD` | unset | Optional seed business account. |
 
-Advanced daemon settings such as `maxLiveRuns` and `moxxyCliPath` are stored in `${COMPANION_HOME}/companiond.json` after first boot.
+Advanced daemon settings such as `maxLiveRuns` and `moxxyCliPath` are stored in `${COMPANION_HOME}/companion-api.json` after first boot.
 
 ## Development commands
 
 ```sh
-pnpm dev        # run companiond and the Vite web app in development mode
+pnpm dev        # run companion-api and the Vite web app in development mode
 pnpm build      # build all workspace packages
 pnpm typecheck  # type-check all workspace packages
 pnpm test       # run workspace tests where present
@@ -172,14 +191,14 @@ pnpm test       # run workspace tests where present
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
-pnpm --filter companiond start
+pnpm --filter companion-api start
 ```
 
-After `pnpm build`, companiond serves the built SPA from `apps/web/dist` when present.
+After `pnpm build`, companion-api serves the built SPA from `apps/web/dist` when present.
 
 ### Run under pm2
 
-`ecosystem.config.cjs` runs the whole suite (companiond serving the built SPA, local runner included) as a managed process:
+`ecosystem.config.cjs` runs the whole suite (companion-api serving the built SPA, local runner included) as a managed process:
 
 ```sh
 npm i -g pm2
@@ -189,4 +208,4 @@ pm2 logs companion   # follow logs
 pm2 save && pm2 startup   # survive reboots
 ```
 
-Configuration comes from companiond's layered env (`process env > ./.env > ~/.companion/.env`), so no pm2-specific settings are needed. The file also has a commented-out entry for serving a `companion-runner` agent from the same checkout.
+Configuration comes from companion-api's layered env (`process env > ./.env > ~/.companion/.env`), so no pm2-specific settings are needed. The file also has a commented-out entry for serving a `companion-runner` agent from the same checkout.

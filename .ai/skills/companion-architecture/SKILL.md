@@ -1,123 +1,153 @@
 ---
 name: companion-architecture
 description: >-
-  Map of the Companion monorepo and its load-bearing invariants. Read this
-  BEFORE any nontrivial change so you edit the right layer and don't break a
-  cross-cutting rule. Use when you need to know where something lives, how a
-  request flows contract → store → service → route → api → hook → page, or what
-  must never be violated (end-to-end RBAC, GitHub-as-cache, the typed spine).
+  Map of the Companion modular-framework monorepo and its load-bearing
+  invariants. Read this BEFORE any nontrivial change so you edit the right layer
+  and don't break a cross-cutting rule. Use when you need to know where something
+  lives, how a request flows contract → store → service → route → api → hook →
+  page inside a module, how modules load/toggle at runtime, or what must never be
+  violated (end-to-end RBAC, single-owner tables, GitHub-as-cache, live broadcasts).
 ---
 
 # Companion architecture
 
-Companion is a self-hosted engineering dashboard that drives GitHub repositories
-with [moxxy](https://github.com/moxxy-ai/moxxy) agents. It is a **pnpm workspace
-monorepo**, all ESM, all TypeScript `strict`.
+Companion drives GitHub repositories with [moxxy](https://github.com/moxxy-ai/moxxy)
+agents. It is a **pnpm workspace monorepo**, all ESM, all TypeScript `strict`,
+structured as a **modular framework**: a small framework core hosts feature
+**modules** that load, migrate, permission, and toggle **at runtime**.
 
-## The four packages
+> To build or extend a module, the authoritative guide is **`modules/README.md`**
+> and the **`companion-build-module`** skill. This skill is the map; that one is
+> the recipe.
 
-| Path | What it is | Depends on |
-| --- | --- | --- |
-| `packages/contract` | **The spine.** Shared domain types, the `Permission` grid, REST DTOs, the `SpaServerMessage` union, pipeline unions, the moxxy wire subset, the runner-agent protocol. Pure types + a few const arrays. | nothing |
-| `apps/companiond` | **The daemon.** SQLite store, domain services, the typed HTTP/WS route registry + RBAC, run orchestration, GitHub sync, runner registry. Serves the built SPA in prod. | `@companion/contract` |
-| `apps/web` | **The SPA.** React 18 + Vite + Tailwind v4. REST/WS client, data hooks, pages, the module registry. Hash-routed, no react-router. | `@companion/contract` |
-| `apps/companion-runner` | **The remote agent.** A slim daemon a remote box runs to execute agent work (moxxy gateways, git worktrees) driven by a `companiond` over HTTP+WS. Publishes to npm. | `@companion/contract` (dev) |
+## The layout
 
-`moxxy` is an **external runtime, not a dependency** — companiond shells out to
-the `moxxy` CLI and drives gateway processes. Never add moxxy as a package dep.
+```
+apps/
+  api/                  the daemon: kernel boot + the module registry + HTTP/WS server
+  web/                  the React/Vite SPA shell: ModulesProvider + net layer (no feature code)
+  companion-runner/     the published @moxxy/companion-runner (remote execution agent)
+packages/
+  types/       @companion/types      inert primitives, zero runtime — DAG root
+  contracts/   @companion/contracts  the OPEN registries (RBAC/WS/services/bus) + grid assembler + envelopes
+  services/    @companion/services   base store/service abstractions + shared utils (paths, log, request-context)
+  core/        @companion/core        THE FRAMEWORK: registrant API + server kernel + client host
+  ui/          @companion/ui          the design-system kit
+modules/
+  core workspace operate code plan automations admin   ← one @companion/module-<id> per domain
+```
+
+`@companion/core` (the framework: kernel + registrants, no business logic) is
+distinct from `@companion/module-core` (the required identity module). `moxxy` is
+an **external runtime, not a dependency** — the daemon shells out to the `moxxy`
+CLI. Never add moxxy as a package dep.
+
+## Packages (the framework)
+
+| Package | What it is | Depends on |
+|---|---|---|
+| `@companion/types` | naked primitives (branded ids, enums, moxxy wire types). No runtime, no boundary meaning. | — |
+| `@companion/contracts` | cross-boundary machinery: the declaration-merged open registries `PermissionRegistry` / `ServerMessageRegistry` / `ServiceMap` / bus events, the RBAC grid assembler, `AuthUser`/route-access/error envelopes. | types |
+| `@companion/services` | what a single store/service is made of — `BaseStore` helpers, request-context, `paths`, `log`, config. Kernel-independent. | types, contracts |
+| `@companion/core` | the framework host. `.` = isomorphic `define*` + manifest; `/server` = kernel + lifecycle, `DynamicRouter` + `RawRouter`, `MigrationRunner`, `ServiceRegistry`, `ServerBus`, `WsHub`, capabilities; `/client` = `ModulesProvider`/`useKernel`, route compiler, single-socket net + `useLive`, `NavIcon`/`OnboardingArt`/`lazyView`. | types, contracts, services |
+| `@companion/ui` | presentational React + Tailwind (Markdown, DiffView, icons). Pixels only. | react (+ types) |
+
+## Modules (the domains)
+
+Each `modules/<id>` is a package with four entry points via its `package.json`
+`exports`: `./manifest` (cheap metafile, eager), `./contract` (DTOs + registry
+augmentations, types only), `./api` (server slice, lazy, no DOM), `./client`
+(web slice, lazy, Vite source). Dual resolver: tsc→`dist` for `./api`, Vite
+`source` for `./client`; `tsconfig.build.json` excludes `src/client`. See
+`modules/README.md` §1–2.
+
+```
+core → workspace → operate → code → plan       required = {core, workspace}
+                          \→ admin              (dependsOn = hard load/enable order)
+```
 
 ## The request spine (learn this cold)
 
-A feature is one vertical slice through these layers. Data always flows the same
-way; each arrow is a file you touch when adding an area.
+A feature is one vertical slice **inside a module**. Same shape as ever, but the
+registries replaced the central files (no `buildRoutes`, no `ApiDeps`, no
+`App.tsx` route ladder):
 
 ```
-packages/contract/src/*.ts        ← types, DTOs, Permission, SpaServerMessage   (the shared truth)
+modules/<id>/src/contract/index.ts   ← DTOs + `declare module` augment RBAC/WS/ServiceMap   (shared truth)
         │
-companiond: store/<x>.ts          ← SQLite class + migration           (persistence)
-        │   store/db.ts            ← facade wires the store class
-companiond: <x>/<x>.ts            ← service class: business logic, broadcasts WS   (behavior)
-        │
-companiond: http/routes/<x>.ts    ← route({...}) registry, access = Permission    (HTTP surface)
-        │   http/routes/index.ts   ← buildRoutes() concatenates registries  (one line)
-        │   http/deps.ts           ← ApiDeps: the DI container
-        │   index.ts               ← composition root: construct + inject
+        api/<x>-store.ts             ← SQLite class + prepared SQL           (owns this module's tables)
+        api/migrations.ts            ← defineMigrations — tables, with down()  (per-module, versioned)
+        api/<x>-service.ts           ← business logic; ctx.broadcast on change  (behavior)
+        api/services.ts              ← defineServices — construct + ctx.services.register('<id>', svc)
+        api/routes.ts                ← defineRoutes — route({ access: Permission })  (HTTP surface)
+        api/index.ts                 ← defineApiModule({ manifest, acl, migrations, services, routes, ... })
         ▼
-web: lib/api.ts                   ← typed REST/WS client method              (client surface)
-        │
-web: hooks/use<X>.ts              ← data hook, useLive(refresh, msg.t==='x.changed')
-        │
-web: pages/<X>.tsx                ← page component (ui.tsx kit)
-        │   modules.tsx            ← nav entry + permission + shortcut
-        │   App.tsx Route()        ← hash → page, guard(can(perm), <Page/>)
+        client/api.ts                ← request/post slice                     (client surface)
+        client/hooks/use<X>.ts       ← useLive(refresh, msg.t === '<id>.changed')
+        client/pages/<X>.tsx         ← page (ui.tsx kit), lazyView-chunked
+        client/nav.tsx               ← defineNav — sidebar entry + permission + shortcut
+        client/routes.tsx            ← defineClientRoutes — whole-segment match → page
+        client/index.tsx             ← defineClientModule({ manifest, nav, routes, ... })
 ```
 
-See `companion-add-backend-area` and `companion-add-web-area` for the exact
-step-by-step recipes.
+Installed via **one line in each app registry**: `apps/api/src/modules.ts`
+(`MODULES`) and `apps/web/src/modules.ts` (`CLIENT_LOADERS`).
 
-## Layer responsibilities (companiond)
+## Runtime lifecycle (what "modular" buys)
 
-- **`store/`** — one class per domain (`ProposalsStore`, `RunsStore`, …), each
-  taking `Database.Database` in its constructor. Prepared SQL, row⇄DTO mapping.
-  Composed in `store/db.ts` (`class Store`). Rows are the source of truth for
-  run/proposal/spec **lifecycle**; issues & PRs are a **cache of GitHub**.
-- **Domain services** (`proposals/`, `triage/`, `prs/`, `pipelines/`, `runs/`,
-  `github/`, `automations/`, …) — business logic. Constructor-injected deps
-  (`store`, `orchestrator`, `checkouts`, `broadcast`, a GitHub client factory).
-  Every state change ends with a `broadcast({ t: 'x.changed' })`.
-- **`http/router.ts`** — the `route()` factory + `Router.dispatch`. Auth,
-  zod body parsing, param typing, and error→status mapping happen here, centrally.
-- **`http/routes/<area>.ts`** — `export function <area>Routes(deps): CompiledRoute[]`.
-  Pure declarations; no auth logic (the router enforces `access`).
-- **`http/deps.ts`** — `ApiDeps`, the single injection surface routes can reach.
-- **`index.ts`** — the composition root. Constructs everything once, wires
-  `broadcast` (which also nudges services on run lifecycle), starts the server.
+The kernel (`packages/core/src/server/kernel.ts`) reconciles the installed set
+into a `modules` table, topo-sorts enabled modules by `dependsOn`, and for each:
+`load()` → `migrateUp` → `registerServices` → mount routes → `onEnable` → a
+single `postActivate` pass (resumers). Toggling is live: **enable** mounts
+routes + folds ACL into the grid; **disable** unmounts (paths 503) + drops ACL +
+runs `onDisable`, keeping data; **uninstall** runs `down()` migrations (or
+`purge`), clears the ledger, and its paths become 404. State is durable across
+restarts.
 
 ## Non-negotiable invariants
 
-Break one of these and the change is wrong even if it typechecks.
+Break one and the change is wrong even if it typechecks.
 
 1. **RBAC is enforced once, centrally.** Every route declares `access`
-   (`Permission | 'public' | 'any'`); `Router.dispatch` calls `auth.require`.
-   Handlers must **never** re-check permissions. The SPA mirrors the same
-   `Permission` in `modules.tsx` + `App.tsx guard()`. A capability is threaded
-   end-to-end by the type system — see `companion-contract-and-rbac`.
-2. **The contract is the single source of truth.** Any type crossing the
-   client/server boundary lives in `packages/contract`. Never redefine a DTO
-   locally on either side; import it.
-3. **GitHub stays authoritative.** `issues`/`prs` tables are a sync cache. Only
-   `github/sync.ts` or an explicitly-applied action mutates them. Don't treat
-   the cache as the record of truth, and don't write to it from unrelated code.
-4. **Mutations broadcast.** After a service changes state, `broadcast` the
-   matching `{ t: '<area>.changed' }`. The SPA is live; a silent mutation is a
-   stale UI.
-5. **Gateway processes are cattle, rows are pets.** Run/proposal lifecycle
-   survives daemon restarts via the DB (`orchestrator.recover()`,
-   `resetDangling()`); moxxy processes are disposable and re-derived.
-6. **ESM import suffix.** Relative imports end in `.js` even from `.ts` sources
-   (`from '../router.js'`). NodeNext resolution requires it. See
-   `companion-code-standards`.
+   (`Permission | 'public' | 'any'`); the router calls `auth.require`. Handlers
+   never re-check. The runtime grid is assembled at boot from **enabled** modules'
+   ACL grants — a permission exists in the type union whether or not its module is
+   on. **Compile-checked shape, runtime-checked presence**: cross a `dependsOn`
+   edge via `ctx.services.get`/`ctx.rbac` (or `tryGet` for a soft dep), never
+   assume presence. See `companion-contract-and-rbac`.
+2. **The contract slice is the single source of truth.** A type crossing the
+   client/server boundary lives in that module's `contract/index.ts`; the
+   registries are opened there by augmentation. Never redefine a DTO locally.
+3. **Single-owner tables.** One module owns each table; writes go through its
+   service, reads through the registry or a published `v_*` view — never a raw
+   foreign JOIN. See `companion-store-and-migrations`.
+4. **GitHub stays authoritative.** `issues`/`prs` (module-code) are a sync cache;
+   only sync or an applied action mutates them.
+5. **Mutations broadcast.** After a state change, `ctx.broadcast({ t: '<id>.changed' })`;
+   the SPA is live over one socket, consumed by one `useLive` hook.
+6. **Cross-module reactions are soft.** React to another domain's event via
+   `ctx.bus` / `ctx.services.tryGet`, never a new `dependsOn` edge that would
+   create a load-order cycle.
+7. **ESM import suffix.** Relative imports end in `.js` even from `.ts`/`.tsx`.
+   See `companion-code-standards`.
 
 ## Build, run, verify
 
 ```sh
 pnpm install            # corepack enable first; pnpm 10, Node >= 20
-pnpm dev                # companiond :8901 + Vite :5173 (proxies /api,/ws)
-pnpm build              # tsc across the workspace (+ vite build for web)
-pnpm typecheck          # THE quality gate — there is no linter and no test suite yet
+pnpm dev                # companion-api + Vite (proxies /api,/ws)
+pnpm -r build           # tsc across packages/modules (+ vite build for web, esbuild for the runner)
+pnpm -r typecheck       # THE quality gate — no linter, no test suite yet
 ```
 
-There is **no ESLint/Prettier config and no test framework** wired up. The
-quality bar is: `pnpm typecheck` is clean, and the code reads like its
-neighbours. When you change `packages/contract`, both apps see it through
-`workspace:*` — run `pnpm typecheck` at the root to catch breakage on both sides.
+The bar is: `pnpm -r typecheck` clean and code that reads like its neighbours.
+Because modules link via `workspace:*` and all contracts are imported by both
+apps, a registry change shows up on both sides — run the root typecheck.
 
 ## When you're about to…
 
-- **Add a whole new area** → `companion-add-backend-area` + `companion-add-web-area`.
+- **Add or extend a module** → `modules/README.md` + `companion-build-module`.
 - **Add/relax a permission or a DTO** → `companion-contract-and-rbac`.
 - **Touch the database** → `companion-store-and-migrations`.
-- **Write any code** → `companion-code-standards` (mechanics) and
-  `craft-principles` (design).
-- **Reason about cost or review a change** → `performance-and-complexity`,
-  `critical-thinking`.
+- **Write any code** → `companion-code-standards` (mechanics) + `craft-principles`.
+- **Reason about cost / review** → `performance-and-complexity`, `critical-thinking`.

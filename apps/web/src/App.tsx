@@ -1,44 +1,47 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { MoxxyStatus, WorkspaceVisibility } from '@companion/contract';
-import { api, onServerMessage, onWsState, type WsState } from './lib/api.js';
-import { AuthProvider, useAuth } from './lib/auth.js';
-import { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
-import { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
-import { useIntent, runIntent } from './lib/intents.js';
-import { ChevronDown, Dropdown, LockIcon, Modal } from './components/ui.js';
-import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
-import { AssistantButton, AssistantPanel } from './components/Assistant.js';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import type { MoxxyStatus } from '@companion/module-operate/contract';
+import type { WorkspaceVisibility } from '@companion/module-workspace/contract';
+import {
+  ModulesProvider,
+  useKernel,
+  matchRoute,
+  onServerMessage,
+  onWsState,
+  runIntent,
+  useIntent,
+  type NavEntry,
+  type WsState,
+} from '@companion/core/client';
+import {
+  AuthProvider,
+  useAuth,
+  LoginPage,
+  SetupPage,
+  Onboarding,
+  hasOnboarded,
+  hasUnseenOnboarding,
+  type OnboardingMode,
+} from '@companion/module-core/client';
+import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi } from '@companion/module-workspace/client';
+import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
+import { useWorkspaceRepos } from '@companion/module-code/client';
+import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
+import {
+  ChevronDown,
+  Dropdown,
+  ErrorBar,
+  Field,
+  FormActions,
+  LockIcon,
+  Modal,
+  PageLoading,
+  SearchIcon,
+  StatusDot as Dot,
+} from '@companion/ui';
+import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
-import { Onboarding, hasOnboarded, hasUnseenOnboarding, type OnboardingMode } from './components/Onboarding.js';
-import { Inbox } from './components/Inbox.js';
-import { RunQueueIndicator } from './components/RunQueue.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
-import { MODULES } from './modules.js';
-import { LoginPage } from './pages/Login.js';
-import { SetupPage } from './pages/Setup.js';
-import { UsersPage } from './pages/Users.js';
-import { DashboardPage } from './pages/Dashboard.js';
-import { DigestPage } from './pages/Digest.js';
-import { ProposalsPage } from './pages/Proposals.js';
-import { SpecsPage } from './pages/Specs.js';
-import { DocsPage } from './pages/Docs.js';
-import { IssuesAreaPage } from './pages/IssuesArea.js';
-import { PrsAreaPage } from './pages/PrsArea.js';
-import { PipelinesPage } from './pages/Pipelines.js';
-import { RunsPage } from './pages/RunsPage.js';
-import { RunDetail } from './pages/RunDetail.js';
-import { PrBuild } from './pages/pr/PrBuild.js';
-import { PrView } from './pages/pr/PrView.js';
-import { IssueDetail } from './pages/IssueDetail.js';
-import { ReposPage } from './pages/ReposPage.js';
-import { SkillsPage } from './pages/Skills.js';
-import { GithubAccountsPage } from './pages/GithubAccounts.js';
-import { ProvidersPage } from './pages/Providers.js';
-import { AutomationsPage } from './pages/Automations.js';
-import { RunnersPage } from './pages/Runners.js';
-import { SettingsPage } from './pages/Settings.js';
-import { ProfilePage } from './pages/Profile.js';
-import { InboxPage } from './pages/Inbox.js';
+import { CLIENT_LOADERS } from './modules.js';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(location.hash || '#/overview');
@@ -72,18 +75,12 @@ function Gate(): JSX.Element {
   if (user === null) return <LoginPage />;
   return (
     <WorkspaceProvider>
-      <Shell />
+      <ModulesProvider loaders={CLIENT_LOADERS}>
+        <Shell />
+      </ModulesProvider>
     </WorkspaceProvider>
   );
 }
-
-const SECTION_LABELS: Record<string, string> = {
-  workspace: 'Workspace',
-  plan: 'Plan',
-  code: 'Code',
-  operate: 'Operate',
-  admin: 'Admin',
-};
 
 /** Sidebar brand block: instance logo + name, falling back to the letter tile. */
 function Brand({ rail }: { rail: boolean }): JSX.Element {
@@ -106,15 +103,16 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 function Shell(): JSX.Element {
   const { user, can, logout, branding } = useAuth();
   const hash = useHashRoute();
+  const kernel = useKernel();
 
   // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
   useEffect(() => {
     const name = branding.name?.trim() || 'Companion';
-    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/')
+    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav)
       .map((c) => c.label)
       .join(' · ');
     document.title = labels ? `${labels} · ${name}` : name;
-  }, [hash, branding]);
+  }, [hash, branding, kernel.nav]);
   const [collapsed, setCollapsed] = useState(localStorage.getItem('companion.sidebar') === 'collapsed');
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -151,9 +149,12 @@ function Shell(): JSX.Element {
     }
   };
 
-  const visibleModules = useMemo(() => MODULES.filter((m) => can(m.permission)), [can]);
+  const visibleModules = useMemo(() => kernel.nav.filter((m) => can(m.permission)), [kernel.nav, can]);
   const shortcutTargets = useMemo(
-    () => visibleModules.map((m) => ({ key: m.shortcut, label: m.label, hash: m.hash })),
+    () =>
+      visibleModules
+        .filter((m) => m.shortcut)
+        .map((m) => ({ key: m.shortcut!, label: m.label, hash: m.hash })),
     [visibleModules],
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
@@ -161,10 +162,16 @@ function Shell(): JSX.Element {
   const [assistantOpen, setAssistantOpen] = useState(false);
   // Onboarding: the full tour on first entry; a "what's new" popup when new
   // steps have shipped since the user last looked; replayable (full) from the
-  // shortcuts help.
-  const [tour, setTour] = useState<OnboardingMode | null>(() =>
-    !hasOnboarded() ? 'full' : hasUnseenOnboarding(can) ? 'whatsnew' : null,
-  );
+  // shortcuts help. Steps come from the modules, so the decision waits until the
+  // catalog has loaded (kernel.ready) — otherwise "what's new" would see zero
+  // steps and never fire. Decided once per session.
+  const [tour, setTour] = useState<OnboardingMode | null>(null);
+  const tourDecided = useRef(false);
+  useEffect(() => {
+    if (tourDecided.current || !kernel.ready) return;
+    tourDecided.current = true;
+    setTour(!hasOnboarded() ? 'full' : hasUnseenOnboarding(kernel.onboarding, can) ? 'whatsnew' : null);
+  }, [kernel.ready, kernel.onboarding, can]);
   // Mounted on first open and kept alive: the conversation (and the exit
   // slide animation) survive closing the panel.
   const [assistantMounted, setAssistantMounted] = useState(false);
@@ -213,29 +220,30 @@ function Shell(): JSX.Element {
 
   useEffect(() => {
     return onServerMessage((msg) => {
-      let area: string | null = null;
-      // Only issues/prs carry a repo, so only those can be workspace-scoped —
-      // ignore ones outside the active workspace. Proposals/specs/docs events
-      // are instance-global and always count.
+      // issues/prs carry a repo, so they're workspace-scoped — ignore events for
+      // repos outside the active workspace. (This is the one shell-specific case;
+      // it needs repoSet, which a module can't know.)
       if (msg.t === 'issues.changed' || msg.t === 'prs.changed') {
         if (!repoSet.has(msg.repo)) return;
-        area = msg.t === 'issues.changed' ? 'issues' : 'prs';
-      } else if (msg.t === 'proposals.changed') area = 'proposals';
-      else if (msg.t === 'specs.changed') area = 'specs';
-      else if (msg.t === 'docs.changed') area = 'docs';
-      if (!area || location.hash.startsWith(`#/${area}`)) return;
-      mutateFresh((next) => next.add(area!));
+        const area = msg.t === 'issues.changed' ? 'issues' : 'prs';
+        if (!location.hash.startsWith(`#/${area}`)) mutateFresh((next) => next.add(area));
+        return;
+      }
+      // Everything else: the OWNING nav entry declares when it's fresh via
+      // NavEntry.freshOn — no hardcoded per-area list in the shell.
+      for (const m of kernel.nav) {
+        if (m.freshOn?.(msg) && !location.hash.startsWith(m.hash)) mutateFresh((next) => next.add(m.key));
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoSet, freshKey]);
+  }, [repoSet, freshKey, kernel.nav]);
 
-  // Visiting an area clears its mark.
+  // Visiting an area clears its mark (any nav entry whose hash we're under).
   useEffect(() => {
-    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    const area = ['proposals', 'specs', 'docs', 'issues', 'prs'].find((a) => path.startsWith(`/${a}`));
-    if (area) mutateFresh((next) => next.delete(area));
+    const entry = kernel.nav.find((m) => hash === m.hash || hash.startsWith(`${m.hash}/`) || hash.startsWith(`${m.hash}?`));
+    if (entry && fresh.has(entry.key)) mutateFresh((next) => next.delete(entry.key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash, freshKey]);
+  }, [hash, freshKey, kernel.nav]);
 
   // Cmd/Ctrl+K opens the global search palette from anywhere.
   useEffect(() => {
@@ -272,13 +280,15 @@ function Shell(): JSX.Element {
     }
   }, [hash, visibleModules, can]);
 
+  // Group entries into the shared, ordered section namespace the enabled
+  // modules declared (module ≠ group); empty groups don't render.
   const sections = useMemo(() => {
-    const grouped = new Map<string, typeof visibleModules>();
+    const grouped = new Map<string, NavEntry[]>();
     for (const m of visibleModules) {
       grouped.set(m.section, [...(grouped.get(m.section) ?? []), m]);
     }
-    return [...grouped.entries()];
-  }, [visibleModules]);
+    return kernel.sections.filter((s) => grouped.has(s.id)).map((s) => [s, grouped.get(s.id)!] as const);
+  }, [kernel.sections, visibleModules]);
 
   return (
     <div className="flex h-full">
@@ -303,7 +313,7 @@ function Shell(): JSX.Element {
 
         <nav className="flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
           {sections.map(([section, modules], si) => (
-            <div key={section} className="mt-3">
+            <div key={section.id} className="mt-3">
               {rail ? (
                 <div className="mx-2 flex h-5 items-center" aria-hidden>
                   {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
@@ -312,15 +322,15 @@ function Shell(): JSX.Element {
                 <button
                   type="button"
                   className="dim flex h-5 w-full cursor-pointer items-end justify-between px-2 pb-1 text-[10px] font-medium tracking-widest uppercase transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
-                  onClick={() => toggleSection(section)}
-                  aria-expanded={!foldedSections.has(section)}
+                  onClick={() => toggleSection(section.id)}
+                  aria-expanded={!foldedSections.has(section.id)}
                 >
-                  {SECTION_LABELS[section]}
-                  <ChevronDown open={!foldedSections.has(section)} className="size-3" />
+                  {section.label}
+                  <ChevronDown open={!foldedSections.has(section.id)} className="size-3" />
                 </button>
               )}
               {/* The icon rail ignores folding — hiding icons there saves nothing. */}
-              {!rail && foldedSections.has(section)
+              {!rail && foldedSections.has(section.id)
                 ? null
                 : modules.map((m) => {
                 // Boundary-aware match: #/runners must not light up #/runs.
@@ -441,7 +451,7 @@ function Shell(): JSX.Element {
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
           {/* Keyed by route: navigating away from a crashed page recovers it. */}
           <ErrorBoundary area="this page" resetKey={hash}>
-            <Route hash={hash} />
+            <RouterView hash={hash} />
           </ErrorBoundary>
         </main>
       </div>
@@ -462,7 +472,7 @@ function Shell(): JSX.Element {
           }}
         />
       ) : null}
-      {tour ? <Onboarding mode={tour} onClose={() => setTour(null)} /> : null}
+      {tour ? <Onboarding steps={kernel.onboarding} mode={tour} onClose={() => setTour(null)} /> : null}
     </div>
   );
 }
@@ -566,7 +576,7 @@ function NewWorkspaceModal({
     setBusy(true);
     setError(null);
     try {
-      const { workspace } = await api.createWorkspace(name.trim(), { visibility });
+      const { workspace } = await workspaceApi.createWorkspace(name.trim(), { visibility });
       onCreated(workspace.id);
     } catch (err) {
       setError(String(err));
@@ -577,8 +587,7 @@ function NewWorkspaceModal({
   return (
     <Modal title="New workspace" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Name</span>
+        <Field label="Name">
           <input
             className="input"
             required
@@ -588,7 +597,7 @@ function NewWorkspaceModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-        </label>
+        </Field>
         <fieldset className="flex flex-col gap-1.5">
           <legend className="dim mb-1 text-sm">Visibility</legend>
           <label
@@ -617,15 +626,15 @@ function NewWorkspaceModal({
             <span className="dim text-xs">— just you, plus anyone you invite</span>
           </label>
         </fieldset>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || name.trim().length < 2}>
             {busy ? 'Creating…' : 'Create workspace'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -636,14 +645,19 @@ function NewWorkspaceModal({
  * healthy, amber when partially degraded, red when the daemon is unreachable.
  * Hover or focus expands the popover with the individual statuses.
  */
-function AgentsStatus(): JSX.Element {
+function AgentsStatus(): JSX.Element | null {
+  // moxxy status + live agents are operate's domain; with operate disabled its
+  // /api/moxxy/status 503s, which must NOT read as "daemon unreachable" (a red
+  // dot). The whole widget belongs to operate — hide it, don't alarm.
+  const operateEnabled = useKernel().descriptors.some((m) => m.id === 'operate' && m.enabled);
   const [status, setStatus] = useState<MoxxyStatus | null>(null);
   const [ws, setWs] = useState<WsState>('offline');
   const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
+    if (!operateEnabled) return;
     let alive = true;
-    api
+    operateApi
       .listRuns()
       .then(({ runs }) => {
         if (alive) setLiveIds(new Set(runs.filter((r) => r.live).map((r) => r.id)));
@@ -662,12 +676,13 @@ function AgentsStatus(): JSX.Element {
       alive = false;
       off();
     };
-  }, []);
+  }, [operateEnabled]);
 
   useEffect(() => {
+    if (!operateEnabled) return;
     let alive = true;
     const load = (): void => {
-      api
+      operateApi
         .status()
         .then((s) => alive && setStatus(s))
         .catch(() => alive && setStatus(null));
@@ -684,7 +699,9 @@ function AgentsStatus(): JSX.Element {
       offWs();
       offMsg();
     };
-  }, []);
+  }, [operateEnabled]);
+
+  if (!operateEnabled) return null;
 
   const moxxyOk = Boolean(status && status.cliPath && status.compatible && status.homeReady);
   const moxxyTitle = !status
@@ -759,7 +776,7 @@ function listBackHref(base: '#/prs' | '#/issues'): string {
 }
 
 /** Route-derived crumbs: module label first, then detail segments. */
-function crumbsFor(path: string): Array<{ label: string; href?: string }> {
+function crumbsFor(path: string, nav: readonly NavEntry[]): Array<{ label: string; href?: string }> {
   let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
   if (m) return [{ label: 'Agent Runs', href: '#/runs' }, { label: m[1]! }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
@@ -770,7 +787,7 @@ function crumbsFor(path: string): Array<{ label: string; href?: string }> {
   if (path === '/inbox') return [{ label: 'Inbox' }];
   if (path === '/profile') return [{ label: 'Your profile' }];
   // Boundary-aware match: /runners must not resolve to the Agent Runs module.
-  const mod = MODULES.find((mm) => {
+  const mod = nav.find((mm) => {
     const base = mm.hash.slice(1);
     return path === base || path.startsWith(`${base}/`);
   });
@@ -794,8 +811,9 @@ function TopBar({
   assistantOpen: boolean;
   onToggleAssistant: () => void;
 }): JSX.Element {
+  const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
-  const crumbs = crumbsFor(path);
+  const crumbs = crumbsFor(path, kernel.nav);
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800">
       <button
@@ -882,56 +900,40 @@ function StatusDot({
   label: string;
   title: string;
 }): JSX.Element {
-  const color = ok ? (degraded ? 'bg-amber-500' : 'bg-emerald-500') : 'bg-red-500';
   return (
     <span className="dim flex items-center gap-1.5 text-xs" title={title} role="status" aria-label={title}>
-      <span className={`inline-block size-2 rounded-full ${color}`} aria-hidden />
+      <Dot tone={ok ? (degraded ? 'amber' : 'green') : 'red'} />
       {label}
     </span>
   );
 }
 
-function Route({ hash }: { hash: string }): JSX.Element {
+/**
+ * The data-driven router: matches the hash against the enabled modules'
+ * compiled route table (whole-segment specificity — declaration order is
+ * irrelevant), guards by permission, and lazy-loads the page chunk under
+ * Suspense. A path no enabled module claims is a 404.
+ */
+function RouterView({ hash }: { hash: string }): JSX.Element {
   const { can } = useAuth();
+  const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
-
-  let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)\/preview$/);
-  if (m) return guard(can('runs:read'), <PrBuild key={m[1]} runId={m[1]!} />);
-  m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
-  if (m) return guard(can('runs:read'), <RunDetail key={m[1]} runId={m[1]!} />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
-  if (m) return guard(can('issues:read'), <IssueDetail key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)\/review$/);
-  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} mode="review" />);
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
-  if (m) return guard(can('prs:read'), <PrView key={path} repo={`${m[1]}/${m[2]}`} number={Number(m[3])} />);
-
-  if (path.startsWith('/digest')) return guard(can('reports:read'), <DigestPage />);
-  if (path.startsWith('/proposals')) return guard(can('proposals:read'), <ProposalsPage />);
-  if (path.startsWith('/specs')) return guard(can('specs:read'), <SpecsPage />);
-  if (path.startsWith('/docs')) return guard(can('docs:read'), <DocsPage />);
-  if (path.startsWith('/issues')) return guard(can('issues:read'), <IssuesAreaPage />);
-  if (path.startsWith('/prs')) return guard(can('prs:read'), <PrsAreaPage />);
-  if (path.startsWith('/pipelines')) return guard(can('pipelines:read'), <PipelinesPage />);
-  // Admin route, but it must sit before /runs — that prefix would swallow it.
-  if (path.startsWith('/runners')) return guard(can('runners:manage'), <RunnersPage />);
-  if (path.startsWith('/runs')) return guard(can('runs:read'), <RunsPage />);
-  if (path.startsWith('/automations')) return guard(can('automations:manage'), <AutomationsPage />);
-  if (path.startsWith('/repos')) return guard(can('repos:manage'), <ReposPage />);
-  if (path.startsWith('/skills')) return guard(can('skills:manage'), <SkillsPage />);
-  if (path.startsWith('/github')) return guard(can('github:connect'), <GithubAccountsPage />);
-  if (path.startsWith('/providers')) return guard(can('settings:manage'), <ProvidersPage />);
-  if (path.startsWith('/users')) return guard(can('users:manage'), <UsersPage />);
-  if (path.startsWith('/settings')) return guard(can('settings:manage'), <SettingsPage />);
-  // Every signed-in user has their own profile and inbox.
-  if (path.startsWith('/profile')) return <ProfilePage />;
-  if (path.startsWith('/inbox')) return guard(can('workspaces:read'), <InboxPage />);
-  if (path === '/' || path.startsWith('/overview')) return guard(can('issues:read'), <DashboardPage />);
-  return <NotFoundPage path={path} />;
+  const query = useMemo(() => new URLSearchParams(hash.split('?')[1] ?? ''), [hash]);
+  // First paint: the shell renders instantly; routes resolve when the enabled
+  // modules' (tiny) client chunks land.
+  if (!kernel.ready) return <PageLoading />;
+  const hit = matchRoute(kernel.routes, path);
+  if (!hit) return <NotFoundPage path={path} />;
+  if (hit.route.permission && !can(hit.route.permission)) return <NoAccess />;
+  const Page = hit.route.component;
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <Page params={hit.params} query={query} />
+    </Suspense>
+  );
 }
 
-function guard(allowed: boolean, page: JSX.Element): JSX.Element {
-  if (allowed) return page;
+function NoAccess(): JSX.Element {
   return (
     <div className="mx-auto max-w-md px-6 py-16 text-center">
       <h1 className="text-lg font-semibold">No access</h1>
