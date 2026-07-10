@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Markdown, Spinner } from '@companion/ui';
+import { Eyebrow, Markdown, Spinner } from '@companion/ui';
 import type { Block } from './fold.js';
 
 export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
@@ -33,7 +33,8 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
         <details className="group max-w-[80%] shrink-0 self-end overflow-hidden rounded-xl bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
           <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 select-none [&::-webkit-details-marker]:hidden">
             {block.trigger ? <span className="shrink-0 text-[11px] opacity-80">⚡ {block.trigger}</span> : null}
-            <span className="shrink-0 text-[11px] font-medium tracking-wide uppercase opacity-80">Prompt</span>
+            {/* text-current: the bubble is inverted, so the eyebrow's dim gray would lose contrast. */}
+            <Eyebrow className="shrink-0 text-current opacity-80">Prompt</Eyebrow>
             <span className="min-w-0 flex-1 truncate text-[13px] opacity-70 group-open:hidden">{firstLine(block.text)}</span>
             <span className="shrink-0 text-[10px] opacity-60">
               <span className="group-open:hidden">show</span>
@@ -128,13 +129,13 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: 'tool' }> }): JSX.
         <span className={`shrink-0 text-[11px] ${status.cls}`}>{status.label}</span>
       </summary>
       <div className="flex flex-col gap-1.5 border-t border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-        <div className="dim text-[10px] font-medium tracking-widest uppercase">Input</div>
+        <Eyebrow>Input</Eyebrow>
         <pre className="mono-pane max-h-52">{safeJson(block.input)}</pre>
         {block.detail ? (
           <>
-            <div className="dim mt-1 text-[10px] font-medium tracking-widest uppercase">
+            <Eyebrow className="mt-1">
               {block.status === 'ok' ? 'Result' : block.status === 'denied' ? 'Reason' : 'Error'}
-            </div>
+            </Eyebrow>
             <pre className="mono-pane max-h-52">{block.detail}</pre>
           </>
         ) : null}
@@ -194,7 +195,7 @@ function StructuredReply({ data }: { data: Record<string, unknown> }): JSX.Eleme
     <div className="flex flex-col gap-3">
       {Object.entries(data).map(([key, value]) => (
         <div key={key}>
-          <div className="dim mb-1 text-[10px] font-medium tracking-widest uppercase">{humanizeKey(key)}</div>
+          <Eyebrow className="mb-1">{humanizeKey(key)}</Eyebrow>
           <StructuredValue value={value} ordered={/step/i.test(key)} />
         </div>
       ))}

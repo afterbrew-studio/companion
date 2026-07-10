@@ -1,30 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { ChevronDown, CloseIcon, SparkleIcon } from './icons.js';
 
 /** Small shared primitives so every page speaks the same visual language. */
-
-export function ChevronDown({ open, className = '' }: { open?: boolean; className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden
-      className={`size-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 ${open ? 'rotate-180' : ''} ${className}`}
-    >
-      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** Small stroked padlock — marks private workspaces. */
-export function LockIcon({ className = 'size-3.5' }: { className?: string }): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden className={`shrink-0 ${className}`}>
-      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 export interface DropdownOption<T extends string> {
   value: T;
@@ -467,15 +445,9 @@ export function Modal({
       >
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
           <h2 className="min-w-0 truncate text-sm font-semibold">{title}</h2>
-          <button
-            className="dim -mr-1.5 shrink-0 cursor-pointer rounded-md p-1.5 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            onClick={onClose}
-            aria-label={`Close ${title}`}
-          >
-            <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
-              <path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-          </button>
+          <IconButton label={`Close ${title}`} onClick={onClose} className="-mr-1.5">
+            <CloseIcon />
+          </IconButton>
         </div>
         <div className="p-5">{children}</div>
       </div>
@@ -584,12 +556,19 @@ export function Skeleton({ className = '' }: { className?: string }): JSX.Elemen
   return <span className={`skeleton ${className}`} aria-hidden />;
 }
 
+/** Spinner + label for inline loading moments (list refresh, side panels). */
+export function InlineLoading({ label = 'Loading…', className = '' }: { label?: string; className?: string }): JSX.Element {
+  return (
+    <div className={`dim flex items-center gap-2.5 text-sm ${className}`}>
+      <Spinner /> {label}
+    </div>
+  );
+}
+
 export function PageLoading({ label = 'Loading…' }: { label?: string }): JSX.Element {
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-6">
-      <div className="dim flex items-center gap-2.5 text-sm">
-        <Spinner /> {label}
-      </div>
+      <InlineLoading label={label} />
       <div className="mt-5 flex flex-col gap-3">
         <Skeleton className="h-7 w-2/3" />
         <Skeleton className="h-4 w-1/3" />
@@ -738,14 +717,7 @@ export function FiltersPopover({
               strokeLinejoin="round"
             />
           </svg>
-          {active > 0 ? (
-            <span
-              className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-900 px-1 text-[9px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
-              aria-hidden
-            >
-              {active}
-            </span>
-          ) : null}
+          <CountBadge count={active} />
         </button>
       </Tooltip>
       {open ? (
@@ -910,7 +882,7 @@ function AnchoredMenu({
       setPos({ top, left });
     };
     place();
-    const onDown = (e: MouseEvent): void => {
+    const onDown = (e: globalThis.MouseEvent): void => {
       const t = e.target as Node;
       if (anchorRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       onClose();
@@ -992,30 +964,14 @@ export function AiActionMenu({
       <button
         ref={ref}
         type="button"
-        className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors ${
-          open
-            ? 'border-emerald-500/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
-            : 'border-emerald-500/40 text-emerald-600 hover:border-emerald-500/70 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
-        }`}
+        className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors ${aiAccentClass(open)}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label}
         title={label}
         onClick={() => setOpen((o) => !o)}
       >
-        {busy ? (
-          <Spinner />
-        ) : (
-          <svg viewBox="0 0 20 20" fill="none" className="size-4" aria-hidden>
-            <path
-              d="M10 2.5l1.7 4.3 4.3 1.7-4.3 1.7L10 14.5 8.3 10.2 4 8.5l4.3-1.7L10 2.5z"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinejoin="round"
-            />
-            <path d="M15.5 12.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" fill="currentColor" stroke="none" />
-          </svg>
-        )}
+        {busy ? <Spinner /> : <SparkleIcon />}
         AI
         <ChevronDown open={open} className="size-3.5" />
       </button>
@@ -1029,37 +985,72 @@ export function AiActionMenu({
  * in-progress agent action or a review/risk signal. Sits in the dim metadata
  * strip rather than crowding the title.
  */
+/** The status vocabulary: one tone → color map shared by every dot, signal, and glyph. */
+export type StatusTone = 'blue' | 'amber' | 'red' | 'green' | 'zinc';
+
+const TONE_TEXT: Record<StatusTone, string> = {
+  blue: 'text-[#2a78d6] dark:text-[#5aa2f0]',
+  amber: 'text-amber-600 dark:text-amber-400',
+  red: 'text-red-600 dark:text-red-400',
+  green: 'text-emerald-600 dark:text-emerald-400',
+  zinc: 'text-zinc-500 dark:text-zinc-400',
+};
+
+const TONE_DOT: Record<StatusTone, string> = {
+  blue: 'bg-[#2a78d6] dark:bg-[#5aa2f0]',
+  amber: 'bg-amber-500',
+  red: 'bg-red-500',
+  green: 'bg-emerald-500',
+  zinc: 'bg-zinc-400 dark:bg-zinc-500',
+};
+
+/** Colored status dot; `pulse` marks live activity. */
+export function StatusDot({
+  tone,
+  pulse,
+  size = 'md',
+  title,
+  label,
+  className = '',
+}: {
+  tone: StatusTone;
+  pulse?: boolean;
+  /** sm = meta-line marker, md = list row, lg = prominent health dot. */
+  size?: 'sm' | 'md' | 'lg';
+  title?: string;
+  /** Screen-reader text without a native tooltip — for dots already wrapped in Tooltip. */
+  label?: string;
+  className?: string;
+}): JSX.Element {
+  const sizeClass = size === 'sm' ? 'size-1.5' : size === 'lg' ? 'size-2.5' : 'size-2';
+  const name = title ?? label;
+  return (
+    <span
+      className={`${sizeClass} shrink-0 rounded-full ${TONE_DOT[tone]} ${
+        pulse ? 'animate-pulse motion-reduce:animate-none' : ''
+      } ${className}`}
+      title={title}
+      aria-hidden={name === undefined}
+      role={name === undefined ? undefined : 'img'}
+      aria-label={name}
+    />
+  );
+}
+
 export function MetaSignal({
   tone,
   label,
   pulse,
   title,
 }: {
-  tone: 'blue' | 'amber' | 'red' | 'green' | 'zinc';
+  tone: StatusTone;
   label: string;
   pulse?: boolean;
   title?: string;
 }): JSX.Element {
-  const text: Record<string, string> = {
-    blue: 'text-[#2a78d6] dark:text-[#5aa2f0]',
-    amber: 'text-amber-600 dark:text-amber-400',
-    red: 'text-red-600 dark:text-red-400',
-    green: 'text-emerald-600 dark:text-emerald-400',
-    zinc: 'text-zinc-500 dark:text-zinc-400',
-  };
-  const dot: Record<string, string> = {
-    blue: 'bg-[#2a78d6] dark:bg-[#5aa2f0]',
-    amber: 'bg-amber-500',
-    red: 'bg-red-500',
-    green: 'bg-emerald-500',
-    zinc: 'bg-zinc-400',
-  };
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${text[tone]}`} title={title}>
-      <span
-        className={`size-1.5 rounded-full ${dot[tone]} ${pulse ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-        aria-hidden
-      />
+    <span className={`inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${TONE_TEXT[tone]}`} title={title}>
+      <StatusDot tone={tone} pulse={pulse} size="sm" />
       {label}
     </span>
   );
@@ -1093,4 +1084,261 @@ export function timeAgo(ts: number): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return d < 30 ? `${d}d ago` : new Date(ts).toLocaleDateString();
+}
+
+/** Abbreviated token counts for run lists and detail headers (1.2M / 34.5k). */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+/**
+ * Emerald AI-accent surface (border/bg/text states) — the single visual token
+ * marking an AI trigger. Callers add their own shape (size, radius, padding).
+ */
+export function aiAccentClass(open: boolean): string {
+  return open
+    ? 'border-emerald-500/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+    : 'border-emerald-500/40 text-emerald-600 hover:border-emerald-500/70 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10';
+}
+
+/**
+ * Quiet square icon-only button: transparent until hovered. The one shape for
+ * modal closes, row kebabs, toolbar glyphs. `title` mirrors the aria-label so
+ * every icon button self-documents on hover.
+ */
+export function IconButton({
+  label,
+  onClick,
+  danger,
+  disabled,
+  className = '',
+  children,
+}: {
+  label: string;
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
+  danger?: boolean;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      className={`dim shrink-0 cursor-pointer rounded-md p-1.5 transition-colors disabled:cursor-default disabled:opacity-50 ${
+        danger
+          ? 'hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400'
+          : 'hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+      } ${className}`}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Glyphs for StatusGlyph: outcome shapes shared by every domain state icon. */
+export type GlyphTone = 'ok' | 'warn' | 'danger' | 'muted';
+
+const GLYPH: Record<GlyphTone, { cls: string; path: string }> = {
+  ok: { cls: 'text-emerald-600 dark:text-emerald-400', path: 'M4.6 8.4l2 2 4-4.4' },
+  warn: { cls: 'text-amber-600 dark:text-amber-400', path: 'M8 4.6v4M8 11h.01' },
+  danger: { cls: 'text-red-600 dark:text-red-400', path: 'm5.5 5.5 5 5M10.5 5.5l-5 5' },
+  muted: { cls: 'text-zinc-400 dark:text-zinc-500', path: 'M5 8h6' },
+};
+
+/**
+ * Stroked circle + outcome glyph (✓ ! ✕ –) with a tooltip — the leading state
+ * icon on cards and rows. Domain code maps its states to a tone + label; the
+ * drawing lives here.
+ */
+export function StatusGlyph({ tone, label, className = '' }: { tone: GlyphTone; label: string; className?: string }): JSX.Element {
+  const spec = GLYPH[tone];
+  return (
+    <Tooltip content={label}>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={`size-4 shrink-0 ${spec.cls} ${className}`}
+        role="img"
+        aria-label={label}
+      >
+        <circle cx="8" cy="8" r="6.2" />
+        <path d={spec.path} />
+      </svg>
+    </Tooltip>
+  );
+}
+
+/** Filled ✓/✕ circle for dense timeline nodes where a stroked glyph is too quiet. */
+export function OutcomeDot({ ok }: { ok: boolean }): JSX.Element {
+  return (
+    <span
+      className={`flex size-3.5 items-center justify-center rounded-full text-[8px] leading-none font-bold text-white ${
+        ok ? 'bg-emerald-500' : 'bg-red-500'
+      }`}
+      aria-hidden
+    >
+      {ok ? '✓' : '✕'}
+    </span>
+  );
+}
+
+// Each entry carries its own radius so sizes never fight a base rounded-* class.
+const AVATAR_SIZE = {
+  xs: 'size-5 rounded-lg text-[9px]',
+  sm: 'size-7 rounded-lg text-[10px]',
+  md: 'size-8 rounded-lg text-[11px]',
+  lg: 'size-10 rounded-lg text-[13px]',
+  xl: 'size-11 rounded-xl text-lg',
+} as const;
+
+/** "ML" from "Michal Lastname"; single-word names give their first two letters. */
+function initials(name: string): string {
+  const words = name.trim().split(/[\s-_.]+/).filter(Boolean);
+  const first = words[0] ?? '';
+  return words.length > 1 ? `${first[0] ?? ''}${words[1]?.[0] ?? ''}` : first.slice(0, 2);
+}
+
+/**
+ * Initials tile for people and entities; `src` swaps in an image, `brand`
+ * inverts to the accent fill (instance logos, the auth screens).
+ */
+export function Avatar({
+  name,
+  src,
+  size = 'md',
+  brand,
+  className = '',
+}: {
+  name: string;
+  src?: string;
+  size?: keyof typeof AVATAR_SIZE;
+  brand?: boolean;
+  className?: string;
+}): JSX.Element {
+  const shape = `${AVATAR_SIZE[size]} shrink-0 ${className}`;
+  if (src) return <img src={src} alt={name} className={`${shape} object-cover`} />;
+  return (
+    <span
+      className={`flex items-center justify-center font-semibold uppercase ${shape} ${
+        brand
+          ? 'bg-accent-600 text-white dark:bg-accent-500 dark:text-zinc-950'
+          : 'bg-zinc-100 dark:bg-zinc-800'
+      }`}
+      aria-hidden
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+/**
+ * Bordered card holding divider-separated rows (pairs with `.row-link`).
+ * `subtle` lightens the dividers for nested/secondary lists.
+ */
+export function ListCard({
+  children,
+  subtle,
+  className = '',
+  ariaLabel,
+}: {
+  children: ReactNode;
+  subtle?: boolean;
+  className?: string;
+  /** Names the list for assistive tech (renders as role="group"). */
+  ariaLabel?: string;
+}): JSX.Element {
+  return (
+    <div
+      role={ariaLabel ? 'group' : undefined}
+      aria-label={ariaLabel}
+      className={`card divide-y p-0 ${
+        subtle ? 'divide-zinc-100 dark:divide-zinc-800/60' : 'divide-zinc-200 dark:divide-zinc-800'
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Right-aligned action footer inside a card, above its own top rule. */
+export function CardActions({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+  return (
+    <div
+      className={`mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800 ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Corner count bubble for a trigger (active filters, unread items). */
+export function CountBadge({ count, tone = 'default' }: { count: number; tone?: 'default' | 'danger' }): JSX.Element | null {
+  if (count <= 0) return null;
+  return (
+    <span
+      className={`absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold ${
+        tone === 'danger' ? 'bg-red-500 text-white' : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+      }`}
+      aria-hidden
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  );
+}
+
+/** Tiny uppercase caption above a block (the "eyebrow"). */
+export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+  return <div className={`dim text-[11px] font-medium tracking-widest uppercase ${className}`}>{children}</div>;
+}
+
+/** Two-column label/value grid for detail views; fill with DetailRow. */
+export function DetailGrid({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+  return (
+    <dl className={`grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-[13px] ${className}`}>{children}</dl>
+  );
+}
+
+export function DetailRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <>
+      <dt className="dim">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </>
+  );
+}
+
+/** Hash-route breadcrumb above a detail-page title. */
+export function Breadcrumb({
+  items,
+  className = '',
+}: {
+  items: ReadonlyArray<{ label: string; href?: string }>;
+  className?: string;
+}): JSX.Element {
+  return (
+    <nav className={`dim text-[13px] ${className}`} aria-label="Breadcrumb">
+      {items.map((item, i) => (
+        <span key={`${item.label}-${i}`}>
+          {i > 0 ? ' / ' : ''}
+          {item.href ? (
+            <a href={item.href} className="hover:underline">
+              {item.label}
+            </a>
+          ) : (
+            item.label
+          )}
+        </span>
+      ))}
+    </nav>
+  );
 }

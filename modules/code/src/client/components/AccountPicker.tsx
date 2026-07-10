@@ -26,7 +26,7 @@ export function AccountPicker({
   if (accounts.length < 2) return null;
   return (
     <select
-      className={`input py-1.5 ${className}`}
+      className={`input input-sm ${className}`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label="GitHub account to act as"

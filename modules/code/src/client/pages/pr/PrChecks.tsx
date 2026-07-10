@@ -149,7 +149,7 @@ export function PrChecks({
         </div>
       ) : null}
       {ciAnalysis ? (
-        <div className="anim-in mt-3 rounded-lg border border-accent-400/50 p-3 dark:border-accent-500/40">
+        <div className="card anim-in mt-3 border-accent-400/50 dark:border-accent-500/40">
           <div className="flex items-center gap-2">
             <strong className="text-[13px]">AI failure analysis</strong>
             <span className="dim text-xs">{timeAgo(ciAnalysis.createdAt)}</span>

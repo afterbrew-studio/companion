@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EmptyState, Page, PageHeader, Section, Switch } from '@companion/ui';
+import { EmptyState, ErrorBar, ListCard, Page, PageHeader, Section, SettingRow, Switch } from '@companion/ui';
 import { operateApi as api } from '../api.js';
 import { useProviders } from '../hooks/useProviders.js';
 
@@ -50,7 +50,7 @@ export function ProvidersPage(): JSX.Element {
           </button>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
       {note ? (
         <div className="banner-info" role="status">
           {note}
@@ -76,45 +76,42 @@ export function ProvidersPage(): JSX.Element {
                 : 'Model catalog cached from the last live run — start any run to refresh it.'
               : 'Model catalog not loaded yet — start any run once and moxxy reports each provider’s models here.'}
           </p>
-          <div className="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800/60">
+          <ListCard subtle>
             {providers.map((p) => {
               const models = catalog.find((c) => c.name === p.name)?.models ?? [];
               return (
                 <div key={p.name} className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">{p.name}</div>
-                      <p className="dim mt-0.5">
-                        {p.enabled
-                          ? 'Available to runs and model pickers.'
-                          : 'Hidden — selections fall back to the default model.'}
-                      </p>
-                    </div>
+                  <SettingRow
+                    title={p.name}
+                    description={
+                      p.enabled
+                        ? 'Available to runs and model pickers.'
+                        : 'Hidden — selections fall back to the default model.'
+                    }
+                  >
                     <Switch label={`Provider ${p.name}`} checked={p.enabled} onChange={() => toggleProvider(p.name)} />
-                  </div>
+                  </SettingRow>
                   {p.enabled && models.length > 0 ? (
                     <div className="mt-3 grid gap-1.5 sm:grid-cols-2" aria-label={`Models of ${p.name}`}>
                       {models.map((m) => {
                         const enabled = !isModelDisabled(p.name, m.id);
                         return (
-                          <div
+                          <SettingRow
                             key={m.id}
-                            className={`flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800 ${
+                            className={`rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800 ${
                               enabled ? '' : 'opacity-60'
                             }`}
+                            title={<span className="block truncate font-mono text-xs">{m.id}</span>}
+                            description={
+                              m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k context` : undefined
+                            }
                           >
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-mono text-xs font-medium">{m.id}</div>
-                              {m.contextWindow ? (
-                                <div className="dim text-[11px]">{Math.round(m.contextWindow / 1000)}k context</div>
-                              ) : null}
-                            </div>
                             <Switch
                               label={`Model ${m.id} of ${p.name}`}
                               checked={enabled}
                               onChange={() => toggleModel(p.name, m.id)}
                             />
-                          </div>
+                          </SettingRow>
                         );
                       })}
                     </div>
@@ -122,7 +119,7 @@ export function ProvidersPage(): JSX.Element {
                 </div>
               );
             })}
-          </div>
+          </ListCard>
         </>
       )}
 

@@ -145,6 +145,10 @@
   .input {
     @apply h-9 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-400;
   }
+  /* Compact companion to .input for dense inline controls: `input input-sm`. */
+  .input-sm {
+    @apply h-8 px-2.5 py-1.5 text-xs;
+  }
   /* Native selects: replace the OS arrow with our chevron and reserve room for it. */
   select.input {
     @apply cursor-pointer appearance-none bg-no-repeat pr-8;
@@ -172,6 +176,14 @@
   }
   .mono-pane {
     @apply overflow-auto rounded-lg bg-zinc-50 p-3 font-mono text-xs whitespace-pre-wrap dark:bg-zinc-900;
+  }
+  /* Recessed non-mono surface (analysis output, previews, expanded bodies). */
+  .well {
+    @apply rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900;
+  }
+  /* Inline code token in prose outside .markdown (paths, commands, ids). */
+  .code-inline {
+    @apply rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] dark:bg-zinc-800;
   }
   /* Dense clickable list row (dashboard queues, area lists). */
   .row-link {

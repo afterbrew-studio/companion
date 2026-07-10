@@ -1,11 +1,16 @@
 import { useState } from 'react';
 import {
+  CardActions,
   EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
   ListFilterToolbar,
   Modal,
   Page,
   PageHeader,
   Spinner,
+  StatusGlyph,
   Tooltip,
   facet,
   timeAgo,
@@ -78,7 +83,7 @@ export function ProposalsPage(): JSX.Element {
           ) : undefined
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {proposals.length > 0 ? (
         <ListFilterToolbar
@@ -158,8 +163,7 @@ function CreateProposalModal({
   return (
     <Modal title="New proposal" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Repository</span>
+        <Field label="Repository">
           <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)} required>
             {repos.map((r) => (
               <option key={r.fullName} value={r.fullName}>
@@ -167,9 +171,8 @@ function CreateProposalModal({
               </option>
             ))}
           </select>
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Title</span>
+        </Field>
+        <Field label="Title">
           <input
             className="input"
             required
@@ -179,9 +182,8 @@ function CreateProposalModal({
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Add CSV export to the reports screen"
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">What should change, and why?</span>
+        </Field>
+        <Field label="What should change, and why?">
           <textarea
             className="input min-h-36"
             required
@@ -189,16 +191,16 @@ function CreateProposalModal({
             onChange={(e) => setBody(e.target.value)}
             placeholder="Describe the outcome you want in plain language. The analysis agent reads the codebase and reports feasibility, steps, and risks."
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !repo || !title.trim() || !body.trim()}>
             {busy ? 'Creating…' : 'Create & analyze'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -213,36 +215,19 @@ function ProposalStateIcon({ status, failedImplementing }: { status: ProposalRec
       </Tooltip>
     );
   }
-  const spec =
-    status === 'implemented'
-      ? { label: 'Implemented', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' }
-      : status === 'rejected' || status === 'failed'
-        ? {
-            label: status === 'rejected' ? 'Rejected' : failedImplementing ? 'Implementation failed' : 'Analysis failed',
-            cls: 'text-red-600 dark:text-red-400',
-            glyph: 'm5.5 5.5 5 5M10.5 5.5l-5 5',
-          }
-        : status === 'analyzed' || status === 'review'
-          ? { label: status === 'review' ? 'Ready for review' : 'Analyzed — awaiting approval', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' }
-          : { label: 'Draft', cls: 'text-zinc-400 dark:text-zinc-500', glyph: 'M5 8h6' };
-  return (
-    <Tooltip content={spec.label}>
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`size-4 shrink-0 ${spec.cls}`}
-        role="img"
-        aria-label={spec.label}
-      >
-        <circle cx="8" cy="8" r="6.2" />
-        <path d={spec.glyph} />
-      </svg>
-    </Tooltip>
-  );
+  if (status === 'implemented') return <StatusGlyph tone="ok" label="Implemented" />;
+  if (status === 'rejected' || status === 'failed') {
+    return (
+      <StatusGlyph
+        tone="danger"
+        label={status === 'rejected' ? 'Rejected' : failedImplementing ? 'Implementation failed' : 'Analysis failed'}
+      />
+    );
+  }
+  if (status === 'analyzed' || status === 'review') {
+    return <StatusGlyph tone="warn" label={status === 'review' ? 'Ready for review' : 'Analyzed — awaiting approval'} />;
+  }
+  return <StatusGlyph tone="muted" label="Draft" />;
 }
 
 function ProposalCard({
@@ -307,11 +292,11 @@ function ProposalCard({
 
       {a ? (
         <div className="mt-2.5">
-          <button className="linkish text-sm" onClick={() => setExpanded((v) => !v)}>
+          <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
             {expanded ? 'Hide analysis' : `Analysis: feasibility ${a.feasibility} — details`}
           </button>
           {expanded ? (
-            <div className="mt-2 rounded-lg bg-zinc-50 p-3 text-[13px] dark:bg-zinc-900">
+            <div className="well mt-2 text-[13px]">
               <p>{a.summary}</p>
               {a.steps.length > 0 ? (
                 <ol className="mt-2 list-decimal pl-5">
@@ -335,9 +320,9 @@ function ProposalCard({
         </div>
       ) : null}
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
-      <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+      <CardActions>
         {proposal.status === 'draft' || proposal.status === 'failed' ? (
           <button
             className="btn-ghost"
@@ -422,7 +407,7 @@ function ProposalCard({
             </button>
           </>
         ) : null}
-      </div>
+      </CardActions>
       {confirmElement}
     </article>
   );

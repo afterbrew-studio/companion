@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Markdown, timeAgo } from '@companion/ui';
+import { ErrorBar, Eyebrow, Markdown, timeAgo } from '@companion/ui';
 import type { PrReviewResult } from '../../../contract/index.js';
 import { AccountPicker } from '../../components/AccountPicker.js';
 
@@ -47,7 +47,7 @@ export function PrReview({
           : 'border-amber-500/60';
 
   return (
-    <section className={`anim-in rounded-2xl border p-5 ${border}`} aria-label="AI review">
+    <section className={`card anim-in ${border}`} aria-label="AI review">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm">AI review</strong>
         {v ? <span className={RISK_CLS[v.risk]}>{v.risk} risk</span> : null}
@@ -69,7 +69,7 @@ export function PrReview({
 
           {v.findings.length > 0 ? (
             <div className="mt-3">
-              <div className="dim mb-1 text-[11px] font-medium tracking-widest uppercase">Findings</div>
+              <Eyebrow className="mb-1">Findings</Eyebrow>
               <ul className="list-disc space-y-1 pl-5 text-[13px]">
                 {v.findings.map((f, i) => (
                   <li key={i}>{f}</li>
@@ -88,7 +88,7 @@ export function PrReview({
           ) : null}
         </>
       ) : (
-        <p className="error-bar mt-3">{review.error ?? 'no verdict'}</p>
+        <ErrorBar error={review.error ?? 'no verdict'} className="mt-3" />
       )}
 
       {pending && canAct ? (

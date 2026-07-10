@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useIntent } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import { EmptyState, Modal, Page, PageHeader, Switch, timeAgo, useConfirm } from '@companion/ui';
+import { EmptyState, ErrorBar, Eyebrow, Field, FormActions, ListCard, Modal, Page, PageHeader, Switch, timeAgo, useConfirm } from '@companion/ui';
 import type { GitHubAccountRecord, GitHubAccountScope, GitHubPurpose } from '../../contract/index.js';
 import { GITHUB_PURPOSES } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
@@ -85,7 +85,7 @@ export function GithubAccountsPage(): JSX.Element {
           </button>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {accounts === null ? null : accounts.length === 0 ? (
         <EmptyState
@@ -127,7 +127,7 @@ export function GithubAccountsPage(): JSX.Element {
                 </div>
                 {manageable ? (
                   <>
-                    <div className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800/60 dark:border-zinc-800">
+                    <ListCard subtle className="mt-3">
                       {GITHUB_PURPOSES.map((purpose) => (
                         <div key={purpose} className="flex items-center gap-3 px-3.5 py-2.5">
                           <div className="min-w-0 flex-1">
@@ -141,7 +141,7 @@ export function GithubAccountsPage(): JSX.Element {
                           />
                         </div>
                       ))}
-                    </div>
+                    </ListCard>
                     <ScopeEditor account={a} workspaces={workspaces} onError={setError} onSaved={refresh} />
                   </>
                 ) : (
@@ -215,7 +215,7 @@ function ScopeEditor({
 
   return (
     <div className="mt-3">
-      <Section label="Available to">
+      <FieldGroup label="Available to">
         <div className="grid gap-2 sm:grid-cols-2">
           <OptionRow
             active={!showWorkspaces}
@@ -275,7 +275,7 @@ function ScopeEditor({
             ))}
           </div>
         ) : null}
-      </Section>
+      </FieldGroup>
     </div>
   );
 }
@@ -323,8 +323,14 @@ function ConnectAccountModal({
     <Modal wide title="Connect a GitHub account" onClose={onClose}>
       <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
         {/* Fine-grained PAT — the one required field, spanning the top. */}
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Fine-grained personal access token</span>
+        <Field
+          label="Fine-grained personal access token"
+          hint={
+            <>
+              Needs Contents, Issues, and Pull requests <span className="font-medium">read-write</span>, plus Metadata read.
+            </>
+          }
+        >
           <input
             className="input font-mono"
             type="password"
@@ -334,14 +340,11 @@ function ConnectAccountModal({
             onChange={(e) => setToken(e.target.value)}
             autoFocus
           />
-          <span className="dim text-xs leading-relaxed">
-            Needs Contents, Issues, and Pull requests <span className="font-medium">read-write</span>, plus Metadata read.
-          </span>
-        </label>
+        </Field>
 
         {/* Two columns: what the account DOES (left) vs who it IS + where it applies (right). */}
         <div className="grid gap-x-6 gap-y-5 md:grid-cols-2">
-          <Section label="This account handles">
+          <FieldGroup label="This account handles">
             <div className="flex flex-col gap-2">
               {GITHUB_PURPOSES.map((purpose) => (
                 <OptionRow
@@ -362,11 +365,11 @@ function ConnectAccountModal({
                 />
               ))}
             </div>
-          </Section>
+          </FieldGroup>
 
           <div className="flex flex-col gap-5">
             {isAdmin ? (
-              <Section label="Ownership">
+              <FieldGroup label="Ownership">
                 <div className="flex flex-col gap-2">
                   <OptionRow
                     active={shared}
@@ -381,7 +384,7 @@ function ConnectAccountModal({
                     hint="Only my own actions act as this account."
                   />
                 </div>
-              </Section>
+              </FieldGroup>
             ) : (
               <p className="dim rounded-lg bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed dark:bg-zinc-900/50">
                 This connects as <span className="font-medium">your</span> account — your comments, reviews, and merges
@@ -389,7 +392,7 @@ function ConnectAccountModal({
               </p>
             )}
 
-            <Section label="Available to">
+            <FieldGroup label="Available to">
               <div className="flex flex-col gap-2">
                 <OptionRow
                   active={scope === 'shared'}
@@ -425,12 +428,12 @@ function ConnectAccountModal({
                   ))}
                 </div>
               ) : null}
-            </Section>
+            </FieldGroup>
           </div>
         </div>
 
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
@@ -441,17 +444,17 @@ function ConnectAccountModal({
           >
             {busy ? 'Validating…' : 'Connect'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
 }
 
 /** A titled form group with a small uppercase section header. */
-function Section({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[11px] font-semibold tracking-wider text-zinc-500 uppercase dark:text-zinc-400">{label}</span>
+      <Eyebrow>{label}</Eyebrow>
       {children}
     </div>
   );

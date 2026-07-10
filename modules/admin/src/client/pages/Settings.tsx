@@ -2,7 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { refreshAuth } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useMoxxyStatus } from '@companion/module-operate/client';
-import { Page, PageHeader, Section, Switch } from '@companion/ui';
+import {
+  Avatar,
+  DetailGrid,
+  DetailRow,
+  ErrorBar,
+  Field,
+  InlineLoading,
+  Page,
+  PageHeader,
+  Section,
+  SettingRow,
+  Switch,
+} from '@companion/ui';
 import type { NotificationScope } from '../../contract/index.js';
 import { adminApi as api } from '../api.js';
 
@@ -146,7 +158,7 @@ export function SettingsPage(): JSX.Element {
   return (
     <Page>
       <PageHeader title="Settings" subtitle="Branding, appearance, and the moxxy runtime" />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <Section
         title="Branding"
@@ -154,13 +166,8 @@ export function SettingsPage(): JSX.Element {
       >
         <div className="card flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-4">
-            {logo ? (
-              <img src={logo} alt="Instance logo" className="size-11 shrink-0 rounded-xl object-cover" />
-            ) : (
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-lg font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-                {previewName.slice(0, 1).toUpperCase()}
-              </div>
-            )}
+            {/* Same brand tile as the sign-in screen, so the preview is honest. */}
+            <Avatar name={previewName} src={logo ?? undefined} size="xl" brand />
             <div className="flex flex-wrap items-center gap-2">
               <input
                 ref={fileInput}
@@ -183,8 +190,7 @@ export function SettingsPage(): JSX.Element {
               <span className="dim">PNG, JPEG, WebP, or SVG — scaled down to 128 px.</span>
             </div>
           </div>
-          <label className="flex max-w-sm flex-col gap-1 text-sm">
-            <span className="dim">Instance name</span>
+          <Field label="Instance name" className="max-w-sm">
             <input
               className="input"
               maxLength={40}
@@ -192,7 +198,7 @@ export function SettingsPage(): JSX.Element {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-          </label>
+          </Field>
           <div className="flex items-center gap-2">
             <button className="btn" disabled={!brandDirty || savingBrand} onClick={() => void saveBranding()}>
               {savingBrand ? 'Saving…' : 'Save branding'}
@@ -206,20 +212,18 @@ export function SettingsPage(): JSX.Element {
         title="Notifications"
         description="The default inbox scope for everyone. Each user can override it under their own profile."
       >
-        <div className="card flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[13px] font-medium">Show notifications from all workspaces by default</div>
-            <p className="dim mt-0.5 text-[13px]">
-              Off — the inbox is scoped to the workspace you have open (plus instance-wide events). On — it
-              aggregates every workspace a user can access.
-            </p>
-          </div>
-          <Switch
-            label="Show notifications from all workspaces by default"
-            checked={defaultScope === 'global'}
-            disabled={defaultScope === null}
-            onChange={(v) => void saveScope(v ? 'global' : 'workspace')}
-          />
+        <div className="card">
+          <SettingRow
+            title="Show notifications from all workspaces by default"
+            description="Off — the inbox is scoped to the workspace you have open (plus instance-wide events). On — it aggregates every workspace a user can access."
+          >
+            <Switch
+              label="Show notifications from all workspaces by default"
+              checked={defaultScope === 'global'}
+              disabled={defaultScope === null}
+              onChange={(v) => void saveScope(v ? 'global' : 'workspace')}
+            />
+          </SettingRow>
         </div>
       </Section>
 
@@ -227,33 +231,30 @@ export function SettingsPage(): JSX.Element {
         title="Agent runs"
         description="Unattended runs (triage, review, fixes) share the runners' combined capacity and queue when it's full. Reserve slots so chats can't crowd out automated work."
       >
-        <div className="card flex flex-wrap items-center gap-3">
-          <label className="text-[13px] font-medium" htmlFor="reserved-slots">
-            Runner slots reserved for automated work
-          </label>
-          <input
-            id="reserved-slots"
-            type="number"
-            min={0}
-            max={64}
-            className="input w-20"
-            value={reserved ?? ''}
-            disabled={reserved === null}
-            onChange={(e) => void saveReserved(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-          />
-          <span className="dim text-[13px]">
-            Attended chats (interactive &amp; AI Help) won&apos;t use these slots. At least one chat slot always
-            remains.
-          </span>
+        <div className="card">
+          <SettingRow
+            title={<label htmlFor="reserved-slots">Runner slots reserved for automated work</label>}
+            description="Attended chats (interactive & AI Help) won't use these slots. At least one chat slot always remains."
+          >
+            <input
+              id="reserved-slots"
+              type="number"
+              min={0}
+              max={64}
+              className="input w-20"
+              value={reserved ?? ''}
+              disabled={reserved === null}
+              onChange={(e) => void saveReserved(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+            />
+          </SettingRow>
         </div>
       </Section>
 
       <Section title="moxxy runtime" description="The CLI and home directory agent runs execute against.">
         <div className="card" aria-labelledby="moxxy-heading">
           {status ? (
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
-              <dt className="dim">CLI</dt>
-              <dd>
+            <DetailGrid>
+              <DetailRow label="CLI">
                 {status.cliPath ? (
                   <>
                     <code>{status.cliPath}</code>{' '}
@@ -264,29 +265,29 @@ export function SettingsPage(): JSX.Element {
                 ) : (
                   <span className="badge-danger">not found — npm i -g @moxxy/cli</span>
                 )}
-              </dd>
-              <dt className="dim">Home</dt>
-              <dd>
+              </DetailRow>
+              <DetailRow label="Home">
                 <code>{status.homeDir}</code>{' '}
                 <span className={status.homeReady ? 'badge-ok' : 'badge-warn'}>
                   {status.homeReady ? 'ready' : 'not ready'}
                 </span>
-              </dd>
-              <dt className="dim">Providers</dt>
-              <dd className="flex flex-wrap items-center gap-2">
-                {status.providersImported ? <span className="badge-ok">imported</span> : null}
-                <button
-                  className={status.providersImported ? 'btn-ghost' : 'btn'}
-                  disabled={importing}
-                  onClick={() => void reimport()}
-                  title="Copies config.yaml and re-links providers.json / vault to ~/.moxxy (shared token rotation)"
-                >
-                  {importing ? 'Importing…' : status.providersImported ? 'Re-import from ~/.moxxy' : 'Import from ~/.moxxy'}
-                </button>
-              </dd>
-            </dl>
+              </DetailRow>
+              <DetailRow label="Providers">
+                <div className="flex flex-wrap items-center gap-2">
+                  {status.providersImported ? <span className="badge-ok">imported</span> : null}
+                  <button
+                    className={status.providersImported ? 'btn-ghost' : 'btn'}
+                    disabled={importing}
+                    onClick={() => void reimport()}
+                    title="Copies config.yaml and re-links providers.json / vault to ~/.moxxy (shared token rotation)"
+                  >
+                    {importing ? 'Importing…' : status.providersImported ? 'Re-import from ~/.moxxy' : 'Import from ~/.moxxy'}
+                  </button>
+                </div>
+              </DetailRow>
+            </DetailGrid>
           ) : (
-            <p className="dim text-[13px]">Loading…</p>
+            <InlineLoading />
           )}
           {importResult ? (
             <div className="banner-info mb-0" role="status">

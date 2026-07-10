@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react';
 import {
   EmptyState,
+  ErrorBar,
+  ListCard,
   ListFilterToolbar,
   Page,
   PageHeader,
   Spinner,
+  StatusDot,
   facet,
+  formatTokens,
   timeAgo,
   useListFilter,
   type FilterSelectField,
@@ -126,7 +130,7 @@ export function RunsPage(): JSX.Element {
           </button>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {runs.length > 0 ? (
         <ListFilterToolbar
@@ -151,7 +155,7 @@ export function RunsPage(): JSX.Element {
       ) : filtered.length === 0 ? (
         <EmptyState title="No runs match" hint="Loosen the search or clear the filters." />
       ) : (
-        <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+        <ListCard>
           {filtered.map((run) => (
             <a key={run.id} className="row-link" href={`#/runs/${run.id}`}>
               <span className="min-w-0 flex-1">
@@ -175,30 +179,23 @@ export function RunsPage(): JSX.Element {
               {run.live ? (
                 <Spinner />
               ) : (
-                <span
-                  className={`size-2 shrink-0 rounded-full ${
+                <StatusDot
+                  tone={
                     run.status === 'failed' || run.status === 'interrupted'
-                      ? 'bg-red-500'
+                      ? 'red'
                       : run.status === 'review'
-                        ? 'bg-amber-500'
+                        ? 'amber'
                         : run.status === 'completed'
-                          ? 'bg-emerald-500'
-                          : 'bg-zinc-300 dark:bg-zinc-600'
-                  }`}
-                  aria-hidden
+                          ? 'green'
+                          : 'zinc'
+                  }
                   title={run.status}
                 />
               )}
             </a>
           ))}
-        </div>
+        </ListCard>
       )}
     </Page>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
 }

@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import {
+  CardActions,
   EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
   ListFilterToolbar,
   Markdown,
   Modal,
   Page,
   PageHeader,
   Spinner,
+  StatusGlyph,
   Tooltip,
   facet,
   timeAgo,
@@ -105,7 +110,7 @@ export function SpecsPage(): JSX.Element {
           ) : undefined
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {storage !== null && ((needsSetup && canManage) || configuring) ? (
         <AreaStorageSetup
@@ -179,30 +184,9 @@ function SpecStateIcon({ status, drifted }: { status: SpecRecord['status']; drif
       </Tooltip>
     );
   }
-  const spec =
-    status === 'failed'
-      ? { label: 'Generation failed', cls: 'text-red-600 dark:text-red-400', glyph: 'm5.5 5.5 5 5M10.5 5.5l-5 5' }
-      : drifted
-        ? { label: 'Diverged from code since a merged PR', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' }
-        : { label: 'Ready', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' };
-  return (
-    <Tooltip content={spec.label}>
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`size-4 shrink-0 ${spec.cls}`}
-        role="img"
-        aria-label={spec.label}
-      >
-        <circle cx="8" cy="8" r="6.2" />
-        <path d={spec.glyph} />
-      </svg>
-    </Tooltip>
-  );
+  if (status === 'failed') return <StatusGlyph tone="danger" label="Generation failed" />;
+  if (drifted) return <StatusGlyph tone="warn" label="Diverged from code since a merged PR" />;
+  return <StatusGlyph tone="ok" label="Ready" />;
 }
 
 function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promise<void> }): JSX.Element {
@@ -245,7 +229,7 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
           <div className="truncate text-sm font-medium">{spec.title}</div>
           <div className="dim mt-0.5 truncate text-xs">
             {spec.repo.split('/')[1] ?? spec.repo} · {spec.source} ·{' '}
-            {spec.path ? <code className="font-mono text-[11px]">{spec.path}</code> : 'virtual'} · updated{' '}
+            {spec.path ? <code className="code-inline">{spec.path}</code> : 'virtual'} · updated{' '}
             {timeAgo(spec.updatedAt)}
           </div>
         </div>
@@ -268,17 +252,17 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
       ) : null}
 
       {expanded && spec.status === 'ready' && spec.content ? (
-        <div className="markdown mt-3 max-h-[32rem] overflow-y-auto rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
+        <div className="well markdown mt-3 max-h-[32rem] overflow-y-auto p-4">
           <Markdown text={spec.content} />
         </div>
       ) : null}
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {(spec.status === 'ready' && can('proposals:create')) ||
       (can('specs:manage') && spec.status !== 'generating') ||
       spec.generateRunId ? (
-        <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+        <CardActions>
           {spec.status === 'ready' && can('proposals:create') ? (
             <button className="btn" onClick={() => setFiling(true)}>
               Create feature
@@ -302,7 +286,7 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
               </button>
             </>
           ) : null}
-        </div>
+        </CardActions>
       ) : null}
 
       {editing ? (
@@ -373,8 +357,7 @@ function SpecEditorModal({
     <Modal title={mode === 'generate' ? 'Generate spec from repo' : 'New specification'} onClose={onClose} wide={mode === 'write'}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="flex gap-3 max-sm:flex-col">
-          <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-            <span className="dim">Repository</span>
+          <Field label="Repository" className="min-w-0 flex-1">
             <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)} required>
               {repos.map((r) => (
                 <option key={r.fullName} value={r.fullName}>
@@ -382,20 +365,18 @@ function SpecEditorModal({
                 </option>
               ))}
             </select>
-          </label>
+          </Field>
           {configDir ? (
-            <label className="flex flex-col gap-1 text-sm sm:w-52">
-              <span className="dim">Storage</span>
+            <Field label="Storage" className="sm:w-52">
               <select className="input" value={storage} onChange={(e) => setStorage(e.target.value as AreaStorage)}>
                 <option value="repo">Repository — {configDir}/</option>
                 <option value="virtual">Virtual (Companion only)</option>
               </select>
-            </label>
+            </Field>
           ) : null}
         </div>
         {mode === 'generate' ? (
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">✦ What should the spec cover?</span>
+          <Field label="✦ What should the spec cover?">
             <textarea
               className="input min-h-28"
               required
@@ -404,11 +385,10 @@ function SpecEditorModal({
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="e.g. how CSV export should work across the reports screens — current behavior, desired behavior, edge cases"
             />
-          </label>
+          </Field>
         ) : (
           <>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="dim">Title</span>
+            <Field label="Title">
               <input
                 className="input"
                 required
@@ -419,20 +399,19 @@ function SpecEditorModal({
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Reports CSV export"
               />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="dim">Specification (markdown)</span>
+            </Field>
+            <Field label="Specification (markdown)">
               <textarea
                 className="input min-h-72 w-full resize-y font-mono text-xs leading-relaxed"
                 required
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
               />
-            </label>
+            </Field>
           </>
         )}
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
@@ -443,7 +422,7 @@ function SpecEditorModal({
           >
             {busy ? 'Working…' : mode === 'generate' ? 'Generate spec' : 'Create spec'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -479,8 +458,7 @@ function EditSpecModal({
   return (
     <Modal title={`Edit spec — ${spec.title}`} onClose={onClose} wide>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Title</span>
+        <Field label="Title">
           <input
             className="input"
             required
@@ -489,25 +467,24 @@ function EditSpecModal({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Specification (markdown)</span>
+        </Field>
+        <Field label="Specification (markdown)">
           <textarea
             className="input min-h-80 w-full resize-y font-mono text-xs leading-relaxed"
             required
             value={content}
             onChange={(e) => setContent(e.target.value)}
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !title.trim() || !content.trim()}>
             {busy ? 'Saving…' : 'Save changes'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -571,8 +548,7 @@ function CreateFeatureModal({
           Files a proposal carrying the full specification as implementation context, then starts the
           feasibility analysis — the normal approve → implement flow takes it from there.
         </p>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Feature title</span>
+        <Field label="Feature title">
           <input
             className="input"
             required
@@ -581,25 +557,24 @@ function CreateFeatureModal({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Scoping notes (optional — they override the spec where they conflict)</span>
+        </Field>
+        <Field label="Scoping notes (optional — they override the spec where they conflict)">
           <textarea
             className="input min-h-24"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="e.g. only the first two sections for now; skip the admin surface"
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !title.trim()}>
             {busy ? 'Filing…' : 'File & analyze'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, Markdown, Modal, Spinner, timeAgo } from '@companion/ui';
+import { ChevronDown, Field, FormActions, ListCard, Markdown, Modal, Spinner, timeAgo } from '@companion/ui';
 import type { PipelineRecord, PipelineRunRecord } from '../../../contract/index.js';
 import { pipelineStatusBadge } from '../../widgets.js';
 
@@ -14,17 +14,17 @@ export function PrPipelines({ runs }: { runs: PipelineRunRecord[] }): JSX.Elemen
   if (runs.length === 0) return null;
 
   return (
-    <section className="card p-0" aria-label="Pipelines">
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
-        <strong className="text-sm">Pipelines</strong>
-        <span className="dim tabular-nums">
-          {runs.length} run{runs.length === 1 ? '' : 's'}
-        </span>
-      </div>
+    <section aria-label="Pipelines">
+      <ListCard subtle>
+        <div className="flex items-center gap-2 px-4 py-2.5">
+          <strong className="text-sm">Pipelines</strong>
+          <span className="dim tabular-nums">
+            {runs.length} run{runs.length === 1 ? '' : 's'}
+          </span>
+        </div>
 
-      <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {runs.map((r) => (
-          <li key={r.id} className="anim-in">
+          <div key={r.id} className="anim-in">
             <button
               className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
               onClick={() => setExpanded((v) => (v === r.id ? null : r.id))}
@@ -64,9 +64,9 @@ export function PrPipelines({ runs }: { runs: PipelineRunRecord[] }): JSX.Elemen
                 ))}
               </ol>
             ) : null}
-          </li>
+          </div>
         ))}
-      </ul>
+      </ListCard>
     </section>
   );
 }
@@ -100,8 +100,7 @@ export function RunPipelineModal({
   return (
     <Modal title="Run pipeline" onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Pipeline</span>
+        <Field label="Pipeline">
           <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)} autoFocus>
             {pipelines.map((p) => (
               <option key={p.id} value={p.id}>
@@ -109,9 +108,9 @@ export function RunPipelineModal({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         {chosen?.description ? <p className="dim text-[13px]">{chosen.description}</p> : null}
-        <div className="flex justify-end gap-2">
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
@@ -124,7 +123,7 @@ export function RunPipelineModal({
               'Run pipeline'
             )}
           </button>
-        </div>
+        </FormActions>
       </div>
     </Modal>
   );

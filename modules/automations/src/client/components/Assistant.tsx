@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AskRequest, MoxxyEvent } from '@companion/types';
 import { onServerMessage } from '@companion/core/client';
-import { Markdown, Spinner } from '@companion/ui';
+import { CloseIcon, ErrorBar, IconButton, InlineLoading, Markdown, SparkleIcon, Spinner, aiAccentClass } from '@companion/ui';
 import type { RepoRecord } from '@companion/module-code/contract';
 import { codeApi } from '@companion/module-code/client';
 import type { RunRecord } from '@companion/module-operate/contract';
@@ -103,25 +103,9 @@ export function AssistantButton({ onClick, open }: { onClick: () => void; open: 
       aria-label="AI Help — ask the Companion assistant"
       aria-expanded={open}
       title="AI Help"
-      className={`ai-glow flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors ${
-        open
-          ? 'border-emerald-500/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
-          : 'border-emerald-500/40 text-emerald-600 hover:border-emerald-500/70 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
-      }`}
+      className={`ai-glow flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors ${aiAccentClass(open)}`}
     >
-      <svg viewBox="0 0 20 20" fill="none" className="size-4.5" aria-hidden>
-        <path
-          d="M10 2.5l1.7 4.3 4.3 1.7-4.3 1.7L10 14.5 8.3 10.2 4 8.5l4.3-1.7L10 2.5z"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M15.5 12.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z"
-          fill="currentColor"
-          stroke="none"
-        />
-      </svg>
+      <SparkleIcon className="size-4.5" />
     </button>
   );
 }
@@ -314,18 +298,11 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
       <div className="flex h-full w-full min-w-0 flex-col md:w-[26rem]">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-zinc-200 px-3.5 dark:border-zinc-800">
           <span className="flex size-6 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" aria-hidden>
-            <svg viewBox="0 0 20 20" fill="none" className="size-3.5">
-              <path d="M10 2.5l1.7 4.3 4.3 1.7-4.3 1.7L10 14.5 8.3 10.2 4 8.5l4.3-1.7L10 2.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            </svg>
+            <SparkleIcon className="size-3.5" />
           </span>
           <div className="min-w-0 flex-1 text-[13px] font-semibold">AI Help</div>
           {run ? (
-            <button
-              className="dim flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              onClick={() => void reset()}
-              aria-label="New chat"
-              title="New chat"
-            >
+            <IconButton label="New chat" onClick={() => void reset()}>
               <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
                 <path
                   d="M8 2.5H4A1.5 1.5 0 0 0 2.5 4v8A1.5 1.5 0 0 0 4 13.5h8A1.5 1.5 0 0 0 13.5 12V8M12.9 2.4a1.4 1.4 0 0 1 2 2L9.5 9.8l-2.7.7.7-2.7 5.4-5.4z"
@@ -335,17 +312,11 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
                   strokeLinejoin="round"
                 />
               </svg>
-            </button>
+            </IconButton>
           ) : null}
-          <button
-            className="dim flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            onClick={onClose}
-            aria-label="Close AI Help"
-          >
-            <svg viewBox="0 0 16 16" fill="none" className="size-3.5" aria-hidden>
-              <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-          </button>
+          <IconButton label="Close AI Help" onClick={onClose}>
+            <CloseIcon className="size-3.5" />
+          </IconButton>
         </div>
 
         {/* Chat anchors at the bottom (flex spacer above) and grows upward — a
@@ -354,9 +325,7 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
         <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
           <div className="flex min-h-full flex-col justify-end">
             {loading ? (
-              <div className="dim flex items-center gap-2 text-[13px]">
-                <Spinner /> Loading…
-              </div>
+              <InlineLoading />
             ) : items.length === 0 ? (
               <div className="flex flex-col gap-4">
                 <RobotPet />
@@ -418,7 +387,7 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
             {asks.map((ask) => (
               <AskSheet key={ask.requestId} ask={ask} onRespond={(response) => void api.assistantAsk(ask.requestId, response).catch((err) => setError(String(err)))} />
             ))}
-            {error ? <div className="error-bar mt-2">{error}</div> : null}
+            <ErrorBar error={error} className="mt-2" />
             <div ref={bottomRef} />
           </div>
         </div>

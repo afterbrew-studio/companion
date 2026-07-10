@@ -3,7 +3,10 @@ import { AgentActivity } from '@companion/module-operate/client';
 import {
   ActionMenu,
   AiActionMenu,
+  Breadcrumb,
   CopyText,
+  EmptyState,
+  ErrorBar,
   Markdown,
   Page,
   PageLoading,
@@ -17,6 +20,7 @@ import { codeApi as api } from '../../api.js';
 import { CommentsSection } from '../../components/Comments.js';
 import { ChecksBadge, GitHubUser, PrStateIcon } from '../../widgets.js';
 import { usePr, type UsePr } from './usePr.js';
+import { RailBlock, RailRow } from './rail.js';
 import { PrChecks } from './PrChecks.js';
 import { PrPipelines, RunPipelineModal } from './PrPipelines.js';
 import { PrReview, ReviewingStage } from './PrReview.js';
@@ -34,7 +38,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
   const pr = usePr(repo, number);
   const fetchFiles = useCallback(() => api.prFiles(repo, number), [repo, number]);
 
-  if (!pr.pr) return pr.error ? <Page><div className="error-bar">{pr.error}</div></Page> : <PageLoading />;
+  if (!pr.pr) return pr.error ? <Page><ErrorBar error={pr.error} /></Page> : <PageLoading />;
 
   const p = pr.pr;
   const review = mode === 'review';
@@ -42,7 +46,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
   return (
     <Page className="anim-in">
       <PrHeader pr={p} data={pr} mode={mode} />
-      {pr.error ? <div className="error-bar">{pr.error}</div> : null}
+      <ErrorBar error={pr.error} />
 
       <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -112,17 +116,17 @@ function ReviewLead({ pr, canAct, onRun }: { pr: UsePr; canAct: boolean; onRun: 
   }
   if (pr.analyzing) return <ReviewingStage />;
   return (
-    <div className="rounded-2xl border border-zinc-200 p-8 text-center dark:border-zinc-800">
-      <h2 className="text-sm font-semibold">No AI review yet</h2>
-      <p className="dim mx-auto mt-1 max-w-md text-[13px]">
-        Run an AI review — it reads the diff and CI status, then proposes a verdict you can post to GitHub.
-      </p>
-      {canAct ? (
-        <button className="btn mt-4" onClick={onRun}>
-          Run AI review
-        </button>
-      ) : null}
-    </div>
+    <EmptyState
+      title="No AI review yet"
+      hint="Run an AI review — it reads the diff and CI status, then proposes a verdict you can post to GitHub."
+      action={
+        canAct ? (
+          <button className="btn" onClick={onRun}>
+            Run AI review
+          </button>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -156,12 +160,10 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
   return (
     <header>
       {review ? (
-        <nav className="dim mb-1 text-[13px]" aria-label="Breadcrumb">
-          <a href="#/prs" className="hover:underline">
-            Pull Requests
-          </a>{' '}
-          / {pr.repo} / #{pr.number}
-        </nav>
+        <Breadcrumb
+          className="mb-1"
+          items={[{ label: 'Pull Requests', href: '#/prs' }, { label: pr.repo }, { label: `#${pr.number}` }]}
+        />
       ) : null}
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <h1 className="min-w-0 flex-1 text-xl leading-snug font-semibold">
@@ -236,59 +238,59 @@ function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
     <aside className="flex flex-col gap-4 text-[13px] lg:sticky lg:top-4" aria-label="Pull request details">
       {/* Short scalar facts read best as an aligned label/value grid. */}
       <div className="card flex flex-col gap-3">
-        <Row label="Status">
+        <RailRow label="Status">
           <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
-        </Row>
-        <Row label="Checks">
+        </RailRow>
+        <RailRow label="Checks">
           {pr.checks ? <ChecksBadge checks={pr.checks} /> : <span className="dim">—</span>}
-        </Row>
+        </RailRow>
         {pr.reviewDecision ? (
-          <Row label="Review">
+          <RailRow label="Review">
             <span className={pr.reviewDecision === 'approved' ? 'badge-ok' : 'badge-warn'}>
               {pr.reviewDecision.replace('_', ' ')}
             </span>
-          </Row>
+          </RailRow>
         ) : null}
         {pr.reviewRisk ? (
-          <Row label="AI risk">
+          <RailRow label="AI risk">
             <span className={pr.reviewRisk === 'high' ? 'badge-danger' : pr.reviewRisk === 'medium' ? 'badge-warn' : 'badge-ok'}>
               {pr.reviewRisk}
             </span>
-          </Row>
+          </RailRow>
         ) : null}
       </div>
 
       {/* Branch and target on their own lines — each truncates with the full ref on hover. */}
       <div className="card flex flex-col gap-3">
-        <Block label="Branch">
+        <RailBlock label="Branch">
           <CopyText value={pr.headRef} title={`Copy "${pr.headRef}"`} className="max-w-full">
             <code className="block min-w-0 truncate font-mono text-xs" title={pr.headRef}>
               {pr.headRef}
             </code>
           </CopyText>
-        </Block>
-        <Block label="Target">
+        </RailBlock>
+        <RailBlock label="Target">
           <code className="block truncate font-mono text-xs" title={pr.baseRef}>
             {pr.baseRef}
           </code>
-        </Block>
+        </RailBlock>
       </div>
 
       <div className="card flex flex-col gap-3">
-        <Block label="Author">
+        <RailBlock label="Author">
           <GitHubUser login={pr.author} className="text-zinc-700 dark:text-zinc-300" />
-        </Block>
+        </RailBlock>
         {pr.assignees.length > 0 ? (
-          <Block label="Assignees">
+          <RailBlock label="Assignees">
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               {pr.assignees.map((a) => (
                 <GitHubUser key={a} login={a} className="text-zinc-700 dark:text-zinc-300" />
               ))}
             </div>
-          </Block>
+          </RailBlock>
         ) : null}
         {pr.labels.length > 0 ? (
-          <Block label="Labels">
+          <RailBlock label="Labels">
             <div className="flex flex-wrap gap-1.5">
               {pr.labels.map((l) => (
                 <span key={l} className="chip" title={l}>
@@ -296,46 +298,17 @@ function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
                 </span>
               ))}
             </div>
-          </Block>
+          </RailBlock>
         ) : null}
       </div>
 
-      <div className="card flex flex-col gap-2 text-xs">
-        <div className="flex justify-between gap-2">
-          <span className="dim">Opened</span>
-          <span>{timeAgo(pr.createdAt)}</span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="dim">Updated</span>
-          <span>{timeAgo(pr.updatedAt)}</span>
-        </div>
+      <div className="card flex flex-col gap-3">
+        <RailRow label="Opened">{timeAgo(pr.createdAt)}</RailRow>
+        <RailRow label="Updated">{timeAgo(pr.updatedAt)}</RailRow>
         {pr.closedAt ? (
-          <div className="flex justify-between gap-2">
-            <span className="dim">{pr.state === 'merged' ? 'Merged' : 'Closed'}</span>
-            <span>{timeAgo(pr.closedAt)}</span>
-          </div>
+          <RailRow label={pr.state === 'merged' ? 'Merged' : 'Closed'}>{timeAgo(pr.closedAt)}</RailRow>
         ) : null}
       </div>
     </aside>
-  );
-}
-
-/** Inline label/value row — for short scalar facts. */
-function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="dim w-16 shrink-0 pt-0.5 text-xs font-medium tracking-wide uppercase">{label}</span>
-      <span className="min-w-0 flex-1">{children}</span>
-    </div>
-  );
-}
-
-/** Stacked label-above-value block — for wide values (branches, chips, people). */
-function Block({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <div className="min-w-0">
-      <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">{label}</div>
-      <div className="min-w-0">{children}</div>
-    </div>
   );
 }

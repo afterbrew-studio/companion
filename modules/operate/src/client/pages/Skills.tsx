@@ -1,5 +1,18 @@
 import { useState } from 'react';
-import { EmptyState, Modal, Page, PageHeader, timeAgo, useConfirm } from '@companion/ui';
+import {
+  EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
+  ListCard,
+  Modal,
+  Page,
+  PageHeader,
+  SparkleIcon,
+  aiAccentClass,
+  timeAgo,
+  useConfirm,
+} from '@companion/ui';
 import type { SkillFile } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useSkills } from '../hooks/useSkills.js';
@@ -39,7 +52,7 @@ export function SkillsPage(): JSX.Element {
           </button>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {skills === null ? null : skills.length === 0 ? (
         <EmptyState
@@ -52,7 +65,7 @@ export function SkillsPage(): JSX.Element {
           }
         />
       ) : (
-        <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+        <ListCard>
           {skills.map((s) => (
             <div key={s.name} className="flex flex-wrap items-center gap-2.5 px-4 py-2.5 text-sm">
               <div className="min-w-0 flex-1">
@@ -71,7 +84,7 @@ export function SkillsPage(): JSX.Element {
               </button>
             </div>
           ))}
-        </div>
+        </ListCard>
       )}
 
       {editing ? (
@@ -155,8 +168,7 @@ function SkillEditorModal({
   return (
     <Modal title={skill ? `Edit skill — ${skill.name}` : 'New skill'} onClose={onClose} wide>
       <div className="mb-4 flex items-end gap-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-        <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-          <span className="dim">✦ Generate with AI — describe what the skill should teach the agents</span>
+        <Field label="Generate with AI — describe what the skill should teach the agents" className="min-w-0 flex-1">
           <input
             className="input"
             placeholder="e.g. our TypeScript review conventions: no any, exhaustive switches, zod at boundaries"
@@ -164,19 +176,19 @@ function SkillEditorModal({
             onChange={(e) => setGenInstructions(e.target.value)}
             disabled={generating}
           />
-        </label>
+        </Field>
         <button
           type="button"
-          className="btn py-2"
+          className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors disabled:cursor-default disabled:opacity-50 ${aiAccentClass(false)}`}
           disabled={generating || genInstructions.trim().length < 8}
           onClick={() => void generate()}
         >
+          <SparkleIcon />
           {generating ? 'Generating…' : 'Generate'}
         </button>
       </div>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Name (lowercase letters, digits, dashes)</span>
+        <Field label="Name (lowercase letters, digits, dashes)">
           <input
             className="input font-mono disabled:opacity-60"
             required
@@ -188,25 +200,24 @@ function SkillEditorModal({
             autoFocus={skill === null}
           />
           {nameTaken ? <span className="text-xs text-red-600 dark:text-red-400">A skill with this name already exists.</span> : null}
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Content (markdown)</span>
+        </Field>
+        <Field label="Content (markdown)">
           <textarea
             className="input min-h-80 w-full resize-y font-mono text-xs leading-relaxed"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             autoFocus={skill !== null}
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex items-center justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !nameValid || nameTaken}>
             {busy ? 'Saving…' : skill ? 'Save changes' : 'Create skill'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );

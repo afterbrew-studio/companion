@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AgentActivity } from '@companion/module-operate/client';
-import { ActionMenu, AiActionMenu, CopyText, Markdown, MetaItem, Page, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '@companion/ui';
+import { ActionMenu, AiActionMenu, Breadcrumb, CopyText, ErrorBar, Markdown, MetaItem, Page, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '@companion/ui';
 import type { TriageResult } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useIssue } from '../hooks/useIssue.js';
@@ -28,7 +28,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
     await setIssueState(next);
   };
 
-  if (!issue) return error ? <Page><div className="error-bar">{error}</div></Page> : <PageLoading />;
+  if (!issue) return error ? <Page><ErrorBar error={error} /></Page> : <PageLoading />;
 
   return (
     <Page className="anim-in">
@@ -36,12 +36,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
           title wraps first; the toolbar only drops below when space truly runs out. */}
       <header className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1">
-          <nav className="dim text-[13px]" aria-label="Breadcrumb">
-            <a href="#/issues" className="hover:underline">
-              Issues
-            </a>{' '}
-            / {repo} / #{issue.number}
-          </nav>
+          <Breadcrumb items={[{ label: 'Issues', href: '#/issues' }, { label: repo }, { label: `#${issue.number}` }]} />
           <h1 className="mt-1 text-xl leading-snug font-semibold">
             <CopyText value={`#${issue.number}`} className="dim mr-1.5 align-baseline font-normal">
               #{issue.number}
@@ -117,7 +112,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
           </a>
         </div>
       </header>
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
       {confirmElement}
 
       <article className="card mt-4 max-h-[480px] overflow-y-auto">
@@ -164,7 +159,7 @@ function TriageCard({
 
   return (
     <div
-      className={`anim-in mt-4 rounded-xl border p-4 ${
+      className={`card anim-in mt-4 ${
         triage.status === 'applied' ? 'border-emerald-500/60' : 'border-amber-500/60'
       }`}
     >
@@ -225,9 +220,9 @@ function TriageCard({
           ) : null}
         </>
       ) : (
-        <p className="error-bar">{triage.error ?? 'no verdict'}</p>
+        <ErrorBar error={triage.error ?? 'no verdict'} />
       )}
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
     </div>
   );
 }

@@ -2,14 +2,23 @@ import { useEffect, useState } from 'react';
 import type { Role } from '@companion/types';
 import { refreshAuth } from '@companion/core/client';
 import {
+  Avatar,
+  DetailGrid,
+  DetailRow,
   Dropdown,
   EmptyState,
+  ErrorBar,
+  Field,
   FilterField,
   FiltersPopover,
+  FormActions,
+  ListCard,
   ListFooter,
   Modal,
   Page,
   PageHeader,
+  SearchInput,
+  Spinner,
   timeAgo,
   useConfirm,
 } from '@companion/ui';
@@ -47,14 +56,11 @@ export function UsersPage(): JSX.Element {
         subtitle="Accounts and role scopes for this install"
         actions={
           <>
-            <input
-              className="input w-56"
-              type="search"
-              placeholder="Search users…  ( / )"
-              data-shortcut="search"
-              aria-label="Search users by name or email"
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={setSearch}
+              placeholder="Search users…  ( / )"
+              ariaLabel="Search users by name or email"
             />
             <FiltersPopover active={role === 'all' ? 0 : 1} onClear={() => setRole('all')}>
               <FilterField label="Role">
@@ -77,12 +83,12 @@ export function UsersPage(): JSX.Element {
           </>
         }
       />
-      {(error ?? listError) ? <div className="error-bar">{error ?? listError}</div> : null}
+      <ErrorBar error={error ?? listError} />
 
       {users.length === 0 && !loading ? (
         <EmptyState title={filtered ? 'No users match the filters' : 'No users'} />
       ) : (
-        <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+        <ListCard>
           {users.map((u) => (
             <button
               key={u.username}
@@ -90,9 +96,7 @@ export function UsersPage(): JSX.Element {
               onClick={() => setViewing(u)}
               aria-label={`Open ${u.username}`}
             >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-[11px] font-semibold uppercase dark:bg-zinc-800">
-                {u.displayName.slice(0, 2)}
-              </span>
+              <Avatar name={u.displayName} size="md" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-1.5">
                   <span className="truncate font-medium">{u.displayName}</span>
@@ -116,7 +120,7 @@ export function UsersPage(): JSX.Element {
             noun="users"
             onVisible={loadMore}
           />
-        </div>
+        </ListCard>
       )}
 
       <p className="dim mt-3 text-xs">
@@ -211,9 +215,7 @@ function UserModal({
   return (
     <Modal title={user.displayName} onClose={onClose}>
       <div className="flex items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-[13px] font-semibold uppercase dark:bg-zinc-800">
-          {user.displayName.slice(0, 2)}
-        </span>
+        <Avatar name={user.displayName} size="lg" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
             {user.displayName}
@@ -230,11 +232,10 @@ function UserModal({
         )}
       </div>
 
-      <dl className="mt-4 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-[13px]">
-        <dt className="dim">Display name</dt>
-        <dd>
+      <DetailGrid className="mt-4">
+        <DetailRow label="Display name">
           <input
-            className="input py-1.5"
+            className="input input-sm"
             maxLength={60}
             value={name}
             aria-label={`Display name for ${user.username}`}
@@ -247,15 +248,13 @@ function UserModal({
               }
             }}
           />
-        </dd>
-        <dt className="dim">Joined</dt>
-        <dd>
+        </DetailRow>
+        <DetailRow label="Joined">
           {new Date(user.createdAt).toLocaleDateString()} · {timeAgo(user.createdAt)}
-        </dd>
-        <dt className="dim">Role</dt>
-        <dd>
+        </DetailRow>
+        <DetailRow label="Role">
           <select
-            className="input py-1.5"
+            className="input input-sm"
             value={user.role}
             disabled={isSelf}
             aria-label={`Role for ${user.username}`}
@@ -266,12 +265,12 @@ function UserModal({
             <option value="business">business</option>
           </select>
           <p className="dim mt-1">{isSelf ? 'You cannot change your own role.' : ROLE_HELP[user.role]}</p>
-        </dd>
-      </dl>
+        </DetailRow>
+      </DetailGrid>
 
-      {error ? <div className="error-bar mt-2">{error}</div> : null}
+      <ErrorBar error={error} className="mt-2" />
 
-      <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <FormActions divider>
         <button className="btn-ghost" onClick={onResetPassword}>
           Reset password
         </button>
@@ -287,7 +286,7 @@ function UserModal({
         >
           Delete
         </button>
-      </div>
+      </FormActions>
     </Modal>
   );
 }
@@ -323,8 +322,7 @@ function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
   return (
     <Modal title="Add user" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Display name</span>
+        <Field label="Display name">
           <input
             className="input"
             maxLength={60}
@@ -333,9 +331,8 @@ function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
             onChange={(e) => setDisplayName(e.target.value)}
             autoFocus
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Username (sign-in, cannot change later)</span>
+        </Field>
+        <Field label="Username (sign-in, cannot change later)">
           <input
             className="input"
             required
@@ -344,13 +341,11 @@ function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Email (optional — can also be used to sign in)</span>
+        </Field>
+        <Field label="Email (optional — can also be used to sign in)">
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Password (min 8 characters)</span>
+        </Field>
+        <Field label="Password (min 8 characters)">
           <input
             className="input"
             type="password"
@@ -359,24 +354,29 @@ function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Role</span>
+        </Field>
+        <Field label="Role">
           <select className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
             <option value="admin">admin — {ROLE_HELP.admin}</option>
             <option value="maintainer">maintainer — {ROLE_HELP.maintainer}</option>
             <option value="business">business — {ROLE_HELP.business}</option>
           </select>
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !username.trim() || password.length < 8}>
-            {busy ? 'Creating…' : 'Create user'}
+            {busy ? (
+              <>
+                <Spinner /> Creating…
+              </>
+            ) : (
+              'Create user'
+            )}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -411,8 +411,7 @@ function ResetPasswordModal({
   return (
     <Modal title={`Reset password — ${user.username}`} onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">New password (min 8 characters; their sessions end)</span>
+        <Field label="New password (min 8 characters; their sessions end)">
           <input
             className="input"
             type="password"
@@ -422,16 +421,22 @@ function ResetPasswordModal({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || password.length < 8}>
-            {busy ? 'Saving…' : 'Set password'}
+            {busy ? (
+              <>
+                <Spinner /> Saving…
+              </>
+            ) : (
+              'Set password'
+            )}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );

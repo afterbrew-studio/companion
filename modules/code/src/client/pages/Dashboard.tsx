@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { pipelineRunHref, reportHref, runHref } from '@companion/core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
-import { EmptyState, Page, PageHeader, Spinner, StatTile, timeAgo } from '@companion/ui';
+import { EmptyState, ErrorBar, ListCard, Page, PageHeader, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
 import { ChecksBadge } from '../widgets.js';
@@ -52,7 +52,7 @@ export function DashboardPage(): JSX.Element {
   return (
     <Page>
       <PageHeader title="Overview" subtitle={`${workspaceName} — ${repos.length} repositories`} />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <StatTile
@@ -99,10 +99,10 @@ export function DashboardPage(): JSX.Element {
           <h2 id="needs-attention" className="mb-2 text-sm font-semibold">
             Needs attention
           </h2>
-          <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+          <ListCard>
             {reviewRuns.map((run) => (
               <a key={run.id} href={`#/runs/${run.id}/preview`} className="row-link">
-                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{run.title}</span>
                   <span className="dim block truncate text-xs">agent run needs review</span>
@@ -116,7 +116,7 @@ export function DashboardPage(): JSX.Element {
                 href={`#/repos/${pr.repo}/prs/${pr.number}/review`}
                 className="row-link"
               >
-                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{pr.title}</span>
                   <span className="dim block truncate text-xs">
@@ -132,7 +132,7 @@ export function DashboardPage(): JSX.Element {
                 href={`#/repos/${issue.repo}/issues/${issue.number}`}
                 className="row-link"
               >
-                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{issue.title}</span>
                   <span className="dim block truncate text-xs">
@@ -156,7 +156,7 @@ export function DashboardPage(): JSX.Element {
             ))}
             {actionableProposals.slice(0, 6).map((p) => (
               <a key={p.id} href="#/proposals" className="row-link">
-                <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{p.title}</span>
                   <span className="dim block truncate text-xs">
@@ -169,7 +169,7 @@ export function DashboardPage(): JSX.Element {
             {attentionCount === 0 ? (
               <div className="dim px-4 py-6 text-center text-sm">Nothing waiting on you.</div>
             ) : null}
-          </div>
+          </ListCard>
         </section>
 
         <section aria-labelledby="live-activity">
@@ -190,7 +190,7 @@ interface ActivityEntry {
   readonly ts: number;
   readonly live: boolean;
   readonly status: string;
-  readonly dot: string;
+  readonly tone: StatusTone;
   readonly label: string;
   readonly href: string;
 }
@@ -221,14 +221,14 @@ function ActivityFeed({
         ts: r.updatedAt,
         live: r.live,
         status: `${r.live ? 'live' : r.status} · ${RUN_KIND_LABEL[r.kind]}`,
-        dot:
+        tone:
           r.status === 'failed' || r.status === 'interrupted'
-            ? 'bg-red-500'
+            ? 'red'
             : r.status === 'completed'
-              ? 'bg-emerald-500'
+              ? 'green'
               : r.status === 'review'
-                ? 'bg-amber-500'
-                : 'bg-zinc-300 dark:bg-zinc-600',
+                ? 'amber'
+                : 'zinc',
         label: r.title,
         href: runHref(r),
       }),
@@ -239,12 +239,7 @@ function ActivityFeed({
         ts: p.finishedAt ?? p.createdAt,
         live: p.status === 'running',
         status: `${p.status} · pipeline on ${p.target === 'platform' ? p.repo.split('/')[1] : `${p.target === 'issue' ? 'issue' : 'PR'} #${p.prNumber}`}`,
-        dot:
-          p.status === 'failed' || p.status === 'error'
-            ? 'bg-red-500'
-            : p.status === 'passed'
-              ? 'bg-emerald-500'
-              : 'bg-zinc-300 dark:bg-zinc-600',
+        tone: p.status === 'failed' || p.status === 'error' ? 'red' : p.status === 'passed' ? 'green' : 'zinc',
         label: p.pipelineName,
         href: pipelineRunHref(p),
       }),
@@ -255,7 +250,7 @@ function ActivityFeed({
         ts: r.createdAt,
         live: false,
         status: `report · ${r.kind}`,
-        dot: 'bg-zinc-300 dark:bg-zinc-600',
+        tone: 'zinc',
         label: r.title,
         href: reportHref(r),
       }),
@@ -265,10 +260,10 @@ function ActivityFeed({
     .slice(0, 12);
 
   return (
-    <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+    <ListCard>
       {entries.map((e) => (
         <a key={e.id} href={e.href} className="row-link anim-in">
-          {e.live ? <Spinner /> : <span className={`size-2 shrink-0 rounded-full ${e.dot}`} aria-hidden />}
+          {e.live ? <Spinner /> : <StatusDot tone={e.tone} />}
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{e.label}</span>
             <span className="dim block truncate text-xs">{e.status}</span>
@@ -279,7 +274,7 @@ function ActivityFeed({
       {entries.length === 0 ? (
         <div className="dim px-4 py-6 text-center text-sm">No activity yet — AI actions land here as they run.</div>
       ) : null}
-    </div>
+    </ListCard>
   );
 }
 

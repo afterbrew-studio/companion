@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Permission } from '@companion/contracts';
 import type { IssueRecord, PrRecord, RepoRecord } from '@companion/module-code/contract';
 import type { RunRecord } from '@companion/module-operate/contract';
+import { SearchIcon } from '@companion/ui';
 import { runIntent, useKernel, type Intent } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
@@ -225,7 +226,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-2.5 border-b border-zinc-200 px-4 dark:border-zinc-800">
-          <SearchIcon />
+          <SearchIcon className="dim size-4" />
           <input
             ref={inputRef}
             type="search"
@@ -274,11 +275,3 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
   );
 }
 
-export function SearchIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className="dim size-4 shrink-0" aria-hidden>
-      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}

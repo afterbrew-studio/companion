@@ -12,7 +12,7 @@ export function AskSheet({
 
   if (ask.kind === 'permission') {
     return (
-      <div className="my-2 rounded-xl border border-amber-500/70 bg-zinc-50 p-4 dark:bg-zinc-900">
+      <div className="card my-2 border-amber-500/70 bg-zinc-50 dark:bg-zinc-900">
         <div className="text-[13px]">
           Permission: <strong>{ask.tool?.name ?? 'tool'}</strong>
         </div>
@@ -36,7 +36,7 @@ export function AskSheet({
   if (ask.kind === 'approval') {
     const options = ask.approval?.options ?? [];
     return (
-      <div className="my-2 rounded-xl border border-amber-500/70 bg-zinc-50 p-4 dark:bg-zinc-900">
+      <div className="card my-2 border-amber-500/70 bg-zinc-50 dark:bg-zinc-900">
         <div className="text-[13px] font-medium">{ask.approval?.title ?? 'Approval requested'}</div>
         {ask.approval?.body ? <p className="mt-1 text-sm">{ask.approval.body}</p> : null}
         <div className="mt-2.5 flex flex-wrap gap-2">
@@ -51,7 +51,7 @@ export function AskSheet({
   }
 
   return (
-    <div className="my-2 rounded-xl border border-amber-500/70 bg-zinc-50 p-4 dark:bg-zinc-900">
+    <div className="card my-2 border-amber-500/70 bg-zinc-50 dark:bg-zinc-900">
       <div className="text-[13px] font-medium">{ask.workflow?.label ?? 'Input requested'}</div>
       {ask.workflow?.prompt ? <p className="mt-1 text-sm">{ask.workflow.prompt}</p> : null}
       <div className="mt-2.5 flex gap-2">

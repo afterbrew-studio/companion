@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { timeAgo } from '@companion/ui';
+import { CloseIcon, IconButton, timeAgo } from '@companion/ui';
 import type { QueuedRunEntry, RunKind } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunQueue } from '../hooks/useRunQueue.js';
@@ -85,9 +85,7 @@ function QueueRow({ entry, first, last }: { entry: QueuedRunEntry; first: boolea
       <span className="dim w-5 shrink-0 text-center text-[11px] tabular-nums">{entry.position + 1}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium dark:bg-zinc-800">
-            {KIND_LABEL[entry.kind]}
-          </span>
+          <span className="chip normal-case">{KIND_LABEL[entry.kind]}</span>
           <span className="truncate text-[13px]">{entry.title}</span>
         </span>
         <span className="dim block truncate text-[11px]">
@@ -100,57 +98,33 @@ function QueueRow({ entry, first, last }: { entry: QueuedRunEntry; first: boolea
           disabled={first}
           onClick={() => void api.moveQueued(entry.id, 'up').catch(() => undefined)}
         >
-          <path d="M4 10l4-4 4 4" />
+          <ChevronGlyph d="M4 10l4-4 4 4" />
         </IconButton>
         <IconButton
           label="Move down"
           disabled={last}
           onClick={() => void api.moveQueued(entry.id, 'down').catch(() => undefined)}
         >
-          <path d="M4 6l4 4 4-4" />
+          <ChevronGlyph d="M4 6l4 4 4-4" />
         </IconButton>
         <IconButton
           label="Cancel"
           danger
           onClick={() => void api.cancelQueued(entry.id).catch(() => undefined)}
         >
-          <path d="M4 4l8 8M12 4l-8 8" />
+          <CloseIcon />
         </IconButton>
       </div>
     </div>
   );
 }
 
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  danger,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-  children: React.ReactNode;
-}): JSX.Element {
+/** Reorder chevrons — direction-only variants, so not worth a shared glyph. */
+function ChevronGlyph({ d }: { d: string }): JSX.Element {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex size-6 cursor-pointer items-center justify-center rounded transition-colors disabled:cursor-default disabled:opacity-30 ${
-        danger
-          ? 'text-zinc-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400'
-          : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
-      }`}
-    >
-      <svg viewBox="0 0 16 16" fill="none" className="size-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        {children}
-      </svg>
-    </button>
+    <svg viewBox="0 0 16 16" fill="none" className="size-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={d} />
+    </svg>
   );
 }
 

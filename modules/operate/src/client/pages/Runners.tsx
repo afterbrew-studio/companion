@@ -1,5 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
-import { Modal, Page, PageHeader, Spinner, Switch, Tooltip, timeAgo, useConfirm } from '@companion/ui';
+import { useRef, useState } from 'react';
+import {
+  ErrorBar,
+  Field,
+  FormActions,
+  IconButton,
+  InlineLoading,
+  Modal,
+  Page,
+  PageHeader,
+  StatusDot,
+  Switch,
+  Tooltip,
+  timeAgo,
+  useConfirm,
+  type StatusTone,
+} from '@companion/ui';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
   RunnerCatalog,
@@ -14,11 +29,11 @@ import { RUNNER_PINNABLE_KINDS } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
 
-const DOT_COLOR: Record<RunnerStatus, string> = {
-  online: 'bg-emerald-500',
-  degraded: 'bg-amber-500',
-  offline: 'bg-red-500',
-  unknown: 'bg-zinc-400 dark:bg-zinc-500',
+const DOT_TONE: Record<RunnerStatus, StatusTone> = {
+  online: 'green',
+  degraded: 'amber',
+  offline: 'red',
+  unknown: 'zinc',
 };
 
 /**
@@ -42,14 +57,12 @@ export function RunnersPage(): JSX.Element {
           </button>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <AttachGuide />
 
       {runners === null ? (
-        <div className="dim flex items-center gap-2.5 py-8 text-sm">
-          <Spinner /> Loading runners…
-        </div>
+        <InlineLoading label="Loading runners…" className="py-8" />
       ) : (
         <div className="flex flex-col gap-3">
           {runners.map((runner) => (
@@ -173,12 +186,11 @@ function RunnerCard({
     <article className={`card ${runner.enabled ? '' : 'opacity-70'}`} aria-label={runner.name}>
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip content={health.detail ?? health.status}>
-          <span
-            className={`size-2.5 shrink-0 rounded-full ${DOT_COLOR[health.status]} ${
-              health.liveRuns > 0 ? 'animate-pulse motion-reduce:animate-none' : ''
-            }`}
-            role="img"
-            aria-label={`Health: ${health.detail ?? health.status}`}
+          <StatusDot
+            tone={DOT_TONE[health.status]}
+            size="lg"
+            pulse={health.liveRuns > 0}
+            label={health.detail ?? health.status}
           />
         </Tooltip>
         <span className="text-sm font-medium">{runner.name}</span>
@@ -206,19 +218,12 @@ function RunnerCard({
             onChange={(v) => void setEnabled(v)}
           />
         )}
-        <Tooltip content="Test connection">
-          <button
-            className="dim rounded-md p-1 transition-colors hover:bg-zinc-200 hover:text-zinc-800 disabled:opacity-50 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-            aria-label="Test connection"
-            disabled={probe === 'busy'}
-            onClick={() => void testConnection()}
-          >
-            <svg viewBox="0 0 16 16" fill="none" className={`size-4 ${probe === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden>
-              <path d="M13 8a5 5 0 1 1-1.46-3.54" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-              <path d="M13 2.5V5.5H10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        </Tooltip>
+        <IconButton label="Test connection" disabled={probe === 'busy'} onClick={() => void testConnection()}>
+          <svg viewBox="0 0 16 16" fill="none" className={`size-4 ${probe === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden>
+            <path d="M13 8a5 5 0 1 1-1.46-3.54" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M13 2.5V5.5H10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </IconButton>
       </div>
 
       <div className="dim mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[18px]">
@@ -237,7 +242,7 @@ function RunnerCard({
             </Tooltip>
           ) : (
             <Tooltip content="no model providers configured — agent work is not placed here">
-              <span className="text-amber-600 dark:text-amber-500">no providers</span>
+              <span className="text-amber-600 dark:text-amber-400">no providers</span>
             </Tooltip>
           )
         ) : null}
@@ -280,21 +285,21 @@ companion-runner setup    # installs the moxxy CLI if missing, opens the firewal
 COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
           </pre>
           <span className="dim">
-            <code className="font-mono">companion-runner doctor</code> reports what a box still needs. Leave{' '}
-            <code className="font-mono">COMPANION_RUNNER_TOKEN</code> out and the agent generates one — printed once and
-            saved to <code className="font-mono">~/.companion-runner/token</code>. No GitHub setup is needed on the box:
+            <code className="code-inline">companion-runner doctor</code> reports what a box still needs. Leave{' '}
+            <code className="code-inline">COMPANION_RUNNER_TOKEN</code> out and the agent generates one — printed once and
+            saved to <code className="code-inline">~/.companion-runner/token</code>. No GitHub setup is needed on the box:
             Companion sends its own GitHub credential with each clone and push.
           </span>
         </li>
         <li>
           Make sure this Companion can reach the box on its port (default{' '}
-          <code className="font-mono text-xs">8920</code>) — a private network address or tunnel is fine.{' '}
-          <code className="font-mono">companion-runner open-firewall</code> opens the host firewall if{' '}
-          <code className="font-mono">setup</code> didn't.
+          <code className="code-inline">8920</code>) — a private network address or tunnel is fine.{' '}
+          <code className="code-inline">companion-runner open-firewall</code> opens the host firewall if{' '}
+          <code className="code-inline">setup</code> didn't.
         </li>
         <li>
           Click <span className="font-medium">Add machine</span> and enter the endpoint (
-          <code className="font-mono text-xs">&lt;host&gt;:8920</code> — plain http is fine) and the token. Companion
+          <code className="code-inline">&lt;host&gt;:8920</code> — plain http is fine) and the token. Companion
           probes it, and once it's online you can scope it to workspaces and pin repos to it.
         </li>
       </ol>
@@ -310,22 +315,22 @@ function TokenHelp(): JSX.Element {
         Where do I find the token?
       </summary>
       <div className="dim mt-1.5 rounded-lg border border-zinc-200 p-2.5 text-xs leading-relaxed dark:border-zinc-800">
-        The token is set on the machine running the <code className="font-mono">companion-runner</code> agent. It comes
+        The token is set on the machine running the <code className="code-inline">companion-runner</code> agent. It comes
         from one of, in order:
         <ol className="mt-1.5 ml-4 list-decimal space-y-1">
           <li>
-            the <code className="font-mono">COMPANION_RUNNER_TOKEN</code> you started the agent with — use that exact
+            the <code className="code-inline">COMPANION_RUNNER_TOKEN</code> you started the agent with — use that exact
             value;
           </li>
           <li>
             if you didn't set one, the agent generated it and saved it to{' '}
-            <code className="font-mono">~/.companion-runner/token</code> (under{' '}
-            <code className="font-mono">COMPANION_RUNNER_HOME</code> if you changed it). Read it on that box with:
+            <code className="code-inline">~/.companion-runner/token</code> (under{' '}
+            <code className="code-inline">COMPANION_RUNNER_HOME</code> if you changed it). Read it on that box with:
             <pre className="mono-pane mt-1">cat ~/.companion-runner/token</pre>
           </li>
           <li>
             it's also printed once in the agent's startup log (
-            <code className="font-mono">COMPANION_RUNNER_TOKEN not set — generated one…</code>).
+            <code className="code-inline">COMPANION_RUNNER_TOKEN not set — generated one…</code>).
           </li>
         </ol>
         Paste that value here; it's stored write-only and never shown again.
@@ -451,8 +456,7 @@ function RunnerModal({
       <form className="flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
         <div className={savedId ? 'grid gap-x-6 gap-y-3 md:grid-cols-2' : 'flex flex-col gap-3'}>
           <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Name</span>
+        <Field label="Name">
           <input
             className="input"
             required
@@ -462,12 +466,19 @@ function RunnerModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-        </label>
+        </Field>
 
         {local ? null : (
           <>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="dim">Endpoint — companion-runner agent address</span>
+            <Field
+              label="Endpoint — companion-runner agent address"
+              hint={
+                <>
+                  Plain <code className="code-inline">host:port</code> or <code className="code-inline">ip:port</code>{' '}
+                  works — http is assumed unless you write <code className="code-inline">https://</code>.
+                </>
+              }
+            >
               <input
                 className="input"
                 type="text"
@@ -476,13 +487,8 @@ function RunnerModal({
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
               />
-              <span className="dim text-xs">
-                Plain <code className="font-mono">host:port</code> or <code className="font-mono">ip:port</code> works —
-                http is assumed unless you write <code className="font-mono">https://</code>.
-              </span>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="dim">Bearer token</span>
+            </Field>
+            <Field label="Bearer token">
               <input
                 className="input"
                 type="password"
@@ -492,7 +498,7 @@ function RunnerModal({
                 onChange={(e) => setToken(e.target.value)}
               />
               <TokenHelp />
-            </label>
+            </Field>
           </>
         )}
 
@@ -531,8 +537,7 @@ function RunnerModal({
           </fieldset>
         ) : null}
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Max concurrent runs</span>
+        <Field label="Max concurrent runs">
           <input
             className="input w-28"
             type="number"
@@ -542,7 +547,7 @@ function RunnerModal({
             value={maxRuns}
             onChange={(e) => setMaxRuns(e.target.value)}
           />
-        </label>
+        </Field>
           </div>
 
         {/* Model pins fill the second column once the runner exists and is probed. */}
@@ -550,7 +555,7 @@ function RunnerModal({
           <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-6 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <legend className="text-sm font-medium">Model pins</legend>
-              <button type="button" className="btn-ghost text-xs" disabled={testing} onClick={() => void fetchModels()}>
+              <button type="button" className="btn-ghost" disabled={testing} onClick={() => void fetchModels()}>
                 {testing ? 'Fetching…' : 'Fetch models'}
               </button>
             </div>
@@ -563,8 +568,8 @@ function RunnerModal({
         ) : null}
         </div>
 
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             {savedId && !runner ? 'Done' : 'Cancel'}
           </button>
@@ -588,7 +593,7 @@ function RunnerModal({
                 ? 'Save'
                 : 'Connect & continue'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -644,7 +649,7 @@ function ModelPinsEditor({
         <label key={kind} className="flex items-center justify-between gap-2 text-xs">
           <span className="dim min-w-0 flex-1 truncate">{PIN_LABELS[kind]}</span>
           <select
-            className="input w-40 shrink-0 py-1.5 text-sm"
+            className="input input-sm w-40 shrink-0"
             value={pins[kind] ?? ''}
             onChange={(e) => set(kind, e.target.value)}
           >

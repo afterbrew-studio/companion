@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ErrorBar, FormActions } from '@companion/ui';
 import type { AreaStorageState } from '../../contract/index.js';
 
 /**
@@ -98,8 +99,8 @@ export function AreaStorageSetup({
         </label>
       </div>
 
-      {error ? <div className="error-bar">{error}</div> : null}
-      <div className="mt-3 flex justify-end gap-2">
+      <ErrorBar error={error} />
+      <FormActions className="mt-3">
         {onCancel ? (
           <button type="button" className="btn-ghost" onClick={onCancel}>
             Cancel
@@ -108,7 +109,7 @@ export function AreaStorageSetup({
         <button className="btn" disabled={busy || (mode === 'repo' && !dirValid)} onClick={() => void save()}>
           {busy ? 'Saving…' : mode === 'repo' ? `Use ${dir.trim() || defaultDir}/` : 'Keep virtual'}
         </button>
-      </div>
+      </FormActions>
     </div>
   );
 }
@@ -127,13 +128,7 @@ export function StorageSummary({
     <div className="dim mb-3 flex items-center gap-2 text-xs">
       <span>
         Storage:{' '}
-        {config.dir ? (
-          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] dark:bg-zinc-800">
-            {config.dir}/
-          </code>
-        ) : (
-          'virtual'
-        )}
+        {config.dir ? <code className="code-inline">{config.dir}/</code> : 'virtual'}
       </span>
       {canManage ? (
         <button className="linkish text-xs" onClick={onChange}>

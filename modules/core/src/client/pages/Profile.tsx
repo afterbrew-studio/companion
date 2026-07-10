@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { refreshAuth } from '@companion/core/client';
-import { Dropdown, Page, PageHeader, Section } from '@companion/ui';
+import { DetailGrid, DetailRow, Dropdown, ErrorBar, Field, Page, PageHeader, Section, SettingRow } from '@companion/ui';
 import type { AccountInfo, NotificationScope } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
@@ -20,13 +20,12 @@ export function ProfilePage(): JSX.Element {
   return (
     <Page>
       <PageHeader title="Your profile" subtitle="Your account, appearance, and notification preferences" />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <AccountSection onError={setError} />
 
       <Section title="Appearance" description="Theme is a per-browser preference; it applies immediately.">
-        <div className="card flex flex-wrap items-center gap-3">
-          <span className="text-[13px] font-medium">Theme</span>
+        <SettingRow className="card" title="Theme">
           <Dropdown
             ariaLabel="Theme"
             value={theme}
@@ -40,7 +39,7 @@ export function ProfilePage(): JSX.Element {
               { value: 'dark', label: 'Dark' },
             ]}
           />
-        </div>
+        </SettingRow>
       </Section>
 
       <NotificationSection onError={setError} />
@@ -132,8 +131,7 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
     <Section title="Account" description="Your name and email. Only an admin can change your role.">
       <form className="card flex flex-col gap-4" onSubmit={(e) => void saveProfile(e)}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Display name</span>
+          <Field label="Display name">
             <input
               className="input"
               maxLength={60}
@@ -141,9 +139,8 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
               onChange={(e) => setDisplayName(e.target.value)}
               disabled={account === null}
             />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Email</span>
+          </Field>
+          <Field label="Email">
             <input
               className="input"
               type="email"
@@ -152,20 +149,16 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
               onChange={(e) => setEmail(e.target.value)}
               disabled={account === null}
             />
-          </label>
+          </Field>
         </div>
-        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-[13px]">
-          <div className="flex gap-2">
-            <dt className="dim">Username</dt>
-            <dd>
-              <code>{account?.username ?? '…'}</code>
-            </dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="dim">Role</dt>
-            <dd className="capitalize">{account?.role ?? '…'}</dd>
-          </div>
-        </dl>
+        <DetailGrid>
+          <DetailRow label="Username">
+            <code>{account?.username ?? '…'}</code>
+          </DetailRow>
+          <DetailRow label="Role">
+            <span className="capitalize">{account?.role ?? '…'}</span>
+          </DetailRow>
+        </DetailGrid>
         <div className="flex items-center gap-2">
           <button className="btn" type="submit" disabled={!dirty || savingProfile}>
             {savingProfile ? 'Saving…' : 'Save changes'}
@@ -177,8 +170,7 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
       <form className="card mt-3 flex flex-col gap-4" onSubmit={(e) => void changePassword(e)}>
         <div className="text-[13px] font-medium">Change password</div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Current password</span>
+          <Field label="Current password">
             <input
               className="input"
               type="password"
@@ -186,9 +178,8 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
             />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">New password</span>
+          </Field>
+          <Field label="New password">
             <input
               className="input"
               type="password"
@@ -197,9 +188,8 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Confirm new password</span>
+          </Field>
+          <Field label="Confirm new password">
             <input
               className="input"
               type="password"
@@ -207,7 +197,7 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
             />
-          </label>
+          </Field>
         </div>
         <div className="flex items-center gap-2">
           <button className="btn" type="submit" disabled={!canChangePw || changingPw}>
@@ -272,34 +262,36 @@ function NotificationSection({ onError }: { onError: (e: string | null) => void 
       title="Notifications"
       description="Which workspaces' notifications reach your inbox and the header bell."
     >
-      <div className="card flex flex-wrap items-center gap-3">
-        <span className="text-[13px] font-medium">Inbox scope</span>
+      <SettingRow
+        className="card"
+        title="Inbox scope"
+        description={
+          choice === null
+            ? undefined
+            : saving
+              ? 'Saving…'
+              : choice === 'global'
+                ? 'You see notifications from every workspace you can access.'
+                : choice === 'workspace'
+                  ? 'You only see the workspace you have open (plus instance-wide events).'
+                  : 'Follows whatever the administrator sets for the instance.'
+        }
+      >
         {choice === null ? (
           <span className="dim text-[13px]">Loading…</span>
         ) : (
-          <>
-            <Dropdown<ScopeChoice>
-              ariaLabel="Inbox scope"
-              value={choice}
-              onChange={(v) => void saveScope(v)}
-              options={[
-                { value: 'default', label: `Use instance default (${defaultLabel})` },
-                { value: 'workspace', label: 'This workspace only' },
-                { value: 'global', label: 'All workspaces' },
-              ]}
-            />
-            <span className="dim text-[13px]">
-              {saving
-                ? 'Saving…'
-                : choice === 'global'
-                  ? 'You see notifications from every workspace you can access.'
-                  : choice === 'workspace'
-                    ? 'You only see the workspace you have open (plus instance-wide events).'
-                    : 'Follows whatever the administrator sets for the instance.'}
-            </span>
-          </>
+          <Dropdown<ScopeChoice>
+            ariaLabel="Inbox scope"
+            value={choice}
+            onChange={(v) => void saveScope(v)}
+            options={[
+              { value: 'default', label: `Use instance default (${defaultLabel})` },
+              { value: 'workspace', label: 'This workspace only' },
+              { value: 'global', label: 'All workspaces' },
+            ]}
+          />
         )}
-      </div>
+      </SettingRow>
     </Section>
   );
 }

@@ -2,9 +2,9 @@ import { useCallback, useState } from 'react';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { operateApi as api } from '@companion/module-operate/client';
 import type { Block } from '@companion/module-operate/client';
-import { Markdown } from '@companion/ui';
-import { Page, PageLoading, Spinner, timeAgo } from '@companion/ui';
+import { ErrorBar, Eyebrow, Markdown, Page, PageLoading, Spinner, timeAgo, useConfirm } from '@companion/ui';
 import { usePrBuild, type BuildPhase, type UsePrBuild } from './usePrBuild.js';
+import { RailBlock, RailRow } from './rail.js';
 import { PrChanges } from './PrChanges.js';
 
 /**
@@ -20,7 +20,7 @@ export function PrBuild({ runId }: { runId: string }): JSX.Element {
   if (build.error && !build.run) {
     return (
       <Page>
-        <div className="error-bar">{build.error}</div>
+        <ErrorBar error={build.error} />
       </Page>
     );
   }
@@ -30,7 +30,7 @@ export function PrBuild({ runId }: { runId: string }): JSX.Element {
   return (
     <Page className="anim-in">
       <header>
-        <div className="dim text-[11px] font-medium tracking-widest uppercase">Pull request</div>
+        <Eyebrow>Pull request</Eyebrow>
         <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
           <h1 className="min-w-0 flex-1 text-xl leading-snug font-semibold">{run.title}</h1>
           <a className="btn-ghost shrink-0" href={`#/runs/${run.id}`} title="Open the full agent transcript">
@@ -50,7 +50,7 @@ export function PrBuild({ runId }: { runId: string }): JSX.Element {
           ) : (
             <FailedStage build={build} run={run} />
           )}
-          {build.error ? <div className="error-bar">{build.error}</div> : null}
+          <ErrorBar error={build.error} />
         </div>
 
         <BuildSidebar run={run} phase={build.phase} />
@@ -90,9 +90,7 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         {/* Left: the high-level stepper. */}
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <div className="dim border-b border-zinc-200 px-3.5 py-2 text-[11px] font-medium tracking-widest uppercase dark:border-zinc-800">
-            Progress
-          </div>
+          <Eyebrow className="border-b border-zinc-200 px-3.5 py-2 dark:border-zinc-800">Progress</Eyebrow>
           <ol className="flex flex-col p-4">
             {STEPS.map((step, i) => {
               const state = i < active ? 'done' : i === active ? 'active' : 'pending';
@@ -131,9 +129,7 @@ function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JS
 
         {/* Right: the live activity timeline. */}
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <div className="dim border-b border-zinc-200 px-3.5 py-2 text-[11px] font-medium tracking-widest uppercase dark:border-zinc-800">
-            Live activity
-          </div>
+          <Eyebrow className="border-b border-zinc-200 px-3.5 py-2 dark:border-zinc-800">Live activity</Eyebrow>
           <ol className="max-h-72 overflow-y-auto p-3.5">
             {activity.length === 0 ? (
               <li className="dim flex items-center gap-2 text-xs">
@@ -202,6 +198,7 @@ function ReadyStage({
   fetchDiff: () => Promise<string>;
 }): JSX.Element {
   const [prompt, setPrompt] = useState('');
+  const { confirmDanger, confirmElement } = useConfirm();
 
   const create = async (): Promise<void> => {
     // Reserve the tab in the click gesture so it isn't popup-blocked after the
@@ -217,7 +214,12 @@ function ReadyStage({
   };
 
   const discard = async (): Promise<void> => {
-    if (!confirm('Discard this pull request and its branch? The work is lost.')) return;
+    const ok = await confirmDanger({
+      title: 'Discard this pull request?',
+      message: 'The branch and the work on it are lost.',
+      confirmLabel: 'Discard',
+    });
+    if (!ok) return;
     await build.discard();
   };
 
@@ -248,7 +250,7 @@ function ReadyStage({
         </div>
         {run.outcome ? (
           <div className="mt-3 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-            <div className="dim mb-1 text-[11px] font-medium tracking-widest uppercase">Summary</div>
+            <Eyebrow className="mb-1">Summary</Eyebrow>
             <Markdown text={run.outcome} />
           </div>
         ) : null}
@@ -277,6 +279,7 @@ function ReadyStage({
           </button>
         </div>
       </div>
+      {confirmElement}
     </section>
   );
 }
@@ -367,42 +370,35 @@ function BuildSidebar({ run, phase }: { run: RunRecord; phase: BuildPhase }): JS
   return (
     <aside className="flex flex-col gap-4 text-[13px] lg:sticky lg:top-4" aria-label="Build details">
       <div className="card flex flex-col gap-3">
-        <div className="flex items-center gap-3">
-          <span className="dim w-16 shrink-0 text-xs font-medium tracking-wide uppercase">Status</span>
+        <RailRow label="Status">
           <span className={status.cls}>{status.label}</span>
-        </div>
+        </RailRow>
         {run.branch ? (
-          <div className="min-w-0">
-            <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">Branch</div>
+          <RailBlock label="Branch">
             <code className="block truncate font-mono text-xs" title={run.branch}>
               {run.branch}
             </code>
-          </div>
+          </RailBlock>
         ) : null}
         {run.repo ? (
-          <div className="min-w-0">
-            <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">Repository</div>
+          <RailBlock label="Repository">
             <code className="block truncate font-mono text-xs" title={run.repo}>
               {run.repo}
             </code>
-          </div>
+          </RailBlock>
         ) : null}
       </div>
 
-      <div className="card flex flex-col gap-2 text-xs">
-        <div className="flex justify-between gap-2">
-          <span className="dim">Started</span>
-          <span>{timeAgo(run.createdAt)}</span>
-        </div>
+      <div className="card flex flex-col gap-3">
+        <RailRow label="Started">{timeAgo(run.createdAt)}</RailRow>
         {run.model ? (
-          <div className="flex justify-between gap-2">
-            <span className="dim">Model</span>
-            <span className="truncate" title={run.model}>
+          <RailRow label="Model">
+            <span className="block truncate" title={run.model}>
               {run.model}
             </span>
-          </div>
+          </RailRow>
         ) : null}
-        <a className="linkish mt-1 text-xs" href={`#/runs/${run.id}`}>
+        <a className="linkish text-xs" href={`#/runs/${run.id}`}>
           Open full run →
         </a>
       </div>

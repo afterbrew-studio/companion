@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MoxxyEvent } from '@companion/types';
 import { onServerMessage } from '@companion/core/client';
-import { timeAgo } from '@companion/ui';
+import { OutcomeDot, StatusDot, timeAgo } from '@companion/ui';
 import type { RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 
@@ -101,7 +101,7 @@ export function AgentActivity({
             <span className="relative inline-flex size-2.5 rounded-full bg-accent-500" />
           </span>
         ) : (
-          <span className="inline-flex size-2.5 rounded-full bg-zinc-400" aria-hidden />
+          <StatusDot tone="zinc" size="lg" />
         )}
         <strong className="text-sm">{working ? 'Agent working' : 'Agent activity'}</strong>
         <span className="dim min-w-0 flex-1 truncate">{run.title}</span>
@@ -134,13 +134,9 @@ export function AgentActivity({
                     <span className="absolute inline-flex size-3.5 animate-ping rounded-full bg-accent-500/50 motion-reduce:hidden" />
                   ) : null}
                   {e.tone === 'err' ? (
-                    <span className="flex size-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold leading-none text-white">
-                      ✕
-                    </span>
+                    <OutcomeDot ok={false} />
                   ) : e.tone === 'ok' ? (
-                    <span className="flex size-3.5 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold leading-none text-white">
-                      ✓
-                    </span>
+                    <OutcomeDot ok />
                   ) : (
                     <span
                       className={`size-2 rounded-full ${

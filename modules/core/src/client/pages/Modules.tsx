@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useKernel, type ModuleDescriptor } from '@companion/core/client';
-import { Page, PageHeader, Section, Switch } from '@companion/ui';
+import { ErrorBar, ListCard, Page, PageHeader, Section, Switch } from '@companion/ui';
 import { modulesApi } from '../api.js';
 
 /**
@@ -31,13 +31,13 @@ export function ModulesPage(): JSX.Element {
   return (
     <Page>
       <PageHeader title="Modules" subtitle="The feature modules installed on this instance" />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <Section
         title="Installed"
         description="Disabling a module hides its pages and stops its services. Modules that others depend on can only be disabled once their dependents are off."
       >
-        <div className="card divide-y divide-zinc-200 p-0 dark:divide-zinc-800">
+        <ListCard>
           {modules.map((m) => (
             <div key={m.id} className="flex items-center gap-3 px-4 py-3">
               <span className="min-w-0 flex-1">
@@ -59,7 +59,7 @@ export function ModulesPage(): JSX.Element {
               />
             </div>
           ))}
-        </div>
+        </ListCard>
       </Section>
     </Page>
   );

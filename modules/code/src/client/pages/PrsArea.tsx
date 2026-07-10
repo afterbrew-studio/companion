@@ -1,5 +1,24 @@
 import { useAiActivity } from '@companion/module-operate/client';
-import { AiActivityChip, ContextMenu, Dropdown, EmptyState, FilterField, FiltersPopover, ListFooter, MetaSignal, Page, PageHeader, Tabs, timeAgo } from '@companion/ui';
+import {
+  AiActivityChip,
+  Checkbox,
+  ContextMenu,
+  Dropdown,
+  EmptyState,
+  ErrorBar,
+  FilterField,
+  FiltersPopover,
+  IconButton,
+  KebabIcon,
+  ListCard,
+  ListFooter,
+  MetaSignal,
+  Page,
+  PageHeader,
+  SearchInput,
+  Tabs,
+  timeAgo,
+} from '@companion/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { AssigneeNote, ChecksBadge, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
 
@@ -64,15 +83,7 @@ export function PrsAreaPage(): JSX.Element {
         subtitle={current.name}
         actions={
           <>
-            <input
-              className="input w-56"
-              type="search"
-              placeholder="Search PRs…  ( / )"
-              data-shortcut="search"
-              aria-label="Search pull requests"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <SearchInput value={search} onChange={setSearch} placeholder="Search PRs…  ( / )" ariaLabel="Search pull requests" />
             <FiltersPopover active={activeFilters} onClear={clearFilters}>
               {repos.length > 1 ? (
                 <FilterField label="Repository">
@@ -156,7 +167,7 @@ export function PrsAreaPage(): JSX.Element {
           </>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <Tabs
         value={tab}
@@ -186,7 +197,7 @@ export function PrsAreaPage(): JSX.Element {
           {canRunPipelines && pipelines.length > 0 ? (
             <>
               <select
-                className="input py-1.5"
+                className="input input-sm"
                 aria-label="Pipeline to run against the selected PRs"
                 value={bulkPipeline}
                 onChange={(e) => setBulkPipeline(e.target.value)}
@@ -205,7 +216,7 @@ export function PrsAreaPage(): JSX.Element {
           ) : null}
         </div>
       ) : null}
-      {bulkError ? <div className="error-bar">{bulkError}</div> : null}
+      <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
 
       {prs.length === 0 && !loading ? (
@@ -213,7 +224,7 @@ export function PrsAreaPage(): JSX.Element {
           title={search.trim() || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
         />
       ) : (
-        <div className="card mt-3 divide-y divide-zinc-200 p-0 dark:divide-zinc-800" aria-label="Pull request list">
+        <ListCard className="mt-3" ariaLabel="Pull request list">
           {prs.map((pr) => (
             <a
               key={`${pr.repo}#${pr.number}`}
@@ -225,33 +236,12 @@ export function PrsAreaPage(): JSX.Element {
               }}
             >
               {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) ? (
-                <span
-                  role="checkbox"
-                  aria-checked={selected.has(`${pr.repo}#${pr.number}`)}
-                  aria-label={`Select #${pr.number} for a bulk pipeline run`}
-                  tabIndex={0}
-                  className={`flex size-4 shrink-0 cursor-pointer items-center justify-center rounded border transition-opacity ${
-                    selected.has(`${pr.repo}#${pr.number}`)
-                      ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
-                      : 'border-zinc-300 text-transparent hover:border-zinc-500 dark:border-zinc-600 dark:hover:border-zinc-400'
-                  } ${selected.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    toggleSelected(`${pr.repo}#${pr.number}`);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === ' ' || e.key === 'Enter') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      toggleSelected(`${pr.repo}#${pr.number}`);
-                    }
-                  }}
-                >
-                  <svg viewBox="0 0 16 16" fill="none" className="size-3" aria-hidden>
-                    <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
+                <Checkbox
+                  checked={selected.has(`${pr.repo}#${pr.number}`)}
+                  onToggle={() => toggleSelected(`${pr.repo}#${pr.number}`)}
+                  label={`Select #${pr.number} for a bulk pipeline run`}
+                  className={selected.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}
+                />
               ) : null}
               <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
               <span className="min-w-0 flex-1">
@@ -285,9 +275,9 @@ export function PrsAreaPage(): JSX.Element {
               <span className="dim w-16 shrink-0 text-right" title={new Date(pr.updatedAt).toLocaleString()}>
                 {timeAgo(pr.updatedAt)}
               </span>
-              <button
-                className="dim -mr-1 shrink-0 cursor-pointer rounded-md p-1 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-zinc-200 hover:text-zinc-800 focus-visible:opacity-100 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                aria-label={`Quick actions for #${pr.number}`}
+              <IconButton
+                label={`Quick actions for #${pr.number}`}
+                className="-mr-1 opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -295,12 +285,8 @@ export function PrsAreaPage(): JSX.Element {
                   setCtx({ x: r.right - 224, y: r.bottom + 4, actions: rowActions(pr) });
                 }}
               >
-                <svg viewBox="0 0 16 16" className="size-4 fill-current" aria-hidden>
-                  <circle cx="3" cy="8" r="1.4" />
-                  <circle cx="8" cy="8" r="1.4" />
-                  <circle cx="13" cy="8" r="1.4" />
-                </svg>
-              </button>
+                <KebabIcon />
+              </IconButton>
             </a>
           ))}
           <ListFooter
@@ -311,7 +297,7 @@ export function PrsAreaPage(): JSX.Element {
             noun="pull requests"
             onVisible={loadMore}
           />
-        </div>
+        </ListCard>
       )}
       <ContextMenu menu={ctx} onClose={() => setCtx(null)} />
     </Page>

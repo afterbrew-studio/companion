@@ -26,8 +26,19 @@ import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi } from '@companion
 import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
 import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
-import { ChevronDown, Dropdown, LockIcon, Modal, PageLoading } from '@companion/ui';
-import { CommandPalette, SearchIcon } from './components/CommandPalette.js';
+import {
+  ChevronDown,
+  Dropdown,
+  ErrorBar,
+  Field,
+  FormActions,
+  LockIcon,
+  Modal,
+  PageLoading,
+  SearchIcon,
+  StatusDot as Dot,
+} from '@companion/ui';
+import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { CLIENT_LOADERS } from './modules.js';
@@ -576,8 +587,7 @@ function NewWorkspaceModal({
   return (
     <Modal title="New workspace" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Name</span>
+        <Field label="Name">
           <input
             className="input"
             required
@@ -587,7 +597,7 @@ function NewWorkspaceModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-        </label>
+        </Field>
         <fieldset className="flex flex-col gap-1.5">
           <legend className="dim mb-1 text-sm">Visibility</legend>
           <label
@@ -616,15 +626,15 @@ function NewWorkspaceModal({
             <span className="dim text-xs">— just you, plus anyone you invite</span>
           </label>
         </fieldset>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || name.trim().length < 2}>
             {busy ? 'Creating…' : 'Create workspace'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -890,10 +900,9 @@ function StatusDot({
   label: string;
   title: string;
 }): JSX.Element {
-  const color = ok ? (degraded ? 'bg-amber-500' : 'bg-emerald-500') : 'bg-red-500';
   return (
     <span className="dim flex items-center gap-1.5 text-xs" title={title} role="status" aria-label={title}>
-      <span className={`inline-block size-2 rounded-full ${color}`} aria-hidden />
+      <Dot tone={ok ? (degraded ? 'amber' : 'green') : 'red'} />
       {label}
     </span>
   );

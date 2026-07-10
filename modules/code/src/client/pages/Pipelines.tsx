@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { EmptyState, Modal, Page, PageHeader, Section, useConfirm } from '@companion/ui';
+import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, Section, useConfirm } from '@companion/ui';
 import type {
   PipelineRecord,
   PipelineStep,
@@ -94,7 +94,7 @@ export function PipelinesPage(): JSX.Element {
           ) : undefined
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <div className="flex flex-col gap-3">
         {pipelines.map((p) => (
@@ -133,7 +133,7 @@ export function PipelinesPage(): JSX.Element {
               })}
             </ol>
             {canManage ? (
-              <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+              <CardActions>
                 <button className="btn-ghost" onClick={() => setEditing(p)}>
                   Edit
                 </button>
@@ -155,7 +155,7 @@ export function PipelinesPage(): JSX.Element {
                 >
                   Delete
                 </button>
-              </div>
+              </CardActions>
             ) : null}
           </article>
         ))}
@@ -200,7 +200,7 @@ export function PipelinesPage(): JSX.Element {
                 </div>
                 {d.description ? <p className="dim mt-2 line-clamp-2 text-[13px]">{d.description}</p> : null}
                 {canManage ? (
-                  <div className="mt-3.5 flex items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+                  <CardActions>
                     <button className="btn-ghost" onClick={() => setEditingDef(d)}>
                       Edit
                     </button>
@@ -219,7 +219,7 @@ export function PipelinesPage(): JSX.Element {
                     >
                       Delete
                     </button>
-                  </div>
+                  </CardActions>
                 ) : null}
               </article>
             ))}
@@ -311,15 +311,13 @@ function GenerateModal({
   return (
     <Modal title="✦ Generate with AI" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">What to generate</span>
+        <Field label="What to generate">
           <select className="input" value={target} onChange={(e) => setTarget(e.target.value as 'pipeline' | 'step')}>
             <option value="pipeline">Pipeline (ordered steps run against PRs)</option>
             <option value="step">Custom step (reusable, lands in the library)</option>
           </select>
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Describe what it should do</span>
+        </Field>
+        <Field label="Describe what it should do">
           <textarea
             className="input min-h-28 resize-y"
             required
@@ -333,20 +331,20 @@ function GenerateModal({
             onChange={(e) => setInstructions(e.target.value)}
             autoFocus
           />
-        </label>
+        </Field>
         <p className="dim text-[13px]">
           A companion runner drafts it; the result opens in the editor for review. Nothing auto-runs until you enable
           it.
         </p>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || instructions.trim().length < 8}>
             {busy ? 'Generating… (runs an agent turn)' : 'Generate'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -414,7 +412,7 @@ function PlatformRunButton({
   return (
     <span className="flex items-center gap-2">
       {repos.length > 1 ? (
-        <select className="input py-1.5" aria-label="Repo to run against" value={repo} onChange={(e) => setRepo(e.target.value)}>
+        <select className="input input-sm" aria-label="Repo to run against" value={repo} onChange={(e) => setRepo(e.target.value)}>
           {repos.map((r) => (
             <option key={r} value={r}>
               {r.split('/')[1]}
@@ -495,22 +493,19 @@ function PipelineEditor({
     <Modal title={pipeline ? `Edit pipeline — ${pipeline.name}` : 'New pipeline'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Name</span>
+          <Field label="Name">
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Pre-merge gate" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Description</span>
+          </Field>
+          <Field label="Description">
             <input
               className="input"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What this pipeline verifies"
             />
-          </label>
+          </Field>
         </div>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Type — decides the payload and which steps are allowed</span>
+        <Field label="Type — decides the payload and which steps are allowed">
           <select
             className="input"
             value={type}
@@ -530,7 +525,7 @@ function PipelineEditor({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         {type !== 'platform' ? (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
@@ -594,7 +589,7 @@ function PipelineEditor({
             ))}
             {stepDefs.length > 0 ? (
               <select
-                className="input py-1.5"
+                className="input input-sm"
                 aria-label="Add step from library"
                 value=""
                 onChange={(e) => {
@@ -616,15 +611,15 @@ function PipelineEditor({
           </div>
         </div>
 
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" disabled={busy || !valid} onClick={() => void save()}>
             {busy ? 'Saving…' : 'Save pipeline'}
           </button>
-        </div>
+        </FormActions>
       </div>
     </Modal>
   );
@@ -642,8 +637,7 @@ function RefForm({
   const def = stepDefs.find((d) => d.id === spec.stepDefinitionId);
   return (
     <div className="grid gap-2 md:grid-cols-2">
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="dim">Display name (optional override)</span>
+      <Field label="Display name (optional override)">
         <input
           className="input"
           value={spec.overrides?.name ?? ''}
@@ -655,9 +649,8 @@ function RefForm({
             })
           }
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="dim">On failure</span>
+      </Field>
+      <Field label="On failure">
         <select
           className="input"
           value={spec.overrides?.onFailure ?? def?.step.onFailure ?? 'halt'}
@@ -671,7 +664,7 @@ function RefForm({
           <option value="halt">Stop the pipeline</option>
           <option value="continue">Continue to the next step</option>
         </select>
-      </label>
+      </Field>
     </div>
   );
 }
@@ -696,12 +689,10 @@ function StepForm({ step, onChange }: { step: PipelineStep; onChange: (s: Pipeli
   return (
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 md:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Step name</span>
+        <Field label="Step name">
           <input className="input" value={step.name} onChange={(e) => onChange({ ...step, name: e.target.value })} />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">On failure</span>
+        </Field>
+        <Field label="On failure">
           <select
             className="input"
             value={step.onFailure}
@@ -710,7 +701,7 @@ function StepForm({ step, onChange }: { step: PipelineStep; onChange: (s: Pipeli
             <option value="halt">Stop the pipeline</option>
             <option value="continue">Continue to the next step</option>
           </select>
-        </label>
+        </Field>
       </div>
       <StepConfigForm step={step} onChange={onChange} />
     </div>
@@ -744,7 +735,7 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
           <label className="flex items-center gap-2">
             <span className="dim">Fail when</span>
             <select
-              className="input py-1.5"
+              className="input input-sm"
               value={step.config.failOn}
               onChange={(e) =>
                 onChange({
@@ -762,8 +753,7 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
       );
     case 'agent':
       return (
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Instructions for the agent (it sees the PR, diff, and CI status)</span>
+        <Field label="Instructions for the agent (it sees the PR, diff, and CI status)">
           <textarea
             className="input min-h-24 font-mono text-xs"
             value={step.config.prompt}
@@ -771,12 +761,11 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
             onChange={(e) => onChange({ ...step, config: { prompt: e.target.value } })}
           />
           <SkillsHint />
-        </label>
+        </Field>
       );
     case 'label':
       return (
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Labels (comma-separated)</span>
+        <Field label="Labels (comma-separated)">
           <input
             className="input"
             value={step.config.labels.join(', ')}
@@ -788,18 +777,17 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
               })
             }
           />
-        </label>
+        </Field>
       );
     case 'comment':
       return (
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Comment body — placeholders: {'{{pr.number}} {{pr.title}} {{pr.author}} {{repo}}'}</span>
+        <Field label={`Comment body — placeholders: ${'{{pr.number}} {{pr.title}} {{pr.author}} {{repo}}'}`}>
           <textarea
             className="input min-h-20"
             value={step.config.body}
             onChange={(e) => onChange({ ...step, config: { body: e.target.value } })}
           />
-        </label>
+        </Field>
       );
   }
 }
@@ -841,18 +829,15 @@ function StepDefinitionEditor({
     <Modal title={definition ? `Edit step — ${definition.name}` : 'New custom step'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Step name</span>
+          <Field label="Step name">
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Security scan" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Description</span>
+          </Field>
+          <Field label="Description">
             <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
-          </label>
+          </Field>
         </div>
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Step type</span>
+        <Field label="Step type">
           <select
             className="input"
             value={step.kind}
@@ -864,19 +849,19 @@ function StepDefinitionEditor({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
 
         <StepForm step={step} onChange={setStep} />
 
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" disabled={busy || !name.trim() || !stepIsValid({ ...step, name: name.trim() || step.name })} onClick={() => void save()}>
             {busy ? 'Saving…' : 'Save step'}
           </button>
-        </div>
+        </FormActions>
       </div>
     </Modal>
   );

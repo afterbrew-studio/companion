@@ -4,7 +4,24 @@ import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace, useWorkspaceMembers, workspaceApi } from '@companion/module-workspace/client';
 import type { WorkspaceMemberCandidate, WorkspaceRecord, WorkspaceVisibility } from '@companion/module-workspace/contract';
-import { EmptyState, LockIcon, Modal, Page, PageHeader, Spinner, timeAgo, useConfirm, useDebounced } from '@companion/ui';
+import {
+  Avatar,
+  CardActions,
+  CloseIcon,
+  EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
+  IconButton,
+  LockIcon,
+  Modal,
+  Page,
+  PageHeader,
+  Spinner,
+  timeAgo,
+  useConfirm,
+  useDebounced,
+} from '@companion/ui';
 import type { GitHubAccountRecord, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useReposAdmin } from '../hooks/useReposAdmin.js';
@@ -57,7 +74,7 @@ export function ReposPage(): JSX.Element {
           </>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {repos.length > 0 ? (
         <div className="flex flex-col gap-3">
@@ -199,7 +216,7 @@ function RepoCard({
         ))}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+      <CardActions>
         <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
           {busy ? 'Working…' : 'Sync now'}
         </button>
@@ -209,7 +226,7 @@ function RepoCard({
         {/* Label + description live inside the opened dropdown (optgroup) — the closed control stays label-free. */}
         {accounts.length > 1 ? (
           <select
-            className="input py-1.5 text-xs"
+            className="input input-sm"
             value={repo.githubAccountId ?? ''}
             disabled={busy}
             aria-label={`GitHub account posting for ${repo.fullName}`}
@@ -229,7 +246,7 @@ function RepoCard({
         {/* A pin is pointless while only the local runner exists — hide it. */}
         {runners.length > 1 ? (
           <select
-            className="input py-1.5 text-xs"
+            className="input input-sm"
             value={repo.runnerId ?? ''}
             disabled={busy}
             aria-label={`Runner executing agent work for ${repo.fullName}`}
@@ -263,7 +280,7 @@ function RepoCard({
         >
           Remove
         </button>
-      </div>
+      </CardActions>
       {confirmElement}
 
       {transferring ? (
@@ -314,8 +331,7 @@ function TransferRepoModal({
   return (
     <Modal title={`Transfer ${repo.fullName}`} onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Target workspace</span>
+        <Field label="Target workspace">
           <select className="input" value={target} onChange={(e) => setTarget(e.target.value)}>
             {targets.map((w) => (
               <option key={w.id} value={w.id}>
@@ -323,19 +339,19 @@ function TransferRepoModal({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         <p className="dim text-[13px]">
           The repo leaves <strong>{workspaces.find((w) => w.id === repo.workspaceId)?.name}</strong> together with its
           issues, PRs, and pipeline scope.
         </p>
-        <div className="flex justify-end gap-2">
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !target}>
             {busy ? 'Transferring…' : 'Transfer'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -370,8 +386,7 @@ function AddRepoModal({
   return (
     <Modal title={`Connect a repository — ${workspace.name}`} onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Repository (owner/name)</span>
+        <Field label="Repository (owner/name)">
           <input
             className="input"
             required
@@ -381,20 +396,20 @@ function AddRepoModal({
             onChange={(e) => setFullName(e.target.value)}
             autoFocus
           />
-        </label>
+        </Field>
         <p className="dim text-[13px]">
           The repo connects into <strong>{workspace.name}</strong> — the active workspace. You can move it later from
           its row.
         </p>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !fullName.trim()}>
             {busy ? 'Connecting…' : 'Connect'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -477,10 +492,9 @@ function WorkspaceSettingsModal({
   return (
     <Modal title={`Workspace settings — ${workspace.name}`} onClose={onClose}>
       <form className="flex items-end gap-2" onSubmit={(e) => void rename(e)}>
-        <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-          <span className="dim">Name</span>
+        <Field label="Name" className="min-w-0 flex-1">
           <input className="input" required minLength={2} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
+        </Field>
         <button className="btn py-2" type="submit" disabled={busy || name.trim().length < 2 || name.trim() === workspace.name}>
           {busy ? 'Saving…' : 'Rename'}
         </button>
@@ -539,26 +553,9 @@ function WorkspaceSettingsModal({
           </button>
         </div>
       </div>
-      {error ? <div className="error-bar mt-2">{error}</div> : null}
+      <ErrorBar error={error} className="mt-2" />
       {confirmElement}
     </Modal>
-  );
-}
-
-/** Two-letter initials for an avatar tile. */
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? parts[0]?.[1] ?? '')).toUpperCase() || '?';
-}
-
-function Avatar({ name, className = 'size-7' }: { name: string; className?: string }): JSX.Element {
-  return (
-    <span
-      className={`flex ${className} shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-[10px] font-semibold uppercase dark:bg-zinc-800`}
-      aria-hidden
-    >
-      {initials(name)}
-    </span>
   );
 }
 
@@ -582,7 +579,7 @@ function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Elem
       <ul className="flex flex-col px-1.5 pb-1.5">
         {members?.map((m) => (
           <li key={m.username} className="group/mem flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-            <Avatar name={m.displayName} />
+            <Avatar name={m.displayName} size="sm" />
             <span className="min-w-0 flex-1 leading-tight">
               <span className="block truncate text-sm font-medium">{m.displayName}</span>
               <span className="dim block truncate text-xs">@{m.username}</span>
@@ -590,16 +587,14 @@ function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Elem
             {m.role === 'owner' ? (
               <span className="badge shrink-0">owner</span>
             ) : (
-              <button
-                className="dim shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-600 focus-visible:opacity-100 group-hover/mem:opacity-100 dark:hover:text-red-400"
-                aria-label={`Remove ${m.displayName}`}
-                title="Remove from workspace"
+              <IconButton
+                label={`Remove ${m.displayName}`}
+                danger
+                className="opacity-0 transition-opacity group-hover/mem:opacity-100 focus-visible:opacity-100"
                 onClick={() => void remove(m.username)}
               >
-                <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
-                  <path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              </button>
+                <CloseIcon />
+              </IconButton>
             )}
           </li>
         ))}
@@ -607,7 +602,7 @@ function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Elem
           <li className="dim px-2 py-3 text-center text-sm">No members yet — search above to add people.</li>
         ) : null}
       </ul>
-      {error ? <div className="error-bar mx-3.5 mb-3">{error}</div> : null}
+      <ErrorBar error={error} className="mx-3.5 mb-3" />
     </div>
   );
 }
@@ -727,7 +722,7 @@ function UserPicker({
                     onMouseEnter={() => setActive(i)}
                     onClick={() => void pick(c.username)}
                   >
-                    <Avatar name={c.displayName} />
+                    <Avatar name={c.displayName} size="sm" />
                     <span className="min-w-0 flex-1 leading-tight">
                       <span className="block truncate text-sm font-medium">{c.displayName}</span>
                       <span className="dim block truncate text-xs">@{c.username}</span>

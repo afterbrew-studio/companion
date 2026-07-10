@@ -1,4 +1,6 @@
 export * from './ui.js';
+export * from './icons.js';
+export * from './form.js';
 export * from './markdown.js';
 export * from './diff-view.js';
 export * from './highlight.js';

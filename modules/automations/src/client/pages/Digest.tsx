@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { EmptyState, Markdown, Page, PageHeader, Section, Spinner, timeAgo } from '@companion/ui';
+import { EmptyState, ErrorBar, Markdown, Page, PageHeader, Section, Spinner, timeAgo } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import { automationsApi } from '../api.js';
 import { useDigest } from '../hooks/useDigest.js';
+import { ReportCard } from '../components/ReportCard.js';
 
 /**
  * Daily Digest: the AI review of a repository — what shipped, what failed,
@@ -55,7 +56,7 @@ export function DigestPage(): JSX.Element {
           <>
             {repos.length > 1 ? (
               <select
-                className="input py-1.5"
+                className="input input-sm"
                 aria-label="Repository"
                 value={selected ?? ''}
                 onChange={(e) => setSelected(e.target.value)}
@@ -75,7 +76,7 @@ export function DigestPage(): JSX.Element {
           </>
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {generating ? (
         <div className="card anim-in flex items-center gap-3">
@@ -129,7 +130,7 @@ export function DigestPage(): JSX.Element {
       {repo && can('automations:manage') && !repo.digestEnabled ? (
         <p className="dim mt-3 text-[13px]">
           Want this every morning without clicking?{' '}
-          <a className="underline" href="#/automations">
+          <a className="linkish" href="#/automations">
             Enable the daily digest schedule
           </a>{' '}
           for {repo.fullName}.
@@ -140,16 +141,7 @@ export function DigestPage(): JSX.Element {
         <Section title="Previous digests" description="Older reviews for this repository, newest first.">
           <div className="flex flex-col gap-2.5">
             {history.map((r) => (
-              <details key={r.id} className="card">
-                <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm select-none">
-                  <span className="badge">digest</span>
-                  <strong className="min-w-0 flex-1 truncate">{r.title}</strong>
-                  <span className="dim">{timeAgo(r.createdAt)}</span>
-                </summary>
-                <div className="mt-2.5 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-                  <Markdown text={r.body} />
-                </div>
-              </details>
+              <ReportCard key={r.id} report={r} />
             ))}
           </div>
         </Section>

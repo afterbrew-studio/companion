@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
+  CardActions,
   EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
+  InlineLoading,
   ListFilterToolbar,
   Markdown,
   Modal,
   Page,
   PageHeader,
   Spinner,
-  Tooltip,
+  StatusGlyph,
   facet,
   timeAgo,
   useConfirm,
@@ -102,7 +107,7 @@ export function DocsPage(): JSX.Element {
           ) : undefined
         }
       />
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {storage !== null && ((needsSetup && canManage) || configuring) ? (
         <AreaStorageSetup
@@ -236,7 +241,7 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
             <p className="dim text-[13px]">No indexed chunks match.</p>
           ) : (
             hits.map((h, i) => (
-              <div key={`${h.docId}-${h.seq}-${i}`} className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
+              <div key={`${h.docId}-${h.seq}-${i}`} className="well">
                 <div className="dim mb-1 flex items-center gap-2 text-[11px]">
                   <span className="font-medium text-zinc-700 dark:text-zinc-300">{h.title}</span>
                   {h.repo ? <span className="chip">{h.repo.split('/')[1] ?? h.repo}</span> : null}
@@ -254,26 +259,10 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
 
 /** Indexed docs are retrievable; a 0-chunk doc is invisible to search. */
 function DocStateIcon({ indexed }: { indexed: boolean }): JSX.Element {
-  const spec = indexed
-    ? { label: 'Indexed for retrieval', cls: 'text-emerald-600 dark:text-emerald-400', glyph: 'M4.6 8.4l2 2 4-4.4' }
-    : { label: 'Not indexed — search cannot find this doc', cls: 'text-amber-600 dark:text-amber-400', glyph: 'M8 4.6v4M8 11h.01' };
-  return (
-    <Tooltip content={spec.label}>
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`size-4 shrink-0 ${spec.cls}`}
-        role="img"
-        aria-label={spec.label}
-      >
-        <circle cx="8" cy="8" r="6.2" />
-        <path d={spec.glyph} />
-      </svg>
-    </Tooltip>
+  return indexed ? (
+    <StatusGlyph tone="ok" label="Indexed for retrieval" />
+  ) : (
+    <StatusGlyph tone="warn" label="Not indexed — search cannot find this doc" />
   );
 }
 
@@ -310,7 +299,7 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
             {doc.repo ? <span className="chip shrink-0">{doc.repo.split('/')[1] ?? doc.repo}</span> : null}
           </div>
           <div className="dim mt-0.5 truncate text-xs">
-            {doc.source} · {doc.path ? <code className="font-mono text-[11px]">{doc.path}</code> : 'virtual'} ·{' '}
+            {doc.source} · {doc.path ? <code className="code-inline">{doc.path}</code> : 'virtual'} ·{' '}
             {doc.chunkCount} {doc.chunkCount === 1 ? 'chunk' : 'chunks'} via {doc.embedder} · updated{' '}
             {timeAgo(doc.updatedAt)}
           </div>
@@ -321,14 +310,14 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
       </div>
 
       {expanded ? (
-        <div className="markdown mt-3 max-h-[32rem] overflow-y-auto rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
+        <div className="well markdown mt-3 max-h-[32rem] overflow-y-auto p-4">
           <Markdown text={doc.content} />
         </div>
       ) : null}
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {can('docs:manage') ? (
-        <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+        <CardActions>
           <button className="btn-ghost" onClick={() => setEditing(true)}>
             Edit
           </button>
@@ -336,7 +325,7 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
           <button className="btn-danger-ghost" onClick={() => void remove()}>
             Delete
           </button>
-        </div>
+        </CardActions>
       ) : null}
 
       {editing && current ? (
@@ -406,8 +395,7 @@ function WriteDocModal({
     <Modal title={doc ? `Edit doc — ${doc.title}` : 'New documentation'} onClose={onClose} wide>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="flex gap-3 max-sm:flex-col">
-          <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-            <span className="dim">Title</span>
+          <Field label="Title" className="min-w-0 flex-1">
             <input
               className="input"
               required
@@ -418,10 +406,9 @@ function WriteDocModal({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Payments domain — business rules"
             />
-          </label>
+          </Field>
           {!doc ? (
-            <label className="flex flex-col gap-1 text-sm sm:w-56">
-              <span className="dim">About repo (optional)</span>
+            <Field label="About repo (optional)" className="sm:w-56">
               <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)}>
                 <option value="">Workspace-wide</option>
                 {repos.map((r) => (
@@ -430,20 +417,18 @@ function WriteDocModal({
                   </option>
                 ))}
               </select>
-            </label>
+            </Field>
           ) : null}
           {!doc && configDir && repo ? (
-            <label className="flex flex-col gap-1 text-sm sm:w-52">
-              <span className="dim">Storage</span>
+            <Field label="Storage" className="sm:w-52">
               <select className="input" value={storage} onChange={(e) => setStorage(e.target.value as AreaStorage)}>
                 <option value="repo">Repository — {configDir}/</option>
                 <option value="virtual">Virtual (Companion only)</option>
               </select>
-            </label>
+            </Field>
           ) : null}
         </div>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Content (markdown — chunked and indexed on save)</span>
+        <Field label="Content (markdown — chunked and indexed on save)">
           <textarea
             className="input min-h-80 w-full resize-y font-mono text-xs leading-relaxed"
             required
@@ -451,16 +436,16 @@ function WriteDocModal({
             value={content}
             onChange={(e) => setContent(e.target.value)}
           />
-        </label>
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        </Field>
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !title.trim() || !content.trim()}>
             {busy ? 'Saving…' : doc ? 'Save & reindex' : 'Create & index'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );
@@ -526,8 +511,7 @@ function ImportDocsModal({
   return (
     <Modal title="Import markdown from a repo" onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Repository (needs a finished clone)</span>
+        <Field label="Repository (needs a finished clone)">
           <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)}>
             {repos.map((r) => (
               <option key={r.fullName} value={r.fullName}>
@@ -536,7 +520,7 @@ function ImportDocsModal({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         {files === null ? (
           <p className="dim text-[13px]">Scanning for markdown files…</p>
         ) : files.length === 0 ? (
@@ -555,15 +539,15 @@ function ImportDocsModal({
             ))}
           </div>
         )}
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" disabled={busy || selected.size === 0} onClick={() => void submit()}>
             {busy ? 'Importing…' : `Import ${selected.size} ${selected.size === 1 ? 'file' : 'files'}`}
           </button>
-        </div>
+        </FormActions>
       </div>
     </Modal>
   );
@@ -610,8 +594,7 @@ function GenerateDocModal({
   return (
     <Modal title="Generate documentation" onClose={onClose}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">Source repo (the writer agent reads it; optional)</span>
+        <Field label="Source repo (the writer agent reads it; optional)">
           <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)}>
             <option value="">None — write from the instructions alone</option>
             {repos.map((r) => (
@@ -620,18 +603,16 @@ function GenerateDocModal({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         {configDir && repo ? (
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="dim">Storage</span>
+          <Field label="Storage">
             <select className="input" value={storage} onChange={(e) => setStorage(e.target.value as AreaStorage)}>
               <option value="repo">Repository — {configDir}/</option>
               <option value="virtual">Virtual (Companion only)</option>
             </select>
-          </label>
+          </Field>
         ) : null}
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="dim">✦ What should be documented?</span>
+        <Field label="✦ What should be documented?">
           <textarea
             className="input min-h-28"
             required
@@ -640,21 +621,19 @@ function GenerateDocModal({
             onChange={(e) => setInstructions(e.target.value)}
             placeholder="e.g. the auth and session model end-to-end: roles, permissions, token lifecycle, where each is enforced"
           />
-        </label>
+        </Field>
         {busy ? (
-          <div className="dim flex items-center gap-2 text-[13px]">
-            <Spinner /> The agent is reading the repo and writing — this can take a few minutes…
-          </div>
+          <InlineLoading label="The agent is reading the repo and writing — this can take a few minutes…" />
         ) : null}
-        {error ? <div className="error-bar">{error}</div> : null}
-        <div className="flex justify-end gap-2">
+        <ErrorBar error={error} />
+        <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || instructions.trim().length < 8}>
             {busy ? 'Generating…' : 'Generate & index'}
           </button>
-        </div>
+        </FormActions>
       </form>
     </Modal>
   );

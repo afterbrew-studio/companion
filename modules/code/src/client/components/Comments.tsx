@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Markdown, Spinner, timeAgo } from '@companion/ui';
+import { Avatar, ErrorBar, Markdown, Spinner, timeAgo } from '@companion/ui';
 import type { CommentRecord } from '../../contract/index.js';
 
 /**
@@ -67,9 +67,7 @@ export function CommentsSection({
           {comments.map((c, i) => (
             <li key={i} className="anim-in card py-3">
               <div className="mb-1.5 flex items-center gap-2 text-[13px]">
-                <span className="flex size-5 items-center justify-center rounded-full bg-accent-100 text-[10px] font-semibold text-accent-700 uppercase dark:bg-accent-900/60 dark:text-accent-300">
-                  {c.author.slice(0, 2)}
-                </span>
+                <Avatar name={c.author} size="xs" />
                 <strong>{c.author}</strong>
                 <span className="dim">{timeAgo(c.createdAt)}</span>
               </div>
@@ -80,7 +78,7 @@ export function CommentsSection({
         </ol>
       )}
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       {canComment && post ? (
         <div className="mt-3 flex flex-col gap-2">

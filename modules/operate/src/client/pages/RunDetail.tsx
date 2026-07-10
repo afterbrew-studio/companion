@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActionMenu, DiffView, Markdown } from '@companion/ui';
+import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, formatTokens } from '@companion/ui';
 import type { ModelCatalog, RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRun } from '../hooks/useRun.js';
@@ -62,7 +62,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
         <AskSheet key={ask.requestId} ask={ask} onRespond={(r) => void respondAsk(ask.requestId, r)} />
       ))}
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
 
       <footer className="pt-3 pb-4">
         <div className="flex items-end gap-2 rounded-xl border border-zinc-300 p-2 focus-within:border-zinc-500 dark:border-zinc-700 dark:focus-within:border-zinc-400">
@@ -84,13 +84,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
               Abort
             </button>
           ) : (
-            <button
-              className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              disabled={!run?.live || busy || !draft.trim()}
-              onClick={() => void send()}
-              aria-label="Send prompt"
-              title="Send (Enter)"
-            >
+            <IconButton label="Send prompt" disabled={!run?.live || busy || !draft.trim()} onClick={() => void send()}>
               <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
                 <path
                   d="M14 2 7.5 8.5M14 2 9.8 14a.4.4 0 0 1-.75.02L7.5 8.5 2 6.55a.4.4 0 0 1 .02-.76L14 2z"
@@ -100,7 +94,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
                   strokeLinejoin="round"
                 />
               </svg>
-            </button>
+            </IconButton>
           )}
         </div>
         <p className="dim mt-1.5 px-1 text-[11px]">
@@ -109,10 +103,6 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
       </footer>
     </div>
   );
-}
-
-function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 /**
@@ -175,7 +165,7 @@ function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunR
 
   return (
     <select
-      className="input max-w-48 py-1.5 text-xs"
+      className="input input-sm max-w-48"
       aria-label="Model for this run"
       title="Model for this run (from the moxxy gateway)"
       value={current}
@@ -256,7 +246,7 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   };
 
   return (
-    <div className="my-3 rounded-xl border border-accent-500/60 p-4">
+    <div className="card my-3 border-accent-500/60">
       <div className="flex flex-wrap items-center gap-2.5">
         <strong className="text-sm">
           Review — agent finished on branch <code className="text-[12px]">{run.branch}</code>
@@ -281,10 +271,10 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
       <p className="dim mt-2">
         Not convinced? Send a prompt below — the agent keeps working on the same branch.
       </p>
-      {error ? <div className="error-bar">{error}</div> : null}
+      <ErrorBar error={error} />
       {open ? (
         diff === null ? (
-          <div className="dim mt-2">Loading diff…</div>
+          <InlineLoading label="Loading diff…" className="mt-2" />
         ) : diff.trim() ? (
           <DiffView diff={diff} className="mt-2.5" />
         ) : (
