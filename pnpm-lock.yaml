@@ -96,6 +96,33 @@ importers:
       '@companion/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@companion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@companion/module-admin':
+        specifier: workspace:*
+        version: link:../../modules/admin
+      '@companion/module-automations':
+        specifier: workspace:*
+        version: link:../../modules/automations
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../../modules/code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../../modules/core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../../modules/operate
+      '@companion/module-plan':
+        specifier: workspace:*
+        version: link:../../modules/plan
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../../modules/workspace
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -243,6 +270,9 @@ importers:
       '@companion/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@companion/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -527,6 +557,28 @@ importers:
 
   packages/types:
     devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/ui:
+    dependencies:
+      highlight.js:
+        specifier: ^11.11.1
+        version: 11.11.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.31)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

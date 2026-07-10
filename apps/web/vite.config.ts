@@ -1,9 +1,14 @@
-import { defineConfig } from 'vite';
+import { defaultClientConditions, defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    // Workspace packages resolve to their TypeScript sources (no prebuild step
+    // for client code); setting conditions REPLACES Vite's defaults, so keep them.
+    conditions: ['source', ...defaultClientConditions],
+  },
   server: {
     port: 5173,
     proxy: {

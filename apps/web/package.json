@@ -11,6 +11,15 @@
   },
   "dependencies": {
     "@companion/contract": "workspace:*",
+    "@companion/core": "workspace:*",
+    "@companion/module-admin": "workspace:*",
+    "@companion/module-automations": "workspace:*",
+    "@companion/module-code": "workspace:*",
+    "@companion/module-core": "workspace:*",
+    "@companion/module-operate": "workspace:*",
+    "@companion/module-plan": "workspace:*",
+    "@companion/module-workspace": "workspace:*",
+    "@companion/ui": "workspace:*",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
