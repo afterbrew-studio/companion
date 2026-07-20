@@ -5,7 +5,8 @@
  * reviewing a PR.
  */
 
-export type CheckState = 'passing' | 'failing' | 'pending' | 'none';
+/** 'unknown' = the fetch itself failed (e.g. token lacks Checks read) — NOT the same as 'none' (no CI configured); gates must treat it as not-green. */
+export type CheckState = 'passing' | 'failing' | 'pending' | 'none' | 'unknown';
 
 export type CheckConclusion =
   | 'success'

@@ -28,13 +28,25 @@ export function ChecksBadge({ checks }: { checks: ChecksSnapshot | null }): JSX.
             icon: '✕',
             label: `CI failing — ${checks.failed} of ${checks.total} checks failing`,
           }
-        : {
-            cls: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-            icon: '●',
-            label: `CI running — ${checks.pending} of ${checks.total} checks pending`,
-          };
+        : checks.state === 'unknown'
+          ? {
+              cls: 'border-zinc-400/60 text-zinc-500 dark:text-zinc-400',
+              icon: '?',
+              label: 'CI status unavailable — could not fetch from GitHub',
+            }
+          : {
+              cls: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
+              icon: '●',
+              label: `CI running — ${checks.pending} of ${checks.total} checks pending`,
+            };
   return (
-    <Tooltip content={`CI: ${checks.passed} passed, ${checks.failed} failed, ${checks.pending} running`}>
+    <Tooltip
+      content={
+        checks.state === 'unknown'
+          ? 'CI status unavailable — GitHub fetch failed (check token permissions)'
+          : `CI: ${checks.passed} passed, ${checks.failed} failed, ${checks.pending} running`
+      }
+    >
       <span
         className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border text-[10px] leading-none ${spec.cls}`}
         role="img"

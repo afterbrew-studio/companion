@@ -179,6 +179,10 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       if (summary.state === 'pending' && !step.config.allowPending) {
         return { status: 'failed', summary: `CI still running — ${line}`, detail: describeChecks(summary) };
       }
+      if (summary.state === 'unknown') {
+        // Can't verify ≠ green — a gate that passes on a failed fetch is no gate.
+        return { status: 'failed', summary: 'CI status unavailable (GitHub fetch failed)', detail: describeChecks(summary) };
+      }
       const label = summary.state === 'none' ? 'no CI configured' : `CI ${summary.state} — ${line}`;
       return { status: 'passed', summary: label, detail: describeChecks(summary) };
     },

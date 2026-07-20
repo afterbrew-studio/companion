@@ -214,6 +214,23 @@ export class GitHubClient {
     await this.patch(`/repos/${fullName}/pulls/${number}`, { state: 'closed' });
   }
 
+  /**
+   * Best-effort head-branch cleanup after a merge. Same-repo heads only — a
+   * fork's ref is not ours to delete, and a same-named base-repo branch must
+   * not be collateral. Returns false when skipped (fork / unknown head repo).
+   */
+  async deleteMergedPrBranch(fullName: string, number: number): Promise<boolean> {
+    const pr = await this.pull(fullName, number);
+    if (pr.head.repo?.full_name !== fullName) return false;
+    const res = await fetch(`${API}/repos/${fullName}/git/refs/heads/${encodeURIComponent(pr.head.ref)}`, {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+    // 422 = ref already gone (raced GitHub's own auto-delete) — that's success.
+    if (!res.ok && res.status !== 422) throw await this.error(res, `/repos/${fullName}/git/refs/heads/${pr.head.ref}`);
+    return true;
+  }
+
   private headers(): Record<string, string> {
     return {
       authorization: `Bearer ${this.token}`,
@@ -286,7 +303,7 @@ export interface GhPull {
   draft?: boolean;
   labels?: Array<{ name?: string } | string>;
   assignees?: Array<{ login: string }> | null;
-  head: { ref: string; sha: string };
+  head: { ref: string; sha: string; repo?: { full_name?: string } | null };
   base: { ref: string };
   /** Only on the single-PR GET and webhook payloads (never the list); null = still computing. */
   mergeable?: boolean | null;

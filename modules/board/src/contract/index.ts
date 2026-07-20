@@ -129,6 +129,7 @@ export interface TaskEventRecord {
 export interface BoardConfig {
   /** Reviewer worker reviews every PR that lands in the review column. */
   readonly autoReview: boolean;
+  /** Pinned reviewer; null = automatic resolution among the workspace's enabled reviewer workers. */
   readonly reviewerWorkerId: string | null;
   /** Merge automatically once review approves and checks are green. */
   readonly autoMerge: boolean;

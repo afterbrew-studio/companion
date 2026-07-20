@@ -997,6 +997,19 @@ export class Orchestrator implements RunnerEventSink {
         this.setStatus(runId, this.store.runs.get(runId)?.status ?? 'running', summary || null);
       }
     }
+    if (event.type === 'error') {
+      // A fatal provider/gateway error IS the run's outcome. Without recording
+      // it, the turn just ends and downstream consumers (the board's no-diff
+      // check) misread a dead run as "ran and changed nothing".
+      const { kind, message } = event as { kind?: string; message?: string };
+      if (kind === 'fatal' && message?.trim()) {
+        this.setStatus(
+          runId,
+          this.store.runs.get(runId)?.status ?? 'running',
+          `fatal: ${message.trim().slice(0, 400)}`,
+        );
+      }
+    }
     this.broadcast({ t: 'event', runId, event });
   }
 

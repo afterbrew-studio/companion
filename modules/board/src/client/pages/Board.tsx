@@ -713,6 +713,14 @@ function ChecksLine({ checks }: { checks: ChecksSnapshot | null }): JSX.Element 
       </span>
     );
   }
+  if (checks.state === 'unknown') {
+    return (
+      <span className="flex items-center gap-1.5">
+        <StatusGlyph tone="warn" label="Checks unavailable" />{' '}
+        <span className="dim">checks unavailable — GitHub token can&apos;t read CI</span>
+      </span>
+    );
+  }
   const tone = checks.state === 'passing' ? 'ok' : checks.state === 'failing' ? 'danger' : 'warn';
   const parts = [
     `${checks.passed} passed`,

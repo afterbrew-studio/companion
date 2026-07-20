@@ -100,13 +100,16 @@ export class PrChecks {
     // GET rides along because it is the only feed that carries `mergeable` —
     // this cadence keeps conflict state fresh even when the PR itself is
     // untouched (a sibling PR merging can turn it conflicted).
+    let fetchFailed = false;
     const [checkRuns, combined, ghPr] = await Promise.all([
       client.checkRuns(repo, pr.headSha).catch((err) => {
         log.warn('check-runs fetch failed', { repo, prNumber, err: String(err) });
+        fetchFailed = true;
         return [] as GhCheckRun[];
       }),
       client.combinedStatus(repo, pr.headSha).catch((err) => {
         log.warn('combined-status fetch failed', { repo, prNumber, err: String(err) });
+        fetchFailed = true;
         return null as GhCombinedStatus | null;
       }),
       client.pull(repo, prNumber).catch((err) => {
@@ -122,8 +125,12 @@ export class PrChecks {
       ...checkRuns.map(fromCheckRun),
       ...(combined?.statuses ?? []).map(fromCommitStatus),
     ];
+    const base = summarize(runs);
     const summary: ChecksSummary = {
-      ...summarize(runs),
+      ...base,
+      // No signal AND a source errored = we don't know — 'none' here would
+      // read as "no CI configured", which merge gates treat as green.
+      state: runs.length === 0 && fetchFailed ? 'unknown' : base.state,
       repo,
       prNumber,
       headSha: pr.headSha,
@@ -221,6 +228,9 @@ function fromCommitStatus(s: {
 
 /** Render a summary as prompt-ready lines for a reviewing agent. */
 export function describeChecks(summary: ChecksSummary | null): string {
+  if (summary?.state === 'unknown') {
+    return 'CI status could not be fetched from GitHub (token/permissions) — treat it as unverified.';
+  }
   if (!summary || summary.state === 'none') {
     return 'No CI pipelines are configured or reported for this PR.';
   }

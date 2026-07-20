@@ -97,6 +97,10 @@ export function PrChecks({
           {state === 'ready' && checks ? (
             checks.state === 'none' ? (
               <span className="dim">no pipelines reported for this commit</span>
+            ) : checks.state === 'unknown' ? (
+              <span className="badge-warn" title="Grant the GitHub token 'Checks: read' and 'Commit statuses: read'">
+                checks unavailable — token can&apos;t read CI
+              </span>
             ) : (
               <>
                 <ChecksBadge checks={checks} />

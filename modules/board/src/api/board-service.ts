@@ -611,7 +611,12 @@ ${acceptance}${specSection}
     if (!diff.trim()) {
       // Detach/charge BEFORE discarding — the discard re-emits run.changed
       // synchronously and must find nothing to react to.
-      if ((task.stage === 'address_review' || task.stage === 'fix_ci') && task.prNumber != null) {
+      const outcome = this.operate.runsStore.get(runId)?.outcome;
+      if (outcome?.startsWith('fatal: ')) {
+        // The run died (provider auth, gateway crash) — it never worked, so
+        // neither "no changes needed" nor the plain no-diff message applies.
+        this.attemptFail(taskId, `agent run died — ${outcome.slice('fatal: '.length, 300)}`);
+      } else if ((task.stage === 'address_review' || task.stage === 'fix_ci') && task.prNumber != null) {
         // A remediation run with no diff means "nothing left to change" (the
         // feedback was already addressed) — re-running the builder would just
         // bounce spawn → no-op → spawn. Hand the card back to the review
@@ -712,9 +717,9 @@ ${acceptance}${specSection}
         this.clearBlocker(task.id, 'reviewer');
       }
       if (task.stage === 'awaiting_review' && config.autoReview) {
-        const reviewer = config.reviewerWorkerId ? this.store.getWorker(config.reviewerWorkerId) : undefined;
-        // Review paused until a reviewer worker is configured and enabled.
-        if (!reviewer?.enabled || reviewer.role !== 'reviewer') {
+        const reviewer = this.resolveReviewer(config, task.repo);
+        // Review paused until the workspace has an enabled reviewer worker.
+        if (!reviewer) {
           this.notifyBlocker(
             task,
             'reviewer',
@@ -738,6 +743,9 @@ ${acceptance}${specSection}
       if ((!approved || !config.autoMerge) && !config.autoFixCi) continue;
       const summary = await this.code.prChecks.trySummary(task.repo, task.prNumber);
       if (!summary) continue;
+      // Unknown = the fetch failed (token/permissions) — neither green enough
+      // to merge nor evidence of failure worth a fix_ci cycle.
+      if (summary.state === 'unknown') continue;
       if (summary.state === 'failing') {
         if (config.autoFixCi) this.bindBack(task.id, 'fix_ci', `CI failing on PR #${task.prNumber}`, config);
         continue;
@@ -748,6 +756,22 @@ ${acceptance}${specSection}
       if (Date.now() < notBefore) continue;
       await this.mergeTask(task, config);
     }
+  }
+
+  /**
+   * The reviewer worker for a task: the configured pin when valid, otherwise —
+   * pin unset (null = automatic resolution, mirroring mergeAccountId) — the
+   * workspace's first enabled reviewer. A fresh workspace with reviewer
+   * workers must review out of the box, not sit silently paused.
+   */
+  private resolveReviewer(config: BoardConfig, repo: string): WorkerRecord | undefined {
+    if (config.reviewerWorkerId) {
+      const pinned = this.store.getWorker(config.reviewerWorkerId);
+      return pinned?.enabled && pinned.role === 'reviewer' ? pinned : undefined;
+    }
+    const workspaceId = this.workspaceOf(repo);
+    if (!workspaceId) return undefined;
+    return this.store.listWorkers(workspaceId).find((w) => w.enabled && w.role === 'reviewer');
   }
 
   /** One reviewer, one PR at a time: analyze, post the verdict, route the card. */
@@ -900,6 +924,10 @@ ${acceptance}${specSection}
       await client
         .comment(task.repo, task.prNumber!, 'Merged by the Companion board — review approved and checks green.')
         .catch(() => undefined);
+      // Best-effort branch hygiene — a protected or fork branch never fails the merge.
+      await client
+        .deleteMergedPrBranch(task.repo, task.prNumber!)
+        .catch((err) => log.warn('board: branch delete after merge failed', { taskId: task.id, err: String(err) }));
       this.mergeBackoff.delete(task.id);
       this.complete(task.id, `merged PR #${task.prNumber} (${config.mergeMethod})`);
       void this.code.sync.syncRepo(task.repo).catch(() => undefined);

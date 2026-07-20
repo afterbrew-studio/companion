@@ -141,6 +141,10 @@ export class PrReviews {
     if (!client) throw new Error('GitHub is not configured');
     const result = await client.mergePr(repo, prNumber, method);
     if (!result.merged) throw new Error(result.message || 'merge refused by GitHub');
+    // Best-effort branch hygiene — a protected or fork branch must not fail the merge.
+    await client.deleteMergedPrBranch(repo, prNumber).catch((err) => {
+      log.warn('branch delete after merge failed', { repo, prNumber, err: String(err) });
+    });
     // The caller (route) re-pulls the PR from GitHub so the cache — and thus the
     // UI — reflects the merged state immediately, not on the next full sync.
   }
