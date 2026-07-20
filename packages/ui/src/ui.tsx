@@ -498,11 +498,14 @@ export function Modal({
   onClose,
   children,
   wide,
+  xl,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  /** Detail-heavy dialogs (side rails, review histories); supersedes `wide`. */
+  xl?: boolean;
 }): JSX.Element {
   // Portaled to <body>: a transformed ancestor (e.g. the animated sidebar)
   // would otherwise become the containing block and trap the overlay.
@@ -518,7 +521,7 @@ export function Modal({
       }}
     >
       <div
-        className={`anim-in my-6 w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900`}
+        className={`anim-in my-6 w-full ${xl ? 'max-w-5xl' : wide ? 'max-w-3xl' : 'max-w-lg'} overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
