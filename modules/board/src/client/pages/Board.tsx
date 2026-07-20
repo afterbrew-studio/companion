@@ -33,6 +33,7 @@ import type { ChecksSnapshot, GitHubAccountRecord } from '@companion/module-code
 import type {
   BoardConfig,
   SpecOption,
+  TaskAttachmentInput,
   TaskEventRecord,
   TaskPriority,
   TaskRecord,
@@ -132,6 +133,124 @@ const PRIORITY_OPTIONS = [
   { value: '2', label: 'P2 — normal' },
   { value: '3', label: 'P3 — someday' },
 ] as const;
+
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_CONTENT = 1_500_000;
+
+/** Keep task payloads bounded while retaining enough detail for visual reference. */
+async function fileToAttachment(file: File): Promise<TaskAttachmentInput> {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Use a PNG, JPEG, or WebP image');
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`Could not read ${file.name}`));
+      element.src = url;
+    });
+    const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    return { name: file.name, mediaType: 'image/jpeg', content: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function AttachmentEditor({
+  attachments,
+  onChange,
+  onError,
+}: {
+  attachments: readonly TaskAttachmentInput[];
+  onChange: (attachments: TaskAttachmentInput[]) => void;
+  onError: (error: string) => void;
+}): JSX.Element {
+  const [reading, setReading] = useState(false);
+  const addFiles = async (files: FileList | null): Promise<void> => {
+    if (!files?.length) return;
+    if (attachments.length + files.length > MAX_ATTACHMENTS) {
+      onError(`A task can have up to ${MAX_ATTACHMENTS} images`);
+      return;
+    }
+    setReading(true);
+    try {
+      const added = await Promise.all([...files].map(fileToAttachment));
+      const next = [...attachments, ...added];
+      if (next.reduce((total, attachment) => total + attachment.content.length, 0) > MAX_ATTACHMENT_CONTENT) {
+        throw new Error('Images are too large in total. Remove an image or use smaller screenshots.');
+      }
+      onChange(next);
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setReading(false);
+    }
+  };
+  return (
+    <Field label="Screens & references" hint="PNG, JPEG, or WebP. Images are resized before upload and sent to the worker.">
+      <div className="flex flex-col gap-2">
+        {attachments.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+            {attachments.map((attachment, index) => (
+              <div key={`${attachment.name}-${index}`} className="group relative aspect-square overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
+                <img src={`data:${attachment.mediaType};base64,${attachment.content}`} alt={attachment.name} className="size-full object-cover" />
+                <button
+                  type="button"
+                  className="absolute top-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white opacity-80 hover:opacity-100"
+                  aria-label={`Remove ${attachment.name}`}
+                  onClick={() => onChange(attachments.filter((_, itemIndex) => itemIndex !== index))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {attachments.length < MAX_ATTACHMENTS ? (
+          <label className="flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
+            {reading ? 'Preparing images…' : 'Attach images'}
+            <input
+              className="sr-only"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              disabled={reading}
+              onChange={(event) => {
+                void addFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+          </label>
+        ) : null}
+      </div>
+    </Field>
+  );
+}
+
+function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachments'] }): JSX.Element | null {
+  if (attachments.length === 0) return null;
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold tracking-wide uppercase">Attachments</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {attachments.flatMap((attachment) =>
+          attachment.content
+            ? [
+                <a key={attachment.id} href={`data:${attachment.mediaType};base64,${attachment.content}`} target="_blank" rel="noreferrer" className="group overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <img src={`data:${attachment.mediaType};base64,${attachment.content}`} alt={attachment.name} className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.02]" />
+                  <span className="block truncate px-2 py-1.5 text-xs">{attachment.name}</span>
+                </a>,
+              ]
+            : [],
+        )}
+      </div>
+    </section>
+  );
+}
 
 export default function Board({ query }: RouteProps): JSX.Element {
   const { current } = useWorkspace();
@@ -331,7 +450,8 @@ function TaskCard({
   onDragEnd: () => void;
 }): JSX.Element {
   const signal = cardSignal(task, attention ?? false);
-  const hasChips = task.prUrl != null || task.reviewRecommendation != null || task.attempts > 0 || task.specId != null;
+  const hasChips =
+    task.prUrl != null || task.reviewRecommendation != null || task.attempts > 0 || task.attachments.length > 0 || task.specId != null;
   const borderClass = attention
     ? 'border-amber-400/60 dark:border-amber-500/40'
     : task.status === 'failed'
@@ -413,6 +533,11 @@ function TaskCard({
               <span className="rounded bg-zinc-500/10 px-1.5 py-0.5 text-[10px] tabular-nums">↻ {task.attempts}</span>
             </Tooltip>
           ) : null}
+          {task.attachments.length > 0 ? (
+            <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600 dark:text-sky-400">
+              {task.attachments.length} image{task.attachments.length === 1 ? '' : 's'}
+            </span>
+          ) : null}
           {task.specId ? (
             <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] text-indigo-500">spec</span>
           ) : null}
@@ -431,6 +556,7 @@ function NewTaskModal({ onClose, onError }: { onClose: () => void; onError: (e: 
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [priority, setPriority] = useState<TaskPriority>(2);
+  const [attachments, setAttachments] = useState<TaskAttachmentInput[]>([]);
   const [specs, setSpecs] = useState<SpecOption[]>([]);
   const [specId, setSpecId] = useState<string | null>(null);
   const [queue, setQueue] = useState(true);
@@ -458,7 +584,16 @@ function NewTaskModal({ onClose, onError }: { onClose: () => void; onError: (e: 
     if (!effectiveRepo || !title.trim()) return;
     setBusy(true);
     try {
-      await boardApi.createTask({ repo: effectiveRepo, title: title.trim(), description, acceptance, specId, priority, queue });
+      await boardApi.createTask({
+        repo: effectiveRepo,
+        title: title.trim(),
+        description,
+        acceptance,
+        specId,
+        attachments,
+        priority,
+        queue,
+      });
       onError(null);
       onClose();
     } catch (err) {
@@ -504,6 +639,7 @@ function NewTaskModal({ onClose, onError }: { onClose: () => void; onError: (e: 
             maxLength={10_000}
           />
         </Field>
+        <AttachmentEditor attachments={attachments} onChange={setAttachments} onError={onError} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Priority">
             <Dropdown
@@ -607,6 +743,8 @@ function TaskDetailDrawer({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
+  const [priority, setPriority] = useState<TaskPriority>(2);
+  const [attachments, setAttachments] = useState<TaskAttachmentInput[]>([]);
   const { confirmDanger, confirmElement } = useConfirm();
   const { can } = useAuth();
 
@@ -633,7 +771,13 @@ function TaskDetailDrawer({
   };
 
   const saveEdit = act(async () => {
-    await boardApi.updateTask(id, { title: title.trim() || task.title, description, acceptance });
+    await boardApi.updateTask(id, {
+      title: title.trim() || task.title,
+      description,
+      acceptance,
+      priority,
+      attachments,
+    });
     setEditing(false);
   });
 
@@ -685,6 +829,12 @@ function TaskDetailDrawer({
                 setTitle(task.title);
                 setDescription(task.description);
                 setAcceptance(task.acceptance);
+                setPriority(task.priority);
+                setAttachments(
+                  task.attachments.flatMap(({ name, mediaType, content }) =>
+                    content ? [{ name, mediaType, content }] : [],
+                  ),
+                );
                 setEditing(true);
               }}
             >
@@ -790,6 +940,15 @@ function TaskDetailDrawer({
                 maxLength={10_000}
               />
             </Field>
+            <Field label="Priority">
+              <Dropdown
+                ariaLabel="Priority"
+                value={String(priority) as '0' | '1' | '2' | '3'}
+                onChange={(value) => setPriority(Number(value) as TaskPriority)}
+                options={PRIORITY_OPTIONS}
+              />
+            </Field>
+            <AttachmentEditor attachments={attachments} onChange={setAttachments} onError={(error) => onError(error)} />
             <FormActions>
               <button className="btn-ghost" onClick={() => setEditing(false)}>
                 Cancel
@@ -801,12 +960,15 @@ function TaskDetailDrawer({
           </div>
         ) : (
           <>
-            <section aria-label="Description">
-              <DetailHeading>Description</DetailHeading>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-                {task.description ? <Markdown text={task.description} /> : <p className="dim">No description.</p>}
-              </div>
-            </section>
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem]">
+              <section aria-label="Description">
+                <DetailHeading>Description</DetailHeading>
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                  {task.description ? <Markdown text={task.description} /> : <p className="dim">No description.</p>}
+                </div>
+              </section>
+              <AttachmentGallery attachments={task.attachments} />
+            </div>
             {task.acceptance.trim() ? (
               <section aria-label="Acceptance criteria">
                 <DetailHeading>

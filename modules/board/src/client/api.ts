@@ -3,6 +3,7 @@ import type { PrReviewResult } from '@companion/module-code/contract';
 import type {
   BoardConfig,
   SpecOption,
+  TaskAttachmentInput,
   TaskEventRecord,
   TaskPriority,
   TaskPrView,
@@ -35,12 +36,20 @@ export const boardApi = {
     description: string;
     acceptance: string;
     specId: string | null;
+    attachments: readonly TaskAttachmentInput[];
     priority: TaskPriority;
     queue: boolean;
   }) => post<{ task: TaskRecord }>('/api/board/tasks', input),
   updateTask: (
     id: string,
-    fields: { title?: string; description?: string; acceptance?: string; specId?: string | null; priority?: TaskPriority },
+    fields: {
+      title?: string;
+      description?: string;
+      acceptance?: string;
+      specId?: string | null;
+      attachments?: readonly TaskAttachmentInput[];
+      priority?: TaskPriority;
+    },
   ) => patch<{ task: TaskRecord }>(`/api/board/tasks/${id}`, fields),
   moveTask: (id: string, to: TaskStatus) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/move`, { to }),
   mergeTask: (id: string) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/merge`, {}),

@@ -355,6 +355,7 @@ export class RefinementService {
       // Board tasks carry ONE spec as agent context — only an unambiguous
       // attachment travels; with several specs the task goes without.
       specId: refinement.specIds.length === 1 ? (refinement.specIds[0] ?? null) : null,
+      attachments: [],
       priority: item.priority,
       queue,
       createdBy: user,

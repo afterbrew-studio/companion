@@ -7,6 +7,8 @@ import { log } from '@companion/services';
 import type {
   BoardConfig,
   SpecOption,
+  TaskAttachment,
+  TaskAttachmentInput,
   TaskEventRecord,
   TaskPriority,
   TaskPrView,
@@ -93,7 +95,8 @@ export class BoardService {
   listBoard(user: AuthUser, workspaceId: string): { tasks: TaskRecord[]; workers: WorkerView[]; config: BoardConfig } {
     const tasks = this.store
       .listTasks()
-      .filter((t) => this.workspaceOf(t.repo) === workspaceId && this.workspace.canAccessRepo(user, t.repo));
+      .filter((t) => this.workspaceOf(t.repo) === workspaceId && this.workspace.canAccessRepo(user, t.repo))
+      .map((task) => ({ ...task, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) }));
     const busy = this.store.busyWorkerMap();
     const workers = this.store.listWorkers(workspaceId).map((w): WorkerView => {
       const b = busy.get(w.id);
@@ -147,6 +150,7 @@ export class BoardService {
     description: string;
     acceptance: string;
     specId: string | null;
+    attachments: readonly TaskAttachmentInput[];
     priority: TaskPriority;
     queue: boolean;
     createdBy: string | null;
@@ -160,6 +164,7 @@ export class BoardService {
       description: input.description,
       acceptance: input.acceptance,
       specId: input.specId,
+      attachments: makeAttachments(input.attachments),
       priority: input.priority,
       status: input.queue ? 'ready' : 'backlog',
       stage: input.queue ? 'build' : null,
@@ -188,11 +193,19 @@ export class BoardService {
 
   updateTask(
     id: string,
-    fields: { title?: string; description?: string; acceptance?: string; specId?: string | null; priority?: TaskPriority },
+    fields: {
+      title?: string;
+      description?: string;
+      acceptance?: string;
+      specId?: string | null;
+      attachments?: readonly TaskAttachmentInput[];
+      priority?: TaskPriority;
+    },
   ): TaskRecord {
     const task = this.store.getTask(id);
     if (!task) throw new Error('task not found');
-    this.store.updateTask(id, fields);
+    const { attachments, ...patch } = fields;
+    this.store.updateTask(id, { ...patch, ...(attachments ? { attachments: makeAttachments(attachments) } : {}) });
     this.changed();
     return this.store.getTask(id)!;
   }
@@ -536,6 +549,9 @@ export class BoardService {
           branchPrefix: `companion/task-${task.id.replace(/^tsk-/, '')}`,
           baseBranch: repoRow.default_branch,
           objective: this.buildObjective(task, repoRow.default_branch),
+          attachments: task.attachments.flatMap(({ name, mediaType, content }) =>
+            content ? [{ kind: 'image' as const, name, mediaType, content }] : [],
+          ),
         });
       }
       // The human may have parked/deleted the task while the run was being
@@ -1043,4 +1059,8 @@ function stageLabel(stage: TaskStage): string {
     default:
       return stage;
   }
+}
+
+function makeAttachments(inputs: readonly TaskAttachmentInput[]): TaskAttachment[] {
+  return inputs.map((input) => ({ ...input, id: `att-${randomUUID().slice(0, 12)}` }));
 }

@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import type {
   BoardConfig,
+  TaskAttachment,
   TaskEventRecord,
   TaskPriority,
   TaskRecord,
@@ -26,6 +27,7 @@ interface TaskRow {
   description: string;
   acceptance: string;
   spec_id: string | null;
+  attachments: string;
   priority: number;
   status: string;
   stage: string | null;
@@ -73,6 +75,7 @@ function rowToTask(row: TaskRow): TaskRecord {
     description: row.description,
     acceptance: row.acceptance,
     specId: row.spec_id,
+    attachments: JSON.parse(row.attachments) as TaskAttachment[],
     priority: row.priority as TaskPriority,
     status: row.status as TaskStatus,
     stage: row.stage as TaskStage | null,
@@ -104,6 +107,7 @@ export interface TaskPatch {
   description?: string;
   acceptance?: string;
   specId?: string | null;
+  attachments?: readonly TaskAttachment[];
   priority?: TaskPriority;
   status?: TaskStatus;
   stage?: TaskStage | null;
@@ -126,6 +130,7 @@ const TASK_PATCH_COLUMNS: ReadonlyArray<[keyof TaskPatch, string]> = [
   ['description', 'description'],
   ['acceptance', 'acceptance'],
   ['specId', 'spec_id'],
+  ['attachments', 'attachments'],
   ['priority', 'priority'],
   ['status', 'status'],
   ['stage', 'stage'],
@@ -205,18 +210,18 @@ export class BoardStore {
     this.db
       .prepare(
         `INSERT INTO board_tasks (
-           id, repo, title, description, acceptance, spec_id, priority, status, stage,
+           id, repo, title, description, acceptance, spec_id, attachments, priority, status, stage,
            created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
            review_risk, review_recommendation, attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
-           @id, @repo, @title, @description, @acceptance, @specId, @priority, @status, @stage,
+           @id, @repo, @title, @description, @acceptance, @specId, @attachments, @priority, @status, @stage,
            @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
            @reviewRisk, @reviewRecommendation, @attempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt
          )`,
       )
-      .run(t);
+      .run({ ...t, attachments: JSON.stringify(t.attachments) });
   }
 
   updateTask(id: string, patch: TaskPatch): void {
@@ -225,7 +230,7 @@ export class BoardStore {
     for (const [key, column] of TASK_PATCH_COLUMNS) {
       if (patch[key] !== undefined) {
         sets.push(`${column} = @${key}`);
-        params[key] = patch[key];
+        params[key] = key === 'attachments' ? JSON.stringify(patch[key]) : patch[key];
       }
     }
     if (sets.length === 0) return;

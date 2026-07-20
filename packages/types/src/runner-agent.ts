@@ -18,7 +18,7 @@
  * them on the run row and hands them back to the agent verbatim.
  */
 
-import type { AskRequest, AskResponse, HistorySegment, MoxxyEvent } from './moxxy.js';
+import type { AskRequest, AskResponse, HistorySegment, MoxxyEvent, PromptAttachment } from './moxxy.js';
 
 /** GET /agent/health */
 export interface AgentHealth {
@@ -38,7 +38,12 @@ export interface AgentHealth {
   readonly providers?: readonly string[];
 }
 
-export const RUNNER_AGENT_PROTOCOL = 1;
+/**
+ * Version 2 adds image attachments to AgentPromptRequest. Bumping this makes a
+ * new companiond mark pre-attachment runners degraded instead of silently
+ * starting a turn that drops its visual context.
+ */
+export const RUNNER_AGENT_PROTOCOL = 2;
 
 /** POST /agent/runs/:runId/spawn — bring up serve+gateway for a run at `cwd`. */
 export interface AgentSpawnRequest {
@@ -51,6 +56,7 @@ export interface AgentSpawnRequest {
 export interface AgentPromptRequest {
   readonly prompt: string;
   readonly model?: string;
+  readonly attachments?: readonly PromptAttachment[];
 }
 
 /**
