@@ -7,6 +7,7 @@ const createTaskSchema = z.object({
   repo: z.string().min(3).max(200),
   title: z.string().min(1).max(200),
   description: z.string().max(20_000).default(''),
+  acceptance: z.string().max(10_000).default(''),
   specId: z.string().max(100).nullable().default(null),
   priority: prioritySchema.default(2),
   queue: z.boolean().default(false),
@@ -15,6 +16,7 @@ const createTaskSchema = z.object({
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(20_000).optional(),
+  acceptance: z.string().max(10_000).optional(),
   specId: z.string().max(100).nullable().optional(),
   priority: prioritySchema.optional(),
 });
@@ -39,6 +41,7 @@ const configSchema = z.object({
   reviewerWorkerId: z.string().max(100).nullable().optional(),
   autoMerge: z.boolean().optional(),
   mergeMethod: z.enum(['merge', 'squash', 'rebase']).optional(),
+  mergeAccountId: z.string().max(100).nullable().optional(),
   autoFixCi: z.boolean().optional(),
   maxAttempts: z.number().int().min(1).max(10).optional(),
 });
@@ -74,7 +77,7 @@ export default defineRoutes((ctx) => {
       handler: ({ body, user }) => {
         if (!workspace.canAccessRepo(user!, body.repo)) throw forbidden('no access to that repository');
         try {
-          return created({ task: board.createTask(body) });
+          return created({ task: board.createTask({ ...body, createdBy: user!.username }) });
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -101,6 +104,20 @@ export default defineRoutes((ctx) => {
         if (!board.getTask(user!, params.id)) throw notFound('task not found');
         try {
           return { task: await board.moveTask(params.id, body.to) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/board/tasks/:id/merge',
+      access: 'board:manage',
+      handler: async ({ params, user }) => {
+        if (!board.getTask(user!, params.id)) throw notFound('task not found');
+        try {
+          return { task: await board.mergeNow(params.id) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

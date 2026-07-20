@@ -273,6 +273,9 @@ importers:
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate

@@ -23,10 +23,13 @@ interface TaskRow {
   repo: string;
   title: string;
   description: string;
+  acceptance: string;
   spec_id: string | null;
   priority: number;
   status: string;
   stage: string | null;
+  created_by: string | null;
+  first_worker: string | null;
   assigned_worker_id: string | null;
   run_id: string | null;
   branch: string | null;
@@ -66,10 +69,13 @@ function rowToTask(row: TaskRow): TaskRecord {
     repo: row.repo,
     title: row.title,
     description: row.description,
+    acceptance: row.acceptance,
     specId: row.spec_id,
     priority: row.priority as TaskPriority,
     status: row.status as TaskStatus,
     stage: row.stage as TaskStage | null,
+    createdBy: row.created_by,
+    firstWorker: row.first_worker,
     assignedWorkerId: row.assigned_worker_id,
     runId: row.run_id,
     branch: row.branch,
@@ -94,10 +100,12 @@ function rowToEvent(row: EventRow): TaskEventRecord {
 export interface TaskPatch {
   title?: string;
   description?: string;
+  acceptance?: string;
   specId?: string | null;
   priority?: TaskPriority;
   status?: TaskStatus;
   stage?: TaskStage | null;
+  firstWorker?: string | null;
   assignedWorkerId?: string | null;
   runId?: string | null;
   branch?: string | null;
@@ -114,10 +122,12 @@ export interface TaskPatch {
 const TASK_PATCH_COLUMNS: ReadonlyArray<[keyof TaskPatch, string]> = [
   ['title', 'title'],
   ['description', 'description'],
+  ['acceptance', 'acceptance'],
   ['specId', 'spec_id'],
   ['priority', 'priority'],
   ['status', 'status'],
   ['stage', 'stage'],
+  ['firstWorker', 'first_worker'],
   ['assignedWorkerId', 'assigned_worker_id'],
   ['runId', 'run_id'],
   ['branch', 'branch'],
@@ -174,13 +184,13 @@ export class BoardStore {
     this.db
       .prepare(
         `INSERT INTO board_tasks (
-           id, repo, title, description, spec_id, priority, status, stage,
-           assigned_worker_id, run_id, branch, pr_number, pr_url,
+           id, repo, title, description, acceptance, spec_id, priority, status, stage,
+           created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
            review_risk, review_recommendation, attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
-           @id, @repo, @title, @description, @specId, @priority, @status, @stage,
-           @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
+           @id, @repo, @title, @description, @acceptance, @specId, @priority, @status, @stage,
+           @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
            @reviewRisk, @reviewRecommendation, @attempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt
          )`,
@@ -265,18 +275,28 @@ export class BoardStore {
           reviewer_worker_id: string | null;
           auto_merge: number;
           merge_method: string;
+          merge_account_id: string | null;
           auto_fix_ci: number;
           max_attempts: number;
         }
       | undefined;
     if (!row) {
-      return { autoReview: true, reviewerWorkerId: null, autoMerge: true, mergeMethod: 'squash', autoFixCi: true, maxAttempts: 3 };
+      return {
+        autoReview: true,
+        reviewerWorkerId: null,
+        autoMerge: true,
+        mergeMethod: 'squash',
+        mergeAccountId: null,
+        autoFixCi: true,
+        maxAttempts: 3,
+      };
     }
     return {
       autoReview: row.auto_review === 1,
       reviewerWorkerId: row.reviewer_worker_id,
       autoMerge: row.auto_merge === 1,
       mergeMethod: row.merge_method as BoardConfig['mergeMethod'],
+      mergeAccountId: row.merge_account_id,
       autoFixCi: row.auto_fix_ci === 1,
       maxAttempts: row.max_attempts,
     };
@@ -285,13 +305,14 @@ export class BoardStore {
   setConfig(config: BoardConfig): void {
     this.db
       .prepare(
-        `INSERT INTO board_config (id, auto_review, reviewer_worker_id, auto_merge, merge_method, auto_fix_ci, max_attempts)
-         VALUES (1, @autoReview, @reviewerWorkerId, @autoMerge, @mergeMethod, @autoFixCi, @maxAttempts)
+        `INSERT INTO board_config (id, auto_review, reviewer_worker_id, auto_merge, merge_method, merge_account_id, auto_fix_ci, max_attempts)
+         VALUES (1, @autoReview, @reviewerWorkerId, @autoMerge, @mergeMethod, @mergeAccountId, @autoFixCi, @maxAttempts)
          ON CONFLICT (id) DO UPDATE SET
            auto_review = excluded.auto_review,
            reviewer_worker_id = excluded.reviewer_worker_id,
            auto_merge = excluded.auto_merge,
            merge_method = excluded.merge_method,
+           merge_account_id = excluded.merge_account_id,
            auto_fix_ci = excluded.auto_fix_ci,
            max_attempts = excluded.max_attempts`,
       )
@@ -300,6 +321,7 @@ export class BoardStore {
         reviewerWorkerId: config.reviewerWorkerId,
         autoMerge: config.autoMerge ? 1 : 0,
         mergeMethod: config.mergeMethod,
+        mergeAccountId: config.mergeAccountId,
         autoFixCi: config.autoFixCi ? 1 : 0,
         maxAttempts: config.maxAttempts,
       });

@@ -66,4 +66,32 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    version: 2,
+    name: 'board_merge_account',
+    up: (db) => {
+      db.exec(`ALTER TABLE board_config ADD COLUMN merge_account_id TEXT`);
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE board_config DROP COLUMN merge_account_id`);
+    },
+  },
+  {
+    version: 3,
+    name: 'board_task_provenance',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE board_tasks ADD COLUMN acceptance TEXT NOT NULL DEFAULT '';
+        ALTER TABLE board_tasks ADD COLUMN created_by TEXT;
+        ALTER TABLE board_tasks ADD COLUMN first_worker TEXT;
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        ALTER TABLE board_tasks DROP COLUMN acceptance;
+        ALTER TABLE board_tasks DROP COLUMN created_by;
+        ALTER TABLE board_tasks DROP COLUMN first_worker;
+      `);
+    },
+  },
 ]);

@@ -1,9 +1,11 @@
 import { del, patch, post, put, request } from '@companion/core/client';
+import type { PrReviewResult } from '@companion/module-code/contract';
 import type {
   BoardConfig,
   SpecOption,
   TaskEventRecord,
   TaskPriority,
+  TaskPrView,
   TaskRecord,
   TaskStatus,
   WorkerRole,
@@ -17,22 +19,31 @@ export interface BoardSnapshot {
   readonly config: BoardConfig;
 }
 
+export interface TaskDetail {
+  readonly task: TaskRecord;
+  readonly events: TaskEventRecord[];
+  readonly pr: TaskPrView | null;
+  readonly reviews: PrReviewResult[];
+}
+
 export const boardApi = {
   get: () => request<BoardSnapshot>('/api/board'),
-  task: (id: string) => request<{ task: TaskRecord; events: TaskEventRecord[] }>(`/api/board/tasks/${id}`),
+  task: (id: string) => request<TaskDetail>(`/api/board/tasks/${id}`),
   createTask: (input: {
     repo: string;
     title: string;
     description: string;
+    acceptance: string;
     specId: string | null;
     priority: TaskPriority;
     queue: boolean;
   }) => post<{ task: TaskRecord }>('/api/board/tasks', input),
   updateTask: (
     id: string,
-    fields: { title?: string; description?: string; specId?: string | null; priority?: TaskPriority },
+    fields: { title?: string; description?: string; acceptance?: string; specId?: string | null; priority?: TaskPriority },
   ) => patch<{ task: TaskRecord }>(`/api/board/tasks/${id}`, fields),
   moveTask: (id: string, to: TaskStatus) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/move`, { to }),
+  mergeTask: (id: string) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/merge`, {}),
   deleteTask: (id: string) => del<{ ok: true }>(`/api/board/tasks/${id}`),
   specs: (repo: string) => request<{ specs: SpecOption[] }>(`/api/board/specs/${repo}`),
   createWorker: (name: string, role: WorkerRole) => post<{ worker: WorkerRecord }>('/api/board/workers', { name, role }),

@@ -20,6 +20,7 @@
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
     "@companion/ui": "workspace:*",
+    "@companion/module-core": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@companion/module-code": "workspace:*",
     "@companion/module-operate": "workspace:*",

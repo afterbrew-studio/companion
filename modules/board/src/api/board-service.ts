@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { AuthUser, ServiceMap, SpaServerMessage } from '@companion/contracts';
 import type { NotificationEmitter } from '@companion/core/server';
 import type { RunRecord, RunStatus } from '@companion/module-operate/contract';
+import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@companion/services';
 import type {
   BoardConfig,
   SpecOption,
   TaskEventRecord,
   TaskPriority,
+  TaskPrView,
   TaskRecord,
   TaskStage,
   TaskStatus,
@@ -88,10 +90,22 @@ export class BoardService {
     return { tasks, workers, config: this.store.getConfig() };
   }
 
-  getTask(user: AuthUser, id: string): { task: TaskRecord; events: TaskEventRecord[] } | null {
+  getTask(
+    user: AuthUser,
+    id: string,
+  ): { task: TaskRecord; events: TaskEventRecord[]; pr: TaskPrView | null; reviews: PrReviewResult[] } | null {
     const task = this.store.getTask(id);
     if (!task || !this.workspace.canAccessRepo(user, task.repo)) return null;
-    return { task, events: this.store.listEvents(id) };
+    // Join the PR's cached GitHub state and its full review history from the
+    // code module, so the detail view shows verdicts/checks without extra calls.
+    const pr = task.prNumber != null ? this.code.prs.get(task.repo, task.prNumber) : undefined;
+    const reviews = task.prNumber != null ? this.code.prReviews.listForPr(task.repo, task.prNumber) : [];
+    return {
+      task,
+      events: this.store.listEvents(id),
+      pr: pr ? { state: pr.state, reviewDecision: pr.reviewDecision, checks: pr.checks } : null,
+      reviews,
+    };
   }
 
   /** Spec picker options for a repo — empty when the plan module is disabled. */
@@ -111,9 +125,11 @@ export class BoardService {
     repo: string;
     title: string;
     description: string;
+    acceptance: string;
     specId: string | null;
     priority: TaskPriority;
     queue: boolean;
+    createdBy: string | null;
   }): TaskRecord {
     if (!this.code.repos.get(input.repo)) throw new Error(`repo ${input.repo} is not connected`);
     const now = Date.now();
@@ -122,10 +138,13 @@ export class BoardService {
       repo: input.repo,
       title: input.title,
       description: input.description,
+      acceptance: input.acceptance,
       specId: input.specId,
       priority: input.priority,
       status: input.queue ? 'ready' : 'backlog',
       stage: input.queue ? 'build' : null,
+      createdBy: input.createdBy,
+      firstWorker: null,
       assignedWorkerId: null,
       runId: null,
       branch: null,
@@ -149,7 +168,7 @@ export class BoardService {
 
   updateTask(
     id: string,
-    fields: { title?: string; description?: string; specId?: string | null; priority?: TaskPriority },
+    fields: { title?: string; description?: string; acceptance?: string; specId?: string | null; priority?: TaskPriority },
   ): TaskRecord {
     const task = this.store.getTask(id);
     if (!task) throw new Error('task not found');
@@ -286,6 +305,15 @@ export class BoardService {
       const reviewer = this.store.getWorker(next.reviewerWorkerId);
       if (!reviewer) throw new Error('reviewer worker not found');
       if (reviewer.role !== 'reviewer') throw new Error(`${reviewer.name} is not a reviewer`);
+    }
+    if (next.mergeAccountId) {
+      const account = this.code.githubAccounts.row(next.mergeAccountId);
+      if (!account) throw new Error('merge account not found');
+      // Merges run unattended (no invoking user), and personal accounts never
+      // act for anyone but their owner — only shared/delegated accounts work.
+      if (account.ownerId !== null) {
+        throw new Error(`${account.login} is a personal account — pick a shared account with merge rights`);
+      }
     }
     this.store.setConfig(next);
     this.changed();
@@ -430,6 +458,7 @@ export class BoardService {
     this.store.updateTask(task.id, {
       status: 'in_progress',
       stage,
+      firstWorker: task.firstWorker ?? worker.name,
       assignedWorkerId: worker.id,
       lastError: null,
       startedAt: task.startedAt ?? Date.now(),
@@ -482,12 +511,15 @@ export class BoardService {
         specSection = `\n## Specification: ${spec.title}\n${content}\n`;
       }
     }
+    const acceptance = task.acceptance.trim()
+      ? `\n## Acceptance criteria (definition of done)\n${task.acceptance.trim()}\n`
+      : '';
     return `You are an autonomous software engineer working in a dedicated git worktree (branch off origin/${baseBranch}). Implement the following task from the development board.
 
 ## Task: ${task.title}
 
 ${task.description || '(no further description)'}
-${specSection}
+${acceptance}${specSection}
 ## Rules
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
@@ -507,10 +539,30 @@ ${specSection}
 
     const { diff } = await this.code.fixes.diff(runId).catch(() => ({ diff: '' }));
     if (!diff.trim()) {
-      // Charge the attempt (which detaches the run) BEFORE discarding — the
-      // discard re-emits run.changed synchronously and must find nothing.
-      this.attemptFail(taskId, 'agent finished without producing any changes');
+      // Detach/charge BEFORE discarding — the discard re-emits run.changed
+      // synchronously and must find nothing to react to.
+      if ((task.stage === 'address_review' || task.stage === 'fix_ci') && task.prNumber != null) {
+        // A remediation run with no diff means "nothing left to change" (the
+        // feedback was already addressed) — re-running the builder would just
+        // bounce spawn → no-op → spawn. Hand the card back to the review
+        // cycle to re-verdict instead; attempts still bound the loop.
+        this.store.updateTask(taskId, {
+          status: 'in_review',
+          stage: 'awaiting_review',
+          runId: null,
+          attempts: task.attempts + 1,
+        });
+        this.store.insertEvent(
+          taskId,
+          'no_changes',
+          `${task.stage === 'fix_ci' ? 'CI repair' : 'review fix'} run changed nothing — back to review`,
+        );
+        this.changed();
+      } else {
+        this.attemptFail(taskId, 'agent finished without producing any changes');
+      }
       await this.code.fixes.discard(runId).catch(() => undefined);
+      this.kick();
       return;
     }
 
@@ -521,7 +573,9 @@ ${specSection}
     const hadPr = task.prNumber != null;
     const { prUrl } = await this.code.fixes.approve(runId, {
       title: task.title,
-      body: `${task.description ? `${task.description}\n\n` : ''}_Task \`${task.id}\` on the Companion board._`,
+      body: `${task.description ? `${task.description}\n\n` : ''}${
+        task.acceptance.trim() ? `### Acceptance criteria\n${task.acceptance.trim()}\n\n` : ''
+      }_Task \`${task.id}\` on the Companion board._`,
     });
     const run = this.operate.runsStore.get(runId);
     const after = this.store.getTask(taskId);
@@ -548,7 +602,7 @@ ${specSection}
     }
     this.store.updateTask(taskId, prPatch);
     this.store.insertEvent(taskId, hadPr ? 'pr_updated' : 'pr_opened', prUrl);
-    this.notifyUser(task.repo, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board`);
+    this.notifyUser(task.repo, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board?task=${taskId}`);
     this.changed();
     // Warm the PR cache so the review cycle sees the new head promptly.
     void this.code.sync.syncRepo(task.repo).catch(() => undefined);
@@ -620,11 +674,14 @@ ${specSection}
     try {
       const task = this.store.getTask(taskId);
       if (!task || task.status !== 'in_review' || !task.prNumber) return;
+      const config = this.store.getConfig();
       this.store.updateTask(taskId, { stage: 'reviewing' });
       this.store.insertEvent(taskId, 'review_started', `${reviewerName} is reviewing PR #${task.prNumber}`);
       this.changed();
 
-      const result = await this.code.prReviews.analyzePr(task.repo, task.prNumber);
+      const result = await this.code.prReviews.analyzePr(task.repo, task.prNumber, {
+        context: this.reviewBriefing(task, config),
+      });
       const fresh = this.store.getTask(taskId);
       if (!fresh || fresh.status !== 'in_review' || fresh.stage !== 'reviewing' || fresh.prNumber !== task.prNumber) return;
 
@@ -650,7 +707,7 @@ ${specSection}
       }
 
       if (recommendation === 'request_changes') {
-        this.bindBack(taskId, 'address_review', `reviewer requested changes on PR #${task.prNumber}`, this.store.getConfig());
+        this.bindBack(taskId, 'address_review', `reviewer requested changes on PR #${task.prNumber}`, config);
       } else {
         this.store.updateTask(taskId, { stage: 'awaiting_merge' });
         if (recommendation === 'comment') {
@@ -660,8 +717,18 @@ ${specSection}
             task.repo,
             'action_required',
             `Board task needs a decision: ${task.title.slice(0, 60)}`,
-            `The review left comments on PR #${task.prNumber} without approving. Merge it, mark the task done, or queue it back to its worker.`,
-            '#/board',
+            `The review left comments on PR #${task.prNumber} without approving. Merge it from the task, queue it back to its worker, or mark it done.`,
+            `#/board?task=${taskId}`,
+          );
+        } else if (!config.autoMerge) {
+          // Approved with auto-merge off: the human owns the merge — hand them
+          // the task (its Merge button) rather than leaving the card to sit.
+          this.notifyUser(
+            task.repo,
+            'action_required',
+            `Board task ready to merge: ${task.title.slice(0, 60)}`,
+            `The review approved PR #${task.prNumber}. Auto-merge is off — merge it from the task or on GitHub.`,
+            `#/board?task=${taskId}`,
           );
         }
       }
@@ -681,11 +748,63 @@ ${specSection}
     }
   }
 
+  /**
+   * The reviewer's briefing for this loop: verdicts route the card, so be
+   * decisive; findings are fixed in ONE remediation pass, so be exhaustive; and
+   * re-reviews must converge instead of surfacing fresh nitpicks every round.
+   */
+  private reviewBriefing(task: TaskRecord, config: BoardConfig): string {
+    const prior = this.store
+      .listEvents(task.id)
+      .filter((e) => e.kind === 'review_verdict')
+      .reverse(); // the store returns newest-first; the briefing reads in order
+    const lines = [
+      `This review is part of an autonomous build/review loop on a task board (round ${prior.length + 1}; remediation budget ${task.attempts}/${config.maxAttempts} used). Your verdict routes the card automatically:`,
+      `- "request_changes" — the PR returns to the agent that built it, which addresses ALL your findings in one pass.`,
+      `- "approve" — the PR ${config.autoMerge ? 'is merged automatically once checks are green' : 'is handed to a human to merge'}.`,
+      `- "comment" — the loop STOPS and waits for a human decision. Reserve it for questions that genuinely need human judgment; minor polish is not such a question.`,
+      '',
+      `Report EVERY issue that must be fixed in THIS verdict — nothing may be held back for a later round.`,
+    ];
+    if (task.acceptance.trim()) {
+      lines.push('', 'Acceptance criteria for the task — verify the PR satisfies them:', task.acceptance.trim().slice(0, 2000));
+    }
+    if (prior.length > 0) {
+      lines.push(
+        '',
+        'Your earlier verdicts on this PR:',
+        ...prior.map((e, i) => `${i + 1}. ${e.detail.slice(0, 400)}`),
+        '',
+        'Re-review policy: verify the previously requested changes were addressed, and inspect what changed since for defects the changes INTRODUCED. Do not raise new concerns about code you already accepted in an earlier round — put minor or stylistic observations in the review body as non-blocking notes. If the earlier findings are resolved and nothing serious is new, approve.',
+      );
+    }
+    return lines.join('\n');
+  }
+
+  /** Human "merge now" from the task view — the same path auto-merge takes. */
+  async mergeNow(id: string): Promise<TaskRecord> {
+    const task = this.store.getTask(id);
+    if (!task) throw new Error('task not found');
+    if (task.status !== 'in_review' || task.prNumber == null) {
+      throw new Error('only a task in review with an open PR can be merged');
+    }
+    this.mergeBackoff.delete(id);
+    await this.mergeTask(task, this.store.getConfig());
+    const fresh = this.store.getTask(id)!;
+    if (fresh.status !== 'done') throw new Error(fresh.lastError ?? 'merge failed');
+    return fresh;
+  }
+
   /** Merge, comment, complete — with a backoff so a refusing branch doesn't get hammered. */
   private async mergeTask(task: TaskRecord, config: BoardConfig): Promise<void> {
-    const client = this.code.githubAccounts.clientFor('pipelines', { repo: task.repo });
+    const client = this.code.githubAccounts.clientFor('pipelines', {
+      repo: task.repo,
+      accountId: config.mergeAccountId ?? undefined,
+    });
     if (!client) {
-      this.store.updateTask(task.id, { lastError: 'merge blocked: GitHub is not configured for this repo' });
+      this.store.updateTask(task.id, {
+        lastError: 'merge blocked: no usable GitHub account for this repo — set a merge account in Flow',
+      });
       this.mergeBackoff.set(task.id, Date.now() + MERGE_BACKOFF_MS);
       this.changed();
       return;
@@ -745,7 +864,7 @@ ${specSection}
     this.store.insertEvent(taskId, 'attempt_failed', reason.slice(0, 500));
     if (attempts >= config.maxAttempts) {
       this.store.updateTask(taskId, { attempts, runId: null, status: 'failed', lastError: reason.slice(0, 500) });
-      this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), '#/board');
+      this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
     } else {
       const backTo: TaskPatch =
         task.stage && WORK_STAGES.has(task.stage)
@@ -766,7 +885,7 @@ ${specSection}
     this.reviewBackoff.delete(taskId);
     this.store.updateTask(taskId, { status: 'done', stage: null, runId: null, finishedAt: Date.now(), lastError: null });
     this.store.insertEvent(taskId, 'done', how);
-    this.notifyUser(task.repo, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, '#/board');
+    this.notifyUser(task.repo, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
     this.changed();
   }
 
@@ -777,7 +896,7 @@ ${specSection}
     this.reviewBackoff.delete(taskId);
     this.store.updateTask(taskId, { ...extra, status: 'failed', stage: null, runId: null, lastError: reason.slice(0, 500) });
     this.store.insertEvent(taskId, 'failed', reason.slice(0, 500));
-    this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), '#/board');
+    this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
     this.changed();
   }
 
