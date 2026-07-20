@@ -12,6 +12,7 @@ import type {
 
 interface WorkerRow {
   id: string;
+  workspace_id: string;
   name: string;
   role: string;
   enabled: number;
@@ -56,6 +57,7 @@ interface EventRow {
 function rowToWorker(row: WorkerRow): WorkerRecord {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     name: row.name,
     role: row.role as WorkerRole,
     enabled: row.enabled === 1,
@@ -150,8 +152,8 @@ export class BoardStore {
   insertWorker(w: WorkerRecord): void {
     this.db
       .prepare(
-        `INSERT INTO board_workers (id, name, role, enabled, created_at)
-         VALUES (@id, @name, @role, @enabled, @createdAt)`,
+        `INSERT INTO board_workers (id, workspace_id, name, role, enabled, created_at)
+         VALUES (@id, @workspaceId, @name, @role, @enabled, @createdAt)`,
       )
       .run({ ...w, enabled: w.enabled ? 1 : 0 });
   }
@@ -173,9 +175,28 @@ export class BoardStore {
     return row ? rowToWorker(row) : undefined;
   }
 
-  listWorkers(): WorkerRecord[] {
-    const rows = this.db.prepare(`SELECT * FROM board_workers ORDER BY created_at`).all() as WorkerRow[];
+  /** All workers, or one workspace's pool. */
+  listWorkers(workspaceId?: string): WorkerRecord[] {
+    const rows = (
+      workspaceId === undefined
+        ? this.db.prepare(`SELECT * FROM board_workers ORDER BY created_at`).all()
+        : this.db.prepare(`SELECT * FROM board_workers WHERE workspace_id = ? ORDER BY created_at`).all(workspaceId)
+    ) as WorkerRow[];
     return rows.map(rowToWorker);
+  }
+
+  /**
+   * Boot adoption: rows created before workspace scoping (workspace_id = '')
+   * land in the given workspace. Idempotent — matches nothing afterwards.
+   */
+  adoptWorkspace(workspaceId: string): void {
+    this.db.prepare(`UPDATE board_workers SET workspace_id = ? WHERE workspace_id = ''`).run(workspaceId);
+    const claimed = this.db.prepare(`SELECT 1 FROM board_config WHERE workspace_id = ?`).get(workspaceId);
+    if (claimed) {
+      this.db.prepare(`DELETE FROM board_config WHERE workspace_id = ''`).run();
+    } else {
+      this.db.prepare(`UPDATE board_config SET workspace_id = ? WHERE workspace_id = ''`).run(workspaceId);
+    }
   }
 
   // ---------- tasks -----------------------------------------------------------------
@@ -268,8 +289,8 @@ export class BoardStore {
 
   // ---------- config ------------------------------------------------------------------
 
-  getConfig(): BoardConfig {
-    const row = this.db.prepare(`SELECT * FROM board_config WHERE id = 1`).get() as
+  getConfig(workspaceId: string): BoardConfig {
+    const row = this.db.prepare(`SELECT * FROM board_config WHERE workspace_id = ?`).get(workspaceId) as
       | {
           auto_review: number;
           reviewer_worker_id: string | null;
@@ -302,12 +323,12 @@ export class BoardStore {
     };
   }
 
-  setConfig(config: BoardConfig): void {
+  setConfig(workspaceId: string, config: BoardConfig): void {
     this.db
       .prepare(
-        `INSERT INTO board_config (id, auto_review, reviewer_worker_id, auto_merge, merge_method, merge_account_id, auto_fix_ci, max_attempts)
-         VALUES (1, @autoReview, @reviewerWorkerId, @autoMerge, @mergeMethod, @mergeAccountId, @autoFixCi, @maxAttempts)
-         ON CONFLICT (id) DO UPDATE SET
+        `INSERT INTO board_config (workspace_id, auto_review, reviewer_worker_id, auto_merge, merge_method, merge_account_id, auto_fix_ci, max_attempts)
+         VALUES (@workspaceId, @autoReview, @reviewerWorkerId, @autoMerge, @mergeMethod, @mergeAccountId, @autoFixCi, @maxAttempts)
+         ON CONFLICT (workspace_id) DO UPDATE SET
            auto_review = excluded.auto_review,
            reviewer_worker_id = excluded.reviewer_worker_id,
            auto_merge = excluded.auto_merge,
@@ -317,6 +338,7 @@ export class BoardStore {
            max_attempts = excluded.max_attempts`,
       )
       .run({
+        workspaceId,
         autoReview: config.autoReview ? 1 : 0,
         reviewerWorkerId: config.reviewerWorkerId,
         autoMerge: config.autoMerge ? 1 : 0,

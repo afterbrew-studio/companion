@@ -26,6 +26,7 @@ const moveTaskSchema = z.object({
 });
 
 const workerSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   name: z.string().min(1).max(60),
   role: z.enum(['developer', 'reviewer']),
 });
@@ -37,6 +38,7 @@ const updateWorkerSchema = z.object({
 });
 
 const configSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   autoReview: z.boolean().optional(),
   reviewerWorkerId: z.string().max(100).nullable().optional(),
   autoMerge: z.boolean().optional(),
@@ -55,7 +57,12 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/board',
       access: 'board:read',
-      handler: ({ user }) => board.listBoard(user!),
+      handler: ({ user, query }) => {
+        const workspaceId = query.get('workspace') ?? '';
+        if (!workspaceId) throw badRequest('workspace is required');
+        if (!workspace.canAccessWorkspace(user!, workspaceId)) throw forbidden('no access to that workspace');
+        return board.listBoard(user!, workspaceId);
+      },
     }),
 
     route({
@@ -156,7 +163,10 @@ export default defineRoutes((ctx) => {
       path: '/api/board/workers',
       access: 'board:manage',
       body: workerSchema,
-      handler: ({ body }) => created({ worker: board.createWorker(body.name, body.role) }),
+      handler: ({ body, user }) => {
+        if (!workspace.canAccessWorkspace(user!, body.workspaceId)) throw forbidden('no access to that workspace');
+        return created({ worker: board.createWorker(body.workspaceId, body.name, body.role) });
+      },
     }),
 
     route({
@@ -192,9 +202,11 @@ export default defineRoutes((ctx) => {
       path: '/api/board/config',
       access: 'board:manage',
       body: configSchema,
-      handler: ({ body }) => {
+      handler: ({ body, user }) => {
+        const { workspaceId, ...patch } = body;
+        if (!workspace.canAccessWorkspace(user!, workspaceId)) throw forbidden('no access to that workspace');
         try {
-          return { config: board.setConfig(body) };
+          return { config: board.setConfig(workspaceId, patch) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

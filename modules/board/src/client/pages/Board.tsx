@@ -5,6 +5,7 @@ import {
   CopyText,
   DetailGrid,
   DetailRow,
+  Drawer,
   Dropdown,
   EmptyState,
   ErrorBar,
@@ -133,7 +134,8 @@ const PRIORITY_OPTIONS = [
 ] as const;
 
 export default function Board({ query }: RouteProps): JSX.Element {
-  const { tasks, workers, config, loaded, error, setError } = useBoard();
+  const { current } = useWorkspace();
+  const { tasks, workers, config, loaded, error, setError } = useBoard(current?.id);
   const [creating, setCreating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [managingWorkers, setManagingWorkers] = useState(false);
@@ -294,13 +296,19 @@ export default function Board({ query }: RouteProps): JSX.Element {
 
       {creating ? <NewTaskModal onClose={() => setCreating(false)} onError={setError} /> : null}
       {detailId ? (
-        <TaskDetailModal id={detailId} workerName={workerName} onClose={closeDetail} onError={setError} />
+        <TaskDetailDrawer id={detailId} workerName={workerName} onClose={closeDetail} onError={setError} />
       ) : null}
-      {managingWorkers ? (
-        <WorkersModal workers={workers} onClose={() => setManagingWorkers(false)} onError={setError} />
+      {managingWorkers && current ? (
+        <WorkersModal workspaceId={current.id} workers={workers} onClose={() => setManagingWorkers(false)} onError={setError} />
       ) : null}
-      {configuring && config ? (
-        <ConfigModal config={config} workers={workers} onClose={() => setConfiguring(false)} onError={setError} />
+      {configuring && config && current ? (
+        <ConfigModal
+          workspaceId={current.id}
+          config={config}
+          workers={workers}
+          onClose={() => setConfiguring(false)}
+          onError={setError}
+        />
       ) : null}
     </div>
   );
@@ -583,7 +591,7 @@ function ChecksLine({ checks }: { checks: ChecksSnapshot | null }): JSX.Element 
   );
 }
 
-function TaskDetailModal({
+function TaskDetailDrawer({
   id,
   workerName,
   onClose,
@@ -635,238 +643,225 @@ function TaskDetailModal({
   const verdicts = reviews.filter((r) => r.verdict != null);
 
   return (
-    <Modal title={task.title} onClose={onClose} xl>
-      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            {signal ? <MetaSignal tone={signal.tone} label={signal.label} pulse={signal.pulse} /> : null}
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${PRIORITY_CLS[task.priority]}`}>
-              P{task.priority}
-            </span>
-            {task.runId ? (
-              <a className="text-xs font-medium hover:underline" href={`#/runs/${task.runId}`} onClick={onClose}>
-                watch the live run →
-              </a>
-            ) : null}
-          </div>
-
-          <DetailGrid>
-            <DetailRow label="Repository">
-              <span className="font-mono">{task.repo}</span>
-            </DetailRow>
-            {task.branch ? (
-              <DetailRow label="Branch">
-                <CopyText value={task.branch}>
-                  <span className="font-mono">{task.branch}</span>
-                </CopyText>
-              </DetailRow>
-            ) : null}
-            {task.prUrl ? (
-              <DetailRow label="Pull request">
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <a className="font-medium hover:underline" href={task.prUrl} target="_blank" rel="noreferrer">
-                    PR #{task.prNumber} ↗
-                  </a>
-                  <a
-                    className="font-medium hover:underline"
-                    href={`#/repos/${task.repo}/prs/${task.prNumber}/review`}
-                    onClick={onClose}
-                  >
-                    review page
-                  </a>
-                  {pr && pr.state !== 'open' ? <span className="dim">{pr.state}</span> : null}
-                  {pr?.reviewDecision ? (
-                    <span className="dim">GitHub: {pr.reviewDecision.replace('_', ' ')}</span>
-                  ) : null}
-                </span>
-              </DetailRow>
-            ) : null}
-            {task.prNumber != null ? (
-              <DetailRow label="Checks">
-                <ChecksLine checks={pr?.checks ?? null} />
-              </DetailRow>
-            ) : null}
-            <DetailRow label="Author">{task.createdBy ?? '—'}</DetailRow>
-            <DetailRow label="Worker">
-              {task.firstWorker ?? currentWorker ?? 'not picked up yet'}
-              {currentWorker && task.firstWorker && currentWorker !== task.firstWorker ? (
-                <span className="dim"> · now {currentWorker}</span>
-              ) : null}
-              {task.attempts > 0 ? <span className="dim"> · {task.attempts} remediation cycle(s)</span> : null}
-            </DetailRow>
-            <DetailRow label="Timeline">
-              created {timeAgo(task.createdAt)}
-              {task.startedAt ? ` · started ${timeAgo(task.startedAt)}` : ''}
-              {task.finishedAt ? ` · finished ${timeAgo(task.finishedAt)}` : ''}
-            </DetailRow>
-          </DetailGrid>
-
-          {task.lastError ? <ErrorBar error={task.lastError} /> : null}
-
-          {editing ? (
-            <div className="flex flex-col gap-3">
-              <Field label="Title">
-                <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
-              </Field>
-              <Field label="Description">
-                <textarea
-                  className="input min-h-32"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  maxLength={20_000}
-                />
-              </Field>
-              <Field label="Acceptance criteria" hint="Definition of done — what must be true for this task to count as complete.">
-                <textarea
-                  className="input min-h-20"
-                  value={acceptance}
-                  onChange={(e) => setAcceptance(e.target.value)}
-                  maxLength={10_000}
-                />
-              </Field>
-              <FormActions>
-                <button className="btn-ghost" onClick={() => setEditing(false)}>
-                  Cancel
-                </button>
-                <button className="btn" onClick={saveEdit}>
-                  Save
-                </button>
-              </FormActions>
-            </div>
-          ) : (
-            <>
-              <section aria-label="Description">
-                <DetailHeading>Description</DetailHeading>
-                <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-                  {task.description ? <Markdown text={task.description} /> : <p className="dim">No description.</p>}
-                </div>
-              </section>
-              {task.acceptance.trim() ? (
-                <section aria-label="Acceptance criteria">
-                  <DetailHeading>
-                    Acceptance criteria <span className="dim font-normal normal-case">· definition of done</span>
-                  </DetailHeading>
-                  <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-                    <Markdown text={task.acceptance} />
-                  </div>
-                </section>
-              ) : null}
-            </>
-          )}
-
-          {verdicts.length > 0 ? (
-            <section aria-label="Reviews">
-              <DetailHeading>
-                Reviews <span className="dim font-normal normal-case">· {verdicts.length}</span>
-              </DetailHeading>
-              <div className="flex flex-col gap-2.5">
-                {verdicts.map((r) => (
-                  <article key={r.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <VerdictChip recommendation={r.verdict!.recommendation} />
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${RISK_CLS[r.verdict!.risk]}`}>
-                        risk {r.verdict!.risk}
-                      </span>
-                      {r.status !== 'applied' ? <span className="dim">{r.status}</span> : null}
-                      <span className="dim ml-auto tabular-nums">{timeAgo(r.createdAt)}</span>
-                    </div>
-                    <p className="mt-2 text-[13px]">{r.verdict!.summary}</p>
-                    {r.verdict!.findings.length > 0 ? (
-                      <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-[13px]">
-                        {r.verdict!.findings.map((f, i) => (
-                          <li key={i}>{f}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    <details className="mt-2">
-                      <summary className="dim cursor-pointer text-xs hover:underline">Full review as posted</summary>
-                      <div className="mt-2 border-t border-zinc-100 pt-2 text-sm dark:border-zinc-800/60">
-                        <Markdown text={r.verdict!.reviewBody} />
-                      </div>
-                    </details>
-                  </article>
-                ))}
-              </div>
-            </section>
+    <Drawer title={task.title} onClose={onClose} storageKey="companion.board.task-drawer" defaultWidth={350} minWidth={320}>
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {signal ? <MetaSignal tone={signal.tone} label={signal.label} pulse={signal.pulse} /> : null}
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${PRIORITY_CLS[task.priority]}`}>
+            P{task.priority}
+          </span>
+          {task.runId ? (
+            <a className="text-xs font-medium hover:underline" href={`#/runs/${task.runId}`} onClick={onClose}>
+              watch the live run →
+            </a>
           ) : null}
-
-          {task.prNumber != null && can('prs:read') ? (
-            <CommentsSection
-              load={() => codeApi.prComments(task.repo, task.prNumber!)}
-              post={can('prs:act') ? (body: string) => codeApi.commentPr(task.repo, task.prNumber!, body) : undefined}
-              canComment={can('prs:act')}
-            />
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-            {task.status === 'in_review' && task.prNumber != null && task.stage !== 'reviewing' ? (
-              <button className="btn" onClick={act(() => boardApi.mergeTask(id))}>
-                Merge PR
-              </button>
-            ) : null}
-            {canMove(task, 'ready') ? (
-              <button className={task.status === 'in_review' ? 'btn-ghost' : 'btn'} onClick={act(() => boardApi.moveTask(id, 'ready'))}>
-                {task.status === 'failed' ? 'Retry' : task.status === 'in_review' ? 'Re-review' : 'Queue'}
-              </button>
-            ) : null}
-            {canMove(task, 'backlog') ? (
-              <button className="btn-ghost" onClick={act(() => boardApi.moveTask(id, 'backlog'))}>
-                {task.status === 'in_progress' ? 'Cancel & park' : task.status === 'in_review' ? 'Reject' : 'Park'}
-              </button>
-            ) : null}
-            {canMove(task, 'done') ? (
-              <button className="btn-ghost" onClick={act(() => boardApi.moveTask(id, 'done'))}>
-                Mark done
-              </button>
-            ) : null}
-            {!editing ? (
-              <button
-                className="btn-ghost"
-                onClick={() => {
-                  setTitle(task.title);
-                  setDescription(task.description);
-                  setAcceptance(task.acceptance);
-                  setEditing(true);
-                }}
-              >
-                Edit
-              </button>
-            ) : null}
-            <span className="flex-1" />
-            <IconButton
-              label="Delete task"
-              danger
-              onClick={() => {
-                void confirmDanger({
-                  title: 'Delete task',
-                  message: `Delete "${task.title}"? An active run is stopped and its worktree discarded.`,
-                  confirmLabel: 'Delete',
-                }).then((ok) => {
-                  if (!ok) return;
-                  void boardApi
-                    .deleteTask(id)
-                    .then(onClose)
-                    .catch((err) => onError(String(err)));
-                });
-              }}
-            >
-              {/* trash */}
-              <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
-                <path d="M3 4.5h10M6.5 4.5V3.2a.7.7 0 0 1 .7-.7h1.6a.7.7 0 0 1 .7.7v1.3M4.7 4.5l.5 8.3a1 1 0 0 0 1 .95h3.6a1 1 0 0 0 1-.95l.5-8.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </IconButton>
-          </div>
         </div>
 
-        <aside
-          className="min-w-0 border-t border-zinc-200 pt-4 md:border-t-0 md:border-l md:pt-0 md:pl-5 dark:border-zinc-800"
-          aria-label="Activity"
-        >
-          <h3 className="mb-2.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase">
+        <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-3.5 dark:border-zinc-800">
+          {task.status === 'in_review' && task.prNumber != null && task.stage !== 'reviewing' ? (
+            <button className="btn" onClick={act(() => boardApi.mergeTask(id))}>
+              Merge PR
+            </button>
+          ) : null}
+          {canMove(task, 'ready') ? (
+            <button className={task.status === 'in_review' ? 'btn-ghost' : 'btn'} onClick={act(() => boardApi.moveTask(id, 'ready'))}>
+              {task.status === 'failed' ? 'Retry' : task.status === 'in_review' ? 'Re-review' : 'Queue'}
+            </button>
+          ) : null}
+          {canMove(task, 'backlog') ? (
+            <button className="btn-ghost" onClick={act(() => boardApi.moveTask(id, 'backlog'))}>
+              {task.status === 'in_progress' ? 'Cancel & park' : task.status === 'in_review' ? 'Reject' : 'Park'}
+            </button>
+          ) : null}
+          {canMove(task, 'done') ? (
+            <button className="btn-ghost" onClick={act(() => boardApi.moveTask(id, 'done'))}>
+              Mark done
+            </button>
+          ) : null}
+          {!editing ? (
+            <button
+              className="btn-ghost"
+              onClick={() => {
+                setTitle(task.title);
+                setDescription(task.description);
+                setAcceptance(task.acceptance);
+                setEditing(true);
+              }}
+            >
+              Edit
+            </button>
+          ) : null}
+          <span className="flex-1" />
+          <IconButton
+            label="Delete task"
+            danger
+            onClick={() => {
+              void confirmDanger({
+                title: 'Delete task',
+                message: `Delete "${task.title}"? An active run is stopped and its worktree discarded.`,
+                confirmLabel: 'Delete',
+              }).then((ok) => {
+                if (!ok) return;
+                void boardApi
+                  .deleteTask(id)
+                  .then(onClose)
+                  .catch((err) => onError(String(err)));
+              });
+            }}
+          >
+            {/* trash */}
+            <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+              <path d="M3 4.5h10M6.5 4.5V3.2a.7.7 0 0 1 .7-.7h1.6a.7.7 0 0 1 .7.7v1.3M4.7 4.5l.5 8.3a1 1 0 0 0 1 .95h3.6a1 1 0 0 0 1-.95l.5-8.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </IconButton>
+        </div>
+
+        <DetailGrid>
+          <DetailRow label="Repository">
+            <span className="font-mono">{task.repo}</span>
+          </DetailRow>
+          {task.branch ? (
+            <DetailRow label="Branch">
+              <CopyText value={task.branch}>
+                <span className="font-mono">{task.branch}</span>
+              </CopyText>
+            </DetailRow>
+          ) : null}
+          {task.prUrl ? (
+            <DetailRow label="Pull request">
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <a className="font-medium hover:underline" href={task.prUrl} target="_blank" rel="noreferrer">
+                  PR #{task.prNumber} ↗
+                </a>
+                <a
+                  className="font-medium hover:underline"
+                  href={`#/repos/${task.repo}/prs/${task.prNumber}/review`}
+                  onClick={onClose}
+                >
+                  review page
+                </a>
+                {pr && pr.state !== 'open' ? <span className="dim">{pr.state}</span> : null}
+                {pr?.reviewDecision ? (
+                  <span className="dim">GitHub: {pr.reviewDecision.replace('_', ' ')}</span>
+                ) : null}
+              </span>
+            </DetailRow>
+          ) : null}
+          {task.prNumber != null ? (
+            <DetailRow label="Checks">
+              <ChecksLine checks={pr?.checks ?? null} />
+            </DetailRow>
+          ) : null}
+          <DetailRow label="Author">{task.createdBy ?? '—'}</DetailRow>
+          <DetailRow label="Worker">
+            {task.firstWorker ?? currentWorker ?? 'not picked up yet'}
+            {currentWorker && task.firstWorker && currentWorker !== task.firstWorker ? (
+              <span className="dim"> · now {currentWorker}</span>
+            ) : null}
+            {task.attempts > 0 ? <span className="dim"> · {task.attempts} remediation cycle(s)</span> : null}
+          </DetailRow>
+          <DetailRow label="Timeline">
+            created {timeAgo(task.createdAt)}
+            {task.startedAt ? ` · started ${timeAgo(task.startedAt)}` : ''}
+            {task.finishedAt ? ` · finished ${timeAgo(task.finishedAt)}` : ''}
+          </DetailRow>
+        </DetailGrid>
+
+        {task.lastError ? <ErrorBar error={task.lastError} /> : null}
+
+        {editing ? (
+          <div className="flex flex-col gap-3">
+            <Field label="Title">
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
+            </Field>
+            <Field label="Description">
+              <textarea
+                className="input min-h-32"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={20_000}
+              />
+            </Field>
+            <Field label="Acceptance criteria" hint="Definition of done — what must be true for this task to count as complete.">
+              <textarea
+                className="input min-h-20"
+                value={acceptance}
+                onChange={(e) => setAcceptance(e.target.value)}
+                maxLength={10_000}
+              />
+            </Field>
+            <FormActions>
+              <button className="btn-ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+              <button className="btn" onClick={saveEdit}>
+                Save
+              </button>
+            </FormActions>
+          </div>
+        ) : (
+          <>
+            <section aria-label="Description">
+              <DetailHeading>Description</DetailHeading>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                {task.description ? <Markdown text={task.description} /> : <p className="dim">No description.</p>}
+              </div>
+            </section>
+            {task.acceptance.trim() ? (
+              <section aria-label="Acceptance criteria">
+                <DetailHeading>
+                  Acceptance criteria <span className="dim font-normal normal-case">· definition of done</span>
+                </DetailHeading>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                  <Markdown text={task.acceptance} />
+                </div>
+              </section>
+            ) : null}
+          </>
+        )}
+
+        {verdicts.length > 0 ? (
+          <section aria-label="Reviews">
+            <DetailHeading>
+              Reviews <span className="dim font-normal normal-case">· {verdicts.length}</span>
+            </DetailHeading>
+            <div className="flex flex-col gap-2.5">
+              {verdicts.map((r) => (
+                <article key={r.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <VerdictChip recommendation={r.verdict!.recommendation} />
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${RISK_CLS[r.verdict!.risk]}`}>
+                      risk {r.verdict!.risk}
+                    </span>
+                    {r.status !== 'applied' ? <span className="dim">{r.status}</span> : null}
+                    <span className="dim ml-auto tabular-nums">{timeAgo(r.createdAt)}</span>
+                  </div>
+                  <p className="mt-2 text-[13px]">{r.verdict!.summary}</p>
+                  {r.verdict!.findings.length > 0 ? (
+                    <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-[13px]">
+                      {r.verdict!.findings.map((f, i) => (
+                        <li key={i}>{f}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <details className="mt-2">
+                    <summary className="dim cursor-pointer text-xs hover:underline">Full review as posted</summary>
+                    <div className="mt-2 border-t border-zinc-100 pt-2 text-sm dark:border-zinc-800/60">
+                      <Markdown text={r.verdict!.reviewBody} />
+                    </div>
+                  </details>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section aria-label="Activity">
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase">
             Activity
             {active ? <StatusDot tone="blue" pulse size="sm" label="live" /> : null}
-          </h3>
-          <ol className="flex max-h-[26rem] flex-col gap-2.5 overflow-y-auto pr-1 text-xs">
+          </h4>
+          <ol className="flex max-h-80 flex-col gap-2.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800">
             {events.map((ev) => (
               <li key={ev.id} className="flex min-w-0 flex-col gap-0.5">
                 <div className="flex items-baseline justify-between gap-2">
@@ -878,18 +873,29 @@ function TaskDetailModal({
             ))}
             {events.length === 0 ? <li className="dim">Nothing yet.</li> : null}
           </ol>
-        </aside>
+        </section>
+
+        {task.prNumber != null && can('prs:read') ? (
+          <CommentsSection
+            load={() => codeApi.prComments(task.repo, task.prNumber!)}
+            post={can('prs:act') ? (body: string) => codeApi.commentPr(task.repo, task.prNumber!, body) : undefined}
+            canComment={can('prs:act')}
+          />
+        ) : null}
+
       </div>
       {confirmElement}
-    </Modal>
+    </Drawer>
   );
 }
 
 function WorkersModal({
+  workspaceId,
   workers,
   onClose,
   onError,
 }: {
+  workspaceId: string;
   workers: WorkerView[];
   onClose: () => void;
   onError: (e: string | null) => void;
@@ -969,7 +975,7 @@ function WorkersModal({
             className="btn mb-px"
             disabled={!name.trim()}
             onClick={() => {
-              act(() => boardApi.createWorker(name.trim(), role))();
+              act(() => boardApi.createWorker(workspaceId, name.trim(), role))();
               setName('');
             }}
           >
@@ -1008,11 +1014,13 @@ function MaxAttemptsInput({ value, onCommit }: { value: number; onCommit: (n: nu
 }
 
 function ConfigModal({
+  workspaceId,
   config,
   workers,
   onClose,
   onError,
 }: {
+  workspaceId: string;
   config: BoardConfig;
   workers: WorkerView[];
   onClose: () => void;
@@ -1029,7 +1037,7 @@ function ConfigModal({
   }, []);
   const save = (fields: Partial<BoardConfig>): void => {
     void boardApi
-      .saveConfig(fields)
+      .saveConfig(workspaceId, fields)
       .then(() => onError(null))
       .catch((err) => onError(String(err)));
   };

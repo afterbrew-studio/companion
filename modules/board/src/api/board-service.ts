@@ -33,6 +33,7 @@ const WORK_STAGES: ReadonlySet<TaskStage> = new Set(['build', 'address_review', 
 const MAX_SPEC_CHARS = 12_000;
 const MERGE_BACKOFF_MS = 10 * 60_000;
 const REVIEW_BACKOFF_MS = 5 * 60_000;
+const RETRY_BACKOFF_MS = 60_000;
 
 /**
  * The agentic task board: a kanban of tasks executed by a small pool of named
@@ -49,11 +50,14 @@ const REVIEW_BACKOFF_MS = 5 * 60_000;
 export class BoardService {
   private ticking = false;
   private tickQueued = false;
-  /** Reviewer WIP-1 within this daemon life; stale 'reviewing' rows are swept on boot. */
-  private reviewInFlight = false;
+  /** Per-workspace reviewer WIP-1 within this daemon life; stale 'reviewing' rows are swept on boot. */
+  private readonly reviewing = new Set<string>();
   private readonly mergeBackoff = new Map<string, number>();
   /** Reviewer-infrastructure failures back off without charging the task's attempts. */
   private readonly reviewBackoff = new Map<string, number>();
+  /** Failed attempts cool down before redispatch — a fast-dying runner
+   *  environment must not burn the whole attempt ceiling in seconds. */
+  private readonly retryBackoff = new Map<string, number>();
   private disposed = false;
 
   constructor(
@@ -70,12 +74,28 @@ export class BoardService {
     this.disposed = true;
   }
 
+  /** The workspace a task belongs to — via its repo (repos carry the scoping key). */
+  private workspaceOf(repo: string): string | null {
+    return this.code.repos.get(repo)?.workspace_id ?? null;
+  }
+
+  private configFor(repo: string): BoardConfig {
+    return this.store.getConfig(this.workspaceOf(repo) ?? '');
+  }
+
+  /** Boot adoption: pre-scoping workers/config land in the first workspace. */
+  adoptUnscoped(workspaceId: string): void {
+    this.store.adoptWorkspace(workspaceId);
+  }
+
   // ---------- reads -------------------------------------------------------------------
 
-  listBoard(user: AuthUser): { tasks: TaskRecord[]; workers: WorkerView[]; config: BoardConfig } {
-    const tasks = this.store.listTasks().filter((t) => this.workspace.canAccessRepo(user, t.repo));
+  listBoard(user: AuthUser, workspaceId: string): { tasks: TaskRecord[]; workers: WorkerView[]; config: BoardConfig } {
+    const tasks = this.store
+      .listTasks()
+      .filter((t) => this.workspaceOf(t.repo) === workspaceId && this.workspace.canAccessRepo(user, t.repo));
     const busy = this.store.busyWorkerMap();
-    const workers = this.store.listWorkers().map((w): WorkerView => {
+    const workers = this.store.listWorkers(workspaceId).map((w): WorkerView => {
       const b = busy.get(w.id);
       // Busy-ness is visible to everyone (it drives the WIP maths); the task's
       // identity is workspace data and is redacted for non-members.
@@ -87,7 +107,7 @@ export class BoardService {
         busyTaskTitle: visible ? b!.title : null,
       };
     });
-    return { tasks, workers, config: this.store.getConfig() };
+    return { tasks, workers, config: this.store.getConfig(workspaceId) };
   }
 
   getTask(
@@ -213,6 +233,7 @@ export class BoardService {
         patch.attempts = 0;
         patch.lastError = null;
       }
+      this.retryBackoff.delete(id);
       this.store.updateTask(id, patch);
       this.store.insertEvent(id, 'queued', `moved from ${from}`);
     } else if (to === 'backlog') {
@@ -253,6 +274,7 @@ export class BoardService {
     this.store.deleteTask(id);
     this.mergeBackoff.delete(id);
     this.reviewBackoff.delete(id);
+    this.retryBackoff.delete(id);
     if (task.runId) {
       await this.code.fixes.discard(task.runId).catch((err) => log.warn('board: discard on delete failed', { err: String(err) }));
     }
@@ -262,9 +284,10 @@ export class BoardService {
 
   // ---------- worker CRUD -----------------------------------------------------------------
 
-  createWorker(name: string, role: WorkerRole): WorkerRecord {
+  createWorker(workspaceId: string, name: string, role: WorkerRole): WorkerRecord {
     const worker: WorkerRecord = {
       id: `wkr-${randomUUID().slice(0, 12)}`,
+      workspaceId,
       name,
       role,
       enabled: true,
@@ -285,26 +308,29 @@ export class BoardService {
   }
 
   deleteWorker(id: string): void {
+    const worker = this.store.getWorker(id);
+    if (!worker) return;
     const busy = this.store.busyWorkerMap();
     if (busy.has(id)) throw new Error('worker is building a task — wait for it to finish or cancel the task first');
     this.store.deleteWorker(id);
-    const config = this.store.getConfig();
-    if (config.reviewerWorkerId === id) this.store.setConfig({ ...config, reviewerWorkerId: null });
+    const config = this.store.getConfig(worker.workspaceId);
+    if (config.reviewerWorkerId === id) this.store.setConfig(worker.workspaceId, { ...config, reviewerWorkerId: null });
     this.changed();
   }
 
   // ---------- config -----------------------------------------------------------------------
 
-  getConfig(): BoardConfig {
-    return this.store.getConfig();
+  getConfig(workspaceId: string): BoardConfig {
+    return this.store.getConfig(workspaceId);
   }
 
-  setConfig(patch: Partial<BoardConfig>): BoardConfig {
-    const next = { ...this.store.getConfig(), ...patch };
+  setConfig(workspaceId: string, patch: Partial<BoardConfig>): BoardConfig {
+    const next = { ...this.store.getConfig(workspaceId), ...patch };
     if (next.reviewerWorkerId) {
       const reviewer = this.store.getWorker(next.reviewerWorkerId);
       if (!reviewer) throw new Error('reviewer worker not found');
       if (reviewer.role !== 'reviewer') throw new Error(`${reviewer.name} is not a reviewer`);
+      if (reviewer.workspaceId !== workspaceId) throw new Error(`${reviewer.name} belongs to another workspace`);
     }
     if (next.mergeAccountId) {
       const account = this.code.githubAccounts.row(next.mergeAccountId);
@@ -315,7 +341,7 @@ export class BoardService {
         throw new Error(`${account.login} is a personal account — pick a shared account with merge rights`);
       }
     }
-    this.store.setConfig(next);
+    this.store.setConfig(workspaceId, next);
     this.changed();
     this.kick();
     return next;
@@ -402,12 +428,10 @@ export class BoardService {
         this.attemptFail(task.id, run.outcome?.slice(0, 300) ?? `agent run ${run.status}`);
       }
     }
-    if (!this.reviewInFlight) {
-      for (const task of this.store.listTasksByStatus('in_review')) {
-        if (task.stage === 'reviewing') {
-          this.store.updateTask(task.id, { stage: 'awaiting_review' });
-          this.changed();
-        }
+    for (const task of this.store.listTasksByStatus('in_review')) {
+      if (task.stage === 'reviewing' && !this.reviewing.has(this.workspaceOf(task.repo) ?? '')) {
+        this.store.updateTask(task.id, { stage: 'awaiting_review' });
+        this.changed();
       }
     }
   }
@@ -419,19 +443,24 @@ export class BoardService {
    */
   private async dispatch(): Promise<void> {
     const busy = this.store.busyWorkerMap();
-    const free = new Map(
-      this.store
-        .listWorkers()
-        .filter((w) => w.enabled && w.role === 'developer' && !busy.has(w.id))
-        .map((w) => [w.id, w]),
-    );
+    // One free-developer pool per workspace — each board dispatches independently.
+    const freeByWs = new Map<string, Map<string, WorkerRecord>>();
+    for (const w of this.store.listWorkers()) {
+      if (!w.enabled || w.role !== 'developer' || busy.has(w.id)) continue;
+      const pool = freeByWs.get(w.workspaceId) ?? new Map<string, WorkerRecord>();
+      pool.set(w.id, w);
+      freeByWs.set(w.workspaceId, pool);
+    }
     for (const task of this.store.listTasksByStatus('ready')) {
-      if (free.size === 0) break;
+      if (Date.now() < (this.retryBackoff.get(task.id) ?? 0)) continue;
+      const ws = this.workspaceOf(task.repo);
+      const free = ws ? freeByWs.get(ws) : undefined;
+      if (!free || free.size === 0) continue;
       let worker: WorkerRecord | undefined;
       if (task.assignedWorkerId) {
         const sticky = this.store.getWorker(task.assignedWorkerId);
-        if (!sticky || !sticky.enabled || sticky.role !== 'developer') {
-          // Failover: the bound worker is gone — release the binding.
+        if (!sticky || !sticky.enabled || sticky.role !== 'developer' || sticky.workspaceId !== ws) {
+          // Failover: the bound worker is gone (or left the workspace) — release the binding.
           this.store.updateTask(task.id, { assignedWorkerId: null });
           worker = free.values().next().value;
         } else if (free.has(sticky.id)) {
@@ -442,7 +471,7 @@ export class BoardService {
       } else {
         worker = free.values().next().value;
       }
-      if (!worker) break;
+      if (!worker) continue;
       free.delete(worker.id);
       // Re-read: earlier iterations awaited run creation, and a human may have
       // parked or deleted this task in the meantime.
@@ -615,9 +644,9 @@ ${acceptance}${specSection}
    * bound worker, and merge once the verdict is positive and checks are green.
    */
   private async reviewCycle(): Promise<void> {
-    const config = this.store.getConfig();
     for (const task of this.store.listTasksByStatus('in_review')) {
       if (task.runId || !task.prNumber) continue;
+      const config = this.configFor(task.repo);
       const pr = this.code.prs.get(task.repo, task.prNumber);
       if (!pr) continue; // cache hasn't seen the PR yet — next pass
       if (pr.state === 'merged') {
@@ -643,7 +672,7 @@ ${acceptance}${specSection}
         // Review paused until a reviewer worker is configured and enabled.
         if (!reviewer?.enabled || reviewer.role !== 'reviewer') continue;
         if (Date.now() < (this.reviewBackoff.get(task.id) ?? 0)) continue;
-        if (!this.reviewInFlight) void this.runReview(task.id, reviewer.name);
+        if (!this.reviewing.has(this.workspaceOf(task.repo) ?? '')) void this.runReview(task.id, reviewer.name);
         continue;
       }
 
@@ -670,11 +699,15 @@ ${acceptance}${specSection}
 
   /** One reviewer, one PR at a time: analyze, post the verdict, route the card. */
   private async runReview(taskId: string, reviewerName: string): Promise<void> {
-    this.reviewInFlight = true;
+    const guard = this.store.getTask(taskId);
+    if (!guard) return;
+    const ws = this.workspaceOf(guard.repo) ?? '';
+    if (this.reviewing.has(ws)) return;
+    this.reviewing.add(ws);
     try {
       const task = this.store.getTask(taskId);
       if (!task || task.status !== 'in_review' || !task.prNumber) return;
-      const config = this.store.getConfig();
+      const config = this.configFor(task.repo);
       this.store.updateTask(taskId, { stage: 'reviewing' });
       this.store.insertEvent(taskId, 'review_started', `${reviewerName} is reviewing PR #${task.prNumber}`);
       this.changed();
@@ -744,7 +777,7 @@ ${acceptance}${specSection}
         this.changed();
       }
     } finally {
-      this.reviewInFlight = false;
+      this.reviewing.delete(ws);
     }
   }
 
@@ -789,7 +822,7 @@ ${acceptance}${specSection}
       throw new Error('only a task in review with an open PR can be merged');
     }
     this.mergeBackoff.delete(id);
-    await this.mergeTask(task, this.store.getConfig());
+    await this.mergeTask(task, this.configFor(task.repo));
     const fresh = this.store.getTask(id)!;
     if (fresh.status !== 'done') throw new Error(fresh.lastError ?? 'merge failed');
     return fresh;
@@ -859,7 +892,7 @@ ${acceptance}${specSection}
   private attemptFail(taskId: string, reason: string): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
-    const config = this.store.getConfig();
+    const config = this.configFor(task.repo);
     const attempts = task.attempts + 1;
     this.store.insertEvent(taskId, 'attempt_failed', reason.slice(0, 500));
     if (attempts >= config.maxAttempts) {
@@ -873,6 +906,7 @@ ${acceptance}${specSection}
             ? { status: 'in_review', stage: 'awaiting_review' }
             : { status: 'ready', stage: 'build' };
       this.store.updateTask(taskId, { ...backTo, attempts, runId: null, assignedWorkerId: null, lastError: reason.slice(0, 500) });
+      this.retryBackoff.set(taskId, Date.now() + RETRY_BACKOFF_MS);
     }
     this.changed();
     this.kick();
@@ -883,6 +917,7 @@ ${acceptance}${specSection}
     if (!task) return;
     this.mergeBackoff.delete(taskId);
     this.reviewBackoff.delete(taskId);
+    this.retryBackoff.delete(taskId);
     this.store.updateTask(taskId, { status: 'done', stage: null, runId: null, finishedAt: Date.now(), lastError: null });
     this.store.insertEvent(taskId, 'done', how);
     this.notifyUser(task.repo, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
@@ -894,6 +929,7 @@ ${acceptance}${specSection}
     if (!task) return;
     this.mergeBackoff.delete(taskId);
     this.reviewBackoff.delete(taskId);
+    this.retryBackoff.delete(taskId);
     this.store.updateTask(taskId, { ...extra, status: 'failed', stage: null, runId: null, lastError: reason.slice(0, 500) });
     this.store.insertEvent(taskId, 'failed', reason.slice(0, 500));
     this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);

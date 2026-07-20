@@ -43,6 +43,8 @@ export type WorkerRole = 'developer' | 'reviewer';
 
 export interface WorkerRecord {
   readonly id: string;
+  /** The workspace this worker serves — boards are workspace-scoped. */
+  readonly workspaceId: string;
   readonly name: string;
   readonly role: WorkerRole;
   readonly enabled: boolean;

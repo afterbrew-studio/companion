@@ -27,7 +27,7 @@ export interface TaskDetail {
 }
 
 export const boardApi = {
-  get: () => request<BoardSnapshot>('/api/board'),
+  get: (workspaceId: string) => request<BoardSnapshot>(`/api/board?workspace=${encodeURIComponent(workspaceId)}`),
   task: (id: string) => request<TaskDetail>(`/api/board/tasks/${id}`),
   createTask: (input: {
     repo: string;
@@ -46,9 +46,11 @@ export const boardApi = {
   mergeTask: (id: string) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/merge`, {}),
   deleteTask: (id: string) => del<{ ok: true }>(`/api/board/tasks/${id}`),
   specs: (repo: string) => request<{ specs: SpecOption[] }>(`/api/board/specs/${repo}`),
-  createWorker: (name: string, role: WorkerRole) => post<{ worker: WorkerRecord }>('/api/board/workers', { name, role }),
+  createWorker: (workspaceId: string, name: string, role: WorkerRole) =>
+    post<{ worker: WorkerRecord }>('/api/board/workers', { workspaceId, name, role }),
   updateWorker: (id: string, fields: { name?: string; role?: WorkerRole; enabled?: boolean }) =>
     patch<{ worker: WorkerRecord }>(`/api/board/workers/${id}`, fields),
   deleteWorker: (id: string) => del<{ ok: true }>(`/api/board/workers/${id}`),
-  saveConfig: (fields: Partial<BoardConfig>) => put<{ config: BoardConfig }>('/api/board/config', fields),
+  saveConfig: (workspaceId: string, fields: Partial<BoardConfig>) =>
+    put<{ config: BoardConfig }>('/api/board/config', { ...fields, workspaceId }),
 };
