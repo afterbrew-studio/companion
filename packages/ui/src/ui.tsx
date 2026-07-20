@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, CloseIcon, SparkleIcon } from './icons.js';
 
@@ -16,6 +25,10 @@ export interface DropdownOption<T extends string> {
 /**
  * Custom single-select listbox: a trigger button + popover menu, replacing
  * native `<select>` where we want full control over the menu's look.
+ * The menu is portaled and viewport-clamped (like AnchoredMenu) so an
+ * overflow ancestor — a Modal, especially — never clips it; it flips above
+ * the trigger when there's no room below, and is never narrower than the
+ * trigger (but may grow, so short triggers don't truncate their options).
  * Keyboard: arrows move, Enter/Space select, Escape closes and refocuses.
  */
 export function Dropdown<T extends string>({
@@ -47,13 +60,62 @@ export function Dropdown<T extends string>({
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const selected = options.find((o) => o.value === value) ?? null;
 
   const q = query.trim().toLowerCase();
   const visible = q ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(q)) : options;
+
+  // Place the portaled menu against the trigger; re-measured when filtering
+  // changes its height. Layout effect so the first paint is already placed.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = (): void => {
+      const trigger = triggerRef.current;
+      const menu = menuRef.current;
+      if (!trigger || !menu) return;
+      const r = trigger.getBoundingClientRect();
+      // Width before measuring — it decides the wrapped height.
+      menu.style.minWidth = `${r.width}px`;
+      menu.style.maxWidth = `${Math.min(Math.max(r.width, 320), window.innerWidth - 16)}px`;
+      const mh = menu.offsetHeight;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8));
+      const flipUp = r.bottom + 6 + mh > window.innerHeight - 8 && r.top - mh - 6 >= 8;
+      setPos({ top: flipUp ? r.top - mh - 6 : r.bottom + 6, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [open, visible.length]);
+
+  // Dismiss on an outside press or outside scroll (the list scrolls internally).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: globalThis.MouseEvent): void => {
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onScroll = (e: Event): void => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    window.addEventListener('scroll', onScroll, true);
+    // Defer so the opening click doesn't immediately close it.
+    const id = window.setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
 
   // Focus the search field (if any) or the selected option when the menu opens.
   useEffect(() => {
@@ -97,7 +159,9 @@ export function Dropdown<T extends string>({
     <div
       className={`relative ${className}`}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+        // The menu lives in a portal, so DOM containment must check both trees.
+        const next = e.relatedTarget as Node | null;
+        if (!e.currentTarget.contains(next) && !menuRef.current?.contains(next)) setOpen(false);
       }}
     >
       <button
@@ -132,101 +196,108 @@ export function Dropdown<T extends string>({
         )}
       </button>
 
-      {open ? (
-        <div className="absolute inset-x-0 z-30 mt-1.5 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-          {searchable ? (
-            <input
-              ref={searchRef}
-              type="search"
-              className="w-full border-b border-zinc-200 bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-zinc-400 dark:border-zinc-800"
-              placeholder="Search…"
-              aria-label={`Filter ${ariaLabel}`}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  listRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus();
-                } else if (e.key === 'Enter') {
-                  e.preventDefault();
-                  const first = visible[0];
-                  if (first) {
-                    onChange(first.value);
-                    close(true);
-                  }
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  close(true);
-                }
-              }}
-            />
-          ) : null}
-          <ul
-            ref={listRef}
-            role="listbox"
-            aria-label={ariaLabel}
-            className="max-h-72 overflow-y-auto p-1"
-            onKeyDown={onListKeyDown}
-          >
-          {visible.map((o) => {
-            const isSelected = o.value === value;
-            return (
-              <li key={o.value}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
-                  onClick={() => {
-                    onChange(o.value);
-                    close(true);
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? undefined : 'hidden' }}
+              className="z-[60] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              {searchable ? (
+                <input
+                  ref={searchRef}
+                  type="search"
+                  className="w-full border-b border-zinc-200 bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-zinc-400 dark:border-zinc-800"
+                  placeholder="Search…"
+                  aria-label={`Filter ${ariaLabel}`}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      listRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const first = visible[0];
+                      if (first) {
+                        onChange(first.value);
+                        close(true);
+                      }
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      close(true);
+                    }
                   }}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {o.icon ? <span className="dim shrink-0">{o.icon}</span> : null}
-                    <span className="min-w-0">
-                      <span className={`block truncate ${isSelected ? 'font-medium' : ''}`}>{o.label}</span>
-                      {o.hint ? <span className="dim block truncate text-[11px]">{o.hint}</span> : null}
-                    </span>
-                  </span>
-                  {isSelected ? (
-                    <svg
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      aria-hidden
-                      className="size-4 shrink-0 text-accent-600 dark:text-accent-400"
-                    >
-                      <path
-                        d="M3.5 8.5l3 3 6-7"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-            {visible.length === 0 ? <li className="dim px-2.5 py-2">{q ? 'No matches' : 'No options'}</li> : null}
-          </ul>
-          {action ? (
-            <div className="border-t border-zinc-200 p-1 dark:border-zinc-800">
-              <button
-                type="button"
-                className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-2 text-left text-[13px] font-medium outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
-                onClick={() => {
-                  close(false);
-                  action.onSelect();
-                }}
+                />
+              ) : null}
+              <ul
+                ref={listRef}
+                role="listbox"
+                aria-label={ariaLabel}
+                className="max-h-72 overflow-y-auto p-1"
+                onKeyDown={onListKeyDown}
               >
-                <span aria-hidden>＋</span> {action.label}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+              {visible.map((o) => {
+                const isSelected = o.value === value;
+                return (
+                  <li key={o.value}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
+                      onClick={() => {
+                        onChange(o.value);
+                        close(true);
+                      }}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {o.icon ? <span className="dim shrink-0">{o.icon}</span> : null}
+                        <span className="min-w-0">
+                          <span className={`block truncate ${isSelected ? 'font-medium' : ''}`}>{o.label}</span>
+                          {o.hint ? <span className="dim block truncate text-[11px]">{o.hint}</span> : null}
+                        </span>
+                      </span>
+                      {isSelected ? (
+                        <svg
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          aria-hidden
+                          className="size-4 shrink-0 text-accent-600 dark:text-accent-400"
+                        >
+                          <path
+                            d="M3.5 8.5l3 3 6-7"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+                {visible.length === 0 ? <li className="dim px-2.5 py-2">{q ? 'No matches' : 'No options'}</li> : null}
+              </ul>
+              {action ? (
+                <div className="border-t border-zinc-200 p-1 dark:border-zinc-800">
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-2 text-left text-[13px] font-medium outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
+                    onClick={() => {
+                      close(false);
+                      action.onSelect();
+                    }}
+                  >
+                    <span aria-hidden>＋</span> {action.label}
+                  </button>
+                </div>
+              ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
