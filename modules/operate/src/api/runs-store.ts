@@ -73,6 +73,19 @@ export class RunsStore {
   }
 
   /**
+   * Runs currently executing (or about to) on a specific runner — the set a
+   * dead runner strands. `review` rows are excluded: their gateway may be gone
+   * but the finished diff is worth keeping visible until someone acts on it.
+   */
+  activeOnRunner(runnerId: string): RunRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM runs WHERE runner_id = ? AND status IN ('provisioning', 'running', 'idle')`,
+      )
+      .all(runnerId) as RunRow[];
+  }
+
+  /**
    * Live attended chats (interactive + AI Help) holding a slot of the pool the
    * given user schedules against: shared runners (runner_id null = local) plus
    * the user's own machines. A colleague's chats parked on THEIR personal

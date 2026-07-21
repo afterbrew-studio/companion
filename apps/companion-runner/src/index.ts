@@ -15,6 +15,7 @@ import {
   importProvidersFromDailyMoxxy,
   seedPermissionDenyRules,
 } from '@companion/module-operate/exec';
+import { autostart } from './autostart.js';
 import { removePidFile, startBackground, statusBackground, stopBackground, writePidFile } from './background.js';
 import { loadRunnerConfig } from './config.js';
 import { log } from './log.js';
@@ -33,6 +34,8 @@ Usage:
   companion-runner setup           Check + install/repair prerequisites (moxxy CLI,
                                    providers, host firewall).
   companion-runner open-firewall   Open the agent port on this machine's firewall.
+  companion-runner autostart       Start on boot & restart on crash (launchd/systemd).
+  companion-runner autostart off   Remove the boot registration.
   companion-runner --help          Show this help.
 
 Key environment (see the README for the full list):
@@ -63,6 +66,10 @@ async function main(): Promise<void> {
   }
   if (cmd === 'open-firewall') {
     process.exit(await openFirewall(loadRunnerConfig().port));
+  }
+  if (cmd === 'autostart') {
+    const sub = argv.filter((a) => !a.startsWith('-'))[1];
+    process.exit(await autostart(sub === 'off' ? 'off' : sub === 'status' ? 'status' : 'install'));
   }
   if (cmd !== undefined) {
     process.stderr.write(`unknown command: ${cmd}\n\n${HELP}`);

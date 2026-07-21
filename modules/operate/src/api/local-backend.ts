@@ -5,7 +5,7 @@ import { paths } from '@companion/services';
 import type { RunnerHealth } from '../contract/index.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { configuredProviderNames } from '../exec/home.js';
-import { readSessionHistory } from '../exec/history.js';
+import { loadHistoryWithFallback } from '../exec/history.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
@@ -113,8 +113,12 @@ export class LocalRunnerBackend implements RunnerBackend {
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
     const handle = this.pool.get(runId);
-    if (handle?.client.isOpen) return handle.client.loadHistory(runId, before, limit);
-    return readSessionHistory(runId, before, limit);
+    return loadHistoryWithFallback(
+      handle?.client.isOpen ? () => handle.client.loadHistory(runId, before, limit) : null,
+      runId,
+      before,
+      limit,
+    );
   }
 
   async writeFile(cwd: string, relPath: string, content: string): Promise<void> {

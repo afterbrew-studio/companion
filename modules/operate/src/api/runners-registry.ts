@@ -106,7 +106,13 @@ export class Runners {
       if (existing) (existing as RemoteRunnerBackend).dispose();
       this.backends.set(
         row.id,
-        new RemoteRunnerBackend(row.id, row.endpoint, row.token, this.sink, this.githubTokenFor),
+        new RemoteRunnerBackend(row.id, row.endpoint, row.token, this.sink, this.githubTokenFor, (up) => {
+          // Event-stream state is the fastest liveness signal: a drop (or a
+          // reconnect) triggers an immediate probe instead of waiting out the
+          // poll interval. Once health already says offline, the retry loop's
+          // repeated drops stop re-probing.
+          if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
+        }),
       );
     }
   }
@@ -141,9 +147,17 @@ export class Runners {
    * eligible AND preferred (their machine, their subscription); other users'
    * runners never are. Automation passes null and rides shared runners only.
    */
-  place(repo: string | null, wantedProviders?: readonly string[] | null, userId: string | null = null): string | null {
+  place(
+    repo: string | null,
+    wantedProviders?: readonly string[] | null,
+    userId: string | null = null,
+    /** Runner row ids to skip — failover after a spawn just failed there. */
+    exclude?: ReadonlySet<string>,
+  ): string | null {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
-    const eligible = this.store.runners.eligibleFor(workspaceId, userId);
+    const eligible = this.store.runners
+      .eligibleFor(workspaceId, userId)
+      .filter((r) => !exclude?.has(r.id));
     const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
 
     const online = (row: RunnerRow): boolean => {
@@ -229,17 +243,12 @@ export class Runners {
   // ---------- health ----------
 
   private async pollHealth(): Promise<void> {
-    let changed = false;
-    for (const [id, backend] of this.backends) {
-      try {
-        const h = await backend.probe();
-        if (JSON.stringify(this.health.get(id)) !== JSON.stringify(h)) changed = true;
-        this.health.set(id, h);
-      } catch (err) {
-        log.warn('runner health probe failed', { runner: id, err: String(err) });
-      }
-    }
-    if (changed) this.broadcast({ t: 'runners.changed' });
+    // Parallel: one hanging machine must not delay every other runner's health.
+    await Promise.all(
+      [...this.backends.keys()].map((id) =>
+        this.probeOne(id).catch((err) => log.warn('runner health probe failed', { runner: id, err: String(err) })),
+      ),
+    );
   }
 
   healthFor(id: string): RunnerHealth {
@@ -375,9 +384,22 @@ export class Runners {
   private async probeOne(id: string): Promise<RunnerHealth> {
     const backend = this.backends.get(id);
     if (!backend) return UNKNOWN_HEALTH;
+    const prev = this.health.get(id);
     const health = await backend.probe();
     this.health.set(id, health);
+    if (JSON.stringify(prev) !== JSON.stringify(health)) this.broadcast({ t: 'runners.changed' });
+    // Transition into offline strands the runs placed there — tell the sink so
+    // they're marked interrupted (and their owners can redispatch) instead of
+    // sitting "live" forever on a machine that's gone.
+    if (prev?.status !== 'offline' && health.status === 'offline' && id !== LOCAL_RUNNER_ID) {
+      this.sink.onRunnerUnreachable(id, health.detail ?? 'runner unreachable');
+    }
     return health;
+  }
+
+  /** Nudge health after an external failure signal (e.g. a spawn that died). */
+  recheckHealth(id: string | null): void {
+    void this.probeOne(id ?? LOCAL_RUNNER_ID).catch(() => undefined);
   }
 
   private toRecord(row: RunnerRow): RunnerRecord {

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskRequest } from '@companion/types';
+import type { AskRequest, MoxxyEvent } from '@companion/types';
 import { onServerMessage } from '@companion/core/client';
 import type { RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { emptyFold, foldEvent, foldMany, type FoldState } from '../transcript/fold.js';
+
+/** The transcript seed: history not yet loaded / loaded / failed (auto-retrying). */
+export type HistoryState = 'loading' | 'ready' | 'error';
 
 /**
  * One agent run's transcript and interaction layer: the record, pending asks,
@@ -16,6 +19,7 @@ export interface UseRun {
   readonly setRun: (run: RunRecord) => void;
   readonly asks: AskRequest[];
   readonly fold: FoldState;
+  readonly historyState: HistoryState;
   readonly activeTurn: string | null;
   readonly error: string | null;
   readonly runnerNames: ReadonlyMap<string, string> | null;
@@ -33,6 +37,14 @@ export function useRun(runId: string): UseRun {
   const [run, setRun] = useState<RunRecord | null>(null);
   const [asks, setAsks] = useState<AskRequest[]>([]);
   const [fold, setFold] = useState<FoldState>(emptyFold);
+  const [historyState, setHistoryState] = useState<HistoryState>('loading');
+  // Non-null while a seed is in flight: live WS events are diverted here and
+  // replayed onto the seeded fold, instead of being clobbered by its reset.
+  const seedBuffer = useRef<MoxxyEvent[] | null>(null);
+  const seeded = useRef(false);
+  const alive = useRef(true);
+  const retryAttempt = useRef(0);
+  const retryTimer = useRef<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [lifecycle, setLifecycle] = useState<'resuming' | 'stopping' | null>(null);
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
@@ -56,19 +68,46 @@ export function useRun(runId: string): UseRun {
   }, [run?.runnerId, runnerNames]);
 
   const refresh = useCallback(async () => {
+    window.clearTimeout(retryTimer.current);
+    seedBuffer.current = [];
+    if (!seeded.current) setHistoryState('loading');
     try {
       const { run, pendingAsks } = await api.getRun(runId);
       setRun(run);
       setAsks(pendingAsks);
       const segment = await api.history(runId, null, 300);
-      setFold({ ...foldMany(emptyFold(), segment.events) });
+      const next = foldMany(emptyFold(), segment.events);
+      for (const event of seedBuffer.current ?? []) foldEvent(next, event);
+      setFold({ ...next });
+      seeded.current = true;
+      retryAttempt.current = 0;
+      setError(null);
+      setHistoryState('ready');
     } catch (err) {
       setError(String(err));
+      // A remote runner mid-turn can transiently stall the history read —
+      // retry on a capped backoff until the first seed lands.
+      if (!seeded.current && alive.current) {
+        setHistoryState('error');
+        const attempt = ++retryAttempt.current;
+        retryTimer.current = window.setTimeout(() => void refresh(), Math.min(3_000 * attempt, 15_000));
+      }
+    } finally {
+      seedBuffer.current = null;
     }
   }, [runId]);
 
   useEffect(() => {
+    alive.current = true;
+    seeded.current = false;
+    retryAttempt.current = 0;
+    setFold(emptyFold());
+    setHistoryState('loading');
     void refresh();
+    return () => {
+      alive.current = false;
+      window.clearTimeout(retryTimer.current);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -76,7 +115,8 @@ export function useRun(runId: string): UseRun {
       if ('runId' in msg && msg.runId !== runId) return;
       switch (msg.t) {
         case 'event':
-          setFold({ ...foldEvent(foldRef.current, msg.event) });
+          if (seedBuffer.current) seedBuffer.current.push(msg.event);
+          else setFold({ ...foldEvent(foldRef.current, msg.event) });
           break;
         case 'turn':
           setActiveTurn(msg.phase === 'started' ? (msg.turnId ?? 'turn') : null);
@@ -143,6 +183,7 @@ export function useRun(runId: string): UseRun {
     setRun,
     asks,
     fold,
+    historyState,
     activeTurn,
     error,
     runnerNames,

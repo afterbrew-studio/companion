@@ -675,20 +675,24 @@ function AgentsStatus(): JSX.Element | null {
   const [ws, setWs] = useState<WsState>('offline');
   const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
 
-  // The pill counts only the viewer's OWN sessions — colleagues' runs in shared
-  // workspaces stay visible on #/runs but must not inflate the header.
+  // The pill counts the viewer's OWN sessions plus unattributed automation
+  // (board workers, pipelines, scheduled jobs run with userId null) — the
+  // server already scopes both listRuns and run.changed to what the viewer may
+  // see. Colleagues' self-triggered runs carry THEIR username and stay off the
+  // pill, visible on #/runs only.
   useEffect(() => {
     setLiveIds(new Set());
     if (!operateEnabled || !me) return;
+    const mineOrAutomation = (userId: string | null): boolean => userId === null || userId === me;
     let alive = true;
     operateApi
       .listRuns()
       .then(({ runs }) => {
-        if (alive) setLiveIds(new Set(runs.filter((r) => r.live && r.userId === me).map((r) => r.id)));
+        if (alive) setLiveIds(new Set(runs.filter((r) => r.live && mineOrAutomation(r.userId)).map((r) => r.id)));
       })
       .catch(() => undefined); // roles without runs:read just see the count stay 0
     const off = onServerMessage((msg) => {
-      if (msg.t !== 'run.changed' || msg.run.userId !== me) return;
+      if (msg.t !== 'run.changed' || !mineOrAutomation(msg.run.userId)) return;
       setLiveIds((prev) => {
         const next = new Set(prev);
         if (msg.run.live) next.add(msg.run.id);
@@ -753,7 +757,7 @@ function AgentsStatus(): JSX.Element | null {
     overall === 'healthy' ? 'bg-emerald-500' : overall === 'degraded' ? 'bg-amber-500' : 'bg-red-500';
 
   const n = liveIds.size;
-  const label = n === 1 ? '1 live agent of yours' : `${n} live agents of yours`;
+  const label = n === 1 ? '1 live agent' : `${n} live agents`;
 
   return (
     <div className="group relative">

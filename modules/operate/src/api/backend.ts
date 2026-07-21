@@ -63,4 +63,6 @@ export interface RunnerEventSink {
   onAsk(runId: string, ask: AskRequest): void;
   onAskResolved(runId: string, requestId: string): void;
   onGone(runId: string): void;
+  /** A runner's health transitioned to offline — its stranded runs must not stay "live". */
+  onRunnerUnreachable(runnerId: string, detail: string): void;
 }

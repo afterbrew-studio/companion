@@ -37,6 +37,42 @@ export async function readSessionHistory(
   return { events: events.slice(start, end), prevCursor: start > 0 ? start : null };
 }
 
+/**
+ * History via the live gateway when it answers promptly, else the session
+ * JSONL. A gateway that is mid-turn can sit on the RPC far longer than any
+ * caller (the SPA, the hub's HTTP timeout) is willing to wait, while the
+ * on-disk log is appended live and holds the same events — so the RPC gets a
+ * short deadline, never the transcript.
+ */
+export async function loadHistoryWithFallback(
+  rpc: (() => Promise<HistorySegment>) | null,
+  runId: string,
+  before: number | null,
+  limit: number,
+  rpcTimeoutMs = 4_000,
+): Promise<HistorySegment> {
+  if (rpc) {
+    try {
+      return await new Promise<HistorySegment>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`history RPC timed out after ${rpcTimeoutMs}ms`)), rpcTimeoutMs);
+        rpc().then(
+          (v) => {
+            clearTimeout(timer);
+            resolve(v);
+          },
+          (e: unknown) => {
+            clearTimeout(timer);
+            reject(e instanceof Error ? e : new Error(String(e)));
+          },
+        );
+      });
+    } catch {
+      // fall through to the file
+    }
+  }
+  return readSessionHistory(runId, before, limit);
+}
+
 function isEventLike(value: unknown): value is MoxxyEvent {
   return (
     typeof value === 'object' &&

@@ -8,13 +8,17 @@ import { AskSheet } from '../components/AskSheet.js';
 import { statusBadge } from './RunsPage.js';
 
 export function RunDetail({ runId }: { runId: string }): JSX.Element {
-  const { run, setRun, asks, fold, activeTurn, error, runnerNames, lifecycle, busy, refresh, lifecycleAction, sendPrompt, respondAsk, abort } =
+  const { run, setRun, asks, fold, historyState, activeTurn, error, runnerNames, lifecycle, busy, refresh, lifecycleAction, sendPrompt, respondAsk, abort } =
     useRun(runId);
   const [draft, setDraft] = useState('');
 
   const send = async (): Promise<void> => {
     if (await sendPrompt(draft)) setDraft('');
   };
+
+  // Prompting blind into a run whose transcript hasn't seeded yet (remote
+  // runner mid-turn) is how prompts get double-sent — hold the composer shut.
+  const composerLocked = !run?.live || busy || historyState !== 'ready';
 
   return (
     <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-6">
@@ -56,7 +60,25 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
         <ReviewPanel run={run} onChange={refresh} />
       ) : null}
 
-      <Transcript blocks={fold.blocks} />
+      {historyState !== 'ready' && fold.blocks.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-center">
+          {historyState === 'loading' ? (
+            <InlineLoading label="Loading the transcript…" />
+          ) : (
+            <>
+              <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                The transcript didn&apos;t load
+              </span>
+              <span className="dim text-[13px]">The runner didn&apos;t answer in time — retrying automatically.</span>
+              <button className="btn-ghost" onClick={() => void refresh()}>
+                Retry now
+              </button>
+            </>
+          )}
+        </div>
+      ) : (
+        <Transcript blocks={fold.blocks} />
+      )}
 
       {asks.map((ask) => (
         <AskSheet key={ask.requestId} ask={ask} onRespond={(r) => void respondAsk(ask.requestId, r)} />
@@ -69,8 +91,16 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
           <textarea
             className="max-h-40 min-h-11 flex-1 resize-none border-none bg-transparent px-1.5 py-1 text-[13px] outline-none placeholder:text-zinc-400"
             value={draft}
-            placeholder={run?.live ? 'Send a prompt…' : 'Run is not live — resume it to chat'}
-            disabled={!run?.live || busy}
+            placeholder={
+              !run?.live
+                ? 'Run is not live — resume it to chat'
+                : historyState === 'loading'
+                  ? 'Loading the transcript…'
+                  : historyState === 'error'
+                    ? 'Waiting for the runner — transcript not loaded yet'
+                    : 'Send a prompt…'
+            }
+            disabled={composerLocked}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -84,7 +114,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
               Abort
             </button>
           ) : (
-            <IconButton label="Send prompt" disabled={!run?.live || busy || !draft.trim()} onClick={() => void send()}>
+            <IconButton label="Send prompt" disabled={composerLocked || !draft.trim()} onClick={() => void send()}>
               <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
                 <path
                   d="M14 2 7.5 8.5M14 2 9.8 14a.4.4 0 0 1-.75.02L7.5 8.5 2 6.55a.4.4 0 0 1 .02-.76L14 2z"

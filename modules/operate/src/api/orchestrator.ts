@@ -14,6 +14,7 @@ import type {
 } from '../contract/index.js';
 import { log, paths, type DaemonConfig } from '@companion/services';
 import { rowToRun } from './runs-store.js';
+import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
 import { Runners } from './runners-registry.js';
@@ -166,6 +167,27 @@ export class Orchestrator implements RunnerEventSink {
     this.emitRunChanged(runId);
   }
 
+  /**
+   * A runner went unreachable: its provisioning/running/idle runs are stranded
+   * (their gateway, session, and worktree live on that machine). Mark them
+   * interrupted with a telling outcome — the transcript stays readable once the
+   * machine returns, and owners watching run.changed (the board's retry, one-shot
+   * waiters) treat interrupted as terminal failure and redispatch elsewhere.
+   */
+  onRunnerUnreachable(runnerId: string, detail: string): void {
+    for (const row of this.store.runs.activeOnRunner(runnerId)) {
+      log.warn('run stranded by unreachable runner', { runId: row.id, runner: runnerId });
+      this.pendingAsks.delete(row.id);
+      const waiters = this.turnWaiters.get(row.id);
+      if (waiters) {
+        for (const resolve of [...waiters]) resolve();
+        waiters.clear();
+      }
+      this.setStatus(row.id, 'interrupted', `runner unreachable: ${detail}`);
+      this.emitRunChanged(row.id);
+    }
+  }
+
   /** Boot-time recovery: daemon died with children; rows are the truth. */
   recover(): void {
     const swept = this.store.runs.markInterrupted();
@@ -217,9 +239,15 @@ export class Orchestrator implements RunnerEventSink {
    * worktree before createRun (fixes, pipelines) use this so the worktree
    * lands on the runner the run will execute on.
    */
-  placeRun(repo: string | null, kind: RunKind, model?: string | null, userId?: string | null): string | null {
+  placeRun(
+    repo: string | null,
+    kind: RunKind,
+    model?: string | null,
+    userId?: string | null,
+    exclude?: ReadonlySet<string>,
+  ): string | null {
     const effective = model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
-    return this.runners.place(repo, this.providersForModel(effective), userId ?? null);
+    return this.runners.place(repo, this.providersForModel(effective), userId ?? null, exclude);
   }
 
   async createRun(opts: {
@@ -297,19 +325,41 @@ export class Orchestrator implements RunnerEventSink {
     });
     this.broadcast({ t: 'runs.changed' });
 
+    // Auto-placed runs fail over: a scratch/spawn failure marks the runner for
+    // a health recheck and retries on the next-best placement. Explicitly
+    // pinned runs (caller-prepared cwd or runnerId) can't move — their working
+    // dir exists only on that machine.
+    const autoPlaced = opts.runnerId === undefined && opts.cwd === undefined;
+    const tried = new Set<string>([runnerId ?? LOCAL_RUNNER_ID]);
+    let placedOn = runnerId;
+    let placedBackend = backend;
     let cwd = opts.cwd;
-    if (cwd === undefined) {
-      cwd = await backend.scratchDir(id);
-      this.store.runs.setPlacement(id, runnerId, cwd);
-    }
-
-    try {
-      await backend.spawn(id, cwd);
-      this.setStatus(id, 'running');
-    } catch (err) {
-      this.setStatus(id, 'failed', String(err));
-      this.emitRunChanged(id);
-      throw err;
+    for (;;) {
+      try {
+        if (opts.cwd === undefined) {
+          cwd = await placedBackend.scratchDir(id);
+          this.store.runs.setPlacement(id, placedOn, cwd);
+        }
+        await placedBackend.spawn(id, cwd!);
+        this.setStatus(id, 'running');
+        break;
+      } catch (err) {
+        this.runners.recheckHealth(placedOn);
+        const next = autoPlaced
+          ? this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind), opts.userId ?? null, tried)
+          : undefined;
+        if (next === undefined || tried.has(next ?? LOCAL_RUNNER_ID)) {
+          this.setStatus(id, 'failed', String(err));
+          this.emitRunChanged(id);
+          throw err;
+        }
+        log.warn('run placement failed over', { runId: id, from: placedOn, to: next, err: String(err) });
+        tried.add(next ?? LOCAL_RUNNER_ID);
+        placedOn = next;
+        placedBackend = this.runners.backend(placedOn);
+        // The new runner may pin a different model for this action.
+        this.store.runs.setModel(id, opts.model ?? this.runners.modelPinFor(placedOn, kind) ?? this.pinnedModel(kind));
+      }
     }
     this.emitRunChanged(id);
     return this.getRun(id)!;

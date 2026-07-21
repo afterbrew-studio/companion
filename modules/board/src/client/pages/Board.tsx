@@ -29,7 +29,7 @@ import {
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { CommentsSection, codeApi, useWorkspaceRepos } from '@companion/module-code/client';
-import type { ChecksSnapshot, GitHubAccountRecord } from '@companion/module-code/contract';
+import type { ChecksSnapshot, GitHubAccountRecord, RepoRecord } from '@companion/module-code/contract';
 import type {
   BoardConfig,
   SpecOption,
@@ -258,6 +258,7 @@ function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachmen
 export default function Board({ query }: RouteProps): JSX.Element {
   const { current } = useWorkspace();
   const { tasks, workers, config, loaded, error, setError } = useBoard(current?.id);
+  const repos = useWorkspaceRepos(current?.id);
   const [creating, setCreating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [managingWorkers, setManagingWorkers] = useState(false);
@@ -289,6 +290,26 @@ export default function Board({ query }: RouteProps): JSX.Element {
     (id: string | null) => (id ? (workers.find((w) => w.id === id)?.name ?? 'unknown') : null),
     [workers],
   );
+
+  // Short repo names collide across owners (forks, same-named projects) — an
+  // ambiguous short name renders as the full owner/name instead. Collisions are
+  // detected across the workspace's repos AND the board's tasks, so a card
+  // disambiguates even when only one of the twins has tasks here.
+  const repoLabel = useMemo(() => {
+    const fullsByShort = new Map<string, Set<string>>();
+    const note = (full: string): void => {
+      const short = full.split('/')[1] ?? full;
+      const set = fullsByShort.get(short) ?? new Set<string>();
+      set.add(full);
+      fullsByShort.set(short, set);
+    };
+    for (const r of repos) note(r.fullName);
+    for (const t of tasks) note(t.repo);
+    return (full: string): string => {
+      const short = full.split('/')[1] ?? full;
+      return (fullsByShort.get(short)?.size ?? 0) > 1 ? full : short;
+    };
+  }, [repos, tasks]);
 
   // Unfinished prerequisites of a card, by title. Deps outside the caller's
   // repo access aren't in the snapshot and simply don't show.
@@ -410,6 +431,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
                   <TaskCard
                     key={task.id}
                     task={task}
+                    repoLabel={repoLabel(task.repo)}
                     workerName={workerName(task.assignedWorkerId)}
                     waitingOn={waitingOn(task)}
                     attention={col.key === 'needs_decision'}
@@ -431,12 +453,18 @@ export default function Board({ query }: RouteProps): JSX.Element {
         </div>
       </div>
 
-      {creating ? <NewTaskModal onClose={() => setCreating(false)} onError={setError} /> : null}
+      {creating ? <NewTaskModal repos={repos} onClose={() => setCreating(false)} onError={setError} /> : null}
       {detailId ? (
         <TaskDetailDrawer id={detailId} allTasks={tasks} workerName={workerName} onClose={closeDetail} onError={setError} />
       ) : null}
       {managingWorkers && current ? (
-        <WorkersModal workspaceId={current.id} workers={workers} onClose={() => setManagingWorkers(false)} onError={setError} />
+        <WorkersModal
+          workspaceId={current.id}
+          workers={workers}
+          repoLabel={repoLabel}
+          onClose={() => setManagingWorkers(false)}
+          onError={setError}
+        />
       ) : null}
       {configuring && config && current ? (
         <ConfigModal
@@ -453,6 +481,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
 
 function TaskCard({
   task,
+  repoLabel,
   workerName,
   waitingOn,
   attention,
@@ -461,6 +490,8 @@ function TaskCard({
   onDragEnd,
 }: {
   task: TaskRecord;
+  /** Repo display name — short, or owner/name when the short name is ambiguous. */
+  repoLabel: string;
   workerName: string | null;
   /** Titles of unfinished prerequisites — the card won't dispatch until they're done. */
   waitingOn: string[];
@@ -513,7 +544,9 @@ function TaskCard({
         </span>
       </div>
       <p className="dim mt-1 flex min-w-0 items-baseline gap-1.5 text-[11px]">
-        <span className="truncate font-mono">{task.repo.split('/')[1] ?? task.repo}</span>
+        <span className="truncate font-mono" title={task.repo}>
+          {repoLabel}
+        </span>
         {workerName ? (
           <>
             <span className="shrink-0" aria-hidden>
@@ -581,9 +614,15 @@ function TaskCard({
   );
 }
 
-function NewTaskModal({ onClose, onError }: { onClose: () => void; onError: (e: string | null) => void }): JSX.Element {
-  const { current } = useWorkspace();
-  const repos = useWorkspaceRepos(current?.id);
+function NewTaskModal({
+  repos,
+  onClose,
+  onError,
+}: {
+  repos: readonly RepoRecord[];
+  onClose: () => void;
+  onError: (e: string | null) => void;
+}): JSX.Element {
   const [repo, setRepo] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -1232,11 +1271,13 @@ function TaskDetailDrawer({
 function WorkersModal({
   workspaceId,
   workers,
+  repoLabel,
   onClose,
   onError,
 }: {
   workspaceId: string;
   workers: WorkerView[];
+  repoLabel: (full: string) => string;
   onClose: () => void;
   onError: (e: string | null) => void;
 }): JSX.Element {
@@ -1268,9 +1309,13 @@ function WorkersModal({
               />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{w.name}</div>
-                <div className="dim truncate text-xs">
+                <div className="dim truncate text-xs" title={w.busyTaskRepo ?? undefined}>
                   {w.role}
-                  {w.busy ? ` · ${w.busyTaskTitle ?? 'busy'}` : w.enabled ? ' · idle' : ' · disabled'}
+                  {w.busy
+                    ? ` · ${w.busyTaskTitle ?? 'busy'}${w.busyTaskRepo ? ` — ${repoLabel(w.busyTaskRepo)}` : ''}`
+                    : w.enabled
+                      ? ' · idle'
+                      : ' · disabled'}
                 </div>
               </div>
               <Switch checked={w.enabled} onChange={(v) => act(() => boardApi.updateWorker(w.id, { enabled: v }))()} label={`Enable ${w.name}`} />
@@ -1367,12 +1412,15 @@ function ConfigModal({
   onError: (e: string | null) => void;
 }): JSX.Element {
   const reviewers = workers.filter((w) => w.role === 'reviewer');
-  // Shared accounts only: merges run unattended, so personal accounts can't act.
+  // Every connected account is listed; personal ones (owner-bound) are shown
+  // but not selectable — merges run unattended and the server rejects them.
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
   useEffect(() => {
     void codeApi
       .listGithubAccounts()
-      .then(({ accounts }) => setAccounts(accounts.filter((a) => a.ownerId === null)))
+      .then(({ accounts }) =>
+        setAccounts([...accounts].sort((a, b) => Number(a.ownerId !== null) - Number(b.ownerId !== null))),
+      )
       .catch(() => setAccounts([]));
   }, []);
   const save = (fields: Partial<BoardConfig>): void => {
@@ -1419,13 +1467,26 @@ function ConfigModal({
         </SettingRow>
         <SettingRow
           title="Merge account"
-          description="The shared GitHub account that merges — it needs merge rights on the board's repos."
+          description="The connected GitHub account that merges — it needs merge rights on the board's repos."
         >
           <Dropdown
             ariaLabel="Merge account"
             value={config.mergeAccountId}
             onChange={(v) => save({ mergeAccountId: v || null })}
-            options={[{ value: '', label: 'Automatic' }, ...accounts.map((a) => ({ value: a.id, label: a.login }))]}
+            options={[
+              { value: '', label: 'Automatic' },
+              ...accounts.map((a) => ({
+                value: a.id,
+                label: a.login,
+                hint:
+                  a.ownerId !== null
+                    ? `${a.ownerId}'s personal — can't merge unattended`
+                    : a.scope === 'delegated'
+                      ? 'delegated'
+                      : 'shared',
+                disabled: a.ownerId !== null,
+              })),
+            ]}
             placeholder="Automatic"
             className="w-44"
           />

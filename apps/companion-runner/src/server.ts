@@ -34,7 +34,7 @@ import { configuredProviderNames } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
-import { readSessionHistory, upgradeMoxxyCli } from '@companion/module-operate/exec';
+import { loadHistoryWithFallback, upgradeMoxxyCli } from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**
@@ -284,8 +284,12 @@ async function routeRun(
       const beforeRaw = url.searchParams.get('before');
       const before = beforeRaw === null || beforeRaw === '' ? null : clampInt(beforeRaw, 0, Number.MAX_SAFE_INTEGER);
       const handle = deps.pool.get(runId);
-      if (handle?.client.isOpen) return handle.client.loadHistory(runId, before, limit);
-      return readSessionHistory(runId, before, limit);
+      return loadHistoryWithFallback(
+        handle?.client.isOpen ? () => handle.client.loadHistory(runId, before, limit) : null,
+        runId,
+        before,
+        limit,
+      );
     }
     case 'session-info': {
       requireMethod(method, 'GET', action);

@@ -46,6 +46,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly token: string,
     private readonly sink: RunnerEventSink,
     private readonly githubTokenFor: (repo: string) => Promise<string | null> | string | null,
+    /** Event-stream up/down transitions — the registry probes on both edges. */
+    private readonly onStreamState?: (up: boolean) => void,
   ) {
     this.connectEvents();
   }
@@ -79,7 +81,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   async probe(): Promise<RunnerHealth> {
     try {
-      const h = await this.call<AgentHealth>('GET', '/health');
+      // /health is trivial; a machine that can't answer it in 5s is not a
+      // machine to place work on — and a hanging probe must not stall the poll.
+      const h = await this.call<AgentHealth>('GET', '/health', undefined, 5_000);
       const protocolOk = h.protocol === RUNNER_AGENT_PROTOCOL;
       return {
         status: protocolOk && h.moxxyCompatible ? 'online' : 'degraded',
@@ -170,7 +174,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
     const q = `?limit=${limit}${before === null ? '' : `&before=${before}`}`;
-    return this.call<AgentHistoryResponse>('GET', `/runs/${runId}/history${q}`);
+    // Shorter than the default: this call blocks the transcript view, and an
+    // updated agent answers within its own ~4s gateway-RPC fallback anyway.
+    // Only a pre-fallback agent with a busy gateway ever reaches this deadline.
+    return this.call<AgentHistoryResponse>('GET', `/runs/${runId}/history${q}`, undefined, 12_000);
   }
 
   async writeFile(cwd: string, relPath: string, content: string): Promise<void> {
@@ -241,6 +248,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
     const url = `${this.base().replace(/^http/, 'ws')}/agent/events?token=${encodeURIComponent(this.token)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
+    ws.on('open', () => this.onStreamState?.(true));
     ws.on('message', (data) => {
       let msg: AgentEventMessage;
       try {
@@ -278,6 +286,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   private scheduleReconnect(): void {
     if (this.closed || this.wsRetry) return;
+    this.onStreamState?.(false);
     // Agent restarts reap its gateways; mark our runs gone so the UI reflects it.
     for (const runId of [...this.liveRuns]) {
       this.liveRuns.delete(runId);

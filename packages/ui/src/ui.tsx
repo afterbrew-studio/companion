@@ -21,6 +21,8 @@ export interface DropdownOption<T extends string> {
   icon?: ReactNode;
   /** Dim secondary text, right-aligned in the menu (e.g. a count). */
   hint?: string;
+  /** Visible but not selectable — use the hint to say why. */
+  disabled?: boolean;
 }
 
 /**
@@ -129,7 +131,7 @@ export function Dropdown<T extends string>({
     const list = listRef.current;
     const target =
       list?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ??
-      list?.querySelector<HTMLButtonElement>('[role="option"]');
+      list?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)');
     target?.focus();
   }, [open, searchable]);
 
@@ -139,7 +141,7 @@ export function Dropdown<T extends string>({
   };
 
   const onListKeyDown = (e: KeyboardEvent<HTMLUListElement>): void => {
-    const items = [...(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [])];
+    const items = [...(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? [])];
     const idx = items.indexOf(document.activeElement as HTMLButtonElement);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -219,7 +221,7 @@ export function Dropdown<T extends string>({
                       listRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus();
                     } else if (e.key === 'Enter') {
                       e.preventDefault();
-                      const first = visible[0];
+                      const first = visible.find((o) => !o.disabled);
                       if (first) {
                         onChange(first.value);
                         close(true);
@@ -246,7 +248,8 @@ export function Dropdown<T extends string>({
                       type="button"
                       role="option"
                       aria-selected={isSelected}
-                      className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
+                      disabled={o.disabled}
+                      className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-zinc-100 focus:bg-zinc-100 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:focus:bg-zinc-800 dark:disabled:hover:bg-transparent"
                       onClick={() => {
                         onChange(o.value);
                         close(true);

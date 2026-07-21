@@ -375,7 +375,9 @@ COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
             <code className="code-inline">companion-runner doctor</code> reports what a box still needs. Leave{' '}
             <code className="code-inline">COMPANION_RUNNER_TOKEN</code> out and the agent generates one — printed once and
             saved to <code className="code-inline">~/.companion-runner/token</code>. No GitHub setup is needed on the box:
-            Companion sends its own GitHub credential with each clone and push.
+            Companion sends its own GitHub credential with each clone and push. To survive reboots and crashes, register
+            it as a service instead of <code className="code-inline">--background</code>:{' '}
+            <code className="code-inline">companion-runner autostart</code>.
           </span>
         </li>
         <li>

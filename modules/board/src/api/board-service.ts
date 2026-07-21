@@ -109,6 +109,7 @@ export class BoardService {
         busy: b != null,
         busyTaskId: visible ? b!.taskId : null,
         busyTaskTitle: visible ? b!.title : null,
+        busyTaskRepo: visible ? b!.repo : null,
       };
     });
     return { tasks, workers, config: this.store.getConfig(workspaceId) };

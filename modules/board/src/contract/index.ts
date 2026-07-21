@@ -57,6 +57,7 @@ export interface WorkerView extends WorkerRecord {
   /** Task identity is redacted (null) when it lives in a workspace the caller cannot access. */
   readonly busyTaskId: string | null;
   readonly busyTaskTitle: string | null;
+  readonly busyTaskRepo: string | null;
 }
 
 /** An image attached to a task and sent with the worker's first prompt. */
