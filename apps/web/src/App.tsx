@@ -245,12 +245,28 @@ function Shell(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoSet, freshKey, kernel.nav]);
 
-  // Visiting an area clears its mark (any nav entry whose hash we're under).
+  // The hash can sit under several entries' prefixes (#/playground is a prefix
+  // of #/playground/pipelines) — the LONGEST match is the page the user is on,
+  // while prefix matching still lights a section for its detail pages
+  // (#/runs/:id → Runs). One entry wins everywhere: highlight, title, fresh-clear.
+  const activeNavKey = useMemo(() => {
+    let best: { key: string; len: number } | null = null;
+    for (const m of kernel.nav) {
+      const matches =
+        hash === m.hash ||
+        hash.startsWith(`${m.hash}/`) ||
+        hash.startsWith(`${m.hash}?`) ||
+        (m.key === 'overview' && hash === '#/');
+      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
+    }
+    return best?.key ?? null;
+  }, [kernel.nav, hash]);
+
+  // Visiting an area clears its mark.
   useEffect(() => {
-    const entry = kernel.nav.find((m) => hash === m.hash || hash.startsWith(`${m.hash}/`) || hash.startsWith(`${m.hash}?`));
-    if (entry && fresh.has(entry.key)) mutateFresh((next) => next.delete(entry.key));
+    if (activeNavKey && fresh.has(activeNavKey)) mutateFresh((next) => next.delete(activeNavKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash, freshKey, kernel.nav]);
+  }, [activeNavKey, freshKey]);
 
   // Cmd/Ctrl+K opens the global search palette from anywhere.
   useEffect(() => {
@@ -340,12 +356,10 @@ function Shell(): JSX.Element {
               {!rail && foldedSections.has(section.id)
                 ? null
                 : modules.map((m) => {
-                // Boundary-aware match: #/runners must not light up #/runs.
-                const active =
-                  hash === m.hash ||
-                  hash.startsWith(`${m.hash}/`) ||
-                  hash.startsWith(`${m.hash}?`) ||
-                  (m.key === 'overview' && hash === '#/');
+                // Longest-match winner computed once above — boundary-aware
+                // (#/runners never lights #/runs) and nesting-aware
+                // (#/playground/pipelines lights only Pipeline Lab).
+                const active = m.key === activeNavKey;
                 return (
                   <a
                     key={m.key}
@@ -791,11 +805,15 @@ function crumbsFor(path: string, nav: readonly NavEntry[]): Array<{ label: strin
   // Standalone pages outside the module registry.
   if (path === '/inbox') return [{ label: 'Inbox' }];
   if (path === '/profile') return [{ label: 'Your profile' }];
-  // Boundary-aware match: /runners must not resolve to the Agent Runs module.
-  const mod = nav.find((mm) => {
+  // Boundary-aware AND longest-match: /runners must not resolve to Agent Runs,
+  // and /playground/pipelines must resolve to Pipeline Lab, not Agent Lab.
+  let mod: NavEntry | undefined;
+  for (const mm of nav) {
     const base = mm.hash.slice(1);
-    return path === base || path.startsWith(`${base}/`);
-  });
+    if ((path === base || path.startsWith(`${base}/`)) && (mod === undefined || mm.hash.length > mod.hash.length)) {
+      mod = mm;
+    }
+  }
   return [{ label: mod?.label ?? 'Overview' }];
 }
 

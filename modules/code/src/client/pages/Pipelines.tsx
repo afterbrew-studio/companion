@@ -44,6 +44,7 @@ const KIND_META: Record<PipelineStepKind, { label: string; hint: string }> = {
   agent: { label: 'Custom agent', hint: 'Your prompt; agent returns pass/fail' },
   label: { label: 'Add labels', hint: 'Applies labels to the PR' },
   comment: { label: 'Post comment', hint: 'Comments on the PR (supports {{pr.title}}…)' },
+  'slop-check': { label: 'AI slop gate', hint: 'Fails when the slop score reaches the threshold (needs the Slop module)' },
 };
 
 function defaultStep(kind: PipelineStepKind): PipelineStep {
@@ -59,6 +60,8 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
       return { ...base, kind, config: { labels: [] } };
     case 'comment':
       return { ...base, kind, config: { body: '' } };
+    case 'slop-check':
+      return { ...base, kind, config: { threshold: 70 } };
   }
 }
 
@@ -796,6 +799,21 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
             className="input min-h-20"
             value={step.config.body}
             onChange={(e) => onChange({ ...step, config: { body: e.target.value } })}
+          />
+        </Field>
+      );
+    case 'slop-check':
+      return (
+        <Field label="Fail at AI likelihood (1–100) — runs a fresh detection; the verdict also lands on the Slop page">
+          <input
+            type="number"
+            className="input w-28"
+            min={1}
+            max={100}
+            value={step.config.threshold}
+            onChange={(e) =>
+              onChange({ ...step, config: { threshold: Math.min(100, Math.max(1, Number(e.target.value) || 1)) } })
+            }
           />
         </Field>
       );

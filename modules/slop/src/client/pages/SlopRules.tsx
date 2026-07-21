@@ -1,0 +1,211 @@
+import { useState } from 'react';
+import {
+  Breadcrumb,
+  EmptyState,
+  ErrorBar,
+  Field,
+  FormActions,
+  IconButton,
+  Modal,
+  Page,
+  PageHeader,
+  PageLoading,
+  Switch,
+  useConfirm,
+} from '@companion/ui';
+import { NavIcon } from '@companion/core/client';
+import { useAuth } from '@companion/module-core/client';
+import type { SlopRuleRecord } from '../../contract/index.js';
+import { slopApi } from '../api.js';
+import { useSlopRules } from '../hooks/useSlopRules.js';
+
+/**
+ * The workspace's detection rule set: built-ins toggle per workspace, custom
+ * rules are full CRUD. A rule's instructions are fed verbatim to the one-shot
+ * detection agent alongside every other enabled rule.
+ */
+export default function SlopRules(): JSX.Element {
+  const { current, rules, error, setError } = useSlopRules();
+  const { can } = useAuth();
+  const { confirmDanger, confirmElement } = useConfirm();
+  const [editing, setEditing] = useState<SlopRuleRecord | 'new' | null>(null);
+
+  if (!current) return <EmptyState title="No workspace selected" />;
+  const canManage = can('slop:manage');
+
+  const toggle = async (rule: SlopRuleRecord, enabled: boolean): Promise<void> => {
+    try {
+      await slopApi.toggleRule(rule.id, current.id, enabled);
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const remove = async (rule: SlopRuleRecord): Promise<void> => {
+    const ok = await confirmDanger({
+      title: 'Delete rule',
+      message: `Delete the rule "${rule.name}"? Future detections will run without it; past verdicts keep their signals.`,
+    });
+    if (!ok) return;
+    try {
+      await slopApi.deleteRule(rule.id);
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  return (
+    <Page>
+      <Breadcrumb items={[{ label: 'AI Slop Detection', href: '#/slop' }, { label: 'Rules' }]} />
+      <PageHeader
+        title="Detection Rules"
+        subtitle={current.name}
+        actions={
+          canManage ? (
+            <button className="btn" onClick={() => setEditing('new')}>
+              New rule
+            </button>
+          ) : undefined
+        }
+      />
+      <ErrorBar error={error} className="mb-3" />
+
+      {rules === null ? (
+        <PageLoading label="Loading rules…" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rules.map((rule) => (
+            <div
+              key={rule.id}
+              className={`flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 ${rule.enabled ? '' : 'opacity-60'}`}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-medium">{rule.name}</h2>
+                  {rule.builtin ? <span className="badge">built-in</span> : null}
+                </div>
+                <p className="dim mt-0.5 text-xs">{rule.description}</p>
+              </div>
+              {canManage ? (
+                <div className="flex shrink-0 items-center gap-1">
+                  {!rule.builtin ? (
+                    <>
+                      <IconButton label="Edit rule" onClick={() => setEditing(rule)}>
+                        <NavIcon>
+                          <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" />
+                        </NavIcon>
+                      </IconButton>
+                      <IconButton label="Delete rule" danger onClick={() => void remove(rule)}>
+                        <NavIcon>
+                          <path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5" />
+                        </NavIcon>
+                      </IconButton>
+                    </>
+                  ) : null}
+                  <Switch
+                    checked={rule.enabled}
+                    onChange={(v) => void toggle(rule, v)}
+                    label={`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing ? (
+        <RuleEditor
+          workspaceId={current.id}
+          rule={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onError={setError}
+        />
+      ) : null}
+      {confirmElement}
+    </Page>
+  );
+}
+
+function RuleEditor({
+  workspaceId,
+  rule,
+  onClose,
+  onError,
+}: {
+  workspaceId: string;
+  rule: SlopRuleRecord | null;
+  onClose: () => void;
+  onError: (e: string | null) => void;
+}): JSX.Element {
+  const [name, setName] = useState(rule?.name ?? '');
+  const [description, setDescription] = useState(rule?.description ?? '');
+  const [instructions, setInstructions] = useState(rule?.instructions ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const fields = { name: name.trim(), description: description.trim(), instructions: instructions.trim() };
+      if (rule) await slopApi.updateRule(rule.id, fields);
+      else await slopApi.createRule(workspaceId, fields);
+      onError(null);
+      onClose();
+    } catch (err) {
+      onError(String(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={rule ? `Edit rule — ${rule.name}` : 'New detection rule'} onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name">
+            <input
+              className="input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Commit-message tells"
+              maxLength={80}
+            />
+          </Field>
+          <Field label="Description">
+            <input
+              className="input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="One line for the rules list"
+              maxLength={300}
+            />
+          </Field>
+        </div>
+        <Field
+          label="Instructions"
+          hint="Fed verbatim to the detection agent. Describe the tell, what evidence to look for, and how strongly to weigh it."
+        >
+          <textarea
+            className="input min-h-40"
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            maxLength={8_000}
+          />
+        </Field>
+        <FormActions>
+          <button className="btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn"
+            disabled={busy || name.trim().length < 2 || instructions.trim().length < 8}
+            onClick={() => void submit()}
+          >
+            {busy ? 'Saving…' : rule ? 'Save rule' : 'Create rule'}
+          </button>
+        </FormActions>
+      </div>
+    </Modal>
+  );
+}

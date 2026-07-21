@@ -1,0 +1,383 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import type { ServiceMap, SpaServerMessage, BusEvents } from '@companion/contracts';
+import { log, extractModelJson } from '@companion/services';
+import type { PrRecord } from '@companion/module-code/contract';
+import type {
+  SlopAction,
+  SlopDetectionResult,
+  SlopRuleRecord,
+  SlopSignal,
+  SlopVerdict,
+} from '../contract/index.js';
+import type { SlopStore } from './slop-store.js';
+import { BUILTIN_RULES } from './builtin-rules.js';
+
+// Structural aliases, operate-types style: another module's /api entry must
+// never be imported, so the collaborator types derive from the service bundles
+// this module receives through the registry.
+type CodeService = ServiceMap['code'];
+type Orchestrator = ServiceMap['operate']['orchestrator'];
+type Checkouts = ServiceMap['operate']['checkouts'];
+type GitHubClient = NonNullable<ReturnType<CodeService['githubAccounts']['clientFor']>>;
+
+const MAX_DIFF_CHARS = 60_000;
+const DETECT_TIMEOUT_MS = 8 * 60_000;
+
+const verdictSchema = z.object({
+  aiLikelihood: z.number().int().min(0).max(100),
+  confidence: z.enum(['low', 'medium', 'high']),
+  summary: z.string().min(1),
+  signals: z
+    .array(
+      z.object({
+        ruleId: z.string(),
+        observation: z.string(),
+        strength: z.enum(['weak', 'moderate', 'strong']),
+      }),
+    )
+    .max(20),
+  recommendedAction: z.enum(['none', 'label', 'comment', 'request_changes', 'close']),
+  draftComment: z.string(),
+});
+
+/**
+ * AI Slop Detection, review-then-apply like triage: ONE one-shot read-only
+ * agent scores a PR (from code's sync cache) against the workspace's enabled
+ * rule set and stores a pending verdict; labeling / commenting / requesting
+ * changes / closing only happens on explicit, permissioned human apply.
+ */
+export class SlopService {
+  constructor(
+    private readonly store: SlopStore,
+    private readonly code: CodeService,
+    private readonly orchestrator: Orchestrator,
+    private readonly checkouts: Checkouts,
+    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    /** The label the 'label' action applies — module config, read live. */
+    private readonly slopLabel: () => string,
+    private readonly broadcast: (msg: SpaServerMessage) => void,
+    private readonly emit: <K extends keyof BusEvents & string>(event: K, payload: BusEvents[K]) => void,
+  ) {}
+
+  /** The workspace a repo belongs to — via code's repos store (the scoping key). */
+  private workspaceOf(repo: string): string | null {
+    return this.code.repos.get(repo)?.workspace_id ?? null;
+  }
+
+  // ---------- rules -----------------------------------------------------------------
+
+  /** Built-ins (with this workspace's toggles applied) + the workspace's custom rules. */
+  rules(workspaceId: string): SlopRuleRecord[] {
+    const disabled = this.store.disabledBuiltins(workspaceId);
+    return [
+      ...BUILTIN_RULES.map((rule) => (disabled.has(rule.id) ? { ...rule, enabled: false } : rule)),
+      ...this.store.listRules(workspaceId),
+    ];
+  }
+
+  saveRule(
+    workspaceId: string,
+    fields: { name: string; description: string; instructions: string },
+  ): SlopRuleRecord {
+    const now = Date.now();
+    const rule: SlopRuleRecord & { workspaceId: string } = {
+      id: `sr-${randomUUID().slice(0, 12)}`,
+      workspaceId,
+      name: fields.name,
+      description: fields.description,
+      instructions: fields.instructions,
+      builtin: false,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.store.insertRule(rule);
+    this.changed();
+    return rule;
+  }
+
+  updateRule(
+    id: string,
+    fields: { name?: string; description?: string; instructions?: string },
+  ): SlopRuleRecord {
+    if (id.startsWith('builtin-')) throw new Error('built-in rules cannot be edited — disable them instead');
+    if (!this.store.getRule(id)) throw new Error('rule not found');
+    this.store.updateRule(id, fields);
+    this.changed();
+    return this.store.getRule(id)!;
+  }
+
+  deleteRule(id: string): void {
+    if (id.startsWith('builtin-')) throw new Error('built-in rules cannot be deleted');
+    if (this.store.deleteRule(id)) this.changed();
+  }
+
+  /** Enable/disable a rule for a workspace — built-ins via toggle rows, custom via the column. */
+  setRuleEnabled(workspaceId: string, id: string, enabled: boolean): void {
+    if (id.startsWith('builtin-')) {
+      if (!BUILTIN_RULES.some((rule) => rule.id === id)) throw new Error('unknown built-in rule');
+      this.store.setBuiltinEnabled(workspaceId, id, enabled);
+    } else {
+      const rule = this.store.getRule(id);
+      if (!rule || rule.workspaceId !== workspaceId) throw new Error('rule not found');
+      this.store.setRuleEnabled(id, enabled);
+    }
+    this.changed();
+  }
+
+  /** A user-defined rule row (built-ins have no row) — for route access gating. */
+  customRule(id: string): SlopRuleRecord | undefined {
+    return this.store.getRule(id);
+  }
+
+  // ---------- detection -------------------------------------------------------------
+
+  /**
+   * Cheap synchronous validation, shared by the route (so a bad request 400s
+   * instead of vanishing into fire-and-forget) and the agent phase.
+   */
+  private prepare(
+    repo: string,
+    prNumber: number,
+  ): { pr: PrRecord; ruleSet: SlopRuleRecord[]; client: GitHubClient } {
+    const pr = this.code.prs.get(repo, prNumber);
+    if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
+    const workspaceId = this.workspaceOf(repo);
+    if (!workspaceId) throw new Error(`repo ${repo} is not connected`);
+    const ruleSet = this.rules(workspaceId).filter((rule) => rule.enabled);
+    if (ruleSet.length === 0) throw new Error('no detection rules are enabled for this workspace');
+    const client = this.github({ repo });
+    if (!client) throw new Error('GitHub is not configured');
+    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
+    return { pr, ruleSet, client };
+  }
+
+  /** Throws when a detection cannot start (unknown PR, empty rule set, no clone…). */
+  validateDetect(repo: string, prNumber: number): void {
+    this.prepare(repo, prNumber);
+  }
+
+  /**
+   * Run one detection for a PR. The PR record comes from code's sync cache
+   * (GitHub-as-cache); only the diff is fetched, through the same client
+   * surface ai-review uses. Resolves when the result is stored — an agent-
+   * phase failure (diff fetch, dead run, parse miss) lands as status 'failed',
+   * never a fabricated verdict and never a silent vanish.
+   */
+  async detect(repo: string, prNumber: number): Promise<SlopDetectionResult> {
+    const { pr, ruleSet, client } = this.prepare(repo, prNumber);
+
+    let runId = '';
+    let verdict: SlopVerdict | null = null;
+    let error: string | null = null;
+    try {
+      const diff = await client.prDiff(repo, prNumber);
+      const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
+      const oneShot = await this.orchestrator.runOneShot({
+        kind: 'analysis',
+        title: `Slop check PR #${prNumber}: ${pr.title.slice(0, 60)}`,
+        cwd: this.checkouts.cloneDir(repo),
+        repo,
+        issueNumber: prNumber,
+        prompt: detectionPrompt(pr, ruleSet, clipped),
+        timeoutMs: DETECT_TIMEOUT_MS,
+        resume: { type: 'slop-detect', args: { repo, number: prNumber } },
+      });
+      runId = oneShot.runId;
+      verdict = parseSlopVerdict(oneShot.finalMessage ?? '', ruleSet);
+    } catch (err) {
+      error = String(err instanceof Error ? err.message : err).slice(0, 500);
+      log.warn('slop detection failed', { repo, prNumber, err: String(err) });
+    }
+
+    const result: SlopDetectionResult = {
+      id: `slop-${randomUUID().slice(0, 12)}`,
+      repo,
+      prNumber,
+      prTitle: pr.title,
+      runId,
+      status: verdict ? 'pending' : 'failed',
+      verdict,
+      error,
+      appliedAction: null,
+      ruleIds: ruleSet.map((rule) => rule.id),
+      createdAt: Date.now(),
+    };
+    this.store.insertDetection(result);
+    this.changed();
+    if (verdict) {
+      this.emit('slop.verdict', {
+        repo,
+        prNumber,
+        aiLikelihood: verdict.aiLikelihood,
+        recommendedAction: verdict.recommendedAction,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * The pipeline `slop-check` step's entry (see code's engine seam): run a
+   * fresh detection and return the gate-relevant slice. Throws on a failed
+   * detection — the engine turns that into a step error.
+   */
+  async detectForGate(
+    repo: string,
+    prNumber: number,
+  ): Promise<{ aiLikelihood: number; confidence: string; summary: string; detail: string | null }> {
+    const result = await this.detect(repo, prNumber);
+    if (!result.verdict) throw new Error(result.error ?? 'detection produced no verdict');
+    return {
+      aiLikelihood: result.verdict.aiLikelihood,
+      confidence: result.verdict.confidence,
+      summary: result.verdict.summary,
+      detail: signalsMarkdown(result.verdict.signals) || null,
+    };
+  }
+
+  // ---------- reads -----------------------------------------------------------------
+
+  getDetection(id: string): SlopDetectionResult | undefined {
+    return this.store.getDetection(id);
+  }
+
+  listByWorkspace(workspaceId: string): SlopDetectionResult[] {
+    return this.store.listByWorkspace(workspaceId);
+  }
+
+  listForPr(repo: string, prNumber: number): SlopDetectionResult[] {
+    return this.store.listForPr(repo, prNumber);
+  }
+
+  /** Newest detection for a PR — the seam the board can poll to flag its tasks. */
+  latestForPr(repo: string, prNumber: number): SlopDetectionResult | undefined {
+    return this.store.listForPr(repo, prNumber)[0];
+  }
+
+  // ---------- apply / dismiss -------------------------------------------------------
+
+  /**
+   * Apply a pending verdict to GitHub. `action` overrides the recommendation
+   * (a human may downgrade a "close" to a "comment"); 'none' just acknowledges.
+   * 'close' posts the draft comment first — a silent close is hostile.
+   */
+  async apply(
+    id: string,
+    opts: { action?: SlopAction; accountId?: string },
+  ): Promise<{ repo: string; number: number; action: SlopAction }> {
+    const result = this.store.getDetection(id);
+    if (!result?.verdict) throw new Error('detection not found or has no verdict');
+    if (result.status !== 'pending') throw new Error(`detection is ${result.status}, not pending`);
+    const action = opts.action ?? result.verdict.recommendedAction;
+
+    if (action !== 'none') {
+      const client = this.github({ repo: result.repo, accountId: opts.accountId });
+      if (!client) throw new Error('GitHub is not configured');
+      const body =
+        result.verdict.draftComment.trim() ||
+        `This pull request scored ${result.verdict.aiLikelihood}/100 on AI-slop detection (${result.verdict.confidence} confidence). ${result.verdict.summary}`;
+      switch (action) {
+        case 'label':
+          await client.addLabels(result.repo, result.prNumber, [this.slopLabel()]);
+          break;
+        case 'comment':
+          await client.comment(result.repo, result.prNumber, body);
+          break;
+        case 'request_changes':
+          try {
+            await client.createPrReview(result.repo, result.prNumber, { body, event: 'REQUEST_CHANGES' });
+          } catch (err) {
+            // GitHub rejects REQUEST_CHANGES from the PR's own author (422) —
+            // the verdict is still worth publishing as a comment review.
+            if ((err as { status?: number }).status === 422) {
+              await client.createPrReview(result.repo, result.prNumber, { body, event: 'COMMENT' });
+            } else {
+              throw err;
+            }
+          }
+          break;
+        case 'close':
+          await client.comment(result.repo, result.prNumber, body);
+          await client.closePr(result.repo, result.prNumber);
+          break;
+      }
+    }
+
+    this.store.setDetectionStatus(id, 'applied', action);
+    this.changed();
+    return { repo: result.repo, number: result.prNumber, action };
+  }
+
+  dismiss(id: string): void {
+    const result = this.store.getDetection(id);
+    if (!result) throw new Error('detection not found');
+    this.store.setDetectionStatus(id, 'dismissed', null);
+    this.changed();
+  }
+
+  // ---------- plumbing --------------------------------------------------------------
+
+  private changed(): void {
+    this.broadcast({ t: 'slop.changed' });
+  }
+}
+
+function detectionPrompt(pr: PrRecord, rules: readonly SlopRuleRecord[], diff: string): string {
+  const ruleSections = rules
+    .map((rule) => `### ${rule.id}: ${rule.name}\n${rule.instructions}`)
+    .join('\n\n');
+  return `You are an AI-slop detector assessing whether a GitHub pull request was substantially machine-generated with low human oversight. The repository's base branch is checked out in the current directory.
+
+READ-ONLY RULES (mandatory): you may read files and search the codebase to verify claims (do referenced APIs, helpers, and dependencies exist?), but you must NOT modify, create, or delete any file and must NOT run any write command (no git commit/push, no installs). Your ONLY output is the final JSON verdict.
+
+## Detection rules
+Apply EVERY rule below. Each signal you report must cite the id of the rule that produced it.
+
+${ruleSections}
+
+## PR #${pr.number}: ${pr.title}
+Author: ${pr.author} | Branch: ${pr.headRef} → ${pr.baseRef} | Draft: ${pr.draft ? 'yes' : 'no'} | Labels: ${pr.labels.join(', ') || '(none)'}
+
+${pr.body || '(no description)'}
+
+## Diff (may be truncated)
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Your task
+Investigate, weigh the signals across rules (independent families agreeing is far stronger than one family firing repeatedly), then reply with ONLY a JSON object (no markdown fence, no prose before or after) of exactly this shape:
+{
+  "aiLikelihood": <integer 0-100: probability this PR is low-oversight machine output>,
+  "confidence": "low" | "medium" | "high",
+  "summary": "<2-3 sentence assessment>",
+  "signals": [
+    { "ruleId": "<id of the rule that fired>", "observation": "<concrete evidence: quote, file reference, or metadata>", "strength": "weak" | "moderate" | "strong" }
+  ],
+  "recommendedAction": "none" | "label" | "comment" | "request_changes" | "close",
+  "draftComment": "<markdown comment to post if the action needs one; empty string otherwise>"
+}
+Action guidance: "none" for clean PRs; "label" when likely AI-assisted but of acceptable quality; "comment" when the author should confirm or clean up; "request_changes" for substantial slop worth salvaging; "close" ONLY for unmistakable throwaway slop (hallucinated APIs, meaningless diff, description unrelated to code). Being AI-assisted is not itself a fault — judge oversight and quality, not tool use. The draftComment must be specific and respectful: cite the evidence, never insult the author.`;
+}
+
+/**
+ * Tolerant extraction, strict validation — a miss is failure, never a guess.
+ * Signal rule ids resolve to names from the rule set the run used; an id the
+ * model invented survives verbatim as its own name rather than being dropped.
+ */
+export function parseSlopVerdict(text: string, rules: readonly SlopRuleRecord[]): SlopVerdict {
+  const parsed = verdictSchema.parse(extractModelJson(text));
+  const names = new Map(rules.map((rule) => [rule.id, rule.name]));
+  return {
+    ...parsed,
+    signals: parsed.signals.map((signal) => ({
+      ...signal,
+      ruleName: names.get(signal.ruleId) ?? signal.ruleId,
+    })),
+  };
+}
+
+function signalsMarkdown(signals: ReadonlyArray<SlopSignal>): string {
+  return signals.map((s) => `- **${s.ruleName}** (${s.strength}): ${s.observation}`).join('\n');
+}

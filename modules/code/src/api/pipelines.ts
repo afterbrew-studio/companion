@@ -66,6 +66,11 @@ export const pipelineStepSchema = z.discriminatedUnion('kind', [
     ...stepBase,
     config: z.object({ body: z.string().min(1).max(20_000) }),
   }),
+  z.object({
+    kind: z.literal('slop-check'),
+    ...stepBase,
+    config: z.object({ threshold: z.number().int().min(1).max(100) }),
+  }),
 ]);
 
 export const stepSpecSchema = z.union([
@@ -126,6 +131,19 @@ interface StepOutcome {
   readonly detail?: string | null;
 }
 
+/**
+ * Structural seam to module-slop's detection service. Slop `dependsOn` code, so
+ * code must not import its contract (a workspace cycle) — the engine resolves
+ * the service at run time and a disabled/missing slop module surfaces as a
+ * step error, never a crash. Kept in lockstep with SlopService.detectForGate.
+ */
+export interface SlopGateService {
+  detectForGate(
+    repo: string,
+    prNumber: number,
+  ): Promise<{ aiLikelihood: number; confidence: string; summary: string; detail: string | null }>;
+}
+
 interface EngineDeps {
   readonly store: CodeStore;
   readonly orchestrator: Orchestrator;
@@ -133,6 +151,8 @@ interface EngineDeps {
   readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null;
   readonly checks: PrChecks;
   readonly reviews: PrReviews;
+  /** Lazily resolved per run — slop registers after code in topo order. */
+  readonly slop: () => SlopGateService | null;
 }
 
 interface StepContext {
@@ -279,6 +299,20 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       await client.comment(ctx.repo, target.number, body);
       return { status: 'passed', summary: 'comment posted' };
     },
+
+    'slop-check': async (step, ctx) => {
+      if (!ctx.pr) return { status: 'error', summary: 'slop check only applies to PR pipelines' };
+      const slop = deps.slop();
+      if (!slop) return { status: 'error', summary: 'the AI Slop Detection module is not enabled' };
+      // Runs a fresh detection; the verdict also lands as a pending result on
+      // the slop page, so a failing gate arrives with its evidence attached.
+      const verdict = await slop.detectForGate(ctx.repo, ctx.pr.number);
+      return {
+        status: verdict.aiLikelihood >= step.config.threshold ? 'failed' : 'passed',
+        summary: `AI likelihood ${verdict.aiLikelihood}/100 (${verdict.confidence} confidence) — ${verdict.summary}`,
+        detail: verdict.detail,
+      };
+    },
   };
 }
 
@@ -343,7 +377,7 @@ Apply the step instructions to this PR, then reply with ONLY a JSON object (no f
 
 // ---------- engine -------------------------------------------------------------------
 
-type ResolvedStep =
+export type ResolvedStep =
   | { readonly ok: true; readonly step: PipelineStep }
   | { readonly ok: false; readonly name: string; readonly reason: string };
 
@@ -522,7 +556,9 @@ export class Pipelines {
     }
   }
 
-  private resolveSteps(specs: ReadonlyArray<PipelineStepSpec>, type: PipelineType): ResolvedStep[] {
+  /** Public (not just for start()): module-playground's zero-side-effect
+   *  preview resolves through here so there is exactly one resolution rule. */
+  resolveSteps(specs: ReadonlyArray<PipelineStepSpec>, type: PipelineType): ResolvedStep[] {
     const allowed = PIPELINE_TYPE_STEPS[type];
     return specs.map((spec) => {
       if (spec.type === 'inline') {

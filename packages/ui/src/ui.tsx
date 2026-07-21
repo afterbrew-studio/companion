@@ -701,6 +701,9 @@ export function Tabs<T extends string>({
       {options.map((o) => (
         <button
           key={o.value}
+          // Tabs render inside forms (skills editor) — a bare button would
+          // default to type="submit" and save/close on tab switch.
+          type="button"
           role="tab"
           aria-selected={value === o.value}
           className={`rounded-md px-3 py-1 text-[13px] transition-colors ${

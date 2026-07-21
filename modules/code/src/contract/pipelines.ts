@@ -10,11 +10,11 @@
 
 export type PipelineType = 'pr' | 'issue' | 'platform';
 
-export type PipelineStepKind = 'checks-gate' | 'ai-review' | 'agent' | 'label' | 'comment';
+export type PipelineStepKind = 'checks-gate' | 'ai-review' | 'agent' | 'label' | 'comment' | 'slop-check';
 
 /** Which step kinds each pipeline type may contain (payload-driven). */
 export const PIPELINE_TYPE_STEPS: Record<PipelineType, readonly PipelineStepKind[]> = {
-  pr: ['checks-gate', 'ai-review', 'agent', 'label', 'comment'],
+  pr: ['checks-gate', 'ai-review', 'agent', 'label', 'comment', 'slop-check'],
   issue: ['agent', 'label', 'comment'],
   platform: ['agent'],
 };
@@ -72,7 +72,16 @@ export interface CommentStep extends BaseStep {
   };
 }
 
-export type PipelineStep = ChecksGateStep | AiReviewStep | AgentStep | LabelStep | CommentStep;
+/** Gate on AI-slop detection (module-slop, resolved softly at run time). */
+export interface SlopCheckStep extends BaseStep {
+  readonly kind: 'slop-check';
+  readonly config: {
+    /** Fail when the verdict's aiLikelihood reaches this (0–100). */
+    readonly threshold: number;
+  };
+}
+
+export type PipelineStep = ChecksGateStep | AiReviewStep | AgentStep | LabelStep | CommentStep | SlopCheckStep;
 
 // ---------- step library (custom reusable steps) -----------------------------------
 

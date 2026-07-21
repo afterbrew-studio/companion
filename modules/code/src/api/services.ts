@@ -13,7 +13,7 @@ import { PrChecks } from './pr-checks.js';
 import { Triage } from './triage.js';
 import { PrReviews } from './pr-reviews.js';
 import { Fixes } from './fixes.js';
-import { Pipelines } from './pipelines.js';
+import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
 
 /**
@@ -107,6 +107,14 @@ export default defineServices((ctx) => {
       github: (c) => ghAccounts.clientFor('pipelines', c),
       checks: prChecks,
       reviews: prReviews,
+      // Reverse-direction soft dep: module-slop augments ServiceMap in ITS
+      // contract, which code cannot import (slop dependsOn code) — so the key
+      // is invisible to this compilation and the lookup goes through a cast.
+      // The structural SlopGateService seam keeps the shape honest.
+      slop: () =>
+        ((ctx.services.tryGet.bind(ctx.services) as (key: string) => unknown)('slop') as
+          | SlopGateService
+          | undefined) ?? null,
     },
     ctx.broadcast,
   );

@@ -4,8 +4,10 @@ import workspaceManifest from '@companion/module-workspace/manifest';
 import operateManifest from '@companion/module-operate/manifest';
 import codeManifest from '@companion/module-code/manifest';
 import planManifest from '@companion/module-plan/manifest';
+import playgroundManifest from '@companion/module-playground/manifest';
 import boardManifest from '@companion/module-board/manifest';
 import refinementManifest from '@companion/module-refinement/manifest';
+import slopManifest from '@companion/module-slop/manifest';
 import automationsManifest from '@companion/module-automations/manifest';
 import adminManifest from '@companion/module-admin/manifest';
 
@@ -18,8 +20,10 @@ import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import '@companion/module-code/contract';
 import '@companion/module-plan/contract';
+import '@companion/module-playground/contract';
 import '@companion/module-board/contract';
 import '@companion/module-refinement/contract';
+import '@companion/module-slop/contract';
 import '@companion/module-automations/contract';
 import '@companion/module-admin/contract';
 
@@ -37,8 +41,10 @@ export const MODULES: readonly InstalledModule[] = [
   { manifest: operateManifest, load: () => import('@companion/module-operate/api').then((m) => m.default) },
   { manifest: codeManifest, load: () => import('@companion/module-code/api').then((m) => m.default) },
   { manifest: planManifest, load: () => import('@companion/module-plan/api').then((m) => m.default) },
+  { manifest: playgroundManifest, load: () => import('@companion/module-playground/api').then((m) => m.default) },
   { manifest: boardManifest, load: () => import('@companion/module-board/api').then((m) => m.default) },
   { manifest: refinementManifest, load: () => import('@companion/module-refinement/api').then((m) => m.default) },
+  { manifest: slopManifest, load: () => import('@companion/module-slop/api').then((m) => m.default) },
   { manifest: automationsManifest, load: () => import('@companion/module-automations/api').then((m) => m.default) },
   { manifest: adminManifest, load: () => import('@companion/module-admin/api').then((m) => m.default) },
 ];

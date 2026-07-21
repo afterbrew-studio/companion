@@ -1,0 +1,93 @@
+// Import the contract of every module we depend on so their augmentations
+// (permissions, services, messages) are visible in this compilation.
+import '@companion/module-core/contract';
+import '@companion/module-workspace/contract';
+import '@companion/module-operate/contract';
+import '@companion/module-code/contract';
+import type { SlopService } from '../api/slop-service.js';
+
+declare module '@companion/contracts' {
+  interface PermissionRegistry {
+    'slop:read': true;
+    'slop:act': true;
+    'slop:manage': true;
+  }
+  interface ServerMessageRegistry {
+    'slop.changed': Record<never, never>;
+  }
+  interface ServiceMap {
+    slop: SlopService;
+  }
+  interface BusEvents {
+    /**
+     * A detection stored a verdict. Soft consumers (e.g. the board flagging a
+     * task whose PR scored high) subscribe here — no dependsOn edge needed.
+     */
+    'slop.verdict': {
+      readonly repo: string;
+      readonly prNumber: number;
+      readonly aiLikelihood: number;
+      readonly recommendedAction: SlopAction;
+    };
+  }
+}
+
+/** What the human is advised to do about a slop verdict. */
+export type SlopAction = 'none' | 'label' | 'comment' | 'request_changes' | 'close';
+
+export type SlopConfidence = 'low' | 'medium' | 'high';
+
+/** One piece of evidence a detection rule produced. */
+export interface SlopSignal {
+  /** The rule that fired (built-in or custom id; unknown ids survive verbatim). */
+  readonly ruleId: string;
+  /** Resolved display name at detection time — stable even if the rule is later edited. */
+  readonly ruleName: string;
+  /** Concrete evidence: a quote, file reference, or metadata observation. */
+  readonly observation: string;
+  readonly strength: 'weak' | 'moderate' | 'strong';
+}
+
+export interface SlopVerdict {
+  /** 0–100: how likely the PR was substantially machine-generated with low human oversight. */
+  readonly aiLikelihood: number;
+  readonly confidence: SlopConfidence;
+  readonly summary: string;
+  readonly signals: ReadonlyArray<SlopSignal>;
+  readonly recommendedAction: SlopAction;
+  /** Markdown body used by the comment / request-changes / close actions; may be empty. */
+  readonly draftComment: string;
+}
+
+export interface SlopDetectionResult {
+  readonly id: string; // `slop-<uuid12>`
+  readonly repo: string; // owner/name
+  readonly prNumber: number;
+  /** Denormalized so history survives cache churn and PR deletion. */
+  readonly prTitle: string;
+  readonly runId: string;
+  readonly status: 'pending' | 'applied' | 'dismissed' | 'failed';
+  readonly verdict: SlopVerdict | null;
+  readonly error: string | null;
+  /** What the human actually applied (may differ from the recommendation). */
+  readonly appliedAction: SlopAction | null;
+  /** Snapshot of the rule set the detection ran with. */
+  readonly ruleIds: ReadonlyArray<string>;
+  readonly createdAt: number;
+}
+
+/** A detection rule — built-in or user-defined per workspace. */
+export interface SlopRuleRecord {
+  readonly id: string; // 'builtin-…' or `sr-<uuid12>`
+  /** null = built-in. */
+  readonly workspaceId: string | null;
+  readonly name: string;
+  readonly description: string;
+  /** Heuristics fed verbatim to the detection agent. */
+  readonly instructions: string;
+  readonly builtin: boolean;
+  /** Effective for the listing workspace (built-ins can be toggled per workspace). */
+  readonly enabled: boolean;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}

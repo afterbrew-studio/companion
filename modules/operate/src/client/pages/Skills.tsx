@@ -1,14 +1,18 @@
 import { useState } from 'react';
+import { useKernel } from '@companion/core/client';
+import { useAuth } from '@companion/module-core/client';
 import {
   EmptyState,
   ErrorBar,
   Field,
   FormActions,
   ListCard,
+  Markdown,
   Modal,
   Page,
   PageHeader,
   SparkleIcon,
+  Tabs,
   aiAccentClass,
   timeAgo,
   useConfirm,
@@ -19,8 +23,9 @@ import { useSkills } from '../hooks/useSkills.js';
 
 /**
  * Agent skills: markdown instructions injected into every agent run (triage,
- * reviews, pipelines, fixes). Full CRUD — list with previews, editor modal,
- * delete with confirm.
+ * reviews, pipelines, fixes). Full CRUD — list with frontmatter details,
+ * editor modal with a rendered preview, delete with confirm. Other modules
+ * (playground's dry-run) extend each row via the `skills.item-actions` slot.
  */
 export function SkillsPage(): JSX.Element {
   const { skills, error, setError, refresh } = useSkills();
@@ -71,10 +76,13 @@ export function SkillsPage(): JSX.Element {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[13px] font-medium">{s.name}</span>
-                  <span className="dim">updated {timeAgo(s.updatedAt)}</span>
+                  <span className="dim text-xs">
+                    updated {timeAgo(s.updatedAt)} · {formatSize(s.content.length)}
+                  </span>
                 </div>
-                <p className="dim mt-0.5 truncate">{preview(s.content)}</p>
+                <p className="dim mt-0.5 truncate">{describe(s.content)}</p>
               </div>
+              <SkillSlotActions skill={s.name} />
               <button className="btn-ghost" onClick={() => setEditing(s)}>
                 Edit
               </button>
@@ -103,12 +111,49 @@ export function SkillsPage(): JSX.Element {
   );
 }
 
-function preview(content: string): string {
-  const line = content
+/** The `skills.item-actions` slot: other modules add per-skill actions (e.g.
+ *  playground's dry-run) without operate importing them. */
+function SkillSlotActions({ skill }: { skill: string }): JSX.Element | null {
+  const kernel = useKernel();
+  const { can } = useAuth();
+  const actions = kernel.slots('skills.item-actions').filter((s) => s.permission === undefined || can(s.permission));
+  if (actions.length === 0) return null;
+  return (
+    <>
+      {actions.map((s) => (
+        <s.component key={s.key} skill={skill} />
+      ))}
+    </>
+  );
+}
+
+/** Frontmatter `description:`, else the first non-heading content line. */
+function describe(content: string): string {
+  const { description, body } = parseFrontmatter(content);
+  if (description) return description;
+  const line = body
     .split('\n')
     .map((l) => l.replace(/^#+\s*/, '').trim())
     .find((l) => l.length > 0);
   return line ?? 'empty';
+}
+
+/** Minimal frontmatter reader — enough for the `key: value` block moxxy uses. */
+function parseFrontmatter(content: string): { description: string | null; body: string } {
+  if (!content.startsWith('---')) return { description: null, body: content };
+  const end = content.indexOf('\n---', 3);
+  if (end === -1) return { description: null, body: content };
+  const block = content.slice(3, end);
+  const match = block.match(/^description:\s*(.+)$/m);
+  const afterFence = content.indexOf('\n', end + 1);
+  return {
+    description: match?.[1]?.trim() ?? null,
+    body: afterFence === -1 ? '' : content.slice(afterFence + 1),
+  };
+}
+
+function formatSize(chars: number): string {
+  return chars < 1024 ? `${chars} B` : `${(chars / 1024).toFixed(1)} kB`;
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -128,6 +173,7 @@ function SkillEditorModal({
   const [content, setContent] = useState(
     skill?.content ?? '# When to use\n\nDescribe when and how agents should use this skill.\n',
   );
+  const [tab, setTab] = useState<'edit' | 'preview'>('edit');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [genInstructions, setGenInstructions] = useState('');
@@ -201,14 +247,29 @@ function SkillEditorModal({
           />
           {nameTaken ? <span className="text-xs text-red-600 dark:text-red-400">A skill with this name already exists.</span> : null}
         </Field>
-        <Field label="Content (markdown)">
+        <div className="flex items-center justify-between">
+          <span className="dim text-xs font-medium">Content (markdown)</span>
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'edit', label: 'Edit' },
+              { value: 'preview', label: 'Preview' },
+            ]}
+          />
+        </div>
+        {tab === 'edit' ? (
           <textarea
             className="input min-h-80 w-full resize-y font-mono text-xs leading-relaxed"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             autoFocus={skill !== null}
           />
-        </Field>
+        ) : (
+          <div className="well max-h-96 min-h-80 overflow-y-auto p-4">
+            <Markdown text={parseFrontmatter(content).body} />
+          </div>
+        )}
         <ErrorBar error={error} />
         <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>

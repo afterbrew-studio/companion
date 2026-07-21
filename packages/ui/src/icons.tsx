@@ -67,3 +67,19 @@ export function KebabIcon({ className = 'size-4' }: { className?: string }): JSX
     </svg>
   );
 }
+
+/** Flask — experiments and dry runs (the Playground's mark). */
+export function FlaskIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path
+        d="M6.5 2h3M7 2.2v3.6l-3.2 6A1.4 1.4 0 0 0 5 13.8h6a1.4 1.4 0 0 0 1.2-2l-3.2-6V2.2"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M5.2 10.5h5.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
