@@ -55,6 +55,12 @@ export interface SlopVerdict {
   readonly summary: string;
   readonly signals: ReadonlyArray<SlopSignal>;
   readonly recommendedAction: SlopAction;
+  /**
+   * Concrete asks the maintainer can relay to the PR author to raise the
+   * oversight bar (reconcile the description, drop generated docs, add the
+   * missing tests…). Empty when the PR needs nothing.
+   */
+  readonly reviewerHints: ReadonlyArray<string>;
   /** Markdown body used by the comment / request-changes / close actions; may be empty. */
   readonly draftComment: string;
 }
@@ -65,8 +71,10 @@ export interface SlopDetectionResult {
   readonly prNumber: number;
   /** Denormalized so history survives cache churn and PR deletion. */
   readonly prTitle: string;
+  /** Empty while the detection is still 'running' (the run hasn't been assigned yet). */
   readonly runId: string;
-  readonly status: 'pending' | 'applied' | 'dismissed' | 'failed';
+  /** 'running' = the agent phase is in flight; the row exists so the UI shows progress immediately. */
+  readonly status: 'running' | 'pending' | 'applied' | 'dismissed' | 'failed';
   readonly verdict: SlopVerdict | null;
   readonly error: string | null;
   /** What the human actually applied (may differ from the recommendation). */
@@ -74,6 +82,13 @@ export interface SlopDetectionResult {
   /** Snapshot of the rule set the detection ran with. */
   readonly ruleIds: ReadonlyArray<string>;
   readonly createdAt: number;
+}
+
+/** An AI-drafted rule: prefills the editor for review — nothing stored until the user saves. */
+export interface SlopRuleDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly instructions: string;
 }
 
 /** A detection rule — built-in or user-defined per workspace. */

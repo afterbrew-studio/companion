@@ -20,7 +20,7 @@ function SlopRadarWidget(): JSX.Element | null {
   if (hot.length === 0) return null;
   return (
     <Section
-      title="AI slop radar"
+      title="Slop radar"
       description={
         <a className="row-link" href="#/slop">
           High-likelihood verdicts awaiting review

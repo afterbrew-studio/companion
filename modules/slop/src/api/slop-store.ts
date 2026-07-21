@@ -28,6 +28,7 @@ interface RuleRow {
 }
 
 function rowToDetection(row: DetectionRow): SlopDetectionResult {
+  const verdict = row.verdict ? safeParse<SlopVerdict | null>(row.verdict, null) : null;
   return {
     id: row.id,
     repo: row.repo,
@@ -35,7 +36,8 @@ function rowToDetection(row: DetectionRow): SlopDetectionResult {
     prTitle: row.pr_title,
     runId: row.run_id,
     status: row.status as SlopDetectionResult['status'],
-    verdict: row.verdict ? safeParse<SlopVerdict | null>(row.verdict, null) : null,
+    // reviewerHints post-dates the first verdicts; old JSON normalizes to [].
+    verdict: verdict ? { ...verdict, reviewerHints: verdict.reviewerHints ?? [] } : null,
     error: row.error,
     appliedAction: row.applied_action as SlopAction | null,
     ruleIds: safeParse<string[]>(row.rule_ids, []),
@@ -82,8 +84,38 @@ export class SlopStore {
       });
     // Bounded retention: re-detections accumulate per PR; old settled rows go.
     this.db
-      .prepare(`DELETE FROM slop_detections WHERE created_at < ? AND status != 'pending'`)
+      .prepare(`DELETE FROM slop_detections WHERE created_at < ? AND status NOT IN ('pending', 'running')`)
       .run(Date.now() - DETECTION_RETENTION_MS);
+  }
+
+  /**
+   * Settle a 'running' placeholder with the agent phase's outcome. The verdict
+   * fields are guarded on status so a dismissal that raced the run wins, but
+   * the run id always lands — the executed run stays linkable either way.
+   * Returns whether the row was still ours to settle.
+   */
+  finishDetection(
+    id: string,
+    fields: { runId: string; status: 'pending' | 'failed'; verdict: SlopVerdict | null; error: string | null },
+  ): boolean {
+    if (fields.runId) this.db.prepare(`UPDATE slop_detections SET run_id = ? WHERE id = ?`).run(fields.runId, id);
+    return (
+      this.db
+        .prepare(`UPDATE slop_detections SET status = ?, verdict = ?, error = ? WHERE id = ? AND status = 'running'`)
+        .run(fields.status, fields.verdict ? JSON.stringify(fields.verdict) : null, fields.error, id)
+        .changes > 0
+    );
+  }
+
+  /**
+   * First-activation sweep: any row still 'running' belongs to a process that
+   * no longer exists — fail it honestly (a durably-queued detection replays as
+   * its own fresh row).
+   */
+  failInterrupted(): number {
+    return this.db
+      .prepare(`UPDATE slop_detections SET status = 'failed', error = ? WHERE status = 'running'`)
+      .run('interrupted before the run finished').changes;
   }
 
   getDetection(id: string): SlopDetectionResult | undefined {

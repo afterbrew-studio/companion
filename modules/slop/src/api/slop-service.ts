@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { ServiceMap, SpaServerMessage, BusEvents } from '@companion/contracts';
-import { log, extractModelJson } from '@companion/services';
+import { log, paths, extractModelJson } from '@companion/services';
 import type { PrRecord } from '@companion/module-code/contract';
 import type {
   SlopAction,
   SlopDetectionResult,
+  SlopRuleDraft,
   SlopRuleRecord,
   SlopSignal,
   SlopVerdict,
@@ -23,6 +25,15 @@ type GitHubClient = NonNullable<ReturnType<CodeService['githubAccounts']['client
 
 const MAX_DIFF_CHARS = 60_000;
 const DETECT_TIMEOUT_MS = 8 * 60_000;
+const GENERATE_RULE_TIMEOUT_MS = 5 * 60_000;
+
+// Limits mirror the save-rule route schema; the prompt asks for less so an
+// enthusiastic model still lands inside them.
+const ruleDraftSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(300),
+  instructions: z.string().trim().min(8).max(8_000),
+});
 
 const verdictSchema = z.object({
   aiLikelihood: z.number().int().min(0).max(100),
@@ -38,6 +49,7 @@ const verdictSchema = z.object({
     )
     .max(20),
   recommendedAction: z.enum(['none', 'label', 'comment', 'request_changes', 'close']),
+  reviewerHints: z.array(z.string().min(1)).max(10).default([]),
   draftComment: z.string(),
 });
 
@@ -131,6 +143,27 @@ export class SlopService {
     return this.store.getRule(id);
   }
 
+  /**
+   * Draft a detection rule from a free-form request (a tell the team keeps
+   * seeing, a policy to enforce) with a one-shot agent — no repo context,
+   * detection craft only. Returns the draft for review; the caller saves it
+   * (or not) through {@link saveRule}.
+   */
+  async generateRule(prompt: string): Promise<SlopRuleDraft> {
+    const { finalMessage } = await this.orchestrator.runOneShot({
+      kind: 'analysis',
+      title: `Draft slop rule: ${prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
+      // No repo to ground in — the orchestrator mkdirs whatever cwd it gets.
+      cwd: join(paths.scratch(), 'slop-rules'),
+      prompt: generateRulePrompt(prompt),
+      timeoutMs: GENERATE_RULE_TIMEOUT_MS,
+    });
+    // null = timeout or dead runner — say so instead of letting the JSON
+    // extractor choke on an empty string with a cryptic parse error.
+    if (finalMessage === null) throw new Error('the agent run ended without a reply (timeout or runner failure) — try again');
+    return ruleDraftSchema.parse(extractModelJson(finalMessage));
+  }
+
   // ---------- detection -------------------------------------------------------------
 
   /**
@@ -159,14 +192,42 @@ export class SlopService {
   }
 
   /**
+   * Boot recovery: fail any 'running' row stranded by the previous process.
+   * Runs before the resumer registers, so a replayed detection's fresh row
+   * never gets swept up with the orphans.
+   */
+  recoverInterrupted(): void {
+    if (this.store.failInterrupted() > 0) this.changed();
+  }
+
+  /**
    * Run one detection for a PR. The PR record comes from code's sync cache
    * (GitHub-as-cache); only the diff is fetched, through the same client
-   * surface ai-review uses. Resolves when the result is stored — an agent-
-   * phase failure (diff fetch, dead run, parse miss) lands as status 'failed',
-   * never a fabricated verdict and never a silent vanish.
+   * surface ai-review uses. A 'running' row is stored (and broadcast) up
+   * front, then settled when the agent phase resolves — a failure (diff
+   * fetch, dead run, parse miss) lands as status 'failed', never a fabricated
+   * verdict and never a silent vanish.
    */
   async detect(repo: string, prNumber: number): Promise<SlopDetectionResult> {
     const { pr, ruleSet, client } = this.prepare(repo, prNumber);
+
+    // The row exists (and broadcasts) BEFORE the minutes-long agent phase, so
+    // the page shows a live 'running' card the moment a detection is queued.
+    const placeholder: SlopDetectionResult = {
+      id: `slop-${randomUUID().slice(0, 12)}`,
+      repo,
+      prNumber,
+      prTitle: pr.title,
+      runId: '',
+      status: 'running',
+      verdict: null,
+      error: null,
+      appliedAction: null,
+      ruleIds: ruleSet.map((rule) => rule.id),
+      createdAt: Date.now(),
+    };
+    this.store.insertDetection(placeholder);
+    this.changed();
 
     let runId = '';
     let verdict: SlopVerdict | null = null;
@@ -191,21 +252,22 @@ export class SlopService {
       log.warn('slop detection failed', { repo, prNumber, err: String(err) });
     }
 
-    const result: SlopDetectionResult = {
-      id: `slop-${randomUUID().slice(0, 12)}`,
-      repo,
-      prNumber,
-      prTitle: pr.title,
+    const settled = this.store.finishDetection(placeholder.id, {
       runId,
       status: verdict ? 'pending' : 'failed',
       verdict,
       error,
-      appliedAction: null,
-      ruleIds: ruleSet.map((rule) => rule.id),
-      createdAt: Date.now(),
-    };
-    this.store.insertDetection(result);
+    });
     this.changed();
+    // A dismissal that raced the run wins — report the row as it actually is.
+    if (!settled) return this.store.getDetection(placeholder.id) ?? placeholder;
+    const result: SlopDetectionResult = {
+      ...placeholder,
+      runId,
+      status: verdict ? 'pending' : 'failed',
+      verdict,
+      error,
+    };
     if (verdict) {
       this.emit('slop.verdict', {
         repo,
@@ -274,9 +336,11 @@ export class SlopService {
     if (action !== 'none') {
       const client = this.github({ repo: result.repo, accountId: opts.accountId });
       if (!client) throw new Error('GitHub is not configured');
+      const hints = result.verdict.reviewerHints;
       const body =
         result.verdict.draftComment.trim() ||
-        `This pull request scored ${result.verdict.aiLikelihood}/100 on AI-slop detection (${result.verdict.confidence} confidence). ${result.verdict.summary}`;
+        `This pull request scored ${result.verdict.aiLikelihood}/100 on AI-slop detection (${result.verdict.confidence} confidence). ${result.verdict.summary}` +
+          (hints.length > 0 ? `\n\nSuggestions:\n${hints.map((h) => `- ${h}`).join('\n')}` : '');
       switch (action) {
         case 'label':
           await client.addLabels(result.repo, result.prNumber, [this.slopLabel()]);
@@ -356,9 +420,37 @@ Investigate, weigh the signals across rules (independent families agreeing is fa
     { "ruleId": "<id of the rule that fired>", "observation": "<concrete evidence: quote, file reference, or metadata>", "strength": "weak" | "moderate" | "strong" }
   ],
   "recommendedAction": "none" | "label" | "comment" | "request_changes" | "close",
+  "reviewerHints": ["<concrete ask the maintainer can relay to the author>", ...],
   "draftComment": "<markdown comment to post if the action needs one; empty string otherwise>"
 }
-Action guidance: "none" for clean PRs; "label" when likely AI-assisted but of acceptable quality; "comment" when the author should confirm or clean up; "request_changes" for substantial slop worth salvaging; "close" ONLY for unmistakable throwaway slop (hallucinated APIs, meaningless diff, description unrelated to code). Being AI-assisted is not itself a fault — judge oversight and quality, not tool use. The draftComment must be specific and respectful: cite the evidence, never insult the author.`;
+Action guidance: "none" for clean PRs; "label" when likely AI-assisted but of acceptable quality; "comment" when the author should confirm or clean up; "request_changes" for substantial slop worth salvaging; "close" ONLY for unmistakable throwaway slop (hallucinated APIs, meaningless diff, description unrelated to code). Being AI-assisted is not itself a fault — judge oversight and quality, not tool use.
+reviewerHints (0-10 items): concrete, actionable asks the maintainer can pass to the author to fix what the signals found — e.g. "reconcile the test counts between the description and the diff", "remove the generated bindings-status doc or regenerate it from the real output", "replace the useId reference with an export that actually exists". Each hint must map to observed evidence; no generic advice. Empty array when the PR needs nothing.
+The draftComment must be specific and respectful: cite the evidence, weave in the reviewer hints as requests, never insult the author.`;
+}
+
+function generateRulePrompt(request: string): string {
+  const example = BUILTIN_RULES[0]!;
+  return `You are an expert on the fingerprints of low-oversight AI-generated code, writing a reusable detection rule for an AI-slop review tool.
+
+A detection rule tells a review agent what evidence to hunt for in a pull request (description, diff, metadata, and the checked-out codebase). Its instructions are injected verbatim into that agent's prompt; the agent then reports concrete signals (observation + weak/moderate/strong strength) citing the rule.
+
+## The user's request
+
+${request}
+
+## How to write it
+
+- Turn the request into one focused signal family: what to inspect, what concrete evidence counts, and how strongly to weigh it (including when to weigh it weakly — honest disclosure or coincidence).
+- Be prescriptive and self-contained: the review agent knows nothing about the tell beyond your instructions.
+- Match the register of this example rule ("${example.name}"): ${example.instructions}
+- Do NOT restate the tool mechanics (JSON verdict, scoring, action recommendation) — the agent's prompt already carries those; write only the rule itself.
+
+Reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
+{
+  "name": "<rule name, ≤ 60 chars>",
+  "description": "<one line for the rules list, ≤ 200 chars>",
+  "instructions": "<the rule, one dense paragraph or a few, ≤ 6000 chars>"
+}`;
 }
 
 /**

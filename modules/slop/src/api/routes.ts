@@ -15,6 +15,10 @@ const patchRuleSchema = z.object({
   instructions: z.string().trim().min(8).max(8_000).optional(),
 });
 
+const generateRuleSchema = z.object({
+  prompt: z.string().trim().min(3).max(2_000),
+});
+
 const toggleRuleSchema = z.object({
   workspaceId: z.string().min(1),
   enabled: z.boolean(),
@@ -88,6 +92,27 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
         return created({ rule: slop.saveRule(params.id, body) });
+      },
+    }),
+
+    // Synchronous like refinement's method drafting: the editor waits, then
+    // prefills the fields with the draft — nothing is stored until the user saves.
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/slop-rules/generate',
+      access: 'slop:manage',
+      body: generateRuleSchema,
+      handler: async ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        try {
+          return { draft: await slop.generateRule(body.prompt) };
+        } catch (err) {
+          throw badRequest(
+            err instanceof z.ZodError
+              ? 'the agent reply was not a valid rule draft — try rephrasing'
+              : String(err instanceof Error ? err.message : err),
+          );
+        }
       },
     }),
 

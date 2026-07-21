@@ -1,5 +1,5 @@
 import { del, post, put, request } from '@companion/core/client';
-import type { SlopAction, SlopDetectionResult, SlopRuleRecord } from '../contract/index.js';
+import type { SlopAction, SlopDetectionResult, SlopRuleDraft, SlopRuleRecord } from '../contract/index.js';
 
 export const slopApi = {
   list: (workspaceId: string) =>
@@ -8,6 +8,8 @@ export const slopApi = {
     request<{ rules: SlopRuleRecord[] }>(`/api/workspaces/${workspaceId}/slop-rules`),
   createRule: (workspaceId: string, fields: { name: string; description: string; instructions: string }) =>
     post<{ rule: SlopRuleRecord }>(`/api/workspaces/${workspaceId}/slop-rules`, fields),
+  generateRule: (workspaceId: string, prompt: string) =>
+    post<{ draft: SlopRuleDraft }>(`/api/workspaces/${workspaceId}/slop-rules/generate`, { prompt }),
   updateRule: (id: string, fields: { name?: string; description?: string; instructions?: string }) =>
     put<{ rule: SlopRuleRecord }>(`/api/slop-rules/${id}`, fields),
   deleteRule: (id: string) => del<{ ok: true }>(`/api/slop-rules/${id}`),

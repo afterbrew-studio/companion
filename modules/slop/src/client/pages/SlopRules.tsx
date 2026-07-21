@@ -58,7 +58,7 @@ export default function SlopRules(): JSX.Element {
 
   return (
     <Page>
-      <Breadcrumb items={[{ label: 'AI Slop Detection', href: '#/slop' }, { label: 'Rules' }]} />
+      <Breadcrumb items={[{ label: 'Slop Detection', href: '#/slop' }, { label: 'Rules' }]} />
       <PageHeader
         title="Detection Rules"
         subtitle={current.name}
@@ -144,6 +144,26 @@ function RuleEditor({
   const [description, setDescription] = useState(rule?.description ?? '');
   const [instructions, setInstructions] = useState(rule?.instructions ?? '');
   const [busy, setBusy] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+
+  const generate = async (): Promise<void> => {
+    const prompt = aiPrompt.trim();
+    if (prompt.length < 3 || generating) return;
+    setGenerating(true);
+    setGenError(null);
+    try {
+      const { draft } = await slopApi.generateRule(workspaceId, prompt);
+      setName(draft.name);
+      setDescription(draft.description);
+      setInstructions(draft.instructions);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const submit = async (): Promise<void> => {
     setBusy(true);
@@ -162,6 +182,35 @@ function RuleEditor({
   return (
     <Modal title={rule ? `Edit rule — ${rule.name}` : 'New detection rule'} onClose={onClose} wide>
       <div className="flex flex-col gap-4">
+        {!rule ? (
+          <div className="border-b border-zinc-200 pb-4 dark:border-zinc-800">
+            <Field
+              label="Generate with AI"
+              hint="Describe a tell your team keeps seeing (e.g. “PRs whose tests assert nothing”) — the draft fills the fields below for review."
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  className="input flex-1"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  maxLength={2_000}
+                  placeholder="e.g. lockfile churn unrelated to the change"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void generate();
+                  }}
+                />
+                <button
+                  className="btn-ghost shrink-0"
+                  disabled={generating || aiPrompt.trim().length < 3}
+                  onClick={() => void generate()}
+                >
+                  {generating ? 'Drafting… (asking the agent)' : '✦ Generate'}
+                </button>
+              </div>
+            </Field>
+            <ErrorBar error={genError} className="mt-2" />
+          </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name">
             <input
@@ -199,7 +248,7 @@ function RuleEditor({
           </button>
           <button
             className="btn"
-            disabled={busy || name.trim().length < 2 || instructions.trim().length < 8}
+            disabled={busy || generating || name.trim().length < 2 || instructions.trim().length < 8}
             onClick={() => void submit()}
           >
             {busy ? 'Saving…' : rule ? 'Save rule' : 'Create rule'}

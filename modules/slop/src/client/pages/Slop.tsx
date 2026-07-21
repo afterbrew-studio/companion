@@ -1,19 +1,33 @@
 import { useEffect, useState } from 'react';
 import {
   ActionMenu,
+  DetailGrid,
+  DetailRow,
+  Drawer,
   Dropdown,
   EmptyState,
   ErrorBar,
+  Eyebrow,
   Field,
   FormActions,
   IconButton,
+  InlineLoading,
+  ListCard,
+  ListFilterToolbar,
+  Markdown,
+  MetaSignal,
   Modal,
   Page,
   PageHeader,
   PageLoading,
   SparkleIcon,
   Spinner,
+  StatusDot,
+  facet,
   timeAgo,
+  useListFilter,
+  type FilterSelectField,
+  type StatusTone,
 } from '@companion/ui';
 import { NavIcon } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
@@ -31,24 +45,77 @@ const ACTION_LABEL: Record<SlopAction, string> = {
   close: 'close PR',
 };
 
+const STATUS_META: Record<SlopDetectionResult['status'], { label: string; tone: StatusTone }> = {
+  running: { label: 'running', tone: 'blue' },
+  pending: { label: 'pending review', tone: 'amber' },
+  applied: { label: 'applied', tone: 'green' },
+  dismissed: { label: 'dismissed', tone: 'zinc' },
+  failed: { label: 'failed', tone: 'red' },
+};
+
+const STRENGTH_TONE: Record<SlopSignal['strength'], StatusTone> = {
+  weak: 'zinc',
+  moderate: 'amber',
+  strong: 'red',
+};
+
 /**
- * The workspace's slop detections: verdicts pending review, with apply/dismiss
- * actions. Detection is review-then-apply — a verdict never touches GitHub
- * until someone picks an action here (or a pipeline gates on the score).
+ * The workspace's slop detections: a filterable list (RunsPage-style rows) and
+ * a detail drawer with the full verdict + apply/dismiss actions. Detection is
+ * review-then-apply — a verdict never touches GitHub until someone applies it
+ * here (or a pipeline gates on the score).
  */
 export default function Slop(): JSX.Element {
   const { current, detections, error, setError } = useSlopDetections();
   const { can } = useAuth();
   const [detecting, setDetecting] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+
+  const all = detections ?? [];
+  const filterFields: Array<FilterSelectField<SlopDetectionResult>> = [
+    {
+      key: 'status',
+      label: 'Status',
+      allLabel: 'Any status',
+      options: (Object.keys(STATUS_META) as Array<SlopDetectionResult['status']>).map((s) => ({
+        value: s,
+        label: STATUS_META[s].label,
+      })),
+      match: (d, v) => d.status === v,
+    },
+    {
+      key: 'repo',
+      label: 'Repository',
+      allLabel: 'All repositories',
+      options: facet(all, (d) => d.repo).map((r) => ({ value: r, label: r })),
+      match: (d, v) => d.repo === v,
+    },
+  ];
+  const filter = useListFilter(
+    all,
+    (d, needle) =>
+      d.prTitle.toLowerCase().includes(needle) ||
+      d.repo.toLowerCase().includes(needle) ||
+      `${d.repo}#${d.prNumber}`.toLowerCase().includes(needle),
+    filterFields,
+  );
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canAct = can('slop:act');
+  const detail = detailId ? (all.find((d) => d.id === detailId) ?? null) : null;
+
+  const detectButton = (
+    <button className="btn gap-1.5" onClick={() => setDetecting(true)}>
+      <SparkleIcon className="size-3.5" />
+      Detect
+    </button>
+  );
 
   return (
     <Page>
       <PageHeader
-        title="AI Slop Detection"
-        subtitle={current.name}
+        title="Slop Detection"
+        subtitle={`${current.name} — an agent scores pull requests against your rules; nothing touches GitHub until you apply a verdict`}
         actions={
           <div className="flex items-center gap-1.5">
             {can('slop:manage') ? (
@@ -60,12 +127,7 @@ export default function Slop(): JSX.Element {
                 </NavIcon>
               </IconButton>
             ) : null}
-            {canAct ? (
-              <button className="btn gap-1.5" onClick={() => setDetecting(true)}>
-                <SparkleIcon className="size-3.5" />
-                Detect
-              </button>
-            ) : undefined}
+            {canAct ? detectButton : null}
           </div>
         }
       />
@@ -73,63 +135,91 @@ export default function Slop(): JSX.Element {
 
       {detections === null ? (
         <PageLoading label="Loading detections…" />
-      ) : detections.length === 0 ? (
+      ) : all.length === 0 ? (
         <EmptyState
           title="No detections yet"
-          hint="Point the detector at a pull request and an agent scores it against your workspace's rules — style tells, hallucinated APIs, diff-vs-description drift. Verdicts land here for review; nothing touches GitHub until you apply one."
-          action={
-            canAct ? (
-              <button className="btn gap-1.5" onClick={() => setDetecting(true)}>
-                <SparkleIcon className="size-3.5" />
-                Detect
-              </button>
-            ) : undefined
-          }
+          hint="Point the detector at a pull request and an agent scores it against your workspace's rules — style tells, hallucinated APIs, diff-vs-description drift. Verdicts land here for review."
+          action={canAct ? detectButton : undefined}
         />
       ) : (
-        <div className="flex flex-col gap-3">
-          {detections.map((d) => (
-            <DetectionCard key={d.id} detection={d} canAct={canAct} onError={setError} />
-          ))}
-        </div>
+        <>
+          <ListFilterToolbar
+            filter={filter}
+            fields={filterFields}
+            total={all.length}
+            placeholder="Search PR title or repository…"
+            searchLabel="Search detections"
+          />
+          {filter.filtered.length === 0 ? (
+            <EmptyState title="No detections match" hint="Loosen the search or clear the filters." />
+          ) : (
+            <ListCard ariaLabel="Slop detections">
+              {filter.filtered.map((d) => (
+                <DetectionRow key={d.id} detection={d} onOpen={() => setDetailId(d.id)} />
+              ))}
+            </ListCard>
+          )}
+        </>
       )}
 
       {detecting ? <DetectModal workspaceId={current.id} onClose={() => setDetecting(false)} onError={setError} /> : null}
+      {detail ? (
+        <DetectionDrawer detection={detail} canAct={canAct} onClose={() => setDetailId(null)} onError={setError} />
+      ) : null}
     </Page>
   );
 }
 
-function StatusBadge({ status }: { status: SlopDetectionResult['status'] }): JSX.Element {
-  switch (status) {
-    case 'pending':
-      return <span className="badge-accent">pending review</span>;
-    case 'applied':
-      return <span className="badge-ok">applied</span>;
-    case 'dismissed':
-      return <span className="badge opacity-70">dismissed</span>;
-    case 'failed':
-      return <span className="badge-danger">failed</span>;
-  }
+function DetectionRow({ detection: d, onOpen }: { detection: SlopDetectionResult; onOpen: () => void }): JSX.Element {
+  const meta = STATUS_META[d.status];
+  const verdict = d.verdict;
+  const detailBits = [
+    meta.label,
+    ...(verdict
+      ? [
+          `${verdict.confidence} confidence`,
+          `recommends ${ACTION_LABEL[verdict.recommendedAction]}`,
+          `${verdict.signals.length} signal${verdict.signals.length === 1 ? '' : 's'}`,
+        ]
+      : []),
+    ...(d.appliedAction ? [`applied ${ACTION_LABEL[d.appliedAction]}`] : []),
+    ...(d.status === 'failed' && d.error ? [d.error] : []),
+    ...(d.status === 'running' ? ['the agent is reading the diff and rules'] : []),
+  ];
+  return (
+    <button type="button" className="row-link w-full cursor-pointer text-left" onClick={onOpen}>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span className="dim shrink-0 font-mono text-xs">
+            {d.repo}#{d.prNumber}
+          </span>
+          <span className="truncate font-medium">{d.prTitle}</span>
+        </span>
+        <span className="dim mt-0.5 block truncate text-xs">{detailBits.join(' · ')}</span>
+      </span>
+      {verdict ? <SlopMeter value={verdict.aiLikelihood} /> : null}
+      <span className="dim shrink-0 text-xs tabular-nums" title={new Date(d.createdAt).toLocaleString()}>
+        {timeAgo(d.createdAt)}
+      </span>
+      {d.status === 'running' ? <Spinner /> : <StatusDot tone={meta.tone} title={meta.label} />}
+    </button>
+  );
 }
 
-const STRENGTH_DOT: Record<SlopSignal['strength'], string> = {
-  weak: 'bg-zinc-400 dark:bg-zinc-600',
-  moderate: 'bg-amber-500 dark:bg-amber-400',
-  strong: 'bg-red-500 dark:bg-red-400',
-};
-
-function DetectionCard({
-  detection,
+function DetectionDrawer({
+  detection: d,
   canAct,
+  onClose,
   onError,
 }: {
   detection: SlopDetectionResult;
   canAct: boolean;
+  onClose: () => void;
   onError: (e: string | null) => void;
 }): JSX.Element {
   const [busy, setBusy] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const verdict = detection.verdict;
+  const verdict = d.verdict;
+  const meta = STATUS_META[d.status];
 
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
@@ -144,83 +234,141 @@ function DetectionCard({
   };
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex flex-wrap items-center gap-2">
-        <a
-          className="row-link min-w-0 truncate font-mono text-xs"
-          href={`#/repos/${detection.repo}/prs/${detection.prNumber}`}
-        >
-          {detection.repo}#{detection.prNumber}
-        </a>
-        <h2 className="min-w-0 truncate text-sm font-medium">{detection.prTitle}</h2>
-        <StatusBadge status={detection.status} />
-        {verdict ? <SlopMeter value={verdict.aiLikelihood} /> : null}
-        <span className="flex-1" />
-        <span className="dim text-xs tabular-nums">{timeAgo(detection.createdAt)}</span>
-        {busy ? <Spinner /> : null}
-        {canAct && detection.status === 'pending' && verdict ? (
-          <ActionMenu
-            actions={[
-              {
-                label: `Apply recommended — ${ACTION_LABEL[verdict.recommendedAction]}`,
-                onSelect: () => void act(() => slopApi.apply(detection.id, {})),
-              },
-              ...(['label', 'comment', 'request_changes'] as const)
-                .filter((a) => a !== verdict.recommendedAction)
-                .map((action) => ({
-                  label: `Apply — ${ACTION_LABEL[action]}`,
-                  onSelect: () => void act(() => slopApi.apply(detection.id, { action })),
-                })),
-              ...(verdict.recommendedAction !== 'close'
-                ? [
-                    {
-                      label: 'Apply — close PR',
-                      danger: true,
-                      onSelect: () => void act(() => slopApi.apply(detection.id, { action: 'close' })),
-                    },
-                  ]
-                : []),
-              { label: 'Dismiss', onSelect: () => void act(() => slopApi.dismiss(detection.id)) },
-            ]}
-          />
-        ) : null}
-      </div>
+    <Drawer
+      title={`${d.repo}#${d.prNumber}`}
+      onClose={onClose}
+      storageKey="companion.slop.drawer.width"
+      defaultWidth={560}
+      minWidth={480}
+    >
+      <div className="flex flex-col gap-5">
+        <div>
+          <h3 className="text-base font-semibold">{d.prTitle}</h3>
+          <DetailGrid className="mt-3">
+            <DetailRow label="Pull request">
+              <a className="linkish font-mono text-xs" href={`#/repos/${d.repo}/prs/${d.prNumber}`}>
+                {d.repo}#{d.prNumber}
+              </a>
+            </DetailRow>
+            <DetailRow label="Status">
+              <MetaSignal tone={meta.tone} label={meta.label} pulse={d.status === 'running'} />
+            </DetailRow>
+            {verdict ? (
+              <>
+                <DetailRow label="Slop-o-meter">
+                  <SlopMeter value={verdict.aiLikelihood} />
+                </DetailRow>
+                <DetailRow label="Confidence">{verdict.confidence}</DetailRow>
+                <DetailRow label="Recommends">{ACTION_LABEL[verdict.recommendedAction]}</DetailRow>
+              </>
+            ) : null}
+            {d.appliedAction ? <DetailRow label="Applied">{ACTION_LABEL[d.appliedAction]}</DetailRow> : null}
+            {d.runId ? (
+              <DetailRow label="Agent run">
+                <a className="linkish font-mono text-xs" href={`#/runs/${d.runId}`}>
+                  {d.runId}
+                </a>
+              </DetailRow>
+            ) : null}
+            <DetailRow label="Detected">{new Date(d.createdAt).toLocaleString()}</DetailRow>
+          </DetailGrid>
+        </div>
 
-      {verdict ? (
-        <>
-          <p className="mt-2 text-sm">
-            {verdict.summary}{' '}
-            <span className="dim text-xs">
-              ({verdict.confidence} confidence · recommends {ACTION_LABEL[verdict.recommendedAction]}
-              {detection.appliedAction ? ` · applied ${ACTION_LABEL[detection.appliedAction]}` : ''})
-            </span>
-          </p>
-          {verdict.signals.length > 0 ? (
-            <div className="mt-2">
-              <button className="dim cursor-pointer text-xs hover:underline" onClick={() => setExpanded((e) => !e)}>
-                {expanded ? 'Hide' : 'Show'} {verdict.signals.length} signal{verdict.signals.length === 1 ? '' : 's'}
-              </button>
-              {expanded ? (
-                <ul className="mt-1.5 flex flex-col gap-1">
+        {d.status === 'running' ? (
+          <InlineLoading label="The agent is scoring this pull request — the verdict lands here when it finishes." />
+        ) : null}
+        {d.status === 'failed' ? <p className="error-bar text-xs">{d.error ?? 'detection failed'}</p> : null}
+
+        {verdict ? (
+          <>
+            <div>
+              <Eyebrow>Verdict</Eyebrow>
+              <p className="mt-1.5 text-sm">{verdict.summary}</p>
+            </div>
+
+            {verdict.signals.length > 0 ? (
+              <div>
+                <Eyebrow>Signals ({verdict.signals.length})</Eyebrow>
+                <ul className="mt-1.5 flex flex-col gap-1.5">
                   {verdict.signals.map((signal, i) => (
-                    <li key={i} className="flex items-baseline gap-2 text-xs">
-                      <span
-                        className={`mt-0.5 size-1.5 shrink-0 self-center rounded-full ${STRENGTH_DOT[signal.strength]}`}
-                        title={signal.strength}
+                    <li key={i} className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+                      <MetaSignal
+                        tone={STRENGTH_TONE[signal.strength]}
+                        label={signal.ruleName}
+                        title={`${signal.strength} signal`}
                       />
-                      <span className="dim shrink-0">{signal.ruleName}</span>
-                      <span className="min-w-0">{signal.observation}</span>
+                      <p className="mt-1 text-[13px]">{signal.observation}</p>
                     </li>
                   ))}
                 </ul>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <p className="error-bar mt-2 text-xs">{detection.error ?? 'detection failed'}</p>
-      )}
-    </div>
+              </div>
+            ) : null}
+
+            {verdict.reviewerHints.length > 0 ? (
+              <div>
+                <Eyebrow>Suggestions for the author</Eyebrow>
+                <p className="dim mt-1 text-xs">
+                  Relay these to the PR author — concrete asks that would clear the flagged signals.
+                </p>
+                <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-5 text-[13px]">
+                  {verdict.reviewerHints.map((hint, i) => (
+                    <li key={i}>{hint}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {verdict.draftComment.trim() ? (
+              <div>
+                <Eyebrow>Draft comment</Eyebrow>
+                <p className="dim mt-1 text-xs">Posted by the comment / request-changes / close actions.</p>
+                <div className="mt-1.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+                  <Markdown text={verdict.draftComment} />
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {canAct && d.status === 'pending' && verdict ? (
+          <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            {busy ? <Spinner /> : null}
+            <button className="btn-ghost" disabled={busy} onClick={() => void act(() => slopApi.dismiss(d.id))}>
+              Dismiss
+            </button>
+            <ActionMenu
+              actions={[
+                ...(['label', 'comment', 'request_changes'] as const)
+                  .filter((a) => a !== verdict.recommendedAction)
+                  .map((action) => ({
+                    label: `Apply — ${ACTION_LABEL[action]}`,
+                    onSelect: () => void act(() => slopApi.apply(d.id, { action })),
+                  })),
+                ...(verdict.recommendedAction !== 'close'
+                  ? [
+                      {
+                        label: 'Apply — close PR',
+                        danger: true,
+                        onSelect: () => void act(() => slopApi.apply(d.id, { action: 'close' })),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            <button className="btn" disabled={busy} onClick={() => void act(() => slopApi.apply(d.id, {}))}>
+              Apply recommended — {ACTION_LABEL[verdict.recommendedAction]}
+            </button>
+          </div>
+        ) : canAct && d.status === 'failed' ? (
+          <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            {busy ? <Spinner /> : null}
+            <button className="btn-ghost" disabled={busy} onClick={() => void act(() => slopApi.dismiss(d.id))}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </Drawer>
   );
 }
 
@@ -274,7 +422,7 @@ function DetectModal({
   };
 
   return (
-    <Modal title="Detect AI slop" onClose={onClose}>
+    <Modal title="Run detection" onClose={onClose}>
       <div className="flex flex-col gap-4">
         <Field label="Repository">
           <Dropdown
@@ -285,7 +433,10 @@ function DetectModal({
             searchable
           />
         </Field>
-        <Field label="Open pull request" hint="The agent reads the diff and the checkout, then scores it against the enabled rules.">
+        <Field
+          label="Open pull request"
+          hint="The agent reads the diff and the checkout, then scores it against the enabled rules. The detection appears in the list immediately and settles when the run finishes."
+        >
           {prs.length === 0 ? (
             <p className="dim text-sm">No open PRs in this repository.</p>
           ) : (
