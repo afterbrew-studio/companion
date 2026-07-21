@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ApiError, useLive } from '@companion/core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import type { RefineContextOptions, RefineMethodRecord } from '../../contract/index.js';
+import type { RefineContextOptions, RefineMethodDraft, RefineMethodRecord } from '../../contract/index.js';
 import { refinementApi, type RefinementDetail } from '../api.js';
 
 export interface RefinementActions {
@@ -16,6 +16,8 @@ export interface RefinementActions {
   saveMethod(fields: { name: string; description: string; instructions: string }): Promise<void>;
   updateMethod(id: string, fields: { name?: string; description?: string; instructions?: string }): Promise<void>;
   deleteMethod(id: string): Promise<void>;
+  /** Throws on failure — the methods modal shows the error inline, not in the page bar. */
+  generateMethod(prompt: string): Promise<RefineMethodDraft>;
 }
 
 /**
@@ -107,6 +109,11 @@ export function useRefinement(id: string): {
       },
       updateMethod: (methodId, fields) => act(() => refinementApi.updateMethod(methodId, fields)),
       deleteMethod: (methodId) => act(() => refinementApi.deleteMethod(methodId)),
+      generateMethod: async (prompt) => {
+        const workspaceId = detail?.workspaceId;
+        if (!workspaceId) throw new Error('the refinement has no workspace');
+        return (await refinementApi.generateMethod(workspaceId, prompt)).draft;
+      },
     }),
     [act, id, detail?.workspaceId],
   );

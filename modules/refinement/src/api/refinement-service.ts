@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { ServiceMap, SpaServerMessage } from '@companion/contracts';
-import { log, extractModelJson } from '@companion/services';
+import { log, paths, extractModelJson } from '@companion/services';
 import type { TaskPriority } from '@companion/module-board/contract';
 import type {
   RefineContextOptions,
   RefineItemRecord,
+  RefineMethodDraft,
   RefineMethodRecord,
   RefinementListEntry,
   RefinementRecord,
@@ -33,6 +35,7 @@ const decompositionSchema = z.object({
         description: z.string(),
         acceptance: z.string(),
         priority: z.number().int().min(0).max(3),
+        dependsOn: z.array(z.number().int().min(0)).max(10).default([]),
       }),
     )
     .min(1)
@@ -40,6 +43,16 @@ const decompositionSchema = z.object({
 });
 
 type Decomposition = z.infer<typeof decompositionSchema>;
+
+const GENERATE_METHOD_TIMEOUT_MS = 5 * 60_000;
+
+// Limits mirror the save-method route schema; the prompt asks for less so an
+// enthusiastic model still lands inside them.
+const methodDraftSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(300),
+  instructions: z.string().trim().min(8).max(8_000),
+});
 
 /**
  * Product refinement: the user writes an epic, picks a decomposition method
@@ -186,6 +199,26 @@ export class RefinementService {
     return this.store.getMethod(id);
   }
 
+  /**
+   * Draft a decomposition method from a free-form prompt (e.g. "BMAD") with a
+   * one-shot agent — no repo context, methodology knowledge only. Returns the
+   * draft for review; the caller saves it (or not) through {@link saveMethod}.
+   */
+  async generateMethod(prompt: string): Promise<RefineMethodDraft> {
+    const { finalMessage } = await this.orchestrator.runOneShot({
+      kind: 'analysis',
+      title: `Draft method: ${prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
+      // No repo to ground in — the orchestrator mkdirs whatever cwd it gets.
+      cwd: join(paths.scratch(), 'refine-methods'),
+      prompt: generateMethodPrompt(prompt),
+      timeoutMs: GENERATE_METHOD_TIMEOUT_MS,
+    });
+    // null = timeout or dead runner — say so instead of letting the JSON
+    // extractor choke on an empty string with a cryptic parse error.
+    if (finalMessage === null) throw new Error('the agent run ended without a reply (timeout or runner failure) — try again');
+    return methodDraftSchema.parse(extractModelJson(finalMessage));
+  }
+
   // ---------- decomposition ------------------------------------------------------------
 
   /**
@@ -285,6 +318,9 @@ export class RefinementService {
       description: task.description,
       acceptance: task.acceptance,
       priority: task.priority as TaskPriority,
+      // Backward references only (the list is in build order) — self, forward
+      // and out-of-range indexes are dropped, which also rules out cycles.
+      dependsOn: [...new Set(task.dependsOn.filter((dep) => dep < index))],
       status: 'proposed' as const,
       taskId: null,
       createdAt: now,
@@ -347,6 +383,20 @@ export class RefinementService {
     const item = this.store.getItem(itemId);
     if (!item || item.refinementId !== id) throw new Error('item not found');
     if (item.status !== 'proposed') throw new Error(`item is ${item.status}, not proposed`);
+    // Prerequisites that already became board tasks travel as dependencies;
+    // dismissed ones deliberately don't bind. A still-proposed prerequisite
+    // gets its edge via the late-link below once it imports — but that cannot
+    // hold a task that was queued and dispatched in the meantime, so queueing
+    // ahead of the prerequisites is refused rather than silently unordered.
+    const siblings = this.store.listItems(id);
+    const byOrd = new Map(siblings.map((sibling) => [sibling.ord, sibling]));
+    if (queue && item.dependsOn.some((ord) => byOrd.get(ord)?.status === 'proposed')) {
+      throw new Error('this task depends on proposals not imported yet — import those first, or import this one unqueued');
+    }
+    const dependsOn = item.dependsOn.flatMap((ord) => {
+      const dep = byOrd.get(ord);
+      return dep?.status === 'imported' && dep.taskId ? [dep.taskId] : [];
+    });
     const task = this.board.createTask({
       repo: refinement.repo,
       title: item.title,
@@ -356,11 +406,18 @@ export class RefinementService {
       // attachment travels; with several specs the task goes without.
       specId: refinement.specIds.length === 1 ? (refinement.specIds[0] ?? null) : null,
       attachments: [],
+      dependsOn,
       priority: item.priority,
       queue,
       createdBy: user,
     });
     this.store.setItemStatus(itemId, 'imported', task.id);
+    // Late linking: siblings imported before this prerequisite now get the edge.
+    for (const sibling of siblings) {
+      if (sibling.id !== item.id && sibling.status === 'imported' && sibling.taskId && sibling.dependsOn.includes(item.ord)) {
+        this.board.addTaskDependencies(sibling.taskId, [task.id]);
+      }
+    }
     return this.store.getItem(itemId)!;
   }
 
@@ -419,6 +476,8 @@ ${contextSection('Specifications (ground truth for behavior)', specs)}${contextS
 ## Your task
 Investigate the codebase to ground every task in reality — name the real files, modules and areas each task touches. Enrich the epic: fill in the unstated-but-necessary work (migrations, error handling, tests per the house norms you observe). Then decompose it per the method above into 3-15 tasks, each at most ~1 day of focused work, with verifiable acceptance criteria (a markdown bullet list), ordered by build sequence.
 
+Tasks are executed by autonomous agents that pick up any task whose prerequisites are done — independent tasks run IN PARALLEL. Declare a dependency (dependsOn) ONLY where the work genuinely cannot start before another task lands (builds on its code, schema or API); an over-declared chain serializes the whole epic, an under-declared one starts work on missing ground.
+
 Reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
 {
   "summary": "<enriched overview: approach, key decisions, explicit non-goals>",
@@ -427,9 +486,35 @@ Reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
       "title": "<imperative, ≤ 80 chars>",
       "description": "<what and how, incl. files/areas>",
       "acceptance": "<markdown bullets, each verifiable>",
-      "priority": 0 | 1 | 2 | 3
+      "priority": 0 | 1 | 2 | 3,
+      "dependsOn": [<zero-based indexes of EARLIER tasks in this list that must be fully done first; [] when independent>]
     }
   ]
+}`;
+}
+
+function generateMethodPrompt(request: string): string {
+  const example = BUILTIN_METHODS[0]!;
+  return `You are a product-delivery methodologist writing a reusable "decomposition method" for a refinement tool.
+
+A decomposition method tells an AI agent how to split an epic into development tasks. Its instructions are injected verbatim into that agent's prompt; the agent then investigates the codebase and produces 3-15 ordered tasks (title, description, acceptance criteria, priority 0 = highest to 3 = lowest).
+
+## The user's request
+
+${request}
+
+## How to write it
+
+- If the request names a known methodology or framework (e.g. BMAD, Shape Up, user story mapping), distill it into concrete splitting rules: how to slice, how to order, how to assign priorities, what each task description must state. If it defines roles or phases, translate them into steps ONE agent applies in sequence — do not invent multi-agent choreography.
+- Be prescriptive and self-contained: the decomposition agent knows nothing about the methodology beyond your instructions.
+- Match the register of this example method ("${example.name}"): ${example.instructions}
+- Do NOT restate the tool mechanics (task count, JSON format, investigation step) — the agent's prompt already carries those; write only the method itself.
+
+Reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
+{
+  "name": "<method name, ≤ 60 chars>",
+  "description": "<one line for the method picker, ≤ 200 chars>",
+  "instructions": "<the method, one or a few dense paragraphs, ≤ 6000 chars>"
 }`;
 }
 

@@ -152,4 +152,14 @@ export default defineMigrations([
     // may already contain task data. Module teardown drops the table in v1.
     down: () => undefined,
   },
+  {
+    version: 6,
+    name: 'board_task_dependencies',
+    up: (db) => {
+      db.exec(`ALTER TABLE board_tasks ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'`);
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE board_tasks DROP COLUMN depends_on`);
+    },
+  },
 ]);

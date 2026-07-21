@@ -33,6 +33,7 @@ interface ItemRow {
   description: string;
   acceptance: string;
   priority: number;
+  depends_on: string;
   status: string;
   task_id: string | null;
   created_at: number;
@@ -76,6 +77,7 @@ function rowToItem(row: ItemRow): RefineItemRecord {
     description: row.description,
     acceptance: row.acceptance,
     priority: row.priority as TaskPriority,
+    dependsOn: safeParse<number[]>(row.depends_on, []),
     status: row.status as RefineItemRecord['status'],
     taskId: row.task_id,
     createdAt: row.created_at,
@@ -209,13 +211,26 @@ export class RefinementStore {
   replaceProposed(refinementId: string, items: readonly RefineItemRecord[]): void {
     const del = this.db.prepare(`DELETE FROM refine_items WHERE refinement_id = ? AND status = 'proposed'`);
     const insert = this.db.prepare(
-      `INSERT INTO refine_items (id, refinement_id, ord, title, description, acceptance, priority, status, task_id, created_at)
-       VALUES (@id, @refinementId, @ord, @title, @description, @acceptance, @priority, @status, @taskId, @createdAt)`,
+      `INSERT INTO refine_items (id, refinement_id, ord, title, description, acceptance, priority, depends_on, status, task_id, created_at)
+       VALUES (@id, @refinementId, @ord, @title, @description, @acceptance, @priority, @dependsOn, @status, @taskId, @createdAt)`,
     );
     // One transaction: a mid-loop failure must not strand a half-replaced list.
     this.db.transaction(() => {
       del.run(refinementId);
-      for (const item of items) insert.run(item);
+      // Rows that survived earlier rounds keep their ords, so the fresh round
+      // (0-based from the agent) is shifted past them — ords stay unique for
+      // the refinement's lifetime and a dependsOn reference can never
+      // accidentally point across rounds.
+      const { base } = this.db
+        .prepare(`SELECT COALESCE(MAX(ord) + 1, 0) AS base FROM refine_items WHERE refinement_id = ?`)
+        .get(refinementId) as { base: number };
+      for (const item of items) {
+        insert.run({
+          ...item,
+          ord: item.ord + base,
+          dependsOn: JSON.stringify(item.dependsOn.map((dep) => dep + base)),
+        });
+      }
     })();
   }
 

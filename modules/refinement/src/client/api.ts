@@ -2,6 +2,7 @@ import { del, post, put, request } from '@companion/core/client';
 import type {
   RefineContextOptions,
   RefineItemRecord,
+  RefineMethodDraft,
   RefineMethodRecord,
   RefinementListEntry,
   RefinementRecord,
@@ -36,6 +37,8 @@ export const refinementApi = {
     request<{ methods: RefineMethodRecord[] }>(`/api/workspaces/${workspaceId}/refine-methods`),
   saveMethod: (workspaceId: string, fields: { name: string; description: string; instructions: string }) =>
     post<{ method: RefineMethodRecord }>(`/api/workspaces/${workspaceId}/refine-methods`, fields),
+  generateMethod: (workspaceId: string, prompt: string) =>
+    post<{ draft: RefineMethodDraft }>(`/api/workspaces/${workspaceId}/refine-methods/generate`, { prompt }),
   updateMethod: (id: string, fields: { name?: string; description?: string; instructions?: string }) =>
     put<{ method: RefineMethodRecord }>(`/api/refine-methods/${id}`, fields),
   deleteMethod: (id: string) => del<{ ok: true }>(`/api/refine-methods/${id}`),

@@ -21,6 +21,7 @@ const createTaskSchema = z.object({
   acceptance: z.string().max(10_000).default(''),
   specId: z.string().max(100).nullable().default(null),
   attachments: attachmentsSchema,
+  dependsOn: z.array(z.string().max(40)).max(20).default([]),
   priority: prioritySchema.default(2),
   queue: z.boolean().default(false),
 });
@@ -31,6 +32,7 @@ const updateTaskSchema = z.object({
   acceptance: z.string().max(10_000).optional(),
   specId: z.string().max(100).nullable().optional(),
   attachments: attachmentsSchema.optional(),
+  dependsOn: z.array(z.string().max(40)).max(20).optional(),
   priority: prioritySchema.optional(),
 });
 
@@ -111,7 +113,11 @@ export default defineRoutes((ctx) => {
       body: updateTaskSchema,
       handler: ({ params, body, user }) => {
         if (!board.getTask(user!, params.id)) throw notFound('task not found');
-        return { task: board.updateTask(params.id, body) };
+        try {
+          return { task: board.updateTask(params.id, body) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
       },
     }),
 

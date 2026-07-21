@@ -62,6 +62,9 @@ const COLUMNS: ReadonlyArray<{ key: ColumnKey; label: string }> = [
   { key: 'failed', label: 'Failed' },
 ];
 
+/** Search results shown at once in the dependency picker — boards can hold thousands of tasks. */
+const MAX_DEP_MATCHES = 30;
+
 /** A card waiting on a human call (merge / reject) rather than on machinery. */
 function needsDecision(task: TaskRecord, autoMerge: boolean): boolean {
   return (
@@ -287,6 +290,20 @@ export default function Board({ query }: RouteProps): JSX.Element {
     [workers],
   );
 
+  // Unfinished prerequisites of a card, by title. Deps outside the caller's
+  // repo access aren't in the snapshot and simply don't show.
+  const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const waitingOn = useCallback(
+    (task: TaskRecord): string[] =>
+      task.status === 'done'
+        ? []
+        : task.dependsOn.flatMap((depId) => {
+            const dep = taskById.get(depId);
+            return dep && dep.status !== 'done' ? [dep.title] : [];
+          }),
+    [taskById],
+  );
+
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
       try {
@@ -394,6 +411,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
                     key={task.id}
                     task={task}
                     workerName={workerName(task.assignedWorkerId)}
+                    waitingOn={waitingOn(task)}
                     attention={col.key === 'needs_decision'}
                     onOpen={() => setDetailId(task.id)}
                     onDragStart={() => setDragging(task)}
@@ -415,7 +433,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
 
       {creating ? <NewTaskModal onClose={() => setCreating(false)} onError={setError} /> : null}
       {detailId ? (
-        <TaskDetailDrawer id={detailId} workerName={workerName} onClose={closeDetail} onError={setError} />
+        <TaskDetailDrawer id={detailId} allTasks={tasks} workerName={workerName} onClose={closeDetail} onError={setError} />
       ) : null}
       {managingWorkers && current ? (
         <WorkersModal workspaceId={current.id} workers={workers} onClose={() => setManagingWorkers(false)} onError={setError} />
@@ -436,6 +454,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
 function TaskCard({
   task,
   workerName,
+  waitingOn,
   attention,
   onOpen,
   onDragStart,
@@ -443,6 +462,8 @@ function TaskCard({
 }: {
   task: TaskRecord;
   workerName: string | null;
+  /** Titles of unfinished prerequisites — the card won't dispatch until they're done. */
+  waitingOn: string[];
   /** The card sits in the needs-decision column — waiting on the human. */
   attention?: boolean;
   onOpen: () => void;
@@ -451,7 +472,12 @@ function TaskCard({
 }): JSX.Element {
   const signal = cardSignal(task, attention ?? false);
   const hasChips =
-    task.prUrl != null || task.reviewRecommendation != null || task.attempts > 0 || task.attachments.length > 0 || task.specId != null;
+    task.prUrl != null ||
+    task.reviewRecommendation != null ||
+    task.attempts > 0 ||
+    task.attachments.length > 0 ||
+    task.specId != null ||
+    waitingOn.length > 0;
   const borderClass = attention
     ? 'border-amber-400/60 dark:border-amber-500/40'
     : task.status === 'failed'
@@ -540,6 +566,13 @@ function TaskCard({
           ) : null}
           {task.specId ? (
             <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] text-indigo-500">spec</span>
+          ) : null}
+          {waitingOn.length > 0 ? (
+            <Tooltip content={`waits for: ${waitingOn.join(' · ')}`}>
+              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                ⛓ waits for {waitingOn.length}
+              </span>
+            </Tooltip>
           ) : null}
         </div>
       ) : null}
@@ -737,11 +770,14 @@ function ChecksLine({ checks }: { checks: ChecksSnapshot | null }): JSX.Element 
 
 function TaskDetailDrawer({
   id,
+  allTasks,
   workerName,
   onClose,
   onError,
 }: {
   id: string;
+  /** The board snapshot — candidates for the dependency picker. */
+  allTasks: TaskRecord[];
   workerName: (id: string | null) => string | null;
   onClose: () => void;
   onError: (e: string | null) => void;
@@ -753,8 +789,39 @@ function TaskDetailDrawer({
   const [acceptance, setAcceptance] = useState('');
   const [priority, setPriority] = useState<TaskPriority>(2);
   const [attachments, setAttachments] = useState<TaskAttachmentInput[]>([]);
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  // dependsOn is also machine-written (refinement late-linking) — an untouched
+  // picker must not overwrite edges that arrived while the form was open.
+  const [depsTouched, setDepsTouched] = useState(false);
+  const [depQuery, setDepQuery] = useState('');
+  const [depFocused, setDepFocused] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const { can } = useAuth();
+
+  // Tasks that (transitively) depend on this one — offering them as a
+  // prerequisite would close a cycle. The server enforces this too.
+  const depCandidates = useMemo(() => {
+    const forbidden = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const t of allTasks) {
+        if (!forbidden.has(t.id) && t.dependsOn.some((d) => forbidden.has(d))) {
+          forbidden.add(t.id);
+          grew = true;
+        }
+      }
+    }
+    return allTasks.filter((t) => !forbidden.has(t.id));
+  }, [allTasks, id]);
+
+  // Boards can hold thousands of tasks — candidates surface through search
+  // only, already-picked ones excluded (they show as chips instead).
+  const depMatches = useMemo(() => {
+    const query = depQuery.trim().toLowerCase();
+    if (!query) return [];
+    return depCandidates.filter((t) => !dependsOn.includes(t.id) && t.title.toLowerCase().includes(query));
+  }, [depQuery, depCandidates, dependsOn]);
 
   const refresh = useCallback(async () => {
     try {
@@ -767,7 +834,14 @@ function TaskDetailDrawer({
   useLive(refresh, (msg) => msg.t === 'board.changed');
 
   if (!detail) return null;
-  const { task, events, pr, reviews } = detail;
+  const { task, events, pr, reviews, dependencies } = detail;
+
+  // Chip titles: the snapshot first, then the server-resolved detail (covers
+  // deps whose repo the snapshot filter dropped).
+  const depTitle = (depId: string): string =>
+    allTasks.find((t) => t.id === depId)?.title ??
+    dependencies.find((dep) => dep.id === depId)?.title ??
+    'a task outside your access';
 
   const act = (fn: () => Promise<unknown>) => (): void => {
     void fn()
@@ -785,6 +859,7 @@ function TaskDetailDrawer({
       acceptance,
       priority,
       attachments,
+      ...(depsTouched ? { dependsOn } : {}),
     });
     setEditing(false);
   });
@@ -843,6 +918,9 @@ function TaskDetailDrawer({
                     content ? [{ name, mediaType, content }] : [],
                   ),
                 );
+                setDependsOn([...task.dependsOn]);
+                setDepsTouched(false);
+                setDepQuery('');
                 setEditing(true);
               }}
             >
@@ -910,6 +988,18 @@ function TaskDetailDrawer({
               <ChecksLine checks={pr?.checks ?? null} />
             </DetailRow>
           ) : null}
+          {dependencies.length > 0 ? (
+            <DetailRow label="Depends on">
+              <span className="flex min-w-0 flex-col gap-0.5">
+                {dependencies.map((dep) => (
+                  <span key={dep.id} className={`truncate ${dep.status === 'done' ? 'dim' : ''}`}>
+                    <span aria-hidden>{dep.status === 'done' ? '✓' : '⛓'}</span> {dep.title ?? 'a task outside your access'}
+                    {dep.status !== 'done' ? <span className="dim"> · {dep.status.replace('_', ' ')}</span> : null}
+                  </span>
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
           <DetailRow label="Author">{task.createdBy ?? '—'}</DetailRow>
           <DetailRow label="Worker">
             {task.firstWorker ?? currentWorker ?? 'not picked up yet'}
@@ -956,6 +1046,84 @@ function TaskDetailDrawer({
                 options={PRIORITY_OPTIONS}
               />
             </Field>
+            {depCandidates.length > 0 || dependsOn.length > 0 ? (
+              <Field
+                label={`Depends on${dependsOn.length > 0 ? ` (${dependsOn.length})` : ''}`}
+                hint="This task is not dispatched until every selected task is done."
+              >
+                <div className="flex flex-col gap-2">
+                  {dependsOn.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {dependsOn.map((depId) => (
+                        <span
+                          key={depId}
+                          className="flex max-w-full items-center gap-1 rounded-full bg-zinc-500/10 py-0.5 pr-1 pl-2 text-[11px]"
+                        >
+                          <span className="min-w-0 truncate">{depTitle(depId)}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove dependency: ${depTitle(depId)}`}
+                            className="dim shrink-0 rounded-full px-1 hover:bg-zinc-500/20 hover:text-red-500"
+                            onClick={() => {
+                              setDepsTouched(true);
+                              setDependsOn((prev) => prev.filter((x) => x !== depId));
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="relative">
+                    <input
+                      className="input w-full"
+                      value={depQuery}
+                      onChange={(e) => setDepQuery(e.target.value)}
+                      onFocus={() => setDepFocused(true)}
+                      onBlur={() => setDepFocused(false)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setDepQuery('');
+                      }}
+                      placeholder="Search tasks to add…"
+                      aria-label="Search tasks to add as dependencies"
+                    />
+                    {depFocused && depQuery.trim() ? (
+                      // Floating like the ui-kit Dropdown menu — it must not
+                      // stretch the form. mousedown is swallowed so picking a
+                      // result doesn't blur the input and close the panel.
+                      <div
+                        className="absolute top-full right-0 left-0 z-40 mt-1 flex max-h-44 flex-col overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                        onMouseDown={(e) => e.preventDefault()}
+                      >
+                        {depMatches.slice(0, MAX_DEP_MATCHES).map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-left text-[13px] hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            onClick={() => {
+                              setDepsTouched(true);
+                              setDependsOn((prev) => [...prev, candidate.id]);
+                            }}
+                          >
+                            <span className={`min-w-0 flex-1 truncate ${candidate.status === 'done' ? 'dim' : ''}`}>
+                              {candidate.title}
+                            </span>
+                            <span className="dim shrink-0 text-[11px]">{candidate.status.replace('_', ' ')}</span>
+                          </button>
+                        ))}
+                        {depMatches.length === 0 ? <p className="dim px-2 py-1.5 text-[13px]">No matching tasks.</p> : null}
+                        {depMatches.length > MAX_DEP_MATCHES ? (
+                          <p className="dim border-t border-zinc-100 px-2 py-1.5 text-[11px] dark:border-zinc-800/60">
+                            …and {depMatches.length - MAX_DEP_MATCHES} more — keep typing to narrow it down.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </Field>
+            ) : null}
             <AttachmentEditor attachments={attachments} onChange={setAttachments} onError={(error) => onError(error)} />
             <FormActions>
               <button className="btn-ghost" onClick={() => setEditing(false)}>
@@ -968,7 +1136,9 @@ function TaskDetailDrawer({
           </div>
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem]">
+            {/* The 16rem gallery column only exists when there is a gallery —
+                otherwise the description spans the drawer like its siblings. */}
+            <div className={`grid gap-4 ${task.attachments.length > 0 ? 'md:grid-cols-[minmax(0,1fr)_16rem]' : ''}`}>
               <section aria-label="Description">
                 <DetailHeading>Description</DetailHeading>
                 <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">

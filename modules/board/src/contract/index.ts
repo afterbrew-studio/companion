@@ -84,6 +84,8 @@ export interface TaskRecord {
   /** Optional plan-module spec attached as agent context. */
   readonly specId: string | null;
   readonly attachments: readonly TaskAttachment[];
+  /** Prerequisite tasks: dispatch holds this task until every one is done. */
+  readonly dependsOn: readonly string[];
   readonly priority: TaskPriority;
   readonly status: TaskStatus;
   readonly stage: TaskStage | null;
@@ -108,6 +110,13 @@ export interface TaskRecord {
   readonly updatedAt: number;
   readonly startedAt: number | null;
   readonly finishedAt: number | null;
+}
+
+/** A prerequisite in the task detail — title redacted when the caller can't see its repo. */
+export interface TaskDependencyView {
+  readonly id: string;
+  readonly title: string | null;
+  readonly status: TaskStatus;
 }
 
 /** The task's PR as GitHub sees it (from the code module's sync cache). */

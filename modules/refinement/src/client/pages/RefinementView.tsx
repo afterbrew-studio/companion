@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Breadcrumb,
   Dropdown,
@@ -16,7 +16,7 @@ import {
 } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { TaskPriority } from '@companion/module-board/contract';
-import type { RefineItemRecord, RefineMethodRecord, RefinementRecord } from '../../contract/index.js';
+import type { RefineItemRecord, RefineMethodDraft, RefineMethodRecord, RefinementRecord } from '../../contract/index.js';
 import { useRefinement } from '../hooks/useRefinement.js';
 import { StatusBadge } from './Refinements.js';
 
@@ -112,6 +112,7 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
             onSaveMethod={actions.saveMethod}
             onUpdateMethod={actions.updateMethod}
             onDeleteMethod={actions.deleteMethod}
+            onGenerateMethod={actions.generateMethod}
           />
         ) : null}
 
@@ -220,6 +221,7 @@ function DecomposePanel({
   onSaveMethod,
   onUpdateMethod,
   onDeleteMethod,
+  onGenerateMethod,
 }: {
   refinement: RefinementRecord;
   methods: RefineMethodRecord[];
@@ -230,6 +232,7 @@ function DecomposePanel({
   onSaveMethod: (fields: { name: string; description: string; instructions: string }) => Promise<void>;
   onUpdateMethod: (id: string, fields: { name?: string; description?: string; instructions?: string }) => Promise<void>;
   onDeleteMethod: (id: string) => Promise<void>;
+  onGenerateMethod: (prompt: string) => Promise<RefineMethodDraft>;
 }): JSX.Element {
   const [methodId, setMethodId] = useState<string | null>(refinement.methodId);
   const [specIds, setSpecIds] = useState<string[]>([...refinement.specIds]);
@@ -298,6 +301,7 @@ function DecomposePanel({
           onSave={onSaveMethod}
           onUpdate={onUpdateMethod}
           onDelete={onDeleteMethod}
+          onGenerate={onGenerateMethod}
         />
       ) : null}
     </section>
@@ -433,6 +437,14 @@ function ItemCard({
         <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${PRIORITY_CLS[item.priority]}`}>
           P{item.priority}
         </span>
+        {item.dependsOn.length > 0 ? (
+          <span
+            className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            title="Starts only after these tasks are done"
+          >
+            ⛓ after {item.dependsOn.map((dep) => `#${dep + 1}`).join(' ')}
+          </span>
+        ) : null}
         {item.status === 'proposed' && canManage ? (
           <span className="flex shrink-0 items-center gap-1.5">
             <button className="btn" disabled={busy} onClick={onImport}>
@@ -475,12 +487,14 @@ function MethodsModal({
   onSave,
   onUpdate,
   onDelete,
+  onGenerate,
 }: {
   methods: RefineMethodRecord[];
   onClose: () => void;
   onSave: (fields: { name: string; description: string; instructions: string }) => Promise<void>;
   onUpdate: (id: string, fields: { name?: string; description?: string; instructions?: string }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onGenerate: (prompt: string) => Promise<RefineMethodDraft>;
 }): JSX.Element {
   const custom = methods.filter((m) => !m.builtin);
   const builtins = methods.filter((m) => m.builtin);
@@ -489,13 +503,46 @@ function MethodsModal({
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  // Bumped whenever the editor target changes — an in-flight generate that
+  // resolves for an older session is dropped instead of clobbering the form.
+  const editSessionRef = useRef(0);
   const { confirmDanger, confirmElement } = useConfirm();
 
   const startEdit = (method: RefineMethodRecord | 'new'): void => {
+    editSessionRef.current += 1;
     setEditing(method);
     setName(method === 'new' ? '' : method.name);
     setDescription(method === 'new' ? '' : method.description);
     setInstructions(method === 'new' ? '' : method.instructions);
+    setAiPrompt('');
+    setGenError(null);
+  };
+
+  const closeEditor = (): void => {
+    editSessionRef.current += 1;
+    setEditing(null);
+  };
+
+  const generate = async (): Promise<void> => {
+    const prompt = aiPrompt.trim();
+    if (prompt.length < 3 || generating) return;
+    const session = editSessionRef.current;
+    setGenerating(true);
+    setGenError(null);
+    try {
+      const draft = await onGenerate(prompt);
+      if (editSessionRef.current !== session) return;
+      setName(draft.name);
+      setDescription(draft.description);
+      setInstructions(draft.instructions);
+    } catch (err) {
+      if (editSessionRef.current === session) setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const save = async (): Promise<void> => {
@@ -504,7 +551,7 @@ function MethodsModal({
     if (editing === 'new') await onSave(fields);
     else if (editing) await onUpdate(editing.id, fields);
     setBusy(false);
-    setEditing(null);
+    closeEditor();
   };
 
   return (
@@ -512,6 +559,33 @@ function MethodsModal({
       <div className="flex flex-col gap-4">
         {editing ? (
           <div className="flex flex-col gap-3">
+            <div className="border-b border-zinc-200 pb-3 dark:border-zinc-800">
+              <Field
+                label="Generate with AI"
+                hint='Name a methodology (e.g. "BMAD") or describe how to split — the draft fills the fields below for review.'
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input flex-1"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    maxLength={2_000}
+                    placeholder="e.g. BMAD-method"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void generate();
+                    }}
+                  />
+                  <button
+                    className="btn-ghost shrink-0"
+                    disabled={generating || aiPrompt.trim().length < 3}
+                    onClick={() => void generate()}
+                  >
+                    {generating ? 'Drafting… (asking the agent)' : '✦ Generate'}
+                  </button>
+                </div>
+              </Field>
+              <ErrorBar error={genError} className="mt-2" />
+            </div>
             <Field label="Name">
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
             </Field>
@@ -527,12 +601,12 @@ function MethodsModal({
               />
             </Field>
             <FormActions>
-              <button className="btn-ghost" onClick={() => setEditing(null)}>
+              <button className="btn-ghost" onClick={closeEditor}>
                 Cancel
               </button>
               <button
                 className="btn"
-                disabled={busy || name.trim().length < 2 || instructions.trim().length < 8}
+                disabled={busy || generating || name.trim().length < 2 || instructions.trim().length < 8}
                 onClick={() => void save()}
               >
                 {editing === 'new' ? 'Add method' : 'Save'}

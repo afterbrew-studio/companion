@@ -9,6 +9,7 @@ import type {
   SpecOption,
   TaskAttachment,
   TaskAttachmentInput,
+  TaskDependencyView,
   TaskEventRecord,
   TaskPriority,
   TaskPrView,
@@ -116,18 +117,34 @@ export class BoardService {
   getTask(
     user: AuthUser,
     id: string,
-  ): { task: TaskRecord; events: TaskEventRecord[]; pr: TaskPrView | null; reviews: PrReviewResult[] } | null {
+  ): {
+    task: TaskRecord;
+    events: TaskEventRecord[];
+    pr: TaskPrView | null;
+    reviews: PrReviewResult[];
+    dependencies: TaskDependencyView[];
+  } | null {
     const task = this.store.getTask(id);
     if (!task || !this.workspace.canAccessRepo(user, task.repo)) return null;
     // Join the PR's cached GitHub state and its full review history from the
     // code module, so the detail view shows verdicts/checks without extra calls.
     const pr = task.prNumber != null ? this.code.prs.get(task.repo, task.prNumber) : undefined;
     const reviews = task.prNumber != null ? this.code.prReviews.listForPr(task.repo, task.prNumber) : [];
+    // Prerequisites resolve to title+status; like busyTaskTitle, the title is
+    // redacted when the dep lives in a repo the caller can't see. Deleted
+    // prerequisites are omitted (they no longer bind dispatch).
+    const dependencies = task.dependsOn.flatMap((depId): TaskDependencyView[] => {
+      const dep = this.store.getTask(depId);
+      if (!dep) return [];
+      const visible = this.workspace.canAccessRepo(user, dep.repo);
+      return [{ id: dep.id, title: visible ? dep.title : null, status: dep.status }];
+    });
     return {
       task,
       events: this.store.listEvents(id),
       pr: pr ? { state: pr.state, reviewDecision: pr.reviewDecision, checks: pr.checks } : null,
       reviews,
+      dependencies,
     };
   }
 
@@ -151,6 +168,7 @@ export class BoardService {
     acceptance: string;
     specId: string | null;
     attachments: readonly TaskAttachmentInput[];
+    dependsOn?: readonly string[];
     priority: TaskPriority;
     queue: boolean;
     createdBy: string | null;
@@ -165,6 +183,7 @@ export class BoardService {
       acceptance: input.acceptance,
       specId: input.specId,
       attachments: makeAttachments(input.attachments),
+      dependsOn: this.sanitizeDependsOn(input.repo, null, input.dependsOn ?? []),
       priority: input.priority,
       status: input.queue ? 'ready' : 'backlog',
       stage: input.queue ? 'build' : null,
@@ -199,15 +218,75 @@ export class BoardService {
       acceptance?: string;
       specId?: string | null;
       attachments?: readonly TaskAttachmentInput[];
+      dependsOn?: readonly string[];
       priority?: TaskPriority;
     },
   ): TaskRecord {
     const task = this.store.getTask(id);
     if (!task) throw new Error('task not found');
-    const { attachments, ...patch } = fields;
-    this.store.updateTask(id, { ...patch, ...(attachments ? { attachments: makeAttachments(attachments) } : {}) });
+    const { attachments, dependsOn, ...patch } = fields;
+    let sanitizedDeps: string[] | undefined;
+    if (dependsOn !== undefined) {
+      sanitizedDeps = this.sanitizeDependsOn(task.repo, id, dependsOn);
+      if (this.wouldCycle(id, sanitizedDeps)) throw new Error('those dependencies would form a cycle');
+    }
+    this.store.updateTask(id, {
+      ...patch,
+      ...(attachments ? { attachments: makeAttachments(attachments) } : {}),
+      ...(sanitizedDeps ? { dependsOn: sanitizedDeps } : {}),
+    });
     this.changed();
+    // A removed prerequisite may make a ready task dispatchable right now.
+    if (sanitizedDeps) this.kick();
     return this.store.getTask(id)!;
+  }
+
+  /**
+   * Merge extra prerequisites into a task — the refinement import's late
+   * linking (an item imported before its prerequisite gets the edge once the
+   * prerequisite imports). Invalid and cycle-forming ids are dropped, never
+   * thrown: this runs unattended.
+   */
+  addTaskDependencies(id: string, depIds: readonly string[]): void {
+    const task = this.store.getTask(id);
+    if (!task) return;
+    const merged = [...task.dependsOn];
+    for (const depId of this.sanitizeDependsOn(task.repo, id, depIds)) {
+      // One at a time: the existing set is acyclic, so checking each candidate
+      // against the current graph keeps it acyclic.
+      if (!merged.includes(depId) && !this.wouldCycle(id, [depId])) merged.push(depId);
+    }
+    if (merged.length === task.dependsOn.length) return;
+    this.store.updateTask(id, { dependsOn: merged });
+    this.store.insertEvent(id, 'dependency_added', `now waits for ${merged.length} task(s)`);
+    this.changed();
+  }
+
+  /** Same-workspace existing tasks only; self-references and duplicates dropped. */
+  private sanitizeDependsOn(repo: string, selfId: string | null, depIds: readonly string[]): string[] {
+    const workspaceId = this.workspaceOf(repo);
+    const kept = new Set<string>();
+    for (const depId of depIds) {
+      if (depId === selfId || kept.has(depId)) continue;
+      const dep = this.store.getTask(depId);
+      if (dep && this.workspaceOf(dep.repo) === workspaceId) kept.add(depId);
+    }
+    return [...kept];
+  }
+
+  /** Would `id` depending on depIds close a loop? Walks the dep chains back to id. */
+  private wouldCycle(id: string, depIds: readonly string[]): boolean {
+    const stack = [...depIds];
+    const visited = new Set<string>();
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (current === id) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const task = this.store.getTask(current);
+      if (task) stack.push(...task.dependsOn);
+    }
+    return false;
   }
 
   /**
@@ -473,6 +552,9 @@ export class BoardService {
     }
     for (const task of this.store.listTasksByStatus('ready')) {
       if (Date.now() < (this.retryBackoff.get(task.id) ?? 0)) continue;
+      // Hold until every prerequisite is done. A deleted prerequisite no
+      // longer binds; a failed one holds the task until a human resolves it.
+      if (this.unmetDependencies(task)) continue;
       const ws = this.workspaceOf(task.repo);
       const free = ws ? freeByWs.get(ws) : undefined;
       if (!free || free.size === 0) {
@@ -517,6 +599,14 @@ export class BoardService {
       if (!fresh || fresh.status !== 'ready') continue;
       await this.startWork(fresh, worker);
     }
+  }
+
+  /** True when a prerequisite still exists and isn't done yet. */
+  private unmetDependencies(task: TaskRecord): boolean {
+    return task.dependsOn.some((depId) => {
+      const dep = this.store.getTask(depId);
+      return dep !== undefined && dep.status !== 'done';
+    });
   }
 
   /** Claim the worker, then start the stage-appropriate agent run. */
@@ -1004,6 +1094,8 @@ ${acceptance}${specSection}
     this.store.insertEvent(taskId, 'done', how);
     this.notifyUser(task.repo, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
     this.changed();
+    // Tasks waiting on this one may be dispatchable now.
+    this.kick();
   }
 
   private fail(taskId: string, reason: string, extra?: TaskPatch): void {

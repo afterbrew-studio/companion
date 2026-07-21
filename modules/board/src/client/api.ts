@@ -4,6 +4,7 @@ import type {
   BoardConfig,
   SpecOption,
   TaskAttachmentInput,
+  TaskDependencyView,
   TaskEventRecord,
   TaskPriority,
   TaskPrView,
@@ -25,6 +26,7 @@ export interface TaskDetail {
   readonly events: TaskEventRecord[];
   readonly pr: TaskPrView | null;
   readonly reviews: PrReviewResult[];
+  readonly dependencies: TaskDependencyView[];
 }
 
 export const boardApi = {
@@ -37,6 +39,7 @@ export const boardApi = {
     acceptance: string;
     specId: string | null;
     attachments: readonly TaskAttachmentInput[];
+    dependsOn?: readonly string[];
     priority: TaskPriority;
     queue: boolean;
   }) => post<{ task: TaskRecord }>('/api/board/tasks', input),
@@ -48,6 +51,7 @@ export const boardApi = {
       acceptance?: string;
       specId?: string | null;
       attachments?: readonly TaskAttachmentInput[];
+      dependsOn?: readonly string[];
       priority?: TaskPriority;
     },
   ) => patch<{ task: TaskRecord }>(`/api/board/tasks/${id}`, fields),

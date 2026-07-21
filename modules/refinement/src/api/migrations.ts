@@ -36,4 +36,14 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    version: 2,
+    name: 'refine_item_dependencies',
+    up: (db) => {
+      db.exec(`ALTER TABLE refine_items ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'`);
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE refine_items DROP COLUMN depends_on`);
+    },
+  },
 ]);

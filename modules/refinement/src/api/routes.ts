@@ -33,6 +33,10 @@ const saveMethodSchema = z.object({
   instructions: z.string().trim().min(8).max(8_000),
 });
 
+const generateMethodSchema = z.object({
+  prompt: z.string().trim().min(3).max(2_000),
+});
+
 const patchMethodSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
   description: z.string().max(300).optional(),
@@ -221,6 +225,27 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
         return created({ method: refinement.saveMethod(params.id, body) });
+      },
+    }),
+
+    // Synchronous like doc generation: the modal waits, then prefills the
+    // editor with the draft — nothing is stored until the user saves it.
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/refine-methods/generate',
+      access: 'refine:manage',
+      body: generateMethodSchema,
+      handler: async ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        try {
+          return { draft: await refinement.generateMethod(body.prompt) };
+        } catch (err) {
+          throw badRequest(
+            err instanceof z.ZodError
+              ? 'the agent reply was not a valid method draft — try rephrasing'
+              : String(err instanceof Error ? err.message : err),
+          );
+        }
       },
     }),
 

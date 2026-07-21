@@ -64,6 +64,8 @@ export interface RefineItemRecord {
   readonly description: string;
   readonly acceptance: string;
   readonly priority: TaskPriority;
+  /** Ords of sibling items that must land first — mapped to board task dependencies on import. */
+  readonly dependsOn: ReadonlyArray<number>;
   readonly status: 'proposed' | 'imported' | 'dismissed';
   /** Board task once imported. */
   readonly taskId: string | null;
@@ -82,6 +84,16 @@ export interface RefineMethodRecord {
   readonly builtin: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+/**
+ * An AI-drafted method — returned for review and prefilled into the editor;
+ * nothing is stored until the user explicitly saves it.
+ */
+export interface RefineMethodDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly instructions: string;
 }
 
 /** Spec/doc picker options for a refinement's repo+workspace. */
