@@ -5,6 +5,7 @@ import '../contract/index.js';
 import manifest from '../module.js';
 import { nav, sections } from './nav.js';
 import { routes } from './routes.js';
+import { slots } from './slots.js';
 import { onboarding } from './onboarding.js';
 
 /**
@@ -15,6 +16,7 @@ import { onboarding } from './onboarding.js';
 // The shell and downstream modules (code/plan/automations) reach these by
 // name — everything else is routed.
 export { RunQueueIndicator } from './components/RunQueue.js';
+export { TokenBurnWidget } from './components/TokenBurn.js';
 export { AgentActivity } from './components/AgentActivity.js';
 export { AskSheet } from './components/AskSheet.js';
 export { Transcript } from './transcript/Transcript.js';
@@ -34,5 +36,6 @@ export default defineClientModule({
   sections,
   nav,
   routes,
+  slots,
   onboarding,
 });

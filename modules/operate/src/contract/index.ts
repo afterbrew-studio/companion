@@ -149,6 +149,32 @@ export interface AskRespondRequest {
   };
 }
 
+/**
+ * One local-day bucket of token spend across the runs the viewer may see —
+ * the dashboard burn chart's series (aggregated in SQL, zero-filled).
+ */
+export interface TokenUsageDay {
+  /** Start of the local day, ms since epoch. */
+  readonly dayStart: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/** One model's window totals — a "most-used models" leaderboard row. */
+export interface TokenUsageModel {
+  /** Model id as recorded on the run; null = rode the daemon default. */
+  readonly model: string | null;
+  readonly runs: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/** The dashboard cost-analytics payload: daily series + per-model totals. */
+export interface TokenUsage {
+  readonly days: readonly TokenUsageDay[];
+  readonly models: readonly TokenUsageModel[];
+}
+
 // ---------- runners (execution machines) ----------
 
 export type RunnerKind = 'local' | 'remote';

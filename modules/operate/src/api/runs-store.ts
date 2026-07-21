@@ -102,6 +102,66 @@ export class RunsStore {
     ).n;
   }
 
+  /** Repos with runs in the window — the bounded pre-resolve for usage visibility. */
+  distinctReposSince(since: number): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT repo AS r FROM runs WHERE created_at >= ? AND repo IS NOT NULL`)
+      .all(since) as Array<{ r: string }>;
+    return rows.map((row) => row.r);
+  }
+
+  /**
+   * OperateService.canSeeRun resolved to a SQL clause, shared by the usage
+   * aggregates: null scope = no restriction (admin); otherwise the viewer's
+   * own attended chats, repo-less automated runs, and runs on the
+   * pre-resolved accessible repos.
+   */
+  private usageWhere(scope: UsageScope): { clause: string; params: Array<string | number> } {
+    if (scope === null) return { clause: '', params: [] };
+    const inRepos = scope.repos.length > 0 ? ` OR repo IN (${scope.repos.map(() => '?').join(', ')})` : '';
+    return {
+      clause: ` AND (
+        (kind IN ('interactive', 'assistant') AND user_id = ?)
+        OR (kind NOT IN ('interactive', 'assistant') AND (repo IS NULL${inRepos}))
+      )`,
+      params: [scope.username, ...scope.repos],
+    };
+  }
+
+  /**
+   * Token totals per day bucket (`(created_at - since) / 86400000`), summed in
+   * SQL — the burn chart never pulls run rows into JS. The CAST is load-bearing:
+   * better-sqlite3 binds the ms timestamp as a REAL, which turns the division
+   * real too — fractional buckets group per-run and the day lookup drops them.
+   */
+  usageByDay(since: number, scope: UsageScope): UsageDayRow[] {
+    const w = this.usageWhere(scope);
+    return this.db
+      .prepare(
+        `SELECT CAST((created_at - ?) / 86400000 AS INTEGER) AS bucket,
+                SUM(input_tokens) AS input, SUM(output_tokens) AS output
+         FROM runs WHERE created_at >= ?${w.clause} GROUP BY bucket`,
+      )
+      .all(since, since, ...w.params) as UsageDayRow[];
+  }
+
+  /**
+   * Window totals per model — the leaderboard behind the dashboard's cost
+   * estimate. Bounded by the distinct models used in the window; same
+   * visibility scope as usageByDay.
+   */
+  usageByModel(since: number, scope: UsageScope): UsageModelRow[] {
+    const w = this.usageWhere(scope);
+    return this.db
+      .prepare(
+        `SELECT model, COUNT(*) AS runs,
+                SUM(input_tokens) AS input, SUM(output_tokens) AS output
+         FROM runs WHERE created_at >= ?${w.clause}
+         GROUP BY model ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`,
+      )
+      .all(since, ...w.params) as UsageModelRow[];
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db
@@ -111,6 +171,22 @@ export class RunsStore {
       .run(Date.now());
     return result.changes;
   }
+}
+
+/** Pre-resolved visibility for usage aggregates; null = unrestricted (admin). */
+export type UsageScope = { username: string; repos: readonly string[] } | null;
+
+export interface UsageDayRow {
+  bucket: number;
+  input: number;
+  output: number;
+}
+
+export interface UsageModelRow {
+  model: string | null;
+  runs: number;
+  input: number;
+  output: number;
 }
 
 export interface RunRow {

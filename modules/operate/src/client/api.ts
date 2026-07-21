@@ -10,6 +10,7 @@ import type {
   RunnerProbeResult,
   RunnerRecord,
   SkillFile,
+  TokenUsage,
   UpdateRunnerRequest,
 } from '../contract/index.js';
 
@@ -42,6 +43,7 @@ export const operateApi = {
     post<{ ok: true }>(`/api/runs/${id}/ask`, { requestId, response }),
   resumeRun: (id: string) => post<{ run: RunRecord }>(`/api/runs/${id}/resume`),
   stopRun: (id: string) => post<{ ok: true }>(`/api/runs/${id}/stop`),
+  tokenUsage: () => request<TokenUsage>('/api/runs/usage'),
 
   // the run scheduler's waiting line
   runQueue: () => request<{ queue: RunQueueSnapshot }>('/api/runs/queue'),

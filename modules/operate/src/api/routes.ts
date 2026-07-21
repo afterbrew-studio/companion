@@ -111,6 +111,16 @@ export default defineRoutes((ctx) => {
       handler: () => ({ queue: op.orchestrator.queueSnapshot() }),
     }),
 
+    // Token spend for the dashboard cost analytics — daily buckets + per-model
+    // totals, aggregated in SQL over the last 14 days. Must precede
+    // /api/runs/:id so "usage" isn't read as an id.
+    route({
+      method: 'GET',
+      path: '/api/runs/usage',
+      access: 'runs:read',
+      handler: ({ user }) => op.tokenUsage(user),
+    }),
+
     route({
       method: 'POST',
       path: '/api/runs/queue/:id/move',

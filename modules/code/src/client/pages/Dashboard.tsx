@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { pipelineRunHref, reportHref, runHref } from '@companion/core/client';
+import { pipelineRunHref, reportHref, runHref, useKernel } from '@companion/core/client';
+import { useAuth } from '@companion/module-core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
 import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
@@ -106,6 +107,8 @@ export function DashboardPage(): JSX.Element {
 
       <UsageSection runs={workspaceRuns} />
 
+      <DashboardSlots />
+
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section aria-labelledby="needs-attention">
           <h2 id="needs-attention" className="mb-2 text-sm font-semibold">
@@ -199,6 +202,27 @@ export function DashboardPage(): JSX.Element {
         </section>
       </div>
     </Page>
+  );
+}
+
+// ---------- module widgets --------------------------------------------------------
+
+/**
+ * The `dashboard.widgets` slot: other modules (e.g. operate's token-burn chart)
+ * render their own dashboard sections here — inversion of control, so this
+ * module never imports theirs. Each contribution is gated on its own permission.
+ */
+function DashboardSlots(): JSX.Element | null {
+  const kernel = useKernel();
+  const { can } = useAuth();
+  const widgets = kernel.slots('dashboard.widgets').filter((s) => s.permission === undefined || can(s.permission));
+  if (widgets.length === 0) return null;
+  return (
+    <>
+      {widgets.map((s) => (
+        <s.component key={s.key} />
+      ))}
+    </>
   );
 }
 

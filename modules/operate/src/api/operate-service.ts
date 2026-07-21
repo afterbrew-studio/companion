@@ -1,6 +1,6 @@
 import { notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
-import type { GithubTokenSource, RunRecord } from '../contract/index.js';
+import type { GithubTokenSource, RunRecord, TokenUsage } from '../contract/index.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
 import type { RunsStore } from './runs-store.js';
@@ -73,6 +73,46 @@ export class OperateService {
     const run = this.orchestrator.getRun(id);
     if (!run || !this.canSeeRun(user, run)) throw notFound(`run ${id} not found`);
     return run;
+  }
+
+  /**
+   * The dashboard's cost analytics — the last 14 local days of token spend,
+   * as a zero-filled daily series plus per-model window totals, aggregated in
+   * SQL. Visibility is canSeeRun resolved to a SQL scope up front (per-repo
+   * access checked once over the window's DISTINCT repos, never per run), so
+   * the aggregates leak nothing the run list hides.
+   */
+  tokenUsage(user: AuthUser | null): TokenUsage {
+    if (!user) return { days: [], models: [] };
+    const DAYS = 14;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const since = today.getTime() - (DAYS - 1) * 86_400_000;
+    const scope =
+      user.role === 'admin'
+        ? null
+        : {
+            username: user.username,
+            repos: this.runsStore.distinctReposSince(since).filter((repo) => this.canAccessRepo(user, repo)),
+          };
+    const days = Array.from({ length: DAYS }, (_, i) => ({
+      dayStart: since + i * 86_400_000,
+      inputTokens: 0,
+      outputTokens: 0,
+    }));
+    for (const row of this.runsStore.usageByDay(since, scope)) {
+      const day = days[row.bucket];
+      if (!day) continue; // clock skew put a row outside the window — drop it
+      day.inputTokens = row.input;
+      day.outputTokens = row.output;
+    }
+    const models = this.runsStore.usageByModel(since, scope).map((row) => ({
+      model: row.model,
+      runs: row.runs,
+      inputTokens: row.input,
+      outputTokens: row.output,
+    }));
+    return { days, models };
   }
 
   /** module-code plugs its account-aware resolver in at onEnable. */
