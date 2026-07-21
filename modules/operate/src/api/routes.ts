@@ -40,6 +40,7 @@ const createRunnerSchema = z.object({
   name: z.string().min(1).max(80),
   endpoint: z.string().url().max(300),
   token: z.string().min(1).max(400),
+  shared: z.boolean().optional(),
   scope: z.enum(['shared', 'delegated']).optional(),
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
@@ -82,6 +83,14 @@ export default defineRoutes((ctx) => {
   // fix-flow routes, and the WS scope resolver — all delegate to it.
   const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => op.canSeeRun(user, run);
   const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => op.requireRunAccess(user, id);
+
+  // Admins manage every runner; everyone else only the machines they own. A
+  // runner outside your reach reads as "not found" — existence is not leaked.
+  const requireManageableRunner = (user: AuthUser | null, id: string): void => {
+    const runner = op.runners.get(id);
+    if (!runner) throw notFound(`runner ${id} not found`);
+    if (user?.role !== 'admin' && runner.ownerId !== user?.username) throw notFound(`runner ${id} not found`);
+  };
 
   return [
     // ---------- runs -------------------------------------------------------------
@@ -247,35 +256,45 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    // ---------- runners: execution machines. Admin-only (instance administration).
+    // ---------- runners: execution machines ---------------------------------------
+    // Admins manage all (incl. shared instance runners); maintainers connect and
+    // manage their OWN machines (runners:connect) — to run their triggered work
+    // on their own model subscription. A runner you can't manage reads as "not
+    // found" (existence is not leaked), matching the GitHub-accounts precedent.
 
     route({
+      // Admins see every machine; everyone else only their own.
       method: 'GET',
       path: '/api/runners',
-      access: 'runners:manage',
-      handler: () => ({ runners: op.runners.list() }),
+      access: 'runners:connect',
+      handler: ({ user }) => {
+        const all = op.runners.list();
+        return { runners: user?.role === 'admin' ? all : all.filter((r) => r.ownerId === user?.username) };
+      },
     }),
 
     route({
       method: 'POST',
       path: '/api/runners',
-      access: 'runners:manage',
+      access: 'runners:connect',
       body: createRunnerSchema,
-      handler: async ({ body }) => {
+      handler: async ({ body, user }) => {
         if (body.scope === 'delegated' && (body.workspaceIds ?? []).length === 0) {
           throw badRequest('a delegated runner needs at least one workspace');
         }
-        return created({ runner: await op.runners.create(body) });
+        // A shared instance runner is admin-only; everyone else's is personal.
+        const ownerId = user!.role === 'admin' && body.shared ? null : user!.username;
+        return created({ runner: await op.runners.create(body, ownerId) });
       },
     }),
 
     route({
       method: 'PATCH',
       path: '/api/runners/:id',
-      access: 'runners:manage',
+      access: 'runners:connect',
       body: updateRunnerSchema,
-      handler: async ({ params, body }) => {
-        if (!op.runners.get(params.id)) throw notFound(`runner ${params.id} not found`);
+      handler: async ({ params, body, user }) => {
+        requireManageableRunner(user, params.id);
         if (body.scope === 'delegated' && body.workspaceIds && body.workspaceIds.length === 0) {
           throw badRequest('a delegated runner needs at least one workspace');
         }
@@ -286,10 +305,10 @@ export default defineRoutes((ctx) => {
     route({
       method: 'DELETE',
       path: '/api/runners/:id',
-      access: 'runners:manage',
-      handler: ({ params }) => {
+      access: 'runners:connect',
+      handler: ({ params, user }) => {
         if (params.id === LOCAL_RUNNER_ID) throw badRequest('the local runner cannot be deleted');
-        if (!op.runners.get(params.id)) throw notFound(`runner ${params.id} not found`);
+        requireManageableRunner(user, params.id);
         op.runners.delete(params.id);
         return { ok: true };
       },
@@ -299,10 +318,35 @@ export default defineRoutes((ctx) => {
     route({
       method: 'POST',
       path: '/api/runners/:id/probe',
-      access: 'runners:manage',
-      handler: async ({ params }) => {
-        if (!op.runners.get(params.id)) throw notFound(`runner ${params.id} not found`);
+      access: 'runners:connect',
+      handler: async ({ params, user }) => {
+        requireManageableRunner(user, params.id);
         return op.runners.probeNow(params.id);
+      },
+    }),
+
+    route({
+      // Update the moxxy CLI on a runner's machine from the Runners page. The
+      // local runner reuses the same in-place upgrade the Providers page does;
+      // remote runners go through the agent's /agent/update-moxxy endpoint.
+      method: 'POST',
+      path: '/api/runners/:id/update-moxxy',
+      access: 'runners:connect',
+      handler: async ({ params, user }) => {
+        requireManageableRunner(user, params.id);
+        try {
+          if (params.id === LOCAL_RUNNER_ID) {
+            const previous = op.moxxyCli?.version ?? null;
+            const cli = await upgradeMoxxyCli(paths.moxxyHome(), ctx.config.moxxyCliPath);
+            if (!cli) throw new Error('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
+            op.setMoxxyCli(cli);
+            ctx.broadcast({ t: 'runners.changed' });
+            return { previous, version: cli.version, compatible: cli.compatible };
+          }
+          return await op.runners.updateMoxxy(params.id);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err).slice(0, 500));
+        }
       },
     }),
 

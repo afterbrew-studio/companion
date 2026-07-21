@@ -35,7 +35,7 @@ export class Fixes {
     return this.orchestrator.runners.backend(runnerId);
   }
 
-  async startFix(repo: string, issueNumber: number): Promise<RunRecord> {
+  async startFix(repo: string, issueNumber: number, userId: string | null = null): Promise<RunRecord> {
     const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
     const repoRow = this.store.repos.get(repo);
@@ -49,6 +49,7 @@ export class Fixes {
       branchPrefix: `companion/issue-${issueNumber}`,
       baseBranch: repoRow.default_branch,
       objective: fixObjective(issue.title, issue.body, issueNumber, repoRow.default_branch),
+      userId,
     });
     return run;
   }
@@ -68,10 +69,12 @@ export class Fixes {
     baseBranch: string;
     objective: string;
     attachments?: readonly PromptAttachment[];
+    /** Triggering user — unlocks their personal runners for placement. */
+    userId?: string | null;
   }): Promise<RunRecord> {
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
-    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind);
+    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind, null, opts.userId ?? null);
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo);
     const cwd = await backend.addWorktree(
@@ -90,6 +93,7 @@ export class Fixes {
       issueNumber: opts.issueNumber ?? null,
       proposalId: opts.proposalId ?? null,
       branch,
+      userId: opts.userId ?? null,
     });
 
     await this.orchestrator.setGoalMode(run.id);
@@ -100,7 +104,7 @@ export class Fixes {
   // ---------- PR-branch repair runs -----------------------------------------------
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
-  async startCheckFix(repo: string, prNumber: number): Promise<RunRecord> {
+  async startCheckFix(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     const summary = await this.checks.fetchSummary(repo, prNumber);
     const failing = summary.runs.filter(
@@ -112,11 +116,12 @@ export class Fixes {
       pr,
       `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
       checkFixObjective(pr, failing, clip(diff)),
+      { userId },
     );
   }
 
   /** Agent implements the changes human reviewers asked for on a PR. */
-  async startReviewFix(repo: string, prNumber: number): Promise<RunRecord> {
+  async startReviewFix(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     const [reviews, inline] = await Promise.all([
       client.prReviewList(repo, prNumber),
@@ -136,11 +141,12 @@ export class Fixes {
       pr,
       `Address reviews on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
       reviewFixObjective(pr, feedback, comments, clip(diff)),
+      { userId },
     );
   }
 
   /** Agent merges the fresh base into the PR branch and resolves the conflicts. */
-  async startConflictResolve(repo: string, prNumber: number): Promise<RunRecord> {
+  async startConflictResolve(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     // Re-check GitHub live — the sync cache can lag a manual resolution, and a
     // run launched then would push a pointless no-op merge commit. Fail open on
@@ -157,16 +163,18 @@ export class Fixes {
       `Resolve conflicts on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
       conflictObjective(pr, diff),
       // Merging against a stale base would "resolve" nothing — refresh origin.
-      { freshOrigin: true },
+      { freshOrigin: true, userId },
     );
   }
 
   /** Agent works on the PR branch with a user-written objective. */
-  async startCustomPrRun(repo: string, prNumber: number, instructions: string): Promise<RunRecord> {
+  async startCustomPrRun(repo: string, prNumber: number, instructions: string, userId: string | null = null): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     const diff = await this.contextDiff(client, repo, prNumber);
     const preview = instructions.trim().split('\n')[0]!.slice(0, 50);
-    return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions, diff));
+    return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions, diff), {
+      userId,
+    });
   }
 
   /**
@@ -193,10 +201,10 @@ export class Fixes {
     pr: PrRecord,
     title: string,
     objective: string,
-    opts: { freshOrigin?: boolean } = {},
+    opts: { freshOrigin?: boolean; userId?: string | null } = {},
   ): Promise<RunRecord> {
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
-    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix');
+    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', null, opts.userId ?? null);
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo);
     if (opts.freshOrigin) await backend.fetchOrigin(pr.repo);
@@ -218,6 +226,7 @@ export class Fixes {
       repo: pr.repo,
       issueNumber: pr.number,
       branch: pr.headRef,
+      userId: opts.userId ?? null,
     });
     // The existing PR is this run's destination; approve() pushes to its
     // branch instead of opening a new one.

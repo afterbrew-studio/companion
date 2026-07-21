@@ -7,6 +7,7 @@ import type {
   RunnerCatalog,
   RunnerHealth,
   RunnerPinnableKind,
+  RunnerMoxxyUpdateResult,
   RunnerProbeResult,
   RunnerRecord,
   UpdateRunnerRequest,
@@ -135,10 +136,14 @@ export class Runners {
    * runners advertising one of them are preferred; if none does, placement
    * falls back to the capability-agnostic choice and the model is reconciled
    * per turn instead (see Orchestrator.sendPrompt).
+   *
+   * Ownership: `userId` is the triggering user. Their personal runners become
+   * eligible AND preferred (their machine, their subscription); other users'
+   * runners never are. Automation passes null and rides shared runners only.
    */
-  place(repo: string | null, wantedProviders?: readonly string[] | null): string | null {
+  place(repo: string | null, wantedProviders?: readonly string[] | null, userId: string | null = null): string | null {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
-    const eligible = this.store.runners.eligibleFor(workspaceId);
+    const eligible = this.store.runners.eligibleFor(workspaceId, userId);
     const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
 
     const online = (row: RunnerRow): boolean => {
@@ -168,9 +173,16 @@ export class Runners {
       const pin = eligible.find((r) => r.id === pinned);
       if (pin && online(pin) && ready(pin)) return this.normalize(pin.id);
     }
-    // Prefer runners whose model pins cover this action's model preference when
-    // given; otherwise any ready runner, least-loaded first.
-    const usable = eligible.filter(online).filter(ready).sort((a, b) => load(a) - load(b));
+    // The user's own machines come first (that's what they connected them
+    // for), then shared runners; within each tier least-loaded first. An own
+    // runner at capacity drops to the shared tier — preferring it would pick a
+    // full machine over an idle shared one and fail the spawn outright.
+    const own = (row: RunnerRow): number =>
+      userId !== null && row.owner_id === userId && load(row) < 1 ? 0 : 1;
+    const usable = eligible
+      .filter(online)
+      .filter(ready)
+      .sort((a, b) => own(a) - own(b) || load(a) - load(b));
     const served = (row: RunnerRow): boolean => {
       if (!wantedProviders || wantedProviders.length === 0) return true;
       const cat = row.catalog;
@@ -182,11 +194,13 @@ export class Runners {
   }
 
   /**
-   * Combined concurrent-run capacity across every enabled, online runner
-   * (shared + dedicated) — the ceiling the orchestrator schedules unattended
-   * runs against. The local runner always counts, so this is at least its cap.
+   * Combined concurrent-run capacity across every enabled, online runner the
+   * caller can place on — the ceiling the orchestrator schedules against.
+   * Personally-owned runners only count toward their owner's capacity
+   * (`userId`); the shared pool (automation, the queue pump) excludes them.
+   * The local runner always counts, so this is at least its cap.
    */
-  totalCapacity(): number {
+  totalCapacity(userId: string | null = null): number {
     const online = (row: RunnerRow): boolean => {
       const h = this.health.get(row.id);
       // Remote capacity is counted only after a successful, protocol-compatible
@@ -196,6 +210,7 @@ export class Runners {
     };
     let sum = 0;
     for (const row of this.store.runners.list()) {
+      if (row.owner_id !== null && row.owner_id !== userId) continue;
       if (row.enabled === 1 && online(row)) sum += Math.max(0, row.max_runs);
     }
     return sum;
@@ -242,7 +257,7 @@ export class Runners {
     return row ? this.toRecord(row) : undefined;
   }
 
-  async create(req: CreateRunnerRequest): Promise<RunnerRecord> {
+  async create(req: CreateRunnerRequest, ownerId: string | null): Promise<RunnerRecord> {
     const id = `runner-${randomUUID().slice(0, 12)}`;
     this.store.runners.insert({
       id,
@@ -251,6 +266,7 @@ export class Runners {
       endpoint: req.endpoint.replace(/\/+$/, ''),
       token: req.token,
       scope: req.scope ?? 'shared',
+      ownerId,
       maxRuns: req.maxRuns ?? 3,
       workspaceIds: req.workspaceIds ?? [],
       modelPins: req.modelPins,
@@ -306,6 +322,31 @@ export class Runners {
     this.broadcast({ t: 'runners.changed' });
   }
 
+  /**
+   * Update the moxxy CLI on a REMOTE runner's machine (the local runner goes
+   * through OperateService.setMoxxyCli — see the route). A pre-update agent
+   * 404s the endpoint; surface that as actionable manual guidance.
+   */
+  async updateMoxxy(id: string): Promise<RunnerMoxxyUpdateResult> {
+    const backend = this.backends.get(id);
+    if (!(backend instanceof RemoteRunnerBackend)) throw new Error('runner not found');
+    let result;
+    try {
+      result = await backend.updateMoxxy();
+    } catch (err) {
+      // A pre-update agent 404s with its own error envelope ("no route: …").
+      const msg = String(err instanceof Error ? err.message : err);
+      throw /no route|agent 404/.test(msg)
+        ? new Error(
+            'this runner agent predates remote updates — update it on the machine once (npm i -g @moxxy/companion-runner, then restart it); future updates work from here',
+          )
+        : err;
+    }
+    await this.probeOne(id);
+    this.broadcast({ t: 'runners.changed' });
+    return result;
+  }
+
   /** The "Test connection" action — probe health + fetch the runner's catalog. */
   async probeNow(id: string): Promise<RunnerProbeResult> {
     const health = await this.probeOne(id);
@@ -346,6 +387,7 @@ export class Runners {
       kind: row.kind,
       endpoint: row.endpoint,
       hasToken: Boolean(row.token),
+      ownerId: row.owner_id,
       scope: row.scope,
       workspaceIds: row.workspace_ids,
       maxRuns: row.max_runs,

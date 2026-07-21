@@ -15,7 +15,7 @@ export const routes = defineClientRoutes([
   },
   {
     match: { prefix: '/runners' },
-    permission: 'runners:manage',
+    permission: 'runners:connect',
     component: page(() => import('./pages/Runners.js').then((m) => m.RunnersPage)),
   },
   {

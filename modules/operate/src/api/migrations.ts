@@ -53,6 +53,7 @@ export default defineMigrations([
           enabled       INTEGER NOT NULL DEFAULT 1,
           model_pins    TEXT NOT NULL DEFAULT '{}',
           catalog       TEXT,
+          owner_id      TEXT,
           created_at    INTEGER NOT NULL
         );
 
@@ -98,6 +99,23 @@ export default defineMigrations([
       db.exec(
         `DROP TABLE IF EXISTS runner_workspaces; DROP TABLE IF EXISTS runners; DROP TABLE IF EXISTS run_queue; DROP TABLE IF EXISTS runs;`,
       );
+    },
+  },
+  {
+    // Personal runners: the owning user (null = shared instance runner). A
+    // separate version because v1 is already recorded on live installs — an
+    // edited v1 body never re-runs (the ledger filters version > current).
+    version: 2,
+    name: 'runners_owner',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runners ADD COLUMN owner_id TEXT`);
+      } catch {
+        // column already exists (fresh DBs create it in v1's CREATE TABLE)
+      }
+    },
+    down: () => {
+      // SQLite can't drop columns portably; harmless to keep on rollback.
     },
   },
 ]);

@@ -14,6 +14,8 @@ declare module '@companion/contracts' {
     'runs:read': true;
     'runs:act': true;
     'runners:manage': true;
+    /** Connect and manage runner machines you own (bring-your-own-subscription). */
+    'runners:connect': true;
     'skills:manage': true;
   }
   interface ServerMessageRegistry {
@@ -198,6 +200,20 @@ export interface RunnerHealth {
    * not probed yet) — placement assumes capable. Empty = can't serve any model.
    */
   readonly providers: readonly string[] | null;
+  /**
+   * The runner AGENT speaks an older protocol than this daemon — only an
+   * on-machine agent update fixes it (set by the remote probe; absent
+   * elsewhere). Distinct from moxxyCompatible, which the daemon can fix
+   * remotely via update-moxxy.
+   */
+  readonly agentOutdated?: boolean;
+}
+
+/** Result of updating the moxxy CLI on a runner's machine. */
+export interface RunnerMoxxyUpdateResult {
+  readonly previous: string | null;
+  readonly version: string | null;
+  readonly compatible: boolean;
 }
 
 /**
@@ -239,6 +255,12 @@ export interface RunnerRecord {
   readonly endpoint: string | null;
   /** True once a token is stored (the token itself never leaves the daemon). */
   readonly hasToken: boolean;
+  /**
+   * Owning user, or null for a shared instance-wide runner. A personal runner
+   * only receives runs its owner triggers — their own machine, their own
+   * model subscription.
+   */
+  readonly ownerId: string | null;
   readonly scope: RunnerScope;
   readonly workspaceIds: ReadonlyArray<string>;
   readonly maxRuns: number;
@@ -253,6 +275,8 @@ export interface CreateRunnerRequest {
   readonly name: string;
   readonly endpoint: string;
   readonly token: string;
+  /** Admin-only: true = instance-wide (no owner). Everyone else's runner is personal. */
+  readonly shared?: boolean;
   readonly scope?: RunnerScope;
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;

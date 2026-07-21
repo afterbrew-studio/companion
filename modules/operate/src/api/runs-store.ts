@@ -72,31 +72,43 @@ export class RunsStore {
     return counts;
   }
 
-  /** Live attended chats (interactive + AI Help) that currently hold a slot. */
-  activeInteractiveCount(): number {
+  /**
+   * Live attended chats (interactive + AI Help) holding a slot of the pool the
+   * given user schedules against: shared runners (runner_id null = local) plus
+   * the user's own machines. A colleague's chats parked on THEIR personal
+   * runner must not eat this user's headroom — the capacities don't overlap.
+   */
+  activeInteractiveCount(userId: string | null = null): number {
     return (
       this.db
         .prepare(
-          `SELECT COUNT(*) AS n FROM runs
-           WHERE kind IN ('interactive', 'assistant')
-             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+          `SELECT COUNT(*) AS n FROM runs r
+           WHERE r.kind IN ('interactive', 'assistant')
+             AND r.status IN ('provisioning', 'running', 'idle', 'review')
+             AND (r.runner_id IS NULL OR EXISTS (
+               SELECT 1 FROM runners k WHERE k.id = r.runner_id
+                 AND (k.owner_id IS NULL OR k.owner_id = @userId)))`,
         )
-        .get() as { n: number }
+        .get({ userId }) as { n: number }
     ).n;
   }
 
   /**
    * Live runs that DON'T flow through the unattended queue — attended chats plus
    * fix/implement runs started directly. The scheduler adds these to its own
-   * in-flight count so it never overcommits the runner pool.
+   * in-flight count so it never overcommits the runner pool. Runs placed on a
+   * personally-owned runner are excluded: they don't occupy shared capacity,
+   * and counting them would starve the queue while shared runners sit idle.
    */
   activeNonQueueCount(): number {
     return (
       this.db
         .prepare(
-          `SELECT COUNT(*) AS n FROM runs
-           WHERE kind IN ('interactive', 'assistant', 'fix', 'implement')
-             AND status IN ('provisioning', 'running', 'idle', 'review')`,
+          `SELECT COUNT(*) AS n FROM runs r
+           WHERE r.kind IN ('interactive', 'assistant', 'fix', 'implement')
+             AND r.status IN ('provisioning', 'running', 'idle', 'review')
+             AND (r.runner_id IS NULL OR EXISTS (
+               SELECT 1 FROM runners k WHERE k.id = r.runner_id AND k.owner_id IS NULL))`,
         )
         .get() as { n: number }
     ).n;

@@ -431,7 +431,7 @@ export default defineRoutes((ctx) => {
       access: 'issues:act',
       handler: async ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const run = await code.fixes.startFix(fullName, issue.number);
+        const run = await code.fixes.startFix(fullName, issue.number, user?.username ?? null);
         return created({ run });
       },
     }),
@@ -606,7 +606,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
-          return { run: await code.fixes.startCheckFix(fullName, pr.number) };
+          return { run: await code.fixes.startCheckFix(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -621,7 +621,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
-          return { run: await code.fixes.startReviewFix(fullName, pr.number) };
+          return { run: await code.fixes.startReviewFix(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -636,7 +636,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
-          return { run: await code.fixes.startConflictResolve(fullName, pr.number) };
+          return { run: await code.fixes.startConflictResolve(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -652,7 +652,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
-          return { run: await code.fixes.startCustomPrRun(fullName, pr.number, body.instructions) };
+          return { run: await code.fixes.startCustomPrRun(fullName, pr.number, body.instructions, user?.username ?? null) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

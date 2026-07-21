@@ -70,8 +70,10 @@ export const nav = defineNav([
     label: 'Runners',
     hash: '#/runners',
     shortcut: 'n',
-    permission: 'runners:manage',
-    section: 'admin',
+    // runners:connect so maintainers reach their personal machines; admins
+    // hold it too (grants are additive), seeing every machine.
+    permission: 'runners:connect',
+    section: 'operate',
     order: 10,
     icon: (
       <NavIcon>

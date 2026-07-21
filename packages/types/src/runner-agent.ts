@@ -42,8 +42,21 @@ export interface AgentHealth {
  * Version 2 adds image attachments to AgentPromptRequest. Bumping this makes a
  * new companiond mark pre-attachment runners degraded instead of silently
  * starting a turn that drops its visual context.
+ *
+ * `POST /agent/update-moxxy` was added WITHOUT a bump: it's additive — an old
+ * agent answers 404 and the daemon falls back to "update it manually" guidance.
  */
 export const RUNNER_AGENT_PROTOCOL = 2;
+
+/**
+ * POST /agent/update-moxxy — in-place `npm i -g @moxxy/cli@latest` on the
+ * runner's machine, then re-detect. 404 on pre-update agents.
+ */
+export interface AgentUpdateMoxxyResult {
+  readonly previous: string | null;
+  readonly version: string | null;
+  readonly compatible: boolean;
+}
 
 /** POST /agent/runs/:runId/spawn — bring up serve+gateway for a run at `cwd`. */
 export interface AgentSpawnRequest {

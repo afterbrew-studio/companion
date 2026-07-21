@@ -7,6 +7,7 @@ import type {
   MoxxyStatus,
   RunQueueSnapshot,
   RunRecord,
+  RunnerMoxxyUpdateResult,
   RunnerProbeResult,
   RunnerRecord,
   SkillFile,
@@ -58,6 +59,7 @@ export const operateApi = {
     patch<{ runner: RunnerRecord }>(`/api/runners/${id}`, body),
   deleteRunner: (id: string) => del<{ ok: true }>(`/api/runners/${id}`),
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
+  updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
   // providers + models
   importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),

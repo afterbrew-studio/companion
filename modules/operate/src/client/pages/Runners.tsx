@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import {
+  EmptyState,
   ErrorBar,
   Field,
   FormActions,
@@ -15,6 +16,7 @@ import {
   useConfirm,
   type StatusTone,
 } from '@companion/ui';
+import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
   RunnerCatalog,
@@ -37,12 +39,16 @@ const DOT_TONE: Record<RunnerStatus, StatusTone> = {
 };
 
 /**
- * Execution machines. The built-in local runner (companiond's own box) is
- * always present and undeletable; remote runners are attached by endpoint +
- * bearer token. Health is polled by the daemon and pushed over WS.
+ * Execution machines. Admins see every machine (the undeletable local runner,
+ * shared instance runners, everyone's personal ones); maintainers see and
+ * manage only machines they own — attached to run THEIR triggered agent work
+ * on their own model subscription. Health is polled by the daemon and pushed
+ * over WS.
  */
 export function RunnersPage(): JSX.Element {
   const { runners, workspaces, error, setError, refresh } = useRunners();
+  const { user, can } = useAuth();
+  const admin = can('runners:manage');
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<RunnerRecord | null>(null);
 
@@ -50,7 +56,11 @@ export function RunnersPage(): JSX.Element {
     <Page>
       <PageHeader
         title="Runners"
-        subtitle="Machines that execute agent work — this one plus any you attach"
+        subtitle={
+          admin
+            ? 'Machines that execute agent work — this one, shared ones, and everyone\'s personal machines'
+            : 'Your machines — agent work you trigger runs on them, on your own subscription'
+        }
         actions={
           <button className="btn" onClick={() => setCreating(true)}>
             Add machine
@@ -63,12 +73,24 @@ export function RunnersPage(): JSX.Element {
 
       {runners === null ? (
         <InlineLoading label="Loading runners…" className="py-8" />
+      ) : runners.length === 0 ? (
+        <EmptyState
+          title="No machines of your own yet"
+          hint="Attach a machine you control — a desktop at home, a spare laptop, a VM — and every agent run you trigger is placed on it, using the model providers (and subscriptions) configured there instead of the shared pool."
+          action={
+            <button className="btn" onClick={() => setCreating(true)}>
+              Add your machine
+            </button>
+          }
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {runners.map((runner) => (
             <RunnerCard
               key={runner.id}
               runner={runner}
+              admin={admin}
+              me={user?.username ?? null}
               onEdit={() => setEditing(runner)}
               onChange={refresh}
               onError={setError}
@@ -79,6 +101,7 @@ export function RunnersPage(): JSX.Element {
 
       {creating ? (
         <RunnerModal
+          admin={admin}
           workspaces={workspaces}
           onClose={() => setCreating(false)}
           onDone={() => {
@@ -90,6 +113,7 @@ export function RunnersPage(): JSX.Element {
       {editing ? (
         <RunnerModal
           runner={editing}
+          admin={admin}
           workspaces={workspaces}
           onClose={() => setEditing(null)}
           onDone={() => {
@@ -112,11 +136,15 @@ function endpointHost(endpoint: string): string {
 
 function RunnerCard({
   runner,
+  admin,
+  me,
   onEdit,
   onChange,
   onError,
 }: {
   runner: RunnerRecord;
+  admin: boolean;
+  me: string | null;
   onEdit: () => void;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
@@ -124,9 +152,29 @@ function RunnerCard({
   const [busy, setBusy] = useState(false);
   const [probe, setProbe] = useState<'busy' | { ok: boolean; note: string } | null>(null);
   const probeTimer = useRef<number | undefined>(undefined);
+  const [updating, setUpdating] = useState(false);
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const local = runner.kind === 'local';
   const { health } = runner;
+  // The agent binary itself is outdated: only an on-machine update fixes that
+  // (an old agent has no remote-update endpoint either).
+  const agentOutdated = health.agentOutdated === true;
+  // moxxy missing/old but the machine is reachable — remotely updatable.
+  const moxxyOutdated = !agentOutdated && health.status !== 'offline' && health.status !== 'unknown' && !health.moxxyCompatible;
+
+  const updateMoxxy = async (): Promise<void> => {
+    setUpdating(true);
+    setUpdateNote(null);
+    try {
+      const r = await api.updateRunnerMoxxy(runner.id);
+      setUpdateNote(`moxxy ${r.previous ?? 'none'} → ${r.version ?? 'unknown'}${r.compatible ? '' : ' (still too old)'}`);
+    } catch (err) {
+      setUpdateNote(String(err));
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const setEnabled = async (enabled: boolean): Promise<void> => {
     setBusy(true);
@@ -196,6 +244,19 @@ function RunnerCard({
         <span className="text-sm font-medium">{runner.name}</span>
         <span className="chip">{runner.kind}</span>
         {local ? <span className="dim">this machine</span> : null}
+        {admin ? (
+          <Tooltip
+            content={
+              runner.ownerId === null
+                ? 'shared — any eligible run can land here'
+                : `personal — only runs ${runner.ownerId === me ? 'you trigger' : `${runner.ownerId} triggers`} land here`
+            }
+          >
+            <span className="chip">
+              {runner.ownerId === null ? 'shared' : runner.ownerId === me ? 'yours' : runner.ownerId}
+            </span>
+          </Tooltip>
+        ) : null}
         <span className="flex-1" />
         {/* Health/test controls live by the title now, not in a footer. */}
         {probe !== null && probe !== 'busy' ? (
@@ -247,6 +308,32 @@ function RunnerCard({
           )
         ) : null}
       </div>
+
+      {agentOutdated ? (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-[13px] leading-relaxed">
+          <p className="font-medium text-amber-700 dark:text-amber-400">
+            The runner agent on this machine is outdated ({health.detail}).
+          </p>
+          <p className="dim mt-1">Update it on the machine itself — an old agent can't be updated remotely:</p>
+          <pre className="mono-pane mt-1.5">
+{`npm i -g @moxxy/companion-runner
+companion-runner stop && companion-runner --background`}
+          </pre>
+        </div>
+      ) : moxxyOutdated ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-[13px]">
+          <span className="font-medium text-amber-700 dark:text-amber-400">
+            moxxy on this machine is missing or too old — agent work can't run here.
+          </span>
+          <span className="flex-1" />
+          {updateNote ? <span className="dim">{updateNote}</span> : null}
+          <button className="btn-ghost shrink-0" disabled={updating} onClick={() => void updateMoxxy()}>
+            {updating ? 'Updating… (npm i -g @moxxy/cli)' : 'Update moxxy'}
+          </button>
+        </div>
+      ) : updateNote ? (
+        <p className="dim mt-3 text-[13px]">{updateNote}</p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <button className="btn-ghost" onClick={onEdit}>
@@ -303,6 +390,23 @@ COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
           probes it, and once it's online you can scope it to workspaces and pin repos to it.
         </li>
       </ol>
+      <div className="mt-3 border-t border-zinc-200 pt-2.5 text-[13px] leading-relaxed dark:border-zinc-800">
+        <span className="font-medium">Keeping a machine up to date</span>
+        <p className="dim mt-1">
+          When a card shows a <span className="text-amber-600 dark:text-amber-400">version mismatch</span>, the{' '}
+          <code className="code-inline">companion-runner</code> agent itself is outdated — update it on the machine:
+        </p>
+        <pre className="mono-pane mt-1.5">
+{`npm i -g @moxxy/companion-runner
+companion-runner stop && companion-runner --background`}
+        </pre>
+        <p className="dim mt-1.5">
+          An outdated <span className="text-amber-600 dark:text-amber-400">moxxy CLI</span> can be updated straight from
+          the card's <span className="font-medium">Update moxxy</span> button (agents attached after this release);
+          on the machine it's <code className="code-inline">npm i -g @moxxy/cli</code>. Runs already in flight keep
+          their old binary — only new runs pick the update up.
+        </p>
+      </div>
     </details>
   );
 }
@@ -342,11 +446,13 @@ function TokenHelp(): JSX.Element {
 /** Create (no `runner`) or edit. The local runner hides endpoint + token. */
 function RunnerModal({
   runner,
+  admin,
   workspaces,
   onClose,
   onDone,
 }: {
   runner?: RunnerRecord;
+  admin: boolean;
   workspaces: readonly WorkspaceRecord[];
   onClose: () => void;
   onDone: () => void;
@@ -355,6 +461,9 @@ function RunnerModal({
   const [name, setName] = useState(runner?.name ?? '');
   const [endpoint, setEndpoint] = useState(runner?.endpoint ?? '');
   const [token, setToken] = useState('');
+  // Ownership is set at creation and immutable after: admins choose shared vs
+  // personal; everyone else's machine is personal by definition.
+  const [shared, setShared] = useState(admin);
   const [scope, setScope] = useState<RunnerScope>(runner?.scope ?? 'shared');
   const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>(runner?.workspaceIds ?? []);
   const [maxRuns, setMaxRuns] = useState(String(runner?.maxRuns ?? 3));
@@ -405,6 +514,7 @@ function RunnerModal({
           name: name.trim(),
           endpoint: normalizeEndpoint(endpoint),
           token: token.trim(),
+          shared: admin && shared,
           scope,
           workspaceIds: scope === 'delegated' ? workspaceIds : [],
           maxRuns: capacity,
@@ -501,6 +611,29 @@ function RunnerModal({
             </Field>
           </>
         )}
+
+        {!runner ? (
+          admin ? (
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="dim mb-1 text-sm">Ownership</legend>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input type="radio" name="ownership" checked={shared} onChange={() => setShared(true)} />
+                Shared
+                <span className="dim text-xs">— part of the instance pool, any eligible run lands here</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input type="radio" name="ownership" checked={!shared} onChange={() => setShared(false)} />
+                Personal
+                <span className="dim text-xs">— only runs you trigger land here, on this machine's subscription</span>
+              </label>
+            </fieldset>
+          ) : (
+            <p className="dim text-xs">
+              This machine is yours: only agent runs you trigger are placed on it, using the model providers configured
+              there — your subscription, your keys.
+            </p>
+          )
+        ) : null}
 
         <fieldset className="flex flex-col gap-1.5">
           <legend className="dim mb-1 text-sm">Availability</legend>

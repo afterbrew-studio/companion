@@ -67,6 +67,20 @@ it imports). `companion-runner --help` lists every command.
 From a monorepo checkout instead: `pnpm --filter @moxxy/companion-runner dev`
 (watch mode) or `build` then `start`.
 
+## Updating
+
+```sh
+npm i -g @moxxy/companion-runner   # update the agent itself
+companion-runner stop && companion-runner --background
+```
+
+Companion's Runners page shows when a machine is outdated: an agent protocol
+mismatch needs the on-machine update above, while an outdated **moxxy CLI**
+can be updated straight from the runner card ("Update moxxy") — Companion
+calls `POST /agent/update-moxxy`, which runs `npm i -g @moxxy/cli@latest`
+here. Runs already in flight keep their old binary; new runs pick up the
+update.
+
 ## Register with companiond
 
 In companiond, add a runner with this machine's endpoint (`<host>:8920` —

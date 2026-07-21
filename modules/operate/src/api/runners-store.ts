@@ -12,6 +12,8 @@ export interface RunnerRow {
   endpoint: string | null;
   token: string | null;
   scope: RunnerScope;
+  /** Owning user; null = shared instance runner. */
+  owner_id: string | null;
   max_runs: number;
   enabled: number;
   /** Per-action model pins (JSON: kind → model id). */
@@ -74,10 +76,17 @@ export class RunnersStore {
     return row ? this.hydrate(row) : undefined;
   }
 
-  /** Enabled runners eligible for a workspace: shared ones + those delegated to it. */
-  eligibleFor(workspaceId: string | null): RunnerRow[] {
+  /**
+   * Enabled runners eligible for a workspace: shared ones + those delegated to
+   * it. A personally-owned runner is only eligible for runs its owner triggers
+   * — `userId` null (automation) excludes every owned runner.
+   */
+  eligibleFor(workspaceId: string | null, userId: string | null = null): RunnerRow[] {
     return this.list().filter(
-      (r) => r.enabled === 1 && (r.scope === 'shared' || (workspaceId !== null && r.workspace_ids.includes(workspaceId))),
+      (r) =>
+        r.enabled === 1 &&
+        (r.owner_id === null || r.owner_id === userId) &&
+        (r.scope === 'shared' || (workspaceId !== null && r.workspace_ids.includes(workspaceId))),
     );
   }
 
@@ -88,14 +97,15 @@ export class RunnersStore {
     endpoint: string | null;
     token: string | null;
     scope: RunnerScope;
+    ownerId: string | null;
     maxRuns: number;
     workspaceIds: readonly string[];
     modelPins?: RunnerModelPins;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO runners (id, name, kind, endpoint, token, scope, max_runs, enabled, model_pins, created_at)
-         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @maxRuns, 1, @modelPins, @createdAt)`,
+        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled, model_pins, created_at)
+         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1, @modelPins, @createdAt)`,
       )
       .run({ ...r, modelPins: JSON.stringify(r.modelPins ?? {}), createdAt: Date.now() });
     this.setWorkspaces(r.id, r.workspaceIds);

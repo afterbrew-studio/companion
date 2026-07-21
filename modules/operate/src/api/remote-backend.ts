@@ -3,6 +3,7 @@ import type {
   AgentDiffResponse,
   AgentEventMessage,
   AgentHealth,
+  AgentUpdateMoxxyResult,
   AgentHistoryResponse,
   AgentScratchResponse,
   AgentSessionInfoResponse,
@@ -53,9 +54,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
     return this.endpoint.replace(/\/+$/, '');
   }
 
-  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = HTTP_TIMEOUT_MS): Promise<T> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), HTTP_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(`${this.base()}/agent${path}`, {
         method,
@@ -94,6 +95,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
             : `agent's moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
         // Older agents don't report providers — null = unknown, assume capable.
         providers: h.providers ?? null,
+        agentOutdated: !protocolOk,
       };
     } catch (err) {
       return {
@@ -107,6 +109,15 @@ export class RemoteRunnerBackend implements RunnerBackend {
         providers: null,
       };
     }
+  }
+
+  /**
+   * Trigger `npm i -g @moxxy/cli@latest` on the agent's machine. Generous
+   * timeout — npm can be slow. Pre-update agents 404 this route; the caller
+   * turns that into "update the agent manually first" guidance.
+   */
+  async updateMoxxy(): Promise<AgentUpdateMoxxyResult> {
+    return this.call<AgentUpdateMoxxyResult>('POST', '/update-moxxy', undefined, 240_000);
   }
 
   // ---------- gateway lifecycle ----------

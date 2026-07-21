@@ -22,6 +22,7 @@ import {
   type AgentScratchResponse,
   type AgentSessionInfoResponse,
   type AgentSpawnRequest,
+  type AgentUpdateMoxxyResult,
   type AgentWorktreeAtRequest,
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
@@ -33,7 +34,7 @@ import { configuredProviderNames } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
-import { readSessionHistory } from '@companion/module-operate/exec';
+import { readSessionHistory, upgradeMoxxyCli } from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**
@@ -47,7 +48,8 @@ import { log } from './log.js';
 export interface AgentDeps {
   readonly pool: GatewayPool;
   readonly checkouts: Checkouts;
-  readonly moxxy: MoxxyCli | null;
+  /** Mutable: /agent/update-moxxy refreshes it so /agent/health tells the truth. */
+  moxxy: MoxxyCli | null;
   readonly maxRuns: number;
 }
 
@@ -187,6 +189,19 @@ async function route(
   if (run) {
     const runId = decodeURIComponent(run[1] ?? '');
     return routeRun(deps, method, run[2] ?? '', runId, url, body);
+  }
+
+  if (method === 'POST' && path === '/agent/update-moxxy') {
+    // In-place global upgrade; npm retargets the bin symlink, so already-live
+    // gateways keep their running binary and only new spawns pick up the new
+    // version. Companion triggers this from the Runners page.
+    const previous = deps.moxxy?.version ?? null;
+    log.info('updating moxxy CLI (npm i -g @moxxy/cli@latest)…');
+    const fresh = await upgradeMoxxyCli(paths.moxxyHome());
+    if (!fresh) throw badRequest('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
+    deps.moxxy = fresh;
+    log.info(`moxxy CLI updated: ${previous ?? 'none'} → ${fresh.version}`);
+    return { previous, version: fresh.version, compatible: fresh.compatible } satisfies AgentUpdateMoxxyResult;
   }
 
   if (method === 'POST' && path === '/agent/scratch') {

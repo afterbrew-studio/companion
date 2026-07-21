@@ -217,9 +217,9 @@ export class Orchestrator implements RunnerEventSink {
    * worktree before createRun (fixes, pipelines) use this so the worktree
    * lands on the runner the run will execute on.
    */
-  placeRun(repo: string | null, kind: RunKind, model?: string | null): string | null {
+  placeRun(repo: string | null, kind: RunKind, model?: string | null, userId?: string | null): string | null {
     const effective = model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
-    return this.runners.place(repo, this.providersForModel(effective));
+    return this.runners.place(repo, this.providersForModel(effective), userId ?? null);
   }
 
   async createRun(opts: {
@@ -235,7 +235,8 @@ export class Orchestrator implements RunnerEventSink {
     proposalId?: string | null;
     branch?: string | null;
     model?: string | null;
-    /** Owner of an attended run (interactive / AI Help); null for automated. */
+    /** Triggering user: owns attended runs and unlocks their personal runners
+     *  for placement; null for automation (shared runners only). */
     userId?: string | null;
   }): Promise<RunRecord> {
     const id = `run-${randomUUID().slice(0, 12)}`;
@@ -246,9 +247,11 @@ export class Orchestrator implements RunnerEventSink {
     // so triage/review/fix always have room. Always leaves at least one chat
     // slot even on a single-runner install.
     if (kind === 'interactive' || kind === 'assistant') {
-      const capacity = Math.max(1, this.runners.totalCapacity());
+      // The user's personal runners extend THEIR chat capacity — a colleague's
+      // busy shared slots must not block someone whose own machine is idle.
+      const capacity = Math.max(1, this.runners.totalCapacity(opts.userId ?? null));
       const reserved = Math.min(capacity - 1, Math.max(0, this.reservedRunnerSlots()));
-      if (this.store.runs.activeInteractiveCount() >= capacity - reserved) {
+      if (this.store.runs.activeInteractiveCount(opts.userId ?? null) >= capacity - reserved) {
         throw new Error(
           `All runner slots are busy and ${reserved} ${reserved === 1 ? 'is' : 'are'} reserved for automated work — close a chat or try again shortly.`,
         );
@@ -262,7 +265,7 @@ export class Orchestrator implements RunnerEventSink {
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind));
+          : this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind), opts.userId ?? null);
     // Model: explicit override → the CHOSEN runner's pin for this action →
     // legacy global pin. null lets that runner's own moxxy default apply.
     const model =
