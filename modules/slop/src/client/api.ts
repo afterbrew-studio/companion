@@ -19,6 +19,7 @@ export const slopApi = {
     post<{ queued: true }>(`/api/repos/${repo}/prs/${prNumber}/slop-detect`),
   detectionsForPr: (repo: string, prNumber: number) =>
     request<{ detections: SlopDetectionResult[] }>(`/api/repos/${repo}/prs/${prNumber}/slop`),
+  get: (id: string) => request<{ detection: SlopDetectionResult }>(`/api/slop/${id}`),
   apply: (id: string, body: { action?: SlopAction; accountId?: string }) =>
     post<{ repo: string; number: number; action: SlopAction }>(`/api/slop/${id}/apply`, body),
   dismiss: (id: string) => post<{ ok: true }>(`/api/slop/${id}/dismiss`),

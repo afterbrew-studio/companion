@@ -197,6 +197,13 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
+      method: 'GET',
+      path: '/api/slop/:id',
+      access: 'slop:read',
+      handler: ({ params, user }) => ({ detection: requireDetection(user, params.id) }),
+    }),
+
+    route({
       method: 'POST',
       path: '/api/slop/:id/apply',
       access: 'slop:act',

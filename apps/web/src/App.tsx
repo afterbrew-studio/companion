@@ -669,21 +669,26 @@ function AgentsStatus(): JSX.Element | null {
   // /api/moxxy/status 503s, which must NOT read as "daemon unreachable" (a red
   // dot). The whole widget belongs to operate — hide it, don't alarm.
   const operateEnabled = useKernel().descriptors.some((m) => m.id === 'operate' && m.enabled);
+  const { user } = useAuth();
+  const me = user?.username ?? null;
   const [status, setStatus] = useState<MoxxyStatus | null>(null);
   const [ws, setWs] = useState<WsState>('offline');
   const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
 
+  // The pill counts only the viewer's OWN sessions — colleagues' runs in shared
+  // workspaces stay visible on #/runs but must not inflate the header.
   useEffect(() => {
-    if (!operateEnabled) return;
+    setLiveIds(new Set());
+    if (!operateEnabled || !me) return;
     let alive = true;
     operateApi
       .listRuns()
       .then(({ runs }) => {
-        if (alive) setLiveIds(new Set(runs.filter((r) => r.live).map((r) => r.id)));
+        if (alive) setLiveIds(new Set(runs.filter((r) => r.live && r.userId === me).map((r) => r.id)));
       })
       .catch(() => undefined); // roles without runs:read just see the count stay 0
     const off = onServerMessage((msg) => {
-      if (msg.t !== 'run.changed') return;
+      if (msg.t !== 'run.changed' || msg.run.userId !== me) return;
       setLiveIds((prev) => {
         const next = new Set(prev);
         if (msg.run.live) next.add(msg.run.id);
@@ -695,7 +700,7 @@ function AgentsStatus(): JSX.Element | null {
       alive = false;
       off();
     };
-  }, [operateEnabled]);
+  }, [operateEnabled, me]);
 
   useEffect(() => {
     if (!operateEnabled) return;
@@ -748,7 +753,7 @@ function AgentsStatus(): JSX.Element | null {
     overall === 'healthy' ? 'bg-emerald-500' : overall === 'degraded' ? 'bg-amber-500' : 'bg-red-500';
 
   const n = liveIds.size;
-  const label = n === 1 ? '1 live agent' : `${n} live agents`;
+  const label = n === 1 ? '1 live agent of yours' : `${n} live agents of yours`;
 
   return (
     <div className="group relative">
