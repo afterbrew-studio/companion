@@ -259,6 +259,7 @@ export class Specs {
       const docs = workspaceId ? this.store.docs.searchChunks(workspaceId, instructions, 5) : [];
       const { runId, finalMessage } = await this.orchestrator.runOneShot({
         kind: 'analysis',
+        task: 'plan.analyses',
         title: `Draft spec: ${instructions.slice(0, 60)}`,
         cwd: this.checkouts.cloneDir(repo),
         repo,
@@ -338,6 +339,7 @@ export class Specs {
 
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'plan.analyses',
       title: `Spec drift check — PR #${prNumber}`,
       cwd: this.checkouts.cloneDir(repo),
       repo,

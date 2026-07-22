@@ -444,6 +444,7 @@ export class Automations {
         const sinceIso = new Date(since).toISOString();
         const { finalMessage } = await this.orchestrator.runOneShot({
           kind: 'report',
+          task: 'automations.digest',
           title: `Digest: ${repo}`,
           cwd: this.checkouts.cloneDir(repo),
           repo,

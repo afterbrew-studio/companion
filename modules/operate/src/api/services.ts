@@ -78,18 +78,17 @@ export default defineServices(async (ctx) => {
   const canAccessRepo = (user: AuthUser, repo: string): boolean =>
     ctx.services.get('workspace').canAccessRepo(user, repo);
 
-  ctx.services.register(
-    'operate',
-    new OperateService(
-      orchestrator,
-      orchestrator.runners,
-      checkouts,
-      moxxyCli,
-      webhookTunnel,
-      skills,
-      store.runs,
-      tokenSource,
-      canAccessRepo,
-    ),
+  const service = new OperateService(
+    orchestrator,
+    orchestrator.runners,
+    checkouts,
+    moxxyCli,
+    webhookTunnel,
+    skills,
+    store.runs,
+    tokenSource,
+    canAccessRepo,
   );
+  service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
+  ctx.services.register('operate', service);
 });

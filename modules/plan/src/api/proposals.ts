@@ -60,6 +60,7 @@ export class Proposals {
     try {
       const { runId, finalMessage } = await this.orchestrator.runOneShot({
         kind: 'analysis',
+        task: 'plan.analyses',
         title: `Analyze proposal: ${proposal.title.slice(0, 60)}`,
         cwd: this.checkouts.cloneDir(proposal.repo),
         repo: proposal.repo,

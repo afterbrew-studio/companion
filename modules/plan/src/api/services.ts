@@ -20,6 +20,13 @@ export default defineServices((ctx) => {
   const operate = ctx.services.get('operate');
   const code = ctx.services.get('code');
 
+  operate.registerRunTask({
+    id: 'plan.analyses',
+    label: 'Planning analyses',
+    placeable: false,
+    hint: 'proposal analyses, spec drafts, drift checks, documentation',
+  });
+
   // Stores, in the legacy store/db.ts construction order.
   const proposalsStore = new ProposalsStore(ctx.db);
   const specsStore = new SpecsStore(ctx.db);

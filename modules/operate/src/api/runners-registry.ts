@@ -146,9 +146,16 @@ export class Runners {
    * Ownership: `userId` is the triggering user. Their personal runners become
    * eligible AND preferred (their machine, their subscription); other users'
    * runners never are. Automation passes null and rides shared runners only.
+   *
+   * Task eligibility: a runner never receives a task on its block-list — a
+   * hard filter that outranks even the repo pin. When no runner at all
+   * accepts `task`, the local runner takes it anyway (the work must land
+   * somewhere; same spirit as the everything-offline fallback below). An
+   * unlabeled run (`task` null) matches every runner.
    */
   place(
     repo: string | null,
+    task: string | null,
     wantedProviders?: readonly string[] | null,
     userId: string | null = null,
     /** Runner row ids to skip — failover after a spawn just failed there. */
@@ -157,6 +164,7 @@ export class Runners {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
     const eligible = this.store.runners
       .eligibleFor(workspaceId, userId)
+      .filter((r) => this.allows(r, task))
       .filter((r) => !exclude?.has(r.id));
     const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
 
@@ -212,9 +220,10 @@ export class Runners {
    * caller can place on — the ceiling the orchestrator schedules against.
    * Personally-owned runners only count toward their owner's capacity
    * (`userId`); the shared pool (automation, the queue pump) excludes them.
-   * The local runner always counts, so this is at least its cap.
+   * The local runner always counts, so this is at least its cap. With `task`,
+   * only runners whose block-list accepts it count (chat-slot gating).
    */
-  totalCapacity(userId: string | null = null): number {
+  totalCapacity(userId: string | null = null, task: string | null = null): number {
     const online = (row: RunnerRow): boolean => {
       const h = this.health.get(row.id);
       // Remote capacity is counted only after a successful, protocol-compatible
@@ -225,9 +234,15 @@ export class Runners {
     let sum = 0;
     for (const row of this.store.runners.list()) {
       if (row.owner_id !== null && row.owner_id !== userId) continue;
+      if (!this.allows(row, task)) continue;
       if (row.enabled === 1 && online(row)) sum += Math.max(0, row.max_runs);
     }
     return sum;
+  }
+
+  /** True when the task isn't on the runner's block-list (null task = always). */
+  private allows(row: RunnerRow, task: string | null): boolean {
+    return task === null || !row.blocked_tasks.includes(task);
   }
 
   /** Advertised providers of a runner (null = unknown); null id = local. */
@@ -279,6 +294,7 @@ export class Runners {
       maxRuns: req.maxRuns ?? 3,
       workspaceIds: req.workspaceIds ?? [],
       modelPins: req.modelPins,
+      blockedTasks: req.blockedTasks,
     });
     this.rebuildRemotes();
     await this.probeOne(id);
@@ -299,6 +315,7 @@ export class Runners {
         workspaceIds: req.workspaceIds,
         enabled: req.enabled,
         modelPins: req.modelPins,
+        blockedTasks: req.blockedTasks,
       });
     } else {
       this.store.runners.update(id, {
@@ -310,6 +327,7 @@ export class Runners {
         maxRuns: req.maxRuns,
         enabled: req.enabled,
         modelPins: req.modelPins,
+        blockedTasks: req.blockedTasks,
       });
       this.rebuildRemotes();
       await this.probeOne(id);
@@ -414,6 +432,7 @@ export class Runners {
       workspaceIds: row.workspace_ids,
       maxRuns: row.max_runs,
       enabled: row.enabled === 1,
+      blockedTasks: row.blocked_tasks,
       health: this.healthFor(row.id),
       catalog: row.catalog,
       modelPins: row.model_pins,

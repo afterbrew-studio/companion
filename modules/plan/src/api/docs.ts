@@ -291,6 +291,7 @@ export class Docs {
     this.resolveStorage(workspaceId, opts.repo ?? null, opts.storage);
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'plan.analyses',
       title: `Write documentation: ${opts.instructions.slice(0, 60)}`,
       // The orchestrator mkdirs whatever cwd it gets.
       cwd: cwd ?? join(paths.scratch(), 'docs'),

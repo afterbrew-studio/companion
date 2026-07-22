@@ -101,6 +101,7 @@ export class Assistant {
     // back here from another box); without one, keep it on the local runner.
     const run = await this.orchestrator.createRun({
       kind: 'assistant',
+      task: 'automations.assistant',
       title: `AI Help — ${user.displayName || user.username}`,
       runnerId: this.config.publicUrl ? undefined : null,
       userId: user.username,

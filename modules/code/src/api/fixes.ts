@@ -71,10 +71,13 @@ export class Fixes {
     attachments?: readonly PromptAttachment[];
     /** Triggering user — unlocks their personal runners for placement. */
     userId?: string | null;
+    /** Feature task id for runner filtering (e.g. 'board.worker'); defaults by kind. */
+    task?: string;
   }): Promise<RunRecord> {
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
-    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind, null, opts.userId ?? null);
+    const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
+    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind, { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo);
     const cwd = await backend.addWorktree(
@@ -94,6 +97,7 @@ export class Fixes {
       proposalId: opts.proposalId ?? null,
       branch,
       userId: opts.userId ?? null,
+      task,
     });
 
     await this.orchestrator.setGoalMode(run.id);
@@ -104,7 +108,7 @@ export class Fixes {
   // ---------- PR-branch repair runs -----------------------------------------------
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
-  async startCheckFix(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
+  async startCheckFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     const summary = await this.checks.fetchSummary(repo, prNumber);
     const failing = summary.runs.filter(
@@ -116,12 +120,12 @@ export class Fixes {
       pr,
       `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
       checkFixObjective(pr, failing, clip(diff)),
-      { userId },
+      { userId, task },
     );
   }
 
   /** Agent implements the changes human reviewers asked for on a PR. */
-  async startReviewFix(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
+  async startReviewFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
     const { pr, client } = this.requireOpenPr(repo, prNumber);
     const [reviews, inline] = await Promise.all([
       client.prReviewList(repo, prNumber),
@@ -141,7 +145,7 @@ export class Fixes {
       pr,
       `Address reviews on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
       reviewFixObjective(pr, feedback, comments, clip(diff)),
-      { userId },
+      { userId, task },
     );
   }
 
@@ -201,10 +205,11 @@ export class Fixes {
     pr: PrRecord,
     title: string,
     objective: string,
-    opts: { freshOrigin?: boolean; userId?: string | null } = {},
+    opts: { freshOrigin?: boolean; userId?: string | null; task?: string } = {},
   ): Promise<RunRecord> {
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
-    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', null, opts.userId ?? null);
+    const task = opts.task ?? 'code.fix';
+    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo);
     if (opts.freshOrigin) await backend.fetchOrigin(pr.repo);
@@ -227,6 +232,7 @@ export class Fixes {
       issueNumber: pr.number,
       branch: pr.headRef,
       userId: opts.userId ?? null,
+      task,
     });
     // The existing PR is this run's destination; approve() pushes to its
     // branch instead of opening a new one.

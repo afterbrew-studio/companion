@@ -18,6 +18,8 @@ export interface RunnerRow {
   enabled: number;
   /** Per-action model pins (JSON: kind → model id). */
   model_pins: RunnerModelPins;
+  /** Task ids this runner refuses (JSON array); empty = takes everything. */
+  blocked_tasks: string[];
   /** Last-fetched provider/model catalog (JSON), or null. */
   catalog: RunnerCatalog | null;
   created_at: number;
@@ -59,6 +61,7 @@ export class RunnersStore {
     return {
       ...row,
       model_pins: parseJson<RunnerModelPins>(row.model_pins, {}),
+      blocked_tasks: parseJson<string[]>(row.blocked_tasks, []),
       catalog: parseJson<RunnerCatalog | null>(row.catalog, null),
       workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [],
     };
@@ -101,13 +104,19 @@ export class RunnersStore {
     maxRuns: number;
     workspaceIds: readonly string[];
     modelPins?: RunnerModelPins;
+    blockedTasks?: readonly string[];
   }): void {
     this.db
       .prepare(
-        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled, model_pins, created_at)
-         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1, @modelPins, @createdAt)`,
+        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled, model_pins, blocked_tasks, created_at)
+         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1, @modelPins, @blockedTasks, @createdAt)`,
       )
-      .run({ ...r, modelPins: JSON.stringify(r.modelPins ?? {}), createdAt: Date.now() });
+      .run({
+        ...r,
+        modelPins: JSON.stringify(r.modelPins ?? {}),
+        blockedTasks: r.blockedTasks?.length ? JSON.stringify(r.blockedTasks) : null,
+        createdAt: Date.now(),
+      });
     this.setWorkspaces(r.id, r.workspaceIds);
   }
 
@@ -122,14 +131,17 @@ export class RunnersStore {
       enabled: boolean;
       workspaceIds: readonly string[];
       modelPins: RunnerModelPins;
+      /** Full replacement block-list; empty clears it. Undefined = keep. */
+      blockedTasks: readonly string[];
     }>,
   ): void {
     const current = this.get(id);
     if (!current) return;
+    const blockedTasks = fields.blockedTasks ?? current.blocked_tasks;
     this.db
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
-         max_runs = @maxRuns, enabled = @enabled, model_pins = @modelPins WHERE id = @id`,
+         max_runs = @maxRuns, enabled = @enabled, model_pins = @modelPins, blocked_tasks = @blockedTasks WHERE id = @id`,
       )
       .run({
         id,
@@ -140,6 +152,7 @@ export class RunnersStore {
         maxRuns: fields.maxRuns ?? current.max_runs,
         enabled: fields.enabled === undefined ? current.enabled : fields.enabled ? 1 : 0,
         modelPins: JSON.stringify(fields.modelPins ?? current.model_pins),
+        blockedTasks: blockedTasks.length ? JSON.stringify(blockedTasks) : null,
       });
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
   }
@@ -170,8 +183,9 @@ export class RunnersStore {
 }
 
 /** Row as SQLite returns it — JSON columns are still strings here. */
-type RawRunnerRow = Omit<RunnerRow, 'workspace_ids' | 'model_pins' | 'catalog'> & {
+type RawRunnerRow = Omit<RunnerRow, 'workspace_ids' | 'model_pins' | 'blocked_tasks' | 'catalog'> & {
   model_pins: string;
+  blocked_tasks: string | null;
   catalog: string | null;
 };
 

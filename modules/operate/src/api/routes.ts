@@ -31,6 +31,9 @@ const setModelSchema = z.object({
 // ---------- runners ----------
 
 const workspaceIds = z.array(z.string()).max(200).optional();
+// Task ids a runner refuses (RunTaskDescriptor ids). Unknown ids are allowed —
+// a blocked task's module may be disabled right now; the block must survive.
+const blockedTasks = z.array(z.string().min(1).max(64)).max(100);
 // Per-action model pins: kind → model id. Kinds match RUNNER_PINNABLE_KINDS.
 const modelPins = z
   .record(z.enum(['triage', 'analysis', 'fix', 'implement', 'report', 'interactive', 'assistant']), z.string().max(200))
@@ -45,6 +48,7 @@ const createRunnerSchema = z.object({
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
   modelPins,
+  blockedTasks: blockedTasks.optional(),
 });
 
 const updateRunnerSchema = z.object({
@@ -56,6 +60,7 @@ const updateRunnerSchema = z.object({
   maxRuns: z.number().int().min(1).max(64).optional(),
   enabled: z.boolean().optional(),
   modelPins,
+  blockedTasks: blockedTasks.optional(),
 });
 
 // ---------- system (status, provider/model settings, skills) ----------
@@ -107,8 +112,15 @@ export default defineRoutes((ctx) => {
       path: '/api/runs',
       access: 'runs:act',
       body: createRunSchema,
+      // `task` is server-assigned (never client input) so filters can't be dodged.
       handler: async ({ body, user }) =>
-        created({ run: await op.orchestrator.createRun({ ...body, userId: user?.username ?? null }) }),
+        created({
+          run: await op.orchestrator.createRun({
+            ...body,
+            task: (body.kind ?? 'interactive') === 'interactive' ? 'operate.chat' : null,
+            userId: user?.username ?? null,
+          }),
+        }),
     }),
 
     // The scheduler's live state — running count, combined capacity, and the
@@ -263,13 +275,17 @@ export default defineRoutes((ctx) => {
     // found" (existence is not leaked), matching the GitHub-accounts precedent.
 
     route({
-      // Admins see every machine; everyone else only their own.
+      // Admins see every machine; everyone else only their own. Ships the
+      // registered task descriptors alongside, for the per-runner task filter.
       method: 'GET',
       path: '/api/runners',
       access: 'runners:connect',
       handler: ({ user }) => {
         const all = op.runners.list();
-        return { runners: user?.role === 'admin' ? all : all.filter((r) => r.ownerId === user?.username) };
+        return {
+          runners: user?.role === 'admin' ? all : all.filter((r) => r.ownerId === user?.username),
+          tasks: op.runTaskDescriptors(),
+        };
       },
     }),
 

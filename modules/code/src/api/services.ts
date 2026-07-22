@@ -29,6 +29,14 @@ export default defineServices((ctx) => {
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
 
+  // The feature tasks this module runs agents for, so runners can block them.
+  operate.registerRunTask({ id: 'code.fix', label: 'Fix runs', placeable: true, hint: 'issue fixes and PR repairs — worktree goal runs' });
+  operate.registerRunTask({ id: 'code.implement', label: 'Implement runs', placeable: true, hint: 'proposal implementations — worktree goal runs' });
+  operate.registerRunTask({ id: 'code.triage', label: 'Issue triage', placeable: false });
+  operate.registerRunTask({ id: 'code.pr-review', label: 'PR reviews', placeable: false });
+  operate.registerRunTask({ id: 'code.ci-analysis', label: 'CI analyses', placeable: false });
+  operate.registerRunTask({ id: 'code.pipeline', label: 'Pipeline agents', placeable: false });
+
   // Adopt orphan repos into the oldest workspace — the legacy second half of
   // workspace's ensureDefault(), relocated to the repos owner (our migration
   // has just run, and workspace's table migrated before ours in topo order).

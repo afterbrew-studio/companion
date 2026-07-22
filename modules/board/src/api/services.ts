@@ -10,12 +10,19 @@ import { BoardService } from './board-service.js';
  */
 export default defineServices((ctx) => {
   const store = new BoardStore(ctx.db);
+  const operate = ctx.services.get('operate');
+  operate.registerRunTask({
+    id: 'board.worker',
+    label: 'Board workers',
+    placeable: true,
+    hint: 'autonomous task-board agents — the heaviest, longest-running work',
+  });
   ctx.services.register(
     'board',
     new BoardService(
       store,
       ctx.services.get('code'),
-      ctx.services.get('operate'),
+      operate,
       ctx.services.get('workspace'),
       () => ctx.services.tryGet('plan'),
       ctx.broadcast,

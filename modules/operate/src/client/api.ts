@@ -10,6 +10,7 @@ import type {
   RunnerMoxxyUpdateResult,
   RunnerProbeResult,
   RunnerRecord,
+  RunTaskDescriptor,
   SkillFile,
   TokenUsage,
   UpdateRunnerRequest,
@@ -53,7 +54,7 @@ export const operateApi = {
   cancelQueued: (id: string) => del<{ queue: RunQueueSnapshot }>(`/api/runs/queue/${id}`),
 
   // runners (execution machines)
-  listRunners: () => request<{ runners: RunnerRecord[] }>('/api/runners'),
+  listRunners: () => request<{ runners: RunnerRecord[]; tasks: RunTaskDescriptor[] }>('/api/runners'),
   createRunner: (body: CreateRunnerRequest) => post<{ runner: RunnerRecord }>('/api/runners', body),
   updateRunner: (id: string, body: UpdateRunnerRequest) =>
     patch<{ runner: RunnerRecord }>(`/api/runners/${id}`, body),

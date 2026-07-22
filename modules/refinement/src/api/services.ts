@@ -11,6 +11,7 @@ import { RefinementService } from './refinement-service.js';
 export default defineServices((ctx) => {
   const store = new RefinementStore(ctx.db);
   const operate = ctx.services.get('operate');
+  operate.registerRunTask({ id: 'refinement.analyses', label: 'Refinement', placeable: false });
   ctx.services.register(
     'refinement',
     new RefinementService(

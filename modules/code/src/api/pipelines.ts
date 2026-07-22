@@ -259,6 +259,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       }
       const { finalMessage } = await deps.orchestrator.runOneShot({
         kind: 'analysis',
+        task: 'code.pipeline',
         title,
         cwd: deps.checkouts.cloneDir(ctx.repo),
         repo: ctx.repo,

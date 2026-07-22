@@ -12,6 +12,7 @@ export default defineServices((ctx) => {
   const store = new SlopStore(ctx.db);
   const code = ctx.services.get('code');
   const operate = ctx.services.get('operate');
+  operate.registerRunTask({ id: 'slop.detect', label: 'Slop detection', placeable: false });
   ctx.services.register(
     'slop',
     new SlopService(

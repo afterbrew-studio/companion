@@ -207,6 +207,7 @@ export class RefinementService {
   async generateMethod(prompt: string): Promise<RefineMethodDraft> {
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'refinement.analyses',
       title: `Draft method: ${prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
       // No repo to ground in — the orchestrator mkdirs whatever cwd it gets.
       cwd: join(paths.scratch(), 'refine-methods'),
@@ -271,6 +272,7 @@ export class RefinementService {
       }
       const oneShot = await this.orchestrator.runOneShot({
         kind: 'analysis',
+        task: 'refinement.analyses',
         title: `Refine: ${refinement.title.slice(0, 60)}`,
         cwd: worktree,
         repo: refinement.repo,

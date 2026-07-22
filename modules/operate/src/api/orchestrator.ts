@@ -242,12 +242,17 @@ export class Orchestrator implements RunnerEventSink {
   placeRun(
     repo: string | null,
     kind: RunKind,
-    model?: string | null,
-    userId?: string | null,
-    exclude?: ReadonlySet<string>,
+    opts: {
+      model?: string | null;
+      userId?: string | null;
+      /** Runner ids to skip — failover after a spawn just failed there. */
+      exclude?: ReadonlySet<string>;
+      /** Feature-level task id ('board.worker') — runners can block it. */
+      task?: string | null;
+    } = {},
   ): string | null {
-    const effective = model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
-    return this.runners.place(repo, this.providersForModel(effective), userId ?? null, exclude);
+    const effective = opts.model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
+    return this.runners.place(repo, opts.task ?? null, this.providersForModel(effective), opts.userId ?? null, opts.exclude);
   }
 
   async createRun(opts: {
@@ -266,6 +271,9 @@ export class Orchestrator implements RunnerEventSink {
     /** Triggering user: owns attended runs and unlocks their personal runners
      *  for placement; null for automation (shared runners only). */
     userId?: string | null;
+    /** Feature-level task id (RunTaskDescriptor) — always server-assigned by
+     *  the owning feature, never client input, so filters can't be dodged. */
+    task?: string | null;
   }): Promise<RunRecord> {
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
@@ -277,9 +285,13 @@ export class Orchestrator implements RunnerEventSink {
     if (kind === 'interactive' || kind === 'assistant') {
       // The user's personal runners extend THEIR chat capacity — a colleague's
       // busy shared slots must not block someone whose own machine is idle.
-      const capacity = Math.max(1, this.runners.totalCapacity(opts.userId ?? null));
-      const reserved = Math.min(capacity - 1, Math.max(0, this.reservedRunnerSlots()));
-      if (this.store.runs.activeInteractiveCount(opts.userId ?? null) >= capacity - reserved) {
+      // Task-filtered: a runner that blocks chats adds no chat slots — and its
+      // slots already serve automation, so they satisfy the reserve first and
+      // only the remainder is carved out of the chat pool.
+      const total = Math.max(1, this.runners.totalCapacity(opts.userId ?? null));
+      const capacity = Math.max(1, this.runners.totalCapacity(opts.userId ?? null, opts.task ?? null));
+      const reserved = Math.min(capacity - 1, Math.max(0, this.reservedRunnerSlots() - (total - capacity)));
+      if (this.store.runs.activeInteractiveCount(opts.userId ?? null, opts.task ?? null) >= capacity - reserved) {
         throw new Error(
           `All runner slots are busy and ${reserved} ${reserved === 1 ? 'is' : 'are'} reserved for automated work — close a chat or try again shortly.`,
         );
@@ -293,7 +305,7 @@ export class Orchestrator implements RunnerEventSink {
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind), opts.userId ?? null);
+          : this.placeRun(opts.repo ?? null, kind, { model: opts.model, userId: opts.userId, task: opts.task });
     // Model: explicit override → the CHOSEN runner's pin for this action →
     // legacy global pin. null lets that runner's own moxxy default apply.
     const model =
@@ -346,7 +358,7 @@ export class Orchestrator implements RunnerEventSink {
       } catch (err) {
         this.runners.recheckHealth(placedOn);
         const next = autoPlaced
-          ? this.placeRun(opts.repo ?? null, kind, opts.model ?? this.pinnedModel(kind), opts.userId ?? null, tried)
+          ? this.placeRun(opts.repo ?? null, kind, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
           : undefined;
         if (next === undefined || tried.has(next ?? LOCAL_RUNNER_ID)) {
           this.setStatus(id, 'failed', String(err));
@@ -702,6 +714,8 @@ export class Orchestrator implements RunnerEventSink {
     cwd: string;
     repo?: string | null;
     issueNumber?: number | null;
+    /** Feature-level task id — carried for when one-shots learn to place. */
+    task?: string;
     prompt: string;
     timeoutMs?: number;
     /**

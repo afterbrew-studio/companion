@@ -51,6 +51,7 @@ export class PrReviews {
 
     const { runId, finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'code.pr-review',
       title: `Review PR #${prNumber}: ${pr.title.slice(0, 60)}`,
       cwd: this.checkouts.cloneDir(repo),
       repo,
@@ -178,6 +179,7 @@ export class PrReviews {
     const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'code.ci-analysis',
       title: `CI failure analysis — PR #${prNumber}`,
       cwd: this.checkouts.cloneDir(repo),
       repo,

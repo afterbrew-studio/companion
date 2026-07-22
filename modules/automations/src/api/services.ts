@@ -17,6 +17,9 @@ export default defineServices((ctx) => {
   const reports = ctx.services.get('reports');
   const operate = ctx.services.get('operate');
   const code = ctx.services.get('code');
+
+  operate.registerRunTask({ id: 'automations.assistant', label: 'AI Help', placeable: true });
+  operate.registerRunTask({ id: 'automations.digest', label: 'Daily digests', placeable: false });
   const plan = ctx.services.get('plan');
   const core = ctx.services.get('core');
 

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
+import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 /** Agent runs — rows are the source of truth; gateway processes are cattle. */
 export class RunsStore {
@@ -90,19 +91,26 @@ export class RunsStore {
    * given user schedules against: shared runners (runner_id null = local) plus
    * the user's own machines. A colleague's chats parked on THEIR personal
    * runner must not eat this user's headroom — the capacities don't overlap.
+   * With `task`, only chats on runners whose block-list accepts it count —
+   * the gate compares against task-filtered capacity, so a chat parked on a
+   * runner outside that pool must not eat the pool's headroom. Local chats
+   * ALWAYS count: the local runner is the last-resort sink (placement and the
+   * assistant's no-public-url pin can park chats there past its block-list),
+   * and a gate blind to them would admit chats without bound.
    */
-  activeInteractiveCount(userId: string | null = null): number {
+  activeInteractiveCount(userId: string | null = null, task: string | null = null): number {
     return (
       this.db
         .prepare(
           `SELECT COUNT(*) AS n FROM runs r
+           JOIN runners k ON k.id = COALESCE(r.runner_id, @local)
            WHERE r.kind IN ('interactive', 'assistant')
              AND r.status IN ('provisioning', 'running', 'idle', 'review')
-             AND (r.runner_id IS NULL OR EXISTS (
-               SELECT 1 FROM runners k WHERE k.id = r.runner_id
-                 AND (k.owner_id IS NULL OR k.owner_id = @userId)))`,
+             AND (k.owner_id IS NULL OR k.owner_id = @userId)
+             AND (@task IS NULL OR r.runner_id IS NULL OR k.blocked_tasks IS NULL OR NOT EXISTS (
+               SELECT 1 FROM json_each(k.blocked_tasks) WHERE value = @task))`,
         )
-        .get({ userId }) as { n: number }
+        .get({ userId, task, local: LOCAL_RUNNER_ID }) as { n: number }
     ).n;
   }
 

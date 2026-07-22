@@ -152,6 +152,7 @@ export class SlopService {
   async generateRule(prompt: string): Promise<SlopRuleDraft> {
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
+      task: 'slop.detect',
       title: `Draft slop rule: ${prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
       // No repo to ground in — the orchestrator mkdirs whatever cwd it gets.
       cwd: join(paths.scratch(), 'slop-rules'),
@@ -237,6 +238,7 @@ export class SlopService {
       const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
       const oneShot = await this.orchestrator.runOneShot({
         kind: 'analysis',
+        task: 'slop.detect',
         title: `Slop check PR #${prNumber}: ${pr.title.slice(0, 60)}`,
         cwd: this.checkouts.cloneDir(repo),
         repo,

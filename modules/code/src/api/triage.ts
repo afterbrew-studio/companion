@@ -45,6 +45,7 @@ export class Triage {
     const triageId = `triage-${randomUUID().slice(0, 12)}`;
     const { runId, finalMessage } = await this.orchestrator.runOneShot({
       kind: 'triage',
+      task: 'code.triage',
       title: `Triage #${issueNumber}: ${issue.title.slice(0, 60)}`,
       cwd: this.checkouts.cloneDir(repo),
       repo,

@@ -243,6 +243,28 @@ export interface RunnerCatalog {
 export type RunnerModelPins = Partial<Record<RunnerPinnableKind, string>>;
 
 /**
+ * A feature-level unit of agent work — 'board.worker', 'code.fix',
+ * 'automations.digest' — registered by its owning module so runners can be
+ * included in / excluded from specific tasks. Finer than RunKind, which only
+ * classifies how a run behaves: board workers and user-triggered implement
+ * runs share a kind but are different tasks. Registration is in-memory at
+ * module enable; a disabled module's entries linger until restart (the same
+ * discipline as queue resumers).
+ */
+export interface RunTaskDescriptor {
+  readonly id: string;
+  readonly label: string;
+  /**
+   * False = this task's runs currently always execute on the daemon's own
+   * machine (their working dir is prepared there) and never go through
+   * placement — its toggle is shown for completeness and takes effect only
+   * once such runs learn to place remotely.
+   */
+  readonly placeable: boolean;
+  readonly hint?: string;
+}
+
+/**
  * An execution host. The built-in `local` runner (id `runner-local`) always
  * exists, is `shared`, and cannot be deleted. `remote` runners are other
  * machines running the companion-runner agent, reached at `endpoint` with a
@@ -265,6 +287,14 @@ export interface RunnerRecord {
   readonly workspaceIds: ReadonlyArray<string>;
   readonly maxRuns: number;
   readonly enabled: boolean;
+  /**
+   * Task ids (RunTaskDescriptor) this machine refuses — placement never sends
+   * them here; empty = takes everything. An exclude-list, so tasks added by
+   * future modules stay opted-in by default. Hard filter (outranks the repo
+   * pin), except the local runner remains the last resort when no machine at
+   * all accepts a task.
+   */
+  readonly blockedTasks: readonly string[];
   readonly health: RunnerHealth;
   readonly catalog: RunnerCatalog | null;
   readonly modelPins: RunnerModelPins;
@@ -281,6 +311,7 @@ export interface CreateRunnerRequest {
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
   readonly modelPins?: RunnerModelPins;
+  readonly blockedTasks?: ReadonlyArray<string>;
 }
 
 export interface UpdateRunnerRequest {
@@ -293,6 +324,8 @@ export interface UpdateRunnerRequest {
   readonly maxRuns?: number;
   readonly enabled?: boolean;
   readonly modelPins?: RunnerModelPins;
+  /** Full replacement block-list; empty clears it. Omit to keep the current one. */
+  readonly blockedTasks?: ReadonlyArray<string>;
 }
 
 /** Result of probing a runner's endpoint (the "Test connection" action). */

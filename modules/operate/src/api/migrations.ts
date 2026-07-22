@@ -118,4 +118,36 @@ export default defineMigrations([
       // SQLite can't drop columns portably; harmless to keep on rollback.
     },
   },
+  {
+    // Superseded by v4's per-task filter before ever shipping a UI; the column
+    // stays (recorded on any DB that booted between the two) but is unread.
+    version: 3,
+    name: 'runners_allowed_kinds',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runners ADD COLUMN allowed_kinds TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => {
+      // SQLite can't drop columns portably; harmless to keep on rollback.
+    },
+  },
+  {
+    // Per-runner task filter: JSON array of blocked RunTaskDescriptor ids
+    // (e.g. 'board.worker'), NULL = blocks nothing.
+    version: 4,
+    name: 'runners_blocked_tasks',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runners ADD COLUMN blocked_tasks TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => {
+      // SQLite can't drop columns portably; harmless to keep on rollback.
+    },
+  },
 ]);

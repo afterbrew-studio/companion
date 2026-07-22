@@ -1,6 +1,6 @@
 import { notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
-import type { GithubTokenSource, RunRecord, TokenUsage } from '../contract/index.js';
+import type { GithubTokenSource, RunRecord, RunTaskDescriptor, TokenUsage } from '../contract/index.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
 import type { RunsStore } from './runs-store.js';
@@ -20,6 +20,9 @@ import type { MoxxyCli } from '../exec/cli.js';
 export class OperateService {
   /** The built-in settings-key resolver, restored when module-code disables. */
   private readonly defaultTokenSource: GithubTokenSource;
+
+  /** Feature tasks modules registered, keyed by id — feeds the runner filter UI. */
+  private readonly runTasks = new Map<string, RunTaskDescriptor>();
 
   constructor(
     readonly orchestrator: Orchestrator,
@@ -46,6 +49,22 @@ export class OperateService {
   setMoxxyCli(cli: MoxxyCli | null): void {
     this.moxxyCli = cli;
     this.runners.localBackend.updateMoxxyCli(cli?.version ?? null, cli?.compatible ?? false);
+  }
+
+  /**
+   * Declare a feature-level unit of agent work ('board.worker') so runners can
+   * block it. Modules register at enable, alongside their queue resumers; the
+   * matching id must be passed as `task` wherever the feature creates runs.
+   */
+  registerRunTask(task: RunTaskDescriptor): void {
+    this.runTasks.set(task.id, task);
+  }
+
+  /** Every registered task, placeable ones first, alphabetical within a group. */
+  runTaskDescriptors(): RunTaskDescriptor[] {
+    return [...this.runTasks.values()].sort(
+      (a, b) => Number(b.placeable) - Number(a.placeable) || a.label.localeCompare(b.label),
+    );
   }
 
   /**

@@ -25,6 +25,7 @@ import type {
   RunnerRecord,
   RunnerScope,
   RunnerStatus,
+  RunTaskDescriptor,
   UpdateRunnerRequest,
 } from '../../contract/index.js';
 import { RUNNER_PINNABLE_KINDS } from '../../contract/index.js';
@@ -46,7 +47,7 @@ const DOT_TONE: Record<RunnerStatus, StatusTone> = {
  * over WS.
  */
 export function RunnersPage(): JSX.Element {
-  const { runners, workspaces, error, setError, refresh } = useRunners();
+  const { runners, tasks, workspaces, error, setError, refresh } = useRunners();
   const { user, can } = useAuth();
   const admin = can('runners:manage');
   const [creating, setCreating] = useState(false);
@@ -89,6 +90,7 @@ export function RunnersPage(): JSX.Element {
             <RunnerCard
               key={runner.id}
               runner={runner}
+              tasks={tasks}
               admin={admin}
               me={user?.username ?? null}
               onEdit={() => setEditing(runner)}
@@ -102,6 +104,7 @@ export function RunnersPage(): JSX.Element {
       {creating ? (
         <RunnerModal
           admin={admin}
+          tasks={tasks}
           workspaces={workspaces}
           onClose={() => setCreating(false)}
           onDone={() => {
@@ -114,6 +117,7 @@ export function RunnersPage(): JSX.Element {
         <RunnerModal
           runner={editing}
           admin={admin}
+          tasks={tasks}
           workspaces={workspaces}
           onClose={() => setEditing(null)}
           onDone={() => {
@@ -136,6 +140,7 @@ function endpointHost(endpoint: string): string {
 
 function RunnerCard({
   runner,
+  tasks,
   admin,
   me,
   onEdit,
@@ -143,6 +148,7 @@ function RunnerCard({
   onError,
 }: {
   runner: RunnerRecord;
+  tasks: readonly RunTaskDescriptor[];
   admin: boolean;
   me: string | null;
   onEdit: () => void;
@@ -229,6 +235,11 @@ function RunnerCard({
     runner.scope === 'shared'
       ? 'shared'
       : `delegated to ${runner.workspaceIds.length} ${runner.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`;
+  // A blocked id whose module is disabled has no descriptor — show it raw.
+  // (?? [] survives a daemon still on a pre-task dist during the restart gap.)
+  const taskLabel = (id: string): string => (tasks.find((t) => t.id === id)?.label ?? id).toLowerCase();
+  const blockedTasks = runner.blockedTasks ?? [];
+  const taskNote = blockedTasks.length > 0 ? `skips ${blockedTasks.map(taskLabel).join(' · ')}` : null;
 
   return (
     <article className={`card ${runner.enabled ? '' : 'opacity-70'}`} aria-label={runner.name}>
@@ -292,6 +303,11 @@ function RunnerCard({
         <span className="tabular-nums">
           {health.liveRuns} / {runner.maxRuns} running
         </span>
+        {taskNote ? (
+          <Tooltip content="task filter — edit the machine to change which run kinds it accepts">
+            <span>{taskNote}</span>
+          </Tooltip>
+        ) : null}
         {health.moxxyVersion ? <span>moxxy {health.moxxyVersion}</span> : null}
         {!local && runner.endpoint ? <span>{endpointHost(runner.endpoint)}</span> : null}
         {health.status === 'offline' ? (
@@ -449,12 +465,14 @@ function TokenHelp(): JSX.Element {
 function RunnerModal({
   runner,
   admin,
+  tasks,
   workspaces,
   onClose,
   onDone,
 }: {
   runner?: RunnerRecord;
   admin: boolean;
+  tasks: readonly RunTaskDescriptor[];
   workspaces: readonly WorkspaceRecord[];
   onClose: () => void;
   onDone: () => void;
@@ -475,6 +493,7 @@ function RunnerModal({
   // after it's created (and probed), so the Add flow is create-then-pin: the
   // first submit connects, then the pins section appears for the saved runner.
   const [modelPins, setModelPins] = useState<RunnerModelPins>(runner?.modelPins ?? {});
+  const [blockedTasks, setBlockedTasks] = useState<readonly string[]>(runner?.blockedTasks ?? []);
   const [catalog, setCatalog] = useState<RunnerCatalog | null>(runner?.catalog ?? null);
   const [savedId, setSavedId] = useState<string | null>(runner?.id ?? null);
   const [testing, setTesting] = useState(false);
@@ -494,6 +513,7 @@ function RunnerModal({
     workspaceIds: scope === 'delegated' ? workspaceIds : [],
     maxRuns: capacity,
     modelPins,
+    blockedTasks,
     ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
   });
 
@@ -520,10 +540,12 @@ function RunnerModal({
           scope,
           workspaceIds: scope === 'delegated' ? workspaceIds : [],
           maxRuns: capacity,
+          ...(blockedTasks.length ? { blockedTasks } : {}),
         });
         setSavedId(made.id);
         setCatalog(made.catalog);
         setModelPins(made.modelPins);
+        setBlockedTasks(made.blockedTasks);
         setTestNote(
           made.catalog && made.catalog.providers.some((p) => p.ready)
             ? 'Connected — pin models per action below, or leave them on the runner default.'
@@ -683,6 +705,8 @@ function RunnerModal({
             onChange={(e) => setMaxRuns(e.target.value)}
           />
         </Field>
+
+        <TasksEditor tasks={tasks} blocked={blockedTasks} onChange={setBlockedTasks} />
           </div>
 
         {/* Model pins fill the second column once the runner exists and is probed. */}
@@ -731,6 +755,67 @@ function RunnerModal({
         </FormActions>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Per-runner task filter over the registered feature tasks — ticked = the
+ * machine takes it, stored as an exclude-list so future modules' tasks stay
+ * opted-in by default. Non-placeable tasks render disabled: their runs execute
+ * on the daemon's machine regardless (until one-shots learn to place). A
+ * blocked id with no descriptor (its module is disabled) stays removable.
+ */
+function TasksEditor({
+  tasks,
+  blocked,
+  onChange,
+}: {
+  tasks: readonly RunTaskDescriptor[];
+  blocked: readonly string[];
+  onChange: (next: readonly string[]) => void;
+}): JSX.Element {
+  const placeable = tasks.filter((t) => t.placeable);
+  const daemonBound = tasks.filter((t) => !t.placeable);
+  const unknown = blocked.filter((id) => !tasks.some((t) => t.id === id));
+  const toggle = (id: string, on: boolean): void => {
+    onChange(on ? blocked.filter((b) => b !== id) : [...blocked, id]);
+  };
+  const box = (id: string, label: string, hint?: string, disabled = false): JSX.Element => (
+    <label
+      key={id}
+      title={hint}
+      className={`flex items-center gap-2 text-sm ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+    >
+      <input
+        type="checkbox"
+        checked={!blocked.includes(id)}
+        disabled={disabled}
+        onChange={(e) => toggle(id, e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+  return (
+    <fieldset className="flex flex-col gap-1.5">
+      <legend className="dim mb-1 text-sm">Tasks</legend>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {placeable.map((t) => box(t.id, t.label, t.hint))}
+        {unknown.map((id) => box(id, id, 'blocked task of a module that is currently disabled'))}
+      </div>
+      <p className="dim text-xs">
+        Untick work this machine shouldn't take — say, board workers on a weaker laptop. If no machine accepts
+        a task, the local runner takes it as a last resort.
+      </p>
+      {daemonBound.length > 0 ? (
+        <>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {/* A daemon-bound id blocked via the API stays re-allowable here. */}
+            {daemonBound.map((t) => box(t.id, t.label, t.hint, !blocked.includes(t.id)))}
+          </div>
+          <p className="dim text-xs">These prepare their files on the daemon's machine and always run there for now.</p>
+        </>
+      ) : null}
+    </fieldset>
   );
 }
 

@@ -60,6 +60,7 @@ export default defineRoutes((ctx) => {
 
         const { runId, finalMessage } = await op.orchestrator.runOneShot({
           kind: 'analysis',
+          task: 'playground.run',
           title: skill
             ? `Skill dry-run: ${skill.name}`
             : `Playground: ${body.prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
