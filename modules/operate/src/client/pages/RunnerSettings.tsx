@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   Breadcrumb,
   EmptyState,
   ErrorBar,
   Field,
+  MetaSignal,
   Page,
   PageHeader,
   PageLoading,
-  StatusDot,
-  Tooltip,
+  Section,
 } from '@companion/ui';
 import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -25,10 +25,11 @@ import { DOT_TONE, ModelPinsEditor, normalizeEndpoint, TasksEditor, TokenHelp } 
 
 /**
  * A machine's settings page — the Edit modal outgrew itself once tasks and
- * model pins joined connection + placement, so each concern gets its own card
- * here. One form, one Save (in the header); health stays live via the runners
- * broadcast. A runner outside the viewer's reach reads as not found, matching
- * the API's owner masking.
+ * model pins joined connection + placement, so each concern is its own
+ * `Section` + card in a single column, matching the app's settings pages. One
+ * form, one Save (in the header); health stays live via the runners broadcast.
+ * A runner outside the viewer's reach reads as not found, matching the API's
+ * owner masking.
  */
 export function RunnerSettingsPage({ id }: { id: string }): JSX.Element {
   const { runners, tasks, workspaces, error, setError, refresh } = useRunners();
@@ -89,7 +90,7 @@ function SettingsForm({
   const capacity = Number(maxRuns);
   const { health } = runner;
 
-  const save = async (e: React.FormEvent): Promise<void> => {
+  const save = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     if (delegatedEmpty) {
       setError('A delegated runner needs at least one workspace.');
@@ -110,7 +111,7 @@ function SettingsForm({
       });
       setToken('');
       await refresh();
-      setNote('Saved.');
+      setNote('Saved');
     } catch (err) {
       setError(String(err));
     } finally {
@@ -148,23 +149,22 @@ function SettingsForm({
       <PageHeader
         title={runner.name}
         subtitle={
-          <span className="flex items-center gap-2">
-            <Tooltip content={health.detail ?? health.status}>
-              <StatusDot tone={DOT_TONE[health.status]} pulse={health.liveRuns > 0} label={health.status} />
-            </Tooltip>
-            {local ? 'this machine' : (runner.endpoint ?? 'remote')}
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <MetaSignal
+              tone={DOT_TONE[health.status]}
+              label={health.status}
+              pulse={health.liveRuns > 0}
+              title={health.detail ?? undefined}
+            />
+            <span>{local ? 'this machine' : (runner.endpoint ?? 'remote')}</span>
             <span className="tabular-nums">
-              · {health.liveRuns} / {runner.maxRuns} running
+              {health.liveRuns} / {runner.maxRuns} running
             </span>
           </span>
         }
         actions={
           <>
-            {note ? (
-              <span role="status" className="dim text-xs">
-                {note}
-              </span>
-            ) : null}
+            {note ? <MetaSignal tone="green" label={note} /> : null}
             <button
               className="btn"
               type="submit"
@@ -178,122 +178,181 @@ function SettingsForm({
       />
       <ErrorBar error={error} />
 
-      <form id="runner-settings" onSubmit={(e) => void save(e)} className="grid items-start gap-4 lg:grid-cols-2">
-        <section className="card flex flex-col gap-3">
-          <h2 className="text-sm font-medium">Connection</h2>
-          <Field label="Name">
-            <input
-              className="input"
-              required
-              minLength={2}
-              maxLength={80}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          {local ? (
-            <p className="dim text-xs">The built-in runner — companiond's own machine. No endpoint or token.</p>
-          ) : (
-            <>
-              <Field
-                label="Endpoint — companion-runner agent address"
-                hint={
-                  <>
-                    Plain <code className="code-inline">host:port</code> or <code className="code-inline">ip:port</code>{' '}
-                    works — http is assumed unless you write <code className="code-inline">https://</code>.
-                  </>
-                }
-              >
-                <input
-                  className="input"
-                  type="text"
-                  required
-                  placeholder="192.168.1.42:8920"
-                  value={endpoint}
-                  onChange={(e) => setEndpoint(e.target.value)}
-                />
-              </Field>
-              <Field label="Bearer token">
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="leave blank to keep current"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-                <TokenHelp />
-              </Field>
-            </>
-          )}
-        </section>
-
-        <section className="card flex flex-col gap-3">
-          <h2 className="text-sm font-medium">Placement</h2>
-          <fieldset className="flex flex-col gap-1.5">
-            <legend className="dim mb-1 text-sm">Availability</legend>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input type="radio" name="scope" checked={scope === 'shared'} onChange={() => setScope('shared')} />
-              Shared
-              <span className="dim text-xs">— any workspace can place work here</span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input type="radio" name="scope" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />
-              Delegated
-              <span className="dim text-xs">— only the workspaces picked below</span>
-            </label>
-          </fieldset>
-          {scope === 'delegated' ? (
-            <fieldset className="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-              <legend className="dim px-1">Workspaces</legend>
-              {workspaces.length === 0 ? <span className="dim">No workspaces found.</span> : null}
-              {workspaces.map((w) => (
-                <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
+      <form id="runner-settings" onSubmit={(e) => void save(e)}>
+        <Section title="Connection" description="How companiond reaches this machine.">
+          <div className="card flex flex-col gap-4">
+            <Field label="Name" className="max-w-md">
+              <input
+                className="input"
+                required
+                minLength={2}
+                maxLength={80}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+            {local ? (
+              <p className="dim text-[13px]">The built-in runner — companiond&apos;s own machine. No endpoint or token.</p>
+            ) : (
+              <>
+                <Field
+                  label="Endpoint — companion-runner agent address"
+                  className="max-w-md"
+                  hint={
+                    <>
+                      Plain <code className="code-inline">host:port</code> or{' '}
+                      <code className="code-inline">ip:port</code> works — http is assumed unless you write{' '}
+                      <code className="code-inline">https://</code>.
+                    </>
+                  }
+                >
                   <input
-                    type="checkbox"
-                    checked={workspaceIds.includes(w.id)}
-                    onChange={(e) =>
-                      setWorkspaceIds((prev) =>
-                        e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id),
-                      )
-                    }
+                    className="input"
+                    type="text"
+                    required
+                    placeholder="192.168.1.42:8920"
+                    value={endpoint}
+                    onChange={(e) => setEndpoint(e.target.value)}
                   />
-                  {w.name}
-                  {isAmbiguousWorkspaceName(w, workspaces) ? <span className="dim text-xs">{w.slug}</span> : null}
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
-          <Field label="Max concurrent runs">
-            <input
-              className="input w-28"
-              type="number"
-              min={1}
-              max={99}
-              required
-              value={maxRuns}
-              onChange={(e) => setMaxRuns(e.target.value)}
-            />
-          </Field>
-        </section>
-
-        <section className="card">
-          <TasksEditor tasks={tasks} blocked={blockedTasks} onChange={setBlockedTasks} />
-        </section>
-
-        <section className="card flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium">Model pins</h2>
-            <button type="button" className="btn-ghost" disabled={fetching} onClick={() => void fetchModels()}>
-              {fetching ? 'Fetching…' : 'Fetch models'}
-            </button>
+                </Field>
+                <Field label="Bearer token" className="max-w-md">
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="leave blank to keep current"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                  />
+                  <TokenHelp />
+                </Field>
+              </>
+            )}
           </div>
-          <p className="dim text-xs">
-            Bind each action to a model this machine can serve. Unpinned actions ride its own default.
-          </p>
-          {pinsNote ? <p className="dim text-xs">{pinsNote}</p> : null}
-          <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
-        </section>
+        </Section>
+
+        <Section title="Placement" description="Which workspaces can run work here, and how many at once.">
+          <div className="card flex flex-col gap-4">
+            <fieldset className="flex flex-col gap-2">
+              <legend className="dim mb-1.5 text-[13px]">Availability</legend>
+              <div className="grid max-w-xl gap-2 sm:grid-cols-2">
+                <RadioCard
+                  name="scope"
+                  checked={scope === 'shared'}
+                  onSelect={() => setScope('shared')}
+                  title="Shared"
+                  description="Any workspace can place work here."
+                />
+                <RadioCard
+                  name="scope"
+                  checked={scope === 'delegated'}
+                  onSelect={() => setScope('delegated')}
+                  title="Delegated"
+                  description="Only the workspaces you pick below."
+                />
+              </div>
+            </fieldset>
+
+            {scope === 'delegated' ? (
+              <div className="flex max-w-md flex-col gap-1 text-sm">
+                <span className="dim">Workspaces</span>
+                <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+                  {workspaces.length === 0 ? (
+                    <span className="dim px-2 py-1.5">No workspaces found.</span>
+                  ) : null}
+                  {workspaces.map((w) => (
+                    <label
+                      key={w.id}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={workspaceIds.includes(w.id)}
+                        onChange={(e) =>
+                          setWorkspaceIds((prev) =>
+                            e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id),
+                          )
+                        }
+                      />
+                      <span className="flex-1">{w.name}</span>
+                      {isAmbiguousWorkspaceName(w, workspaces) ? <span className="dim text-xs">{w.slug}</span> : null}
+                    </label>
+                  ))}
+                </div>
+                {delegatedEmpty ? (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">Pick at least one workspace.</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            <Field label="Max concurrent runs">
+              <input
+                className="input w-24"
+                type="number"
+                min={1}
+                max={99}
+                required
+                value={maxRuns}
+                onChange={(e) => setMaxRuns(e.target.value)}
+              />
+            </Field>
+          </div>
+        </Section>
+
+        <Section
+          title="Tasks"
+          description="Untick work this machine shouldn't take — say, board workers on a weaker laptop. If no machine accepts a task, the local runner takes it as a last resort."
+        >
+          <div className="card">
+            <TasksEditor tasks={tasks} blocked={blockedTasks} onChange={setBlockedTasks} />
+          </div>
+        </Section>
+
+        <Section
+          title="Model pins"
+          description="Bind each action to a model this machine can serve. Unpinned actions ride its own default."
+        >
+          <div className="card flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="dim text-xs">{pinsNote}</span>
+              <button type="button" className="btn-ghost" disabled={fetching} onClick={() => void fetchModels()}>
+                {fetching ? 'Fetching…' : 'Fetch models'}
+              </button>
+            </div>
+            <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
+          </div>
+        </Section>
       </form>
     </Page>
+  );
+}
+
+/** A bordered, selectable option card — the app's two-choice radio idiom. */
+function RadioCard({
+  name,
+  checked,
+  onSelect,
+  title,
+  description,
+}: {
+  name: string;
+  checked: boolean;
+  onSelect: () => void;
+  title: string;
+  description: string;
+}): JSX.Element {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors ${
+        checked
+          ? 'border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-zinc-800/60'
+          : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+      }`}
+    >
+      <input type="radio" name={name} className="mt-0.5" checked={checked} onChange={onSelect} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium">{title}</span>
+        <span className="dim block text-xs">{description}</span>
+      </span>
+    </label>
   );
 }

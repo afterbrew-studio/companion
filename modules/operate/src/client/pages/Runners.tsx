@@ -598,7 +598,9 @@ export function TasksEditor({
     <label
       key={id}
       title={hint}
-      className={`flex items-center gap-2 text-sm ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+      className={`flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
+        disabled ? 'opacity-50' : 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+      }`}
     >
       <input
         type="checkbox"
@@ -606,30 +608,27 @@ export function TasksEditor({
         disabled={disabled}
         onChange={(e) => toggle(id, e.target.checked)}
       />
-      {label}
+      <span className="flex-1">{label}</span>
     </label>
   );
   return (
-    <fieldset className="flex flex-col gap-1.5">
-      <legend className="dim mb-1 text-sm">Tasks</legend>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+    <div className="flex flex-col gap-3">
+      <div className="grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
         {placeable.map((t) => box(t.id, t.label, t.hint))}
         {unknown.map((id) => box(id, id, 'blocked task of a module that is currently disabled'))}
       </div>
-      <p className="dim text-xs">
-        Untick work this machine shouldn't take — say, board workers on a weaker laptop. If no machine accepts
-        a task, the local runner takes it as a last resort.
-      </p>
       {daemonBound.length > 0 ? (
-        <>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        <div className="flex flex-col gap-1 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <span className="dim text-xs">
+            Always run on the daemon&apos;s machine for now — they prepare their files there.
+          </span>
+          <div className="grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
             {/* A daemon-bound id blocked via the API stays re-allowable here. */}
             {daemonBound.map((t) => box(t.id, t.label, t.hint, !blocked.includes(t.id)))}
           </div>
-          <p className="dim text-xs">These prepare their files on the daemon's machine and always run there for now.</p>
-        </>
+        </div>
       ) : null}
-    </fieldset>
+    </div>
   );
 }
 
@@ -665,7 +664,7 @@ export function ModelPinsEditor({
   if (models.length === 0) {
     return (
       <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
-        No ready models on this machine yet — configure a provider there and re-test to pin models.
+        No ready models on this machine yet — configure a provider there and fetch models to pin them.
       </p>
     );
   }
@@ -678,12 +677,12 @@ export function ModelPinsEditor({
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800/70 dark:border-zinc-800">
       {RUNNER_PINNABLE_KINDS.map((kind) => (
-        <label key={kind} className="flex items-center justify-between gap-2 text-xs">
+        <label key={kind} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
           <span className="dim min-w-0 flex-1 truncate">{PIN_LABELS[kind]}</span>
           <select
-            className="input input-sm w-40 shrink-0"
+            className="input input-sm w-48 shrink-0"
             value={pins[kind] ?? ''}
             onChange={(e) => set(kind, e.target.value)}
           >
