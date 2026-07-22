@@ -22,7 +22,7 @@ import {
   hasUnseenOnboarding,
   type OnboardingMode,
 } from '@companion/module-core/client';
-import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
+import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
 import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
@@ -552,7 +552,12 @@ function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
         renderTrigger={(selected, open) => (
           <>
             <span className="min-w-0 flex-1">
-              <span className="dim block text-[10px] font-medium tracking-widest uppercase">Workspace</span>
+              {/* On a name collision the slug rides the roomy eyebrow line —
+                  appended to the name it would just truncate away. */}
+              <span className="dim block truncate text-[10px] font-medium tracking-widest uppercase">
+                Workspace
+                {current && isAmbiguousWorkspaceName(current, workspaces) ? ` · ${current.slug}` : ''}
+              </span>
               <span className="flex items-center gap-1.5">
                 {current?.visibility === 'private' ? <LockIcon className="dim size-3.5" /> : null}
                 <span className="block truncate text-[13px] font-medium">{selected?.label ?? 'No workspaces'}</span>
@@ -563,9 +568,10 @@ function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
         )}
         options={workspaces.map((w) => ({
           value: w.id,
-          // Slug-qualified on name collisions — two "Personal"s must be tellable apart.
-          label: workspaceLabel(w, workspaces),
-          hint: `${w.repoCount} ${w.repoCount === 1 ? 'repo' : 'repos'}${w.visibility === 'private' ? ' · private' : ''}`,
+          label: w.name,
+          // Colliding names carry the slug in the hint — searchable, and the
+          // menu is wide enough that it never truncates the name itself.
+          hint: `${isAmbiguousWorkspaceName(w, workspaces) ? `${w.slug} · ` : ''}${w.repoCount} ${w.repoCount === 1 ? 'repo' : 'repos'}${w.visibility === 'private' ? ' · private' : ''}`,
         }))}
         action={can('workspaces:create') ? { label: 'New workspace', onSelect: () => setCreating(true) } : undefined}
       />
