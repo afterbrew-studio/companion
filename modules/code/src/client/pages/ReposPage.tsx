@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useIntent } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
-import { useWorkspace, useWorkspaceMembers, workspaceApi } from '@companion/module-workspace/client';
+import { useWorkspace, useWorkspaceMembers, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
 import type { WorkspaceMemberCandidate, WorkspaceRecord, WorkspaceVisibility } from '@companion/module-workspace/contract';
 import {
   Avatar,
@@ -319,6 +319,7 @@ function TransferRepoModal({
   onError: (e: string) => void;
 }): JSX.Element {
   const targets = workspaces.filter((w) => w.id !== repo.workspaceId);
+  const from = workspaces.find((w) => w.id === repo.workspaceId);
   const [target, setTarget] = useState(targets[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
 
@@ -341,13 +342,13 @@ function TransferRepoModal({
           <select className="input" value={target} onChange={(e) => setTarget(e.target.value)}>
             {targets.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name}
+                {workspaceLabel(w, workspaces)}
               </option>
             ))}
           </select>
         </Field>
         <p className="dim text-[13px]">
-          The repo leaves <strong>{workspaces.find((w) => w.id === repo.workspaceId)?.name}</strong> together with its
+          The repo leaves <strong>{from ? workspaceLabel(from, workspaces) : null}</strong> together with its
           issues, PRs, and pipeline scope.
         </p>
         <FormActions>

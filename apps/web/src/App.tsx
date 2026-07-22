@@ -22,7 +22,7 @@ import {
   hasUnseenOnboarding,
   type OnboardingMode,
 } from '@companion/module-core/client';
-import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi } from '@companion/module-workspace/client';
+import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
 import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
 import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
@@ -563,7 +563,8 @@ function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
         )}
         options={workspaces.map((w) => ({
           value: w.id,
-          label: w.name,
+          // Slug-qualified on name collisions — two "Personal"s must be tellable apart.
+          label: workspaceLabel(w, workspaces),
           hint: `${w.repoCount} ${w.repoCount === 1 ? 'repo' : 'repos'}${w.visibility === 'private' ? ' · private' : ''}`,
         }))}
         action={can('workspaces:create') ? { label: 'New workspace', onSelect: () => setCreating(true) } : undefined}

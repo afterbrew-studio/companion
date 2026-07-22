@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useIntent } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
+import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import {
   Dropdown,
@@ -459,6 +460,7 @@ function WorkspaceChecklist({
         >
           <input type="checkbox" checked={selected.includes(w.id)} onChange={(e) => onToggle(w.id, e.target.checked)} />
           {w.name}
+          {isAmbiguousWorkspaceName(w, workspaces) ? <span className="dim text-xs">{w.slug}</span> : null}
         </label>
       ))}
     </div>

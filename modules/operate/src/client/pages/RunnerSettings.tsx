@@ -10,6 +10,7 @@ import {
   StatusDot,
   Tooltip,
 } from '@companion/ui';
+import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
   RunnerCatalog,
@@ -257,6 +258,7 @@ function SettingsForm({
                     }
                   />
                   {w.name}
+                  {isAmbiguousWorkspaceName(w, workspaces) ? <span className="dim text-xs">{w.slug}</span> : null}
                 </label>
               ))}
             </fieldset>

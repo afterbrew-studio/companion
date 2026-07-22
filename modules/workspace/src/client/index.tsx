@@ -15,6 +15,7 @@ import { onboarding } from './onboarding.js';
 
 // The shell (and other modules) reach these by name — everything else is routed.
 export { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
+export { isAmbiguousWorkspaceName, workspaceLabel } from './lib/labels.js';
 export { Inbox } from './components/Inbox.js';
 export { useNotifications } from './hooks/useNotifications.js';
 export { useWorkspaceMembers } from './hooks/useWorkspaceMembers.js';
