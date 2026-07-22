@@ -17,22 +17,19 @@ import {
   type StatusTone,
 } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
-import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
   RunnerCatalog,
   RunnerModelPins,
   RunnerPinnableKind,
   RunnerRecord,
-  RunnerScope,
   RunnerStatus,
   RunTaskDescriptor,
-  UpdateRunnerRequest,
 } from '../../contract/index.js';
 import { RUNNER_PINNABLE_KINDS } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
 
-const DOT_TONE: Record<RunnerStatus, StatusTone> = {
+export const DOT_TONE: Record<RunnerStatus, StatusTone> = {
   online: 'green',
   degraded: 'amber',
   offline: 'red',
@@ -47,11 +44,10 @@ const DOT_TONE: Record<RunnerStatus, StatusTone> = {
  * over WS.
  */
 export function RunnersPage(): JSX.Element {
-  const { runners, tasks, workspaces, error, setError, refresh } = useRunners();
+  const { runners, tasks, error, setError, refresh } = useRunners();
   const { user, can } = useAuth();
   const admin = can('runners:manage');
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<RunnerRecord | null>(null);
 
   return (
     <Page>
@@ -93,7 +89,7 @@ export function RunnersPage(): JSX.Element {
               tasks={tasks}
               admin={admin}
               me={user?.username ?? null}
-              onEdit={() => setEditing(runner)}
+              onEdit={() => (location.hash = `#/runners/${runner.id}`)}
               onChange={refresh}
               onError={setError}
             />
@@ -104,25 +100,10 @@ export function RunnersPage(): JSX.Element {
       {creating ? (
         <RunnerModal
           admin={admin}
-          tasks={tasks}
-          workspaces={workspaces}
           onClose={() => setCreating(false)}
-          onDone={() => {
+          onCreated={(id) => {
             setCreating(false);
-            void refresh();
-          }}
-        />
-      ) : null}
-      {editing ? (
-        <RunnerModal
-          runner={editing}
-          admin={admin}
-          tasks={tasks}
-          workspaces={workspaces}
-          onClose={() => setEditing(null)}
-          onDone={() => {
-            setEditing(null);
-            void refresh();
+            location.hash = `#/runners/${id}`;
           }}
         />
       ) : null}
@@ -430,7 +411,7 @@ companion-runner stop && companion-runner --background`}
 }
 
 /** Where the runner token comes from — shown under the token field. */
-function TokenHelp(): JSX.Element {
+export function TokenHelp(): JSX.Element {
   return (
     <details className="mt-1">
       <summary className="dim cursor-pointer text-xs hover:text-zinc-700 dark:hover:text-zinc-300">
@@ -461,135 +442,56 @@ function TokenHelp(): JSX.Element {
   );
 }
 
-/** Create (no `runner`) or edit. The local runner hides endpoint + token. */
+/** Hoisted so the settings page normalizes endpoints identically. */
+export function normalizeEndpoint(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
+}
+
+/**
+ * Add-machine flow: just the connection handshake (name, endpoint, token,
+ * ownership). Everything else — placement, capacity, tasks, model pins —
+ * lives on the machine's own settings page, opened right after it connects.
+ */
 function RunnerModal({
-  runner,
   admin,
-  tasks,
-  workspaces,
   onClose,
-  onDone,
+  onCreated,
 }: {
-  runner?: RunnerRecord;
   admin: boolean;
-  tasks: readonly RunTaskDescriptor[];
-  workspaces: readonly WorkspaceRecord[];
   onClose: () => void;
-  onDone: () => void;
+  onCreated: (id: string) => void;
 }): JSX.Element {
-  const local = runner?.kind === 'local';
-  const [name, setName] = useState(runner?.name ?? '');
-  const [endpoint, setEndpoint] = useState(runner?.endpoint ?? '');
+  const [name, setName] = useState('');
+  const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   // Ownership is set at creation and immutable after: admins choose shared vs
   // personal; everyone else's machine is personal by definition.
   const [shared, setShared] = useState(admin);
-  const [scope, setScope] = useState<RunnerScope>(runner?.scope ?? 'shared');
-  const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>(runner?.workspaceIds ?? []);
-  const [maxRuns, setMaxRuns] = useState(String(runner?.maxRuns ?? 3));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Model pins + the runner's catalog. For a new runner the catalog only exists
-  // after it's created (and probed), so the Add flow is create-then-pin: the
-  // first submit connects, then the pins section appears for the saved runner.
-  const [modelPins, setModelPins] = useState<RunnerModelPins>(runner?.modelPins ?? {});
-  const [blockedTasks, setBlockedTasks] = useState<readonly string[]>(runner?.blockedTasks ?? []);
-  const [catalog, setCatalog] = useState<RunnerCatalog | null>(runner?.catalog ?? null);
-  const [savedId, setSavedId] = useState<string | null>(runner?.id ?? null);
-  const [testing, setTesting] = useState(false);
-  const [testNote, setTestNote] = useState<string | null>(null);
-
-  const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
-  const capacity = Number(maxRuns);
-
-  const normalizeEndpoint = (raw: string): string => {
-    const trimmed = raw.trim();
-    return trimmed && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
-  };
-
-  const connectionBody = (): UpdateRunnerRequest => ({
-    name: name.trim(),
-    scope,
-    workspaceIds: scope === 'delegated' ? workspaceIds : [],
-    maxRuns: capacity,
-    modelPins,
-    blockedTasks,
-    ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
-  });
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    if (delegatedEmpty) {
-      setError('A delegated runner needs at least one workspace.');
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      if (savedId) {
-        // Existing runner (edit, or the second save of a just-added one).
-        await api.updateRunner(savedId, connectionBody());
-        onDone();
-      } else {
-        // First save of a new runner: create + probe, then reveal the pins.
-        const { runner: made } = await api.createRunner({
-          name: name.trim(),
-          endpoint: normalizeEndpoint(endpoint),
-          token: token.trim(),
-          shared: admin && shared,
-          scope,
-          workspaceIds: scope === 'delegated' ? workspaceIds : [],
-          maxRuns: capacity,
-          ...(blockedTasks.length ? { blockedTasks } : {}),
-        });
-        setSavedId(made.id);
-        setCatalog(made.catalog);
-        setModelPins(made.modelPins);
-        setBlockedTasks(made.blockedTasks);
-        setTestNote(
-          made.catalog && made.catalog.providers.some((p) => p.ready)
-            ? 'Connected — pin models per action below, or leave them on the runner default.'
-            : 'Connected, but no provider with credentials was found on this machine. Configure a provider there, then fetch models.',
-        );
-        setBusy(false);
-      }
+      const { runner: made } = await api.createRunner({
+        name: name.trim(),
+        endpoint: normalizeEndpoint(endpoint),
+        token: token.trim(),
+        shared: admin && shared,
+      });
+      onCreated(made.id);
     } catch (err) {
       setError(String(err));
       setBusy(false);
     }
   };
 
-  // Probe the runner and pull its model catalog into the pin dropdowns. Doubles
-  // as a reachability check — the note reports what came back (or why nothing did).
-  const fetchModels = async (): Promise<void> => {
-    if (!savedId) return;
-    setTesting(true);
-    setTestNote(null);
-    setError(null);
-    try {
-      const result = await api.probeRunner(savedId);
-      setCatalog(result.catalog);
-      const ready = (result.catalog?.providers ?? []).filter((p) => p.ready);
-      const modelCount = new Set(ready.flatMap((p) => p.models.map((m) => m.id))).size;
-      setTestNote(
-        !result.ok
-          ? (result.health.detail ?? 'unreachable')
-          : modelCount > 0
-            ? `${modelCount} model${modelCount === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'}.`
-            : 'Reachable, but no provider with credentials was found on this machine.',
-      );
-    } catch (err) {
-      setTestNote(String(err));
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
-    <Modal wide={!!savedId} title={runner ? `Edit ${runner.name}` : 'Add machine'} onClose={onClose}>
-      <form className="flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
-        <div className={savedId ? 'grid gap-x-6 gap-y-3 md:grid-cols-2' : 'flex flex-col gap-3'}>
-          <div className="flex flex-col gap-3">
+    <Modal title="Add machine" onClose={onClose}>
+      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Field label="Name">
           <input
             className="input"
@@ -601,156 +503,68 @@ function RunnerModal({
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
-
-        {local ? null : (
-          <>
-            <Field
-              label="Endpoint — companion-runner agent address"
-              hint={
-                <>
-                  Plain <code className="code-inline">host:port</code> or <code className="code-inline">ip:port</code>{' '}
-                  works — http is assumed unless you write <code className="code-inline">https://</code>.
-                </>
-              }
-            >
-              <input
-                className="input"
-                type="text"
-                required
-                placeholder="192.168.1.42:8920"
-                value={endpoint}
-                onChange={(e) => setEndpoint(e.target.value)}
-              />
-            </Field>
-            <Field label="Bearer token">
-              <input
-                className="input"
-                type="password"
-                required={!runner}
-                placeholder={runner?.hasToken ? 'leave blank to keep current' : undefined}
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-              <TokenHelp />
-            </Field>
-          </>
-        )}
-
-        {!runner ? (
-          admin ? (
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="dim mb-1 text-sm">Ownership</legend>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input type="radio" name="ownership" checked={shared} onChange={() => setShared(true)} />
-                Shared
-                <span className="dim text-xs">— part of the instance pool, any eligible run lands here</span>
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input type="radio" name="ownership" checked={!shared} onChange={() => setShared(false)} />
-                Personal
-                <span className="dim text-xs">— only runs you trigger land here, on this machine's subscription</span>
-              </label>
-            </fieldset>
-          ) : (
-            <p className="dim text-xs">
-              This machine is yours: only agent runs you trigger are placed on it, using the model providers configured
-              there — your subscription, your keys.
-            </p>
-          )
-        ) : null}
-
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className="dim mb-1 text-sm">Availability</legend>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="radio" name="scope" checked={scope === 'shared'} onChange={() => setScope('shared')} />
-            Shared
-            <span className="dim text-xs">— any workspace can place work here</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="radio" name="scope" checked={scope === 'delegated'} onChange={() => setScope('delegated')} />
-            Delegated
-            <span className="dim text-xs">— only the workspaces picked below</span>
-          </label>
-        </fieldset>
-
-        {scope === 'delegated' ? (
-          <fieldset className="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-            <legend className="dim px-1">Workspaces</legend>
-            {workspaces.length === 0 ? <span className="dim">No workspaces found.</span> : null}
-            {workspaces.map((w) => (
-              <label key={w.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={workspaceIds.includes(w.id)}
-                  onChange={(e) =>
-                    setWorkspaceIds((prev) =>
-                      e.target.checked ? [...prev, w.id] : prev.filter((id) => id !== w.id),
-                    )
-                  }
-                />
-                {w.name}
-              </label>
-            ))}
-          </fieldset>
-        ) : null}
-
-        <Field label="Max concurrent runs">
+        <Field
+          label="Endpoint — companion-runner agent address"
+          hint={
+            <>
+              Plain <code className="code-inline">host:port</code> or <code className="code-inline">ip:port</code>{' '}
+              works — http is assumed unless you write <code className="code-inline">https://</code>.
+            </>
+          }
+        >
           <input
-            className="input w-28"
-            type="number"
-            min={1}
-            max={99}
+            className="input"
+            type="text"
             required
-            value={maxRuns}
-            onChange={(e) => setMaxRuns(e.target.value)}
+            placeholder="192.168.1.42:8920"
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
           />
         </Field>
-
-        <TasksEditor tasks={tasks} blocked={blockedTasks} onChange={setBlockedTasks} />
-          </div>
-
-        {/* Model pins fill the second column once the runner exists and is probed. */}
-        {savedId ? (
-          <fieldset className="flex flex-col gap-2 border-t border-zinc-200 pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-6 dark:border-zinc-800">
-            <div className="flex items-center justify-between">
-              <legend className="text-sm font-medium">Model pins</legend>
-              <button type="button" className="btn-ghost" disabled={testing} onClick={() => void fetchModels()}>
-                {testing ? 'Fetching…' : 'Fetch models'}
-              </button>
-            </div>
-            <p className="dim text-xs">
-              Bind each action to a model this machine can serve. Unpinned actions ride its own default.
-            </p>
-            {testNote ? <p className="dim text-xs">{testNote}</p> : null}
-            <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
+        <Field label="Bearer token">
+          <input
+            className="input"
+            type="password"
+            required
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <TokenHelp />
+        </Field>
+        {admin ? (
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="dim mb-1 text-sm">Ownership</legend>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="radio" name="ownership" checked={shared} onChange={() => setShared(true)} />
+              Shared
+              <span className="dim text-xs">— part of the instance pool, any eligible run lands here</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="radio" name="ownership" checked={!shared} onChange={() => setShared(false)} />
+              Personal
+              <span className="dim text-xs">— only runs you trigger land here, on this machine's subscription</span>
+            </label>
           </fieldset>
-        ) : null}
-        </div>
-
+        ) : (
+          <p className="dim text-xs">
+            This machine is yours: only agent runs you trigger are placed on it, using the model providers configured
+            there — your subscription, your keys.
+          </p>
+        )}
+        <p className="dim text-xs">
+          Once connected you land on the machine's page to scope it, pick its tasks, and pin models.
+        </p>
         <ErrorBar error={error} />
         <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
-            {savedId && !runner ? 'Done' : 'Cancel'}
+            Cancel
           </button>
           <button
             className="btn"
             type="submit"
-            disabled={
-              busy ||
-              name.trim().length < 2 ||
-              delegatedEmpty ||
-              !(capacity >= 1) ||
-              (!local && !endpoint.trim()) ||
-              (!savedId && !token.trim())
-            }
+            disabled={busy || name.trim().length < 2 || !endpoint.trim() || !token.trim()}
           >
-            {busy
-              ? savedId
-                ? 'Saving…'
-                : 'Connecting…'
-              : savedId
-                ? 'Save'
-                : 'Connect & continue'}
+            {busy ? 'Connecting…' : 'Connect'}
           </button>
         </FormActions>
       </form>
@@ -765,7 +579,7 @@ function RunnerModal({
  * on the daemon's machine regardless (until one-shots learn to place). A
  * blocked id with no descriptor (its module is disabled) stays removable.
  */
-function TasksEditor({
+export function TasksEditor({
   tasks,
   blocked,
   onChange,
@@ -830,7 +644,7 @@ const PIN_LABELS: Record<RunnerPinnableKind, string> = {
 };
 
 /** Per-action model dropdowns, options drawn from the runner's ready models. */
-function ModelPinsEditor({
+export function ModelPinsEditor({
   catalog,
   pins,
   onChange,

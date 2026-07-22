@@ -14,6 +14,17 @@ export const routes = defineClientRoutes([
     }),
   },
   {
+    // Must precede the /runners prefix match, like /runs/:id above.
+    match: { regex: /^\/runners\/([A-Za-z0-9_-]+)$/, params: (m) => ({ id: m[1]! }) },
+    permission: 'runners:connect',
+    component: lazyView(async () => {
+      const { RunnerSettingsPage } = await import('./pages/RunnerSettings.js');
+      return {
+        default: ({ params }: RouteProps): JSX.Element => <RunnerSettingsPage key={params.id} id={params.id!} />,
+      };
+    }),
+  },
+  {
     match: { prefix: '/runners' },
     permission: 'runners:connect',
     component: page(() => import('./pages/Runners.js').then((m) => m.RunnersPage)),
