@@ -7,6 +7,8 @@ import type {
   AgentHistoryResponse,
   AgentScratchResponse,
   AgentSessionInfoResponse,
+  AgentStorageCleanupRequest,
+  AgentStorageCleanupResponse,
   AgentWorktreeResponse,
   AgentCloneStatusResponse,
   AskResponse,
@@ -242,6 +244,11 @@ export class RemoteRunnerBackend implements RunnerBackend {
   }
   async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
     await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo, username)) });
+  }
+
+  cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse> {
+    // Removing dependency-heavy worktrees can take minutes on slower disks.
+    return this.call<AgentStorageCleanupResponse>('POST', '/storage/cleanup', request, 10 * 60_000);
   }
 
   /** Every remote network operation carries the run owner's verified token;

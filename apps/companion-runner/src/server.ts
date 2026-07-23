@@ -22,6 +22,8 @@ import {
   type AgentScratchResponse,
   type AgentSessionInfoResponse,
   type AgentSpawnRequest,
+  type AgentStorageCleanupRequest,
+  type AgentStorageCleanupResponse,
   type AgentUpdateMoxxyResult,
   type AgentWorktreeAtRequest,
   type AgentWorktreeRequest,
@@ -34,7 +36,7 @@ import { configuredProviderNames } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
-import { loadHistoryWithFallback, upgradeMoxxyCli } from '@companion/module-operate/exec';
+import { cleanupRunnerStorage, loadHistoryWithFallback, upgradeMoxxyCli } from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**
@@ -210,6 +212,15 @@ async function route(
     const cwd = join(paths.scratch(), safeId(runId));
     mkdirSync(cwd, { recursive: true });
     return { cwd } satisfies AgentScratchResponse;
+  }
+
+  if (method === 'POST' && path === '/agent/storage/cleanup') {
+    const request = storageCleanupRequest(body);
+    return (await cleanupRunnerStorage(
+      request,
+      deps.checkouts,
+      deps.pool.liveIds(),
+    )) satisfies AgentStorageCleanupResponse;
   }
 
   if (method === 'POST' && path === '/agent/files/write') {
@@ -426,6 +437,36 @@ function requireMethod(method: string, expected: string, action: string): void {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0) throw badRequest(`missing ${name}`);
   return value;
+}
+
+function storageCleanupRequest(value: unknown): AgentStorageCleanupRequest {
+  if (!value || typeof value !== 'object') throw badRequest('invalid storage cleanup request');
+  const raw = value as Record<string, unknown>;
+  const duration = (key: string): number => {
+    const candidate = raw[key];
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate <= 0) {
+      throw badRequest(`${key} must be a positive number`);
+    }
+    return candidate;
+  };
+  if (!Array.isArray(raw.runs) || raw.runs.length > 10_000) throw badRequest('runs must be a bounded array');
+  const runs = raw.runs.map((candidate, index) => {
+    if (!candidate || typeof candidate !== 'object') throw badRequest(`runs[${index}] is invalid`);
+    const run = candidate as Record<string, unknown>;
+    if (typeof run.runId !== 'string' || !run.runId.trim()) throw badRequest(`runs[${index}].runId is invalid`);
+    if (typeof run.cwd !== 'string') throw badRequest(`runs[${index}].cwd is invalid`);
+    if (typeof run.updatedAt !== 'number' || !Number.isFinite(run.updatedAt)) {
+      throw badRequest(`runs[${index}].updatedAt is invalid`);
+    }
+    if (typeof run.protected !== 'boolean') throw badRequest(`runs[${index}].protected is invalid`);
+    return { runId: run.runId, cwd: run.cwd, updatedAt: run.updatedAt, protected: run.protected };
+  });
+  return {
+    worktreeRetentionMs: duration('worktreeRetentionMs'),
+    scratchRetentionMs: duration('scratchRetentionMs'),
+    sessionRetentionMs: duration('sessionRetentionMs'),
+    runs,
+  };
 }
 
 function clampInt(raw: string | null, fallback: number, max: number): number {

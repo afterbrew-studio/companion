@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { AgentStorageRunLease } from '@companion/types';
 import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -54,6 +55,25 @@ export class RunsStore {
     return this.db
       .prepare(`SELECT * FROM runs ORDER BY created_at DESC LIMIT ?`)
       .all(limit) as RunRow[];
+  }
+
+  /** Bounded runner artifact lease set: active/review rows are always included;
+   * recent terminal rows carry their logical last-use time into filesystem
+   * retention. Older rows can be treated as unleased stale artifacts. */
+  storageLeasesForRunner(runnerId: string | null, since: number): AgentStorageRunLease[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, cwd, status, updated_at FROM runs
+         WHERE runner_id IS ?
+           AND (updated_at >= ? OR status IN ('provisioning', 'running', 'idle', 'review'))`,
+      )
+      .all(runnerId, since) as Array<Pick<RunRow, 'id' | 'cwd' | 'status' | 'updated_at'>>;
+    return rows.map((row) => ({
+      runId: row.id,
+      cwd: row.cwd,
+      updatedAt: row.updated_at,
+      protected: row.status === 'provisioning' || row.status === 'running' || row.status === 'idle' || row.status === 'review',
+    }));
   }
 
   /**

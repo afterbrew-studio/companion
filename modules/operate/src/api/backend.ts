@@ -1,4 +1,13 @@
-import type { AskRequest, AskResponse, HistorySegment, MoxxyEvent, RunTurnArgs, RunTurnResult } from '@companion/types';
+import type {
+  AgentStorageCleanupRequest,
+  AgentStorageCleanupResponse,
+  AskRequest,
+  AskResponse,
+  HistorySegment,
+  MoxxyEvent,
+  RunTurnArgs,
+  RunTurnResult,
+} from '@companion/types';
 import type { RunnerHealth } from '../contract/index.js';
 
 /**
@@ -54,6 +63,9 @@ export interface RunnerBackend {
   diffVsBase(cwd: string, baseBranch: string): Promise<string>;
   commitAll(cwd: string, message: string): Promise<void>;
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void>;
+
+  /** Enforce daemon-owned retention inside this runner's managed roots. */
+  cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse>;
 }
 
 /** The event sink a backend feeds — one shared instance drives the orchestrator. */

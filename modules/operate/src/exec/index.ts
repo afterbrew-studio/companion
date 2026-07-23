@@ -10,3 +10,4 @@ export * from './gateway-pool.js';
 export * from './history.js';
 export * from './home.js';
 export * from './checkouts.js';
+export * from './storage-cleanup.js';
