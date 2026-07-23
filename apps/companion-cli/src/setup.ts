@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnvFile } from '@companion/services';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const DEFAULT_EMAIL = 'admin@companion.local';
+const PENDING_SETUP_FILE = 'pending-admin-setup.json';
 
 export interface AdminSetup {
   readonly username: string;
@@ -43,6 +44,7 @@ export function validatePassword(value: string): true | string {
 export function setupExists(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.COMPANION_ADMIN_USER?.trim() && env.COMPANION_ADMIN_PASSWORD) return true;
   if (existsSync(join(home, 'companion.db'))) return true;
+  if (existsSync(join(home, PENDING_SETUP_FILE))) return true;
   const file = join(home, '.env');
   if (!existsSync(file)) return false;
   const raw = readFileSync(file, 'utf8');
@@ -51,33 +53,56 @@ export function setupExists(home: string, env: NodeJS.ProcessEnv = process.env):
 
 /** Credentials are needed once to authenticate the bootstrap API request. */
 export function readAdminSetup(home: string, env: NodeJS.ProcessEnv = process.env): AdminSetup | null {
+  const pending = readPendingAdminSetup(home);
   const file = join(home, '.env');
   const stored = parseEnvFile(file);
-  const username = env.COMPANION_ADMIN_USER?.trim() || stored.COMPANION_ADMIN_USER?.trim();
-  const email = env.COMPANION_ADMIN_EMAIL?.trim() || stored.COMPANION_ADMIN_EMAIL?.trim() || DEFAULT_EMAIL;
-  const password = env.COMPANION_ADMIN_PASSWORD || stored.COMPANION_ADMIN_PASSWORD;
+  const username = env.COMPANION_ADMIN_USER?.trim() || pending?.username || stored.COMPANION_ADMIN_USER?.trim();
+  const email =
+    env.COMPANION_ADMIN_EMAIL?.trim() || pending?.email || stored.COMPANION_ADMIN_EMAIL?.trim() || DEFAULT_EMAIL;
+  const password = env.COMPANION_ADMIN_PASSWORD || pending?.password || stored.COMPANION_ADMIN_PASSWORD;
   if (!username || !password) return null;
   return { username, email, password, generatedPassword: false };
 }
 
-/** Preserve unrelated settings while replacing any partial admin seed. */
-export function writeAdminSetup(home: string, setup: AdminSetup): string {
+/** Store credentials only until the first successful daemon boot. */
+export function writePendingAdminSetup(home: string, setup: AdminSetup): string {
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  const file = join(home, '.env');
-  const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  const retained = existing
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*COMPANION_ADMIN_(USER|EMAIL|PASSWORD)\s*=/.test(line))
-    .join('\n')
-    .trimEnd();
-  const admin = [
-    `COMPANION_ADMIN_USER=${JSON.stringify(setup.username)}`,
-    `COMPANION_ADMIN_EMAIL=${JSON.stringify(setup.email)}`,
-    `COMPANION_ADMIN_PASSWORD=${JSON.stringify(setup.password)}`,
-  ].join('\n');
-  writeFileSync(file, `${retained ? `${retained}\n\n` : ''}${admin}\n`, { mode: 0o600 });
+  const file = join(home, PENDING_SETUP_FILE);
+  writeFileSync(
+    file,
+    `${JSON.stringify({ username: setup.username, email: setup.email, password: setup.password }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
   chmodSync(file, 0o600);
   return file;
+}
+
+export function readPendingAdminSetup(home: string): AdminSetup | null {
+  const file = join(home, PENDING_SETUP_FILE);
+  if (!existsSync(file)) return null;
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8')) as Partial<AdminSetup>;
+    if (typeof value.username !== 'string' || typeof value.email !== 'string' || typeof value.password !== 'string') {
+      return null;
+    }
+    return { username: value.username, email: value.email, password: value.password, generatedPassword: false };
+  } catch {
+    return null;
+  }
+}
+
+/** Pass the pending seed in memory to the daemon config loader. */
+export function applyPendingAdminSetup(home: string): AdminSetup | null {
+  const setup = readPendingAdminSetup(home);
+  if (!setup) return null;
+  process.env.COMPANION_ADMIN_USER = setup.username;
+  process.env.COMPANION_ADMIN_EMAIL = setup.email;
+  process.env.COMPANION_ADMIN_PASSWORD = setup.password;
+  return setup;
+}
+
+export function consumePendingAdminSetup(home: string): void {
+  rmSync(join(home, PENDING_SETUP_FILE), { force: true });
 }
 
 export function renderSetupBox(setup: AdminSetup, home: string, url: string): string {

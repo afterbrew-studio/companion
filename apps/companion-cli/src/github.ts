@@ -9,13 +9,18 @@ interface PendingGhImport {
   readonly login: string;
 }
 
+export interface CompanionCredentials {
+  readonly username: string;
+  readonly password: string;
+}
+
 /** Active github.com identity from gh's local auth metadata. Never reads the token. */
 export function detectGhLogin(): string | null {
   try {
     const raw = execFileSync(
       'gh',
       ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 },
     );
     return parseGhLogin(raw);
   } catch {
@@ -66,17 +71,28 @@ export function pendingGhLogin(home: string): string | null {
 export async function importPendingGhAccount(home: string, baseUrl: string, admin: AdminSetup): Promise<string | null> {
   const expected = pendingGhLogin(home);
   if (!expected) return null;
+  const active = await connectGhAccount(baseUrl, admin, expected);
+  rmSync(join(home, PENDING_FILE), { force: true });
+  return active;
+}
+
+/** Connect the active gh identity to the authenticated Companion user. */
+export async function connectGhAccount(
+  baseUrl: string,
+  credentials: CompanionCredentials,
+  expectedLogin?: string,
+): Promise<string> {
   const active = detectGhLogin();
-  if (!active) throw new Error('GitHub import is pending, but gh is no longer authenticated for github.com.');
-  if (active !== expected) {
-    throw new Error(`GitHub import expects gh account ${expected}, but ${active} is active. Switch accounts or remove ${join(home, PENDING_FILE)}.`);
+  if (!active) throw new Error('gh is not authenticated for github.com. Run `gh auth login` and retry.');
+  if (expectedLogin && active !== expectedLogin) {
+    throw new Error(`GitHub import expects gh account ${expectedLogin}, but ${active} is active. Switch accounts and retry.`);
   }
 
   const token = readGhToken();
   const login = await requestJson<{ token: string }>(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: admin.username, password: admin.password }),
+    body: JSON.stringify({ username: credentials.username, password: credentials.password }),
   });
   const authorization = `Bearer ${login.token}`;
   try {
@@ -94,7 +110,6 @@ export async function importPendingGhAccount(home: string, baseUrl: string, admi
       });
     }
     if (!response.ok) throw new Error(await responseError(response, 'Companion rejected the GitHub account.'));
-    rmSync(join(home, PENDING_FILE), { force: true });
     return active;
   } finally {
     await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: { authorization } }).catch(() => undefined);
@@ -106,6 +121,7 @@ function readGhToken(): string {
     const token = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
     }).trim();
     if (!token) throw new Error('empty token');
     return token;
