@@ -13,8 +13,9 @@ import type { GithubAccountRow } from './github-accounts-store.js';
 
 /**
  * Optional resolution context. `username` overrides the request-scoped invoker;
- * `workspaceId` stands in for the repo's workspace when the repo row doesn't
- * exist yet (adding a repository).
+ * `workspaceId` explicitly selects the target workspace. This matters while
+ * adding a repo that is already connected elsewhere: account eligibility must
+ * be checked against the requested destination, not the existing connection.
  */
 type ResolveCtx = { repo?: string; accountId?: string; username?: string | null; workspaceId?: string };
 
@@ -310,7 +311,7 @@ export class GitHubAccounts {
   private candidatesFor(purpose: GitHubPurpose, ctx?: ResolveCtx): GithubAccountRow[] {
     const rows = this.store.githubAccounts.list();
     const repoRow = ctx?.repo ? this.store.repos.get(ctx.repo) : undefined;
-    const workspaceId = repoRow?.workspace_id ?? ctx?.workspaceId ?? null;
+    const workspaceId = ctx?.workspaceId ?? repoRow?.workspace_id ?? null;
     // An explicit null means system-owned work and must not inherit a request
     // that happened to enqueue it. Omission alone falls back to the invoker.
     const username = ctx && 'username' in ctx ? ctx.username : (currentUser()?.username ?? null);

@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { z } from 'zod';
-import { defineRoutes, route, created, accepted, notFound, badRequest, forbidden } from '@companion/core/server';
+import { defineRoutes, route, created, accepted, notFound, badRequest, forbidden, HttpError } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -317,6 +317,7 @@ export default defineRoutes((ctx) => {
         // accounts delegated to it compete, access-verified when several could act.
         const { row: account, tried } = await code.githubAccounts.verifiedRowFor('fetch', body.fullName, {
           workspaceId: body.workspaceId,
+          username: user?.username ?? null,
         });
         if (!account) {
           throw badRequest(
@@ -335,6 +336,13 @@ export default defineRoutes((ctx) => {
             );
           }
           throw err;
+        }
+        const existing = code.repos.get(meta.full_name);
+        if (existing && existing.workspace_id !== body.workspaceId) {
+          throw new HttpError(
+            409,
+            `${meta.full_name} is already connected to another workspace — ask someone with access to transfer it or add you to that workspace`,
+          );
         }
         code.repos.upsert({
           fullName: meta.full_name,
