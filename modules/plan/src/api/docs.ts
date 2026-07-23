@@ -280,6 +280,7 @@ export class Docs {
   async generate(
     workspaceId: string,
     opts: { repo?: string; instructions: string; storage?: AreaStorage },
+    userId: string,
   ): Promise<DocRecord> {
     let cwd: string | null = null;
     if (opts.repo) {
@@ -296,6 +297,7 @@ export class Docs {
       // The orchestrator mkdirs whatever cwd it gets.
       cwd: cwd ?? join(paths.scratch(), 'docs'),
       repo: opts.repo ?? null,
+      userId: opts.repo ? userId : null,
       prompt: generatePrompt(opts.instructions, Boolean(cwd)),
       timeoutMs: 8 * 60_000,
     });

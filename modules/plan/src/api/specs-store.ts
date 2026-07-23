@@ -8,8 +8,8 @@ export class SpecsStore {
   insert(s: SpecRecord): void {
     this.db
       .prepare(
-        `INSERT INTO specs (id, repo, title, content, status, source, storage, path, generate_run_id, drift_note, created_at, updated_at)
-         VALUES (@id, @repo, @title, @content, @status, @source, @storage, @path, @generateRunId, @driftNote, @createdAt, @updatedAt)`,
+        `INSERT INTO specs (id, workspace_id, repo, title, content, status, source, storage, path, generate_run_id, drift_note, created_at, updated_at)
+         VALUES (@id, @workspaceId, @repo, @title, @content, @status, @source, @storage, @path, @generateRunId, @driftNote, @createdAt, @updatedAt)`,
       )
       .run({ ...s });
   }
@@ -59,10 +59,14 @@ export class SpecsStore {
   listWorkspace(workspaceId: string): SpecRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT s.* FROM specs s JOIN repos r ON r.full_name = s.repo
-         WHERE r.workspace_id = ? ORDER BY s.updated_at DESC`,
+        `SELECT * FROM specs WHERE workspace_id = ? ORDER BY updated_at DESC`,
       )
       .all(workspaceId) as SpecRow[];
+    return rows.map(specRowToRecord);
+  }
+
+  listRepo(repo: string): SpecRecord[] {
+    const rows = this.db.prepare(`SELECT * FROM specs WHERE repo = ? ORDER BY updated_at DESC`).all(repo) as SpecRow[];
     return rows.map(specRowToRecord);
   }
 
@@ -77,6 +81,7 @@ export class SpecsStore {
 
 interface SpecRow {
   id: string;
+  workspace_id: string;
   repo: string;
   title: string;
   content: string;
@@ -93,6 +98,7 @@ interface SpecRow {
 function specRowToRecord(row: SpecRow): SpecRecord {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     repo: row.repo,
     title: row.title,
     content: row.content,

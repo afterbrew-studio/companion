@@ -5,6 +5,7 @@ import type { RefineMethodRecord } from '../contract/index.js';
 import '../contract/index.js';
 
 const createSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
   branch: z.string().max(200).optional(),
   title: z.string().trim().min(3).max(200),
@@ -51,7 +52,7 @@ export default defineRoutes((ctx) => {
   /** A refinement in a workspace the caller can't reach reads as "not found". */
   const requireRefinement = (user: AuthUser | null, id: string) => {
     const detail = refinement.get(id);
-    if (!detail || !user || !workspace.canAccessRepo(user, detail.refinement.repo)) {
+    if (!detail || !user || !workspace.canAccessWorkspace(user, detail.refinement.workspaceId)) {
       throw notFound('refinement not found');
     }
     return detail;
@@ -91,7 +92,9 @@ export default defineRoutes((ctx) => {
       access: 'refine:manage',
       body: createSchema,
       handler: ({ body, user }) => {
-        if (!user || !workspace.canAccessRepo(user, body.repo)) throw notFound(`repo ${body.repo} not connected`);
+        if (!user || !workspace.canAccessWorkspace(user, body.workspaceId)) {
+          throw notFound(`workspace ${body.workspaceId} not found`);
+        }
         try {
           return created({ refinement: refinement.create(body) });
         } catch (err) {
@@ -149,7 +152,7 @@ export default defineRoutes((ctx) => {
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
-        void refinement.runDecompose(params.id, method).catch(() => undefined);
+        void refinement.runDecompose(params.id, method, user!.username).catch(() => undefined);
         return accepted({ queued: true });
       },
     }),

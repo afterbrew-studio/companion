@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dropdown } from '@companion/ui';
+import { Dropdown, Tooltip } from '@companion/ui';
 import type { RepoBranchRecord } from '../../contract/index.js';
 import { codeApi } from '../api.js';
 
 /** Searchable selector for an existing remote branch of a connected repo. */
 export function BranchPicker({
   repo,
+  workspaceId,
   value,
   onChange,
   defaultBranch,
@@ -14,6 +15,7 @@ export function BranchPicker({
   ariaLabel = 'Branch',
 }: {
   repo: string | null;
+  workspaceId: string;
   value: string;
   onChange: (branch: string) => void;
   defaultBranch?: string;
@@ -34,7 +36,7 @@ export function BranchPicker({
     if (!repo) return;
     let cancelled = false;
     void codeApi
-      .repoBranches(repo)
+      .repoBranches(repo, workspaceId)
       .then((result) => {
         if (cancelled) return;
         setBranches(result.branches);
@@ -49,7 +51,7 @@ export function BranchPicker({
     return () => {
       cancelled = true;
     };
-  }, [repo]);
+  }, [repo, workspaceId]);
 
   const effectiveDefault = remoteDefault ?? defaultBranch ?? null;
   const options = useMemo(() => {
@@ -70,7 +72,10 @@ export function BranchPicker({
       });
   }, [branches, effectiveDefault, value]);
 
-  return (
+  const unavailable = failed
+    ? 'Could not load branches from GitHub. Check that your GitHub account has access to this repository.'
+    : null;
+  const picker = (
     <div className={compact ? 'w-52 min-w-0' : 'min-w-0'}>
       <Dropdown
         ariaLabel={ariaLabel}
@@ -80,14 +85,20 @@ export function BranchPicker({
         placeholder={loading ? 'Loading branches…' : 'Select branch…'}
         searchable
         maxVisible={100}
-        disabled={disabled || !repo}
+        disabled={disabled || !repo || failed}
         triggerClassName={
           compact
             ? 'flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-left font-mono text-xs transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
             : undefined
         }
       />
-      {failed ? <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">Could not refresh branches from GitHub.</p> : null}
     </div>
+  );
+  return unavailable ? (
+    <Tooltip content={unavailable} className={compact ? 'w-52 min-w-0' : 'block min-w-0'}>
+      {picker}
+    </Tooltip>
+  ) : (
+    picker
   );
 }

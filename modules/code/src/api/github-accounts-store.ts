@@ -2,9 +2,8 @@ import type Database from 'better-sqlite3';
 import type { GitHubAccountScope, GitHubPurpose } from '../contract/index.js';
 
 /**
- * Connected GitHub accounts (PATs) and what each one is used for. Workspace
- * delegation lives in a side table so an account can serve many workspaces
- * (and vice versa), mirroring runner delegation.
+ * Personal GitHub accounts (PATs) and what each owner uses them for. Workspace
+ * selection lives in a side table; it never grants another profile access.
  */
 export class GithubAccountsStore {
   constructor(private readonly db: Database.Database) {}
@@ -35,7 +34,7 @@ export class GithubAccountsStore {
       login: string;
       token: string;
       purposes: string;
-      scope: GitHubAccountScope;
+      scope: GitHubAccountScope | 'shared' | 'delegated';
       owner_id: string | null;
       created_at: number;
     }>;
@@ -44,8 +43,9 @@ export class GithubAccountsStore {
       login: r.login,
       token: r.token,
       purposes: JSON.parse(r.purposes) as GitHubPurpose[],
-      scope: r.scope,
-      workspaceIds: r.scope === 'delegated' ? this.workspaceIds(r.id) : [],
+      // Normalize pre-personal-account values without a destructive migration.
+      scope: r.scope === 'delegated' || r.scope === 'selected' ? 'selected' : 'all',
+      workspaceIds: r.scope === 'delegated' || r.scope === 'selected' ? this.workspaceIds(r.id) : [],
       ownerId: r.owner_id,
       createdAt: r.created_at,
     }));
@@ -101,7 +101,7 @@ export class GithubAccountsStore {
     this.db.prepare(`DELETE FROM github_accounts WHERE id = ?`).run(id);
   }
 
-  /** Logins of the connected GitHub accounts — the identity behind "__me" filters. */
+  /** Legacy broad helper; request routes pass the current profile's logins explicitly. */
   logins(): string[] {
     return this.list().map((a) => a.login);
   }

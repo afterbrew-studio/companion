@@ -4,6 +4,19 @@ import { defineRoutes, route, created, notFound, badRequest, forbidden } from '@
 import type { AuthUser } from '@companion/contracts';
 import type { WorkspaceRecord } from '../contract/index.js';
 
+type CodeReportAccess = {
+  readonly repos: {
+    listByWorkspace(workspaceId: string): Array<{ readonly full_name: string }>;
+  };
+  readonly githubAccounts: {
+    verifiedClientFor(
+      purpose: 'fetch',
+      repo: string,
+      ctx: { readonly username: string; readonly workspaceId?: string },
+    ): Promise<{ readonly client: unknown | null }>;
+  };
+};
+
 const workspaceSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(500).default(''),
@@ -27,6 +40,32 @@ export default defineRoutes((ctx) => {
   const auth = ctx.services.get('core');
   const notifications = ctx.services.get('notifications');
   const reports = ctx.services.get('reports');
+  // workspace cannot depend on code (code already depends on workspace), but
+  // report visibility still needs code's personal-GitHub access boundary at
+  // request time. Keep the reverse lookup narrow and fail closed if the code
+  // module is disabled or unavailable.
+  const codeAccess = (): CodeReportAccess | null =>
+    (((ctx.services.tryGet.bind(ctx.services) as (key: string) => unknown)('code') as CodeReportAccess | undefined) ??
+      null);
+  const accessibleRepos = async (username: string, workspaceId: string): Promise<string[]> => {
+    const code = codeAccess();
+    if (!code) return [];
+    const rows = code.repos.listByWorkspace(workspaceId);
+    const access = await Promise.all(
+      rows.map(async ({ full_name }) => {
+        try {
+          const { client } = await code.githubAccounts.verifiedClientFor('fetch', full_name, {
+            username,
+            workspaceId,
+          });
+          return client ? full_name : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return access.filter((repo): repo is string => repo !== null);
+  };
 
   // Access gate: a private workspace the user isn't in reads as "not found" —
   // membership is hidden, so its existence is too. Platform role never bypasses it.
@@ -194,9 +233,10 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/metrics',
       access: 'workspaces:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
-        return { metrics: workspaces.metrics(params.id) };
+        const repos = await accessibleRepos(user!.username, params.id);
+        return { metrics: workspaces.metrics(params.id, 12, repos) };
       },
     }),
 
@@ -206,9 +246,27 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/notifications',
       access: 'workspaces:read',
-      handler: ({ query, user }) => {
+      handler: async ({ query, user }) => {
         const s = scope(user, query.get('workspace'));
-        return { notifications: notifications.list(s.workspaceId, 100, s.accessibleIds) };
+        const items = notifications.list(s.workspaceId, 100, s.accessibleIds);
+        const code = codeAccess();
+        if (!code) return { notifications: items.filter((item) => item.repo === null) };
+        const checks = new Map<string, Promise<boolean>>();
+        const visible = await Promise.all(
+          items.map(async (item) => {
+            if (!item.repo) return true;
+            let check = checks.get(item.repo);
+            if (!check) {
+              check = code.githubAccounts
+                .verifiedClientFor('fetch', item.repo, { username: user!.username })
+                .then(({ client }) => client !== null)
+                .catch(() => false);
+              checks.set(item.repo, check);
+            }
+            return check;
+          }),
+        );
+        return { notifications: items.filter((_, index) => visible[index]) };
       },
     }),
 
@@ -241,15 +299,49 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/reports',
       access: 'reports:read',
-      handler: ({ user }) => ({
-        reports: reports.list().filter((report) => {
+      handler: async ({ user }) => {
+        const scoped = reports.list().filter((report) => {
           if (report.workspaceId) return workspaces.canAccessWorkspace(user!, report.workspaceId);
           // Legacy briefings predate workspace_id; hiding them is safer than
           // guessing their scope from a non-unique workspace name in the title.
           if (report.kind === 'briefing') return false;
           return !report.repo || workspaces.canAccessRepo(user!, report.repo);
-        }),
-      }),
+        });
+        const code = codeAccess();
+        if (!code) return { reports: scoped.filter((report) => !report.repo && !report.workspaceId) };
+
+        const repoChecks = new Map<string, Promise<boolean>>();
+        const canAccessRepo = (repo: string, workspaceId?: string): Promise<boolean> => {
+          const key = `${workspaceId ?? ''}:${repo}`;
+          let check = repoChecks.get(key);
+          if (!check) {
+            check = code.githubAccounts
+              .verifiedClientFor('fetch', repo, {
+                username: user!.username,
+                ...(workspaceId ? { workspaceId } : {}),
+              })
+              .then(({ client }) => client !== null)
+              .catch(() => false);
+            repoChecks.set(key, check);
+          }
+          return check;
+        };
+        const visible = await Promise.all(
+          scoped.map(async (report) => {
+            if (report.repo) return canAccessRepo(report.repo, report.workspaceId ?? undefined);
+            if (!report.workspaceId) return true;
+            // A workspace briefing may contain titles and activity from every
+            // connected repo. Do not return a partially redacted cached body:
+            // hide it unless the current profile can see every source repo.
+            const repos = code.repos.listByWorkspace(report.workspaceId);
+            const access = await Promise.all(
+              repos.map((repo) => canAccessRepo(repo.full_name, report.workspaceId ?? undefined)),
+            );
+            return access.every(Boolean);
+          }),
+        );
+        return { reports: scoped.filter((_, index) => visible[index]) };
+      },
     }),
   ];
 });

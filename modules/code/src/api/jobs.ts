@@ -5,9 +5,8 @@ import { defineJobs } from '@companion/core/server';
  * git-credential resolver is PLUGGED INTO the execution plane (inversion of
  * control — operate never imports code), the orchestrator's replay resumers
  * are registered before operate's postActivate resumes the persisted queue,
- * and the GitHub poller starts. Disable stops the poller AND restores operate's
- * default token source, so a disabled/uninstalled code module's account
- * registry no longer governs clones/pushes.
+ * Disable restores operate's fail-closed token source, so a disabled code
+ * module cannot leave stale personal credentials reachable.
  */
 export default defineJobs({
   onEnable: (ctx) => {
@@ -15,22 +14,16 @@ export default defineJobs({
     const operate = ctx.services.get('operate');
 
     // Git credentials for clones/worktrees/pushes and remote runner agents,
-    // resolved per repo so account pins and workspace delegation apply — and
+    // resolved per repo and owning profile — and
     // access-VERIFIED when several accounts compete, so the account that can
     // actually see the repo is the one that clones it.
-    // Mirrors the legacy githubTokenFor closure + the /api/status github fields.
+    // Also feeds /api/status with the current request owner's GitHub identity.
     operate.setGithubTokenSource({
       tokenFor: (repo, username) =>
         repo
           ? code.githubAccounts.verifiedTokenFor('runs', repo, username === undefined ? undefined : { username })
           : (code.githubAccounts.tokenFor('runs', username === undefined ? undefined : { username }) ?? null),
-      login: () => {
-        const list = code.githubAccounts.list();
-        return (
-          (list.find((a) => a.ownerId === null && a.purposes.includes('fetch')) ??
-            list.find((a) => a.purposes.includes('fetch')))?.login ?? null
-        );
-      },
+      login: () => code.githubAccounts.loginFor('fetch'),
     });
 
     // Replay unattended work that was still queued when the daemon last
@@ -39,20 +32,24 @@ export default defineJobs({
     // resumePersistedQueue after ALL modules' onEnable, so these are in place.
     const num = (a: Record<string, unknown>, k: string): number => Number(a[k]);
     const str = (a: Record<string, unknown>, k: string): string => String(a[k]);
-    operate.orchestrator.registerResumer('triage', (a) => code.triage.triageIssue(str(a, 'repo'), num(a, 'number')));
+    operate.orchestrator.registerResumer('triage', (a) =>
+      code.triage.triageIssue(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),
+    );
     operate.orchestrator.registerResumer('pr-review', (a) =>
-      code.prReviews.analyzePr(str(a, 'repo'), num(a, 'number'), typeof a.context === 'string' ? { context: a.context } : undefined),
+      code.prReviews.analyzePr(
+        str(a, 'repo'),
+        num(a, 'number'),
+        str(a, 'userId'),
+        typeof a.context === 'string' ? { context: a.context } : undefined,
+      ),
     );
     operate.orchestrator.registerResumer('ci-analysis', (a) =>
-      code.prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number')),
+      code.prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),
     );
 
-    code.sync.start();
   },
   onDisable: (ctx) => {
-    ctx.services.get('code').sync.stop();
-    // Unplug our account-aware resolver so operate falls back to its built-in
-    // settings-key source (our github_accounts table may be uninstalled next).
+    // Unplug our account-aware resolver; operate then fails network Git closed.
     ctx.services.get('operate').resetGithubTokenSource();
   },
 });

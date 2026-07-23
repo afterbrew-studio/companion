@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@companion/core/client';
-import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
+import type { BriefingCadence, GitHubAccountRecord, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
+import { codeApi, RepoUnavailableRow } from '@companion/module-code/client';
 import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
@@ -49,7 +50,13 @@ export function AutomationsPage(): JSX.Element {
 
       <div className="mt-3 flex flex-col gap-3">
         {repos.map((repo) => (
-          <RepoAutomation key={repo.fullName} repo={repo} onChange={refresh} onError={setError} />
+          repo.githubAccessible ? (
+            <RepoAutomation key={repo.fullName} repo={repo} onChange={refresh} onError={setError} />
+          ) : (
+            <article key={repo.fullName} className="card overflow-hidden p-0 opacity-70">
+              <RepoUnavailableRow repo={repo.fullName} />
+            </article>
+          )
         ))}
       </div>
       {repos.length === 0 ? (
@@ -76,11 +83,7 @@ export function AutomationsPage(): JSX.Element {
               <details key={repo ?? 'workspace'} className="card">
                 <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm select-none">
                   <strong className="min-w-0 flex-1 truncate">{repo ?? 'Workspace'}</strong>
-                  {[...new Set(group.map((r) => r.kind))].map((kind) => (
-                    <span key={kind} className="badge">
-                      {kind}
-                    </span>
-                  ))}
+                  <span className="dim text-xs">{[...new Set(group.map((r) => r.kind))].join(' · ')}</span>
                   <span className="dim">
                     {group.length} · {timeAgo(group[0]!.createdAt)}
                   </span>
@@ -329,8 +332,30 @@ function RepoAutomation({
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
+  const { user } = useAuth();
   const [webhook, setWebhook] = useState<WebhookInfo | null>(null);
+  const [accounts, setAccounts] = useState<readonly GitHubAccountRecord[]>([]);
+  const [accountId, setAccountId] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void codeApi
+      .listGithubAccounts()
+      .then(({ accounts: rows }) => {
+        const eligible = rows.filter((account) => account.purposes.includes('webhooks'));
+        setAccounts(eligible);
+        setAccountId((current) => current || eligible[0]?.id || '');
+      })
+      .catch((err) => onError(String(err)));
+    if (repo.webhookConfigured) {
+      void api
+        .getWebhook(repo.fullName)
+        .then(({ webhook: info }) => setWebhook(info))
+        .catch((err) => onError(String(err)));
+    }
+  }, [repo.fullName, repo.webhookConfigured]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const automationsManagedByYou = repo.automationOwnerId === null || repo.automationOwnerId === user?.username;
 
   const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
     setBusy(true);
@@ -349,7 +374,8 @@ function RepoAutomation({
     try {
       if (on) {
         // Enabling surfaces the URL + secret right away.
-        setWebhook(await api.enableWebhook(repo.fullName));
+        if (!accountId) throw new Error('Connect one of your GitHub accounts and enable it for webhooks first.');
+        setWebhook(await api.enableWebhook(repo.fullName, accountId));
       } else {
         await api.disableWebhook(repo.fullName);
         setWebhook(null);
@@ -369,9 +395,38 @@ function RepoAutomation({
         {repo.webhookConfigured ? (
           <MetaSignal tone="green" label="webhook active" title="Receiving GitHub deliveries for this repo" />
         ) : null}
+        {repo.automationOwnerId && !automationsManagedByYou ? (
+          <MetaSignal
+            tone="zinc"
+            label="automations unavailable"
+            title={`Managed by ${repo.automationOwnerId}; their personal GitHub credentials are never shared.`}
+          />
+        ) : null}
       </div>
 
       <ListCard subtle className="mt-3">
+        {!repo.webhookConfigured || webhook?.managedByYou ? (
+          <SettingRow
+            className="px-3.5 py-2.5"
+            title="Webhook owner"
+            description="This personal account must retain access to the repository."
+          >
+            <select
+              className="input input-sm"
+              value={webhook?.accountId ?? accountId}
+              disabled={busy || repo.webhookConfigured}
+              onChange={(event) => setAccountId(event.target.value)}
+              aria-label={`GitHub account owning the webhook for ${repo.fullName}`}
+            >
+              {accounts.length === 0 ? <option value="">No eligible account</option> : null}
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.login}
+                </option>
+              ))}
+            </select>
+          </SettingRow>
+        ) : null}
         <SettingRow
           className="px-3.5 py-2.5"
           title="GitHub webhook"
@@ -380,18 +435,30 @@ function RepoAutomation({
           <Switch
             label={`GitHub webhook for ${repo.fullName}`}
             checked={repo.webhookConfigured}
-            disabled={busy}
+            disabled={
+              busy ||
+              (!repo.webhookConfigured && !accountId) ||
+              (repo.webhookConfigured && webhook?.managedByYou !== true)
+            }
             onChange={(v) => void toggleWebhook(v)}
           />
         </SettingRow>
         {AUTOMATIONS.map((a) => (
           <SettingRow key={a.field} className="px-3.5 py-2.5" title={a.label} description={a.description}>
-            <Switch
-              label={`${a.label} for ${repo.fullName}`}
-              checked={a.isOn(repo)}
-              disabled={busy}
-              onChange={(v) => void act(() => api.setAutomation(repo.fullName, { [a.field]: v }))()}
-            />
+            <span
+              title={
+                automationsManagedByYou
+                  ? undefined
+                  : `Managed by ${repo.automationOwnerId}; their personal GitHub credentials are never shared.`
+              }
+            >
+              <Switch
+                label={`${a.label} for ${repo.fullName}`}
+                checked={a.isOn(repo)}
+                disabled={busy || !automationsManagedByYou}
+                onChange={(v) => void act(() => api.setAutomation(repo.fullName, { [a.field]: v }))()}
+              />
+            </span>
           </SettingRow>
         ))}
       </ListCard>
@@ -441,12 +508,16 @@ function RepoAutomation({
               <div className="dim">Enable public webhook delivery above to get a ready-to-paste URL.</div>
             </>
           )}
-          <div className="flex items-center gap-1.5">
-            Secret:
-            <CopyText value={webhook.secret} title="Copy webhook secret">
-              <code className="code-inline break-all">{webhook.secret}</code>
-            </CopyText>
-          </div>
+          {webhook.secret ? (
+            <div className="flex items-center gap-1.5">
+              Secret:
+              <CopyText value={webhook.secret} title="Copy webhook secret">
+                <code className="code-inline break-all">{webhook.secret}</code>
+              </CopyText>
+            </div>
+          ) : (
+            <div className="dim">Managed by another Companion profile. Its secret and credentials stay private.</div>
+          )}
           <div className="dim mt-1 w-full border-t border-zinc-300/60 pt-2 dark:border-zinc-700">
             Turning the webhook off rejects future deliveries here; also delete the webhook on GitHub to stop them at
             the source.

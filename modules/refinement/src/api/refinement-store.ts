@@ -10,6 +10,7 @@ import type { TaskPriority } from '@companion/module-board/contract';
 
 interface RefinementRow {
   id: string;
+  workspace_id: string;
   repo: string;
   branch: string;
   title: string;
@@ -52,6 +53,7 @@ interface MethodRow {
 function rowToRefinement(row: RefinementRow): RefinementRecord {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     repo: row.repo,
     branch: row.branch,
     title: row.title,
@@ -134,10 +136,10 @@ export class RefinementStore {
     this.db
       .prepare(
         `INSERT INTO refinements (
-           id, repo, branch, title, story, status, error, method_id, spec_ids, doc_ids,
+           id, workspace_id, repo, branch, title, story, status, error, method_id, spec_ids, doc_ids,
            summary, run_id, created_at, updated_at
          ) VALUES (
-           @id, @repo, @branch, @title, @story, @status, @error, @methodId, @specIds, @docIds,
+           @id, @workspaceId, @repo, @branch, @title, @story, @status, @error, @methodId, @specIds, @docIds,
            @summary, @runId, @createdAt, @updatedAt
          )`,
       )
@@ -171,19 +173,15 @@ export class RefinementStore {
     this.db.prepare(`DELETE FROM refinements WHERE id = ?`).run(id);
   }
 
-  /**
-   * One workspace's refinements, newest activity first, with item tallies for
-   * the list page. Workspace scoping goes through code's published `v_repos`
-   * view — never a raw JOIN on its repos table.
-   */
+  /** One workspace's refinements, newest activity first, with item tallies. */
   listByWorkspace(workspaceId: string): RefinementListEntry[] {
     const rows = this.db
       .prepare(
         `SELECT f.*,
            (SELECT COUNT(*) FROM refine_items i WHERE i.refinement_id = f.id AND i.status = 'proposed') AS proposed_count,
            (SELECT COUNT(*) FROM refine_items i WHERE i.refinement_id = f.id AND i.status = 'imported') AS imported_count
-         FROM refinements f JOIN v_repos r ON r.full_name = f.repo
-         WHERE r.workspace_id = ?
+         FROM refinements f
+         WHERE f.workspace_id = ?
          ORDER BY f.updated_at DESC`,
       )
       .all(workspaceId) as Array<RefinementRow & { proposed_count: number; imported_count: number }>;

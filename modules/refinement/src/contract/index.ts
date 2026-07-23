@@ -28,6 +28,7 @@ declare module '@companion/contracts' {
  */
 export interface RefinementRecord {
   readonly id: string;              // `ref-<uuid12>`
+  readonly workspaceId: string;     // board/refinement context, even when repo is shared
   readonly repo: string;            // owner/name
   /** Branch the decomposition agent reads. */
   readonly branch: string;

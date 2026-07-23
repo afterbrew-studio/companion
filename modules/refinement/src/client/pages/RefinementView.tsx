@@ -132,6 +132,7 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
           <ItemsSection
             items={items}
             proposedCount={proposed.length}
+            workspaceId={refinement.workspaceId}
             repo={refinement.repo}
             defaultTargetBranch={refinement.branch}
             canManage={canManage}
@@ -187,6 +188,7 @@ function StoryCard({
         <Field label="Branch" hint={`on ${refinement.repo}`}>
           <BranchPicker
             repo={refinement.repo}
+            workspaceId={refinement.workspaceId}
             value={branch}
             onChange={setBranch}
             disabled={disabled}
@@ -351,6 +353,7 @@ function ContextPicker({
 function ItemsSection({
   items,
   proposedCount,
+  workspaceId,
   repo,
   defaultTargetBranch,
   canManage,
@@ -360,6 +363,7 @@ function ItemsSection({
 }: {
   items: RefineItemRecord[];
   proposedCount: number;
+  workspaceId: string;
   repo: string;
   defaultTargetBranch: string;
   canManage: boolean;
@@ -392,6 +396,7 @@ function ItemsSection({
               target branch
               <BranchPicker
                 repo={repo}
+                workspaceId={workspaceId}
                 value={targetBranch}
                 onChange={setTargetBranch}
                 defaultBranch={defaultTargetBranch}

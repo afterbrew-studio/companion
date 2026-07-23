@@ -186,4 +186,59 @@ export default defineMigrations([
       db.exec(`ALTER TABLE prs DROP COLUMN mergeable`);
     },
   },
+  {
+    version: 3,
+    name: 'code_repo_workspaces',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS repo_workspaces (
+          repo         TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          created_at   INTEGER NOT NULL,
+          PRIMARY KEY (repo, workspace_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_workspaces_workspace
+          ON repo_workspaces(workspace_id, repo);
+        INSERT OR IGNORE INTO repo_workspaces (repo, workspace_id, created_at)
+          SELECT full_name, workspace_id, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM repos WHERE workspace_id IS NOT NULL;
+        DROP VIEW IF EXISTS v_repos;
+        CREATE VIEW v_repos AS
+          SELECT repo AS full_name, workspace_id FROM repo_workspaces;
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP VIEW IF EXISTS v_repos;
+        CREATE VIEW v_repos AS SELECT full_name, workspace_id FROM repos;
+        DROP TABLE IF EXISTS repo_workspaces;
+      `);
+    },
+  },
+  {
+    version: 4,
+    name: 'code_personal_webhook_owner',
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE repos ADD COLUMN webhook_owner_id TEXT`,
+        `ALTER TABLE repos ADD COLUMN webhook_account_id TEXT`,
+        `ALTER TABLE repos ADD COLUMN automation_owner_id TEXT`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+      db.exec(`
+        UPDATE github_accounts SET scope = 'all' WHERE owner_id IS NOT NULL AND scope = 'shared';
+        UPDATE github_accounts SET scope = 'selected' WHERE owner_id IS NOT NULL AND scope = 'delegated';
+        UPDATE repos SET github_account_id = NULL;
+        UPDATE repos
+        SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL
+        WHERE webhook_owner_id IS NULL;
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

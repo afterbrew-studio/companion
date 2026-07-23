@@ -22,6 +22,7 @@ export class NotificationsService implements NotificationEmitter {
     this.store.insert({
       id: randomUUID(),
       workspaceId: input.workspaceId,
+      repo: input.repo ?? null,
       kind: input.kind,
       title: input.title,
       body: input.body ?? '',

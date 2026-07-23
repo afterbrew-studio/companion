@@ -15,26 +15,29 @@ const execFileP = promisify(execFile);
  * the token from the child's env.
  *
  * Network-touching methods take an optional per-call `token` used when the
- * constructor thunk yields none — on a runner agent that's the hub-supplied
- * credential riding the request, overridden by the machine's own
- * COMPANION_RUNNER_GITHUB_TOKEN when set.
+ * constructor thunk yields none. On a remote runner this is the hub-supplied,
+ * access-verified personal credential riding the request and it always wins
+ * over any legacy machine credential.
  */
 export class Checkouts {
   /** Per-repo mutex: `git worktree add` / fetch mutate shared .git state. */
   private readonly locks = new Map<string, Promise<unknown>>();
 
   /**
-   * The thunk resolves PER REPO (so delegated accounts and repo pins apply to
-   * clones/fetches, not just API calls) and may be async (an access-verified
-   * resolver probes GitHub). Only network operations resolve it.
+   * The thunk resolves per repo and profile and may be async because access is
+   * probed at GitHub. Only network operations resolve it.
    */
   constructor(
     private readonly token: (fullName: string, username?: string | null) => Promise<string | null> | string | null,
   ) {}
 
-  /** The credential a network operation runs with: resolver first, caller fallback second. */
-  private async creds(fullName: string, fallback?: string, username?: string | null): Promise<string | null> {
-    return (await this.token(fullName, username)) ?? fallback?.trim() ?? null;
+  /** The explicit per-operation personal credential wins; the resolver is for local calls. */
+  private async creds(fullName: string, fallback?: string, username?: string | null): Promise<string> {
+    const credential = fallback?.trim() || (await this.token(fullName, username)) || null;
+    if (!credential) {
+      throw new Error(`no personal GitHub credential with access to ${fullName}`);
+    }
+    return credential;
   }
 
   cloneDir(fullName: string): string {

@@ -95,4 +95,33 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS specs; DROP TABLE IF EXISTS proposals;`);
     },
   },
+  {
+    version: 2,
+    name: 'plan_workspace_scope',
+    up: (db) => {
+      const proposals = db.prepare(`PRAGMA table_info(proposals)`).all() as Array<{ name: string }>;
+      const specs = db.prepare(`PRAGMA table_info(specs)`).all() as Array<{ name: string }>;
+      if (!proposals.some((column) => column.name === 'workspace_id')) {
+        db.exec(`ALTER TABLE proposals ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`);
+      }
+      if (!specs.some((column) => column.name === 'workspace_id')) {
+        db.exec(`ALTER TABLE specs ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`);
+      }
+      db.exec(`
+        UPDATE proposals SET workspace_id = COALESCE(
+          (SELECT rw.workspace_id FROM repo_workspaces rw WHERE rw.repo = proposals.repo
+           ORDER BY rw.created_at, rw.workspace_id LIMIT 1),
+          (SELECT r.workspace_id FROM repos r WHERE r.full_name = proposals.repo), '')
+        WHERE workspace_id = '';
+        UPDATE specs SET workspace_id = COALESCE(
+          (SELECT rw.workspace_id FROM repo_workspaces rw WHERE rw.repo = specs.repo
+           ORDER BY rw.created_at, rw.workspace_id LIMIT 1),
+          (SELECT r.workspace_id FROM repos r WHERE r.full_name = specs.repo), '')
+        WHERE workspace_id = '';
+        CREATE INDEX IF NOT EXISTS idx_proposals_workspace ON proposals(workspace_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_specs_workspace ON specs(workspace_id, updated_at);
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

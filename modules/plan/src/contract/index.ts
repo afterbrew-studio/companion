@@ -45,6 +45,7 @@ export interface ProposalAnalysis {
 
 export interface ProposalRecord {
   readonly id: string;
+  readonly workspaceId: string;
   readonly repo: string;
   readonly title: string;
   readonly body: string;
@@ -96,6 +97,7 @@ export interface AreaStorageState {
  */
 export interface SpecRecord {
   readonly id: string;
+  readonly workspaceId: string;
   readonly repo: string;
   readonly title: string;
   /** Markdown body. Empty while `generating`. */

@@ -173,4 +173,27 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 8,
+    name: 'board_task_workspace',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(board_tasks)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'workspace_id')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`);
+      }
+      db.exec(`
+        UPDATE board_tasks
+        SET workspace_id = COALESCE(
+          (SELECT rw.workspace_id FROM repo_workspaces rw
+           WHERE rw.repo = board_tasks.repo ORDER BY rw.created_at, rw.workspace_id LIMIT 1),
+          (SELECT r.workspace_id FROM repos r WHERE r.full_name = board_tasks.repo),
+          ''
+        )
+        WHERE workspace_id = '';
+        CREATE INDEX IF NOT EXISTS idx_board_tasks_workspace
+          ON board_tasks(workspace_id, status, priority, created_at);
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

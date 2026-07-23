@@ -33,6 +33,7 @@ export const boardApi = {
   get: (workspaceId: string) => request<BoardSnapshot>(`/api/board?workspace=${encodeURIComponent(workspaceId)}`),
   task: (id: string) => request<TaskDetail>(`/api/board/tasks/${id}`),
   createTask: (input: {
+    workspaceId: string;
     repo: string;
     targetBranch: string;
     title: string;
@@ -59,7 +60,8 @@ export const boardApi = {
   moveTask: (id: string, to: TaskStatus) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/move`, { to }),
   mergeTask: (id: string) => post<{ task: TaskRecord }>(`/api/board/tasks/${id}/merge`, {}),
   deleteTask: (id: string) => del<{ ok: true }>(`/api/board/tasks/${id}`),
-  specs: (repo: string) => request<{ specs: SpecOption[] }>(`/api/board/specs/${repo}`),
+  specs: (repo: string, workspaceId: string) =>
+    request<{ specs: SpecOption[] }>(`/api/board/specs/${repo}?workspace=${encodeURIComponent(workspaceId)}`),
   createWorker: (workspaceId: string, name: string, role: WorkerRole) =>
     post<{ worker: WorkerRecord }>('/api/board/workers', { workspaceId, name, role }),
   updateWorker: (id: string, fields: { name?: string; role?: WorkerRole; enabled?: boolean }) =>

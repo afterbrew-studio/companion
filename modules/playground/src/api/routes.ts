@@ -66,6 +66,7 @@ export default defineRoutes((ctx) => {
             : `Playground: ${body.prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
           cwd,
           repo: body.repo ?? null,
+          userId: body.repo ? user!.username : null,
           prompt: buildPlaygroundPrompt({ input: body.prompt, repo: body.repo ?? null, skill }),
           timeoutMs: body.timeoutMs,
         });
@@ -79,7 +80,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/playground/pipeline-preview',
       access: 'playground:run',
-      handler: ({ query, user }): PipelinePreview => {
+      handler: async ({ query, user }): Promise<PipelinePreview> => {
         const repo = query.get('repo') ?? '';
         const pipelineId = query.get('pipelineId') ?? '';
         const prNumber = Number(query.get('pr') ?? '');
@@ -89,6 +90,8 @@ export default defineRoutes((ctx) => {
         const code = ctx.services.tryGet('code');
         if (!code) throw badRequest('pipeline previews need the code module enabled');
         if (!workspace.canAccessRepo(user!, repo)) throw notFound(`repo ${repo} not found`);
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', repo, { username: user!.username });
+        if (!client) throw notFound(`repo ${repo} not found`);
         const repoRow = code.repos.get(repo);
         if (!repoRow) throw notFound(`repo ${repo} not found`);
 

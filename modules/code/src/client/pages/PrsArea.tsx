@@ -21,6 +21,7 @@ import {
   timeAgo,
 } from '@companion/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
+import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
 
 /**
@@ -48,6 +49,7 @@ export function PrsAreaPage(): JSX.Element {
     hasMore,
     loadMore,
     error,
+    unavailableRepos,
     canActPrs,
     canRunPipelines,
     pipelines,
@@ -76,6 +78,7 @@ export function PrsAreaPage(): JSX.Element {
   } = s.filters;
 
   if (!current) return <EmptyState title="No workspace selected" />;
+  const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
 
   return (
     <Page>
@@ -220,13 +223,14 @@ export function PrsAreaPage(): JSX.Element {
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
 
-      {prs.length === 0 && !loading ? (
+      {prs.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
         />
       ) : (
         <ListCard className="mt-3" ariaLabel="Pull request list">
           {loading && prs.length === 0 ? <RowsSkeleton rows={6} /> : null}
+          {!loading ? unavailable.map((repo) => <RepoUnavailableRow key={repo} repo={repo} />) : null}
           {prs.map((pr) => (
             <a
               key={`${pr.repo}#${pr.number}`}

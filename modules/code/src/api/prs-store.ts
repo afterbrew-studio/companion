@@ -79,7 +79,7 @@ export class PrsStore {
   listWorkspace(workspaceId: string): PrRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT p.* FROM prs p JOIN repos r ON r.full_name = p.repo
+        `SELECT p.* FROM prs p JOIN v_repos r ON r.full_name = p.repo
          WHERE r.workspace_id = ? ORDER BY p.updated_at DESC`,
       )
       .all(workspaceId) as PrRow[];
@@ -109,6 +109,8 @@ export class PrsStore {
       draft?: 'hide' | 'only';
       limit?: number;
       offset?: number;
+      accessibleRepos?: readonly string[];
+      myLogins?: readonly string[];
     },
   ): {
     prs: PrRecord[];
@@ -118,12 +120,16 @@ export class PrsStore {
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
+    if (opts.accessibleRepos) {
+      where.push(opts.accessibleRepos.length > 0 ? `p.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})` : '1 = 0');
+      args.push(...opts.accessibleRepos);
+    }
     if (opts.repo) {
       where.push('p.repo = ?');
       args.push(opts.repo);
     }
     if (opts.author === '__me') {
-      const mine = this.githubAccounts.logins();
+      const mine = [...(opts.myLogins ?? this.githubAccounts.logins())];
       where.push(mine.length > 0 ? `p.author IN (${mine.map(() => '?').join(', ')})` : '1 = 0');
       args.push(...mine);
     } else if (opts.author) {
@@ -133,7 +139,7 @@ export class PrsStore {
     if (opts.assignee === '__none') {
       where.push(`p.assignees = '[]'`);
     } else if (opts.assignee === '__me') {
-      const mine = this.githubAccounts.logins();
+      const mine = [...(opts.myLogins ?? this.githubAccounts.logins())];
       where.push(
         mine.length > 0
           ? `EXISTS (SELECT 1 FROM json_each(p.assignees) WHERE json_each.value IN (${mine.map(() => '?').join(', ')}))`
@@ -167,7 +173,7 @@ export class PrsStore {
       const like = likeArg(opts.q);
       args.push(like, like, opts.q.replace(/^#/, ''));
     }
-    const base = `FROM prs p JOIN repos r ON r.full_name = p.repo WHERE ${where.join(' AND ')}`;
+    const base = `FROM prs p JOIN v_repos r ON r.full_name = p.repo WHERE ${where.join(' AND ')}`;
     const counts = { open: 0, merged: 0, closed: 0 };
     for (const row of this.db.prepare(`SELECT p.state AS state, COUNT(*) AS n ${base} GROUP BY p.state`).all(...args) as Array<{ state: string; n: number }>) {
       if (row.state === 'open' || row.state === 'merged' || row.state === 'closed') counts[row.state] = row.n;
@@ -187,10 +193,16 @@ export class PrsStore {
       return prRowToRecord(row, map.get(row.number) ?? null);
     });
     const total = state ? counts[state] : counts.open + counts.merged + counts.closed;
-    const facetBase = `FROM prs p JOIN repos r ON r.full_name = p.repo WHERE r.workspace_id = ?`;
+    const facetAccess = opts.accessibleRepos
+      ? opts.accessibleRepos.length > 0
+        ? ` AND p.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})`
+        : ' AND 1 = 0'
+      : '';
+    const facetBase = `FROM prs p JOIN v_repos r ON r.full_name = p.repo WHERE r.workspace_id = ?${facetAccess}`;
+    const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
     const facets = {
-      authors: (this.db.prepare(`SELECT DISTINCT p.author AS v ${facetBase} AND p.author != '' ORDER BY 1`).all(workspaceId) as Array<{ v: string }>).map((r) => r.v),
-      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.assignees) WHERE')} ORDER BY 1`).all(workspaceId) as Array<{ v: string }>).map((r) => r.v),
+      authors: (this.db.prepare(`SELECT DISTINCT p.author AS v ${facetBase} AND p.author != '' ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.assignees) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
     };
     return { prs, total, counts, facets };
   }

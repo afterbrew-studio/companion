@@ -48,13 +48,15 @@ export interface RepoRecord {
   readonly fullName: string;
   readonly owner: string;
   readonly name: string;
-  /** Workspace this repo belongs to. */
+  /** Workspace context this record was listed for. A repo may belong to several workspaces. */
   readonly workspaceId: string;
   readonly defaultBranch: string;
   readonly private: boolean;
   readonly cloneReady: boolean;
   readonly lastSyncAt: number | null;
   readonly openIssues: number;
+  /** Proven against one of the current profile's own accounts for this response. */
+  readonly githubAccessible: boolean;
   /** Automation switches. */
   readonly autoTriage: boolean;
   readonly digestEnabled: boolean;
@@ -65,7 +67,9 @@ export interface RepoRecord {
   readonly autoMergeEnabled: boolean;
   /** Set once a webhook secret was generated (receiver active). */
   readonly webhookConfigured: boolean;
-  /** Pinned GitHub account for this repo's posting/actions; null = purpose bindings. */
+  /** Profile responsible for unattended repo automation; null means paused/unclaimed. */
+  readonly automationOwnerId: string | null;
+  /** @deprecated Always null; account resolution is personal per profile. */
   readonly githubAccountId: string | null;
   /** Preferred runner for this repo's agent work; null = auto-place among eligible. */
   readonly runnerId: string | null;
@@ -85,6 +89,12 @@ export interface RepoCandidate {
 export interface RepoBranchRecord {
   readonly name: string;
   readonly protected: boolean;
+}
+
+/** Result of refreshing every repository in one workspace for the current user. */
+export interface WorkspaceSyncResult {
+  /** Repositories for which no usable GitHub account could return data. */
+  readonly unavailableRepos: readonly string[];
 }
 
 export interface IssueRecord {
@@ -203,11 +213,10 @@ export type GitHubPurpose = 'fetch' | 'runs' | 'pipelines' | 'webhooks';
 export const GITHUB_PURPOSES: readonly GitHubPurpose[] = ['fetch', 'runs', 'pipelines', 'webhooks'];
 
 /**
- * Where an account may act. `shared` accounts serve any workspace; `delegated`
- * accounts only act for repos in the workspaces explicitly assigned to them
- * (GitHubAccountRecord.workspaceIds) — mirroring RunnerScope.
+ * Which of the owner's workspaces a personal account may serve. This is a
+ * routing preference within one Companion identity, never a sharing grant.
  */
-export type GitHubAccountScope = 'shared' | 'delegated';
+export type GitHubAccountScope = 'all' | 'selected';
 
 /** A connected GitHub account (PAT); tokens never leave the daemon. */
 export interface GitHubAccountRecord {
@@ -215,14 +224,13 @@ export interface GitHubAccountRecord {
   readonly login: string;
   readonly purposes: readonly GitHubPurpose[];
   readonly scope: GitHubAccountScope;
-  /** Workspaces this account serves when `delegated` (ignored when `shared`). */
+  /** Workspaces this personal account serves when scope is `selected`. */
   readonly workspaceIds: ReadonlyArray<string>;
   /**
-   * User who connected/owns this account. A user's own account is preferred
-   * when they invoke an action; null = a shared default account (admin-managed)
-   * used as the fallback for everyone.
+   * Companion profile that owns this credential. API records are always
+   * personal, so this is never null at the contract boundary.
    */
-  readonly ownerId: string | null;
+  readonly ownerId: string;
   readonly createdAt: number;
 }
 
@@ -238,9 +246,14 @@ export interface CommentRecord {
 export interface WebhookInfo {
   /** Deliveries POST here (behind the public tunnel / the user's port-forward). */
   readonly path: string;
-  readonly secret: string;
+  /** Only returned to the profile that owns the registration. */
+  readonly secret: string | null;
   /** Absolute delivery URL when the moxxy-proxy tunnel is up; null otherwise. */
   readonly url: string | null;
+  readonly ownerId: string | null;
+  readonly accountId: string | null;
+  readonly accountLogin: string | null;
+  readonly managedByYou: boolean;
 }
 
 /** How often a workspace's briefing report is generated. */

@@ -29,7 +29,7 @@ import {
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { BranchPicker, CommentsSection, codeApi, useWorkspaceRepos } from '@companion/module-code/client';
-import type { ChecksSnapshot, GitHubAccountRecord, RepoRecord } from '@companion/module-code/contract';
+import type { ChecksSnapshot, RepoRecord } from '@companion/module-code/contract';
 import type {
   BoardConfig,
   SpecOption,
@@ -472,7 +472,9 @@ export default function Board({ query }: RouteProps): JSX.Element {
         </div>
       </div>
 
-      {creating ? <NewTaskModal repos={repos} onClose={() => setCreating(false)} onError={setError} /> : null}
+      {creating && current ? (
+        <NewTaskModal workspaceId={current.id} repos={repos} onClose={() => setCreating(false)} onError={setError} />
+      ) : null}
       {detailId ? (
         <TaskDetailDrawer id={detailId} allTasks={tasks} workerName={workerName} onClose={closeDetail} onError={setError} />
       ) : null}
@@ -634,10 +636,12 @@ function TaskCard({
 }
 
 function NewTaskModal({
+  workspaceId,
   repos,
   onClose,
   onError,
 }: {
+  workspaceId: string;
   repos: readonly RepoRecord[];
   onClose: () => void;
   onError: (e: string | null) => void;
@@ -654,7 +658,7 @@ function NewTaskModal({
   const [queue, setQueue] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const effectiveRepo = repo ?? repos[0]?.fullName ?? null;
+  const effectiveRepo = repo ?? repos.find((candidate) => candidate.githubAccessible)?.fullName ?? null;
 
   useEffect(() => {
     setTargetBranch(repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch || 'main');
@@ -666,7 +670,7 @@ function NewTaskModal({
     if (!effectiveRepo) return;
     let cancelled = false;
     void boardApi
-      .specs(effectiveRepo)
+      .specs(effectiveRepo, workspaceId)
       .then((r) => {
         if (!cancelled) setSpecs(r.specs);
       })
@@ -674,13 +678,14 @@ function NewTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [effectiveRepo]);
+  }, [effectiveRepo, workspaceId]);
 
   const submit = async (): Promise<void> => {
     if (!effectiveRepo || !title.trim()) return;
     setBusy(true);
     try {
       await boardApi.createTask({
+        workspaceId,
         repo: effectiveRepo,
         targetBranch: targetBranch.trim() || 'main',
         title: title.trim(),
@@ -707,13 +712,19 @@ function NewTaskModal({
             ariaLabel="Repository"
             value={effectiveRepo}
             onChange={(v) => setRepo(v)}
-            options={repos.map((r) => ({ value: r.fullName, label: r.fullName }))}
+            options={repos.map((r) => ({
+              value: r.fullName,
+              label: r.fullName,
+              disabled: !r.githubAccessible,
+              hint: r.githubAccessible ? undefined : 'GitHub access required',
+            }))}
             searchable
           />
         </Field>
         <Field label="Target branch" hint="The worker starts here and opens the pull request back to this branch.">
           <BranchPicker
             repo={effectiveRepo}
+            workspaceId={workspaceId}
             value={targetBranch}
             onChange={setTargetBranch}
             defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}
@@ -1451,17 +1462,6 @@ function ConfigModal({
   onError: (e: string | null) => void;
 }): JSX.Element {
   const reviewers = workers.filter((w) => w.role === 'reviewer');
-  // Every connected account is listed; personal ones (owner-bound) are shown
-  // but not selectable — merges run unattended and the server rejects them.
-  const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
-  useEffect(() => {
-    void codeApi
-      .listGithubAccounts()
-      .then(({ accounts }) =>
-        setAccounts([...accounts].sort((a, b) => Number(a.ownerId !== null) - Number(b.ownerId !== null))),
-      )
-      .catch(() => setAccounts([]));
-  }, []);
   const save = (fields: Partial<BoardConfig>): void => {
     void boardApi
       .saveConfig(workspaceId, fields)
@@ -1501,32 +1501,6 @@ function ConfigModal({
               { value: 'merge', label: 'Merge commit' },
               { value: 'rebase', label: 'Rebase' },
             ]}
-            className="w-44"
-          />
-        </SettingRow>
-        <SettingRow
-          title="Merge account"
-          description="The connected GitHub account that merges — it needs merge rights on the board's repos."
-        >
-          <Dropdown
-            ariaLabel="Merge account"
-            value={config.mergeAccountId}
-            onChange={(v) => save({ mergeAccountId: v || null })}
-            options={[
-              { value: '', label: 'Automatic' },
-              ...accounts.map((a) => ({
-                value: a.id,
-                label: a.login,
-                hint:
-                  a.ownerId !== null
-                    ? `${a.ownerId}'s personal — can't merge unattended`
-                    : a.scope === 'delegated'
-                      ? 'delegated'
-                      : 'shared',
-                disabled: a.ownerId !== null,
-              })),
-            ]}
-            placeholder="Automatic"
             className="w-44"
           />
         </SettingRow>

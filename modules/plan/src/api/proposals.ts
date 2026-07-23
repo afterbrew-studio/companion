@@ -28,9 +28,10 @@ export class Proposals {
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
-  create(repo: string, title: string, body: string): ProposalRecord {
+  create(workspaceId: string, repo: string, title: string, body: string): ProposalRecord {
     const proposal: ProposalRecord = {
       id: `prop-${randomUUID().slice(0, 12)}`,
+      workspaceId,
       repo,
       title,
       body,
@@ -49,7 +50,7 @@ export class Proposals {
   }
 
   /** Kick the analysis run (async — resolves when analysis is stored). */
-  async analyze(id: string): Promise<ProposalRecord> {
+  async analyze(id: string, userId: string): Promise<ProposalRecord> {
     const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
     if (!this.checkouts.hasClone(proposal.repo)) throw new Error(`repo ${proposal.repo} has no clone yet`);
@@ -64,6 +65,7 @@ export class Proposals {
         title: `Analyze proposal: ${proposal.title.slice(0, 60)}`,
         cwd: this.checkouts.cloneDir(proposal.repo),
         repo: proposal.repo,
+        userId,
         prompt: analysisPrompt(proposal),
         timeoutMs: 10 * 60_000,
       });
@@ -80,7 +82,7 @@ export class Proposals {
   }
 
   /** Maintainer approved the analyzed plan → start the implementation goal run. */
-  async approve(id: string): Promise<ProposalRecord> {
+  async approve(id: string, userId: string): Promise<ProposalRecord> {
     const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
     if (proposal.status !== 'analyzed') throw new Error(`proposal is ${proposal.status}, not analyzed`);
@@ -98,6 +100,7 @@ export class Proposals {
       branchPrefix: `companion/proposal-${id.replace('prop-', '')}`,
       baseBranch: repoRow.default_branch,
       objective: implementObjective(proposal),
+      userId,
     });
     this.store.proposals.update(id, { implementRunId: run.id, branch: run.branch ?? undefined });
     this.broadcast({ t: 'proposals.changed' });
@@ -105,13 +108,13 @@ export class Proposals {
   }
 
   /** Implementation diff approved → push + PR, mark implemented. */
-  async finishImplementation(id: string): Promise<ProposalRecord> {
+  async finishImplementation(id: string, userId: string): Promise<ProposalRecord> {
     const proposal = this.store.proposals.get(id);
     if (!proposal?.implementRunId) throw new Error('proposal has no implementation run');
     const { prUrl } = await this.fixes.approve(proposal.implementRunId, {
       title: proposal.title,
       body: `${proposal.body}\n\n---\n${proposal.analysis?.summary ?? ''}`,
-    });
+    }, userId);
     this.store.proposals.update(id, { status: 'implemented', prUrl });
     this.broadcast({ t: 'proposals.changed' });
     return this.store.proposals.get(id)!;

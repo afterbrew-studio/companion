@@ -55,7 +55,7 @@ export class Specs {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly proposals: Proposals,
-    private readonly github: (repo?: string) => GitHubClient | null,
+    private readonly github: (repo: string, username: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -120,6 +120,7 @@ export class Specs {
           const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
           this.store.specs.insert({
             id: `spec-${randomUUID().slice(0, 12)}`,
+            workspaceId,
             repo: repo.full_name,
             title: heading?.slice(0, 180) || path,
             content,
@@ -141,9 +142,8 @@ export class Specs {
   }
 
   /** Requested storage against the workspace config; repo needs a configured dir. */
-  private resolveStorage(repo: string, requested?: AreaStorage): { storage: AreaStorage; dir: string | null } {
-    const workspaceId = this.store.repos.get(repo)?.workspace_id ?? null;
-    const dir = workspaceId ? (this.configFor(workspaceId)?.dir ?? null) : null;
+  private resolveStorage(workspaceId: string, requested?: AreaStorage): { storage: AreaStorage; dir: string | null } {
+    const dir = this.configFor(workspaceId)?.dir ?? null;
     const storage = requested ?? (dir ? 'repo' : 'virtual');
     if (storage === 'repo' && !dir) {
       throw new Error('repo storage needs a configured specs directory — set it in the Specifications module first');
@@ -155,8 +155,8 @@ export class Specs {
   private freshPath(repo: string, dir: string, title: string): string {
     const taken = new Set(
       this.store.specs
-        .listWorkspace(this.store.repos.get(repo)?.workspace_id ?? '')
-        .filter((s) => s.repo === repo && s.path)
+        .listRepo(repo)
+        .filter((s) => s.path)
         .map((s) => s.path),
     );
     const slug = slugForTitle(title);
@@ -178,10 +178,11 @@ export class Specs {
 
   // ---------- lifecycle ---------------------------------------------------------
 
-  create(repo: string, title: string, content: string, storage?: AreaStorage): SpecRecord {
-    const resolved = this.resolveStorage(repo, storage);
+  create(workspaceId: string, repo: string, title: string, content: string, storage?: AreaStorage): SpecRecord {
+    const resolved = this.resolveStorage(workspaceId, storage);
     const spec: SpecRecord = {
       id: `spec-${randomUUID().slice(0, 12)}`,
+      workspaceId,
       repo,
       title,
       content,
@@ -229,14 +230,21 @@ export class Specs {
    * Draft a spec from the repo itself (async — resolves when stored). The row
    * exists immediately with status 'generating' so the UI can show progress.
    */
-  async generate(repo: string, instructions: string, storage?: AreaStorage): Promise<SpecRecord> {
+  async generate(
+    workspaceId: string,
+    repo: string,
+    instructions: string,
+    storage: AreaStorage | undefined,
+    userId: string,
+  ): Promise<SpecRecord> {
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     // Resolve up front so a repo request against an unconfigured workspace
     // fails before any agent time is spent.
-    const resolved = this.resolveStorage(repo, storage);
+    const resolved = this.resolveStorage(workspaceId, storage);
     const id = `spec-${randomUUID().slice(0, 12)}`;
     const placeholder: SpecRecord = {
       id,
+      workspaceId,
       repo,
       title: instructions.slice(0, 80),
       content: '',
@@ -254,14 +262,14 @@ export class Specs {
 
     try {
       // Business/context docs the workspace already holds sharpen the draft.
-      const workspaceId = this.store.repos.get(repo)?.workspace_id ?? null;
-      const docs = workspaceId ? this.store.docs.searchChunks(workspaceId, instructions, 5) : [];
+      const docs = this.store.docs.searchChunks(workspaceId, instructions, 5);
       const { runId, finalMessage } = await this.orchestrator.runOneShot({
         kind: 'analysis',
         task: 'plan.analyses',
         title: `Draft spec: ${instructions.slice(0, 60)}`,
         cwd: this.checkouts.cloneDir(repo),
         repo,
+        userId,
         prompt: generatePrompt(instructions, docs.map((d) => `### ${d.title}\n${d.content}`)),
         timeoutMs: 10 * 60_000,
       });
@@ -288,7 +296,7 @@ export class Specs {
    * One click from spec to feature: files a proposal that embeds the spec as
    * the source of truth and kicks its feasibility analysis right away.
    */
-  createFeature(id: string, opts: { title?: string; notes?: string }): ProposalRecord {
+  createFeature(id: string, opts: { title?: string; notes?: string }, userId: string): ProposalRecord {
     const spec = this.store.specs.get(id);
     if (!spec) throw new Error('spec not found');
     if (spec.status !== 'ready') throw new Error(`spec is ${spec.status}, not ready`);
@@ -300,10 +308,10 @@ export class Specs {
       '',
       spec.content,
     ].join('\n');
-    const proposal = this.proposals.create(spec.repo, opts.title?.trim() || spec.title, body);
+    const proposal = this.proposals.create(spec.workspaceId, spec.repo, opts.title?.trim() || spec.title, body);
     // Fire-and-forget, matching how the SPA files a fresh proposal.
     void this.proposals
-      .analyze(proposal.id)
+      .analyze(proposal.id, userId)
       .catch((err) => log.warn('spec feature analysis failed', { proposal: proposal.id, err: String(err) }));
     return proposal;
   }
@@ -322,15 +330,14 @@ export class Specs {
    * spec (driftNote) and raise an inbox notification. Specs are only useful
    * while they are TRUE — this keeps the grounding honest.
    */
-  async checkDriftForMergedPr(repo: string, prNumber: number): Promise<void> {
-    const workspaceId = this.store.repos.get(repo)?.workspace_id ?? null;
-    if (!workspaceId) return;
-    const specs = this.store.specs
-      .listWorkspace(workspaceId)
+  async checkDriftForMergedPr(repo: string, prNumber: number, userId: string): Promise<void> {
+    const workspaceIds = this.store.repos.workspaceIds(repo);
+    const specs = workspaceIds
+      .flatMap((workspaceId) => this.store.specs.listWorkspace(workspaceId))
       .filter((s) => s.repo === repo && s.status === 'ready' && s.content.trim())
       .slice(0, MAX_DRIFT_SPECS);
     if (specs.length === 0) return;
-    const client = this.github(repo);
+    const client = this.github(repo, userId);
     if (!client || !this.checkouts.hasClone(repo)) return;
     const pr = this.store.prs.get(repo, prNumber);
     // A merge webhook can beat the PR cache refresh; resolve the live base in
@@ -350,10 +357,13 @@ export class Specs {
           title: `Spec drift check — PR #${prNumber}`,
           cwd,
           repo,
+          userId,
           issueNumber: prNumber,
           prompt: driftPrompt(specs, pr?.title ?? live?.title ?? `PR #${prNumber}`, baseRef),
           timeoutMs: 12 * 60_000,
         }),
+      undefined,
+      userId,
     );
     const { findings } = driftSchema.parse(extractModelJson(finalMessage ?? ''));
     const known = new Set(specs.map((s) => s.id));
@@ -363,18 +373,23 @@ export class Specs {
         driftNote: `PR #${prNumber}${pr?.title ? ` ("${pr.title.slice(0, 80)}")` : ''}: ${f.note || 'merged changes contradict this spec'}`,
       });
     }
-    if (drifted.length > 0) {
+    for (const workspaceId of workspaceIds) {
+      const workspaceDrift = drifted.filter((finding) =>
+        specs.some((spec) => spec.id === finding.id && spec.workspaceId === workspaceId),
+      );
+      if (workspaceDrift.length === 0) continue;
       this.store.notifications.insert({
         id: `ntf-${randomUUID().slice(0, 12)}`,
         workspaceId,
+        repo,
         kind: 'action_required',
-        title: `Spec drift: ${drifted.length} spec(s) diverged from ${repo}`,
-        body: `PR #${prNumber} changed behavior that ${drifted.length === 1 ? 'a spec describes' : 'specs describe'} — review and update them.`,
+        title: `Spec drift: ${workspaceDrift.length} spec(s) diverged from ${repo}`,
+        body: `PR #${prNumber} changed behavior that ${workspaceDrift.length === 1 ? 'a spec describes' : 'specs describe'} — review and update them.`,
         href: '#/specs',
         createdAt: Date.now(),
       });
-      this.broadcast({ t: 'specs.changed' });
     }
+    if (drifted.length > 0) this.broadcast({ t: 'specs.changed' });
   }
 }
 

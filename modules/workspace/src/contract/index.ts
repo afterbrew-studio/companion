@@ -130,6 +130,8 @@ export interface NotificationRecord {
   readonly id: string;
   /** Workspace the event belongs to; null = instance-wide. */
   readonly workspaceId: string | null;
+  /** Repo access required to read this notification; null for workspace/platform events. */
+  readonly repo: string | null;
   readonly kind: NotificationKind;
   readonly title: string;
   readonly body: string;

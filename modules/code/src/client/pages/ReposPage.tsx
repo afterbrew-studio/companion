@@ -23,21 +23,20 @@ import {
   useConfirm,
   useDebounced,
 } from '@companion/ui';
-import type { GitHubAccountRecord, RepoCandidate, RepoRecord } from '../../contract/index.js';
+import type { RepoCandidate, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useReposAdmin } from '../hooks/useReposAdmin.js';
 
 /**
- * Repository management, scoped to the active workspace. Repos move between
- * workspaces via the per-row selector; the workspace itself (rename/delete)
- * is managed here too.
+ * Repository management, scoped to the active workspace. A repository may be
+ * connected to several workspaces; transfer moves only this membership.
  */
 export function ReposPage(): JSX.Element {
   const { can, user } = useAuth();
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
   // Admins manage any workspace; an owner manages their own (public or private).
   const canManageCurrent = can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username);
-  const { repos, loaded, accounts, runners, error, setError, refresh } = useReposAdmin();
+  const { repos, loaded, runners, error, setError, refresh } = useReposAdmin();
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
 
@@ -84,7 +83,7 @@ export function ReposPage(): JSX.Element {
       ) : repos.length > 0 ? (
         <div className="flex flex-col gap-3">
           {repos.map((repo) => (
-            <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} accounts={accounts} runners={runners} onChange={refresh} onError={setError} />
+            <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} runners={runners} onChange={refresh} onError={setError} />
           ))}
         </div>
       ) : (
@@ -132,14 +131,12 @@ export function ReposPage(): JSX.Element {
 function RepoCard({
   repo,
   workspaces,
-  accounts,
   runners,
   onChange,
   onError,
 }: {
   repo: RepoRecord;
   workspaces: readonly WorkspaceRecord[];
-  accounts: readonly GitHubAccountRecord[];
   runners: readonly RunnerRecord[];
   onChange: () => Promise<void>;
   onError: (e: string) => void;
@@ -147,6 +144,25 @@ function RepoCard({
   const [busy, setBusy] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
+
+  if (!repo.githubAccessible) {
+    return (
+      <article className="card opacity-70" aria-label={`${repo.fullName} — no GitHub access`} aria-disabled="true">
+        <div className="flex items-start gap-3 text-zinc-500 dark:text-zinc-500">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700">
+            <LockIcon className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-zinc-600 dark:text-zinc-400">{repo.fullName}</div>
+            <p className="mt-1 text-xs leading-relaxed">
+              None of your personal GitHub accounts can access this repository. Ask its owner to grant your GitHub
+              account access, then refresh. Cached repository data and another user's credentials stay hidden.
+            </p>
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
     setBusy(true);
@@ -229,26 +245,6 @@ function RepoCard({
         <button className="btn-ghost" disabled={busy || workspaces.length < 2} title={workspaces.length < 2 ? 'Create another workspace to transfer' : undefined} onClick={() => setTransferring(true)}>
           Transfer…
         </button>
-        {/* Label + description live inside the opened dropdown (optgroup) — the closed control stays label-free. */}
-        {accounts.length > 1 ? (
-          <select
-            className="input input-sm"
-            value={repo.githubAccountId ?? ''}
-            disabled={busy}
-            aria-label={`GitHub account posting for ${repo.fullName}`}
-            title="Reviews, labels, and comments on this repo post as this account"
-            onChange={(e) => void act(() => api.setRepoGithubAccount(repo.fullName, e.target.value || null))()}
-          >
-            <optgroup label="Posts as — reviews, labels, and comments on this repo post as this account">
-              <option value="">auto (bindings)</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.login}
-                </option>
-              ))}
-            </optgroup>
-          </select>
-        ) : null}
         {/* A pin is pointless while only the local runner exists — hide it. */}
         {runners.length > 1 ? (
           <select
@@ -277,10 +273,10 @@ function RepoCard({
             void (async () => {
               const ok = await confirmDanger({
                 title: `Disconnect ${repo.fullName}`,
-                message: 'Synced issues, PRs, and the local clone are removed from Companion. The GitHub repository itself is untouched.',
+                message: 'The repository is removed from this workspace. Shared cached data and the local clone remain while another workspace still uses it.',
                 confirmLabel: 'Disconnect',
               });
-              if (ok) await act(() => api.removeRepo(repo.fullName))();
+              if (ok) await act(() => api.removeRepo(repo.fullName, repo.workspaceId))();
             })()
           }
         >
@@ -327,7 +323,7 @@ function TransferRepoModal({
     e.preventDefault();
     setBusy(true);
     try {
-      await api.moveRepo(repo.fullName, target);
+      await api.moveRepo(repo.fullName, repo.workspaceId, target);
       onDone();
     } catch (err) {
       onError(String(err));
@@ -348,8 +344,8 @@ function TransferRepoModal({
           </select>
         </Field>
         <p className="dim text-[13px]">
-          The repo leaves <strong>{from ? workspaceLabel(from, workspaces) : null}</strong> together with its
-          issues, PRs, and pipeline scope.
+          The repo leaves <strong>{from ? workspaceLabel(from, workspaces) : null}</strong> and joins the target.
+          Its shared GitHub cache and local clone stay intact.
         </p>
         <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -500,8 +496,8 @@ function AddRepoModal({
         </div>
 
         <p className="dim text-[13px]">
-          The repo connects into <strong>{workspace.name}</strong> — the active workspace. You can move it later from
-          its row.
+          The repo connects into <strong>{workspace.name}</strong> — the active workspace. The same repository may
+          also be connected to other workspaces.
         </p>
         <ErrorBar error={error} />
         <FormActions>

@@ -1,60 +1,44 @@
 import type { SpaServerMessage } from '@companion/contracts';
 import { log } from '@companion/services';
+import type { WorkspaceSyncResult } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import { GitHubClient, type GhIssue, type GhPull } from './github-client.js';
 
 /**
  * Incremental GitHub → SQLite sync. GitHub stays authoritative; the cache
  * exists so the board renders instantly and agents can be prompted without
- * burning API calls. Poll cadence is slow (2 min) — webhooks are the fast path.
+ * burning API calls. Synchronization is request-owned: without a Companion
+ * user there is no personal credential to borrow. Webhooks remain the fast
+ * path because their signed payload already carries the changed record.
  */
 export class GitHubSync {
-  private timer: NodeJS.Timeout | null = null;
   private inFlight = new Map<string, Promise<{ issues: number; prs: number }>>();
   /** Optional post-sync hook (checks refresh); injected to avoid a dep cycle. */
-  onSynced: ((repo: string) => Promise<void>) | null = null;
+  onSynced: ((repo: string, username: string) => Promise<void>) | null = null;
 
   constructor(
     private readonly store: CodeStore,
-    /** Per-repo so account pins and workspace delegation apply. */
-    private readonly client: (repo: string) => GitHubClient | null,
+    /** Explicit user context prevents background work borrowing an ambient PAT. */
+    private readonly client: (
+      repo: string,
+      workspaceId: string | undefined,
+      username: string,
+    ) => GitHubClient | null | Promise<GitHubClient | null>,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
-  start(intervalMs = 120_000): void {
-    // First poll now, not one interval from now — a freshly booted daemon
-    // should catch up without waiting or a manual sync.
-    void this.syncAll().catch((err) => log.warn('initial sync failed', { err: String(err) }));
-    this.timer = setInterval(() => {
-      void this.syncAll().catch((err) => log.warn('sync tick failed', { err: String(err) }));
-    }, intervalMs);
-    this.timer.unref();
-  }
-
-  stop(): void {
-    if (this.timer) clearInterval(this.timer);
-  }
-
-  async syncAll(): Promise<void> {
-    for (const repo of this.store.repos.list()) {
-      await this.syncRepo(repo.full_name).catch((err) =>
-        log.warn(`sync failed for ${repo.full_name}`, { err: String(err) }),
-      );
-    }
-  }
-
   /** On-demand refresh for the workspace currently visible in the SPA. */
-  async syncWorkspace(workspaceId: string): Promise<void> {
+  async syncWorkspace(workspaceId: string, username: string): Promise<WorkspaceSyncResult> {
     const failures: string[] = [];
     for (const repo of this.store.repos.listByWorkspace(workspaceId)) {
       try {
-        await this.syncRepo(repo.full_name);
+        await this.syncRepo(repo.full_name, workspaceId, username);
       } catch (err) {
         failures.push(repo.full_name);
         log.warn(`workspace sync failed for ${repo.full_name}`, { workspaceId, err: String(err) });
       }
     }
-    if (failures.length > 0) throw new Error(`GitHub sync failed for ${failures.join(', ')}`);
+    return { unavailableRepos: failures };
   }
 
   /** Webhook fast path: the delivery carries the full issue — apply it now. */
@@ -78,8 +62,8 @@ export class GitHubSync {
    * reflects the real state immediately instead of waiting for the next full
    * sync. Best-effort: a fetch failure leaves the cache untouched.
    */
-  async syncPr(fullName: string, number: number): Promise<void> {
-    const client = this.client(fullName);
+  async syncPr(fullName: string, number: number, username: string, workspaceId?: string): Promise<void> {
+    const client = await this.client(fullName, workspaceId, username);
     if (!client) return;
     try {
       const pr = await client.pull(fullName, number);
@@ -92,8 +76,8 @@ export class GitHubSync {
   }
 
   /** Re-pull ONE issue from GitHub and refresh the cache (see syncPr). */
-  async syncIssue(fullName: string, number: number): Promise<void> {
-    const client = this.client(fullName);
+  async syncIssue(fullName: string, number: number, username: string, workspaceId?: string): Promise<void> {
+    const client = await this.client(fullName, workspaceId, username);
     if (!client) return;
     try {
       this.store.issues.upsert(mapIssue(fullName, await client.issue(fullName, number)));
@@ -103,25 +87,27 @@ export class GitHubSync {
     }
   }
 
-  async syncRepo(fullName: string): Promise<{ issues: number; prs: number }> {
-    const client = this.client(fullName);
-    if (!client) throw new Error('GitHub is not configured (set a PAT in Settings)');
+  async syncRepo(fullName: string, workspaceId: string | undefined, username: string): Promise<{ issues: number; prs: number }> {
+    const client = await this.client(fullName, workspaceId, username);
+    if (!client) throw new Error(`none of this profile's GitHub accounts can access ${fullName}`);
     // Concurrent callers join the in-flight sync — returning a fake empty
     // result here would let automation run before the data actually landed.
-    const existing = this.inFlight.get(fullName);
+    const inFlightKey = `${username}:${fullName}:${workspaceId ?? ''}`;
+    const existing = this.inFlight.get(inFlightKey);
     if (existing) return existing;
-    const run = this.doSync(fullName, client);
-    this.inFlight.set(fullName, run);
+    const run = this.doSync(fullName, client, username);
+    this.inFlight.set(inFlightKey, run);
     try {
       return await run;
     } finally {
-      this.inFlight.delete(fullName);
+      this.inFlight.delete(inFlightKey);
     }
   }
 
   private async doSync(
     fullName: string,
     client: GitHubClient,
+    username: string,
   ): Promise<{ issues: number; prs: number }> {
     const repoRow = this.store.repos.get(fullName);
     // Incremental: only issues updated since the last sync (minus a safety margin).
@@ -154,7 +140,7 @@ export class GitHubSync {
     if (prsChanged) this.broadcast({ t: 'prs.changed', repo: fullName });
     this.broadcast({ t: 'repos.changed' });
     if (this.onSynced) {
-      void this.onSynced(fullName).catch((err) =>
+      void this.onSynced(fullName, username).catch((err) =>
         log.warn('post-sync hook failed', { repo: fullName, err: String(err) }),
       );
     }

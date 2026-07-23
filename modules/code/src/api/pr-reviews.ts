@@ -27,7 +27,7 @@ export class PrReviews {
     private readonly store: CodeStore,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
-    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null,
     private readonly mergeGithub: (
       repo: string,
       prNumber: number,
@@ -42,13 +42,13 @@ export class PrReviews {
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
-  async analyzePr(repo: string, prNumber: number, opts?: { context?: string }): Promise<PrReviewResult> {
+  async analyzePr(repo: string, prNumber: number, userId: string, opts?: { context?: string }): Promise<PrReviewResult> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    if (!this.github({ repo })) throw new Error('GitHub is not configured');
+    if (!this.github({ repo, username: userId })) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    const checksSummary = await this.checks.trySummary(repo, prNumber);
+    const checksSummary = await this.checks.trySummary(repo, prNumber, userId);
     const { runId, finalMessage } = await this.checkouts.withPullRequestWorktree(
       repo,
       `pr-review-${prNumber}-${randomUUID().slice(0, 8)}`,
@@ -61,12 +61,18 @@ export class PrReviews {
           title: `Review PR #${prNumber}: ${pr.title.slice(0, 60)}`,
           cwd,
           repo,
+          userId,
           issueNumber: prNumber,
           prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, describeChecks(checksSummary), opts?.context),
           timeoutMs: 12 * 60_000,
           // The caller's context rides along so a resumed review keeps its briefing.
-          resume: { type: 'pr-review', args: { repo, number: prNumber, ...(opts?.context ? { context: opts.context } : {}) } },
+          resume: {
+            type: 'pr-review',
+            args: { repo, number: prNumber, userId, ...(opts?.context ? { context: opts.context } : {}) },
+          },
         }),
+      undefined,
+      userId,
     );
 
     let verdict: PrReviewVerdict | null = null;
@@ -99,11 +105,11 @@ export class PrReviews {
   }
 
   /** Post the verdict to GitHub as a PR review. */
-  async apply(id: string, accountId?: string): Promise<{ repo: string; number: number }> {
+  async apply(id: string, accountId?: string, userId?: string): Promise<{ repo: string; number: number }> {
     const result = this.store.prReviews.get(id);
     if (!result?.verdict) throw new Error('review not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`review is ${result.status}, not pending`);
-    const client = this.github({ repo: result.repo, accountId });
+    const client = this.github({ repo: result.repo, accountId, username: userId });
     if (!client) throw new Error('GitHub is not configured');
 
     const event =
@@ -144,8 +150,8 @@ export class PrReviews {
     this.broadcast({ t: 'prs.changed', repo: result.repo });
   }
 
-  async merge(repo: string, prNumber: number, method: 'merge' | 'squash' | 'rebase'): Promise<void> {
-    const { result, client, tried } = await this.mergeGithub(repo, prNumber, method);
+  async merge(repo: string, prNumber: number, method: 'merge' | 'squash' | 'rebase', userId: string): Promise<void> {
+    const { result, client, tried } = await this.mergeGithub(repo, prNumber, method, { username: userId });
     if (!client || !result) {
       throw new Error(
         tried.length > 0
@@ -162,8 +168,8 @@ export class PrReviews {
     // UI — reflects the merged state immediately, not on the next full sync.
   }
 
-  async close(repo: string, prNumber: number): Promise<void> {
-    const client = this.github({ repo });
+  async close(repo: string, prNumber: number, userId: string): Promise<void> {
+    const client = this.github({ repo, username: userId });
     if (!client) throw new Error('GitHub is not configured');
     await client.closePr(repo, prNumber);
   }
@@ -174,13 +180,13 @@ export class PrReviews {
    * (may run builds/tests read-only) and writes a markdown report stored as a
    * ci-analysis report on the PR.
    */
-  async analyzeFailedChecks(repo: string, prNumber: number): Promise<void> {
+  async analyzeFailedChecks(repo: string, prNumber: number, userId: string): Promise<void> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    if (!this.github()) throw new Error('GitHub is not configured');
+    if (!this.github({ repo, username: userId })) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    const summary = await this.checks.fetchSummary(repo, prNumber);
+    const summary = await this.checks.fetchSummary(repo, prNumber, userId);
     const failing = summary.runs.filter(
       (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
     );
@@ -198,11 +204,14 @@ export class PrReviews {
           title: `CI failure analysis — PR #${prNumber}`,
           cwd,
           repo,
+          userId,
           issueNumber: prNumber,
           prompt: ciAnalysisPrompt(pr.title, pr.headRef, pr.baseRef, failing),
           timeoutMs: 14 * 60_000,
-          resume: { type: 'ci-analysis', args: { repo, number: prNumber } },
+          resume: { type: 'ci-analysis', args: { repo, number: prNumber, userId } },
         }),
+      undefined,
+      userId,
     );
     if (!finalMessage?.trim()) throw new Error('CI analysis produced no report');
 
@@ -225,15 +234,15 @@ export class PrReviews {
    * a confident low-risk verdict on a PR whose CI is not failing; anything
    * else stays pending for the human. Merging is never automatic.
    */
-  async gate(repo: string, prNumber: number): Promise<void> {
-    const result = await this.analyzePr(repo, prNumber);
+  async gate(repo: string, prNumber: number, userId: string): Promise<void> {
+    const result = await this.analyzePr(repo, prNumber, userId);
     if (!result.verdict || result.verdict.risk !== 'low') return;
     const checks = this.store.prs.get(repo, prNumber)?.checks ?? null;
     if (checks && checks.state === 'failing') {
       log.info('PR gate: verdict held back (CI failing)', { repo, prNumber });
       return;
     }
-    await this.apply(result.id);
+    await this.apply(result.id, undefined, userId);
     log.info('PR gate auto-posted review', { repo, prNumber, recommendation: result.verdict.recommendation });
   }
 }

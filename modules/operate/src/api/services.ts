@@ -1,5 +1,5 @@
 import { defineServices } from '@companion/core/server';
-import type { AuthUser, SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@companion/contracts';
 import { paths } from '@companion/services';
 import type { GithubTokenSource } from '../contract/index.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
@@ -38,13 +38,14 @@ export default defineServices(async (ctx) => {
     settings.delete('webhookTunnel');
   }
 
-  // Git credentials: module-code plugs its account-aware resolver in at its
-  // onEnable; until then (or with code disabled) the legacy settings key serves.
+  // Git credentials: module-code plugs its personal-account resolver in at
+  // onEnable. Without it, network Git fails closed; a legacy instance token
+  // must never become an implicit credential shared by every profile.
   const tokenSource: { current: GithubTokenSource } = {
-    current: { tokenFor: () => settings.get('github_token') },
+    current: { tokenFor: () => null },
   };
   const githubTokenFor = async (repo: string, username?: string | null): Promise<string | null> =>
-    (await tokenSource.current.tokenFor(repo, username)) ?? settings.get('github_token');
+    (await tokenSource.current.tokenFor(repo, username)) ?? null;
 
   // run.changed fans out to browsers AND to the server bus, replacing the
   // legacy composition root's hard-coded proposals forward-ref: reacting
@@ -66,7 +67,7 @@ export default defineServices(async (ctx) => {
     ctx.log.info(`moxxy ${moxxyCli.version} at ${moxxyCli.path}`);
   }
 
-  // Per-repo resolution, so delegated accounts / repo pins govern clones too.
+  // Per-repo resolution, so the invoking/run-owning profile governs clones too.
   const checkouts = new Checkouts(githubTokenFor);
   const store = new OperateStore(ctx.db, settings);
   const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
@@ -77,11 +78,6 @@ export default defineServices(async (ctx) => {
   );
   const skills = new Skills();
 
-  // Run visibility gates on repo→workspace access; resolve workspace lazily so
-  // the live instance is always used (operate dependsOn workspace).
-  const canAccessRepo = (user: AuthUser, repo: string): boolean =>
-    ctx.services.get('workspace').canAccessRepo(user, repo);
-
   const service = new OperateService(
     orchestrator,
     orchestrator.runners,
@@ -91,7 +87,6 @@ export default defineServices(async (ctx) => {
     skills,
     store.runs,
     tokenSource,
-    canAccessRepo,
   );
   service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
   ctx.services.register('operate', service);

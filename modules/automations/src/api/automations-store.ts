@@ -66,8 +66,7 @@ export class AutomationsStore {
       try {
         return this.db
           .prepare(
-            `SELECT p.title, p.status FROM proposals p JOIN repos r ON r.full_name = p.repo
-             WHERE r.workspace_id = ? ORDER BY p.created_at DESC`,
+            `SELECT title, status FROM proposals WHERE workspace_id = ? ORDER BY created_at DESC`,
           )
           .all(workspaceId) as ProposalLite[];
       } catch {

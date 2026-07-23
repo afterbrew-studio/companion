@@ -17,7 +17,8 @@ export const automationsApi = {
     fullName: string,
     fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean; autoMerge?: boolean },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
-  enableWebhook: (fullName: string) => post<WebhookInfo>(`/api/repos/${fullName}/webhook`),
+  enableWebhook: (fullName: string, accountId: string) =>
+    post<WebhookInfo>(`/api/repos/${fullName}/webhook`, { accountId }),
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
   /** Read-only: never (re-)enables the receiver. */
   getWebhook: (fullName: string) => request<{ webhook: WebhookInfo | null }>(`/api/repos/${fullName}/webhook`),

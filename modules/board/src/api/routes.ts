@@ -15,6 +15,7 @@ const attachmentsSchema = z
 const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 
 const createTaskSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   repo: z.string().min(3).max(200),
   targetBranch: z.string().trim().min(1).max(200),
   title: z.string().min(1).max(200),
@@ -66,6 +67,7 @@ const configSchema = z.object({
 
 export default defineRoutes((ctx) => {
   const board = ctx.services.get('board');
+  const code = ctx.services.get('code');
   const workspace = ctx.services.get('workspace');
 
   return [
@@ -98,7 +100,10 @@ export default defineRoutes((ctx) => {
       access: 'board:manage',
       body: createTaskSchema,
       handler: ({ body, user }) => {
-        if (!workspace.canAccessRepo(user!, body.repo)) throw forbidden('no access to that repository');
+        if (!workspace.canAccessWorkspace(user!, body.workspaceId)) throw forbidden('no access to that workspace');
+        if (!code.repos.inWorkspace(body.repo, body.workspaceId)) {
+          throw forbidden('repository is not connected to that workspace');
+        }
         try {
           return created({ task: board.createTask({ ...body, createdBy: user!.username }) });
         } catch (err) {
@@ -171,10 +176,16 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/board/specs/:owner/:name',
       access: 'board:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         const repo = `${params.owner}/${params.name}`;
-        if (!workspace.canAccessRepo(user!, repo)) throw forbidden('no access to that repository');
-        return { specs: board.specOptions(repo) };
+        const workspaceId = query.get('workspace') ?? '';
+        if (!workspaceId || !workspace.canAccessWorkspace(user!, workspaceId)) {
+          throw forbidden('no access to that workspace');
+        }
+        if (!code.repos.inWorkspace(repo, workspaceId)) {
+          throw forbidden('repository is not connected to that workspace');
+        }
+        return { specs: board.specOptions(repo, workspaceId) };
       },
     }),
 

@@ -72,19 +72,17 @@ export class RefinementService {
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
-  /** The workspace a refinement belongs to — via its repo (repos carry the scoping key). */
-  private workspaceOf(repo: string): string | null {
-    return this.code.repos.get(repo)?.workspace_id ?? null;
-  }
-
   // ---------- CRUD ---------------------------------------------------------------------
 
-  create(input: { repo: string; branch?: string; title: string; story: string }): RefinementRecord {
+  create(input: { workspaceId: string; repo: string; branch?: string; title: string; story: string }): RefinementRecord {
     const repoRow = this.code.repos.get(input.repo);
-    if (!repoRow) throw new Error(`repo ${input.repo} is not connected`);
+    if (!repoRow || !this.code.repos.inWorkspace(input.repo, input.workspaceId)) {
+      throw new Error(`repo ${input.repo} is not connected to this workspace`);
+    }
     const now = Date.now();
     const refinement: RefinementRecord = {
       id: `ref-${randomUUID().slice(0, 12)}`,
+      workspaceId: input.workspaceId,
       repo: input.repo,
       branch: input.branch?.trim() || repoRow.default_branch,
       title: input.title,
@@ -132,15 +130,14 @@ export class RefinementService {
     if (!refinement) return undefined;
     // workspaceId rides along so the client resolves methods against the
     // refinement's workspace, not whichever one the switcher happens to show.
-    return { refinement, items: this.store.listItems(id), workspaceId: this.workspaceOf(refinement.repo) };
+    return { refinement, items: this.store.listItems(id), workspaceId: refinement.workspaceId };
   }
 
   /** Spec/doc picker options for the refinement's repo/workspace — id + title only. */
   contextOptions(id: string): RefineContextOptions {
     const refinement = this.store.get(id);
     if (!refinement) throw new Error('refinement not found');
-    const workspaceId = this.workspaceOf(refinement.repo);
-    if (!workspaceId) return { specs: [], docs: [] };
+    const workspaceId = refinement.workspaceId;
     const specs = this.plan.specs
       .list(workspaceId)
       .filter((s) => s.repo === refinement.repo && s.status === 'ready')
@@ -232,7 +229,7 @@ export class RefinementService {
     const refinement = this.store.get(id);
     if (!refinement) throw new Error('refinement not found');
     if (refinement.status === 'decomposing') throw new Error('a decomposition is already running');
-    const method = this.resolveMethod(refinement.repo, opts.methodId);
+    const method = this.resolveMethod(refinement, opts.methodId);
     // Persist only context ids that resolve for this repo/workspace — a stale
     // or foreign id would silently thin the prompt on every future run.
     const options = this.contextOptions(id);
@@ -249,7 +246,7 @@ export class RefinementService {
    * error (imported items are never touched) — never a thrown rejection. The
    * worktree is removed in every outcome.
    */
-  async runDecompose(id: string, method: RefineMethodRecord): Promise<void> {
+  async runDecompose(id: string, method: RefineMethodRecord, userId: string): Promise<void> {
     const refinement = this.store.get(id);
     if (!refinement) return;
 
@@ -258,12 +255,14 @@ export class RefinementService {
     try {
       // Idempotent and lock-serialized; without it a repo whose background
       // clone failed reads as a bogus "branch does not exist" error.
-      await this.checkouts.clone(refinement.repo);
+      await this.checkouts.clone(refinement.repo, undefined, userId);
       try {
         worktree = await this.checkouts.addWorktreeAtBranch(
           refinement.repo,
           `refine-${id}-${Date.now().toString(36)}`,
           refinement.branch,
+          undefined,
+          userId,
         );
       } catch (err) {
         throw new Error(
@@ -276,11 +275,12 @@ export class RefinementService {
         title: `Refine: ${refinement.title.slice(0, 60)}`,
         cwd: worktree,
         repo: refinement.repo,
+        userId,
         prompt: decomposePrompt(
           refinement,
           method,
-          this.specContext(refinement.repo, refinement.specIds),
-          this.docContext(refinement.repo, refinement.docIds),
+          this.specContext(refinement, refinement.specIds),
+          this.docContext(refinement, refinement.docIds),
         ),
         timeoutMs: DECOMPOSE_TIMEOUT_MS,
       });
@@ -330,34 +330,32 @@ export class RefinementService {
   }
 
   /** Builtin id or a custom row of the refinement's workspace — anything else is unknown. */
-  private resolveMethod(repo: string, methodId: string): RefineMethodRecord {
+  private resolveMethod(refinement: RefinementRecord, methodId: string): RefineMethodRecord {
     const builtin = BUILTIN_METHODS.find((m) => m.id === methodId);
     if (builtin) return builtin;
     const custom = this.store.getMethod(methodId);
-    if (custom && custom.workspaceId === this.workspaceOf(repo)) return custom;
+    if (custom && custom.workspaceId === refinement.workspaceId) return custom;
     throw new Error(`unknown decomposition method "${methodId}"`);
   }
 
   /** The attached ready specs of the refinement's repo, capped and clipped. */
-  private specContext(repo: string, specIds: readonly string[]): Array<{ title: string; content: string }> {
-    const workspaceId = this.workspaceOf(repo);
-    if (!workspaceId || specIds.length === 0) return [];
+  private specContext(refinement: RefinementRecord, specIds: readonly string[]): Array<{ title: string; content: string }> {
+    if (specIds.length === 0) return [];
     const wanted = new Set(specIds.slice(0, MAX_CONTEXT_ENTRIES));
     return this.plan.specs
-      .list(workspaceId)
-      .filter((s) => wanted.has(s.id) && s.repo === repo && s.status === 'ready')
+      .list(refinement.workspaceId)
+      .filter((s) => wanted.has(s.id) && s.repo === refinement.repo && s.status === 'ready')
       .slice(0, MAX_CONTEXT_ENTRIES)
       .map((s) => ({ title: s.title, content: s.content }));
   }
 
   /** The attached workspace docs, capped and clipped. */
-  private docContext(repo: string, docIds: readonly string[]): Array<{ title: string; content: string }> {
-    const workspaceId = this.workspaceOf(repo);
-    if (!workspaceId || docIds.length === 0) return [];
+  private docContext(refinement: RefinementRecord, docIds: readonly string[]): Array<{ title: string; content: string }> {
+    if (docIds.length === 0) return [];
     const docs: Array<{ title: string; content: string }> = [];
     for (const docId of docIds.slice(0, MAX_CONTEXT_ENTRIES)) {
       const doc = this.plan.docs.get(docId);
-      if (doc && doc.workspaceId === workspaceId) docs.push({ title: doc.title, content: doc.content });
+      if (doc && doc.workspaceId === refinement.workspaceId) docs.push({ title: doc.title, content: doc.content });
     }
     return docs;
   }
@@ -412,6 +410,7 @@ export class RefinementService {
       return dep?.status === 'imported' && dep.taskId ? [dep.taskId] : [];
     });
     const task = this.board.createTask({
+      workspaceId: refinement.workspaceId,
       repo: refinement.repo,
       targetBranch: targetBranch?.trim() || refinement.branch,
       title: item.title,

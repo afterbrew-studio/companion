@@ -25,7 +25,7 @@ import type { MoxxyCli } from '../exec/cli.js';
  * code depends on operate, never the reverse).
  */
 export class OperateService {
-  /** The built-in settings-key resolver, restored when module-code disables. */
+  /** The built-in fail-closed resolver, restored when module-code disables. */
   private readonly defaultTokenSource: GithubTokenSource;
 
   /** Feature tasks modules registered, keyed by id — feeds the runner filter UI. */
@@ -41,9 +41,6 @@ export class OperateService {
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
     readonly runsStore: RunsStore,
     private readonly tokenSource: { current: GithubTokenSource },
-    /** Workspace repo-access check, resolved lazily so the current workspace
-     *  instance is always used. operate dependsOn workspace, so it's present. */
-    private readonly canAccessRepo: (user: AuthUser, repo: string) => boolean,
   ) {
     this.defaultTokenSource = tokenSource.current;
   }
@@ -81,13 +78,14 @@ export class OperateService {
    * go through here so the rule has one definition:
    *  - attended chats (interactive / AI Help) are private to their owner — one
    *    maintainer must never see another's assistant;
-   *  - repo runs inherit that repo's workspace access;
+   *  - repo runs are private to the profile whose personal GitHub account
+   *    authorized them (workspace membership alone cannot reveal the clone);
    *  - other repo-less runs (automated one-shots) stay visible to runs:read.
    */
   canSeeRun(user: AuthUser | null, run: { repo: string | null; kind: string; userId: string | null }): boolean {
     if (!user) return false;
     if (run.kind === 'interactive' || run.kind === 'assistant') return run.userId === user.username;
-    if (run.repo) return this.canAccessRepo(user, run.repo);
+    if (run.repo) return run.userId === user.username;
     return true;
   }
 
@@ -109,9 +107,9 @@ export class OperateService {
     return { ...snapshot, entries };
   }
 
-  canSeeQueueEntry(user: AuthUser | null, entry: Pick<QueuedRunEntry, 'repo'>): boolean {
+  canSeeQueueEntry(user: AuthUser | null, entry: Pick<QueuedRunEntry, 'repo' | 'userId'>): boolean {
     if (!user) return false;
-    return entry.repo ? this.canAccessRepo(user, entry.repo) : true;
+    return entry.repo ? entry.userId === user.username : true;
   }
 
   /**
@@ -127,10 +125,7 @@ export class OperateService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const since = today.getTime() - (DAYS - 1) * 86_400_000;
-    const scope = {
-      username: user.username,
-      repos: this.runsStore.distinctReposSince(since).filter((repo) => this.canAccessRepo(user, repo)),
-    };
+    const scope = { username: user.username };
     const days = Array.from({ length: DAYS }, (_, i) => ({
       dayStart: since + i * 86_400_000,
       inputTokens: 0,
@@ -156,13 +151,12 @@ export class OperateService {
     this.tokenSource.current = source;
   }
 
-  /** module-code restores the built-in resolver at onDisable, so a disabled (or
-   *  uninstalled) code module's account registry stops governing git credentials. */
+  /** Restore the built-in fail-closed resolver when code disables. */
   resetGithubTokenSource(): void {
     this.tokenSource.current = this.defaultTokenSource;
   }
 
-  /** The current git-credential source (default: the legacy settings key). */
+  /** The current git-credential source (default: no credential). */
   githubTokens(): GithubTokenSource {
     return this.tokenSource.current;
   }

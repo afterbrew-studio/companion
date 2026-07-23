@@ -216,8 +216,8 @@ export class PipelinesStore {
   listWorkspaceRuns(workspaceId: string, limit = 100): PipelineRunRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT pr.* FROM pipeline_runs pr JOIN repos r ON r.full_name = pr.repo
-         WHERE r.workspace_id = ? ORDER BY pr.created_at DESC LIMIT ?`,
+        `SELECT pr.* FROM pipeline_runs pr JOIN pipelines p ON p.id = pr.pipeline_id
+         WHERE p.workspace_id = ? ORDER BY pr.created_at DESC LIMIT ?`,
       )
       .all(workspaceId, limit) as PipelineRunRow[];
     return rows.map(pipelineRunRowToRecord);

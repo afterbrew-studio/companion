@@ -27,12 +27,12 @@ export class Triage {
     private readonly store: CodeStore,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
-    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
   /** Queue a triage run for one issue. Resolves when the verdict is stored. */
-  async triageIssue(repo: string, issueNumber: number): Promise<TriageResult> {
+  async triageIssue(repo: string, issueNumber: number, userId: string): Promise<TriageResult> {
     const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
@@ -49,10 +49,11 @@ export class Triage {
       title: `Triage #${issueNumber}: ${issue.title.slice(0, 60)}`,
       cwd: this.checkouts.cloneDir(repo),
       repo,
+      userId,
       issueNumber,
       prompt: buildTriagePrompt(issue, openIssues),
       timeoutMs: 6 * 60_000,
-      resume: { type: 'triage', args: { repo, number: issueNumber } },
+      resume: { type: 'triage', args: { repo, number: issueNumber, userId } },
     });
 
     let verdict: TriageVerdict | null = null;
@@ -81,11 +82,14 @@ export class Triage {
   }
 
   /** Apply a pending verdict to GitHub: labels + (optional) draft reply comment. */
-  async apply(id: string, opts: { comment: boolean; accountId?: string }): Promise<{ repo: string; number: number }> {
+  async apply(
+    id: string,
+    opts: { comment: boolean; accountId?: string; userId: string },
+  ): Promise<{ repo: string; number: number }> {
     const result = this.findTriage(id);
     if (!result || !result.verdict) throw new Error('triage result not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`triage is ${result.status}, not pending`);
-    const client = this.github({ repo: result.repo, accountId: opts.accountId });
+    const client = this.github({ repo: result.repo, accountId: opts.accountId, username: opts.userId });
     if (!client) throw new Error('GitHub is not configured');
 
     const labels = [...result.verdict.labels];

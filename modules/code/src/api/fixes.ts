@@ -24,6 +24,7 @@ export class Fixes {
     private readonly store: CodeStore,
     private readonly orchestrator: Orchestrator,
     private readonly github: (repo?: string, username?: string | null) => GitHubClient | null,
+    private readonly verifyGithub: (repo: string, username: string) => Promise<boolean>,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
@@ -72,6 +73,7 @@ export class Fixes {
     /** Feature task id for runner filtering (e.g. 'board.worker'); defaults by kind. */
     task?: string;
   }): Promise<RunRecord> {
+    await this.requirePersonalAccess(opts.repo, opts.userId);
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
@@ -108,8 +110,9 @@ export class Fixes {
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
   async startCheckFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
+    await this.requirePersonalAccess(repo, userId);
     const { pr } = this.requireOpenPr(repo, prNumber, userId);
-    const summary = await this.checks.fetchSummary(repo, prNumber);
+    const summary = await this.checks.fetchSummary(repo, prNumber, userId!);
     const failing = summary.runs.filter(
       (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
     );
@@ -124,6 +127,7 @@ export class Fixes {
 
   /** Agent implements the changes human reviewers asked for on a PR. */
   async startReviewFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
+    await this.requirePersonalAccess(repo, userId);
     const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     const [reviews, inline] = await Promise.all([
       client.prReviewList(repo, prNumber),
@@ -148,6 +152,7 @@ export class Fixes {
 
   /** Agent merges the fresh base into the PR branch and resolves the conflicts. */
   async startConflictResolve(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
+    await this.requirePersonalAccess(repo, userId);
     const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     // Re-check GitHub live — the sync cache can lag a manual resolution, and a
     // run launched then would push a pointless no-op merge commit. Fail open on
@@ -168,6 +173,7 @@ export class Fixes {
 
   /** Agent works on the PR branch with a user-written objective. */
   async startCustomPrRun(repo: string, prNumber: number, instructions: string, userId: string | null = null): Promise<RunRecord> {
+    await this.requirePersonalAccess(repo, userId);
     const { pr } = this.requireOpenPr(repo, prNumber, userId);
     const preview = instructions.trim().split('\n')[0]!.slice(0, 50);
     return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions), {
@@ -196,6 +202,7 @@ export class Fixes {
     objective: string,
     opts: { userId?: string | null; task?: string } = {},
   ): Promise<RunRecord> {
+    await this.requirePersonalAccess(pr.repo, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
     const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', { userId: opts.userId, task });
@@ -251,17 +258,23 @@ export class Fixes {
   async approve(
     runId: string,
     opts: { title?: string; body?: string; baseBranch?: string } = {},
+    actorUsername?: string | null,
   ): Promise<{ prUrl: string }> {
     const run = this.store.runs.get(runId);
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
     const repoRow = this.store.repos.get(run.repo);
     if (!repoRow) throw new Error(`unknown repo ${run.repo}`);
-    const client = this.github(run.repo, run.user_id);
+    // An interactive approver acts as themselves, never as the user who
+    // originally created the run. Internal continuations omit the override and
+    // remain bound to the persisted run owner.
+    const credentialOwner = actorUsername === undefined ? run.user_id : actorUsername;
+    await this.requirePersonalAccess(run.repo, credentialOwner);
+    const client = this.github(run.repo, credentialOwner);
     if (!client) throw new Error('GitHub is not configured');
 
     const backend = this.backendForRun(run.runner_id);
     await backend.commitAll(run.cwd, opts.title ?? run.title);
-    await backend.push(run.repo, run.cwd, run.branch, run.user_id);
+    await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 
     if (run.pr_url) {
       this.orchestrator.markRun(runId, 'completed', `pushed to ${run.branch} (${run.pr_url})`);
@@ -298,6 +311,12 @@ export class Fixes {
       await this.backendForRun(run.runner_id).removeWorktree(run.repo, run.cwd).catch(() => undefined);
     }
     this.orchestrator.markRun(runId, 'abandoned', 'discarded by user');
+  }
+
+  private async requirePersonalAccess(repo: string, username?: string | null): Promise<void> {
+    if (!username || !(await this.verifyGithub(repo, username))) {
+      throw new Error(`your GitHub accounts cannot access ${repo} — ask the repository owner to grant access`);
+    }
   }
 }
 

@@ -29,6 +29,6 @@ export const slopApi = {
   apply: (id: string, body: { action?: SlopAction; accountId?: string }) =>
     post<{ repo: string; number: number; action: SlopAction }>(`/api/slop/${id}/apply`, body),
   dismiss: (id: string) => post<{ ok: true }>(`/api/slop/${id}/dismiss`),
-  moveToRefinement: (id: string) =>
-    post<SlopMoveToRefinementResult>(`/api/slop/${id}/move-to-refinement`, {}),
+  moveToRefinement: (id: string, workspaceId: string) =>
+    post<SlopMoveToRefinementResult>(`/api/slop/${id}/move-to-refinement`, { workspaceId }),
 };

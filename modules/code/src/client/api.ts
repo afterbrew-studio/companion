@@ -19,6 +19,7 @@ import type {
   SavePipelineRequest,
   SaveStepDefinitionRequest,
   StepDefinitionRecord,
+  WorkspaceSyncResult,
   TriageResult,
 } from '../contract/index.js';
 
@@ -32,25 +33,26 @@ import type {
 export const codeApi = {
   // repos
   listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
-  repoBranches: (fullName: string) =>
-    request<{ branches: RepoBranchRecord[]; defaultBranch: string }>(`/api/repos/${fullName}/branches`),
+  repoBranches: (fullName: string, workspaceId: string) =>
+    request<{ branches: RepoBranchRecord[]; defaultBranch: string }>(
+      `/api/repos/${fullName}/branches?workspaceId=${encodeURIComponent(workspaceId)}`,
+    ),
   addRepo: (fullName: string, workspaceId: string) =>
     post<{ repo: RepoRecord }>('/api/repos', { fullName, workspaceId }),
   /** Repos the reachable GitHub accounts can see — feeds the add-repo picker. */
   repoCandidates: (workspaceId: string) =>
     request<{ candidates: RepoCandidate[] }>(`/api/github/repo-candidates?workspaceId=${encodeURIComponent(workspaceId)}`),
-  removeRepo: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}`),
-  moveRepo: (fullName: string, workspaceId: string) =>
-    post<{ repo: RepoRecord }>(`/api/repos/${fullName}/workspace`, { workspaceId }),
+  removeRepo: (fullName: string, workspaceId: string) =>
+    del<{ ok: true }>(`/api/repos/${fullName}?workspaceId=${encodeURIComponent(workspaceId)}`),
+  moveRepo: (fullName: string, fromWorkspaceId: string, workspaceId: string) =>
+    post<{ repo: RepoRecord }>(`/api/repos/${fullName}/workspace`, { fromWorkspaceId, workspaceId }),
   syncRepo: (fullName: string) => post<{ issues: number; prs: number }>(`/api/repos/${fullName}/sync`),
-  setRepoGithubAccount: (fullName: string, accountId: string | null) =>
-    patch<{ repo: RepoRecord }>(`/api/repos/${fullName}/github-account`, { accountId }),
   setRepoRunner: (fullName: string, runnerId: string | null) =>
     patch<{ repo: RepoRecord }>(`/api/repos/${fullName}/runner`, { runnerId }),
 
   // workspace-scoped feeds
   workspaceRepos: (id: string) => request<{ repos: RepoRecord[] }>(`/api/workspaces/${id}/repos`),
-  refreshWorkspace: (id: string) => post<{ ok: true }>(`/api/workspaces/${id}/sync`),
+  refreshWorkspace: (id: string) => post<WorkspaceSyncResult>(`/api/workspaces/${id}/sync`),
   workspaceIssues: (
     id: string,
     state?: 'open' | 'closed',
@@ -171,10 +173,9 @@ export const codeApi = {
   addGithubAccount: (
     token: string,
     purposes: readonly GitHubPurpose[],
-    scope: GitHubAccountScope = 'shared',
+    scope: GitHubAccountScope = 'all',
     workspaceIds: readonly string[] = [],
-    shared = false,
-  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds, shared }),
+  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds }),
   updateGithubAccount: (
     id: string,
     fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },

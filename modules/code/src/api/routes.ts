@@ -19,7 +19,7 @@ const addRepoSchema = z.object({
   fullName: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
   workspaceId: z.string().min(1),
 });
-const moveSchema = z.object({ workspaceId: z.string().min(1) });
+const moveSchema = z.object({ workspaceId: z.string().min(1), fromWorkspaceId: z.string().min(1) });
 
 // ---------- issues ----------
 
@@ -36,16 +36,14 @@ const prAgentSchema = z.object({ instructions: z.string().trim().min(8).max(16_0
 // ---------- github accounts ----------
 
 const purposesSchema = z.array(z.enum(['fetch', 'runs', 'pipelines', 'webhooks'])).min(1).max(4);
-const scopeSchema = z.enum(['shared', 'delegated']);
+const scopeSchema = z.enum(['all', 'selected']);
 const workspaceIdsSchema = z.array(z.string()).max(200);
 
 const addAccountSchema = z.object({
   token: z.string().min(10).max(500),
   purposes: purposesSchema,
-  scope: scopeSchema.default('shared'),
+  scope: scopeSchema.default('all'),
   workspaceIds: workspaceIdsSchema.default([]),
-  /** Admin-only: make this a shared default account (usable by everyone) rather than personal. */
-  shared: z.boolean().default(false),
 });
 
 const patchAccountSchema = z.object({
@@ -140,6 +138,33 @@ export default defineRoutes((ctx) => {
     return { fullName, pr };
   };
 
+  /** Cache membership is not authorization. Before returning cached GitHub
+   * data, prove that one of the caller's own accounts can still see the repo. */
+  const requirePersonalRepoAccess = async (user: AuthUser | null, fullName: string, workspaceId?: string): Promise<void> => {
+    if (!user) throw forbidden('sign in first');
+    const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
+      username: user.username,
+      workspaceId,
+    });
+    if (!client) {
+      throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
+    }
+  };
+
+  const accessibleRepoNames = async (user: AuthUser, workspaceId: string): Promise<string[]> => {
+    const rows = code.repos.listByWorkspace(workspaceId);
+    const access = await Promise.all(
+      rows.map(async (row) => {
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', row.full_name, {
+          username: user.username,
+          workspaceId,
+        });
+        return client ? row.full_name : null;
+      }),
+    );
+    return access.filter((repo): repo is string => repo !== null);
+  };
+
   // Access gate for the workspace feeds: a private workspace the user isn't in
   // reads as "not found" — same helper as module-workspace's routes.
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
@@ -154,7 +179,7 @@ export default defineRoutes((ctx) => {
 
   const requirePipelineForRepo = (user: AuthUser | null, id: string, repo: string) => {
     const pipeline = requirePipeline(user, id);
-    if (code.repos.get(repo)?.workspace_id !== pipeline.workspaceId) {
+    if (!code.repos.inWorkspace(repo, pipeline.workspaceId)) {
       throw notFound(`pipeline ${id} not found`);
     }
     return pipeline;
@@ -168,27 +193,30 @@ export default defineRoutes((ctx) => {
     return definition;
   };
 
-  const requirePipelineRun = (user: AuthUser | null, id: string) => {
+  const requirePipelineRun = async (user: AuthUser | null, id: string) => {
     const run = pipelinesStore.getRun(id);
     if (!run || !user || !workspace.canAccessRepo(user, run.repo)) {
       throw notFound(`pipeline run ${id} not found`);
     }
+    await requirePersonalRepoAccess(user, run.repo);
     return run;
   };
 
-  const requireTriage = (user: AuthUser | null, id: string) => {
+  const requireTriage = async (user: AuthUser | null, id: string) => {
     const result = triageStore.get(id);
     if (!result || !user || !workspace.canAccessRepo(user, result.repo)) {
       throw notFound(`triage ${id} not found`);
     }
+    await requirePersonalRepoAccess(user, result.repo);
     return result;
   };
 
-  const requirePrReview = (user: AuthUser | null, id: string) => {
+  const requirePrReview = async (user: AuthUser | null, id: string) => {
     const review = prReviewsStore.get(id);
     if (!review || !user || !workspace.canAccessRepo(user, review.repo)) {
       throw notFound(`PR review ${id} not found`);
     }
+    await requirePersonalRepoAccess(user, review.repo);
     return review;
   };
 
@@ -198,13 +226,11 @@ export default defineRoutes((ctx) => {
     }
   };
 
-  // Personal accounts stay private to their owner. Admins additionally manage
-  // shared instance accounts, without inheriting other users' accounts.
+  // Every GitHub account is personal and manageable only by its owner.
   const requireManageable = (user: AuthUser | null, id: string) => {
     const row = code.githubAccounts.row(id);
     if (!row) throw notFound(`GitHub account ${id} not found`);
-    const canManageShared = !!user && row.ownerId === null && ctx.rbac.has(user.role, 'settings:manage');
-    if (!user || (row.ownerId !== user.username && !canManageShared)) {
+    if (!user || row.ownerId !== user.username) {
       throw notFound(`GitHub account ${id} not found`);
     }
     return row;
@@ -241,16 +267,22 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos',
       access: 'repos:read',
-      handler: ({ user }) => {
+      handler: async ({ user }) => {
         const accessible = workspace.accessibleIds(user!);
+        const rows = code.repos.listAccessible([...accessible]);
         return {
-          repos: code.repos
-            .list()
-            .filter((row) => !row.workspace_id || accessible.has(row.workspace_id))
-            .map((row) => ({
-              ...rowToRepo(row),
-              openIssues: code.issues.list(row.full_name, 'open').length,
-            })),
+          repos: await Promise.all(
+            rows.map(async (row) => {
+              const { client } = await code.githubAccounts.verifiedClientFor('fetch', row.full_name, {
+                username: user!.username,
+              });
+              return {
+                ...rowToRepo(row),
+                githubAccessible: client !== null,
+                openIssues: client ? code.issues.list(row.full_name, 'open').length : 0,
+              };
+            }),
+          ),
         };
       },
     }),
@@ -260,10 +292,14 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/branches',
       access: 'repos:read',
-      handler: async ({ params, user }) => {
+      handler: async ({ params, query, user }) => {
         const { fullName, row } = requireRepo(user, params.owner, params.name);
+        const workspaceId = query.get('workspaceId') ?? '';
+        if (!workspaceId || !workspace.canAccessWorkspace(user!, workspaceId) || !code.repos.inWorkspace(fullName, workspaceId)) {
+          throw notFound(`repo ${fullName} not connected`);
+        }
         const { client, tried } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
-          accountId: row.github_account_id ?? undefined,
+          workspaceId,
           username: user?.username ?? null,
         });
         if (!client) {
@@ -313,8 +349,8 @@ export default defineRoutes((ctx) => {
         if (!workspace.canAccess(user!, ws)) {
           throw forbidden('you cannot add repos to that workspace');
         }
-        // Resolve WITH the target workspace (the repo row doesn't exist yet) so
-        // accounts delegated to it compete, access-verified when several could act.
+        // Resolve WITH the target workspace (the repo row doesn't exist yet)
+        // across only the invoking user's eligible personal accounts.
         const { row: account, tried } = await code.githubAccounts.verifiedRowFor('fetch', body.fullName, {
           workspaceId: body.workspaceId,
           username: user?.username ?? null,
@@ -322,8 +358,8 @@ export default defineRoutes((ctx) => {
         if (!account) {
           throw badRequest(
             tried.length > 0
-              ? `none of the connected GitHub accounts (${tried.join(', ')}) can access ${body.fullName} — connect one with access, or grant it to an existing account`
-              : 'GitHub is not configured (connect an account first)',
+              ? `none of your connected GitHub accounts (${tried.join(', ')}) can access ${body.fullName} — ask the repository owner to grant your account access`
+              : 'connect one of your GitHub accounts first',
           );
         }
         let meta;
@@ -338,11 +374,8 @@ export default defineRoutes((ctx) => {
           throw err;
         }
         const existing = code.repos.get(meta.full_name);
-        if (existing && existing.workspace_id !== body.workspaceId) {
-          throw new HttpError(
-            409,
-            `${meta.full_name} is already connected to another workspace — ask someone with access to transfer it or add you to that workspace`,
-          );
+        if (code.repos.inWorkspace(meta.full_name, body.workspaceId)) {
+          throw new HttpError(409, `${meta.full_name} is already connected to this workspace`);
         }
         code.repos.upsert({
           fullName: meta.full_name,
@@ -355,15 +388,21 @@ export default defineRoutes((ctx) => {
         // Clone + first sync in the background; the UI follows repos.changed.
         void (async () => {
           try {
-            await operate.checkouts.clone(meta.full_name);
-            code.repos.setCloneReady(meta.full_name, true);
-            await code.sync.syncRepo(meta.full_name);
+            if (!existing?.clone_ready) {
+              // Provision with the exact credential verified above. Ambient
+              // request identity must not make the clone pick another account.
+              await operate.checkouts.clone(meta.full_name, account.token);
+              code.repos.setCloneReady(meta.full_name, true);
+            }
+            await code.sync.syncRepo(meta.full_name, body.workspaceId, user!.username);
           } catch (err) {
             log.warn('repo provisioning failed', { repo: meta.full_name, err: String(err) });
           }
         })();
         ctx.broadcast({ t: 'repos.changed' });
-        return created({ repo: rowToRepo(code.repos.get(meta.full_name)!) });
+        return created({
+          repo: { ...rowToRepo(code.repos.getInWorkspace(meta.full_name, body.workspaceId)!), githubAccessible: true },
+        });
       },
     }),
 
@@ -371,9 +410,14 @@ export default defineRoutes((ctx) => {
       method: 'DELETE',
       path: '/api/repos/:owner/:name',
       access: 'repos:manage',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        code.repos.remove(fullName);
+        const workspaceId = query.get('workspaceId');
+        if (!workspaceId || !workspace.canAccessWorkspace(user!, workspaceId)) {
+          throw forbidden('no access to that workspace');
+        }
+        if (!code.repos.inWorkspace(fullName, workspaceId)) throw notFound(`repo ${fullName} not connected`);
+        code.repos.removeFromWorkspace(fullName, workspaceId);
         ctx.broadcast({ t: 'repos.changed' });
         return { ok: true };
       },
@@ -391,9 +435,15 @@ export default defineRoutes((ctx) => {
         if (!workspace.canAccess(user!, target)) {
           throw forbidden('you cannot move this repo into that workspace');
         }
-        code.repos.setWorkspace(fullName, body.workspaceId);
+        if (!workspace.canAccessWorkspace(user!, body.fromWorkspaceId)) {
+          throw forbidden('you cannot move this repo out of that workspace');
+        }
+        if (!code.repos.inWorkspace(fullName, body.fromWorkspaceId)) {
+          throw notFound(`repo ${fullName} not connected`);
+        }
+        code.repos.moveWorkspace(fullName, body.fromWorkspaceId, body.workspaceId);
         ctx.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(code.repos.get(fullName)!) };
+        return { repo: rowToRepo(code.repos.getInWorkspace(fullName, body.workspaceId)!) };
       },
     }),
 
@@ -403,28 +453,7 @@ export default defineRoutes((ctx) => {
       access: 'repos:manage',
       handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        return code.sync.syncRepo(fullName);
-      },
-    }),
-
-    route({
-      method: 'PATCH',
-      path: '/api/repos/:owner/:name/github-account',
-      access: 'repos:manage',
-      body: z.object({ accountId: z.string().max(60).nullable() }),
-      handler: ({ params, body, user }) => {
-        const { fullName } = requireRepo(user, params.owner, params.name);
-        if (
-          body.accountId &&
-          !code.githubAccounts
-            .list()
-            .some((account) => account.id === body.accountId && (account.ownerId === null || account.ownerId === user?.username))
-        ) {
-          throw notFound(`unknown GitHub account: ${body.accountId}`);
-        }
-        code.repos.setGithubAccount(fullName, body.accountId);
-        ctx.broadcast({ t: 'repos.changed' });
-        return { repo: rowToRepo(code.repos.get(fullName)!) };
+        return code.sync.syncRepo(fullName, undefined, user!.username);
       },
     }),
 
@@ -457,7 +486,7 @@ export default defineRoutes((ctx) => {
         if (pipeline.type !== 'platform') {
           throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
         }
-        const run = code.pipelines.start(params.pipelineId, fullName, 0, 'manual');
+        const run = code.pipelines.start(params.pipelineId, fullName, 0, 'manual', user!.username);
         return created({ run });
       },
     }),
@@ -466,8 +495,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues',
       access: 'issues:read',
-      handler: ({ params, query, user }) => {
+      handler: async ({ params, query, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
         const state = query.get('state');
         return {
           issues: code.issues.list(fullName, state === 'open' || state === 'closed' ? state : undefined),
@@ -479,8 +509,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs',
       access: 'prs:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
         return { prs: code.prs.list(fullName) };
       },
     }),
@@ -489,8 +520,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/triage',
       access: 'issues:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
         return { results: triageStore.list(fullName) };
       },
     }),
@@ -501,8 +533,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues/:number',
       access: 'issues:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
         return { issue, triage: triageStore.latest(fullName, issue.number) ?? null };
       },
     }),
@@ -515,7 +548,7 @@ export default defineRoutes((ctx) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         // Long-running; kick it and let the UI follow triage.changed.
         void code.triage
-          .triageIssue(fullName, issue.number)
+          .triageIssue(fullName, issue.number, user!.username)
           .catch((err) => log.warn('triage failed', { fullName, number: issue.number, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -539,8 +572,8 @@ export default defineRoutes((ctx) => {
       access: 'issues:read',
       handler: async ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('fetch', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, { username: user!.username });
+        if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
         const raw = await client.issueComments(fullName, issue.number);
         const comments: CommentRecord[] = raw.map((c) => ({
           author: c.user?.login ?? 'unknown',
@@ -558,9 +591,13 @@ export default defineRoutes((ctx) => {
       body: commentSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
-        const result = await client.comment(fullName, issue.number, body.body);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.comment(fullName, issue.number, body.body),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
         return { url: result.html_url };
       },
     }),
@@ -572,10 +609,14 @@ export default defineRoutes((ctx) => {
       body: stateSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
-        await client.updateIssueState(fullName, issue.number, body.state);
-        void code.sync.syncRepo(fullName).catch(() => undefined);
+        const { client } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (candidate) => candidate.updateIssueState(fullName, issue.number, body.state),
+          { username: user!.username },
+        );
+        if (!client) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        void code.sync.syncRepo(fullName, undefined, user!.username).catch(() => undefined);
         ctx.broadcast({ t: 'issues.changed', repo: fullName });
         return { ok: true };
       },
@@ -590,7 +631,7 @@ export default defineRoutes((ctx) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
         if (pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
-        const run = code.pipelines.start(params.pipelineId, fullName, issue.number, 'manual');
+        const run = code.pipelines.start(params.pipelineId, fullName, issue.number, 'manual', user!.username);
         return created({ run });
       },
     }),
@@ -599,8 +640,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/issues/:number/pipeline-runs',
       access: 'issues:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName } = requireIssue(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
         return { runs: pipelinesStore.listRunsForIssue(fullName, Number(params.number)) };
       },
     }),
@@ -611,12 +653,13 @@ export default defineRoutes((ctx) => {
       access: 'issues:act',
       body: applyTriageSchema,
       handler: async ({ params, query, body, user }) => {
-        requireTriage(user, params.id);
+        await requireTriage(user, params.id);
         const { repo, number } = await code.triage.apply(params.id, {
           comment: body.comment,
           accountId: query.get('account') ?? undefined,
+          userId: user!.username,
         });
-        await code.sync.syncIssue(repo, number);
+        await code.sync.syncIssue(repo, number, user!.username);
         return { ok: true };
       },
     }),
@@ -625,8 +668,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/triage/:id/dismiss',
       access: 'issues:act',
-      handler: ({ params, user }) => {
-        requireTriage(user, params.id);
+      handler: async ({ params, user }) => {
+        await requireTriage(user, params.id);
         code.triage.dismiss(params.id);
         return { ok: true };
       },
@@ -638,8 +681,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number',
       access: 'prs:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
         return {
           pr,
           review: prReviewsStore.latest(fullName, pr.number) ?? null,
@@ -656,8 +700,8 @@ export default defineRoutes((ctx) => {
       access: 'prs:read',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('fetch', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, { username: user!.username });
+        if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
         const raw = await client.issueComments(fullName, pr.number);
         const comments: CommentRecord[] = raw.map((c) => ({
           author: c.user?.login ?? 'unknown',
@@ -675,9 +719,13 @@ export default defineRoutes((ctx) => {
       body: commentSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
-        const result = await client.comment(fullName, pr.number, body.body);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.comment(fullName, pr.number, body.body),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
         return { url: result.html_url };
       },
     }),
@@ -690,7 +738,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         void code.prReviews
-          .analyzeFailedChecks(fullName, pr.number)
+          .analyzeFailedChecks(fullName, pr.number, user!.username)
           .catch((err) => log.warn('CI analysis failed', { fullName, number: pr.number, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -764,7 +812,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:read',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        return { checks: await code.prChecks.fetchSummary(fullName, pr.number) };
+        return { checks: await code.prChecks.fetchSummary(fullName, pr.number, user!.username) };
       },
     }),
 
@@ -778,8 +826,8 @@ export default defineRoutes((ctx) => {
       access: 'prs:read',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const client = code.githubAccounts.clientFor('fetch', { repo: fullName });
-        if (!client) throw badRequest('GitHub is not configured');
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, { username: user!.username });
+        if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
         const { files, truncated } = await client.prFiles(fullName, pr.number);
         const mapped: PrFileChange[] = files.map((f) => ({
           filename: f.filename,
@@ -800,7 +848,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         void code.prReviews
-          .analyzePr(fullName, pr.number)
+          .analyzePr(fullName, pr.number, user!.username)
           .catch((err) => log.warn('pr analysis failed', { fullName, number: pr.number, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -814,12 +862,12 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         try {
-          await code.prReviews.merge(fullName, pr.number, body.method);
+          await code.prReviews.merge(fullName, pr.number, body.method, user!.username);
         } catch (err) {
           throw badRequest(err instanceof Error ? err.message : String(err));
         }
         // Recalculate state from GitHub before returning so the UI updates now.
-        await code.sync.syncPr(fullName, pr.number);
+        await code.sync.syncPr(fullName, pr.number, user!.username);
         return { ok: true };
       },
     }),
@@ -830,8 +878,8 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        await code.prReviews.close(fullName, pr.number);
-        await code.sync.syncPr(fullName, pr.number);
+        await code.prReviews.close(fullName, pr.number, user!.username);
+        await code.sync.syncPr(fullName, pr.number, user!.username);
         return { ok: true };
       },
     }),
@@ -845,7 +893,7 @@ export default defineRoutes((ctx) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
         if (pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
-        const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual');
+        const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual', user!.username);
         return created({ run });
       },
     }),
@@ -854,8 +902,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/pipeline-runs',
       access: 'prs:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
         return { runs: pipelinesStore.listRunsForPr(fullName, pr.number) };
       },
     }),
@@ -865,9 +914,13 @@ export default defineRoutes((ctx) => {
       path: '/api/pr-reviews/:id/apply',
       access: 'prs:act',
       handler: async ({ params, query, user }) => {
-        requirePrReview(user, params.id);
-        const { repo, number } = await code.prReviews.apply(params.id, query.get('account') ?? undefined);
-        await code.sync.syncPr(repo, number);
+        await requirePrReview(user, params.id);
+        const { repo, number } = await code.prReviews.apply(
+          params.id,
+          query.get('account') ?? undefined,
+          user!.username,
+        );
+        await code.sync.syncPr(repo, number, user!.username);
         return { ok: true };
       },
     }),
@@ -876,25 +929,24 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/pr-reviews/:id/dismiss',
       access: 'prs:act',
-      handler: ({ params, user }) => {
-        requirePrReview(user, params.id);
+      handler: async ({ params, user }) => {
+        await requirePrReview(user, params.id);
         code.prReviews.dismiss(params.id);
         return { ok: true };
       },
     }),
 
     // ---------- GitHub accounts --------------------------------------------------
-    // Everyone sees shared defaults plus their own personal accounts. Admins
-    // may manage shared defaults, but never inherit another user's account.
+    // The caller sees only their own sanitized account records.
 
     route({
-      // Sanitized list (no tokens): shared defaults + the caller's own.
+      // Sanitized list (no tokens) of the caller's own accounts.
       method: 'GET',
       path: '/api/github/accounts',
       access: 'repos:read',
       handler: ({ user }) => {
         return {
-          accounts: code.githubAccounts.list().filter((a) => a.ownerId === null || a.ownerId === user?.username),
+          accounts: code.githubAccounts.list().filter((a) => a.ownerId === user?.username),
         };
       },
     }),
@@ -905,13 +957,17 @@ export default defineRoutes((ctx) => {
       access: 'github:connect',
       body: addAccountSchema,
       handler: async ({ body, user }) => {
-        if (body.scope === 'delegated' && body.workspaceIds.length === 0) {
-          throw badRequest('a delegated account needs at least one workspace');
+        if (body.scope === 'selected' && body.workspaceIds.length === 0) {
+          throw badRequest('a workspace-selected account needs at least one workspace');
         }
-        if (body.scope === 'delegated') requireAccessibleWorkspaceIds(user, body.workspaceIds);
-        // A shared default account is admin-only; everyone else's is personal.
-        const ownerId = ctx.rbac.has(user!.role, 'settings:manage') && body.shared ? null : user!.username;
-        const account = await code.githubAccounts.add(body.token, body.purposes, body.scope, body.workspaceIds, ownerId);
+        if (body.scope === 'selected') requireAccessibleWorkspaceIds(user, body.workspaceIds);
+        const account = await code.githubAccounts.add(
+          body.token,
+          body.purposes,
+          user!.username,
+          body.scope,
+          body.scope === 'selected' ? body.workspaceIds : [],
+        );
         ctx.broadcast({ t: 'repos.changed' });
         return created({ account });
       },
@@ -926,10 +982,10 @@ export default defineRoutes((ctx) => {
         const account = requireManageable(user, params.id);
         const nextScope = body.scope ?? account.scope;
         const nextWorkspaceIds = body.workspaceIds ?? account.workspaceIds;
-        if (nextScope === 'delegated' && nextWorkspaceIds.length === 0) {
-          throw badRequest('a delegated account needs at least one workspace');
+        if (nextScope === 'selected' && nextWorkspaceIds.length === 0) {
+          throw badRequest('a workspace-selected account needs at least one workspace');
         }
-        if (nextScope === 'delegated') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
+        if (nextScope === 'selected') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
         return { account: code.githubAccounts.update(params.id, body) };
       },
     }),
@@ -996,7 +1052,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/pipeline-runs/:id',
       access: 'pipelines:read',
-      handler: ({ params, user }) => ({ run: requirePipelineRun(user, params.id) }),
+      handler: async ({ params, user }) => ({ run: await requirePipelineRun(user, params.id) }),
     }),
 
     // ---------- workspace area feeds (code-owned cross-domain reads) --------------
@@ -1005,12 +1061,15 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/repos',
       access: 'repos:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
+        const rows = code.repos.listByWorkspace(params.id);
+        const accessible = new Set(await accessibleRepoNames(user!, params.id));
         return {
-          repos: code.repos.listByWorkspace(params.id).map((row) => ({
+          repos: rows.map((row) => ({
             ...rowToRepo(row),
-            openIssues: code.issues.list(row.full_name, 'open').length,
+            githubAccessible: accessible.has(row.full_name),
+            openIssues: accessible.has(row.full_name) ? code.issues.list(row.full_name, 'open').length : 0,
           })),
         };
       },
@@ -1022,8 +1081,7 @@ export default defineRoutes((ctx) => {
       access: 'repos:read',
       handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
-        await code.sync.syncWorkspace(params.id);
-        return { ok: true };
+        return code.sync.syncWorkspace(params.id, user!.username);
       },
     }),
 
@@ -1031,8 +1089,10 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/issues',
       access: 'issues:read',
-      handler: ({ params, query, user }) => {
+      handler: async ({ params, query, user }) => {
         requireWorkspace(user, params.id);
+        const accessibleRepos = await accessibleRepoNames(user!, params.id);
+        const myLogins = code.githubAccounts.list().filter((account) => account.ownerId === user!.username).map((account) => account.login);
         const state = query.get('state');
         return code.issues.listWorkspacePaged(
           params.id,
@@ -1046,6 +1106,8 @@ export default defineRoutes((ctx) => {
             triage: pick(query.get('triage'), ['pending', 'applied', 'dismissed'] as const),
             limit: Number(query.get('limit')) || undefined,
             offset: Number(query.get('offset')) || undefined,
+            accessibleRepos,
+            myLogins,
           },
         );
       },
@@ -1055,8 +1117,10 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/prs',
       access: 'prs:read',
-      handler: ({ params, query, user }) => {
+      handler: async ({ params, query, user }) => {
         requireWorkspace(user, params.id);
+        const accessibleRepos = await accessibleRepoNames(user!, params.id);
+        const myLogins = code.githubAccounts.list().filter((account) => account.ownerId === user!.username).map((account) => account.login);
         const state = query.get('state');
         const page = code.prs.listWorkspacePaged(
           params.id,
@@ -1071,11 +1135,13 @@ export default defineRoutes((ctx) => {
             draft: pick(query.get('draft'), ['hide', 'only'] as const),
             limit: Number(query.get('limit')) || undefined,
             offset: Number(query.get('offset')) || undefined,
+            accessibleRepos,
+            myLogins,
           },
         );
         // Warm missing/stale check snapshots for exactly the page being viewed;
         // each landing snapshot broadcasts prs.changed so the list fills in live.
-        code.prChecks.preloadWorkspace(params.id, page.prs);
+        code.prChecks.preloadWorkspace(params.id, page.prs, user!.username);
         return page;
       },
     }),
@@ -1119,9 +1185,10 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/pipeline-runs',
       access: 'pipelines:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
-        return { runs: pipelinesStore.listWorkspaceRuns(params.id) };
+        const accessible = new Set(await accessibleRepoNames(user!, params.id));
+        return { runs: pipelinesStore.listWorkspaceRuns(params.id).filter((run) => accessible.has(run.repo)) };
       },
     }),
 
@@ -1137,7 +1204,7 @@ export default defineRoutes((ctx) => {
       path: '/api/skills/generate',
       access: 'skills:manage',
       body: genSchema,
-      handler: async ({ body }) => {
+      handler: async ({ body, user }) => {
         const reply = await oneShot(
           'Generate skill',
           `You are drafting an agent skill for Companion — a markdown file injected into every agent run (triage, code review, fixes) to teach conventions or domain knowledge. Do not modify any files.
@@ -1237,7 +1304,7 @@ Reply with ONLY a fenced json block matching:
       body: approvePrSchema,
       handler: ({ params, body, user }) => {
         requireRunAccess(user, params.id);
-        return code.fixes.approve(params.id, body);
+        return code.fixes.approve(params.id, body, user!.username);
       },
     }),
 
@@ -1259,11 +1326,17 @@ Reply with ONLY a fenced json block matching:
       path: '/api/settings/github',
       access: 'settings:manage',
       body: ghTokenSchema,
-      handler: async ({ body }) => {
+      handler: async ({ body, user }) => {
         // Onboarding path: the first token gets every purpose; rebinding happens
         // in Settings → GitHub accounts (mirrors the legacy setGithubToken).
-        const account = await code.githubAccounts.add(body.token, ['fetch', 'runs', 'pipelines', 'webhooks']);
-        settings.set('github_token', body.token);
+        const account = await code.githubAccounts.add(
+          body.token,
+          ['fetch', 'runs', 'pipelines', 'webhooks'],
+          user!.username,
+          'all',
+          [],
+        );
+        settings.delete('github_token');
         ctx.broadcast({ t: 'repos.changed' });
         return { login: account.login };
       },
