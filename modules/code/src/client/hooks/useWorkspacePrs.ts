@@ -18,6 +18,7 @@ import type { PipelineRecord, PrRecord, RepoRecord } from '../../contract/index.
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js';
 
 export type PrTab = 'open' | 'merged' | 'closed';
 
@@ -118,13 +119,14 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.decision, filters.review, filters.draft],
   );
-  const { items: prs, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
+  const { items: prs, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
 
   useEffect(() => {
     return onServerMessage((msg) => {
       if (msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') reload();
     });
   }, [reload]);
+  const refreshError = useWorkspaceRefresh(workspaceId);
 
   const bulkAiReview = (): void => {
     const targets = prs.filter((pr) => selection.has(prKey(pr)));
@@ -195,7 +197,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     loading,
     hasMore,
     loadMore,
-    error,
+    error: listError ?? refreshError,
     canActPrs,
     canRunPipelines,
     pipelines,
