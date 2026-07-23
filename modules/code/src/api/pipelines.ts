@@ -185,8 +185,6 @@ const agentVerdictSchema = z.object({
   detail: z.string().optional(),
 });
 
-const MAX_DIFF_CHARS = 60_000;
-
 function createStepRegistry(deps: EngineDeps): StepRegistry {
   return {
     'checks-gate': async (step, ctx) => {
@@ -240,15 +238,8 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       let prompt: string;
       let title: string;
       if (ctx.pr) {
-        const client = deps.github({ repo: ctx.repo });
-        if (!client) return { status: 'error', summary: 'GitHub is not configured' };
-        const [diff, checksSummary] = await Promise.all([
-          client.prDiff(ctx.repo, ctx.pr.number),
-          deps.checks.trySummary(ctx.repo, ctx.pr.number),
-        ]);
-        const clipped =
-          diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
-        prompt = agentStepPrompt(step.config.prompt, ctx.pr, clipped, describeChecks(checksSummary));
+        const checksSummary = await deps.checks.trySummary(ctx.repo, ctx.pr.number);
+        prompt = agentStepPrompt(step.config.prompt, ctx.pr, describeChecks(checksSummary));
         title = `Pipeline step "${step.name}" on PR #${ctx.pr.number}`;
       } else if (ctx.issue) {
         prompt = agentIssueStepPrompt(step.config.prompt, ctx.issue);
@@ -257,16 +248,26 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
         prompt = agentPlatformStepPrompt(step.config.prompt, ctx.repo);
         title = `Pipeline step "${step.name}" on ${ctx.repo}`;
       }
-      const { finalMessage } = await deps.orchestrator.runOneShot({
-        kind: 'analysis',
-        task: 'code.pipeline',
-        title,
-        cwd: deps.checkouts.cloneDir(ctx.repo),
-        repo: ctx.repo,
-        issueNumber: targetOf(ctx)?.number ?? null,
-        prompt,
-        timeoutMs: 8 * 60_000,
-      });
+      const run = (cwd: string) =>
+        deps.orchestrator.runOneShot({
+          kind: 'analysis',
+          task: 'code.pipeline',
+          title,
+          cwd,
+          repo: ctx.repo,
+          issueNumber: targetOf(ctx)?.number ?? null,
+          prompt,
+          timeoutMs: 12 * 60_000,
+        });
+      const { finalMessage } = ctx.pr
+        ? await deps.checkouts.withPullRequestWorktree(
+            ctx.repo,
+            `pipeline-${ctx.pr.number}-${randomUUID().slice(0, 8)}`,
+            ctx.pr.number,
+            ctx.pr.baseRef,
+            run,
+          )
+        : await run(deps.checkouts.cloneDir(ctx.repo));
       const verdict = agentVerdictSchema.parse(extractModelJson(finalMessage ?? ''));
       return {
         status: verdict.pass ? 'passed' : 'failed',
@@ -347,8 +348,8 @@ ${instructions}
 Reply with ONLY a JSON object: { "pass": boolean, "summary": "<one line>", "detail": "<optional longer notes>" }`;
 }
 
-function agentStepPrompt(instructions: string, pr: PrRecord, diff: string, checks: string): string {
-  return `You are a pipeline step evaluating a GitHub pull request against the repository checked out in the current directory.
+function agentStepPrompt(instructions: string, pr: PrRecord, checks: string): string {
+  return `You are a pipeline step evaluating a GitHub pull request whose exact head is checked out in the current directory.
 
 READ-ONLY RULES (mandatory): you may read files and search the codebase, but you must NOT modify anything. Your ONLY output is the final JSON.
 
@@ -363,10 +364,13 @@ ${pr.body || '(no description)'}
 ## CI pipelines
 ${checks}
 
-## Diff
-\`\`\`diff
-${diff}
-\`\`\`
+## Inspecting the complete PR
+\`origin/${pr.baseRef}\` is the refreshed base. Inspect the complete change locally; no prompt-sized diff was provided.
+
+- Start with \`git diff --stat origin/${pr.baseRef}...HEAD\`, \`git diff --numstat origin/${pr.baseRef}...HEAD\`, and \`git diff --name-only origin/${pr.baseRef}...HEAD\`.
+- Inspect changed files in bounded groups with \`git diff origin/${pr.baseRef}...HEAD -- <path>...\`; do not dump an oversized whole-PR diff into one tool call.
+- Cover every changed file relevant to the step instructions. Generated, vendored, lock, and binary files may be classified and sampled instead of expanded line-by-line.
+- If collaboration/subagent tools are available, delegate disjoint file groups and synthesize their evidence yourself. Do not assume delegation exists.
 
 Apply the step instructions to this PR, then reply with ONLY a JSON object (no fence, no prose):
 {

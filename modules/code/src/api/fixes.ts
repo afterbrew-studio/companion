@@ -7,8 +7,6 @@ import type { Orchestrator, RunnerBackend } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
 import type { PrChecks } from './pr-checks.js';
 
-const MAX_DIFF_CHARS = 60_000;
-
 /**
  * Fix-to-PR flows: a goal-mode agent works in a dedicated worktree; the human
  * reviews the diff; companiond (never the agent) pushes. Two shapes:
@@ -110,17 +108,16 @@ export class Fixes {
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
   async startCheckFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
+    const { pr } = this.requireOpenPr(repo, prNumber, userId);
     const summary = await this.checks.fetchSummary(repo, prNumber);
     const failing = summary.runs.filter(
       (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
     );
     if (failing.length === 0) throw new Error('no failing checks on this PR');
-    const diff = await client.prDiff(repo, prNumber);
     return this.createPrBranchRun(
       pr,
       `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
-      checkFixObjective(pr, failing, clip(diff)),
+      checkFixObjective(pr, failing),
       { userId, task },
     );
   }
@@ -141,11 +138,10 @@ export class Fixes {
     if (feedback.length === 0 && comments.length === 0) {
       throw new Error('no human review feedback found on this PR');
     }
-    const diff = await client.prDiff(repo, prNumber);
     return this.createPrBranchRun(
       pr,
       `Address reviews on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
-      reviewFixObjective(pr, feedback, comments, clip(diff)),
+      reviewFixObjective(pr, feedback, comments),
       { userId, task },
     );
   }
@@ -162,33 +158,21 @@ export class Fixes {
       this.broadcast({ t: 'prs.changed', repo });
       if (live.mergeable === true) throw new Error('GitHub reports no merge conflicts on this PR');
     }
-    const diff = await this.contextDiff(client, repo, prNumber);
     return this.createPrBranchRun(
       pr,
       `Resolve conflicts on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
-      conflictObjective(pr, diff),
-      // Merging against a stale base would "resolve" nothing — refresh origin.
-      { freshOrigin: true, userId },
+      conflictObjective(pr),
+      { userId },
     );
   }
 
   /** Agent works on the PR branch with a user-written objective. */
   async startCustomPrRun(repo: string, prNumber: number, instructions: string, userId: string | null = null): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
-    const diff = await this.contextDiff(client, repo, prNumber);
+    const { pr } = this.requireOpenPr(repo, prNumber, userId);
     const preview = instructions.trim().split('\n')[0]!.slice(0, 50);
-    return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions, diff), {
+    return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions), {
       userId,
     });
-  }
-
-  /**
-   * The PR diff as prompt context only — GitHub 406s the single-payload diff on
-   * large PRs, and losing the context must not block the run itself.
-   */
-  private async contextDiff(client: GitHubClient, repo: string, prNumber: number): Promise<string> {
-    const diff = await client.prDiff(repo, prNumber).catch(() => '(diff too large to include — read it from git)');
-    return clip(diff);
   }
 
   private requireOpenPr(
@@ -210,14 +194,16 @@ export class Fixes {
     pr: PrRecord,
     title: string,
     objective: string,
-    opts: { freshOrigin?: boolean; userId?: string | null; task?: string } = {},
+    opts: { userId?: string | null; task?: string } = {},
   ): Promise<RunRecord> {
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
     const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo, opts.userId);
-    if (opts.freshOrigin) await backend.fetchOrigin(pr.repo, opts.userId);
+    // The objective inspects the full PR locally; refresh the base and head refs
+    // before creating the worktree so a large diff never needs prompt embedding.
+    await backend.fetchOrigin(pr.repo, opts.userId);
     let cwd: string;
     try {
       cwd = await backend.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef, opts.userId);
@@ -312,14 +298,9 @@ export class Fixes {
   }
 }
 
-function clip(diff: string): string {
-  return diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
-}
-
 function checkFixObjective(
   pr: PrRecord,
   failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
-  diff: string,
 ): string {
   const list = failing
     .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
@@ -329,10 +310,7 @@ function checkFixObjective(
 ## Failing pipelines
 ${list}
 
-## The PR's diff (for context — this work is already on your branch)
-\`\`\`diff
-${diff}
-\`\`\`
+${prDiffInspectionGuide(pr.baseRef)}
 
 ## Rules
 - Work ONLY inside this worktree, on this branch.
@@ -342,7 +320,7 @@ ${diff}
 - Finish with a short summary: cause of each failure, what you changed, and how you verified it.`;
 }
 
-function reviewFixObjective(pr: PrRecord, feedback: readonly string[], comments: readonly string[], diff: string): string {
+function reviewFixObjective(pr: PrRecord, feedback: readonly string[], comments: readonly string[]): string {
   return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}). Human reviewers asked for changes; implement them.
 
 ## Review feedback
@@ -351,10 +329,7 @@ ${feedback.join('\n\n') || '(none beyond the inline comments)'}
 ## Inline comments (file:line)
 ${comments.join('\n') || '(none)'}
 
-## The PR's diff (for context — this work is already on your branch)
-\`\`\`diff
-${diff}
-\`\`\`
+${prDiffInspectionGuide(pr.baseRef)}
 
 ## Rules
 - Work ONLY inside this worktree, on this branch.
@@ -364,13 +339,10 @@ ${diff}
 - Finish with a summary mapping each review comment to what you did about it.`;
 }
 
-function conflictObjective(pr: PrRecord, diff: string): string {
+function conflictObjective(pr: PrRecord): string {
   return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}). The PR has merge conflicts against its target branch ${pr.baseRef}; your job is to resolve them so the PR merges cleanly, without changing what it intends to do.
 
-## The PR's diff (for context — this work is already on your branch)
-\`\`\`diff
-${diff}
-\`\`\`
+${prDiffInspectionGuide(pr.baseRef)}
 
 ## Rules
 - Work ONLY inside this worktree, on this branch. All origin refs were fetched just now — do NOT fetch or pull.
@@ -379,16 +351,13 @@ ${diff}
 - Finish with a short summary: which files conflicted, how you resolved each, and how you verified the result.`;
 }
 
-function customObjective(pr: PrRecord, instructions: string, diff: string): string {
+function customObjective(pr: PrRecord, instructions: string): string {
   return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}, targeting ${pr.baseRef}). The maintainer asked you to do the following on this PR's branch.
 
 ## Task
 ${instructions.trim()}
 
-## The PR's diff (for context — this work is already on your branch)
-\`\`\`diff
-${diff}
-\`\`\`
+${prDiffInspectionGuide(pr.baseRef)}
 
 ## Rules
 - Work ONLY inside this worktree, on this branch.
@@ -396,6 +365,15 @@ ${diff}
 - Verify your changes (run relevant tests/builds where possible).
 - Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
 - Finish with a short summary of what you did and how you verified it.`;
+}
+
+function prDiffInspectionGuide(baseRef: string): string {
+  return `## Inspecting the complete PR
+The worktree is at the exact PR head and \`origin/${baseRef}\` was refreshed. Inspect the complete existing change locally; no prompt-sized diff was provided.
+
+- Start with \`git diff --stat origin/${baseRef}...HEAD\`, \`git diff --numstat origin/${baseRef}...HEAD\`, and \`git diff --name-only origin/${baseRef}...HEAD\`.
+- Inspect relevant files in bounded groups with \`git diff origin/${baseRef}...HEAD -- <path>...\`; do not dump an oversized whole-PR diff into one tool call.
+- If collaboration/subagent tools are available, delegate read-only investigation of disjoint file groups and synthesize the evidence before editing. Do not assume delegation exists.`;
 }
 
 function fixObjective(title: string, body: string, issueNumber: number, baseBranch: string): string {

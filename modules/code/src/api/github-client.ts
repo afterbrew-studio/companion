@@ -157,15 +157,6 @@ export class GitHubClient {
     return this.get<GhCombinedStatus>(`/repos/${fullName}/commits/${ref}/status`);
   }
 
-  /** Raw unified diff of a PR (GitHub's diff media type). */
-  async prDiff(fullName: string, number: number): Promise<string> {
-    const res = await fetch(`${API}/repos/${fullName}/pulls/${number}`, {
-      headers: { ...this.headers(), accept: 'application/vnd.github.diff' },
-    });
-    if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}.diff`);
-    return res.text();
-  }
-
   /**
    * Changed files via the paginated files API — resilient to large PRs that the
    * single-payload `.diff` endpoint rejects (406). Pages are capped to bound the

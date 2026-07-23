@@ -113,6 +113,46 @@ export class Checkouts {
     });
   }
 
+  /**
+   * Temporary detached worktree at GitHub's synthetic pull-request head ref.
+   * Unlike an origin branch checkout this also works for PRs opened from forks.
+   * The base tracking ref is refreshed so agents can inspect the complete PR
+   * incrementally with `git diff origin/<base>...HEAD -- <path>` instead of
+   * receiving one oversized diff in their prompt.
+   */
+  async withPullRequestWorktree<T>(
+    fullName: string,
+    key: string,
+    number: number,
+    baseBranch: string,
+    fn: (cwd: string) => Promise<T>,
+    token?: string,
+    username?: string | null,
+  ): Promise<T> {
+    const worktree = await this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      const credential = await this.creds(fullName, token, username);
+      await this.git(
+        ['fetch', '--quiet', 'origin', `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`],
+        clone,
+        credential,
+      );
+      await this.git(['fetch', '--quiet', 'origin', `refs/pull/${number}/head`], clone, credential);
+      const wt = join(paths.worktrees(), key);
+      await this.git(['worktree', 'add', '--detach', wt, 'FETCH_HEAD'], clone);
+      await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
+        () => undefined,
+      );
+      return wt;
+    });
+
+    try {
+      return await fn(worktree);
+    } finally {
+      await this.removeWorktree(fullName, worktree).catch(() => undefined);
+    }
+  }
+
   async removeWorktree(fullName: string, worktreePath: string): Promise<void> {
     await this.locked(fullName, async () => {
       await this.git(['worktree', 'remove', '--force', worktreePath], this.cloneDir(fullName)).catch(

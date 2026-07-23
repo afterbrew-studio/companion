@@ -125,6 +125,10 @@ die at any instant.
 2. In your service, call `orchestrator.runOneShot({ kind, cwd, prompt, timeoutMs })`
    against an isolated checkout (`checkouts.cloneDir(repo)` /
    `checkouts.worktree(...)`).
+   For PR-wide analysis, use `checkouts.withPullRequestWorktree(...)`: it checks
+   out GitHub's pull ref (including forks), refreshes the base, and cleans up
+   after the turn. The prompt should make the agent inspect the diff in bounded
+   file groups instead of embedding or clipping one monolithic payload.
 3. Parse `finalMessage`; on null or parse failure, store a `failed` result with
    the error — do not fabricate a verdict.
 4. For anything that changes GitHub or the repo, use **review-then-apply**:
