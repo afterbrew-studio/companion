@@ -20,8 +20,10 @@ export default defineJobs({
     // actually see the repo is the one that clones it.
     // Mirrors the legacy githubTokenFor closure + the /api/status github fields.
     operate.setGithubTokenSource({
-      tokenFor: (repo) =>
-        repo ? code.githubAccounts.verifiedTokenFor('runs', repo) : (code.githubAccounts.tokenFor('runs') ?? null),
+      tokenFor: (repo, username) =>
+        repo
+          ? code.githubAccounts.verifiedTokenFor('runs', repo, username === undefined ? undefined : { username })
+          : (code.githubAccounts.tokenFor('runs', username === undefined ? undefined : { username }) ?? null),
       login: () => {
         const list = code.githubAccounts.list();
         return (

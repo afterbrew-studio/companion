@@ -257,7 +257,9 @@ export class GitHubAccounts {
     const rows = this.store.githubAccounts.list();
     const repoRow = ctx?.repo ? this.store.repos.get(ctx.repo) : undefined;
     const workspaceId = repoRow?.workspace_id ?? ctx?.workspaceId ?? null;
-    const username = ctx?.username ?? currentUser()?.username ?? null;
+    // An explicit null means system-owned work and must not inherit a request
+    // that happened to enqueue it. Omission alone falls back to the invoker.
+    const username = ctx && 'username' in ctx ? ctx.username : (currentUser()?.username ?? null);
     const eligibleHere = (r: GithubAccountRow): boolean =>
       r.scope === 'shared' || (workspaceId !== null && r.workspaceIds.includes(workspaceId));
     const usable = (r: GithubAccountRow): boolean => r.ownerId === null || r.ownerId === username;

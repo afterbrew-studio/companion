@@ -45,7 +45,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly endpoint: string,
     private readonly token: string,
     private readonly sink: RunnerEventSink,
-    private readonly githubTokenFor: (repo: string) => Promise<string | null> | string | null,
+    private readonly githubTokenFor: (
+      repo: string,
+      username?: string | null,
+    ) => Promise<string | null> | string | null,
     /** Event-stream up/down transitions — the registry probes on both edges. */
     private readonly onStreamState?: (up: boolean) => void,
   ) {
@@ -195,30 +198,36 @@ export class RemoteRunnerBackend implements RunnerBackend {
   async cloneDir(repo: string): Promise<string> {
     return (await this.call<AgentCloneStatusResponse>('POST', '/git/clone-status', { repo })).cloneDir;
   }
-  async ensureClone(repo: string): Promise<void> {
-    await this.call('POST', '/git/ensure-clone', { repo, ...(await this.ghToken(repo)) });
+  async ensureClone(repo: string, username?: string | null): Promise<void> {
+    await this.call('POST', '/git/ensure-clone', { repo, ...(await this.ghToken(repo, username)) });
   }
-  async fetchOrigin(repo: string): Promise<void> {
-    await this.call('POST', '/git/fetch', { repo, ...(await this.ghToken(repo)) });
+  async fetchOrigin(repo: string, username?: string | null): Promise<void> {
+    await this.call('POST', '/git/fetch', { repo, ...(await this.ghToken(repo, username)) });
   }
-  async addWorktree(repo: string, key: string, branch: string, baseBranch: string): Promise<string> {
+  async addWorktree(
+    repo: string,
+    key: string,
+    branch: string,
+    baseBranch: string,
+    username?: string | null,
+  ): Promise<string> {
     return (
       await this.call<AgentWorktreeResponse>('POST', '/git/worktree', {
         repo,
         key,
         branch,
         baseBranch,
-        ...(await this.ghToken(repo)),
+        ...(await this.ghToken(repo, username)),
       })
     ).cwd;
   }
-  async addWorktreeAtBranch(repo: string, key: string, branch: string): Promise<string> {
+  async addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string> {
     return (
       await this.call<AgentWorktreeResponse>('POST', '/git/worktree-at', {
         repo,
         key,
         branch,
-        ...(await this.ghToken(repo)),
+        ...(await this.ghToken(repo, username)),
       })
     ).cwd;
   }
@@ -231,13 +240,13 @@ export class RemoteRunnerBackend implements RunnerBackend {
   async commitAll(cwd: string, message: string): Promise<void> {
     await this.call('POST', '/git/commit-all', { cwd, message });
   }
-  async push(repo: string, cwd: string, branch: string): Promise<void> {
-    await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo)) });
+  async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
+    await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo, username)) });
   }
 
   /** Spread-ready `{ githubToken }` when the hub has a credential for the repo. */
-  private async ghToken(repo: string): Promise<{ githubToken?: string }> {
-    const token = await this.githubTokenFor(repo);
+  private async ghToken(repo: string, username?: string | null): Promise<{ githubToken?: string }> {
+    const token = await this.githubTokenFor(repo, username);
     return token ? { githubToken: token } : {};
   }
 

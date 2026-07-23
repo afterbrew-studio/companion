@@ -45,15 +45,15 @@ export interface RunnerBackend {
   scratchDir(runId: string): Promise<string>;
   hasClone(repo: string): Promise<boolean>;
   cloneDir(repo: string): Promise<string>;
-  ensureClone(repo: string): Promise<void>;
+  ensureClone(repo: string, username?: string | null): Promise<void>;
   /** Refresh all origin refs of the clone (e.g. a fresh base before a merge). */
-  fetchOrigin(repo: string): Promise<void>;
-  addWorktree(repo: string, key: string, branch: string, baseBranch: string): Promise<string>;
-  addWorktreeAtBranch(repo: string, key: string, branch: string): Promise<string>;
+  fetchOrigin(repo: string, username?: string | null): Promise<void>;
+  addWorktree(repo: string, key: string, branch: string, baseBranch: string, username?: string | null): Promise<string>;
+  addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
   diffVsBase(cwd: string, baseBranch: string): Promise<string>;
   commitAll(cwd: string, message: string): Promise<void>;
-  push(repo: string, cwd: string, branch: string): Promise<void>;
+  push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void>;
 }
 
 /** The event sink a backend feeds — one shared instance drives the orchestrator. */

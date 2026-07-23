@@ -43,8 +43,8 @@ export default defineServices(async (ctx) => {
   const tokenSource: { current: GithubTokenSource } = {
     current: { tokenFor: () => settings.get('github_token') },
   };
-  const githubTokenFor = async (repo: string): Promise<string | null> =>
-    (await tokenSource.current.tokenFor(repo)) ?? settings.get('github_token');
+  const githubTokenFor = async (repo: string, username?: string | null): Promise<string | null> =>
+    (await tokenSource.current.tokenFor(repo, username)) ?? settings.get('github_token');
 
   // run.changed fans out to browsers AND to the server bus, replacing the
   // legacy composition root's hard-coded proposals forward-ref: reacting
