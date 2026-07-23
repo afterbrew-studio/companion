@@ -47,6 +47,7 @@ export const codeApi = {
 
   // workspace-scoped feeds
   workspaceRepos: (id: string) => request<{ repos: RepoRecord[] }>(`/api/workspaces/${id}/repos`),
+  refreshWorkspace: (id: string) => post<{ ok: true }>(`/api/workspaces/${id}/sync`),
   workspaceIssues: (
     id: string,
     state?: 'open' | 'closed',

@@ -907,6 +907,17 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
+      method: 'POST',
+      path: '/api/workspaces/:id/sync',
+      access: 'repos:read',
+      handler: async ({ params, user }) => {
+        requireWorkspace(user, params.id);
+        await code.sync.syncWorkspace(params.id);
+        return { ok: true };
+      },
+    }),
+
+    route({
       method: 'GET',
       path: '/api/workspaces/:id/issues',
       access: 'issues:read',

@@ -43,6 +43,20 @@ export class GitHubSync {
     }
   }
 
+  /** On-demand refresh for the workspace currently visible in the SPA. */
+  async syncWorkspace(workspaceId: string): Promise<void> {
+    const failures: string[] = [];
+    for (const repo of this.store.repos.listByWorkspace(workspaceId)) {
+      try {
+        await this.syncRepo(repo.full_name);
+      } catch (err) {
+        failures.push(repo.full_name);
+        log.warn(`workspace sync failed for ${repo.full_name}`, { workspaceId, err: String(err) });
+      }
+    }
+    if (failures.length > 0) throw new Error(`GitHub sync failed for ${failures.join(', ')}`);
+  }
+
   /** Webhook fast path: the delivery carries the full issue — apply it now. */
   applyIssue(fullName: string, issue: GhIssue): void {
     this.store.issues.upsert(mapIssue(fullName, issue));

@@ -18,6 +18,7 @@ import type { IssueRecord, PipelineRecord, RepoRecord } from '../../contract/ind
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js';
 
 export type IssueTab = 'open' | 'closed';
 
@@ -121,13 +122,14 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.label, filters.triage],
   );
-  const { items: issues, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
+  const { items: issues, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
 
   useEffect(() => {
     return onServerMessage((msg) => {
       if (msg.t === 'issues.changed' || msg.t === 'triage.changed') reload();
     });
   }, [reload]);
+  const refreshError = useWorkspaceRefresh(workspaceId);
 
   const bulkAiTriage = (): void => {
     const targets = issues.filter((i) => selection.has(issueKey(i)));
@@ -203,7 +205,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     loading,
     hasMore,
     loadMore,
-    error,
+    error: listError ?? refreshError,
     canActIssues,
     canRunPipelines,
     pipelines,
