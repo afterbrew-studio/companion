@@ -56,6 +56,7 @@ export const DEFAULT_MODEL = 'gpt-5.5';
 
 export interface UserCredential {
   readonly username: string;
+  readonly email: string;
   readonly password: string;
   readonly role: Role;
 }
@@ -94,8 +95,8 @@ interface StoredConfig {
 /**
  * Load (or create on first boot) the daemon config. Also creates the dir layout
  * and resolves auth credentials from the environment:
- * process.env > ./.env (cwd) > ~/.companion/.env. If no admin credential exists
- * anywhere, one is generated so the install is never left without a login.
+ * process.env > ./.env (cwd) > ~/.companion/.env. With no seeded account, the
+ * browser presents first-boot onboarding instead.
  */
 export function loadDaemonConfig(): DaemonConfig {
   for (const dir of [
@@ -166,7 +167,13 @@ export function parseEnvFile(file: string): Record<string, string> {
     if (eq <= 0) continue;
     const key = trimmed.slice(0, eq).trim();
     let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try {
+        value = JSON.parse(value) as string;
+      } catch {
+        value = value.slice(1, -1);
+      }
+    } else if (value.startsWith("'") && value.endsWith("'")) {
       value = value.slice(1, -1);
     }
     out[key] = value;
@@ -174,10 +181,15 @@ export function parseEnvFile(file: string): Record<string, string> {
   return out;
 }
 
-const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; pass: string }> = [
-  { role: 'admin', user: 'COMPANION_ADMIN_USER', pass: 'COMPANION_ADMIN_PASSWORD' },
-  { role: 'maintainer', user: 'COMPANION_MAINTAINER_USER', pass: 'COMPANION_MAINTAINER_PASSWORD' },
-  { role: 'business', user: 'COMPANION_BUSINESS_USER', pass: 'COMPANION_BUSINESS_PASSWORD' },
+const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; email: string; pass: string }> = [
+  { role: 'admin', user: 'COMPANION_ADMIN_USER', email: 'COMPANION_ADMIN_EMAIL', pass: 'COMPANION_ADMIN_PASSWORD' },
+  {
+    role: 'maintainer',
+    user: 'COMPANION_MAINTAINER_USER',
+    email: 'COMPANION_MAINTAINER_EMAIL',
+    pass: 'COMPANION_MAINTAINER_PASSWORD',
+  },
+  { role: 'business', user: 'COMPANION_BUSINESS_USER', email: 'COMPANION_BUSINESS_EMAIL', pass: 'COMPANION_BUSINESS_PASSWORD' },
 ];
 
 /**
@@ -187,11 +199,12 @@ const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; pass: string }> = [
  */
 function resolveUsers(env: Record<string, string>): UserCredential[] {
   const users: UserCredential[] = [];
-  for (const { role, user, pass } of ROLE_ENV) {
+  for (const { role, user, email, pass } of ROLE_ENV) {
     const username = env[user]?.trim();
+    const address = env[email]?.trim() ?? '';
     const password = env[pass];
-    if (username && password) users.push({ username, password, role });
-    else if (username || password) {
+    if (username && password) users.push({ username, email: address, password, role });
+    else if (username || address || password) {
       log.warn(`incomplete ${role} credentials — need both ${user} and ${pass}; account disabled`);
     }
   }

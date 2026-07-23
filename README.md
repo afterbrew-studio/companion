@@ -74,6 +74,30 @@ complete authoring guide — or invoke the `companion-build-module` skill /
 - Optional for local agent runs: moxxy CLI (`npm i -g @moxxy/cli`). The daemon still starts without it, but agent runs fail until it is installed.
 - Optional for Docker bootstrap: Docker and Docker Compose.
 
+## One-command local start
+
+The published CLI contains both companion-api and the built SPA:
+
+```sh
+npx @moxxy-ai/companion
+```
+
+On first launch, choose an admin username, email, and password, or press Enter
+to use the recommended local defaults. The default password is generated
+randomly and shown once in a confirmation box. Later launches reuse the data in
+`~/.companion`, start Companion at <http://127.0.0.1:8901>, and open the browser
+without repeating setup.
+
+If GitHub CLI is already authenticated, the interactive setup offers to connect
+its active `github.com` identity as a personal GitHub account owned by the new
+admin. The token is read from `gh` only after confirmation, sent to the local
+Companion API, and never printed or copied into the CLI configuration.
+
+Use `npx @moxxy-ai/companion init` for setup without starting the server,
+or add `--no-open`, `--port`, or `--home` as needed. Node.js 20+ is the only
+requirement for the dashboard; install the external moxxy CLI before running AI
+agents.
+
 ## Getting started locally
 
 1. Install dependencies:
@@ -171,11 +195,11 @@ Common variables:
 | `COMPANION_PORT` | `8901` | HTTP and WebSocket port for companion-api. |
 | `COMPANION_HOME` | `~/.companion` | Data directory for the SQLite DB, cloned repos, worktrees, and isolated moxxy home. |
 | `COMPANION_MODEL` | `gpt-5.5` | Default model passed to agent runs. |
-| `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. |
+| `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_EMAIL` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. |
 | `COMPANION_MAINTAINER_USER` / `COMPANION_MAINTAINER_PASSWORD` | unset | Optional seed maintainer account. |
 | `COMPANION_BUSINESS_USER` / `COMPANION_BUSINESS_PASSWORD` | unset | Optional seed business account. |
 
-Advanced daemon settings such as `maxLiveRuns` and `moxxyCliPath` are stored in `${COMPANION_HOME}/companion-api.json` after first boot.
+Advanced daemon settings such as `maxLiveRuns` and `moxxyCliPath` are stored in `${COMPANION_HOME}/companiond.json` after first boot.
 
 ## Development commands
 

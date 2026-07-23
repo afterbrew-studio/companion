@@ -1,0 +1,49 @@
+{
+  "name": "@moxxy-ai/companion",
+  "version": "0.1.0",
+  "description": "Run the complete Companion dashboard locally with one command.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "companion": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "moxxy",
+    "companion",
+    "dashboard",
+    "github",
+    "agents",
+    "cli"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "bundle": "pnpm --filter 'companion-api...' build && pnpm --filter companion-web build && node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run bundle && node --test tests/*.test.mjs",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.10.1",
+    "better-sqlite3": "^12.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@companion/services": "workspace:*",
+    "@types/node": "^22.10.0",
+    "companion-api": "workspace:*",
+    "companion-web": "workspace:*",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

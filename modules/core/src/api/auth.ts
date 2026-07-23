@@ -14,6 +14,7 @@ const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
 /** A legacy `.env` account, seeded once into an empty user store. */
 export interface SeedUser {
   readonly username: string;
+  readonly email: string;
   readonly password: string;
   readonly role: Role;
 }
@@ -46,7 +47,7 @@ export class Auth implements Authenticator {
   seedFromEnv(users: readonly SeedUser[]): void {
     if (this.users.count() > 0 || users.length === 0) return;
     for (const u of users) {
-      this.users.insert({ username: u.username, email: '', passwordHash: hashPassword(u.password), role: u.role });
+      this.users.insert({ username: u.username, email: u.email, passwordHash: hashPassword(u.password), role: u.role });
     }
   }
 
