@@ -171,47 +171,140 @@ export function configuredProviderNames(): string[] {
   return [...names].sort();
 }
 
+export interface ProviderDefaults {
+  readonly name: string;
+  readonly model: string | null;
+}
+
+interface ProviderConfigScan {
+  readonly names: Set<string>;
+  readonly explicitName: string | null;
+  readonly explicitModel: string | null;
+  readonly pluginDefault: string | null;
+}
+
 /**
- * Provider names from a moxxy config.yaml without a YAML dependency: the keys
- * one indent level under `plugins.provider.items`, plus the `default`. The
- * shape is stable moxxy config; anything unexpected just yields no names.
+ * Active provider defaults from moxxy's config without a YAML dependency.
+ * moxxy writes both block YAML and flow maps (`provider: { name: … }`), so the
+ * narrow parser accepts exactly those stable provider shapes and ignores the
+ * rest of the document.
+ */
+export function providerDefaultsFromConfigYaml(yaml: string | null): ProviderDefaults | null {
+  if (!yaml) return null;
+  const scan = scanProviderConfig(yaml);
+  const name = scan.explicitName ?? scan.pluginDefault;
+  return name ? { name, model: scan.explicitName ? scan.explicitModel : null } : null;
+}
+
+/**
+ * Provider names from moxxy config.yaml: the active provider, plugin default,
+ * and keys under `plugins.provider.items`. Unknown YAML stays a safe no-op.
  */
 export function providerNamesFromConfigYaml(yaml: string | null): string[] {
   if (!yaml) return [];
+  return [...scanProviderConfig(yaml).names].sort();
+}
+
+function scanProviderConfig(yaml: string): ProviderConfigScan {
   const names = new Set<string>();
-  let providerIndent = -1; // -1 = outside the provider block
-  let itemsIndent = -1;
-  let childIndent = -1;
-  for (const line of yaml.split('\n')) {
-    if (/^\s*#/.test(line) || line.trim() === '') continue;
-    const indent = line.length - line.trimStart().length;
-    const trimmed = line.trim();
-    // Leaving blocks: a sibling (or shallower) key closes the deeper scopes.
-    if (providerIndent >= 0 && indent <= providerIndent) {
-      providerIndent = -1;
-      itemsIndent = -1;
-      childIndent = -1;
-    } else if (itemsIndent >= 0 && indent <= itemsIndent) {
-      itemsIndent = -1;
-      childIndent = -1;
+  let explicitName: string | null = null;
+  let explicitModel: string | null = null;
+  let pluginDefault: string | null = null;
+
+  // Flow maps are self-contained, including when the surrounding document is
+  // itself a flow-style object spread over several lines.
+  for (const match of yaml.matchAll(/\bprovider\s*:\s*\{([^{}]*)\}/g)) {
+    const body = match[1] ?? '';
+    const name = flowField(body, 'name');
+    const model = flowField(body, 'model');
+    const fallback = flowField(body, 'default');
+    if (name) {
+      explicitName ??= name;
+      explicitModel ??= model;
+      names.add(name);
     }
-    if (providerIndent < 0) {
-      if (/^provider:\s*$/.test(trimmed)) providerIndent = indent;
-      continue;
-    }
-    if (itemsIndent < 0 && /^items:\s*$/.test(trimmed)) {
-      itemsIndent = indent;
-      continue;
-    }
-    if (itemsIndent < 0 && /^default:\s*\S/.test(trimmed)) {
-      const value = trimmed.slice('default:'.length).trim();
-      if (value) names.add(value);
-      continue;
-    }
-    if (itemsIndent >= 0) {
-      if (childIndent < 0) childIndent = indent; // first child fixes the item level
-      if (indent === childIndent && trimmed.endsWith(':')) names.add(trimmed.slice(0, -1).trim());
+    if (fallback) {
+      pluginDefault ??= fallback;
+      names.add(fallback);
     }
   }
-  return [...names];
+
+  const lines = yaml.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (!/^\s*provider:\s*$/.test(line)) continue;
+    const providerIndent = indentation(line);
+    let childIndent: number | null = null;
+    let itemsIndent: number | null = null;
+    let itemIndent: number | null = null;
+    for (let inner = index + 1; inner < lines.length; inner++) {
+      const child = lines[inner]!;
+      const trimmed = child.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const indent = indentation(child);
+      if (indent <= providerIndent) break;
+      childIndent ??= indent;
+
+      if (itemsIndent !== null && indent > itemsIndent) {
+        itemIndent ??= indent;
+        if (indent === itemIndent) {
+          const item = yamlKey(trimmed);
+          if (item) names.add(item);
+        }
+        continue;
+      }
+      if (indent !== childIndent) continue;
+
+      const name = blockField(trimmed, 'name');
+      const model = blockField(trimmed, 'model');
+      const fallback = blockField(trimmed, 'default');
+      if (name) {
+        explicitName ??= name;
+        names.add(name);
+      }
+      if (model) explicitModel ??= model;
+      if (fallback) {
+        pluginDefault ??= fallback;
+        names.add(fallback);
+      }
+      if (/^items:\s*$/.test(trimmed)) itemsIndent = indent;
+    }
+  }
+
+  return { names, explicitName, explicitModel, pluginDefault };
+}
+
+function flowField(body: string, field: string): string | null {
+  const match = new RegExp(`(?:^|,)\\s*${field}\\s*:\\s*("(?:[^"\\\\]|\\\\.)*"|'[^']*'|[^,}]+)`).exec(body);
+  return yamlScalar(match?.[1]);
+}
+
+function blockField(line: string, field: string): string | null {
+  const match = new RegExp(`^${field}\\s*:\\s*(.+)$`).exec(line);
+  return yamlScalar(match?.[1]);
+}
+
+function yamlScalar(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim().replace(/,$/, '').trim();
+  if (!value || value === 'null' || value === '~') return null;
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return typeof parsed === 'string' && parsed ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'") || null;
+  return value;
+}
+
+function yamlKey(line: string): string | null {
+  const match = /^("(?:[^"\\]|\\.)*"|'[^']*'|[^:#][^:]*):/.exec(line);
+  return yamlScalar(match?.[1]);
+}
+
+function indentation(line: string): number {
+  return line.length - line.trimStart().length;
 }
