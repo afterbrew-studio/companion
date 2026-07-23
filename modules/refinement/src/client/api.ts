@@ -27,12 +27,12 @@ export const refinementApi = {
   decompose: (id: string, body: { methodId: string; specIds: string[]; docIds: string[] }) =>
     post<{ queued: true }>(`/api/refinements/${id}/decompose`, body),
   contextOptions: (id: string) => request<RefineContextOptions>(`/api/refinements/${id}/context-options`),
-  importItem: (id: string, itemId: string, queue: boolean) =>
-    post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}/import`, { queue }),
+  importItem: (id: string, itemId: string, queue: boolean, targetBranch?: string) =>
+    post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}/import`, { queue, targetBranch }),
   dismissItem: (id: string, itemId: string) =>
     post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}/dismiss`),
-  importAll: (id: string, queue: boolean) =>
-    post<{ imported: number }>(`/api/refinements/${id}/import-all`, { queue }),
+  importAll: (id: string, queue: boolean, targetBranch?: string) =>
+    post<{ imported: number }>(`/api/refinements/${id}/import-all`, { queue, targetBranch }),
   methods: (workspaceId: string) =>
     request<{ methods: RefineMethodRecord[] }>(`/api/workspaces/${workspaceId}/refine-methods`),
   saveMethod: (workspaceId: string, fields: { name: string; description: string; instructions: string }) =>

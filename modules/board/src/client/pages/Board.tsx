@@ -28,7 +28,7 @@ import {
 } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { CommentsSection, codeApi, useWorkspaceRepos } from '@companion/module-code/client';
+import { BranchPicker, CommentsSection, codeApi, useWorkspaceRepos } from '@companion/module-code/client';
 import type { ChecksSnapshot, GitHubAccountRecord, RepoRecord } from '@companion/module-code/contract';
 import type {
   BoardConfig,
@@ -173,15 +173,16 @@ function AttachmentEditor({
   onError: (error: string) => void;
 }): JSX.Element {
   const [reading, setReading] = useState(false);
-  const addFiles = async (files: FileList | null): Promise<void> => {
-    if (!files?.length) return;
-    if (attachments.length + files.length > MAX_ATTACHMENTS) {
+  const addFiles = useCallback(async (files: FileList | readonly File[] | null): Promise<void> => {
+    const selected = files ? [...files] : [];
+    if (selected.length === 0) return;
+    if (attachments.length + selected.length > MAX_ATTACHMENTS) {
       onError(`A task can have up to ${MAX_ATTACHMENTS} images`);
       return;
     }
     setReading(true);
     try {
-      const added = await Promise.all([...files].map(fileToAttachment));
+      const added = await Promise.all(selected.map(fileToAttachment));
       const next = [...attachments, ...added];
       if (next.reduce((total, attachment) => total + attachment.content.length, 0) > MAX_ATTACHMENT_CONTENT) {
         throw new Error('Images are too large in total. Remove an image or use smaller screenshots.');
@@ -192,9 +193,27 @@ function AttachmentEditor({
     } finally {
       setReading(false);
     }
-  };
+  }, [attachments, onChange, onError]);
+
+  useEffect(() => {
+    const paste = (event: ClipboardEvent): void => {
+      if (reading) return;
+      const images = [...(event.clipboardData?.items ?? [])]
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .flatMap((item) => {
+          const file = item.getAsFile();
+          return file ? [file] : [];
+        });
+      if (images.length === 0) return;
+      event.preventDefault();
+      void addFiles(images);
+    };
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  }, [addFiles, reading]);
+
   return (
-    <Field label="Screens & references" hint="PNG, JPEG, or WebP. Images are resized before upload and sent to the worker.">
+    <Field label="Screens & references" hint="PNG, JPEG, or WebP. Attach a file or paste an image with Ctrl/Cmd+V.">
       <div className="flex flex-col gap-2">
         {attachments.length > 0 ? (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
@@ -624,6 +643,7 @@ function NewTaskModal({
   onError: (e: string | null) => void;
 }): JSX.Element {
   const [repo, setRepo] = useState<string | null>(null);
+  const [targetBranch, setTargetBranch] = useState('main');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
@@ -635,6 +655,10 @@ function NewTaskModal({
   const [busy, setBusy] = useState(false);
 
   const effectiveRepo = repo ?? repos[0]?.fullName ?? null;
+
+  useEffect(() => {
+    setTargetBranch(repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch || 'main');
+  }, [effectiveRepo, repos]);
 
   useEffect(() => {
     setSpecs([]);
@@ -658,6 +682,7 @@ function NewTaskModal({
     try {
       await boardApi.createTask({
         repo: effectiveRepo,
+        targetBranch: targetBranch.trim() || 'main',
         title: title.trim(),
         description,
         acceptance,
@@ -684,6 +709,15 @@ function NewTaskModal({
             onChange={(v) => setRepo(v)}
             options={repos.map((r) => ({ value: r.fullName, label: r.fullName }))}
             searchable
+          />
+        </Field>
+        <Field label="Target branch" hint="The worker starts here and opens the pull request back to this branch.">
+          <BranchPicker
+            repo={effectiveRepo}
+            value={targetBranch}
+            onChange={setTargetBranch}
+            defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}
+            ariaLabel="Target branch"
           />
         </Field>
         <Field label="Title">
@@ -995,8 +1029,13 @@ function TaskDetailDrawer({
           <DetailRow label="Repository">
             <span className="font-mono">{task.repo}</span>
           </DetailRow>
+          <DetailRow label="Target branch">
+            <CopyText value={task.targetBranch}>
+              <span className="font-mono">{task.targetBranch}</span>
+            </CopyText>
+          </DetailRow>
           {task.branch ? (
-            <DetailRow label="Branch">
+            <DetailRow label="Working branch">
               <CopyText value={task.branch}>
                 <span className="font-mono">{task.branch}</span>
               </CopyText>

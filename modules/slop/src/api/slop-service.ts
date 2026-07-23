@@ -6,6 +6,7 @@ import { log, paths, extractModelJson } from '@companion/services';
 import type { PrRecord } from '@companion/module-code/contract';
 import type {
   SlopAction,
+  SlopMoveToRefinementResult,
   SlopDetectionResult,
   SlopRuleDraft,
   SlopRuleRecord,
@@ -21,6 +22,7 @@ import { BUILTIN_RULES } from './builtin-rules.js';
 type CodeService = ServiceMap['code'];
 type Orchestrator = ServiceMap['operate']['orchestrator'];
 type Checkouts = ServiceMap['operate']['checkouts'];
+type RefinementService = ServiceMap['refinement'];
 type GitHubClient = NonNullable<ReturnType<CodeService['githubAccounts']['clientFor']>>;
 
 const DETECT_TIMEOUT_MS = 15 * 60_000;
@@ -65,6 +67,7 @@ export class SlopService {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly refinement: () => RefinementService | undefined,
     /** The label the 'label' action applies — module config, read live. */
     private readonly slopLabel: () => string,
     private readonly broadcast: (msg: SpaServerMessage) => void,
@@ -376,6 +379,43 @@ export class SlopService {
     this.store.setDetectionStatus(id, 'applied', action);
     this.changed();
     return { repo: result.repo, number: result.prNumber, action };
+  }
+
+  /** Turn a rejected low-oversight PR into a clean refinement starting from
+   *  its base branch. The detection stays as audit history and records that
+   *  the human chose refinement instead of applying a GitHub-side action. */
+  moveToRefinement(id: string): SlopMoveToRefinementResult {
+    const result = this.store.getDetection(id);
+    if (!result?.verdict) throw new Error('detection not found or has no verdict');
+    if (result.status !== 'pending') throw new Error(`detection is ${result.status}, not pending`);
+    const pr = this.code.prs.get(result.repo, result.prNumber);
+    if (!pr) throw new Error('pull request is no longer available');
+    const refinementService = this.refinement();
+    if (!refinementService) throw new Error('Product Refinement is not enabled');
+
+    const signalLines = result.verdict.signals.map(
+      (signal) => `- **${signal.ruleName} (${signal.strength})** — ${signal.observation}`,
+    );
+    const hintLines = result.verdict.reviewerHints.map((hint) => `- ${hint}`);
+    const story = [
+      `Rework [PR #${pr.number}](${pr.url}) from a clean \`${pr.baseRef}\` base rather than building on the detected low-oversight implementation.`,
+      pr.body.trim() ? `## Original pull request\n${pr.body.trim()}` : '',
+      `## Slop detection\n${result.verdict.summary}`,
+      signalLines.length > 0 ? `## Evidence\n${signalLines.join('\n')}` : '',
+      hintLines.length > 0 ? `## Expected improvements\n${hintLines.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 32_000);
+    const refinement = refinementService.create({
+      repo: result.repo,
+      branch: pr.baseRef,
+      title: `Rework: ${pr.title}`.slice(0, 200),
+      story,
+    });
+    this.store.setDetectionStatus(id, 'applied', 'refinement');
+    this.changed();
+    return { refinementId: refinement.id };
   }
 
   dismiss(id: string): void {

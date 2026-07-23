@@ -17,6 +17,7 @@ export * from './widgets.js';
 export { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
 export { CommentsSection } from './components/Comments.js';
 export { AccountPicker } from './components/AccountPicker.js';
+export { BranchPicker } from './components/BranchPicker.js';
 export { codeApi } from './api.js';
 
 export default defineClientModule({

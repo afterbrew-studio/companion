@@ -25,6 +25,7 @@ const decomposeSchema = z.object({
 
 const importSchema = z.object({
   queue: z.boolean().default(false),
+  targetBranch: z.string().trim().min(1).max(200).optional(),
 });
 
 const saveMethodSchema = z.object({
@@ -171,7 +172,15 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         requireRefinement(user, params.id);
         try {
-          return { item: refinement.importItem(params.id, params.itemId, user?.username ?? null, body.queue) };
+          return {
+            item: refinement.importItem(
+              params.id,
+              params.itemId,
+              user?.username ?? null,
+              body.queue,
+              body.targetBranch,
+            ),
+          };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -200,7 +209,14 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         requireRefinement(user, params.id);
         try {
-          return { imported: refinement.importAll(params.id, user?.username ?? null, body.queue) };
+          return {
+            imported: refinement.importAll(
+              params.id,
+              user?.username ?? null,
+              body.queue,
+              body.targetBranch,
+            ),
+          };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

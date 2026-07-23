@@ -16,6 +16,7 @@ const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.lite
 
 const createTaskSchema = z.object({
   repo: z.string().min(3).max(200),
+  targetBranch: z.string().trim().min(1).max(200),
   title: z.string().min(1).max(200),
   description: z.string().max(20_000).default(''),
   acceptance: z.string().max(10_000).default(''),

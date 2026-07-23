@@ -21,8 +21,9 @@ export const automationsApi = {
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
   /** Read-only: never (re-)enables the receiver. */
   getWebhook: (fullName: string) => request<{ webhook: WebhookInfo | null }>(`/api/repos/${fullName}/webhook`),
-  /** Status only — the toggle is operate's `webhookTunnel` module config (Modules page). */
+  /** Instance-wide tunnel state; configuration remains kernel-owned module config. */
   webhookTunnel: () => request<WebhookTunnelState>('/api/webhooks/tunnel'),
+  retryWebhookTunnel: () => post<WebhookTunnelState>('/api/webhooks/tunnel/retry'),
   digestNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/digest-now`),
   staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
 

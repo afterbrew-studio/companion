@@ -164,6 +164,7 @@ export class BoardService {
 
   createTask(input: {
     repo: string;
+    targetBranch: string;
     title: string;
     description: string;
     acceptance: string;
@@ -179,6 +180,7 @@ export class BoardService {
     const task: TaskRecord = {
       id: `tsk-${randomUUID().slice(0, 12)}`,
       repo: input.repo,
+      targetBranch: input.targetBranch,
       title: input.title,
       description: input.description,
       acceptance: input.acceptance,
@@ -641,8 +643,8 @@ export class BoardService {
           title: `Task: ${task.title.slice(0, 60)}`,
           repo: task.repo,
           branchPrefix: `companion/task-${task.id.replace(/^tsk-/, '')}`,
-          baseBranch: repoRow.default_branch,
-          objective: this.buildObjective(task, repoRow.default_branch),
+          baseBranch: task.targetBranch,
+          objective: this.buildObjective(task, task.targetBranch),
           userId: task.createdBy,
           attachments: task.attachments.flatMap(({ name, mediaType, content }) =>
             content ? [{ kind: 'image' as const, name, mediaType, content }] : [],
@@ -702,7 +704,7 @@ ${acceptance}${specSection}
     const task = this.store.getTask(taskId);
     if (!task || task.runId !== runId || task.status !== 'in_progress') return;
 
-    const { diff } = await this.code.fixes.diff(runId).catch(() => ({ diff: '' }));
+    const { diff } = await this.code.fixes.diff(runId, task.targetBranch).catch(() => ({ diff: '' }));
     if (!diff.trim()) {
       // Detach/charge BEFORE discarding — the discard re-emits run.changed
       // synchronously and must find nothing to react to.
@@ -743,6 +745,7 @@ ${acceptance}${specSection}
     const hadPr = task.prNumber != null;
     const { prUrl } = await this.code.fixes.approve(runId, {
       title: task.title,
+      baseBranch: task.targetBranch,
       body: `${task.description ? `${task.description}\n\n` : ''}${
         task.acceptance.trim() ? `### Acceptance criteria\n${task.acceptance.trim()}\n\n` : ''
       }_Task \`${task.id}\` on the Companion board._`,
@@ -1002,20 +1005,30 @@ ${acceptance}${specSection}
 
   /** Merge, comment, complete — with a backoff so a refusing branch doesn't get hammered. */
   private async mergeTask(task: TaskRecord, config: BoardConfig): Promise<void> {
-    const client = this.code.githubAccounts.clientFor('pipelines', {
-      repo: task.repo,
-      accountId: config.mergeAccountId ?? undefined,
-    });
-    if (!client) {
-      this.store.updateTask(task.id, {
-        lastError: 'merge blocked: no usable GitHub account for this repo — set a merge account in Flow',
-      });
-      this.mergeBackoff.set(task.id, Date.now() + MERGE_BACKOFF_MS);
-      this.changed();
-      return;
-    }
     try {
-      await client.mergePr(task.repo, task.prNumber!, config.mergeMethod);
+      const { result, client, tried } = await this.code.githubAccounts.performForRepo(
+        'pipelines',
+        task.repo,
+        (candidate) => candidate.mergePr(task.repo, task.prNumber!, config.mergeMethod),
+        {
+          accountId: config.mergeAccountId ?? undefined,
+          // Board automation is system-owned and must not inherit the request
+          // that happened to enqueue or manually advance the task.
+          username: null,
+        },
+      );
+      if (!client || !result) {
+        this.store.updateTask(task.id, {
+          lastError:
+            tried.length > 0
+              ? `merge blocked: none of the connected GitHub accounts (${tried.join(', ')}) can merge pull requests in this repo`
+              : 'merge blocked: no usable GitHub account for this repo — set a merge account in Flow',
+        });
+        this.mergeBackoff.set(task.id, Date.now() + MERGE_BACKOFF_MS);
+        this.changed();
+        return;
+      }
+      if (!result.merged) throw new Error(result.message || 'merge refused by GitHub');
       await client
         .comment(task.repo, task.prNumber!, 'Merged by the Companion board — review approved and checks green.')
         .catch(() => undefined);

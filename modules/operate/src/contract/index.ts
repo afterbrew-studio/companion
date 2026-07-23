@@ -380,8 +380,11 @@ export interface SetRunModelRequest {
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
 export interface WebhookTunnelState {
   readonly enabled: boolean;
+  readonly status: 'off' | 'connecting' | 'connected' | 'error';
   /** Public base URL while up (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
   readonly url: string | null;
+  /** Sanitized operator-facing failure; relay internals stay in server logs. */
+  readonly error: string | null;
 }
 
 // ---------- skills ----------

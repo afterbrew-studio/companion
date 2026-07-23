@@ -78,6 +78,8 @@ export interface TaskAttachmentInput {
 export interface TaskRecord {
   readonly id: string;
   readonly repo: string;
+  /** Branch the worker starts from and the resulting PR targets. */
+  readonly targetBranch: string;
   readonly title: string;
   readonly description: string;
   /** Definition of done: acceptance criteria the build must satisfy. */

@@ -23,6 +23,7 @@ interface WorkerRow {
 interface TaskRow {
   id: string;
   repo: string;
+  target_branch: string;
   title: string;
   description: string;
   acceptance: string;
@@ -72,6 +73,7 @@ function rowToTask(row: TaskRow): TaskRecord {
   return {
     id: row.id,
     repo: row.repo,
+    targetBranch: row.target_branch,
     title: row.title,
     description: row.description,
     acceptance: row.acceptance,
@@ -214,12 +216,12 @@ export class BoardStore {
     this.db
       .prepare(
         `INSERT INTO board_tasks (
-           id, repo, title, description, acceptance, spec_id, attachments, depends_on, priority, status, stage,
+           id, repo, target_branch, title, description, acceptance, spec_id, attachments, depends_on, priority, status, stage,
            created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
            review_risk, review_recommendation, attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
-           @id, @repo, @title, @description, @acceptance, @specId, @attachments, @dependsOn, @priority, @status, @stage,
+           @id, @repo, @targetBranch, @title, @description, @acceptance, @specId, @attachments, @dependsOn, @priority, @status, @stage,
            @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
            @reviewRisk, @reviewRecommendation, @attempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt

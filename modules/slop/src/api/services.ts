@@ -21,6 +21,7 @@ export default defineServices((ctx) => {
       operate.orchestrator,
       operate.checkouts,
       (c) => code.githubAccounts.clientFor('pipelines', c),
+      () => ctx.services.tryGet('refinement'),
       () => {
         const label = ctx.moduleConfig.get('label');
         return typeof label === 'string' && label.trim() ? label.trim() : 'ai-slop';

@@ -13,8 +13,10 @@ function fixture() {
     );
     CREATE TABLE board_tasks (
       id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL,
+      target_branch TEXT NOT NULL DEFAULT 'main',
       description TEXT NOT NULL DEFAULT '', acceptance TEXT NOT NULL DEFAULT '', spec_id TEXT,
-      attachments TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL, status TEXT NOT NULL, stage TEXT, created_by TEXT,
+      attachments TEXT NOT NULL DEFAULT '[]', depends_on TEXT NOT NULL DEFAULT '[]',
+      priority INTEGER NOT NULL, status TEXT NOT NULL, stage TEXT, created_by TEXT,
       first_worker TEXT, assigned_worker_id TEXT, run_id TEXT, branch TEXT,
       pr_number INTEGER, pr_url TEXT, review_risk TEXT, review_recommendation TEXT,
       attempts INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL,
@@ -57,11 +59,13 @@ function insertTask(store, overrides = {}) {
   store.insertTask({
     id: overrides.id ?? 'tsk-1',
     repo: 'owner/repo',
+    targetBranch: 'main',
     title: 'Lifecycle test',
     description: '',
     acceptance: '',
     specId: null,
     attachments: [],
+    dependsOn: [],
     priority: 2,
     status: 'ready',
     stage: 'build',

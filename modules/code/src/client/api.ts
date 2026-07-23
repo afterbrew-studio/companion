@@ -14,6 +14,7 @@ import type {
   PrRecord,
   PrReviewResult,
   RepoCandidate,
+  RepoBranchRecord,
   RepoRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
@@ -31,6 +32,8 @@ import type {
 export const codeApi = {
   // repos
   listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
+  repoBranches: (fullName: string) =>
+    request<{ branches: RepoBranchRecord[]; defaultBranch: string }>(`/api/repos/${fullName}/branches`),
   addRepo: (fullName: string, workspaceId: string) =>
     post<{ repo: RepoRecord }>('/api/repos', { fullName, workspaceId }),
   /** Repos the reachable GitHub accounts can see — feeds the add-repo picker. */

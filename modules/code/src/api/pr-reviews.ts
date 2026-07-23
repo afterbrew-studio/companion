@@ -28,6 +28,16 @@ export class PrReviews {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly mergeGithub: (
+      repo: string,
+      prNumber: number,
+      method: 'merge' | 'squash' | 'rebase',
+      ctx?: { accountId?: string; username?: string | null },
+    ) => Promise<{
+      result: { merged: boolean; message: string } | null;
+      client: GitHubClient | null;
+      tried: string[];
+    }>,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
@@ -135,9 +145,14 @@ export class PrReviews {
   }
 
   async merge(repo: string, prNumber: number, method: 'merge' | 'squash' | 'rebase'): Promise<void> {
-    const client = this.github({ repo });
-    if (!client) throw new Error('GitHub is not configured');
-    const result = await client.mergePr(repo, prNumber, method);
+    const { result, client, tried } = await this.mergeGithub(repo, prNumber, method);
+    if (!client || !result) {
+      throw new Error(
+        tried.length > 0
+          ? `none of the connected GitHub accounts (${tried.join(', ')}) can merge pull requests in ${repo}`
+          : 'GitHub is not configured',
+      );
+    }
     if (!result.merged) throw new Error(result.message || 'merge refused by GitHub');
     // Best-effort branch hygiene — a protected or fork branch must not fail the merge.
     await client.deleteMergedPrBranch(repo, prNumber).catch((err) => {

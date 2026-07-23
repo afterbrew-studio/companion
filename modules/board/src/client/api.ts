@@ -34,6 +34,7 @@ export const boardApi = {
   task: (id: string) => request<TaskDetail>(`/api/board/tasks/${id}`),
   createTask: (input: {
     repo: string;
+    targetBranch: string;
     title: string;
     description: string;
     acceptance: string;

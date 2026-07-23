@@ -8,8 +8,8 @@ import { refinementApi, type RefinementDetail } from '../api.js';
 export interface RefinementActions {
   update(fields: { title?: string; story?: string; branch?: string }): Promise<void>;
   decompose(methodId: string, specIds: string[], docIds: string[]): Promise<void>;
-  importItem(itemId: string, queue: boolean): Promise<void>;
-  importAll(queue: boolean): Promise<void>;
+  importItem(itemId: string, queue: boolean, targetBranch?: string): Promise<void>;
+  importAll(queue: boolean, targetBranch?: string): Promise<void>;
   dismissItem(itemId: string): Promise<void>;
   /** Resolves true when deleted (the caller navigates away). */
   remove(): Promise<boolean>;
@@ -90,8 +90,9 @@ export function useRefinement(id: string): {
     () => ({
       update: (fields) => act(() => refinementApi.update(id, fields)),
       decompose: (methodId, specIds, docIds) => act(() => refinementApi.decompose(id, { methodId, specIds, docIds })),
-      importItem: (itemId, queue) => act(() => refinementApi.importItem(id, itemId, queue)),
-      importAll: (queue) => act(() => refinementApi.importAll(id, queue)),
+      importItem: (itemId, queue, targetBranch) =>
+        act(() => refinementApi.importItem(id, itemId, queue, targetBranch)),
+      importAll: (queue, targetBranch) => act(() => refinementApi.importAll(id, queue, targetBranch)),
       dismissItem: (itemId) => act(() => refinementApi.dismissItem(id, itemId)),
       remove: async () => {
         try {

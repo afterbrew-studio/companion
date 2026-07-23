@@ -162,4 +162,15 @@ export default defineMigrations([
       db.exec(`ALTER TABLE board_tasks DROP COLUMN depends_on`);
     },
   },
+  {
+    version: 7,
+    name: 'board_task_target_branch',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(board_tasks)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'target_branch')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`);
+      }
+    },
+    down: () => undefined,
+  },
 ]);

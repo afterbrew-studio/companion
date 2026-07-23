@@ -81,6 +81,12 @@ export interface RepoCandidate {
   readonly accountLogin: string;
 }
 
+/** One existing remote branch offered by branch-selection controls. */
+export interface RepoBranchRecord {
+  readonly name: string;
+  readonly protected: boolean;
+}
+
 export interface IssueRecord {
   readonly repo: string;
   readonly number: number;

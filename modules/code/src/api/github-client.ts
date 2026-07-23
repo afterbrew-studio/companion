@@ -16,6 +16,8 @@ const API = 'https://api.github.com';
 
 export class GitHubClient {
   private readonly etags = new Map<string, { etag: string; body: unknown }>();
+  private readonly branchCache = new Map<string, { at: number; branches: GhBranch[] }>();
+  private readonly branchInflight = new Map<string, Promise<GhBranch[]>>();
 
   constructor(private readonly token: string) {}
 
@@ -67,6 +69,30 @@ export class GitHubClient {
     name: string;
   }> {
     return this.get(`/repos/${fullName}`);
+  }
+
+  /** Existing remote branches, paged and bounded to protect the GitHub budget. */
+  async branches(fullName: string, maxPages = 20): Promise<GhBranch[]> {
+    const cached = this.branchCache.get(fullName);
+    if (cached && Date.now() - cached.at < 60_000) return cached.branches;
+    const pending = this.branchInflight.get(fullName);
+    if (pending) return pending;
+    const load = (async (): Promise<GhBranch[]> => {
+      const collected: GhBranch[] = [];
+      for (let page = 1; page <= maxPages; page++) {
+        const batch = await this.get<GhBranch[]>(`/repos/${fullName}/branches?per_page=100&page=${page}`);
+        collected.push(...batch);
+        if (batch.length < 100) break;
+      }
+      this.branchCache.set(fullName, { at: Date.now(), branches: collected });
+      return collected;
+    })();
+    this.branchInflight.set(fullName, load);
+    try {
+      return await load;
+    } finally {
+      this.branchInflight.delete(fullName);
+    }
   }
 
   /** All issues (open+closed, no PRs) sorted by updated, paged. */
@@ -266,6 +292,11 @@ export interface GhRepoSummary {
   description: string | null;
   pushed_at: string | null;
   archived: boolean;
+}
+
+export interface GhBranch {
+  name: string;
+  protected: boolean;
 }
 
 export interface GhIssue {

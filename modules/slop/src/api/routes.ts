@@ -228,5 +228,19 @@ export default defineRoutes((ctx) => {
         return { ok: true };
       },
     }),
+
+    route({
+      method: 'POST',
+      path: '/api/slop/:id/move-to-refinement',
+      access: 'slop:act',
+      handler: ({ params, user }) => {
+        requireDetection(user, params.id);
+        try {
+          return slop.moveToRefinement(params.id);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
   ];
 });
