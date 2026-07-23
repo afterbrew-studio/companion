@@ -145,9 +145,31 @@ function RepoCard({
   const [transferring, setTransferring] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
 
+  const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await fn();
+      await onChange();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async (): Promise<void> => {
+    const ok = await confirmDanger({
+      title: `Disconnect ${repo.fullName}`,
+      message:
+        'The repository is removed from this workspace. Shared cached data and the local clone remain while another workspace still uses it.',
+      confirmLabel: 'Disconnect',
+    });
+    if (ok) await act(() => api.removeRepo(repo.fullName, repo.workspaceId))();
+  };
+
   if (!repo.githubAccessible) {
     return (
-      <article className="card opacity-70" aria-label={`${repo.fullName} — no GitHub access`} aria-disabled="true">
+      <article className="card opacity-70" aria-label={`${repo.fullName} — no GitHub access`}>
         <div className="flex items-start gap-3 text-zinc-500 dark:text-zinc-500">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700">
             <LockIcon className="size-4" />
@@ -160,21 +182,16 @@ function RepoCard({
             </p>
           </div>
         </div>
+        <CardActions>
+          <span className="dim mr-auto text-xs">GitHub actions are unavailable for this repository.</span>
+          <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
+            {busy ? 'Working…' : 'Remove from workspace'}
+          </button>
+        </CardActions>
+        {confirmElement}
       </article>
     );
   }
-
-  const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
-    setBusy(true);
-    try {
-      await fn();
-      await onChange();
-    } catch (err) {
-      onError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const automations: ReadonlyArray<{ label: string; on: boolean }> = [
     { label: 'auto-triage', on: repo.autoTriage },
@@ -269,16 +286,7 @@ function RepoCard({
         <button
           className="btn-danger-ghost"
           disabled={busy}
-          onClick={() =>
-            void (async () => {
-              const ok = await confirmDanger({
-                title: `Disconnect ${repo.fullName}`,
-                message: 'The repository is removed from this workspace. Shared cached data and the local clone remain while another workspace still uses it.',
-                confirmLabel: 'Disconnect',
-              });
-              if (ok) await act(() => api.removeRepo(repo.fullName, repo.workspaceId))();
-            })()
-          }
+          onClick={() => void disconnect()}
         >
           Remove
         </button>

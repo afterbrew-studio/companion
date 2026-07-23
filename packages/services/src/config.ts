@@ -189,7 +189,12 @@ const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; email: string; pass: s
     email: 'COMPANION_MAINTAINER_EMAIL',
     pass: 'COMPANION_MAINTAINER_PASSWORD',
   },
-  { role: 'business', user: 'COMPANION_BUSINESS_USER', email: 'COMPANION_BUSINESS_EMAIL', pass: 'COMPANION_BUSINESS_PASSWORD' },
+  {
+    role: 'business',
+    user: 'COMPANION_BUSINESS_USER',
+    email: 'COMPANION_BUSINESS_EMAIL',
+    pass: 'COMPANION_BUSINESS_PASSWORD',
+  },
 ];
 
 /**
