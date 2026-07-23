@@ -40,7 +40,6 @@ const driftSchema = z.object({
     .max(24),
 });
 
-const MAX_DRIFT_DIFF = 50_000;
 const MAX_DRIFT_SPECS = 12;
 
 /**
@@ -334,19 +333,28 @@ export class Specs {
     const client = this.github(repo);
     if (!client || !this.checkouts.hasClone(repo)) return;
     const pr = this.store.prs.get(repo, prNumber);
-    const diffRaw = await client.prDiff(repo, prNumber);
-    const diff = diffRaw.length > MAX_DRIFT_DIFF ? `${diffRaw.slice(0, MAX_DRIFT_DIFF)}\n… (diff truncated)` : diffRaw;
-
-    const { finalMessage } = await this.orchestrator.runOneShot({
-      kind: 'analysis',
-      task: 'plan.analyses',
-      title: `Spec drift check — PR #${prNumber}`,
-      cwd: this.checkouts.cloneDir(repo),
+    // A merge webhook can beat the PR cache refresh; resolve the live base in
+    // that narrow race so drift detection does not silently disappear.
+    const live = pr ? null : await client.pull(repo, prNumber).catch(() => null);
+    const baseRef = pr?.baseRef ?? live?.base.ref;
+    if (!baseRef) return;
+    const { finalMessage } = await this.checkouts.withPullRequestWorktree(
       repo,
-      issueNumber: prNumber,
-      prompt: driftPrompt(specs, pr?.title ?? `PR #${prNumber}`, diff),
-      timeoutMs: 8 * 60_000,
-    });
+      `spec-drift-${prNumber}-${randomUUID().slice(0, 8)}`,
+      prNumber,
+      baseRef,
+      (cwd) =>
+        this.orchestrator.runOneShot({
+          kind: 'analysis',
+          task: 'plan.analyses',
+          title: `Spec drift check — PR #${prNumber}`,
+          cwd,
+          repo,
+          issueNumber: prNumber,
+          prompt: driftPrompt(specs, pr?.title ?? live?.title ?? `PR #${prNumber}`, baseRef),
+          timeoutMs: 12 * 60_000,
+        }),
+    );
     const { findings } = driftSchema.parse(extractModelJson(finalMessage ?? ''));
     const known = new Set(specs.map((s) => s.id));
     const drifted = findings.filter((f) => f.drift && known.has(f.id));
@@ -370,19 +378,18 @@ export class Specs {
   }
 }
 
-function driftPrompt(specs: readonly SpecRecord[], prTitle: string, diff: string): string {
+function driftPrompt(specs: readonly SpecRecord[], prTitle: string, baseRef: string): string {
   const blocks = specs
     .map((s) => `### Spec ${s.id}: ${s.title}\n${s.content.slice(0, 4000)}`)
     .join('\n\n');
-  return `A pull request just MERGED into the repository checked out in the current directory. Decide, for each specification below, whether the merged change makes the spec's described behavior wrong (drift).
+  return `A pull request just MERGED and its exact head is checked out in the current directory. Decide, for each specification below, whether the merged change makes the spec's described behavior wrong (drift).
 
 READ-ONLY RULES (mandatory): you may read files to verify, but you must NOT modify anything. Your ONLY output is the final JSON.
 
 ## Merged PR: ${prTitle}
 
-\`\`\`diff
-${diff}
-\`\`\`
+## Inspecting the complete PR
+\`origin/${baseRef}\` is the refreshed base. Start with \`git diff --stat origin/${baseRef}...HEAD\` and \`git diff --name-only origin/${baseRef}...HEAD\`, then inspect relevant files in bounded groups with \`git diff origin/${baseRef}...HEAD -- <path>...\`. Do not dump an oversized whole-PR diff into one tool call. If collaboration/subagent tools are available, delegate disjoint file groups or specification groups and synthesize the evidence yourself.
 
 ## Specifications to check
 ${blocks}

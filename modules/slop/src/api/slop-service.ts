@@ -23,8 +23,7 @@ type Orchestrator = ServiceMap['operate']['orchestrator'];
 type Checkouts = ServiceMap['operate']['checkouts'];
 type GitHubClient = NonNullable<ReturnType<CodeService['githubAccounts']['clientFor']>>;
 
-const MAX_DIFF_CHARS = 60_000;
-const DETECT_TIMEOUT_MS = 8 * 60_000;
+const DETECT_TIMEOUT_MS = 15 * 60_000;
 const GENERATE_RULE_TIMEOUT_MS = 5 * 60_000;
 
 // Limits mirror the save-rule route schema; the prompt asks for less so an
@@ -174,17 +173,16 @@ export class SlopService {
   private prepare(
     repo: string,
     prNumber: number,
-  ): { pr: PrRecord; ruleSet: SlopRuleRecord[]; client: GitHubClient } {
+  ): { pr: PrRecord; ruleSet: SlopRuleRecord[] } {
     const pr = this.code.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const workspaceId = this.workspaceOf(repo);
     if (!workspaceId) throw new Error(`repo ${repo} is not connected`);
     const ruleSet = this.rules(workspaceId).filter((rule) => rule.enabled);
     if (ruleSet.length === 0) throw new Error('no detection rules are enabled for this workspace');
-    const client = this.github({ repo });
-    if (!client) throw new Error('GitHub is not configured');
+    if (!this.github({ repo })) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
-    return { pr, ruleSet, client };
+    return { pr, ruleSet };
   }
 
   /** Throws when a detection cannot start (unknown PR, empty rule set, no clone…). */
@@ -203,14 +201,14 @@ export class SlopService {
 
   /**
    * Run one detection for a PR. The PR record comes from code's sync cache
-   * (GitHub-as-cache); only the diff is fetched, through the same client
-   * surface ai-review uses. A 'running' row is stored (and broadcast) up
-   * front, then settled when the agent phase resolves — a failure (diff
-   * fetch, dead run, parse miss) lands as status 'failed', never a fabricated
-   * verdict and never a silent vanish.
+   * (GitHub-as-cache). The agent receives a temporary checkout at the exact PR
+   * head and inspects the complete diff locally in bounded file groups. A
+   * 'running' row is stored (and broadcast) up front, then settled when the
+   * agent phase resolves — a failure (checkout, dead run, parse miss) lands as
+   * status 'failed', never a fabricated verdict and never a silent vanish.
    */
   async detect(repo: string, prNumber: number): Promise<SlopDetectionResult> {
-    const { pr, ruleSet, client } = this.prepare(repo, prNumber);
+    const { pr, ruleSet } = this.prepare(repo, prNumber);
 
     // The row exists (and broadcasts) BEFORE the minutes-long agent phase, so
     // the page shows a live 'running' card the moment a detection is queued.
@@ -234,19 +232,24 @@ export class SlopService {
     let verdict: SlopVerdict | null = null;
     let error: string | null = null;
     try {
-      const diff = await client.prDiff(repo, prNumber);
-      const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
-      const oneShot = await this.orchestrator.runOneShot({
-        kind: 'analysis',
-        task: 'slop.detect',
-        title: `Slop check PR #${prNumber}: ${pr.title.slice(0, 60)}`,
-        cwd: this.checkouts.cloneDir(repo),
+      const oneShot = await this.checkouts.withPullRequestWorktree(
         repo,
-        issueNumber: prNumber,
-        prompt: detectionPrompt(pr, ruleSet, clipped),
-        timeoutMs: DETECT_TIMEOUT_MS,
-        resume: { type: 'slop-detect', args: { repo, number: prNumber } },
-      });
+        `slop-${placeholder.id}`,
+        prNumber,
+        pr.baseRef,
+        (cwd) =>
+          this.orchestrator.runOneShot({
+            kind: 'analysis',
+            task: 'slop.detect',
+            title: `Slop check PR #${prNumber}: ${pr.title.slice(0, 60)}`,
+            cwd,
+            repo,
+            issueNumber: prNumber,
+            prompt: detectionPrompt(pr, ruleSet),
+            timeoutMs: DETECT_TIMEOUT_MS,
+            resume: { type: 'slop-detect', args: { repo, number: prNumber } },
+          }),
+      );
       runId = oneShot.runId;
       verdict = parseSlopVerdict(oneShot.finalMessage ?? '', ruleSet);
     } catch (err) {
@@ -389,11 +392,11 @@ export class SlopService {
   }
 }
 
-function detectionPrompt(pr: PrRecord, rules: readonly SlopRuleRecord[], diff: string): string {
+function detectionPrompt(pr: PrRecord, rules: readonly SlopRuleRecord[]): string {
   const ruleSections = rules
     .map((rule) => `### ${rule.id}: ${rule.name}\n${rule.instructions}`)
     .join('\n\n');
-  return `You are an AI-slop detector assessing whether a GitHub pull request was substantially machine-generated with low human oversight. The repository's base branch is checked out in the current directory.
+  return `You are an AI-slop detector assessing whether a GitHub pull request was substantially machine-generated with low human oversight. The exact pull request head is checked out in the current directory.
 
 READ-ONLY RULES (mandatory): you may read files and search the codebase to verify claims (do referenced APIs, helpers, and dependencies exist?), but you must NOT modify, create, or delete any file and must NOT run any write command (no git commit/push, no installs). Your ONLY output is the final JSON verdict.
 
@@ -407,10 +410,13 @@ Author: ${pr.author} | Branch: ${pr.headRef} → ${pr.baseRef} | Draft: ${pr.dra
 
 ${pr.body || '(no description)'}
 
-## Diff (may be truncated)
-\`\`\`diff
-${diff}
-\`\`\`
+## Inspecting the complete PR
+\`origin/${pr.baseRef}\` is the refreshed base. Inspect the complete change locally; no prompt-sized diff was provided.
+
+- Start with \`git diff --stat origin/${pr.baseRef}...HEAD\`, \`git diff --numstat origin/${pr.baseRef}...HEAD\`, and \`git diff --name-only origin/${pr.baseRef}...HEAD\`.
+- Inspect changed files in bounded groups with \`git diff origin/${pr.baseRef}...HEAD -- <path>...\`; do not dump an oversized whole-PR diff into one tool call.
+- Cover every changed file and apply every enabled detection rule. Generated, vendored, lock, and binary files may be classified and sampled instead of expanded line-by-line.
+- If collaboration/subagent tools are available, delegate disjoint file groups or rule families and synthesize their evidence yourself. Do not assume delegation exists.
 
 ## Your task
 Investigate, weigh the signals across rules (independent families agreeing is far stronger than one family firing repeatedly), then reply with ONLY a JSON object (no markdown fence, no prose before or after) of exactly this shape:

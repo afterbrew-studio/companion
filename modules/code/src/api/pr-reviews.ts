@@ -16,8 +16,6 @@ const verdictSchema = z.object({
   reviewBody: z.string(),
 });
 
-const MAX_DIFF_CHARS = 60_000;
-
 /**
  * PR reviews, review-then-apply like triage: an agent reads the PR diff
  * against the repo checkout and returns a structured verdict; posting the
@@ -37,30 +35,29 @@ export class PrReviews {
   async analyzePr(repo: string, prNumber: number, opts?: { context?: string }): Promise<PrReviewResult> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    const client = this.github({ repo });
-    if (!client) throw new Error('GitHub is not configured');
+    if (!this.github({ repo })) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
-    // The assistant sees the PR's CI pipelines alongside the diff.
-    const [diff, checksSummary] = await Promise.all([
-      client.prDiff(repo, prNumber),
-      this.checks.trySummary(repo, prNumber),
-    ]);
-    const clippedDiff =
-      diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
-
-    const { runId, finalMessage } = await this.orchestrator.runOneShot({
-      kind: 'analysis',
-      task: 'code.pr-review',
-      title: `Review PR #${prNumber}: ${pr.title.slice(0, 60)}`,
-      cwd: this.checkouts.cloneDir(repo),
+    const checksSummary = await this.checks.trySummary(repo, prNumber);
+    const { runId, finalMessage } = await this.checkouts.withPullRequestWorktree(
       repo,
-      issueNumber: prNumber,
-      prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, clippedDiff, describeChecks(checksSummary), opts?.context),
-      timeoutMs: 8 * 60_000,
-      // The caller's context rides along so a resumed review keeps its briefing.
-      resume: { type: 'pr-review', args: { repo, number: prNumber, ...(opts?.context ? { context: opts.context } : {}) } },
-    });
+      `pr-review-${prNumber}-${randomUUID().slice(0, 8)}`,
+      prNumber,
+      pr.baseRef,
+      (cwd) =>
+        this.orchestrator.runOneShot({
+          kind: 'analysis',
+          task: 'code.pr-review',
+          title: `Review PR #${prNumber}: ${pr.title.slice(0, 60)}`,
+          cwd,
+          repo,
+          issueNumber: prNumber,
+          prompt: reviewPrompt(pr.title, pr.body, pr.author, pr.baseRef, describeChecks(checksSummary), opts?.context),
+          timeoutMs: 12 * 60_000,
+          // The caller's context rides along so a resumed review keeps its briefing.
+          resume: { type: 'pr-review', args: { repo, number: prNumber, ...(opts?.context ? { context: opts.context } : {}) } },
+        }),
+    );
 
     let verdict: PrReviewVerdict | null = null;
     let error: string | null = null;
@@ -165,8 +162,7 @@ export class PrReviews {
   async analyzeFailedChecks(repo: string, prNumber: number): Promise<void> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    const client = this.github();
-    if (!client) throw new Error('GitHub is not configured');
+    if (!this.github()) throw new Error('GitHub is not configured');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
 
     const summary = await this.checks.fetchSummary(repo, prNumber);
@@ -175,19 +171,24 @@ export class PrReviews {
     );
     if (failing.length === 0) throw new Error('no failing checks on this PR');
 
-    const diff = await client.prDiff(repo, prNumber);
-    const clipped = diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… (diff truncated)` : diff;
-    const { finalMessage } = await this.orchestrator.runOneShot({
-      kind: 'analysis',
-      task: 'code.ci-analysis',
-      title: `CI failure analysis — PR #${prNumber}`,
-      cwd: this.checkouts.cloneDir(repo),
+    const { finalMessage } = await this.checkouts.withPullRequestWorktree(
       repo,
-      issueNumber: prNumber,
-      prompt: ciAnalysisPrompt(pr.title, pr.headRef, failing, clipped),
-      timeoutMs: 10 * 60_000,
-      resume: { type: 'ci-analysis', args: { repo, number: prNumber } },
-    });
+      `ci-analysis-${prNumber}-${randomUUID().slice(0, 8)}`,
+      prNumber,
+      pr.baseRef,
+      (cwd) =>
+        this.orchestrator.runOneShot({
+          kind: 'analysis',
+          task: 'code.ci-analysis',
+          title: `CI failure analysis — PR #${prNumber}`,
+          cwd,
+          repo,
+          issueNumber: prNumber,
+          prompt: ciAnalysisPrompt(pr.title, pr.headRef, pr.baseRef, failing),
+          timeoutMs: 14 * 60_000,
+          resume: { type: 'ci-analysis', args: { repo, number: prNumber } },
+        }),
+    );
     if (!finalMessage?.trim()) throw new Error('CI analysis produced no report');
 
     this.store.reports.insert({
@@ -226,7 +227,6 @@ function reviewPrompt(
   body: string,
   author: string,
   baseRef: string,
-  diff: string,
   checks: string,
   context?: string,
 ): string {
@@ -242,10 +242,7 @@ ${body || '(no description)'}
 ## CI pipelines
 ${checks}
 ${context ? `\n## Review context\n${context}\n` : ''}
-## Diff
-\`\`\`diff
-${diff}
-\`\`\`
+${diffInspectionGuide(baseRef)}
 
 ## Your task
 Assess correctness, risk, and fit with the surrounding code, then reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
@@ -266,27 +263,34 @@ export function parseReviewVerdict(text: string): PrReviewVerdict {
 function ciAnalysisPrompt(
   title: string,
   headRef: string,
+  baseRef: string,
   failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
-  diff: string,
 ): string {
   const list = failing
     .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
     .join('\n');
-  return `You are investigating why CI pipelines are failing on the pull request "${title}" (branch ${headRef}). The repository's base branch is checked out in the current directory.
+  return `You are investigating why CI pipelines are failing on the pull request "${title}" (branch ${headRef}). The pull request head is checked out in the current directory.
 
 RULES: you may read files, search, and run non-destructive commands (installs into the existing environment, builds, linters, test suites) to reproduce the failures locally. You must NOT modify, commit, or push anything.
 
 ## Failing pipelines
 ${list}
 
-## PR diff
-\`\`\`diff
-${diff}
-\`\`\`
+${diffInspectionGuide(baseRef)}
 
 ## Your task
 Figure out the most likely cause of each failing pipeline. Where practical, reproduce locally (e.g. run the linter or the test suite the check corresponds to) against the diff's changes. Reply with a concise markdown report:
 1. **Verdict per failing check** — probable cause, evidence, and whether you reproduced it.
 2. **Suggested fix** — concrete change(s) the author should make.
 3. **Confidence** — high/medium/low per finding.`;
+}
+
+function diffInspectionGuide(baseRef: string): string {
+  return `## Inspecting the complete PR
+The current checkout is the exact PR head and \`origin/${baseRef}\` is the refreshed base. Inspect the complete change locally; no prompt-sized diff was provided.
+
+- Start with \`git diff --stat origin/${baseRef}...HEAD\`, \`git diff --numstat origin/${baseRef}...HEAD\`, and \`git diff --name-only origin/${baseRef}...HEAD\`.
+- Review changed files in bounded groups with \`git diff origin/${baseRef}...HEAD -- <path>...\`; do not dump an oversized whole-PR diff into one tool call.
+- Cover every changed file. Generated, vendored, lock, and binary files may be classified and sampled instead of expanded line-by-line.
+- If collaboration/subagent tools are available, delegate disjoint file groups and synthesize their evidence yourself. Do not assume delegation exists.`;
 }

@@ -34,6 +34,13 @@ produce a single string. The conventions that make output parseable:
 - **Budget the context.** Pass only what's needed and cap it — triage includes
   at most `openIssues.slice(0, 60)` for duplicate detection, titles only. Don't
   dump whole datasets into a prompt; it's slow, costly, and dilutes the task.
+- **Do not embed a pull request's raw diff.** GitHub rejects some oversized
+  `.diff` responses and clipping creates false confidence. Run PR analysis in
+  `checkouts.withPullRequestWorktree(...)`, tell the agent the refreshed base
+  ref, and have it enumerate the full change with `--stat` / `--name-only`
+  before inspecting bounded file groups. It may delegate disjoint groups when
+  its runtime supports subagents, but the main agent owns full coverage and the
+  final verdict.
 
 Keep the requested enums in lockstep with the zod schema and the contract union
 (severity/kind/risk/recommendation) — the prompt, the validator, and the DTO
