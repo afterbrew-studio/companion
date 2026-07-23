@@ -1,28 +1,35 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parseEnvFile } from '@companion/services';
-import { createDefaultAdmin, readAdminSetup, renderSetupBox, setupExists, writeAdminSetup } from '../dist/setup.js';
+import {
+  applyPendingAdminSetup,
+  consumePendingAdminSetup,
+  createDefaultAdmin,
+  readAdminSetup,
+  renderSetupBox,
+  setupExists,
+  writePendingAdminSetup,
+} from '../dist/setup.js';
 import { parseGhLogin, pendingGhLogin, scheduleGhImport } from '../dist/github.js';
 
-test('generated defaults round-trip through the daemon env parser', () => {
+test('generated defaults are held in a one-time owner-only bootstrap file', () => {
   const home = mkdtempSync(join(tmpdir(), 'companion-cli-'));
   try {
-    writeFileSync(join(home, '.env'), 'COMPANION_PORT=9911\n', 'utf8');
     const setup = createDefaultAdmin();
-    const file = writeAdminSetup(home, setup);
-    const parsed = parseEnvFile(file);
-
-    assert.equal(parsed.COMPANION_PORT, '9911');
-    assert.equal(parsed.COMPANION_ADMIN_USER, setup.username);
-    assert.equal(parsed.COMPANION_ADMIN_EMAIL, setup.email);
-    assert.equal(parsed.COMPANION_ADMIN_PASSWORD, setup.password);
+    const file = writePendingAdminSetup(home, setup);
     assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(setupExists(home, {}), true);
     assert.deepEqual(readAdminSetup(home, {}), { ...setup, generatedPassword: false });
+    assert.deepEqual(applyPendingAdminSetup(home), { ...setup, generatedPassword: false });
+    assert.equal(process.env.COMPANION_ADMIN_USER, setup.username);
+    consumePendingAdminSetup(home);
+    assert.equal(readAdminSetup(home, {}), null);
   } finally {
+    delete process.env.COMPANION_ADMIN_USER;
+    delete process.env.COMPANION_ADMIN_EMAIL;
+    delete process.env.COMPANION_ADMIN_PASSWORD;
     rmSync(home, { recursive: true, force: true });
   }
 });

@@ -15,6 +15,7 @@ import { PrReviews } from './pr-reviews.js';
 import { Fixes } from './fixes.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
+import { readActiveLocalGhAccount } from './local-gh-account.js';
 
 /**
  * Construct the GitHub/code domain: the sync-cache stores, the narrow store
@@ -24,7 +25,7 @@ import { CodeService } from './code-service.js';
  * composition root's construction order; the git-credential seam into operate
  * is plugged in at onEnable (jobs.ts), not here.
  */
-export default defineServices((ctx) => {
+export default defineServices(async (ctx) => {
   const settings = ctx.services.get('settings');
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
@@ -85,6 +86,30 @@ export default defineServices((ctx) => {
   // An unowned legacy token is intentionally never adopted.
   const ghAccounts = new GitHubAccounts(store);
   ghAccounts.migrateLegacyToken();
+  const bootstrapUsername = ctx.services.get('core').envBootstrappedUsername();
+  if (bootstrapUsername) {
+    const localGh = readActiveLocalGhAccount();
+    if (localGh) {
+      try {
+        const connected = await ghAccounts.add(
+          localGh.token,
+          ['fetch', 'runs', 'pipelines', 'webhooks'],
+          bootstrapUsername,
+          'all',
+        );
+        ctx.log.info('connected active local gh account to env-bootstrapped user', {
+          githubLogin: connected.login,
+          username: bootstrapUsername,
+        });
+      } catch (err) {
+        ctx.log.warn('could not connect active local gh account during first-user bootstrap', {
+          expectedGithubLogin: localGh.login,
+          username: bootstrapUsername,
+          err: String(err),
+        });
+      }
+    }
+  }
 
   const sync = new GitHubSync(
     store,

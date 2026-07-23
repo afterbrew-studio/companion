@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { chmodSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -14,6 +14,9 @@ import { startHttpServer } from './http/server.js';
  * cross-module reactions) lives in the modules the kernel loads.
  */
 async function main(): Promise<void> {
+  // The database, WAL, setup files, and run artifacts may contain credentials.
+  // Keep every file created by the daemon private to the OS user by default.
+  process.umask(0o077);
   const config = loadDaemonConfig();
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
   log.info(`default agent model: ${config.defaultModel}`);
@@ -23,8 +26,12 @@ async function main(): Promise<void> {
   // from a clean slate and first-boot setup runs again.
   if (consumePendingDbRecreate()) log.warn('recreate-db marker found — starting with a fresh database');
 
-  const db = new Database(paths.db());
+  const dbPath = paths.db();
+  const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    if (existsSync(file)) chmodSync(file, 0o600);
+  }
 
   // The hub authenticates upgrades through the kernel (module-core's Auth once
   // booted); the kernel pushes through the hub. Both closures run post-boot.

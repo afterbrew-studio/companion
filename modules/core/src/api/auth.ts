@@ -34,6 +34,8 @@ export class AuthError extends StatusError {
  * read the live effective grid (assembled from the enabled modules) via `rbac`.
  */
 export class Auth implements Authenticator {
+  private bootstrappedUsername: string | null = null;
+
   constructor(
     private readonly users: UsersStore,
     private readonly sessions: SessionsStore,
@@ -49,6 +51,13 @@ export class Auth implements Authenticator {
     for (const u of users) {
       this.users.insert({ username: u.username, email: u.email, passwordHash: hashPassword(u.password), role: u.role });
     }
+    this.bootstrappedUsername = users[0]?.username ?? null;
+  }
+
+  /** User created by env seeding during this process boot, if any. This is
+   * deliberately ephemeral: later env edits never rename or re-own data. */
+  envBootstrappedUsername(): string | null {
+    return this.bootstrappedUsername;
   }
 
   setupNeeded(): boolean {

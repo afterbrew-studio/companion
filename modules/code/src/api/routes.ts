@@ -36,19 +36,23 @@ const prAgentSchema = z.object({ instructions: z.string().trim().min(8).max(16_0
 // ---------- github accounts ----------
 
 const purposesSchema = z.array(z.enum(['fetch', 'runs', 'pipelines', 'webhooks'])).min(1).max(4);
-const scopeSchema = z.enum(['all', 'selected']);
+// Accept the pre-personal-account names during rolling/local upgrades. They
+// only map the owner's own availability; a legacy `shared: true` flag is
+// ignored and can never make the credential usable by another profile.
+const scopeInputSchema = z.enum(['all', 'selected', 'shared', 'delegated']);
 const workspaceIdsSchema = z.array(z.string()).max(200);
 
 const addAccountSchema = z.object({
   token: z.string().min(10).max(500),
   purposes: purposesSchema,
-  scope: scopeSchema.default('all'),
+  scope: scopeInputSchema.default('all'),
   workspaceIds: workspaceIdsSchema.default([]),
+  shared: z.boolean().optional(),
 });
 
 const patchAccountSchema = z.object({
   purposes: purposesSchema.optional(),
-  scope: scopeSchema.optional(),
+  scope: scopeInputSchema.optional(),
   workspaceIds: workspaceIdsSchema.optional(),
 });
 
@@ -957,16 +961,17 @@ export default defineRoutes((ctx) => {
       access: 'github:connect',
       body: addAccountSchema,
       handler: async ({ body, user }) => {
-        if (body.scope === 'selected' && body.workspaceIds.length === 0) {
+        const scope = body.scope === 'delegated' || body.scope === 'selected' ? 'selected' : 'all';
+        if (scope === 'selected' && body.workspaceIds.length === 0) {
           throw badRequest('a workspace-selected account needs at least one workspace');
         }
-        if (body.scope === 'selected') requireAccessibleWorkspaceIds(user, body.workspaceIds);
+        if (scope === 'selected') requireAccessibleWorkspaceIds(user, body.workspaceIds);
         const account = await code.githubAccounts.add(
           body.token,
           body.purposes,
           user!.username,
-          body.scope,
-          body.scope === 'selected' ? body.workspaceIds : [],
+          scope,
+          scope === 'selected' ? body.workspaceIds : [],
         );
         ctx.broadcast({ t: 'repos.changed' });
         return created({ account });
@@ -980,13 +985,24 @@ export default defineRoutes((ctx) => {
       body: patchAccountSchema,
       handler: ({ params, body, user }) => {
         const account = requireManageable(user, params.id);
-        const nextScope = body.scope ?? account.scope;
+        const nextScope =
+          body.scope === undefined
+            ? account.scope
+            : body.scope === 'delegated' || body.scope === 'selected'
+              ? 'selected'
+              : 'all';
         const nextWorkspaceIds = body.workspaceIds ?? account.workspaceIds;
         if (nextScope === 'selected' && nextWorkspaceIds.length === 0) {
           throw badRequest('a workspace-selected account needs at least one workspace');
         }
         if (nextScope === 'selected') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
-        return { account: code.githubAccounts.update(params.id, body) };
+        return {
+          account: code.githubAccounts.update(params.id, {
+            ...(body.purposes === undefined ? {} : { purposes: body.purposes }),
+            ...(body.scope === undefined ? {} : { scope: nextScope }),
+            ...(body.workspaceIds === undefined ? {} : { workspaceIds: body.workspaceIds }),
+          }),
+        };
       },
     }),
 

@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  applyPendingAdminSetup,
+  consumePendingAdminSetup,
   createDefaultAdmin,
   readAdminSetup,
   renderSetupBox,
@@ -11,13 +13,13 @@ import {
   validateEmail,
   validatePassword,
   validateUsername,
-  writeAdminSetup,
+  writePendingAdminSetup,
 } from './setup.js';
 import type { AdminSetup } from './setup.js';
-import { detectGhLogin, importPendingGhAccount, scheduleGhImport } from './github.js';
+import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 
 interface CliOptions {
-  readonly command: 'start' | 'init';
+  readonly command: 'start' | 'init' | 'connect-github';
   readonly home: string;
   readonly host?: string;
   readonly port?: number;
@@ -31,6 +33,8 @@ const HELP = `@moxxy-ai/companion — run Companion locally
 Usage:
   npx @moxxy-ai/companion             Initialize when needed, start, open browser
   npx @moxxy-ai/companion init        Create the local admin configuration only
+  npx @moxxy-ai/companion connect-github
+                                       Connect active gh to an existing Companion user
 
 Options:
   --home <path>    Data directory (default: COMPANION_HOME or ~/.companion)
@@ -48,6 +52,10 @@ class SetupCancelled extends Error {}
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.command === 'connect-github') {
+    await connectGithub(options);
+    return;
+  }
   if (!setupExists(options.home)) await initialize(options);
   else if (options.command === 'init') {
     process.stdout.write(`Companion is already initialized in ${options.home}\n`);
@@ -55,6 +63,58 @@ async function main(): Promise<void> {
   }
   if (options.command === 'init') return;
   await start(options);
+}
+
+async function connectGithub(options: CliOptions): Promise<void> {
+  const { host, port } = resolveAddress(options);
+  const url = localUrl(host, port);
+  if (!(await waitForHealth(url, 2_000))) {
+    throw new Error(`Companion is not running at ${url}. Start it first, then retry.`);
+  }
+
+  const ghLogin = detectGhLogin();
+  if (!ghLogin) throw new Error('gh is not authenticated for github.com. Run `gh auth login` and retry.');
+  const stored = readAdminSetup(options.home);
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
+  let credentials = stored;
+  if (interactive) {
+    const { input, password } = await import('@inquirer/prompts');
+    const username = await input({
+      message: 'Companion username',
+      default: stored?.username ?? 'admin',
+      validate: validateUsername,
+    });
+    const chosenPassword = await password({
+      message: 'Companion password',
+      mask: '*',
+      validate: (value) => value.length > 0 || 'Enter your Companion password.',
+    });
+    credentials = {
+      username: username.trim(),
+      password: chosenPassword,
+      email: stored?.email ?? '',
+      generatedPassword: false,
+    };
+  }
+  if (!credentials) {
+    throw new Error(
+      'Companion credentials are required in non-interactive mode. Set COMPANION_ADMIN_USER and COMPANION_ADMIN_PASSWORD or run interactively.',
+    );
+  }
+
+  process.stdout.write(`Connecting active gh account ${ghLogin} to Companion user ${credentials.username} at ${url}...\n`);
+  try {
+    await connectGhAccount(url, credentials, ghLogin);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/invalid credentials/i.test(message)) {
+      throw new Error(
+        'Companion rejected those credentials. Admin env variables only seed an empty database; enter the existing Companion username and password.',
+      );
+    }
+    throw err;
+  }
+  process.stdout.write(`Connected GitHub account ${ghLogin} to Companion user ${credentials.username}.\n`);
 }
 
 async function initialize(options: CliOptions): Promise<void> {
@@ -82,14 +142,14 @@ async function initialize(options: CliOptions): Promise<void> {
     process.stdout.write('Using secure generated defaults because prompting was skipped.\n');
   }
 
-  const file = writeAdminSetup(options.home, setup);
+  const file = writePendingAdminSetup(options.home, setup);
   if (connectGh && ghLogin) {
     scheduleGhImport(options.home, ghLogin);
     process.stdout.write(`Will connect gh account ${ghLogin} to admin ${setup.username} when Companion starts.\n`);
   } else if (options.githubFromGh && !ghLogin) {
     process.stderr.write('Could not find an active github.com account in gh; continuing without GitHub import.\n');
   }
-  process.stdout.write(`\nSaved ${file} with owner-only permissions.\n`);
+  process.stdout.write(`\nSaved one-time bootstrap data in ${file} with owner-only permissions.\n`);
   if (setup.generatedPassword) process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
   if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy-ai/companion\n');
 }
@@ -124,6 +184,8 @@ async function start(options: CliOptions): Promise<void> {
   }
 
   process.env.COMPANION_HOME = options.home;
+  const pendingAdmin = applyPendingAdminSetup(options.home);
+  if (pendingAdmin) process.env.COMPANION_IMPORT_LOCAL_GH = pendingGhLogin(options.home) ? 'true' : 'false';
   process.env.COMPANION_STATIC_DIR = staticDir;
   if (options.host !== undefined) process.env.COMPANION_HOST = options.host;
   if (options.port !== undefined) process.env.COMPANION_PORT = String(options.port);
@@ -137,15 +199,18 @@ async function start(options: CliOptions): Promise<void> {
     return;
   }
   process.stdout.write(`\nCompanion is ready: ${url}\n`);
-  const admin = readAdminSetup(options.home);
+  const admin = pendingAdmin ?? readAdminSetup(options.home);
   if (admin) {
     try {
       const githubLogin = await importPendingGhAccount(options.home, url, admin);
       if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin} to admin ${admin.username}.\n`);
     } catch (err) {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\nThe import remains pending for the next start.\n`);
+      process.stderr.write(
+        `${err instanceof Error ? err.message : String(err)}\nSign in with the saved Companion password, then run \`npx @moxxy-ai/companion connect-github\`.\n`,
+      );
     }
   }
+  if (pendingAdmin) consumePendingAdminSetup(options.home);
   if (options.open) openBrowser(url);
 }
 
@@ -160,7 +225,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg === 'init' && command === 'start') command = 'init';
+    if ((arg === 'init' || arg === 'connect-github') && command === 'start') command = arg;
     else if (arg === '--home') home = requiredValue(argv, ++i, arg);
     else if (arg === '--host') host = requiredValue(argv, ++i, arg);
     else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
