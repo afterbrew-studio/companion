@@ -1,0 +1,257 @@
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  createDefaultAdmin,
+  readAdminSetup,
+  renderSetupBox,
+  setupExists,
+  validateEmail,
+  validatePassword,
+  validateUsername,
+  writeAdminSetup,
+} from './setup.js';
+import type { AdminSetup } from './setup.js';
+import { detectGhLogin, importPendingGhAccount, scheduleGhImport } from './github.js';
+
+interface CliOptions {
+  readonly command: 'start' | 'init';
+  readonly home: string;
+  readonly host?: string;
+  readonly port?: number;
+  readonly open: boolean;
+  readonly yes: boolean;
+  readonly githubFromGh: boolean;
+}
+
+const HELP = `@moxxy-ai/companion — run Companion locally
+
+Usage:
+  npx @moxxy-ai/companion             Initialize when needed, start, open browser
+  npx @moxxy-ai/companion init        Create the local admin configuration only
+
+Options:
+  --home <path>    Data directory (default: COMPANION_HOME or ~/.companion)
+  --host <host>    Bind host for this run (default: 127.0.0.1)
+  --port <port>    HTTP port for this run (default: 8901)
+  --no-open        Do not open a browser
+  -y, --yes        Accept secure generated defaults without prompting
+  --github-from-gh Connect the active local gh account to the new admin
+  -h, --help       Show this help
+
+The moxxy CLI is optional at startup, but required before running AI agents.
+`;
+
+class SetupCancelled extends Error {}
+
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  if (!setupExists(options.home)) await initialize(options);
+  else if (options.command === 'init') {
+    process.stdout.write(`Companion is already initialized in ${options.home}\n`);
+    return;
+  }
+  if (options.command === 'init') return;
+  await start(options);
+}
+
+async function initialize(options: CliOptions): Promise<void> {
+  process.stdout.write('\nWelcome to Companion.\n\n');
+  const defaults = createDefaultAdmin();
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
+  const setup = interactive ? await promptForAdmin(defaults) : defaults;
+  const { host, port } = resolveAddress(options);
+  const url = localUrl(host, port);
+  process.stdout.write(`${renderSetupBox(setup, options.home, url)}\n`);
+
+  const ghLogin = detectGhLogin();
+  let connectGh = options.githubFromGh && ghLogin !== null;
+  if (interactive) {
+    const { confirm } = await import('@inquirer/prompts');
+    const accepted = await confirm({ message: 'Create this local configuration?', default: true });
+    if (!accepted) throw new SetupCancelled('Setup cancelled.');
+    if (ghLogin) {
+      connectGh = await confirm({
+        message: `Connect active gh account ${ghLogin} to the Companion admin?`,
+        default: true,
+      });
+    }
+  } else {
+    process.stdout.write('Using secure generated defaults because prompting was skipped.\n');
+  }
+
+  const file = writeAdminSetup(options.home, setup);
+  if (connectGh && ghLogin) {
+    scheduleGhImport(options.home, ghLogin);
+    process.stdout.write(`Will connect gh account ${ghLogin} to admin ${setup.username} when Companion starts.\n`);
+  } else if (options.githubFromGh && !ghLogin) {
+    process.stderr.write('Could not find an active github.com account in gh; continuing without GitHub import.\n');
+  }
+  process.stdout.write(`\nSaved ${file} with owner-only permissions.\n`);
+  if (setup.generatedPassword) process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
+  if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy-ai/companion\n');
+}
+
+async function promptForAdmin(defaults: AdminSetup): Promise<AdminSetup> {
+  const { confirm, input, password } = await import('@inquirer/prompts');
+  const useDefaults = await confirm({
+    message: 'Use recommended local admin defaults (including a generated password)?',
+    default: true,
+  });
+  if (useDefaults) return defaults;
+
+  const username = await input({ message: 'Admin username', default: defaults.username, validate: validateUsername });
+  const email = await input({ message: 'Admin email', default: defaults.email, validate: validateEmail });
+  const chosen = await password({ message: 'Admin password', mask: '*', validate: validatePassword });
+  await password({
+    message: 'Confirm password',
+    mask: '*',
+    validate: (value) => value === chosen || 'Passwords do not match.',
+  });
+  return { username: username.trim(), email: email.trim(), password: chosen, generatedPassword: false };
+}
+
+async function start(options: CliOptions): Promise<void> {
+  const { host, port } = resolveAddress(options);
+  const url = localUrl(host, port);
+  const bundleDir = dirname(fileURLToPath(import.meta.url));
+  const staticDir = join(bundleDir, 'web');
+  const server = join(bundleDir, 'server.js');
+  if (!existsSync(join(staticDir, 'index.html')) || !existsSync(server)) {
+    throw new Error('Companion bundle is incomplete. Reinstall @moxxy-ai/companion.');
+  }
+
+  process.env.COMPANION_HOME = options.home;
+  process.env.COMPANION_STATIC_DIR = staticDir;
+  if (options.host !== undefined) process.env.COMPANION_HOST = options.host;
+  if (options.port !== undefined) process.env.COMPANION_PORT = String(options.port);
+  process.chdir(options.home);
+
+  process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\nPress Ctrl+C to stop.\n\n`);
+  const ready = waitForHealth(url, 30_000);
+  await import(pathToFileURL(server).href);
+  if (!(await ready)) {
+    process.stderr.write(`Companion did not become ready within 30 seconds. Check the logs above.\n`);
+    return;
+  }
+  process.stdout.write(`\nCompanion is ready: ${url}\n`);
+  const admin = readAdminSetup(options.home);
+  if (admin) {
+    try {
+      const githubLogin = await importPendingGhAccount(options.home, url, admin);
+      if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin} to admin ${admin.username}.\n`);
+    } catch (err) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\nThe import remains pending for the next start.\n`);
+    }
+  }
+  if (options.open) openBrowser(url);
+}
+
+function parseArgs(argv: readonly string[]): CliOptions {
+  let command: CliOptions['command'] = 'start';
+  let home = process.env.COMPANION_HOME || join(homedir(), '.companion');
+  let host: string | undefined;
+  let port: number | undefined;
+  let open = true;
+  let yes = false;
+  let githubFromGh = false;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === 'init' && command === 'start') command = 'init';
+    else if (arg === '--home') home = requiredValue(argv, ++i, arg);
+    else if (arg === '--host') host = requiredValue(argv, ++i, arg);
+    else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
+    else if (arg === '--no-open') open = false;
+    else if (arg === '--yes' || arg === '-y') yes = true;
+    else if (arg === '--github-from-gh') githubFromGh = true;
+    else if (arg === '--help' || arg === '-h' || arg === 'help') {
+      process.stdout.write(HELP);
+      process.exit(0);
+    } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
+  }
+  home = isAbsolute(home) ? home : resolve(home);
+  return { command, home, host, port, open, yes, githubFromGh };
+}
+
+function requiredValue(argv: readonly string[], index: number, option: string): string {
+  const value = argv[index];
+  if (!value || value.startsWith('-')) throw new Error(`${option} requires a value.`);
+  return value;
+}
+
+function validPort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`Invalid port: ${value}`);
+  return port;
+}
+
+function resolveAddress(options: CliOptions): { host: string; port: number } {
+  const stored = readStoredAddress(options.home);
+  return {
+    host: options.host ?? process.env.COMPANION_HOST?.trim() ?? stored.host ?? '127.0.0.1',
+    port: options.port ?? envPort(process.env.COMPANION_PORT) ?? stored.port ?? 8901,
+  };
+}
+
+function readStoredAddress(home: string): { host?: string; port?: number } {
+  const file = join(home, 'companiond.json');
+  if (!existsSync(file)) return {};
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8')) as { host?: unknown; port?: unknown };
+    return {
+      host: typeof value.host === 'string' && value.host.trim() ? value.host : undefined,
+      port: typeof value.port === 'number' && Number.isInteger(value.port) ? value.port : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function envPort(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  try {
+    return validPort(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function localUrl(host: string, port: number): string {
+  const browserHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+  const formattedHost = browserHost.includes(':') ? `[${browserHost}]` : browserHost;
+  return `http://${formattedHost}:${port}`;
+}
+
+async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/healthz`);
+      if (response.ok) return true;
+    } catch {
+      // Boot is still in progress.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+function openBrowser(url: string): void {
+  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+  child.once('error', () => process.stderr.write(`Could not open a browser automatically. Open ${url}\n`));
+  child.unref();
+}
+
+main().catch((err: unknown) => {
+  if (err instanceof SetupCancelled || (err instanceof Error && err.name === 'ExitPromptError')) {
+    process.stderr.write('Setup cancelled.\n');
+    process.exit(130);
+  }
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
+});

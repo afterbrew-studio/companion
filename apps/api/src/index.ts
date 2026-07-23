@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.
   const here = dirname(fileURLToPath(import.meta.url));
-  const builtSpa = join(here, '..', '..', 'web', 'dist');
+  const builtSpa = process.env.COMPANION_STATIC_DIR?.trim() || join(here, '..', '..', 'web', 'dist');
   const server = await startHttpServer({
     host: config.host,
     port: config.port,
