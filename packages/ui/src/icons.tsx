@@ -47,6 +47,40 @@ export function CloseIcon({ className = 'size-4' }: { className?: string }): JSX
   );
 }
 
+/** Check mark for successful states and completed steps. */
+export function CheckIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="m3.5 8.2 3 3 6-6.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Clock face for pending or in-progress states. */
+export function ClockIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="8" cy="8" r="5.8" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 4.7V8l2.3 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Question mark for states whose outcome could not be determined. */
+export function QuestionIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path
+        d="M5.9 5.9A2.2 2.2 0 0 1 8.1 4c1.3 0 2.3.8 2.3 2 0 1.6-2.4 1.8-2.4 3.3"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <circle cx="8" cy="12" r=".8" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Magnifier for search inputs and search-triggering buttons. */
 export function SearchIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
   return (

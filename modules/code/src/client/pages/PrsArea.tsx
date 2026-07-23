@@ -21,7 +21,7 @@ import {
   timeAgo,
 } from '@companion/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
-import { AssigneeNote, ChecksBadge, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
+import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
 
 /**
  * Pull requests across every repo of the active workspace. Server-paged: only
@@ -273,7 +273,7 @@ export function PrsAreaPage(): JSX.Element {
                 </span>
               </span>
               <CommentCount count={pr.comments} />
-              <ChecksBadge checks={pr.checks} />
+              <ChecksIcon checks={pr.checks} />
               <span className="dim w-16 shrink-0 text-right" title={new Date(pr.updatedAt).toLocaleString()}>
                 {timeAgo(pr.updatedAt)}
               </span>

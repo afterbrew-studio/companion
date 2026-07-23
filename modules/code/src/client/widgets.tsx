@@ -1,4 +1,4 @@
-import { Tooltip } from '@companion/ui';
+import { CheckIcon, ClockIcon, CloseIcon, QuestionIcon, Tooltip } from '@companion/ui';
 import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus } from '@companion/module-code/contract';
 
 /**
@@ -10,33 +10,33 @@ import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus }
 // ---------- status renderers ---------------------------------------------------
 
 /**
- * CI snapshot as a compact icon (✓ / ✕ / ●) — shape + color, never color
- * alone; the counts live in the tooltip and aria-label.
+ * CI snapshot as a compact SVG icon — shape + color, never color alone; the
+ * counts live in the tooltip and aria-label.
  */
-export function ChecksBadge({ checks }: { checks: ChecksSnapshot | null }): JSX.Element | null {
+export function ChecksIcon({ checks }: { checks: ChecksSnapshot | null }): JSX.Element | null {
   if (!checks || checks.state === 'none') return null;
   const spec =
     checks.state === 'passing'
       ? {
-          cls: 'border-emerald-500/50 text-emerald-600 dark:text-emerald-400',
-          icon: '✓',
+          cls: 'text-emerald-600 dark:text-emerald-400',
+          icon: <CheckIcon />,
           label: `CI passing — ${checks.passed}/${checks.total} checks`,
         }
       : checks.state === 'failing'
         ? {
-            cls: 'border-red-500/50 text-red-600 dark:text-red-400',
-            icon: '✕',
+            cls: 'text-red-600 dark:text-red-400',
+            icon: <CloseIcon />,
             label: `CI failing — ${checks.failed} of ${checks.total} checks failing`,
           }
         : checks.state === 'unknown'
           ? {
-              cls: 'border-zinc-400/60 text-zinc-500 dark:text-zinc-400',
-              icon: '?',
+              cls: 'text-zinc-500 dark:text-zinc-400',
+              icon: <QuestionIcon />,
               label: 'CI status unavailable — could not fetch from GitHub',
             }
           : {
-              cls: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-              icon: '●',
+              cls: 'text-amber-600 dark:text-amber-400',
+              icon: <ClockIcon />,
               label: `CI running — ${checks.pending} of ${checks.total} checks pending`,
             };
   return (
@@ -47,11 +47,7 @@ export function ChecksBadge({ checks }: { checks: ChecksSnapshot | null }): JSX.
           : `CI: ${checks.passed} passed, ${checks.failed} failed, ${checks.pending} running`
       }
     >
-      <span
-        className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border text-[10px] leading-none ${spec.cls}`}
-        role="img"
-        aria-label={spec.label}
-      >
+      <span className={`inline-flex size-4 shrink-0 items-center justify-center ${spec.cls}`} role="img" aria-label={spec.label}>
         {spec.icon}
       </span>
     </Tooltip>
