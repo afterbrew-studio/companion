@@ -23,6 +23,8 @@ import type { OperateStore } from './operate-store.js';
 
 /** Hard per-run output-token ceiling (goal mode upstream is uncapped). */
 const MAX_RUN_OUTPUT_TOKENS = 400_000;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 
 /** A queued unattended job: display metadata plus its start/cancel handles. */
 interface QueueItem {
@@ -105,7 +107,20 @@ export class Orchestrator implements RunnerEventSink {
     ) => Promise<string | null> | string | null = () => null,
     private readonly moduleConfig: ModuleConfigAccessor = { values: () => ({}), get: () => null },
   ) {
-    this.runners = new Runners(store, checkouts, moxxyCli, config.maxLiveRuns, this, broadcast, githubTokenFor);
+    this.runners = new Runners(
+      store,
+      checkouts,
+      moxxyCli,
+      config.maxLiveRuns,
+      this,
+      broadcast,
+      githubTokenFor,
+      () => ({
+        worktreeRetentionMs: this.retentionMs('worktreeRetentionDays', 3, DAY_MS),
+        scratchRetentionMs: this.retentionMs('scratchRetentionHours', 24, HOUR_MS),
+        sessionRetentionMs: this.retentionMs('sessionRetentionDays', 30, DAY_MS),
+      }),
+    );
   }
 
   /** The backend a run executes on (its runner, or local). */
@@ -945,6 +960,13 @@ export class Orchestrator implements RunnerEventSink {
   private reservedRunnerSlots(): number {
     const v = this.moduleConfig.get('reservedRunnerSlots');
     return typeof v === 'number' ? v : 1;
+  }
+
+  /** Module-config values are validated by the kernel; keep a fail-safe here
+   * for old/corrupt rows so cleanup never turns an invalid value into zero. */
+  private retentionMs(key: string, fallback: number, unitMs: number): number {
+    const value = this.moduleConfig.get(key);
+    return (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback) * unitMs;
   }
 
   /** The scheduler's live state for the UI: running count, capacity, and the line. */

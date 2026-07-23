@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@companion/contracts';
+import type { AgentStorageCleanupRequest } from '@companion/types';
 import type {
   CreateRunnerRequest,
   ModelCatalogModel,
@@ -22,6 +23,7 @@ import { LocalRunnerBackend } from './local-backend.js';
 import { RemoteRunnerBackend } from './remote-backend.js';
 
 const HEALTH_POLL_MS = 30_000;
+const STORAGE_CLEANUP_MS = 6 * 60 * 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
   moxxyVersion: null,
@@ -45,6 +47,8 @@ export class Runners {
   private readonly health = new Map<string, RunnerHealth>();
   private readonly local: LocalRunnerBackend;
   private healthTimer: NodeJS.Timeout | null = null;
+  private cleanupTimer: NodeJS.Timeout | null = null;
+  private readonly cleanupInFlight = new Set<string>();
 
   constructor(
     private readonly store: OperateStore,
@@ -58,6 +62,11 @@ export class Runners {
       repo: string,
       username?: string | null,
     ) => Promise<string | null> | string | null = () => null,
+    private readonly storagePolicy: () => Omit<AgentStorageCleanupRequest, 'runs'> = () => ({
+      worktreeRetentionMs: 3 * 24 * 60 * 60_000,
+      scratchRetentionMs: 24 * 60 * 60_000,
+      sessionRetentionMs: 30 * 24 * 60 * 60_000,
+    }),
   ) {
     this.local = new LocalRunnerBackend(
       LOCAL_RUNNER_ID,
@@ -78,13 +87,16 @@ export class Runners {
   }
 
   start(): void {
-    void this.pollHealth();
+    void this.pollHealth().then(() => this.enforceStorageCleanup());
     this.healthTimer = setInterval(() => void this.pollHealth(), HEALTH_POLL_MS);
     this.healthTimer.unref();
+    this.cleanupTimer = setInterval(() => void this.enforceStorageCleanup(), STORAGE_CLEANUP_MS);
+    this.cleanupTimer.unref();
   }
 
   stop(): void {
     if (this.healthTimer) clearInterval(this.healthTimer);
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     for (const backend of this.backends.values()) {
       if (backend instanceof RemoteRunnerBackend) backend.dispose();
     }
@@ -273,6 +285,44 @@ export class Runners {
     return this.health.get(id) ?? UNKNOWN_HEALTH;
   }
 
+  /** Companion owns retention; runners only execute it inside their managed
+   * roots. Every registered compatible machine receives the same policy and
+   * the run leases that protect active/review work. */
+  private async enforceStorageCleanup(): Promise<void> {
+    await Promise.all([...this.backends.keys()].map((id) => this.cleanupOne(id)));
+  }
+
+  private async cleanupOne(id: string): Promise<void> {
+    if (this.cleanupInFlight.has(id)) return;
+    const health = this.health.get(id);
+    if (id !== LOCAL_RUNNER_ID && (!health || health.status === 'offline' || health.status === 'unknown' || health.agentOutdated)) {
+      return;
+    }
+    this.cleanupInFlight.add(id);
+    try {
+      const policy = this.storagePolicy();
+      const since = Date.now() - Math.max(policy.worktreeRetentionMs, policy.scratchRetentionMs, policy.sessionRetentionMs);
+      const runs = this.store.runs.storageLeasesForRunner(id === LOCAL_RUNNER_ID ? null : id, since);
+      const result = await this.backends.get(id)!.cleanupStorage({ ...policy, runs });
+      const removed =
+        result.removedWorktrees + result.removedScratchDirs + result.removedSessionFiles + result.removedRunConfigs;
+      if (removed > 0) {
+        log.info('runner storage cleanup completed', {
+          runner: id,
+          worktrees: result.removedWorktrees,
+          scratch: result.removedScratchDirs,
+          sessions: result.removedSessionFiles,
+          configs: result.removedRunConfigs,
+        });
+      }
+      if (result.errors.length > 0) log.warn('runner storage cleanup had errors', { runner: id, errors: result.errors });
+    } catch (err) {
+      log.warn('runner storage cleanup failed', { runner: id, err: String(err) });
+    } finally {
+      this.cleanupInFlight.delete(id);
+    }
+  }
+
   // ---------- CRUD (drives store + backend rebuild) ----------
 
   list(): RunnerRecord[] {
@@ -414,6 +464,15 @@ export class Runners {
     // sitting "live" forever on a machine that's gone.
     if (prev?.status !== 'offline' && health.status === 'offline' && id !== LOCAL_RUNNER_ID) {
       this.sink.onRunnerUnreachable(id, health.detail ?? 'runner unreachable');
+    }
+    const newlyReachable =
+      id !== LOCAL_RUNNER_ID &&
+      (prev === undefined || prev.status === 'offline' || prev.status === 'unknown') &&
+      health.status !== 'offline' &&
+      health.status !== 'unknown' &&
+      !health.agentOutdated;
+    if (newlyReachable) {
+      void this.cleanupOne(id);
     }
     return health;
   }

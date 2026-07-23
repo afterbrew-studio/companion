@@ -39,14 +39,14 @@ export interface AgentHealth {
 }
 
 /**
- * Version 2 adds image attachments to AgentPromptRequest. Bumping this makes a
- * new companiond mark pre-attachment runners degraded instead of silently
- * starting a turn that drops its visual context.
+ * Version 3 adds platform-enforced storage cleanup. Bumping this makes a new
+ * companiond mark agents that cannot receive cleanup leases as outdated rather
+ * than continuing to place work on a machine whose disk can grow without bound.
  *
  * `POST /agent/update-moxxy` was added WITHOUT a bump: it's additive — an old
  * agent answers 404 and the daemon falls back to "update it manually" guidance.
  */
-export const RUNNER_AGENT_PROTOCOL = 2;
+export const RUNNER_AGENT_PROTOCOL = 3;
 
 /**
  * POST /agent/update-moxxy — in-place `npm i -g @moxxy/cli@latest` on the
@@ -189,6 +189,36 @@ export interface AgentScratchRequest {
 }
 export interface AgentScratchResponse {
   readonly cwd: string;
+}
+
+// ---------- platform-enforced storage cleanup ---------------------------------
+
+/** Run state the daemon leases to the runner while enforcing retention. */
+export interface AgentStorageRunLease {
+  readonly runId: string;
+  /** Runner-local cwd previously returned by this runner (opaque to companiond). */
+  readonly cwd: string;
+  /** Daemon-side lifecycle timestamp, used when it is newer than filesystem mtime. */
+  readonly updatedAt: number;
+  /** Active/review work must survive regardless of age. */
+  readonly protected: boolean;
+}
+
+/** POST /agent/storage/cleanup — policy is owned by companiond, execution by the runner. */
+export interface AgentStorageCleanupRequest {
+  readonly worktreeRetentionMs: number;
+  readonly scratchRetentionMs: number;
+  readonly sessionRetentionMs: number;
+  readonly runs: readonly AgentStorageRunLease[];
+}
+
+export interface AgentStorageCleanupResponse {
+  readonly removedWorktrees: number;
+  readonly removedScratchDirs: number;
+  readonly removedSessionFiles: number;
+  readonly removedRunConfigs: number;
+  /** Basenames only — runner filesystem paths never need to cross the wire. */
+  readonly errors: readonly string[];
 }
 
 // ---------- WS event envelope (agent → companiond) -----------------------------

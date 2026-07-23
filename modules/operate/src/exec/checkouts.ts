@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { log, paths } from '@companion/services';
 
@@ -157,11 +158,34 @@ export class Checkouts {
   }
 
   async removeWorktree(fullName: string, worktreePath: string): Promise<void> {
+    const managed = this.managedWorktree(worktreePath);
     await this.locked(fullName, async () => {
-      await this.git(['worktree', 'remove', '--force', worktreePath], this.cloneDir(fullName)).catch(
-        () => undefined,
-      );
+      const clone = this.cloneDir(fullName);
+      const cloneReady = existsSync(join(clone, '.git'));
+      if (cloneReady) {
+        await this.git(['worktree', 'remove', '--force', managed], clone).catch(() => undefined);
+      }
+      // `git worktree remove` cannot help when the clone/admin dir vanished.
+      // The path was resolved as a direct child of our managed root, so the
+      // orphan fallback cannot escape into an operator-owned checkout.
+      await rm(managed, { recursive: true, force: true });
+      // Prune after the fallback removal too: if `git worktree remove` failed,
+      // the administrative entry becomes stale only once the directory is gone.
+      if (cloneReady) await this.git(['worktree', 'prune', '--expire', 'now'], clone).catch(() => undefined);
     });
+  }
+
+  /** Remove a stale worktree discovered locally by the storage janitor. The
+   * .git pointer identifies the owning clone when it still exists; otherwise
+   * remove only the already-validated orphan directory. */
+  async removeStaleWorktree(worktreePath: string): Promise<void> {
+    const managed = this.managedWorktree(worktreePath);
+    const fullName = this.repoForWorktree(managed);
+    if (fullName) {
+      await this.removeWorktree(fullName, managed);
+      return;
+    }
+    await rm(managed, { recursive: true, force: true });
   }
 
   async pruneWorktrees(fullName: string): Promise<void> {
@@ -261,5 +285,40 @@ export class Checkouts {
     const next = prev.then(fn, fn);
     this.locks.set(fullName, next.catch(() => undefined));
     return next;
+  }
+
+  private managedWorktree(worktreePath: string): string {
+    const root = resolve(paths.worktrees());
+    const candidate = resolve(worktreePath);
+    if (dirname(candidate) !== root) throw new Error('worktree path is outside the managed root');
+    return candidate;
+  }
+
+  private repoForWorktree(worktreePath: string): string | null {
+    let pointer: string;
+    try {
+      pointer = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
+    } catch {
+      return null;
+    }
+    if (!pointer.startsWith('gitdir:')) return null;
+    let gitdir: string;
+    let reposRoot: string;
+    try {
+      // macOS aliases /var to /private/var; compare canonical paths so a valid
+      // managed clone is not mistaken for an orphan in temporary/data roots.
+      gitdir = realpathSync(resolve(worktreePath, pointer.slice('gitdir:'.length).trim()));
+      reposRoot = realpathSync(paths.repos());
+    } catch {
+      return null;
+    }
+    const worktreesAdmin = dirname(gitdir);
+    const gitAdmin = dirname(worktreesAdmin);
+    if (basename(worktreesAdmin) !== 'worktrees' || basename(gitAdmin) !== '.git') return null;
+    const clone = dirname(gitAdmin);
+    const rel = relative(reposRoot, clone);
+    if (!rel || rel === '..' || rel.startsWith(`..${sep}`)) return null;
+    const parts = rel.split(sep).filter(Boolean);
+    return parts.length === 2 ? `${parts[0]}/${parts[1]}` : null;
   }
 }

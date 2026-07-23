@@ -1,6 +1,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { AskResponse, HistorySegment, RunTurnArgs, RunTurnResult } from '@companion/types';
+import type {
+  AgentStorageCleanupRequest,
+  AgentStorageCleanupResponse,
+  AskResponse,
+  HistorySegment,
+  RunTurnArgs,
+  RunTurnResult,
+} from '@companion/types';
 import { paths } from '@companion/services';
 import type { RunnerHealth } from '../contract/index.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
@@ -8,6 +15,7 @@ import { configuredProviderNames } from '../exec/home.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
+import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 /**
@@ -163,6 +171,10 @@ export class LocalRunnerBackend implements RunnerBackend {
   }
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
     return this.checkouts.push(repo, cwd, branch, undefined, username);
+  }
+
+  cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse> {
+    return cleanupRunnerStorage(request, this.checkouts, this.pool.liveIds());
   }
 
   /** Reap all gateways (daemon shutdown). */
