@@ -4,6 +4,8 @@ import {
   ActionMenu,
   AiActionMenu,
   Breadcrumb,
+  CheckIcon,
+  CloseIcon,
   CopyText,
   EmptyState,
   ErrorBar,
@@ -15,13 +17,14 @@ import {
   PageLoading,
   Spinner,
   timeAgo,
+  Tooltip,
   useConfirm,
   type MenuAction,
 } from '@companion/ui';
 import type { PrRecord } from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
 import { CommentsSection } from '../../components/Comments.js';
-import { ChecksBadge, GitHubUser, PrStateIcon } from '../../widgets.js';
+import { ChecksIcon, GitHubUser, PrStateIcon } from '../../widgets.js';
 import { usePr, type UsePr } from './usePr.js';
 import { RailBlock, RailRow } from './rail.js';
 import { PrChecks } from './PrChecks.js';
@@ -322,27 +325,45 @@ function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
           <PrStateIcon state={pr.state} draft={pr.draft} decision={pr.reviewDecision} />
         </RailRow>
         <RailRow label="Checks">
-          {pr.checks ? <ChecksBadge checks={pr.checks} /> : <span className="dim">—</span>}
+          {pr.checks ? <ChecksIcon checks={pr.checks} /> : <span className="dim">—</span>}
         </RailRow>
         {pr.state === 'open' && pr.mergeable !== null ? (
           <RailRow label="Merge">
             {pr.mergeable ? (
-              <span className="badge-ok">clean</span>
+              <span className="font-medium tracking-wide text-emerald-600 uppercase dark:text-emerald-400">clean</span>
             ) : (
-              <span className="badge-danger">conflicts</span>
+              <span className="font-medium tracking-wide text-red-600 uppercase dark:text-red-400">conflicts</span>
             )}
           </RailRow>
         ) : null}
         {pr.reviewDecision ? (
           <RailRow label="Review">
-            <span className={pr.reviewDecision === 'approved' ? 'badge-ok' : 'badge-warn'}>
-              {pr.reviewDecision.replace('_', ' ')}
-            </span>
+            <Tooltip content={pr.reviewDecision === 'approved' ? 'Review approved' : 'Review changes requested'}>
+              <span
+                className={`inline-flex size-4 items-center justify-center ${
+                  pr.reviewDecision === 'approved'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-amber-600 dark:text-amber-400'
+                }`}
+                role="img"
+                aria-label={pr.reviewDecision === 'approved' ? 'Review approved' : 'Review changes requested'}
+              >
+                {pr.reviewDecision === 'approved' ? <CheckIcon /> : <CloseIcon />}
+              </span>
+            </Tooltip>
           </RailRow>
         ) : null}
         {pr.reviewRisk ? (
           <RailRow label="AI risk">
-            <span className={pr.reviewRisk === 'high' ? 'badge-danger' : pr.reviewRisk === 'medium' ? 'badge-warn' : 'badge-ok'}>
+            <span
+              className={`font-medium tracking-wide uppercase ${
+                pr.reviewRisk === 'high'
+                  ? 'text-red-600 dark:text-red-400'
+                  : pr.reviewRisk === 'medium'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
               {pr.reviewRisk}
             </span>
           </RailRow>

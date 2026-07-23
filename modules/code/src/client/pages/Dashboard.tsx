@@ -6,7 +6,7 @@ import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/mo
 import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@companion/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
-import { ChecksBadge } from '../widgets.js';
+import { ChecksIcon } from '../widgets.js';
 
 /**
  * Workspace overview: headline numbers plus the "needs a human" queues —
@@ -160,7 +160,7 @@ export function DashboardPage(): JSX.Element {
             ))}
             {failingPrs?.slice(0, 6).map((pr) => (
               <a key={`${pr.repo}#${pr.number}`} href={`#/repos/${pr.repo}/prs/${pr.number}`} className="row-link">
-                <ChecksBadge checks={pr.checks} />
+                <ChecksIcon checks={pr.checks} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{pr.title}</span>
                   <span className="dim block truncate text-xs">

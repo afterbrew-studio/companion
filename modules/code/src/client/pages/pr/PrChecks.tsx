@@ -3,7 +3,7 @@ import type { ReportRecord } from '@companion/module-workspace/contract';
 import { AiActionMenu, ChevronDown, Markdown, Spinner, timeAgo, type MenuAction } from '@companion/ui';
 import type { CheckRunInfo, ChecksSummary } from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
-import { ChecksBadge } from '../../widgets.js';
+import { ChecksIcon } from '../../widgets.js';
 
 /**
  * GitHub CI for the PR's head commit — the folded check-run summary, the
@@ -103,7 +103,7 @@ export function PrChecks({
               </span>
             ) : (
               <>
-                <ChecksBadge checks={checks} />
+                <ChecksIcon checks={checks} />
                 <span className="dim">
                   {checks.passed} passed · {checks.failed} failed · {checks.pending} running
                 </span>
