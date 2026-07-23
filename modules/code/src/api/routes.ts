@@ -12,7 +12,6 @@ import { TriageStore } from './triage-store.js';
 import { PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
 import { GitHubError } from './github-client.js';
-import type { GitHubClient } from './github-client.js';
 
 // ---------- repos ----------
 
@@ -111,9 +110,6 @@ export default defineRoutes((ctx) => {
   const pipelinesStore = new PipelinesStore(ctx.db);
   // Reports are workspace-owned; module-workspace registers the store below us.
   const reports = ctx.services.get('reports');
-
-  /** The legacy `deps.github` closure: the default fetch-purpose client. */
-  const github = (): GitHubClient | null => code.githubAccounts.clientFor('fetch');
 
   // Resolve a repo and enforce its workspace's access rule — a repo in a
   // private workspace the user isn't in reads as "not connected".
@@ -443,7 +439,7 @@ export default defineRoutes((ctx) => {
       access: 'issues:read',
       handler: async ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = github();
+        const client = code.githubAccounts.clientFor('fetch', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         const raw = await client.issueComments(fullName, issue.number);
         const comments: CommentRecord[] = raw.map((c) => ({
@@ -462,7 +458,7 @@ export default defineRoutes((ctx) => {
       body: commentSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = github();
+        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         const result = await client.comment(fullName, issue.number, body.body);
         return { url: result.html_url };
@@ -476,7 +472,7 @@ export default defineRoutes((ctx) => {
       body: stateSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const client = github();
+        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         await client.updateIssueState(fullName, issue.number, body.state);
         void code.sync.syncRepo(fullName).catch(() => undefined);
@@ -558,7 +554,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:read',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const client = github();
+        const client = code.githubAccounts.clientFor('fetch', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         const raw = await client.issueComments(fullName, pr.number);
         const comments: CommentRecord[] = raw.map((c) => ({
@@ -577,7 +573,7 @@ export default defineRoutes((ctx) => {
       body: commentSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const client = github();
+        const client = code.githubAccounts.clientFor('pipelines', { repo: fullName });
         if (!client) throw badRequest('GitHub is not configured');
         const result = await client.comment(fullName, pr.number, body.body);
         return { url: result.html_url };
