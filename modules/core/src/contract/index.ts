@@ -18,6 +18,10 @@ declare module '@companion/contracts' {
     core: Auth;
     settings: SettingsStore;
   }
+  interface BusEvents {
+    /** First-boot onboarding created the installation's primary admin. */
+    'auth.setup.completed': { readonly username: string };
+  }
 }
 
 /** A managed account (admin-editable; passwords are scrypt hashes at rest). */

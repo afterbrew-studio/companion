@@ -1,5 +1,7 @@
 import { defineJobs } from '@companion/core/server';
 
+let offSetupCompleted: (() => void) | null = null;
+
 /**
  * The cross-module seams, wired at enable time: the account-aware
  * git-credential resolver is PLUGGED INTO the execution plane (inversion of
@@ -26,6 +28,14 @@ export default defineJobs({
       login: () => code.githubAccounts.loginFor('fetch'),
     });
 
+    // A clean install has no admin while services boot. First-boot onboarding
+    // creates that admin later, so retry the host gh import at that exact
+    // lifecycle edge instead of requiring a daemon restart.
+    offSetupCompleted = ctx.bus.on('auth.setup.completed', ({ username }) => {
+      if (ctx.services.get('core').primaryAdminUsername() !== username) return;
+      void code.importLocalGhAccount();
+    });
+
     // Replay unattended work that was still queued when the daemon last
     // stopped (legacy index.ts resumers). Each resumer rebuilds the prompt
     // from stored args and re-enqueues fresh; operate's postActivate calls
@@ -49,6 +59,8 @@ export default defineJobs({
 
   },
   onDisable: (ctx) => {
+    offSetupCompleted?.();
+    offSetupCompleted = null;
     // Unplug our account-aware resolver; operate then fails network Git closed.
     ctx.services.get('operate').resetGithubTokenSource();
   },

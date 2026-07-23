@@ -17,6 +17,8 @@ import type { Pipelines } from './pipelines.js';
  * fixes + the client resolver; automations consumes most of it.
  */
 export class CodeService {
+  private localGhImport: Promise<boolean> | null = null;
+
   constructor(
     readonly repos: ReposStore,
     readonly issues: IssuesStore,
@@ -28,5 +30,17 @@ export class CodeService {
     readonly prChecks: PrChecks,
     readonly fixes: Fixes,
     readonly pipelines: Pipelines,
+    private readonly importActiveLocalGh: () => Promise<boolean>,
   ) {}
+
+  /** Coalesce boot/setup triggers so the same host credential is never raced
+   * through two GitHub validation requests. A later trigger may retry a
+   * transient failure. */
+  importLocalGhAccount(): Promise<boolean> {
+    if (this.localGhImport) return this.localGhImport;
+    this.localGhImport = this.importActiveLocalGh().finally(() => {
+      this.localGhImport = null;
+    });
+    return this.localGhImport;
+  }
 }
