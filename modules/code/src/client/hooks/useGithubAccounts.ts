@@ -3,6 +3,7 @@ import { operateApi } from '@companion/module-operate/client';
 import type { MoxxyStatus } from '@companion/module-operate/contract';
 import { workspaceApi } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
+import { useLive } from '@companion/core/client';
 import type { GitHubAccountRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 
@@ -43,6 +44,11 @@ export function useGithubAccounts(): {
       .then((r) => setWorkspaces(r.workspaces))
       .catch(() => setWorkspaces([]));
   }, [refresh]);
+
+  // Account mutations and the post-setup local-gh import reuse the existing
+  // repos.changed signal, keeping this page correct even when import finishes
+  // just after first-boot navigation.
+  useLive(refresh, (message) => message.t === 'repos.changed');
 
   return { accounts, workspaces, status, error, setError, refresh };
 }

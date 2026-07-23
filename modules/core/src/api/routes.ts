@@ -66,7 +66,11 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/setup',
       access: 'public',
       body: setupSchema,
-      handler: ({ body }): LoginResponse => auth.setup(body.username, body.email, body.password),
+      handler: ({ body }): LoginResponse => {
+        const session = auth.setup(body.username, body.email, body.password);
+        ctx.bus.emit('auth.setup.completed', { username: session.user.username });
+        return session;
+      },
     }),
     route({
       method: 'POST',

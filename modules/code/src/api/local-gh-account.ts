@@ -1,4 +1,7 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileP = promisify(execFile);
 
 export interface LocalGhAccount {
   readonly login: string;
@@ -11,27 +14,30 @@ export interface LocalGhAccount {
  * admin; it is never a runtime credential fallback and the token is never
  * logged or written outside the account store.
  */
-export function readActiveLocalGhAccount(): LocalGhAccount | null {
+export async function readActiveLocalGhAccount(): Promise<LocalGhAccount | null> {
   if (process.env.COMPANION_IMPORT_LOCAL_GH === 'false') return null;
   try {
-    const raw = execFileSync(
+    const { stdout: raw } = await execFileP(
       'gh',
       ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 },
+      { encoding: 'utf8', timeout: 5_000 },
     );
     const parsed = JSON.parse(raw) as {
       hosts?: Record<string, Array<{ active?: unknown; login?: unknown; state?: unknown }>>;
     };
+    // `gh auth status` verifies GitHub over the network. The local identity is
+    // still valid input when that probe reports `state: error`; `GitHubAccounts`
+    // performs the authoritative token check before persisting anything.
     const account = parsed.hosts?.['github.com']?.find(
-      (candidate) => candidate.active === true && candidate.state === 'success' && typeof candidate.login === 'string',
+      (candidate) => candidate.active === true && typeof candidate.login === 'string',
     );
     const login = typeof account?.login === 'string' ? account.login.trim() : '';
     if (!login) return null;
-    const token = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], {
+    const { stdout } = await execFileP('gh', ['auth', 'token', '--hostname', 'github.com'], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 5_000,
-    }).trim();
+    });
+    const token = stdout.trim();
     return token ? { login, token } : null;
   } catch {
     return null;

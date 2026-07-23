@@ -25,7 +25,7 @@ import { readActiveLocalGhAccount } from './local-gh-account.js';
  * composition root's construction order; the git-credential seam into operate
  * is plugged in at onEnable (jobs.ts), not here.
  */
-export default defineServices(async (ctx) => {
+export default defineServices((ctx) => {
   const settings = ctx.services.get('settings');
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
@@ -86,30 +86,33 @@ export default defineServices(async (ctx) => {
   // An unowned legacy token is intentionally never adopted.
   const ghAccounts = new GitHubAccounts(store);
   ghAccounts.migrateLegacyToken();
-  const primaryAdmin = ctx.services.get('core').primaryAdminUsername();
-  if (primaryAdmin) {
-    const localGh = readActiveLocalGhAccount();
-    if (localGh) {
-      try {
-        const connected = await ghAccounts.add(
-          localGh.token,
-          ['fetch', 'runs', 'pipelines', 'webhooks'],
-          primaryAdmin,
-          'all',
-        );
-        ctx.log.info('connected active local gh account to primary admin', {
-          githubLogin: connected.login,
-          username: primaryAdmin,
-        });
-      } catch (err) {
-        ctx.log.warn('could not connect active local gh account to primary admin', {
-          expectedGithubLogin: localGh.login,
-          username: primaryAdmin,
-          err: String(err),
-        });
-      }
+  const importActiveLocalGh = async (): Promise<boolean> => {
+    const primaryAdmin = ctx.services.get('core').primaryAdminUsername();
+    if (!primaryAdmin) return false;
+    const localGh = await readActiveLocalGhAccount();
+    if (!localGh) return false;
+    try {
+      const connected = await ghAccounts.add(
+        localGh.token,
+        ['fetch', 'runs', 'pipelines', 'webhooks'],
+        primaryAdmin,
+        'all',
+      );
+      ctx.log.info('connected active local gh account to primary admin', {
+        githubLogin: connected.login,
+        username: primaryAdmin,
+      });
+      ctx.broadcast({ t: 'repos.changed' });
+      return true;
+    } catch (err) {
+      ctx.log.warn('could not connect active local gh account to primary admin', {
+        expectedGithubLogin: localGh.login,
+        username: primaryAdmin,
+        err: String(err),
+      });
+      return false;
     }
-  }
+  };
 
   const sync = new GitHubSync(
     store,
@@ -181,8 +184,21 @@ export default defineServices(async (ctx) => {
     ctx.broadcast,
   );
 
-  ctx.services.register(
-    'code',
-    new CodeService(reposStore, issuesStore, prsStore, ghAccounts, sync, triage, prReviews, prChecks, fixes, pipelines),
+  const code = new CodeService(
+    reposStore,
+    issuesStore,
+    prsStore,
+    ghAccounts,
+    sync,
+    triage,
+    prReviews,
+    prChecks,
+    fixes,
+    pipelines,
+    importActiveLocalGh,
   );
+  ctx.services.register('code', code);
+  // Host integration is opportunistic and must never delay the daemon boot.
+  // The account page refreshes from repos.changed once validation completes.
+  void code.importLocalGhAccount();
 });
