@@ -11,8 +11,8 @@ import type {
 
 /**
  * Workspaces group repos; the dashboard metrics roll up per workspace. This
- * store owns the access-control predicates (`canAccess`/`canManage`/
- * `canAccessRepo`/`accessibleIds`) — the scoping key every other module resolves
+ * store owns the access-control predicates (`canAccess`/`canAccessRepo`/
+ * `accessibleIds`) — the scoping key every other module resolves
  * through. Metrics/`canAccessRepo` read code-owned tables (repos/issues/prs) by
  * design; those tables persist regardless of module-code's enabled state.
  */
@@ -58,7 +58,6 @@ export class WorkspacesStore {
   }
 
   listFor(user: AuthUser): WorkspaceRecord[] {
-    if (user.role === 'admin') return this.list();
     return this.queryWorkspaces(
       `WHERE w.visibility = 'public'
           OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)
@@ -148,9 +147,9 @@ export class WorkspacesStore {
     return !!this.db.prepare(`SELECT 1 FROM workspace_members WHERE workspace_id = ? AND username = ?`).get(id, username);
   }
 
-  /** Can this user see the workspace? Admins: always. Public: always. Private: members. */
+  /** Can this user see the workspace? Public: always. Private: members, regardless of platform role. */
   canAccess(user: AuthUser, ws: WorkspaceRecord): boolean {
-    return user.role === 'admin' || ws.visibility === 'public' || this.isMember(ws.id, user.username);
+    return ws.visibility === 'public' || this.isMember(ws.id, user.username);
   }
 
   /** Convenience for cross-module callers that only have the id. */
@@ -168,17 +167,6 @@ export class WorkspacesStore {
     const ws = this.get(id);
     if (!ws || !user || !this.canAccess(user, ws)) throw notFound(`workspace ${id} not found`);
     return ws;
-  }
-
-  /** Existence-only gate (no access check) — for feeds already gated elsewhere. */
-  requireExists(id: string): WorkspaceRecord {
-    const ws = this.get(id);
-    if (!ws) throw notFound(`workspace ${id} not found`);
-    return ws;
-  }
-
-  canManage(user: AuthUser, ws: WorkspaceRecord): boolean {
-    return user.role === 'admin' || ws.ownerId === user.username;
   }
 
   setVisibility(id: string, visibility: WorkspaceVisibility, actorUsername: string): void {
@@ -209,9 +197,10 @@ export class WorkspacesStore {
 
   /** Can this user see a repo? Follows its workspace's access rule. */
   canAccessRepo(user: AuthUser, fullName: string): boolean {
-    if (user.role === 'admin') return true;
     const w = this.repoVisibility(fullName);
-    if (!w) return true;
+    // Without a workspace mapping there is no scope to prove. This also keeps
+    // orphaned records private if module-code (and its v_repos view) is absent.
+    if (!w) return false;
     return w.visibility === 'public' || this.isMember(w.id, user.username);
   }
 

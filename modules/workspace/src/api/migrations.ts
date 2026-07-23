@@ -36,12 +36,13 @@ export default defineMigrations([
         );
         CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
         CREATE TABLE IF NOT EXISTS reports (
-          id         TEXT PRIMARY KEY,
-          repo       TEXT,
-          kind       TEXT NOT NULL,
-          title      TEXT NOT NULL,
-          body       TEXT NOT NULL,
-          created_at INTEGER NOT NULL
+          id           TEXT PRIMARY KEY,
+          workspace_id TEXT,
+          repo         TEXT,
+          kind         TEXT NOT NULL,
+          title        TEXT NOT NULL,
+          body         TEXT NOT NULL,
+          created_at   INTEGER NOT NULL
         );
       `);
       for (const ddl of [
@@ -61,5 +62,17 @@ export default defineMigrations([
         `DROP TABLE IF EXISTS reports; DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS workspace_members; DROP TABLE IF EXISTS workspaces;`,
       );
     },
+  },
+  {
+    version: 2,
+    name: 'report_workspace_scope',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE reports ADD COLUMN workspace_id TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => undefined,
   },
 ]);

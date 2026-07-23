@@ -23,6 +23,11 @@ export class TriageStore {
       .run(status, verdict ? JSON.stringify(verdict) : null, error ?? null, id);
   }
 
+  get(id: string): TriageResult | undefined {
+    const row = this.db.prepare(`SELECT * FROM triage_results WHERE id = ?`).get(id) as TriageRow | undefined;
+    return row ? triageRowToResult(row) : undefined;
+  }
+
   latest(repo: string, issueNumber: number): TriageResult | undefined {
     const row = this.db
       .prepare(

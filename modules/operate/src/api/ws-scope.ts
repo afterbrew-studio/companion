@@ -3,8 +3,8 @@ import type { ModuleContext, ScopeResolver } from '@companion/core/server';
 /**
  * Run-stream visibility (the legacy SpaHub closures, relocated to their owner).
  * A run's record/events/turns/asks only reach users who may see the run:
- * admins always; attended chats (interactive / AI Help) their owner only; repo
- * runs whoever can access the repo's workspace. Registered with the hub in
+ * attended chats (interactive / AI Help) reach their owner only; repo runs
+ * reach whoever can access the repo's workspace. Registered with the hub in
  * onEnable, so disabling operate removes the claim with it.
  */
 

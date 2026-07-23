@@ -1,6 +1,13 @@
 import { notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
-import type { GithubTokenSource, RunRecord, RunTaskDescriptor, TokenUsage } from '../contract/index.js';
+import type {
+  GithubTokenSource,
+  QueuedRunEntry,
+  RunQueueSnapshot,
+  RunRecord,
+  RunTaskDescriptor,
+  TokenUsage,
+} from '../contract/index.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
 import type { RunsStore } from './runs-store.js';
@@ -72,7 +79,6 @@ export class OperateService {
    * who may see a run's record, events, turns and asks. Consumers (this
    * module's routes, module-code's fix-flow routes, the WS scope resolver) all
    * go through here so the rule has one definition:
-   *  - admins see everything;
    *  - attended chats (interactive / AI Help) are private to their owner — one
    *    maintainer must never see another's assistant;
    *  - repo runs inherit that repo's workspace access;
@@ -80,7 +86,6 @@ export class OperateService {
    */
   canSeeRun(user: AuthUser | null, run: { repo: string | null; kind: string; userId: string | null }): boolean {
     if (!user) return false;
-    if (user.role === 'admin') return true;
     if (run.kind === 'interactive' || run.kind === 'assistant') return run.userId === user.username;
     if (run.repo) return this.canAccessRepo(user, run.repo);
     return true;
@@ -92,6 +97,21 @@ export class OperateService {
     const run = this.orchestrator.getRun(id);
     if (!run || !this.canSeeRun(user, run)) throw notFound(`run ${id} not found`);
     return run;
+  }
+
+  /** Queue rows can expose the same repo/title metadata as runs, so they use
+   *  the same workspace boundary before they become persisted run records. */
+  queueSnapshot(user: AuthUser | null): RunQueueSnapshot {
+    const snapshot = this.orchestrator.queueSnapshot();
+    const entries = snapshot.entries
+      .filter((entry) => this.canSeeQueueEntry(user, entry))
+      .map((entry, position) => ({ ...entry, position }));
+    return { ...snapshot, entries };
+  }
+
+  canSeeQueueEntry(user: AuthUser | null, entry: Pick<QueuedRunEntry, 'repo'>): boolean {
+    if (!user) return false;
+    return entry.repo ? this.canAccessRepo(user, entry.repo) : true;
   }
 
   /**
@@ -107,13 +127,10 @@ export class OperateService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const since = today.getTime() - (DAYS - 1) * 86_400_000;
-    const scope =
-      user.role === 'admin'
-        ? null
-        : {
-            username: user.username,
-            repos: this.runsStore.distinctReposSince(since).filter((repo) => this.canAccessRepo(user, repo)),
-          };
+    const scope = {
+      username: user.username,
+      repos: this.runsStore.distinctReposSince(since).filter((repo) => this.canAccessRepo(user, repo)),
+    };
     const days = Array.from({ length: DAYS }, (_, i) => ({
       dayStart: since + i * 86_400_000,
       inputTokens: 0,

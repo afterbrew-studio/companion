@@ -192,6 +192,7 @@ export class PrReviews {
 
     this.store.reports.insert({
       id: `rep-${randomUUID().slice(0, 12)}`,
+      workspaceId: null,
       repo,
       issueNumber: prNumber,
       kind: 'ci-analysis',

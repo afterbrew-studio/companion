@@ -110,6 +110,8 @@ export interface WorkspaceMetrics {
 
 export interface ReportRecord {
   readonly id: string;
+  /** Direct workspace scope for reports that are not tied to one repository (for example briefings). */
+  readonly workspaceId: string | null;
   readonly repo: string | null;
   /** Issue/PR number this report is about (ci-analysis), if any. */
   readonly issueNumber: number | null;
