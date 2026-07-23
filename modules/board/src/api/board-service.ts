@@ -629,9 +629,9 @@ export class BoardService {
       // All board-dispatched agent work carries 'board.worker' so runners can
       // opt out of it wholesale — it is the heaviest automation in the system.
       if (stage === 'address_review') {
-        run = await this.code.fixes.startReviewFix(task.repo, task.prNumber!, null, 'board.worker');
+        run = await this.code.fixes.startReviewFix(task.repo, task.prNumber!, task.createdBy, 'board.worker');
       } else if (stage === 'fix_ci') {
-        run = await this.code.fixes.startCheckFix(task.repo, task.prNumber!, null, 'board.worker');
+        run = await this.code.fixes.startCheckFix(task.repo, task.prNumber!, task.createdBy, 'board.worker');
       } else {
         const repoRow = this.code.repos.get(task.repo);
         if (!repoRow) throw new Error(`repo ${task.repo} is not connected`);
@@ -643,6 +643,7 @@ export class BoardService {
           branchPrefix: `companion/task-${task.id.replace(/^tsk-/, '')}`,
           baseBranch: repoRow.default_branch,
           objective: this.buildObjective(task, repoRow.default_branch),
+          userId: task.createdBy,
           attachments: task.attachments.flatMap(({ name, mediaType, content }) =>
             content ? [{ kind: 'image' as const, name, mediaType, content }] : [],
           ),

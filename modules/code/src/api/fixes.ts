@@ -25,7 +25,7 @@ export class Fixes {
   constructor(
     private readonly store: CodeStore,
     private readonly orchestrator: Orchestrator,
-    private readonly github: (repo?: string) => GitHubClient | null,
+    private readonly github: (repo?: string, username?: string | null) => GitHubClient | null,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
@@ -79,12 +79,13 @@ export class Fixes {
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
     const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind, { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
-    await backend.ensureClone(opts.repo);
+    await backend.ensureClone(opts.repo, opts.userId);
     const cwd = await backend.addWorktree(
       opts.repo,
       `${opts.kind}-${suffix}-${Math.random().toString(36).slice(2, 8)}`,
       branch,
       opts.baseBranch,
+      opts.userId,
     );
 
     const run = await this.orchestrator.createRun({
@@ -109,7 +110,7 @@ export class Fixes {
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
   async startCheckFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     const summary = await this.checks.fetchSummary(repo, prNumber);
     const failing = summary.runs.filter(
       (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
@@ -126,7 +127,7 @@ export class Fixes {
 
   /** Agent implements the changes human reviewers asked for on a PR. */
   async startReviewFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     const [reviews, inline] = await Promise.all([
       client.prReviewList(repo, prNumber),
       client.prReviewComments(repo, prNumber).catch(() => []),
@@ -151,7 +152,7 @@ export class Fixes {
 
   /** Agent merges the fresh base into the PR branch and resolves the conflicts. */
   async startConflictResolve(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     // Re-check GitHub live — the sync cache can lag a manual resolution, and a
     // run launched then would push a pointless no-op merge commit. Fail open on
     // fetch trouble: the run itself discovers "already up to date".
@@ -173,7 +174,7 @@ export class Fixes {
 
   /** Agent works on the PR branch with a user-written objective. */
   async startCustomPrRun(repo: string, prNumber: number, instructions: string, userId: string | null = null): Promise<RunRecord> {
-    const { pr, client } = this.requireOpenPr(repo, prNumber);
+    const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     const diff = await this.contextDiff(client, repo, prNumber);
     const preview = instructions.trim().split('\n')[0]!.slice(0, 50);
     return this.createPrBranchRun(pr, `Agent on PR #${prNumber}: ${preview}`, customObjective(pr, instructions, diff), {
@@ -190,12 +191,16 @@ export class Fixes {
     return clip(diff);
   }
 
-  private requireOpenPr(repo: string, prNumber: number): { pr: PrRecord; client: GitHubClient } {
+  private requireOpenPr(
+    repo: string,
+    prNumber: number,
+    username?: string | null,
+  ): { pr: PrRecord; client: GitHubClient } {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     if (pr.state !== 'open') throw new Error(`PR #${prNumber} is ${pr.state}`);
     if (!pr.headRef) throw new Error('PR has no head branch');
-    const client = this.github(repo);
+    const client = this.github(repo, username);
     if (!client) throw new Error('GitHub is not configured');
     return { pr, client };
   }
@@ -211,11 +216,11 @@ export class Fixes {
     const task = opts.task ?? 'code.fix';
     const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
-    await backend.ensureClone(pr.repo);
-    if (opts.freshOrigin) await backend.fetchOrigin(pr.repo);
+    await backend.ensureClone(pr.repo, opts.userId);
+    if (opts.freshOrigin) await backend.fetchOrigin(pr.repo, opts.userId);
     let cwd: string;
     try {
-      cwd = await backend.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef);
+      cwd = await backend.addWorktreeAtBranch(pr.repo, `prfix-${suffix}`, pr.headRef, opts.userId);
     } catch (err) {
       // Only the checkout step earns the fork-branch diagnosis — clone/fetch
       // failures surface raw so a network blip isn't mislabelled.
@@ -262,12 +267,12 @@ export class Fixes {
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
     const repoRow = this.store.repos.get(run.repo);
     if (!repoRow) throw new Error(`unknown repo ${run.repo}`);
-    const client = this.github(run.repo);
+    const client = this.github(run.repo, run.user_id);
     if (!client) throw new Error('GitHub is not configured');
 
     const backend = this.backendForRun(run.runner_id);
     await backend.commitAll(run.cwd, opts.title ?? run.title);
-    await backend.push(run.repo, run.cwd, run.branch);
+    await backend.push(run.repo, run.cwd, run.branch, run.user_id);
 
     if (run.pr_url) {
       this.orchestrator.markRun(runId, 'completed', `pushed to ${run.branch} (${run.pr_url})`);

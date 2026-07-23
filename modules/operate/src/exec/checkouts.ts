@@ -28,11 +28,13 @@ export class Checkouts {
    * clones/fetches, not just API calls) and may be async (an access-verified
    * resolver probes GitHub). Only network operations resolve it.
    */
-  constructor(private readonly token: (fullName: string) => Promise<string | null> | string | null) {}
+  constructor(
+    private readonly token: (fullName: string, username?: string | null) => Promise<string | null> | string | null,
+  ) {}
 
   /** The credential a network operation runs with: resolver first, caller fallback second. */
-  private async creds(fullName: string, fallback?: string): Promise<string | null> {
-    return (await this.token(fullName)) ?? fallback?.trim() ?? null;
+  private async creds(fullName: string, fallback?: string, username?: string | null): Promise<string | null> {
+    return (await this.token(fullName, username)) ?? fallback?.trim() ?? null;
   }
 
   cloneDir(fullName: string): string {
@@ -44,7 +46,7 @@ export class Checkouts {
     return existsSync(join(this.cloneDir(fullName), '.git'));
   }
 
-  async clone(fullName: string, token?: string): Promise<void> {
+  async clone(fullName: string, token?: string, username?: string | null): Promise<void> {
     await this.locked(fullName, async () => {
       const dir = this.cloneDir(fullName);
       if (existsSync(join(dir, '.git'))) return;
@@ -52,15 +54,15 @@ export class Checkouts {
       await this.git(
         ['clone', '--quiet', `https://github.com/${fullName}.git`, dir],
         undefined,
-        await this.creds(fullName, token),
+        await this.creds(fullName, token, username),
       );
       log.info(`cloned ${fullName}`);
     });
   }
 
-  async fetch(fullName: string, token?: string): Promise<void> {
+  async fetch(fullName: string, token?: string, username?: string | null): Promise<void> {
     await this.locked(fullName, async () =>
-      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName), await this.creds(fullName, token)),
+      this.git(['fetch', '--quiet', 'origin'], this.cloneDir(fullName), await this.creds(fullName, token, username)),
     );
   }
 
@@ -71,10 +73,11 @@ export class Checkouts {
     branch: string,
     baseBranch: string,
     token?: string,
+    username?: string | null,
   ): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone, await this.creds(fullName, token));
+      await this.git(['fetch', '--quiet', 'origin', baseBranch], clone, await this.creds(fullName, token, username));
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', branch, wt, `origin/${baseBranch}`], clone);
       // Keep run scaffolding (agent notes etc.) out of accidental commits.
@@ -91,10 +94,16 @@ export class Checkouts {
    * branch is named after the run so concurrent repairs never collide; pushes
    * go to the original remote branch via `push(..., branch)`.
    */
-  async addWorktreeAtBranch(fullName: string, runId: string, branch: string, token?: string): Promise<string> {
+  async addWorktreeAtBranch(
+    fullName: string,
+    runId: string,
+    branch: string,
+    token?: string,
+    username?: string | null,
+  ): Promise<string> {
     return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
-      await this.git(['fetch', '--quiet', 'origin', branch], clone, await this.creds(fullName, token));
+      await this.git(['fetch', '--quiet', 'origin', branch], clone, await this.creds(fullName, token, username));
       const wt = join(paths.worktrees(), runId);
       await this.git(['worktree', 'add', '-b', `companion/${runId}`, wt, `origin/${branch}`], clone);
       await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
@@ -143,9 +152,19 @@ export class Checkouts {
     );
   }
 
-  async push(fullName: string, worktree: string, branch: string, token?: string): Promise<void> {
+  async push(
+    fullName: string,
+    worktree: string,
+    branch: string,
+    token?: string,
+    username?: string | null,
+  ): Promise<void> {
     await this.locked(fullName, async () =>
-      this.git(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], worktree, await this.creds(fullName, token)),
+      this.git(
+        ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`],
+        worktree,
+        await this.creds(fullName, token, username),
+      ),
     );
   }
 

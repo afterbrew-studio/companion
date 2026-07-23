@@ -140,17 +140,17 @@ export class LocalRunnerBackend implements RunnerBackend {
   async cloneDir(repo: string): Promise<string> {
     return this.checkouts.cloneDir(repo);
   }
-  async ensureClone(repo: string): Promise<void> {
-    await this.checkouts.clone(repo);
+  async ensureClone(repo: string, username?: string | null): Promise<void> {
+    await this.checkouts.clone(repo, undefined, username);
   }
-  fetchOrigin(repo: string): Promise<void> {
-    return this.checkouts.fetch(repo);
+  fetchOrigin(repo: string, username?: string | null): Promise<void> {
+    return this.checkouts.fetch(repo, undefined, username);
   }
-  addWorktree(repo: string, key: string, branch: string, baseBranch: string): Promise<string> {
-    return this.checkouts.addWorktree(repo, key, branch, baseBranch);
+  addWorktree(repo: string, key: string, branch: string, baseBranch: string, username?: string | null): Promise<string> {
+    return this.checkouts.addWorktree(repo, key, branch, baseBranch, undefined, username);
   }
-  addWorktreeAtBranch(repo: string, key: string, branch: string): Promise<string> {
-    return this.checkouts.addWorktreeAtBranch(repo, key, branch);
+  addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string> {
+    return this.checkouts.addWorktreeAtBranch(repo, key, branch, undefined, username);
   }
   removeWorktree(repo: string, cwd: string): Promise<void> {
     return this.checkouts.removeWorktree(repo, cwd);
@@ -161,8 +161,8 @@ export class LocalRunnerBackend implements RunnerBackend {
   commitAll(cwd: string, message: string): Promise<void> {
     return this.checkouts.commitAll(cwd, message);
   }
-  push(repo: string, cwd: string, branch: string): Promise<void> {
-    return this.checkouts.push(repo, cwd, branch);
+  push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
+    return this.checkouts.push(repo, cwd, branch, undefined, username);
   }
 
   /** Reap all gateways (daemon shutdown). */

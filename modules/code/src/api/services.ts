@@ -103,7 +103,15 @@ export default defineServices((ctx) => {
   const fixes = new Fixes(
     store,
     operate.orchestrator,
-    (repo) => ghAccounts.clientFor('runs', repo ? { repo } : undefined),
+    (repo, username) =>
+      ghAccounts.clientFor(
+        'runs',
+        repo
+          ? { repo, ...(username === undefined ? {} : { username }) }
+          : username === undefined
+            ? undefined
+            : { username },
+      ),
     prChecks,
     ctx.broadcast,
   );

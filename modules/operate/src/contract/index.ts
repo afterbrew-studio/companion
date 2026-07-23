@@ -48,11 +48,11 @@ declare module '@companion/contracts' {
  */
 export interface GithubTokenSource {
   /**
-   * Token for network git operations, resolved per repo; null = none
-   * configured. May be async — an access-verified resolver probes GitHub to
-   * pick an account that can actually see the repo.
+   * Token for network git operations, resolved per repo and optional owning
+   * user; null = none configured. May be async — an access-verified resolver
+   * probes GitHub to pick an account that can actually see the repo.
    */
-  tokenFor(repo?: string): string | null | Promise<string | null>;
+  tokenFor(repo?: string, username?: string | null): string | null | Promise<string | null>;
   /** Login of the default posting account, when known (feeds /api/status). */
   login?(): string | null;
 }
