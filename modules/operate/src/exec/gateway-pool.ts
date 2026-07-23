@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { AskRequest, MoxxyEvent } from '@companion/types';
 import { log, paths } from '@companion/services';
 import { GatewayClient } from './gateway-client.js';
+import { providerDefaultsFromConfigYaml, readHomeFile, type ProviderDefaults } from './home.js';
 
 /**
  * One live agent run = TWO moxxy processes under Companion's isolated
@@ -57,6 +58,14 @@ const SERVE_READY_TIMEOUT_MS = 120_000;
 const GATEWAY_READY_TIMEOUT_MS = 60_000;
 const STOP_GRACE_MS = 5_000;
 
+/** Build the isolated per-run overlay without mutating the imported moxxy config. */
+export function gatewayConfigYaml(port: number, skillsDir: string, provider: ProviderDefaults | null): string {
+  const providerYaml = provider
+    ? `provider:\n  name: ${JSON.stringify(provider.name)}\n${provider.model ? `  model: ${JSON.stringify(provider.model)}\n` : ''}`
+    : '';
+  return `${providerYaml}channels:\n  mobile:\n    port: ${port}\nskills:\n  userDir: ${JSON.stringify(skillsDir)}\n`;
+}
+
 interface Child {
   readonly proc: ChildProcess;
   readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
@@ -101,9 +110,10 @@ export class GatewayPool {
     // skills.userDir: moxxy's defaultUserSkillsDir() hardcodes ~/.moxxy/skills
     // (ignores MOXXY_HOME — upstream bug), so point it at Companion's skills.
     const configFile = join(paths.runConfigs(), `${opts.runId}.yaml`);
+    const provider = providerDefaultsFromConfigYaml(readHomeFile('config.yaml'));
     writeFileSync(
       configFile,
-      `channels:\n  mobile:\n    port: ${port}\nskills:\n  userDir: ${JSON.stringify(join(paths.moxxyHome(), 'skills'))}\n`,
+      gatewayConfigYaml(port, join(paths.moxxyHome(), 'skills'), provider),
     );
 
     const baseEnv = {
