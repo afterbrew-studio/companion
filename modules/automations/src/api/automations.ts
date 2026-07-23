@@ -159,6 +159,7 @@ export class Automations {
     this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
+      workspaceId: null,
       repo,
       kind: 'webhook',
       title: `${eventName}${action ? `.${action}` : ''}`,
@@ -339,6 +340,7 @@ export class Automations {
 
     this.store.reports.insert({
       id: `rep-${randomUUID().slice(0, 12)}`,
+      workspaceId,
       repo: null,
       issueNumber: null,
       kind: 'briefing',
@@ -473,6 +475,7 @@ export class Automations {
     this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
+      workspaceId: null,
       repo,
       kind: 'digest',
       title: `Daily digest — ${repo}`,
@@ -501,6 +504,7 @@ export class Automations {
     this.store.reports.insert({
       issueNumber: null,
       id: `rep-${randomUUID().slice(0, 12)}`,
+      workspaceId: null,
       repo,
       kind: 'stale-sweep',
       title: `Stale sweep — ${stale.length} issue(s) idle >${staleDays}d`,

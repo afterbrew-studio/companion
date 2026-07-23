@@ -144,15 +144,68 @@ export default defineRoutes((ctx) => {
   // reads as "not found" — same helper as module-workspace's routes.
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
     workspace.requireAccessible(user, id);
-  // The generate routes only assert existence (legacy behavior).
-  const requireWorkspaceExists = (id: string): WorkspaceRecord => workspace.requireExists(id);
+  const requirePipeline = (user: AuthUser | null, id: string) => {
+    const pipeline = pipelinesStore.get(id);
+    if (!pipeline || !user || !workspace.canAccessWorkspace(user, pipeline.workspaceId)) {
+      throw notFound(`pipeline ${id} not found`);
+    }
+    return pipeline;
+  };
 
-  // GitHub account manage gate: an account's owner, or any admin.
+  const requirePipelineForRepo = (user: AuthUser | null, id: string, repo: string) => {
+    const pipeline = requirePipeline(user, id);
+    if (code.repos.get(repo)?.workspace_id !== pipeline.workspaceId) {
+      throw notFound(`pipeline ${id} not found`);
+    }
+    return pipeline;
+  };
+
+  const requireStepDefinition = (user: AuthUser | null, id: string) => {
+    const definition = pipelinesStore.getStepDefinition(id);
+    if (!definition || !user || !workspace.canAccessWorkspace(user, definition.workspaceId)) {
+      throw notFound(`step definition ${id} not found`);
+    }
+    return definition;
+  };
+
+  const requirePipelineRun = (user: AuthUser | null, id: string) => {
+    const run = pipelinesStore.getRun(id);
+    if (!run || !user || !workspace.canAccessRepo(user, run.repo)) {
+      throw notFound(`pipeline run ${id} not found`);
+    }
+    return run;
+  };
+
+  const requireTriage = (user: AuthUser | null, id: string) => {
+    const result = triageStore.get(id);
+    if (!result || !user || !workspace.canAccessRepo(user, result.repo)) {
+      throw notFound(`triage ${id} not found`);
+    }
+    return result;
+  };
+
+  const requirePrReview = (user: AuthUser | null, id: string) => {
+    const review = prReviewsStore.get(id);
+    if (!review || !user || !workspace.canAccessRepo(user, review.repo)) {
+      throw notFound(`PR review ${id} not found`);
+    }
+    return review;
+  };
+
+  const requireAccessibleWorkspaceIds = (user: AuthUser | null, ids: readonly string[]): void => {
+    if (!user || ids.some((id) => !workspace.canAccessWorkspace(user, id))) {
+      throw notFound('workspace not found');
+    }
+  };
+
+  // Personal accounts stay private to their owner. Admins additionally manage
+  // shared instance accounts, without inheriting other users' accounts.
   const requireManageable = (user: AuthUser | null, id: string) => {
     const row = code.githubAccounts.row(id);
     if (!row) throw notFound(`GitHub account ${id} not found`);
-    if (!user || (user.role !== 'admin' && row.ownerId !== user.username)) {
-      throw forbidden('you can only manage your own GitHub account');
+    const canManageShared = !!user && row.ownerId === null && ctx.rbac.has(user.role, 'settings:manage');
+    if (!user || (row.ownerId !== user.username && !canManageShared)) {
+      throw notFound(`GitHub account ${id} not found`);
     }
     return row;
   };
@@ -320,7 +373,12 @@ export default defineRoutes((ctx) => {
       body: z.object({ accountId: z.string().max(60).nullable() }),
       handler: ({ params, body, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        if (body.accountId && !code.githubAccounts.list().some((a) => a.id === body.accountId)) {
+        if (
+          body.accountId &&
+          !code.githubAccounts
+            .list()
+            .some((account) => account.id === body.accountId && (account.ownerId === null || account.ownerId === user?.username))
+        ) {
           throw notFound(`unknown GitHub account: ${body.accountId}`);
         }
         code.repos.setGithubAccount(fullName, body.accountId);
@@ -337,7 +395,8 @@ export default defineRoutes((ctx) => {
       body: z.object({ runnerId: z.string().max(60).nullable() }),
       handler: ({ params, body, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        if (body.runnerId && !operate.runners.get(body.runnerId)) {
+        const runner = body.runnerId ? operate.runners.get(body.runnerId) : null;
+        if (body.runnerId && (!runner || (runner.ownerId !== null && runner.ownerId !== user?.username))) {
           throw notFound(`unknown runner: ${body.runnerId}`);
         }
         code.repos.setRunner(fullName, body.runnerId);
@@ -353,8 +412,8 @@ export default defineRoutes((ctx) => {
       access: 'pipelines:run',
       handler: ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        const pipeline = pipelinesStore.get(params.pipelineId);
-        if (pipeline && pipeline.type !== 'platform') {
+        const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
+        if (pipeline.type !== 'platform') {
           throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
         }
         const run = code.pipelines.start(params.pipelineId, fullName, 0, 'manual');
@@ -488,8 +547,8 @@ export default defineRoutes((ctx) => {
       access: 'pipelines:run',
       handler: ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        const pipeline = pipelinesStore.get(params.pipelineId);
-        if (pipeline && pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
+        const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
+        if (pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = code.pipelines.start(params.pipelineId, fullName, issue.number, 'manual');
         return created({ run });
       },
@@ -510,7 +569,8 @@ export default defineRoutes((ctx) => {
       path: '/api/triage/:id/apply',
       access: 'issues:act',
       body: applyTriageSchema,
-      handler: async ({ params, query, body }) => {
+      handler: async ({ params, query, body, user }) => {
+        requireTriage(user, params.id);
         const { repo, number } = await code.triage.apply(params.id, {
           comment: body.comment,
           accountId: query.get('account') ?? undefined,
@@ -524,7 +584,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/triage/:id/dismiss',
       access: 'issues:act',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requireTriage(user, params.id);
         code.triage.dismiss(params.id);
         return { ok: true };
       },
@@ -737,8 +798,8 @@ export default defineRoutes((ctx) => {
       access: 'pipelines:run',
       handler: ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        const pipeline = pipelinesStore.get(params.pipelineId);
-        if (pipeline && pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
+        const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
+        if (pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual');
         return created({ run });
       },
@@ -758,7 +819,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/pr-reviews/:id/apply',
       access: 'prs:act',
-      handler: async ({ params, query }) => {
+      handler: async ({ params, query, user }) => {
+        requirePrReview(user, params.id);
         const { repo, number } = await code.prReviews.apply(params.id, query.get('account') ?? undefined);
         await code.sync.syncPr(repo, number);
         return { ok: true };
@@ -769,29 +831,26 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/pr-reviews/:id/dismiss',
       access: 'prs:act',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requirePrReview(user, params.id);
         code.prReviews.dismiss(params.id);
         return { ok: true };
       },
     }),
 
     // ---------- GitHub accounts --------------------------------------------------
-    // Maintainers may connect and manage their OWN account (github:connect);
-    // admins manage all and own the shared default accounts. When a user invokes
-    // an action, their own account is preferred; otherwise a shared default.
+    // Everyone sees shared defaults plus their own personal accounts. Admins
+    // may manage shared defaults, but never inherit another user's account.
 
     route({
-      // Sanitized list (no tokens): shared defaults + the caller's own; admins see all.
+      // Sanitized list (no tokens): shared defaults + the caller's own.
       method: 'GET',
       path: '/api/github/accounts',
       access: 'repos:read',
       handler: ({ user }) => {
-        const all = code.githubAccounts.list();
-        const accounts =
-          user?.role === 'admin'
-            ? all
-            : all.filter((a) => a.ownerId === null || a.ownerId === user?.username);
-        return { accounts };
+        return {
+          accounts: code.githubAccounts.list().filter((a) => a.ownerId === null || a.ownerId === user?.username),
+        };
       },
     }),
 
@@ -804,8 +863,9 @@ export default defineRoutes((ctx) => {
         if (body.scope === 'delegated' && body.workspaceIds.length === 0) {
           throw badRequest('a delegated account needs at least one workspace');
         }
+        if (body.scope === 'delegated') requireAccessibleWorkspaceIds(user, body.workspaceIds);
         // A shared default account is admin-only; everyone else's is personal.
-        const ownerId = user!.role === 'admin' && body.shared ? null : user!.username;
+        const ownerId = ctx.rbac.has(user!.role, 'settings:manage') && body.shared ? null : user!.username;
         const account = await code.githubAccounts.add(body.token, body.purposes, body.scope, body.workspaceIds, ownerId);
         ctx.broadcast({ t: 'repos.changed' });
         return created({ account });
@@ -818,10 +878,13 @@ export default defineRoutes((ctx) => {
       access: 'github:connect',
       body: patchAccountSchema,
       handler: ({ params, body, user }) => {
-        requireManageable(user, params.id);
-        if (body.scope === 'delegated' && body.workspaceIds && body.workspaceIds.length === 0) {
+        const account = requireManageable(user, params.id);
+        const nextScope = body.scope ?? account.scope;
+        const nextWorkspaceIds = body.workspaceIds ?? account.workspaceIds;
+        if (nextScope === 'delegated' && nextWorkspaceIds.length === 0) {
           throw badRequest('a delegated account needs at least one workspace');
         }
+        if (nextScope === 'delegated') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
         return { account: code.githubAccounts.update(params.id, body) };
       },
     }),
@@ -845,14 +908,18 @@ export default defineRoutes((ctx) => {
       path: '/api/pipelines/:id',
       access: 'pipelines:manage',
       body: savePipelineSchema,
-      handler: ({ params, body }) => ({ pipeline: code.pipelines.update(params.id, body) }),
+      handler: ({ params, body, user }) => {
+        requirePipeline(user, params.id);
+        return { pipeline: code.pipelines.update(params.id, body) };
+      },
     }),
 
     route({
       method: 'DELETE',
       path: '/api/pipelines/:id',
       access: 'pipelines:manage',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requirePipeline(user, params.id);
         code.pipelines.remove(params.id);
         return { ok: true };
       },
@@ -863,16 +930,18 @@ export default defineRoutes((ctx) => {
       path: '/api/step-definitions/:id',
       access: 'pipelines:manage',
       body: saveStepDefinitionSchema,
-      handler: ({ params, body }) => ({
-        stepDefinition: code.pipelines.updateStepDefinition(params.id, body),
-      }),
+      handler: ({ params, body, user }) => {
+        requireStepDefinition(user, params.id);
+        return { stepDefinition: code.pipelines.updateStepDefinition(params.id, body) };
+      },
     }),
 
     route({
       method: 'DELETE',
       path: '/api/step-definitions/:id',
       access: 'pipelines:manage',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requireStepDefinition(user, params.id);
         code.pipelines.removeStepDefinition(params.id);
         return { ok: true };
       },
@@ -882,11 +951,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/pipeline-runs/:id',
       access: 'pipelines:read',
-      handler: ({ params }) => {
-        const run = pipelinesStore.getRun(params.id);
-        if (!run) throw notFound(`pipeline run ${params.id} not found`);
-        return { run };
-      },
+      handler: ({ params, user }) => ({ run: requirePipelineRun(user, params.id) }),
     }),
 
     // ---------- workspace area feeds (code-owned cross-domain reads) --------------
@@ -1052,8 +1117,8 @@ Reply with ONLY a fenced json block:
       path: '/api/workspaces/:id/step-definitions/generate',
       access: 'pipelines:manage',
       body: genSchema,
-      handler: async ({ params, body }) => {
-        requireWorkspaceExists(params.id);
+      handler: async ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         const reply = await oneShot(
           'Generate custom step',
           `You are drafting one reusable pipeline step for Companion's PR pipelines. Do not modify any files.
@@ -1082,8 +1147,8 @@ Reply with ONLY a fenced json block matching:
       path: '/api/workspaces/:id/pipelines/generate',
       access: 'pipelines:manage',
       body: genSchema,
-      handler: async ({ params, body }) => {
-        requireWorkspaceExists(params.id);
+      handler: async ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         const reply = await oneShot(
           'Generate pipeline',
           `You are drafting a pipeline for Companion: an ordered set of steps with a type that decides its payload. Types: "pr" (runs against pull requests; all step kinds allowed), "issue" (runs against issues; only agent/label/comment steps), "platform" (runs against the repo itself; agent steps only). Pick the type that fits the request. Do not modify any files.

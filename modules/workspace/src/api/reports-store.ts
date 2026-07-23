@@ -8,8 +8,8 @@ export class ReportsStore {
   insert(r: ReportRecord): void {
     this.db
       .prepare(
-        `INSERT INTO reports (id, repo, issue_number, kind, title, body, created_at)
-         VALUES (@id, @repo, @issueNumber, @kind, @title, @body, @createdAt)`,
+        `INSERT INTO reports (id, workspace_id, repo, issue_number, kind, title, body, created_at)
+         VALUES (@id, @workspaceId, @repo, @issueNumber, @kind, @title, @body, @createdAt)`,
       )
       .run(r);
   }
@@ -35,6 +35,7 @@ export class ReportsStore {
 
 interface ReportRow {
   id: string;
+  workspace_id: string | null;
   repo: string | null;
   issue_number: number | null;
   kind: ReportRecord['kind'];
@@ -46,6 +47,7 @@ interface ReportRow {
 function reportRowToRecord(row: ReportRow): ReportRecord {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     repo: row.repo,
     issueNumber: row.issue_number,
     kind: row.kind,

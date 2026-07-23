@@ -29,23 +29,21 @@ export default defineRoutes((ctx) => {
   const reports = ctx.services.get('reports');
 
   // Access gate: a private workspace the user isn't in reads as "not found" —
-  // membership is hidden, so its existence is too.
+  // membership is hidden, so its existence is too. Platform role never bypasses it.
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
     workspaces.requireAccessible(user, id);
   // Manage gate (rename/delete/members): owner or admin only.
   const requireManage = (user: AuthUser | null, id: string): WorkspaceRecord => {
     const ws = requireWorkspace(user, id);
-    if (!user || !workspaces.canManage(user, ws)) {
+    if (!user || (ws.ownerId !== user.username && !ctx.rbac.has(user.role, 'workspaces:manage'))) {
       throw forbidden('only the workspace owner or an admin can manage this workspace');
     }
     return ws;
   };
 
   // Resolve the notification scope for a user. A specific, accessible workspace
-  // → just that one (+ instance-wide). Otherwise fall back to everything the
-  // user can see: admins get all workspaces (undefined = unrestricted), others
-  // get instance-wide + their accessible workspaces — so a private workspace's
-  // inbox never leaks, even via the no-workspace path.
+  // → just that one (+ instance-wide). Otherwise use instance-wide + every
+  // accessible workspace. Platform role never widens the workspace boundary.
   const scope = (
     user: AuthUser | null,
     workspaceId: string | null,
@@ -54,7 +52,7 @@ export default defineRoutes((ctx) => {
       const ws = workspaces.get(workspaceId);
       if (ws && workspaces.canAccess(user, ws)) return { workspaceId };
     }
-    if (!user || user.role === 'admin') return { workspaceId: null };
+    if (!user) return { workspaceId: null, accessibleIds: [] };
     return { workspaceId: null, accessibleIds: [...workspaces.accessibleIds(user)] };
   };
 
@@ -181,7 +179,7 @@ export default defineRoutes((ctx) => {
       access: 'workspaces:read',
       handler: ({ params, user }) => {
         requireManage(user, params.id);
-        if (params.username === user!.username && user!.role !== 'admin') {
+        if (params.username === user!.username && !ctx.rbac.has(user!.role, 'workspaces:manage')) {
           throw badRequest('the owner cannot remove themselves — delete the workspace instead');
         }
         workspaces.removeMember(params.id, params.username);
@@ -243,7 +241,15 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/reports',
       access: 'reports:read',
-      handler: () => ({ reports: reports.list() }),
+      handler: ({ user }) => ({
+        reports: reports.list().filter((report) => {
+          if (report.workspaceId) return workspaces.canAccessWorkspace(user!, report.workspaceId);
+          // Legacy briefings predate workspace_id; hiding them is safer than
+          // guessing their scope from a non-unique workspace name in the title.
+          if (report.kind === 'briefing') return false;
+          return !report.repo || workspaces.canAccessRepo(user!, report.repo);
+        }),
+      }),
     }),
   ];
 });

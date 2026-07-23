@@ -93,27 +93,35 @@ export default defineRoutes((ctx) => {
   const proposalsStore = new ProposalsStore(ctx.db);
   const specsStore = new SpecsStore(ctx.db);
 
-  const requireSpec = (id: string) => {
+  const requireProposal = (user: AuthUser | null, id: string) => {
+    const proposal = proposalsStore.get(id);
+    if (!proposal || !user || !workspace.canAccessRepo(user, proposal.repo)) {
+      throw notFound(`proposal ${id} not found`);
+    }
+    return proposal;
+  };
+  const requireSpec = (user: AuthUser | null, id: string) => {
     const spec = specsStore.get(id);
-    if (!spec) throw notFound(`spec ${id} not found`);
+    if (!spec || !user || !workspace.canAccessRepo(user, spec.repo)) throw notFound(`spec ${id} not found`);
     return spec;
   };
-  const requireDoc = (id: string) => {
+  const requireDoc = (user: AuthUser | null, id: string) => {
     const doc = plan.docs.get(id);
-    if (!doc) throw notFound(`doc ${id} not found`);
+    if (!doc || !user || !workspace.canAccessWorkspace(user, doc.workspaceId)) {
+      throw notFound(`doc ${id} not found`);
+    }
     return doc;
   };
-  const requireRepo = (fullName: string) => {
-    if (!code.repos.get(fullName)) throw badRequest(`repo ${fullName} not connected`);
+  const requireRepo = (user: AuthUser | null, fullName: string) => {
+    if (!code.repos.get(fullName) || !user || !workspace.canAccessRepo(user, fullName)) {
+      throw notFound(`repo ${fullName} not connected`);
+    }
   };
 
   // Access gate for the workspace proposals feed: a private workspace the user
   // isn't in reads as "not found" — same helper as module-workspace's routes.
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
     workspace.requireAccessible(user, id);
-  // The spec/doc routes only assert existence (legacy behavior).
-  const requireWorkspaceExists = (id: string): WorkspaceRecord => workspace.requireExists(id);
-
   return [
     // ---------- proposals ----------------------------------------------------------
 
@@ -121,7 +129,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/proposals',
       access: 'proposals:read',
-      handler: () => ({ proposals: proposalsStore.list() }),
+      handler: ({ user }) => ({
+        proposals: proposalsStore.list().filter((proposal) => workspace.canAccessRepo(user!, proposal.repo)),
+      }),
     }),
 
     route({
@@ -129,8 +139,8 @@ export default defineRoutes((ctx) => {
       path: '/api/proposals',
       access: 'proposals:create',
       body: proposalSchema,
-      handler: ({ body }) => {
-        if (!code.repos.get(body.repo)) throw badRequest(`repo ${body.repo} not connected`);
+      handler: ({ body, user }) => {
+        requireRepo(user, body.repo);
         return created({ proposal: plan.proposals.create(body.repo, body.title, body.body) });
       },
     }),
@@ -142,7 +152,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/proposals/:id/analyze',
       access: 'proposals:create',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requireProposal(user, params.id);
         void plan.proposals
           .analyze(params.id)
           .catch((err) => log.warn('analysis failed', { id: params.id, err: String(err) }));
@@ -154,21 +165,28 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/proposals/:id/approve',
       access: 'proposals:act',
-      handler: async ({ params }) => ({ proposal: await plan.proposals.approve(params.id) }),
+      handler: async ({ params, user }) => {
+        requireProposal(user, params.id);
+        return { proposal: await plan.proposals.approve(params.id) };
+      },
     }),
 
     route({
       method: 'POST',
       path: '/api/proposals/:id/finish',
       access: 'proposals:act',
-      handler: async ({ params }) => ({ proposal: await plan.proposals.finishImplementation(params.id) }),
+      handler: async ({ params, user }) => {
+        requireProposal(user, params.id);
+        return { proposal: await plan.proposals.finishImplementation(params.id) };
+      },
     }),
 
     route({
       method: 'POST',
       path: '/api/proposals/:id/reject',
       access: 'proposals:act',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requireProposal(user, params.id);
         plan.proposals.reject(params.id);
         return { ok: true };
       },
@@ -191,8 +209,8 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/specs',
       access: 'specs:read',
-      handler: ({ params }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { specs: plan.specs.list(params.id) };
       },
     }),
@@ -201,7 +219,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/specs/:id',
       access: 'specs:read',
-      handler: ({ params }) => ({ spec: requireSpec(params.id) }),
+      handler: ({ params, user }) => ({ spec: requireSpec(user, params.id) }),
     }),
 
     // ---------- storage configuration (first-visit setup) ---------------------
@@ -210,8 +228,8 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/specs-config',
       access: 'specs:read',
-      handler: ({ params }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return plan.specs.storageState(params.id);
       },
     }),
@@ -221,8 +239,8 @@ export default defineRoutes((ctx) => {
       path: '/api/workspaces/:id/specs-config',
       access: 'specs:manage',
       body: specConfigSchema,
-      handler: ({ params, body }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         try {
           return plan.specs.configure(params.id, body.dir);
         } catch (err) {
@@ -236,8 +254,8 @@ export default defineRoutes((ctx) => {
       path: '/api/specs',
       access: 'specs:manage',
       body: createSpecSchema,
-      handler: ({ body }) => {
-        requireRepo(body.repo);
+      handler: ({ body, user }) => {
+        requireRepo(user, body.repo);
         try {
           return created({ spec: plan.specs.create(body.repo, body.title, body.content, body.storage) });
         } catch (err) {
@@ -251,8 +269,8 @@ export default defineRoutes((ctx) => {
       path: '/api/specs/:id',
       access: 'specs:manage',
       body: patchSpecSchema,
-      handler: ({ params, body }) => {
-        requireSpec(params.id);
+      handler: ({ params, body, user }) => {
+        requireSpec(user, params.id);
         return { spec: plan.specs.update(params.id, body) };
       },
     }),
@@ -261,8 +279,8 @@ export default defineRoutes((ctx) => {
       method: 'DELETE',
       path: '/api/specs/:id',
       access: 'specs:manage',
-      handler: ({ params }) => {
-        requireSpec(params.id);
+      handler: ({ params, user }) => {
+        requireSpec(user, params.id);
         plan.specs.remove(params.id);
         return { ok: true };
       },
@@ -273,8 +291,8 @@ export default defineRoutes((ctx) => {
       path: '/api/specs/generate',
       access: 'specs:manage',
       body: generateSpecSchema,
-      handler: ({ body }) => {
-        requireRepo(body.repo);
+      handler: ({ body, user }) => {
+        requireRepo(user, body.repo);
         void plan.specs
           .generate(body.repo, body.instructions, body.storage)
           .catch((err) => log.warn('spec generation failed', { repo: body.repo, err: String(err) }));
@@ -286,8 +304,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/specs/:id/dismiss-drift',
       access: 'specs:manage',
-      handler: ({ params }) => {
-        requireSpec(params.id);
+      handler: ({ params, user }) => {
+        requireSpec(user, params.id);
         plan.specs.dismissDrift(params.id);
         return { ok: true };
       },
@@ -299,9 +317,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/proposals/:id/capture-spec',
       access: 'specs:manage',
-      handler: ({ params }) => {
-        const proposal = proposalsStore.get(params.id);
-        if (!proposal) throw notFound(`proposal ${params.id} not found`);
+      handler: ({ params, user }) => {
+        const proposal = requireProposal(user, params.id);
         if (proposal.status !== 'implemented') throw badRequest(`proposal is ${proposal.status}, not implemented`);
         void plan.specs
           .generate(
@@ -320,8 +337,8 @@ export default defineRoutes((ctx) => {
       path: '/api/specs/:id/create-feature',
       access: 'proposals:create',
       body: createFeatureSchema,
-      handler: ({ params, body }) => {
-        requireSpec(params.id);
+      handler: ({ params, body, user }) => {
+        requireSpec(user, params.id);
         return created({ proposal: plan.specs.createFeature(params.id, body) });
       },
     }),
@@ -332,8 +349,8 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/docs',
       access: 'docs:read',
-      handler: ({ params }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return { docs: plan.docs.list(params.id) };
       },
     }),
@@ -342,8 +359,8 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/docs/search',
       access: 'docs:read',
-      handler: ({ params, query }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, query, user }) => {
+        requireWorkspace(user, params.id);
         const q = query.get('q') ?? '';
         const limit = Math.min(Number(query.get('limit')) || 8, 25);
         return { hits: plan.docs.search(params.id, q, limit) };
@@ -354,7 +371,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/docs/:id',
       access: 'docs:read',
-      handler: ({ params }) => ({ doc: requireDoc(params.id) }),
+      handler: ({ params, user }) => ({ doc: requireDoc(user, params.id) }),
     }),
 
     // ---------- storage configuration (first-visit setup) ---------------------
@@ -363,8 +380,8 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/docs-config',
       access: 'docs:read',
-      handler: ({ params }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, user }) => {
+        requireWorkspace(user, params.id);
         return plan.docs.storageState(params.id);
       },
     }),
@@ -374,8 +391,8 @@ export default defineRoutes((ctx) => {
       path: '/api/workspaces/:id/docs-config',
       access: 'docs:manage',
       body: docConfigSchema,
-      handler: ({ params, body }) => {
-        requireWorkspaceExists(params.id);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
         try {
           return plan.docs.configure(params.id, body.dir);
         } catch (err) {
@@ -389,9 +406,9 @@ export default defineRoutes((ctx) => {
       path: '/api/workspaces/:id/docs',
       access: 'docs:manage',
       body: saveDocSchema,
-      handler: ({ params, body }) => {
-        requireWorkspaceExists(params.id);
-        if (body.repo) requireRepo(body.repo);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        if (body.repo) requireRepo(user, body.repo);
         return created({ doc: plan.docs.create(params.id, { ...body, repo: body.repo ?? null }) });
       },
     }),
@@ -401,9 +418,9 @@ export default defineRoutes((ctx) => {
       path: '/api/docs/:id',
       access: 'docs:manage',
       body: patchDocSchema,
-      handler: ({ params, body }) => {
-        requireDoc(params.id);
-        if (body.repo) requireRepo(body.repo);
+      handler: ({ params, body, user }) => {
+        requireDoc(user, params.id);
+        if (body.repo) requireRepo(user, body.repo);
         return { doc: plan.docs.update(params.id, body) };
       },
     }),
@@ -412,8 +429,8 @@ export default defineRoutes((ctx) => {
       method: 'DELETE',
       path: '/api/docs/:id',
       access: 'docs:manage',
-      handler: ({ params }) => {
-        requireDoc(params.id);
+      handler: ({ params, user }) => {
+        requireDoc(user, params.id);
         plan.docs.remove(params.id);
         return { ok: true };
       },
@@ -423,9 +440,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/doc-files',
       access: 'docs:read',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
         const fullName = `${params.owner}/${params.name}`;
-        requireRepo(fullName);
+        requireRepo(user, fullName);
         return { files: plan.docs.importCandidates(fullName) };
       },
     }),
@@ -435,9 +452,9 @@ export default defineRoutes((ctx) => {
       path: '/api/workspaces/:id/docs/import',
       access: 'docs:manage',
       body: importDocsSchema,
-      handler: ({ params, body }) => {
-        requireWorkspaceExists(params.id);
-        requireRepo(body.repo);
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        requireRepo(user, body.repo);
         return created({ docs: plan.docs.importFromRepo(params.id, body.repo, body.paths) });
       },
     }),
@@ -448,9 +465,9 @@ export default defineRoutes((ctx) => {
       path: '/api/workspaces/:id/docs/generate',
       access: 'docs:manage',
       body: generateDocSchema,
-      handler: async ({ params, body }) => {
-        requireWorkspaceExists(params.id);
-        if (body.repo) requireRepo(body.repo);
+      handler: async ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        if (body.repo) requireRepo(user, body.repo);
         try {
           return created({ doc: await plan.docs.generate(params.id, body) });
         } catch (err) {

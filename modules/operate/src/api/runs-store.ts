@@ -150,7 +150,6 @@ export class RunsStore {
    * pre-resolved accessible repos.
    */
   private usageWhere(scope: UsageScope): { clause: string; params: Array<string | number> } {
-    if (scope === null) return { clause: '', params: [] };
     const inRepos = scope.repos.length > 0 ? ` OR repo IN (${scope.repos.map(() => '?').join(', ')})` : '';
     return {
       clause: ` AND (
@@ -206,8 +205,8 @@ export class RunsStore {
   }
 }
 
-/** Pre-resolved visibility for usage aggregates; null = unrestricted (admin). */
-export type UsageScope = { username: string; repos: readonly string[] } | null;
+/** Pre-resolved visibility for usage aggregates. */
+export type UsageScope = { username: string; repos: readonly string[] };
 
 export interface UsageDayRow {
   bucket: number;

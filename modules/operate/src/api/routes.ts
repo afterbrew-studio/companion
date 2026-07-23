@@ -82,19 +82,32 @@ const modelPinsSchema = z.object({
 export default defineRoutes((ctx) => {
   const op = ctx.services.get('operate');
   const settings = ctx.services.get('settings');
+  const workspace = ctx.services.get('workspace');
 
   // Run-stream visibility is a security rule with a single owner: the operate
   // service (see OperateService.canSeeRun). Routes here — and module-code's
   // fix-flow routes, and the WS scope resolver — all delegate to it.
   const canSeeRun = (user: AuthUser | null, run: RunRecord): boolean => op.canSeeRun(user, run);
   const requireRunAccess = (user: AuthUser | null, id: string): RunRecord => op.requireRunAccess(user, id);
+  const requireQueueEntryAccess = (user: AuthUser | null, id: string): void => {
+    if (!op.queueSnapshot(user).entries.some((entry) => entry.id === id)) {
+      throw notFound(`queued run ${id} not found`);
+    }
+  };
 
-  // Admins manage every runner; everyone else only the machines they own. A
-  // runner outside your reach reads as "not found" — existence is not leaked.
+  const requireAccessibleWorkspaceIds = (user: AuthUser | null, ids: readonly string[]): void => {
+    if (!user || ids.some((id) => !workspace.canAccessWorkspace(user, id))) {
+      throw notFound('workspace not found');
+    }
+  };
+
+  // Personal runners stay private to their owner. Admins additionally manage
+  // shared instance runners, without inheriting other users' machines.
   const requireManageableRunner = (user: AuthUser | null, id: string): void => {
     const runner = op.runners.get(id);
     if (!runner) throw notFound(`runner ${id} not found`);
-    if (user?.role !== 'admin' && runner.ownerId !== user?.username) throw notFound(`runner ${id} not found`);
+    const canManageShared = !!user && runner.ownerId === null && ctx.rbac.has(user.role, 'runners:manage');
+    if (!user || (runner.ownerId !== user.username && !canManageShared)) throw notFound(`runner ${id} not found`);
   };
 
   return [
@@ -129,7 +142,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/runs/queue',
       access: 'runs:read',
-      handler: () => ({ queue: op.orchestrator.queueSnapshot() }),
+      handler: ({ user }) => ({ queue: op.queueSnapshot(user) }),
     }),
 
     // Token spend for the dashboard cost analytics — daily buckets + per-model
@@ -147,9 +160,10 @@ export default defineRoutes((ctx) => {
       path: '/api/runs/queue/:id/move',
       access: 'runs:act',
       body: z.object({ direction: z.enum(['up', 'down']) }),
-      handler: ({ params, body }) => {
+      handler: ({ params, body, user }) => {
+        requireQueueEntryAccess(user, params.id);
         op.orchestrator.moveQueued(params.id, body.direction);
-        return { queue: op.orchestrator.queueSnapshot() };
+        return { queue: op.queueSnapshot(user) };
       },
     }),
 
@@ -157,9 +171,10 @@ export default defineRoutes((ctx) => {
       method: 'DELETE',
       path: '/api/runs/queue/:id',
       access: 'runs:act',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        requireQueueEntryAccess(user, params.id);
         op.orchestrator.cancelQueued(params.id);
-        return { queue: op.orchestrator.queueSnapshot() };
+        return { queue: op.queueSnapshot(user) };
       },
     }),
 
@@ -269,21 +284,21 @@ export default defineRoutes((ctx) => {
     }),
 
     // ---------- runners: execution machines ---------------------------------------
-    // Admins manage all (incl. shared instance runners); maintainers connect and
-    // manage their OWN machines (runners:connect) — to run their triggered work
-    // on their own model subscription. A runner you can't manage reads as "not
-    // found" (existence is not leaked), matching the GitHub-accounts precedent.
+    // Admins manage shared instance runners; everyone manages their own machines
+    // (runners:connect). Personal machines never become visible through role.
 
     route({
-      // Admins see every machine; everyone else only their own. Ships the
-      // registered task descriptors alongside, for the per-runner task filter.
+      // Admins see shared + own machines; everyone else only their own. Ships
+      // task descriptors alongside for the per-runner task filter.
       method: 'GET',
       path: '/api/runners',
       access: 'runners:connect',
       handler: ({ user }) => {
-        const all = op.runners.list();
+        const canManageShared = !!user && ctx.rbac.has(user.role, 'runners:manage');
         return {
-          runners: user?.role === 'admin' ? all : all.filter((r) => r.ownerId === user?.username),
+          runners: op.runners
+            .list()
+            .filter((runner) => runner.ownerId === user?.username || (canManageShared && runner.ownerId === null)),
           tasks: op.runTaskDescriptors(),
         };
       },
@@ -298,8 +313,9 @@ export default defineRoutes((ctx) => {
         if (body.scope === 'delegated' && (body.workspaceIds ?? []).length === 0) {
           throw badRequest('a delegated runner needs at least one workspace');
         }
+        if (body.scope === 'delegated') requireAccessibleWorkspaceIds(user, body.workspaceIds ?? []);
         // A shared instance runner is admin-only; everyone else's is personal.
-        const ownerId = user!.role === 'admin' && body.shared ? null : user!.username;
+        const ownerId = ctx.rbac.has(user!.role, 'runners:manage') && body.shared ? null : user!.username;
         return created({ runner: await op.runners.create(body, ownerId) });
       },
     }),
@@ -311,9 +327,13 @@ export default defineRoutes((ctx) => {
       body: updateRunnerSchema,
       handler: async ({ params, body, user }) => {
         requireManageableRunner(user, params.id);
-        if (body.scope === 'delegated' && body.workspaceIds && body.workspaceIds.length === 0) {
+        const runner = op.runners.get(params.id)!;
+        const nextScope = body.scope ?? runner.scope;
+        const nextWorkspaceIds = body.workspaceIds ?? runner.workspaceIds;
+        if (nextScope === 'delegated' && nextWorkspaceIds.length === 0) {
           throw badRequest('a delegated runner needs at least one workspace');
         }
+        if (nextScope === 'delegated') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
         return { runner: await op.runners.update(params.id, body) };
       },
     }),
