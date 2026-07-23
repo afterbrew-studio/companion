@@ -26,6 +26,7 @@ interface CliOptions {
   readonly open: boolean;
   readonly yes: boolean;
   readonly githubFromGh: boolean;
+  readonly verbose: boolean;
 }
 
 const HELP = `@moxxy-ai/companion — run Companion locally
@@ -43,6 +44,7 @@ Options:
   --no-open        Do not open a browser
   -y, --yes        Accept secure generated defaults without prompting
   --github-from-gh Connect the active local gh account to the new admin
+  --verbose        Show daemon startup and diagnostic logs
   -h, --help       Show this help
 
 The moxxy CLI is optional at startup, but required before running AI agents.
@@ -184,6 +186,10 @@ async function start(options: CliOptions): Promise<void> {
   }
 
   process.env.COMPANION_HOME = options.home;
+  // The one-command experience stays focused on actionable status. Warnings
+  // and errors still surface; developers running `pnpm dev` keep full logs.
+  if (options.verbose) process.env.COMPANION_LOG_LEVEL = 'info';
+  else process.env.COMPANION_LOG_LEVEL ??= 'warn';
   const pendingAdmin = applyPendingAdminSetup(options.home);
   if (pendingAdmin) process.env.COMPANION_IMPORT_LOCAL_GH = pendingGhLogin(options.home) ? 'true' : 'false';
   process.env.COMPANION_STATIC_DIR = staticDir;
@@ -222,6 +228,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let open = true;
   let yes = false;
   let githubFromGh = false;
+  let verbose = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -232,13 +239,14 @@ function parseArgs(argv: readonly string[]): CliOptions {
     else if (arg === '--no-open') open = false;
     else if (arg === '--yes' || arg === '-y') yes = true;
     else if (arg === '--github-from-gh') githubFromGh = true;
+    else if (arg === '--verbose') verbose = true;
     else if (arg === '--help' || arg === '-h' || arg === 'help') {
       process.stdout.write(HELP);
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
   }
   home = isAbsolute(home) ? home : resolve(home);
-  return { command, home, host, port, open, yes, githubFromGh };
+  return { command, home, host, port, open, yes, githubFromGh, verbose };
 }
 
 function requiredValue(argv: readonly string[], index: number, option: string): string {
