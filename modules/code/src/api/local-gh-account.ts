@@ -7,8 +7,9 @@ export interface LocalGhAccount {
 
 /**
  * Read the active github.com identity from the operator's gh keyring. This is
- * used only during first-user env bootstrap; it is never a runtime credential
- * fallback and the token is never logged or written outside the account store.
+ * used at daemon boot to attach the operator's identity to the oldest enabled
+ * admin; it is never a runtime credential fallback and the token is never
+ * logged or written outside the account store.
  */
 export function readActiveLocalGhAccount(): LocalGhAccount | null {
   if (process.env.COMPANION_IMPORT_LOCAL_GH === 'false') return null;
