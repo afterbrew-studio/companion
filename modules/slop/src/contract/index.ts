@@ -4,6 +4,8 @@ import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import '@companion/module-code/contract';
+// Soft dependency: the action is only available while refinement is enabled.
+import '@companion/module-refinement/contract';
 import type { SlopService } from '../api/slop-service.js';
 
 declare module '@companion/contracts' {
@@ -34,6 +36,7 @@ declare module '@companion/contracts' {
 
 /** What the human is advised to do about a slop verdict. */
 export type SlopAction = 'none' | 'label' | 'comment' | 'request_changes' | 'close';
+export type SlopAppliedAction = SlopAction | 'refinement';
 
 export type SlopConfidence = 'low' | 'medium' | 'high';
 
@@ -78,10 +81,14 @@ export interface SlopDetectionResult {
   readonly verdict: SlopVerdict | null;
   readonly error: string | null;
   /** What the human actually applied (may differ from the recommendation). */
-  readonly appliedAction: SlopAction | null;
+  readonly appliedAction: SlopAppliedAction | null;
   /** Snapshot of the rule set the detection ran with. */
   readonly ruleIds: ReadonlyArray<string>;
   readonly createdAt: number;
+}
+
+export interface SlopMoveToRefinementResult {
+  readonly refinementId: string;
 }
 
 /** An AI-drafted rule: prefills the editor for review — nothing stored until the user saves. */

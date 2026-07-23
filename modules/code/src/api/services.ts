@@ -97,6 +97,8 @@ export default defineServices((ctx) => {
     operate.orchestrator,
     operate.checkouts,
     (c) => ghAccounts.clientFor('pipelines', c),
+    (repo, prNumber, method, c) =>
+      ghAccounts.performForRepo('pipelines', repo, (client) => client.mergePr(repo, prNumber, method), c),
     prChecks,
     ctx.broadcast,
   );

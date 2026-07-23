@@ -16,6 +16,7 @@ import {
 } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { TaskPriority } from '@companion/module-board/contract';
+import { BranchPicker } from '@companion/module-code/client';
 import type { RefineItemRecord, RefineMethodDraft, RefineMethodRecord, RefinementRecord } from '../../contract/index.js';
 import { useRefinement } from '../hooks/useRefinement.js';
 import { StatusBadge } from './Refinements.js';
@@ -131,6 +132,8 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
           <ItemsSection
             items={items}
             proposedCount={proposed.length}
+            repo={refinement.repo}
+            defaultTargetBranch={refinement.branch}
             canManage={canManage}
             onImport={actions.importItem}
             onImportAll={actions.importAll}
@@ -182,12 +185,12 @@ function StoryCard({
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} disabled={disabled} />
         </Field>
         <Field label="Branch" hint={`on ${refinement.repo}`}>
-          <input
-            className="input font-mono"
+          <BranchPicker
+            repo={refinement.repo}
             value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            maxLength={200}
+            onChange={setBranch}
             disabled={disabled}
+            ariaLabel="Refinement branch"
           />
         </Field>
       </div>
@@ -348,6 +351,8 @@ function ContextPicker({
 function ItemsSection({
   items,
   proposedCount,
+  repo,
+  defaultTargetBranch,
   canManage,
   onImport,
   onImportAll,
@@ -355,13 +360,18 @@ function ItemsSection({
 }: {
   items: RefineItemRecord[];
   proposedCount: number;
+  repo: string;
+  defaultTargetBranch: string;
   canManage: boolean;
-  onImport: (itemId: string, queue: boolean) => Promise<void>;
-  onImportAll: (queue: boolean) => Promise<void>;
+  onImport: (itemId: string, queue: boolean, targetBranch?: string) => Promise<void>;
+  onImportAll: (queue: boolean, targetBranch?: string) => Promise<void>;
   onDismiss: (itemId: string) => Promise<void>;
 }): JSX.Element {
   const [queue, setQueue] = useState(false);
+  const [targetBranch, setTargetBranch] = useState(defaultTargetBranch);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => setTargetBranch(defaultTargetBranch), [defaultTargetBranch]);
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true);
@@ -379,13 +389,24 @@ function ItemsSection({
         {canManage ? (
           <>
             <label className="dim flex items-center gap-1.5 text-xs">
+              target branch
+              <BranchPicker
+                repo={repo}
+                value={targetBranch}
+                onChange={setTargetBranch}
+                defaultBranch={defaultTargetBranch}
+                compact
+                ariaLabel="Imported tasks target branch"
+              />
+            </label>
+            <label className="dim flex items-center gap-1.5 text-xs">
               <input type="checkbox" checked={queue} onChange={(e) => setQueue(e.target.checked)} />
               queue immediately
             </label>
             <button
               className="btn"
               disabled={busy || proposedCount === 0}
-              onClick={() => void run(() => onImportAll(queue))}
+              onClick={() => void run(() => onImportAll(queue, targetBranch.trim() || defaultTargetBranch))}
             >
               Import all ({proposedCount})
             </button>
@@ -402,7 +423,7 @@ function ItemsSection({
             item={item}
             canManage={canManage}
             busy={busy}
-            onImport={() => void run(() => onImport(item.id, queue))}
+            onImport={() => void run(() => onImport(item.id, queue, targetBranch.trim() || defaultTargetBranch))}
             onDismiss={() => void run(() => onDismiss(item.id))}
           />
         ))}

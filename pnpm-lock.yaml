@@ -664,6 +664,9 @@ importers:
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate
+      '@companion/module-refinement':
+        specifier: workspace:*
+        version: link:../refinement
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace

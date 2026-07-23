@@ -233,13 +233,13 @@ export class Fixes {
     return this.orchestrator.getRun(run.id)!;
   }
 
-  async diff(runId: string): Promise<{ diff: string; branch: string | null }> {
+  async diff(runId: string, baseBranch?: string): Promise<{ diff: string; branch: string | null }> {
     const run = this.store.runs.get(runId);
     if (!run || !run.repo) throw new Error('run not found or not a repo run');
     const repoRow = this.store.repos.get(run.repo);
     // PR-branch runs diff against the PR head (only the agent's delta);
     // fresh-branch runs diff against the default branch.
-    const base = run.pr_url && run.branch ? run.branch : (repoRow?.default_branch ?? 'main');
+    const base = run.pr_url && run.branch ? run.branch : (baseBranch ?? repoRow?.default_branch ?? 'main');
     const diff = await this.backendForRun(run.runner_id).diffVsBase(run.cwd, base);
     return { diff, branch: run.branch };
   }
@@ -248,7 +248,10 @@ export class Fixes {
    * Human approved the diff: commit leftovers and push. Runs bound to an
    * existing PR stop there; fresh-branch runs open the PR.
    */
-  async approve(runId: string, opts: { title?: string; body?: string } = {}): Promise<{ prUrl: string }> {
+  async approve(
+    runId: string,
+    opts: { title?: string; body?: string; baseBranch?: string } = {},
+  ): Promise<{ prUrl: string }> {
     const run = this.store.runs.get(runId);
     if (!run || !run.repo || !run.branch) throw new Error('run not found or has no branch');
     const repoRow = this.store.repos.get(run.repo);
@@ -271,7 +274,7 @@ export class Fixes {
     const pr = await client.createPr(run.repo, {
       title: opts.title ?? run.title,
       head: run.branch,
-      base: repoRow.default_branch,
+      base: opts.baseBranch ?? repoRow.default_branch,
       body:
         opts.body ??
         `${run.outcome ?? ''}\n\n${run.issue_number ? `Closes #${run.issue_number}.` : ''}`.trim(),

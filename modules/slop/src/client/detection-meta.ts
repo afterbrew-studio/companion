@@ -1,14 +1,15 @@
 import type { StatusTone } from '@companion/ui';
-import type { SlopAction, SlopDetectionResult, SlopSignal } from '../contract/index.js';
+import type { SlopAppliedAction, SlopDetectionResult, SlopSignal } from '../contract/index.js';
 
 /** Detection wording/tones shared by the list page and the detection subpage. */
 
-export const ACTION_LABEL: Record<SlopAction, string> = {
+export const ACTION_LABEL: Record<SlopAppliedAction, string> = {
   none: 'nothing',
   label: 'apply label',
   comment: 'comment',
   request_changes: 'request changes',
   close: 'close PR',
+  refinement: 'moved to refinement',
 };
 
 export const STATUS_META: Record<SlopDetectionResult['status'], { label: string; tone: StatusTone }> = {

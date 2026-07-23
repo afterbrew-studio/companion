@@ -365,21 +365,33 @@ export class RefinementService {
   // ---------- imports ------------------------------------------------------------------
 
   /** Import one proposed item into the board (review-then-apply's "apply"). */
-  importItem(id: string, itemId: string, user: string | null, queue: boolean): RefineItemRecord {
-    const item = this.importOne(id, itemId, user, queue);
+  importItem(
+    id: string,
+    itemId: string,
+    user: string | null,
+    queue: boolean,
+    targetBranch?: string,
+  ): RefineItemRecord {
+    const item = this.importOne(id, itemId, user, queue, targetBranch);
     this.changed();
     return item;
   }
 
   /** Import every proposed item in build order; returns how many were imported. */
-  importAll(id: string, user: string | null, queue: boolean): number {
+  importAll(id: string, user: string | null, queue: boolean, targetBranch?: string): number {
     const proposed = this.store.listItems(id).filter((item) => item.status === 'proposed');
-    for (const item of proposed) this.importOne(id, item.id, user, queue);
+    for (const item of proposed) this.importOne(id, item.id, user, queue, targetBranch);
     if (proposed.length > 0) this.changed();
     return proposed.length;
   }
 
-  private importOne(id: string, itemId: string, user: string | null, queue: boolean): RefineItemRecord {
+  private importOne(
+    id: string,
+    itemId: string,
+    user: string | null,
+    queue: boolean,
+    targetBranch?: string,
+  ): RefineItemRecord {
     const refinement = this.store.get(id);
     if (!refinement) throw new Error('refinement not found');
     const item = this.store.getItem(itemId);
@@ -401,6 +413,7 @@ export class RefinementService {
     });
     const task = this.board.createTask({
       repo: refinement.repo,
+      targetBranch: targetBranch?.trim() || refinement.branch,
       title: item.title,
       description: item.description,
       acceptance: item.acceptance,

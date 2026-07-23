@@ -1,5 +1,11 @@
 import { del, post, put, request } from '@companion/core/client';
-import type { SlopAction, SlopDetectionResult, SlopRuleDraft, SlopRuleRecord } from '../contract/index.js';
+import type {
+  SlopAction,
+  SlopDetectionResult,
+  SlopMoveToRefinementResult,
+  SlopRuleDraft,
+  SlopRuleRecord,
+} from '../contract/index.js';
 
 export const slopApi = {
   list: (workspaceId: string) =>
@@ -23,4 +29,6 @@ export const slopApi = {
   apply: (id: string, body: { action?: SlopAction; accountId?: string }) =>
     post<{ repo: string; number: number; action: SlopAction }>(`/api/slop/${id}/apply`, body),
   dismiss: (id: string) => post<{ ok: true }>(`/api/slop/${id}/dismiss`),
+  moveToRefinement: (id: string) =>
+    post<SlopMoveToRefinementResult>(`/api/slop/${id}/move-to-refinement`, {}),
 };

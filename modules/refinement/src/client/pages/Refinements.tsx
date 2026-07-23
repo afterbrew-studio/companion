@@ -14,7 +14,7 @@ import {
 } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { useWorkspaceRepos } from '@companion/module-code/client';
+import { BranchPicker, useWorkspaceRepos } from '@companion/module-code/client';
 import type { RefinementListEntry } from '../../contract/index.js';
 import { refinementApi } from '../api.js';
 import { useRefinements } from '../hooks/useRefinements.js';
@@ -184,11 +184,12 @@ function NewRefinementModal({
             />
           </Field>
           <Field label="Branch" hint="The decomposition agent reads the code as of this branch.">
-            <input
-              className="input font-mono"
+            <BranchPicker
+              repo={effectiveRepo}
               value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              maxLength={200}
+              onChange={setBranch}
+              defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}
+              ariaLabel="Refinement branch"
             />
           </Field>
         </div>

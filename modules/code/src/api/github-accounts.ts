@@ -161,6 +161,60 @@ export class GitHubAccounts {
     return (await this.verifiedRowFor(purpose, fullName, ctx)).row?.token ?? null;
   }
 
+  /** Access-verified client for a repo-bound API action. This is the write-side
+   *  equivalent of verifiedTokenFor: a higher-precedence account that cannot
+   *  see the repo must not turn a valid action into GitHub's opaque 404. */
+  async verifiedClientFor(
+    purpose: GitHubPurpose,
+    fullName: string,
+    ctx?: Omit<ResolveCtx, 'repo'>,
+  ): Promise<{ client: GitHubClient | null; tried: string[] }> {
+    const { row, tried } = await this.verifiedRowFor(purpose, fullName, ctx);
+    if (!row) return { client: null, tried };
+    // verifiedRowFor deliberately skips a redundant probe for a lone
+    // candidate. A caller asking specifically for a verified client needs the
+    // stronger contract even then (write actions must not leak GitHub's opaque
+    // 404 when the selected account cannot see this repository).
+    if (!(await this.hasAccess(row, fullName))) {
+      return { client: null, tried: [...tried, row.login || row.id] };
+    }
+    return { client: this.clientOf(row), tried };
+  }
+
+  /**
+   * Run a repo-bound GitHub action with account failover. Visibility alone is
+   * not enough for writes: a fine-grained token may read the repo but GitHub
+   * can still hide a write endpoint behind 403/404. Those credential failures
+   * advance to the next eligible account; semantic failures (for example a
+   * non-mergeable PR) remain authoritative and are returned to the caller.
+   */
+  async performForRepo<T>(
+    purpose: GitHubPurpose,
+    fullName: string,
+    action: (client: GitHubClient) => Promise<T>,
+    ctx?: Omit<ResolveCtx, 'repo'>,
+  ): Promise<{ result: T | null; client: GitHubClient | null; tried: string[] }> {
+    const candidates = this.candidatesFor(purpose, { ...ctx, repo: fullName });
+    const tried: string[] = [];
+    for (const row of candidates) {
+      const label = row.login || row.id;
+      if (!(await this.hasAccess(row, fullName))) {
+        tried.push(label);
+        continue;
+      }
+      const client = this.clientOf(row);
+      try {
+        return { result: await action(client), client, tried };
+      } catch (err) {
+        const credentialFailure =
+          err instanceof GitHubError && [401, 403, 404].includes(err.status) && !/rate limit/i.test(err.message);
+        if (!credentialFailure) throw err;
+        tried.push(label);
+      }
+    }
+    return { result: null, client: null, tried };
+  }
+
   /**
    * The add-repo picker feed: repositories visible to the accounts the invoking
    * user may act with in this workspace (fetch purpose), deduped by full name

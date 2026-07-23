@@ -255,6 +255,39 @@ export default defineRoutes((ctx) => {
       },
     }),
 
+    /** Existing remote branches for searchable branch pickers. */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/branches',
+      access: 'repos:read',
+      handler: async ({ params, user }) => {
+        const { fullName, row } = requireRepo(user, params.owner, params.name);
+        const { client, tried } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
+          accountId: row.github_account_id ?? undefined,
+          username: user?.username ?? null,
+        });
+        if (!client) {
+          throw badRequest(
+            tried.length > 0
+              ? `none of the connected GitHub accounts (${tried.join(', ')}) can list branches for ${fullName}`
+              : 'GitHub is not configured (connect an account first)',
+          );
+        }
+        try {
+          const branches = await client.branches(fullName);
+          return {
+            branches: branches.map((branch) => ({ name: branch.name, protected: branch.protected })),
+            defaultBranch: row.default_branch,
+          };
+        } catch (err) {
+          if (err instanceof GitHubError && [401, 403, 404].includes(err.status)) {
+            throw badRequest(`the selected GitHub account cannot list branches for ${fullName}`);
+          }
+          throw err;
+        }
+      },
+    }),
+
     /** The add-repo picker feed: repos the reachable GitHub accounts can see. */
     route({
       method: 'GET',
@@ -772,7 +805,11 @@ export default defineRoutes((ctx) => {
       body: mergeSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        await code.prReviews.merge(fullName, pr.number, body.method);
+        try {
+          await code.prReviews.merge(fullName, pr.number, body.method);
+        } catch (err) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
         // Recalculate state from GitHub before returning so the UI updates now.
         await code.sync.syncPr(fullName, pr.number);
         return { ok: true };

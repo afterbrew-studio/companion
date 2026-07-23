@@ -71,6 +71,7 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
   const verdict = d.verdict;
   const meta = STATUS_META[d.status];
   const canAct = can('slop:act');
+  const canRefine = can('refine:manage');
 
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
@@ -91,6 +92,20 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
         <button className="btn-ghost" disabled={busy} onClick={() => void act(() => slopApi.dismiss(d.id))}>
           Dismiss
         </button>
+        {canRefine ? (
+          <button
+            className="btn-ghost"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                const { refinementId } = await slopApi.moveToRefinement(d.id);
+                window.location.hash = `/refinement/${refinementId}`;
+              })
+            }
+          >
+            Move to refinement
+          </button>
+        ) : null}
         <ActionMenu
           actions={[
             ...(['label', 'comment', 'request_changes'] as const)

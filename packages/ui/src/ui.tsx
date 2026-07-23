@@ -45,6 +45,8 @@ export function Dropdown<T extends string>({
   renderTrigger,
   searchable,
   action,
+  disabled = false,
+  maxVisible,
 }: {
   value: T | null;
   onChange: (v: T) => void;
@@ -60,6 +62,9 @@ export function Dropdown<T extends string>({
   searchable?: boolean;
   /** Pinned action row at the bottom of the menu (e.g. "New workspace"). */
   action?: { label: string; onSelect: () => void };
+  disabled?: boolean;
+  /** Cap rendered options; searchable lists disclose how many remain. */
+  maxVisible?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -71,7 +76,12 @@ export function Dropdown<T extends string>({
   const selected = options.find((o) => o.value === value) ?? null;
 
   const q = query.trim().toLowerCase();
-  const visible = q ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(q)) : options;
+  const matching = q ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(q)) : options;
+  const visible = maxVisible ? matching.slice(0, maxVisible) : matching;
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   // Place the portaled menu against the trigger; re-measured when filtering
   // changes its height. Layout effect so the first paint is already placed.
@@ -170,12 +180,13 @@ export function Dropdown<T extends string>({
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
         className={
           triggerClassName ??
-          'flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-left text-[13px] font-medium transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
+          'flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-left text-[13px] font-medium transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
         }
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {
@@ -283,6 +294,11 @@ export function Dropdown<T extends string>({
                 );
               })}
                 {visible.length === 0 ? <li className="dim px-2.5 py-2">{q ? 'No matches' : 'No options'}</li> : null}
+                {matching.length > visible.length ? (
+                  <li className="dim px-2.5 py-2 text-[11px]">
+                    {matching.length - visible.length} more — keep typing to narrow the list
+                  </li>
+                ) : null}
               </ul>
               {action ? (
                 <div className="border-t border-zinc-200 p-1 dark:border-zinc-800">

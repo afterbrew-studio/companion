@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import { safeParse } from '@companion/services';
-import type { SlopAction, SlopDetectionResult, SlopRuleRecord, SlopVerdict } from '../contract/index.js';
+import type { SlopAppliedAction, SlopDetectionResult, SlopRuleRecord, SlopVerdict } from '../contract/index.js';
 
 interface DetectionRow {
   id: string;
@@ -39,7 +39,7 @@ function rowToDetection(row: DetectionRow): SlopDetectionResult {
     // reviewerHints post-dates the first verdicts; old JSON normalizes to [].
     verdict: verdict ? { ...verdict, reviewerHints: verdict.reviewerHints ?? [] } : null,
     error: row.error,
-    appliedAction: row.applied_action as SlopAction | null,
+    appliedAction: row.applied_action as SlopAppliedAction | null,
     ruleIds: safeParse<string[]>(row.rule_ids, []),
     createdAt: row.created_at,
   };
@@ -123,7 +123,7 @@ export class SlopStore {
     return row ? rowToDetection(row) : undefined;
   }
 
-  setDetectionStatus(id: string, status: SlopDetectionResult['status'], appliedAction: SlopAction | null): void {
+  setDetectionStatus(id: string, status: SlopDetectionResult['status'], appliedAction: SlopAppliedAction | null): void {
     this.db
       .prepare(`UPDATE slop_detections SET status = ?, applied_action = ? WHERE id = ?`)
       .run(status, appliedAction, id);
