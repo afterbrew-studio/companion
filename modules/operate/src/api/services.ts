@@ -70,7 +70,11 @@ export default defineServices(async (ctx) => {
   const checkouts = new Checkouts(githubTokenFor);
   const store = new OperateStore(ctx.db, settings);
   const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
-  const webhookTunnel = new WebhookTunnel(() => ctx.moduleConfig.get('webhookTunnel') === true, ctx.config.port);
+  const webhookTunnel = new WebhookTunnel(
+    () => ctx.moduleConfig.get('webhookTunnel') === true,
+    ctx.config.port,
+    () => ctx.broadcast({ t: 'modules.changed' }),
+  );
   const skills = new Skills();
 
   // Run visibility gates on repo→workspace access; resolve workspace lazily so

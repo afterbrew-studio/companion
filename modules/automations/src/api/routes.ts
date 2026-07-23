@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineRoutes, route, notFound } from '@companion/core/server';
+import { badRequest, defineRoutes, route, notFound } from '@companion/core/server';
 import type { AuthUser } from '@companion/contracts';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import '../contract/index.js';
@@ -122,13 +122,25 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    /** Instance-wide public webhook delivery over moxxy's proxy relay (read-only —
-     *  the toggle is operate's `webhookTunnel` module config, edited on the Modules page). */
+    /** Instance-wide public webhook delivery over moxxy's proxy relay. */
     route({
       method: 'GET',
       path: '/api/webhooks/tunnel',
       access: 'automations:manage',
-      handler: () => ({ enabled: operate.webhookTunnel.enabled(), url: operate.webhookTunnel.url() }),
+      handler: () => operate.webhookTunnel.state(),
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/webhooks/tunnel/retry',
+      access: 'settings:manage',
+      handler: async () => {
+        if (!operate.webhookTunnel.enabled()) throw badRequest('enable public webhook delivery first');
+        await operate.webhookTunnel
+          .start()
+          .catch((err) => ctx.log.warn('manual webhook tunnel retry failed', { err: String(err) }));
+        return operate.webhookTunnel.state();
+      },
     }),
 
     route({

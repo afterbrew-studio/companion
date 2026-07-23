@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@companion/core/client';
 import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
+import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@companion/ui';
@@ -176,12 +177,14 @@ function WorkspaceBriefingCard({
 }
 
 /**
- * Instance-wide tunnel status (read-only here): the toggle is operate's
- * `webhookTunnel` module config, edited under Modules → Operate → Configure.
- * Config changes broadcast `modules.changed`, so the card follows edits live.
+ * Instance-wide tunnel status + its directly relevant module-config toggle.
+ * State changes broadcast `modules.changed`, so relay failure/retry stays live.
  */
 function WebhookTunnelCard(): JSX.Element | null {
+  const { can } = useAuth();
   const [tunnel, setTunnel] = useState<WebhookTunnelState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(
     () =>
@@ -195,31 +198,84 @@ function WebhookTunnelCard(): JSX.Element | null {
 
   if (!tunnel) return null;
 
+  const configure = async (enabled: boolean): Promise<void> => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await modulesApi.setConfig('operate', { webhookTunnel: enabled });
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retry = async (): Promise<void> => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      setTunnel(await api.retryWebhookTunnel());
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signal =
+    tunnel.status === 'connected'
+      ? { tone: 'green' as const, label: 'connected' }
+      : tunnel.status === 'error'
+        ? { tone: 'red' as const, label: 'connection error' }
+        : tunnel.status === 'connecting'
+          ? { tone: 'amber' as const, label: 'connecting' }
+          : { tone: 'zinc' as const, label: 'off' };
+
   return (
     <article className="card mt-3" aria-label="Public webhook delivery">
       <SettingRow
         title={
           <span className="flex flex-wrap items-center gap-2">
             Public webhook delivery
-            <MetaSignal tone={tunnel.enabled ? 'green' : 'zinc'} label={tunnel.enabled ? 'on' : 'off'} />
+            <MetaSignal tone={signal.tone} label={signal.label} pulse={tunnel.status === 'connecting'} />
           </span>
         }
         description="Routes GitHub deliveries through the moxxy proxy — no tunnel or port-forward of your own needed. The URL is stable across restarts."
       >
-        <a className="btn-ghost" href="#/modules">
-          Configure in Modules
-        </a>
+        {can('settings:manage') ? (
+          <Switch
+            checked={tunnel.enabled}
+            disabled={busy}
+            label="Public webhook delivery"
+            onChange={(enabled) => void configure(enabled)}
+          />
+        ) : null}
       </SettingRow>
+      <ErrorBar error={actionError} className="mt-2.5" />
       {tunnel.enabled ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2.5 text-[13px] dark:border-zinc-800">
-          <span className="dim">Base URL:</span>
-          {tunnel.url ? (
-            <CopyText value={tunnel.url} title="Copy public base URL">
-              <code className="code-inline break-all">{tunnel.url}</code>
-            </CopyText>
-          ) : (
-            <span className="badge-warn">connecting…</span>
-          )}
+        <div className="mt-2.5 border-t border-zinc-200 pt-2.5 text-[13px] dark:border-zinc-800">
+          {tunnel.status === 'connected' && tunnel.url ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="dim">Base URL:</span>
+              <CopyText value={tunnel.url} title="Copy public base URL">
+                <code className="code-inline break-all">{tunnel.url}</code>
+              </CopyText>
+            </div>
+          ) : null}
+          {tunnel.status === 'connecting' ? (
+            <p className="dim">Establishing secure relay connection…</p>
+          ) : null}
+          {tunnel.status === 'error' ? (
+            <div className="flex flex-col items-start gap-2">
+              <ErrorBar error={tunnel.error} />
+              {can('settings:manage') ? (
+                <button className="btn-ghost" disabled={busy} onClick={() => void retry()}>
+                  {busy ? 'Retrying…' : 'Retry now'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </article>
