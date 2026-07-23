@@ -31,6 +31,7 @@ interface QueueItem {
   title: string;
   repo: string | null;
   issueNumber: number | null;
+  userId: string | null;
   priority: number;
   enqueuedAt: number;
   /** How to replay this entry after a restart; absent = not persisted. */
@@ -98,7 +99,7 @@ export class Orchestrator implements RunnerEventSink {
     checkouts: Checkouts,
     moxxyCli: MoxxyCli | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
-    githubTokenFor: (
+    private readonly githubTokenFor: (
       repo: string,
       username?: string | null,
     ) => Promise<string | null> | string | null = () => null,
@@ -278,6 +279,16 @@ export class Orchestrator implements RunnerEventSink {
      *  the owning feature, never client input, so filters can't be dodged. */
     task?: string | null;
   }): Promise<RunRecord> {
+    if (opts.repo) {
+      if (!opts.userId) {
+        throw new Error(`a personal GitHub account owner is required to run agents for ${opts.repo}`);
+      }
+      if (!(await this.githubTokenFor(opts.repo, opts.userId))) {
+        throw new Error(
+          `your GitHub accounts cannot access ${opts.repo} — ask the repository owner to grant access`,
+        );
+      }
+    }
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
     const kind: RunKind = opts.kind ?? 'interactive';
@@ -716,6 +727,8 @@ export class Orchestrator implements RunnerEventSink {
     title: string;
     cwd: string;
     repo?: string | null;
+    /** Profile whose personal GitHub account authorizes access to `repo`. */
+    userId?: string | null;
     issueNumber?: number | null;
     /** Feature-level task id — carried for when one-shots learn to place. */
     task?: string;
@@ -768,6 +781,7 @@ export class Orchestrator implements RunnerEventSink {
         title: opts.title,
         repo: opts.repo ?? null,
         issueNumber: opts.issueNumber ?? null,
+        userId: opts.userId ?? null,
         resume: opts.resume,
       },
       job,
@@ -788,6 +802,7 @@ export class Orchestrator implements RunnerEventSink {
       title: string;
       repo: string | null;
       issueNumber: number | null;
+      userId: string | null;
       resume?: { type: string; args: Record<string, unknown> };
     },
     job: () => Promise<T>,
@@ -806,6 +821,7 @@ export class Orchestrator implements RunnerEventSink {
         title: meta.title,
         repo: meta.repo,
         issueNumber: meta.issueNumber,
+        userId: meta.userId,
         priority,
         enqueuedAt: restored?.enqueuedAt ?? Date.now(),
         resume: meta.resume,
@@ -943,6 +959,7 @@ export class Orchestrator implements RunnerEventSink {
         title: q.title,
         repo: q.repo,
         issueNumber: q.issueNumber,
+        userId: q.userId,
         priority: q.priority,
         enqueuedAt: q.enqueuedAt,
       })),

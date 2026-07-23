@@ -118,6 +118,7 @@ export function ProposalsPage(): JSX.Element {
 
       {creating ? (
         <CreateProposalModal
+          workspaceId={current.id}
           repos={repos}
           onClose={() => setCreating(false)}
           onCreated={() => {
@@ -131,15 +132,17 @@ export function ProposalsPage(): JSX.Element {
 }
 
 function CreateProposalModal({
+  workspaceId,
   repos,
   onClose,
   onCreated,
 }: {
+  workspaceId: string;
   repos: RepoRecord[];
   onClose: () => void;
   onCreated: () => void;
 }): JSX.Element {
-  const [repo, setRepo] = useState(repos[0]?.fullName ?? '');
+  const [repo, setRepo] = useState(repos.find((candidate) => candidate.githubAccessible)?.fullName ?? '');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -150,7 +153,7 @@ function CreateProposalModal({
     setBusy(true);
     setError(null);
     try {
-      const { proposal } = await api.createProposal(repo, title.trim(), body.trim());
+      const { proposal } = await api.createProposal(workspaceId, repo, title.trim(), body.trim());
       // Fire the feasibility analysis right away; the card streams its state.
       void api.analyzeProposal(proposal.id).catch(() => undefined);
       onCreated();
@@ -166,8 +169,9 @@ function CreateProposalModal({
         <Field label="Repository">
           <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)} required>
             {repos.map((r) => (
-              <option key={r.fullName} value={r.fullName}>
+              <option key={r.fullName} value={r.fullName} disabled={!r.githubAccessible}>
                 {r.fullName}
+                {r.githubAccessible ? '' : ' — access required'}
               </option>
             ))}
           </select>

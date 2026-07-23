@@ -10,6 +10,7 @@ import { SpecsStore } from './specs-store.js';
 // ---------- proposals ----------
 
 const proposalSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   repo: z.string(),
   title: z.string().min(3).max(200),
   body: z.string().min(1),
@@ -20,6 +21,7 @@ const proposalSchema = z.object({
 const storageSchema = z.enum(['virtual', 'repo']).optional();
 
 const createSpecSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   repo: z.string(),
   title: z.string().min(3).max(200),
   content: z.string().min(1).max(256_000),
@@ -36,6 +38,7 @@ const patchSpecSchema = z.object({
 });
 
 const generateSpecSchema = z.object({
+  workspaceId: z.string().min(1).max(100),
   repo: z.string(),
   instructions: z.string().min(8).max(4000),
   storage: storageSchema,
@@ -95,14 +98,14 @@ export default defineRoutes((ctx) => {
 
   const requireProposal = (user: AuthUser | null, id: string) => {
     const proposal = proposalsStore.get(id);
-    if (!proposal || !user || !workspace.canAccessRepo(user, proposal.repo)) {
+    if (!proposal || !user || !workspace.canAccessWorkspace(user, proposal.workspaceId)) {
       throw notFound(`proposal ${id} not found`);
     }
     return proposal;
   };
   const requireSpec = (user: AuthUser | null, id: string) => {
     const spec = specsStore.get(id);
-    if (!spec || !user || !workspace.canAccessRepo(user, spec.repo)) throw notFound(`spec ${id} not found`);
+    if (!spec || !user || !workspace.canAccessWorkspace(user, spec.workspaceId)) throw notFound(`spec ${id} not found`);
     return spec;
   };
   const requireDoc = (user: AuthUser | null, id: string) => {
@@ -112,8 +115,8 @@ export default defineRoutes((ctx) => {
     }
     return doc;
   };
-  const requireRepo = (user: AuthUser | null, fullName: string) => {
-    if (!code.repos.get(fullName) || !user || !workspace.canAccessRepo(user, fullName)) {
+  const requireRepo = (user: AuthUser | null, workspaceId: string, fullName: string) => {
+    if (!code.repos.inWorkspace(fullName, workspaceId) || !user || !workspace.canAccessWorkspace(user, workspaceId)) {
       throw notFound(`repo ${fullName} not connected`);
     }
   };
@@ -130,7 +133,7 @@ export default defineRoutes((ctx) => {
       path: '/api/proposals',
       access: 'proposals:read',
       handler: ({ user }) => ({
-        proposals: proposalsStore.list().filter((proposal) => workspace.canAccessRepo(user!, proposal.repo)),
+        proposals: proposalsStore.list().filter((proposal) => workspace.canAccessWorkspace(user!, proposal.workspaceId)),
       }),
     }),
 
@@ -140,8 +143,8 @@ export default defineRoutes((ctx) => {
       access: 'proposals:create',
       body: proposalSchema,
       handler: ({ body, user }) => {
-        requireRepo(user, body.repo);
-        return created({ proposal: plan.proposals.create(body.repo, body.title, body.body) });
+        requireRepo(user, body.workspaceId, body.repo);
+        return created({ proposal: plan.proposals.create(body.workspaceId, body.repo, body.title, body.body) });
       },
     }),
 
@@ -155,7 +158,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, user }) => {
         requireProposal(user, params.id);
         void plan.proposals
-          .analyze(params.id)
+          .analyze(params.id, user!.username)
           .catch((err) => log.warn('analysis failed', { id: params.id, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -167,7 +170,7 @@ export default defineRoutes((ctx) => {
       access: 'proposals:act',
       handler: async ({ params, user }) => {
         requireProposal(user, params.id);
-        return { proposal: await plan.proposals.approve(params.id) };
+        return { proposal: await plan.proposals.approve(params.id, user!.username) };
       },
     }),
 
@@ -177,7 +180,7 @@ export default defineRoutes((ctx) => {
       access: 'proposals:act',
       handler: async ({ params, user }) => {
         requireProposal(user, params.id);
-        return { proposal: await plan.proposals.finishImplementation(params.id) };
+        return { proposal: await plan.proposals.finishImplementation(params.id, user!.username) };
       },
     }),
 
@@ -255,9 +258,9 @@ export default defineRoutes((ctx) => {
       access: 'specs:manage',
       body: createSpecSchema,
       handler: ({ body, user }) => {
-        requireRepo(user, body.repo);
+        requireRepo(user, body.workspaceId, body.repo);
         try {
-          return created({ spec: plan.specs.create(body.repo, body.title, body.content, body.storage) });
+          return created({ spec: plan.specs.create(body.workspaceId, body.repo, body.title, body.content, body.storage) });
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -292,9 +295,9 @@ export default defineRoutes((ctx) => {
       access: 'specs:manage',
       body: generateSpecSchema,
       handler: ({ body, user }) => {
-        requireRepo(user, body.repo);
+        requireRepo(user, body.workspaceId, body.repo);
         void plan.specs
-          .generate(body.repo, body.instructions, body.storage)
+          .generate(body.workspaceId, body.repo, body.instructions, body.storage, user!.username)
           .catch((err) => log.warn('spec generation failed', { repo: body.repo, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -322,8 +325,11 @@ export default defineRoutes((ctx) => {
         if (proposal.status !== 'implemented') throw badRequest(`proposal is ${proposal.status}, not implemented`);
         void plan.specs
           .generate(
+            proposal.workspaceId,
             proposal.repo,
             `Document, as a specification of the CURRENT behavior, the feature implemented by the proposal "${proposal.title}". Original proposal:\n${proposal.body.slice(0, 2000)}`,
+            undefined,
+            user!.username,
           )
           .catch((err) => log.warn('capture-spec failed', { proposal: params.id, err: String(err) }));
         return accepted({ queued: true });
@@ -339,7 +345,7 @@ export default defineRoutes((ctx) => {
       body: createFeatureSchema,
       handler: ({ params, body, user }) => {
         requireSpec(user, params.id);
-        return created({ proposal: plan.specs.createFeature(params.id, body) });
+        return created({ proposal: plan.specs.createFeature(params.id, body, user!.username) });
       },
     }),
 
@@ -408,7 +414,7 @@ export default defineRoutes((ctx) => {
       body: saveDocSchema,
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
-        if (body.repo) requireRepo(user, body.repo);
+        if (body.repo) requireRepo(user, params.id, body.repo);
         return created({ doc: plan.docs.create(params.id, { ...body, repo: body.repo ?? null }) });
       },
     }),
@@ -419,8 +425,8 @@ export default defineRoutes((ctx) => {
       access: 'docs:manage',
       body: patchDocSchema,
       handler: ({ params, body, user }) => {
-        requireDoc(user, params.id);
-        if (body.repo) requireRepo(user, body.repo);
+        const doc = requireDoc(user, params.id);
+        if (body.repo) requireRepo(user, doc.workspaceId, body.repo);
         return { doc: plan.docs.update(params.id, body) };
       },
     }),
@@ -442,7 +448,7 @@ export default defineRoutes((ctx) => {
       access: 'docs:read',
       handler: ({ params, user }) => {
         const fullName = `${params.owner}/${params.name}`;
-        requireRepo(user, fullName);
+        if (!user || !workspace.canAccessRepo(user, fullName)) throw notFound(`repo ${fullName} not connected`);
         return { files: plan.docs.importCandidates(fullName) };
       },
     }),
@@ -454,7 +460,7 @@ export default defineRoutes((ctx) => {
       body: importDocsSchema,
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
-        requireRepo(user, body.repo);
+        requireRepo(user, params.id, body.repo);
         return created({ docs: plan.docs.importFromRepo(params.id, body.repo, body.paths) });
       },
     }),
@@ -467,9 +473,9 @@ export default defineRoutes((ctx) => {
       body: generateDocSchema,
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
-        if (body.repo) requireRepo(user, body.repo);
+        if (body.repo) requireRepo(user, params.id, body.repo);
         try {
-          return created({ doc: await plan.docs.generate(params.id, body) });
+          return created({ doc: await plan.docs.generate(params.id, body, user!.username) });
         } catch (err) {
           throw badRequest(
             err instanceof z.ZodError

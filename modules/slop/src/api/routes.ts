@@ -29,9 +29,12 @@ const applySchema = z.object({
   accountId: z.string().optional(),
 });
 
+const moveToRefinementSchema = z.object({ workspaceId: z.string().min(1).max(100) });
+
 export default defineRoutes((ctx) => {
   const slop = ctx.services.get('slop');
   const workspace = ctx.services.get('workspace');
+  const code = ctx.services.get('code');
 
   // A private workspace the caller isn't in reads as "not found" — the house
   // convention (existence is not leaked).
@@ -39,8 +42,10 @@ export default defineRoutes((ctx) => {
     workspace.requireAccessible(user, id);
   };
 
-  const requireRepo = (user: AuthUser | null, repo: string): void => {
+  const requireRepo = async (user: AuthUser | null, repo: string): Promise<void> => {
     if (!user || !workspace.canAccessRepo(user, repo)) throw notFound(`repo ${repo} not connected`);
+    const { client } = await code.githubAccounts.verifiedClientFor('fetch', repo, { username: user.username });
+    if (!client) throw notFound(`repo ${repo} not connected`);
   };
 
   // Custom rules are workspace-owned: mutating one you can't reach reads as
@@ -55,11 +60,12 @@ export default defineRoutes((ctx) => {
   };
 
   // A detection in a repo the caller can't reach reads as "not found".
-  const requireDetection = (user: AuthUser | null, id: string) => {
+  const requireDetection = async (user: AuthUser | null, id: string) => {
     const detection = slop.getDetection(id);
     if (!detection || !user || !workspace.canAccessRepo(user, detection.repo)) {
       throw notFound('detection not found');
     }
+    await requireRepo(user, detection.repo);
     return detection;
   };
 
@@ -68,9 +74,13 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/slop',
       access: 'slop:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
-        return { detections: slop.listByWorkspace(params.id) };
+        const detections = slop.listByWorkspace(params.id);
+        const visible = await Promise.all(
+          detections.map((detection) => requireRepo(user, detection.repo).then(() => true).catch(() => false)),
+        );
+        return { detections: detections.filter((_, index) => visible[index]) };
       },
     }),
 
@@ -171,16 +181,16 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/slop-detect',
       access: 'slop:act',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const repo = `${params.owner}/${params.name}`;
-        requireRepo(user, repo);
+        await requireRepo(user, repo);
         const prNumber = Number(params.number);
         try {
-          slop.validateDetect(repo, prNumber);
+          slop.validateDetect(repo, prNumber, user!.username);
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
-        void slop.detect(repo, prNumber).catch(() => undefined);
+        void slop.detect(repo, prNumber, user!.username).catch(() => undefined);
         return accepted({ queued: true });
       },
     }),
@@ -189,9 +199,9 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/slop',
       access: 'slop:read',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const repo = `${params.owner}/${params.name}`;
-        requireRepo(user, repo);
+        await requireRepo(user, repo);
         return { detections: slop.listForPr(repo, Number(params.number)) };
       },
     }),
@@ -200,7 +210,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/slop/:id',
       access: 'slop:read',
-      handler: ({ params, user }) => ({ detection: requireDetection(user, params.id) }),
+      handler: async ({ params, user }) => ({ detection: await requireDetection(user, params.id) }),
     }),
 
     route({
@@ -209,9 +219,9 @@ export default defineRoutes((ctx) => {
       access: 'slop:act',
       body: applySchema,
       handler: async ({ params, body, user }) => {
-        requireDetection(user, params.id);
+        await requireDetection(user, params.id);
         try {
-          return await slop.apply(params.id, body);
+          return await slop.apply(params.id, { ...body, userId: user!.username });
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -222,8 +232,8 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/slop/:id/dismiss',
       access: 'slop:act',
-      handler: ({ params, user }) => {
-        requireDetection(user, params.id);
+      handler: async ({ params, user }) => {
+        await requireDetection(user, params.id);
         slop.dismiss(params.id);
         return { ok: true };
       },
@@ -233,10 +243,15 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/slop/:id/move-to-refinement',
       access: 'slop:act',
-      handler: ({ params, user }) => {
-        requireDetection(user, params.id);
+      body: moveToRefinementSchema,
+      handler: async ({ params, body, user }) => {
+        const detection = await requireDetection(user, params.id);
+        requireWorkspace(user, body.workspaceId);
+        if (!code.repos.inWorkspace(detection.repo, body.workspaceId)) {
+          throw notFound(`repo ${detection.repo} not connected`);
+        }
         try {
-          return slop.moveToRefinement(params.id);
+          return slop.moveToRefinement(params.id, body.workspaceId);
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

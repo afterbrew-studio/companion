@@ -9,8 +9,8 @@ export class ProposalsStore {
   insert(p: ProposalRecord): void {
     this.db
       .prepare(
-        `INSERT INTO proposals (id, repo, title, body, status, analysis, analysis_run_id, implement_run_id, branch, pr_url, created_at, updated_at)
-         VALUES (@id, @repo, @title, @body, @status, @analysis, @analysisRunId, @implementRunId, @branch, @prUrl, @createdAt, @updatedAt)`,
+        `INSERT INTO proposals (id, workspace_id, repo, title, body, status, analysis, analysis_run_id, implement_run_id, branch, pr_url, created_at, updated_at)
+         VALUES (@id, @workspaceId, @repo, @title, @body, @status, @analysis, @analysisRunId, @implementRunId, @branch, @prUrl, @createdAt, @updatedAt)`,
       )
       .run({ ...p, analysis: p.analysis ? JSON.stringify(p.analysis) : null });
   }
@@ -59,8 +59,7 @@ export class ProposalsStore {
   listWorkspace(workspaceId: string): ProposalRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT p.* FROM proposals p JOIN repos r ON r.full_name = p.repo
-         WHERE r.workspace_id = ? ORDER BY p.created_at DESC`,
+        `SELECT * FROM proposals WHERE workspace_id = ? ORDER BY created_at DESC`,
       )
       .all(workspaceId) as ProposalRow[];
     return rows.map(proposalRowToRecord);
@@ -81,6 +80,7 @@ export class ProposalsStore {
 
 interface ProposalRow {
   id: string;
+  workspace_id: string;
   repo: string;
   title: string;
   body: string;
@@ -97,6 +97,7 @@ interface ProposalRow {
 function proposalRowToRecord(row: ProposalRow): ProposalRecord {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     repo: row.repo,
     title: row.title,
     body: row.body,

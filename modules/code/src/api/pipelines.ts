@@ -141,6 +141,7 @@ export interface SlopGateService {
   detectForGate(
     repo: string,
     prNumber: number,
+    userId: string,
   ): Promise<{ aiLikelihood: number; confidence: string; summary: string; detail: string | null }>;
 }
 
@@ -148,7 +149,7 @@ interface EngineDeps {
   readonly store: CodeStore;
   readonly orchestrator: Orchestrator;
   readonly checkouts: Checkouts;
-  readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null;
+  readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null;
   readonly checks: PrChecks;
   readonly reviews: PrReviews;
   /** Lazily resolved per run — slop registers after code in topo order. */
@@ -157,6 +158,7 @@ interface EngineDeps {
 
 interface StepContext {
   readonly repo: string;
+  readonly userId: string;
   readonly type: PipelineType;
   /** Present for pr-type runs. */
   readonly pr: PrRecord | null;
@@ -189,7 +191,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
   return {
     'checks-gate': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'CI checks gate only applies to PR pipelines' };
-      const summary = await deps.checks.fetchSummary(ctx.repo, ctx.pr.number);
+      const summary = await deps.checks.fetchSummary(ctx.repo, ctx.pr.number, ctx.userId);
       const line = `${summary.passed} passed, ${summary.failed} failed, ${summary.pending} running`;
       if (summary.state === 'failing') {
         return { status: 'failed', summary: `CI failing — ${line}`, detail: describeChecks(summary) };
@@ -207,14 +209,14 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
 
     'ai-review': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
-      const result = await deps.reviews.analyzePr(ctx.repo, ctx.pr.number);
+      const result = await deps.reviews.analyzePr(ctx.repo, ctx.pr.number, ctx.userId);
       if (!result.verdict) {
         return { status: 'error', summary: result.error ?? 'review produced no verdict' };
       }
       let posted = '';
       if (step.config.post) {
         try {
-          await deps.reviews.apply(result.id);
+          await deps.reviews.apply(result.id, undefined, ctx.userId);
           posted = ', posted to GitHub';
         } catch (err) {
           posted = `, posting failed: ${String(err)}`;
@@ -238,7 +240,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       let prompt: string;
       let title: string;
       if (ctx.pr) {
-        const checksSummary = await deps.checks.trySummary(ctx.repo, ctx.pr.number);
+        const checksSummary = await deps.checks.trySummary(ctx.repo, ctx.pr.number, ctx.userId);
         prompt = agentStepPrompt(step.config.prompt, ctx.pr, describeChecks(checksSummary));
         title = `Pipeline step "${step.name}" on PR #${ctx.pr.number}`;
       } else if (ctx.issue) {
@@ -255,6 +257,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
           title,
           cwd,
           repo: ctx.repo,
+          userId: ctx.userId,
           issueNumber: targetOf(ctx)?.number ?? null,
           prompt,
           timeoutMs: 12 * 60_000,
@@ -266,6 +269,8 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
             ctx.pr.number,
             ctx.pr.baseRef,
             run,
+            undefined,
+            ctx.userId,
           )
         : await run(deps.checkouts.cloneDir(ctx.repo));
       const verdict = agentVerdictSchema.parse(extractModelJson(finalMessage ?? ''));
@@ -279,7 +284,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
     label: async (step, ctx) => {
       const target = targetOf(ctx);
       if (!target) return { status: 'error', summary: 'label steps need a PR or issue target' };
-      const client = deps.github({ repo: ctx.repo });
+      const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
       await client.addLabels(ctx.repo, target.number, [...step.config.labels]);
       return { status: 'passed', summary: `added ${step.config.labels.join(', ')}` };
@@ -288,7 +293,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
     comment: async (step, ctx) => {
       const target = targetOf(ctx);
       if (!target) return { status: 'error', summary: 'comment steps need a PR or issue target' };
-      const client = deps.github({ repo: ctx.repo });
+      const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
       const body = step.config.body
         .replaceAll('{{pr.number}}', String(target.number))
@@ -308,7 +313,7 @@ function createStepRegistry(deps: EngineDeps): StepRegistry {
       if (!slop) return { status: 'error', summary: 'the AI Slop Detection module is not enabled' };
       // Runs a fresh detection; the verdict also lands as a pending result on
       // the slop page, so a failing gate arrives with its evidence attached.
-      const verdict = await slop.detectForGate(ctx.repo, ctx.pr.number);
+      const verdict = await slop.detectForGate(ctx.repo, ctx.pr.number, ctx.userId);
       return {
         status: verdict.aiLikelihood >= step.config.threshold ? 'failed' : 'passed',
         summary: `AI likelihood ${verdict.aiLikelihood}/100 (${verdict.confidence} confidence) — ${verdict.summary}`,
@@ -492,7 +497,13 @@ export class Pipelines {
    * Start a pipeline against a PR. Returns the freshly inserted run record;
    * execution continues in the background and streams over pipelineRuns.changed.
    */
-  start(pipelineId: string, repo: string, targetNumber: number, trigger: PipelineTrigger): PipelineRunRecord {
+  start(
+    pipelineId: string,
+    repo: string,
+    targetNumber: number,
+    trigger: PipelineTrigger,
+    userId: string,
+  ): PipelineRunRecord {
     const pipeline = this.deps.store.pipelines.get(pipelineId);
     if (!pipeline) throw new Error(`unknown pipeline ${pipelineId}`);
     // The pipeline's type decides the payload it needs.
@@ -529,31 +540,30 @@ export class Pipelines {
     this.deps.store.pipelines.insertRun(run);
     this.broadcast({ t: 'pipelineRuns.changed', repo });
 
-    void this.execute(run.id, resolved, { repo, type: pipeline.type, pr, issue }).catch((err) => {
+    void this.execute(run.id, resolved, { repo, userId, type: pipeline.type, pr, issue }).catch((err) => {
       log.warn('pipeline run crashed', { runId: run.id, err: String(err) });
     });
     return run;
   }
 
   /** Webhook hook: run every auto-run PR pipeline of the repo's workspace. */
-  autoRunForPr(repo: string, prNumber: number): void {
-    this.autoRun(repo, prNumber, 'pr', 'pr-opened');
+  autoRunForPr(repo: string, prNumber: number, userId: string): void {
+    this.autoRun(repo, prNumber, 'pr', 'pr-opened', userId);
   }
 
   /** Webhook hook: run every auto-run issue pipeline of the repo's workspace. */
-  autoRunForIssue(repo: string, issueNumber: number): void {
-    this.autoRun(repo, issueNumber, 'issue', 'issue-opened');
+  autoRunForIssue(repo: string, issueNumber: number, userId: string): void {
+    this.autoRun(repo, issueNumber, 'issue', 'issue-opened', userId);
   }
 
-  private autoRun(repo: string, number: number, type: PipelineType, trigger: PipelineTrigger): void {
-    const repoRow = this.deps.store.repos.get(repo);
-    if (!repoRow) return;
-    const auto = this.deps.store.pipelines
-      .list(repoRow.workspace_id)
+  private autoRun(repo: string, number: number, type: PipelineType, trigger: PipelineTrigger, userId: string): void {
+    const auto = this.deps.store.repos
+      .workspaceIds(repo)
+      .flatMap((workspaceId) => this.deps.store.pipelines.list(workspaceId))
       .filter((p) => p.autoRunOnPrOpen && p.type === type);
     for (const pipeline of auto) {
       try {
-        this.start(pipeline.id, repo, number, trigger);
+        this.start(pipeline.id, repo, number, trigger, userId);
         log.info('auto-run pipeline started', { pipeline: pipeline.name, repo, number });
       } catch (err) {
         log.warn('auto-run pipeline failed to start', { pipeline: pipeline.name, err: String(err) });

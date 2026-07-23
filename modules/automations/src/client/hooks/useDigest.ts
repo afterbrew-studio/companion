@@ -55,7 +55,11 @@ export function useDigest(): {
 
   // Default to the first repo; keep the pick valid as the repo list changes.
   useEffect(() => {
-    setSelected((prev) => (prev && repos.some((x) => x.fullName === prev) ? prev : (repos[0]?.fullName ?? null)));
+    setSelected((prev) =>
+      prev && repos.some((x) => x.fullName === prev && x.githubAccessible)
+        ? prev
+        : (repos.find((x) => x.githubAccessible)?.fullName ?? null),
+    );
   }, [repos]);
 
   return { current, repos, reports, runs, selected, setSelected, loaded, error, setError, refresh };

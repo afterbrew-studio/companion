@@ -20,6 +20,7 @@ import {
   timeAgo,
 } from '@companion/ui';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
+import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, TriageStateIcon } from '../widgets.js';
 
 /**
@@ -47,6 +48,7 @@ export function IssuesAreaPage(): JSX.Element {
     hasMore,
     loadMore,
     error,
+    unavailableRepos,
     canActIssues,
     canRunPipelines,
     pipelines,
@@ -74,6 +76,7 @@ export function IssuesAreaPage(): JSX.Element {
   } = s.filters;
 
   if (!current) return <EmptyState title="No workspace selected" />;
+  const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
 
   return (
     <Page>
@@ -201,7 +204,7 @@ export function IssuesAreaPage(): JSX.Element {
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
 
-      {issues.length === 0 && !loading ? (
+      {issues.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No issues match the filters' : `No ${tab} issues`}
           hint={!search.trim() && repoFilter === 'all' ? 'Connect repositories to this workspace to start syncing issues.' : undefined}
@@ -210,6 +213,7 @@ export function IssuesAreaPage(): JSX.Element {
         <>
         <ListCard className="mt-3" ariaLabel="Issue list">
           {loading && issues.length === 0 ? <RowsSkeleton rows={6} /> : null}
+          {!loading ? unavailable.map((repo) => <RepoUnavailableRow key={repo} repo={repo} />) : null}
           {issues.map((issue) => (
             <a
               key={`${issue.repo}#${issue.number}`}

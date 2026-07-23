@@ -47,7 +47,7 @@ export default defineServices((ctx) => {
     operate.checkouts,
     operate.webhookTunnel,
     plan.specs,
-    (repo) => code.githubAccounts.clientFor('pipelines', { repo }),
+    (repo, username) => code.githubAccounts.clientFor('pipelines', { repo, username }),
     ctx.broadcast,
   );
 

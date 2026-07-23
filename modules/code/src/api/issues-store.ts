@@ -73,13 +73,13 @@ export class IssuesStore {
       state
         ? this.db
             .prepare(
-              `SELECT i.* FROM issues i JOIN repos r ON r.full_name = i.repo
+              `SELECT i.* FROM issues i JOIN v_repos r ON r.full_name = i.repo
                WHERE r.workspace_id = ? AND i.state = ? ORDER BY i.updated_at DESC`,
             )
             .all(workspaceId, state)
         : this.db
             .prepare(
-              `SELECT i.* FROM issues i JOIN repos r ON r.full_name = i.repo
+              `SELECT i.* FROM issues i JOIN v_repos r ON r.full_name = i.repo
                WHERE r.workspace_id = ? ORDER BY i.updated_at DESC`,
             )
             .all(workspaceId)
@@ -109,6 +109,8 @@ export class IssuesStore {
       triage?: 'pending' | 'applied' | 'dismissed';
       limit?: number;
       offset?: number;
+      accessibleRepos?: readonly string[];
+      myLogins?: readonly string[];
     },
   ): {
     issues: IssueRecord[];
@@ -118,12 +120,16 @@ export class IssuesStore {
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
+    if (opts.accessibleRepos) {
+      where.push(opts.accessibleRepos.length > 0 ? `i.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})` : '1 = 0');
+      args.push(...opts.accessibleRepos);
+    }
     if (opts.repo) {
       where.push('i.repo = ?');
       args.push(opts.repo);
     }
     if (opts.author === '__me') {
-      const mine = this.githubAccounts.logins();
+      const mine = [...(opts.myLogins ?? this.githubAccounts.logins())];
       where.push(mine.length > 0 ? `i.author IN (${mine.map(() => '?').join(', ')})` : '1 = 0');
       args.push(...mine);
     } else if (opts.author) {
@@ -133,7 +139,7 @@ export class IssuesStore {
     if (opts.assignee === '__none') {
       where.push(`i.assignees = '[]'`);
     } else if (opts.assignee === '__me') {
-      const mine = this.githubAccounts.logins();
+      const mine = [...(opts.myLogins ?? this.githubAccounts.logins())];
       where.push(
         mine.length > 0
           ? `EXISTS (SELECT 1 FROM json_each(i.assignees) WHERE json_each.value IN (${mine.map(() => '?').join(', ')}))`
@@ -163,7 +169,7 @@ export class IssuesStore {
       const like = likeArg(opts.q);
       args.push(like, like, opts.q.replace(/^#/, ''));
     }
-    const base = `FROM issues i JOIN repos r ON r.full_name = i.repo WHERE ${where.join(' AND ')}`;
+    const base = `FROM issues i JOIN v_repos r ON r.full_name = i.repo WHERE ${where.join(' AND ')}`;
     const counts = { open: 0, closed: 0 };
     for (const row of this.db.prepare(`SELECT i.state AS state, COUNT(*) AS n ${base} GROUP BY i.state`).all(...args) as Array<{ state: string; n: number }>) {
       if (row.state === 'open' || row.state === 'closed') counts[row.state] = row.n;
@@ -183,11 +189,17 @@ export class IssuesStore {
       return issueRowToRecord(row, map.get(row.number) ?? null);
     });
     const total = state ? counts[state] : counts.open + counts.closed;
-    const facetBase = `FROM issues i JOIN repos r ON r.full_name = i.repo WHERE r.workspace_id = ?`;
+    const facetAccess = opts.accessibleRepos
+      ? opts.accessibleRepos.length > 0
+        ? ` AND i.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})`
+        : ' AND 1 = 0'
+      : '';
+    const facetBase = `FROM issues i JOIN v_repos r ON r.full_name = i.repo WHERE r.workspace_id = ?${facetAccess}`;
+    const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
     const facets = {
-      authors: (this.db.prepare(`SELECT DISTINCT i.author AS v ${facetBase} AND i.author != '' ORDER BY 1`).all(workspaceId) as Array<{ v: string }>).map((r) => r.v),
-      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.assignees) WHERE')} ORDER BY 1`).all(workspaceId) as Array<{ v: string }>).map((r) => r.v),
-      labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.labels) WHERE')} ORDER BY 1`).all(workspaceId) as Array<{ v: string }>).map((r) => r.v),
+      authors: (this.db.prepare(`SELECT DISTINCT i.author AS v ${facetBase} AND i.author != '' ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.assignees) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+      labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.labels) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
     };
     return { issues, total, counts, facets };
   }

@@ -180,7 +180,7 @@ export class WorkspacesStore {
     this.db.prepare(`UPDATE workspaces SET visibility = ? WHERE id = ?`).run(visibility, id);
   }
 
-  private repoVisibility(fullName: string): { id: string; visibility: string; owner_id: string | null } | undefined {
+  private repoVisibilities(fullName: string): Array<{ id: string; visibility: string; owner_id: string | null }> {
     try {
       return this.db
         .prepare(
@@ -188,20 +188,19 @@ export class WorkspacesStore {
            FROM v_repos r JOIN workspaces w ON w.id = r.workspace_id
            WHERE r.full_name = ?`,
         )
-        .get(fullName) as { id: string; visibility: string; owner_id: string | null } | undefined;
+        .all(fullName) as Array<{ id: string; visibility: string; owner_id: string | null }>;
     } catch {
       // module-code (repos owner) uninstalled — its v_repos view is gone.
-      return undefined;
+      return [];
     }
   }
 
   /** Can this user see a repo? Follows its workspace's access rule. */
   canAccessRepo(user: AuthUser, fullName: string): boolean {
-    const w = this.repoVisibility(fullName);
+    const workspaces = this.repoVisibilities(fullName);
     // Without a workspace mapping there is no scope to prove. This also keeps
     // orphaned records private if module-code (and its v_repos view) is absent.
-    if (!w) return false;
-    return w.visibility === 'public' || this.isMember(w.id, user.username);
+    return workspaces.some((w) => w.visibility === 'public' || this.isMember(w.id, user.username));
   }
 
   /** Ids of the workspaces a user may see — for filtering global listings. */
@@ -210,17 +209,19 @@ export class WorkspacesStore {
   }
 
   /** Counters + weekly open/close velocity for a workspace's dashboard. */
-  metrics(workspaceId: string, weeks = 12): WorkspaceMetrics {
+  metrics(workspaceId: string, weeks = 12, repoNames?: readonly string[]): WorkspaceMetrics {
     // issues/prs/repos are code-owned; if module-code is uninstalled the JOINs
     // fail — degrade to empty series rather than crash the dashboard.
     const rollup = (table: 'issues' | 'prs'): Array<{ state: string; created_at: number; closed_at: number | null }> => {
+      if (repoNames?.length === 0) return [];
       try {
+        const repoFilter = repoNames ? ` AND t.repo IN (${repoNames.map(() => '?').join(', ')})` : '';
         return this.db
           .prepare(
             `SELECT t.state, t.created_at, t.closed_at FROM ${table} t
-             JOIN repos r ON r.full_name = t.repo WHERE r.workspace_id = ?`,
+             JOIN v_repos r ON r.full_name = t.repo WHERE r.workspace_id = ?${repoFilter}`,
           )
-          .all(workspaceId) as Array<{ state: string; created_at: number; closed_at: number | null }>;
+          .all(workspaceId, ...(repoNames ?? [])) as Array<{ state: string; created_at: number; closed_at: number | null }>;
       } catch {
         return [];
       }

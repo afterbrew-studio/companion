@@ -77,13 +77,8 @@ export class BoardService {
     this.disposed = true;
   }
 
-  /** The workspace a task belongs to — via its repo (repos carry the scoping key). */
-  private workspaceOf(repo: string): string | null {
-    return this.code.repos.get(repo)?.workspace_id ?? null;
-  }
-
-  private configFor(repo: string): BoardConfig {
-    return this.store.getConfig(this.workspaceOf(repo) ?? '');
+  private configFor(task: TaskRecord): BoardConfig {
+    return this.store.getConfig(task.workspaceId);
   }
 
   /** Boot adoption: pre-scoping workers/config land in the first workspace. */
@@ -96,7 +91,7 @@ export class BoardService {
   listBoard(user: AuthUser, workspaceId: string): { tasks: TaskRecord[]; workers: WorkerView[]; config: BoardConfig } {
     const tasks = this.store
       .listTasks()
-      .filter((t) => this.workspaceOf(t.repo) === workspaceId && this.workspace.canAccessRepo(user, t.repo))
+      .filter((task) => task.workspaceId === workspaceId)
       .map((task) => ({ ...task, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) }));
     const busy = this.store.busyWorkerMap();
     const workers = this.store.listWorkers(workspaceId).map((w): WorkerView => {
@@ -126,7 +121,7 @@ export class BoardService {
     dependencies: TaskDependencyView[];
   } | null {
     const task = this.store.getTask(id);
-    if (!task || !this.workspace.canAccessRepo(user, task.repo)) return null;
+    if (!task || !this.workspace.canAccessWorkspace(user, task.workspaceId)) return null;
     // Join the PR's cached GitHub state and its full review history from the
     // code module, so the detail view shows verdicts/checks without extra calls.
     const pr = task.prNumber != null ? this.code.prs.get(task.repo, task.prNumber) : undefined;
@@ -137,7 +132,7 @@ export class BoardService {
     const dependencies = task.dependsOn.flatMap((depId): TaskDependencyView[] => {
       const dep = this.store.getTask(depId);
       if (!dep) return [];
-      const visible = this.workspace.canAccessRepo(user, dep.repo);
+      const visible = this.workspace.canAccessWorkspace(user, dep.workspaceId);
       return [{ id: dep.id, title: visible ? dep.title : null, status: dep.status }];
     });
     return {
@@ -150,10 +145,9 @@ export class BoardService {
   }
 
   /** Spec picker options for a repo — empty when the plan module is disabled. */
-  specOptions(repo: string): SpecOption[] {
+  specOptions(repo: string, workspaceId: string): SpecOption[] {
     const plan = this.plan();
-    const workspaceId = this.code.repos.get(repo)?.workspace_id;
-    if (!plan || !workspaceId) return [];
+    if (!plan) return [];
     return plan.specs
       .list(workspaceId)
       .filter((s) => s.repo === repo && s.status === 'ready')
@@ -163,6 +157,7 @@ export class BoardService {
   // ---------- task CRUD -----------------------------------------------------------------
 
   createTask(input: {
+    workspaceId: string;
     repo: string;
     targetBranch: string;
     title: string;
@@ -175,10 +170,13 @@ export class BoardService {
     queue: boolean;
     createdBy: string | null;
   }): TaskRecord {
-    if (!this.code.repos.get(input.repo)) throw new Error(`repo ${input.repo} is not connected`);
+    if (!this.code.repos.inWorkspace(input.repo, input.workspaceId)) {
+      throw new Error(`repo ${input.repo} is not connected to this workspace`);
+    }
     const now = Date.now();
     const task: TaskRecord = {
       id: `tsk-${randomUUID().slice(0, 12)}`,
+      workspaceId: input.workspaceId,
       repo: input.repo,
       targetBranch: input.targetBranch,
       title: input.title,
@@ -186,7 +184,7 @@ export class BoardService {
       acceptance: input.acceptance,
       specId: input.specId,
       attachments: makeAttachments(input.attachments),
-      dependsOn: this.sanitizeDependsOn(input.repo, null, input.dependsOn ?? []),
+      dependsOn: this.sanitizeDependsOn(input.workspaceId, null, input.dependsOn ?? []),
       priority: input.priority,
       status: input.queue ? 'ready' : 'backlog',
       stage: input.queue ? 'build' : null,
@@ -230,7 +228,7 @@ export class BoardService {
     const { attachments, dependsOn, ...patch } = fields;
     let sanitizedDeps: string[] | undefined;
     if (dependsOn !== undefined) {
-      sanitizedDeps = this.sanitizeDependsOn(task.repo, id, dependsOn);
+      sanitizedDeps = this.sanitizeDependsOn(task.workspaceId, id, dependsOn);
       if (this.wouldCycle(id, sanitizedDeps)) throw new Error('those dependencies would form a cycle');
     }
     this.store.updateTask(id, {
@@ -254,7 +252,7 @@ export class BoardService {
     const task = this.store.getTask(id);
     if (!task) return;
     const merged = [...task.dependsOn];
-    for (const depId of this.sanitizeDependsOn(task.repo, id, depIds)) {
+    for (const depId of this.sanitizeDependsOn(task.workspaceId, id, depIds)) {
       // One at a time: the existing set is acyclic, so checking each candidate
       // against the current graph keeps it acyclic.
       if (!merged.includes(depId) && !this.wouldCycle(id, [depId])) merged.push(depId);
@@ -266,13 +264,12 @@ export class BoardService {
   }
 
   /** Same-workspace existing tasks only; self-references and duplicates dropped. */
-  private sanitizeDependsOn(repo: string, selfId: string | null, depIds: readonly string[]): string[] {
-    const workspaceId = this.workspaceOf(repo);
+  private sanitizeDependsOn(workspaceId: string, selfId: string | null, depIds: readonly string[]): string[] {
     const kept = new Set<string>();
     for (const depId of depIds) {
       if (depId === selfId || kept.has(depId)) continue;
       const dep = this.store.getTask(depId);
-      if (dep && this.workspaceOf(dep.repo) === workspaceId) kept.add(depId);
+      if (dep?.workspaceId === workspaceId) kept.add(depId);
     }
     return [...kept];
   }
@@ -427,21 +424,15 @@ export class BoardService {
   }
 
   setConfig(workspaceId: string, patch: Partial<BoardConfig>): BoardConfig {
-    const next = { ...this.store.getConfig(workspaceId), ...patch };
+    // A workspace-wide credential pin would let background work borrow the
+    // profile that configured the board. Legacy pins are discarded; merge
+    // resolution is always bound to the task owner instead.
+    const next = { ...this.store.getConfig(workspaceId), ...patch, mergeAccountId: null };
     if (next.reviewerWorkerId) {
       const reviewer = this.store.getWorker(next.reviewerWorkerId);
       if (!reviewer) throw new Error('reviewer worker not found');
       if (reviewer.role !== 'reviewer') throw new Error(`${reviewer.name} is not a reviewer`);
       if (reviewer.workspaceId !== workspaceId) throw new Error(`${reviewer.name} belongs to another workspace`);
-    }
-    if (next.mergeAccountId) {
-      const account = this.code.githubAccounts.row(next.mergeAccountId);
-      if (!account) throw new Error('merge account not found');
-      // Merges run unattended (no invoking user), and personal accounts never
-      // act for anyone but their owner — only shared/delegated accounts work.
-      if (account.ownerId !== null) {
-        throw new Error(`${account.login} is a personal account — pick a shared account with merge rights`);
-      }
     }
     this.store.setConfig(workspaceId, next);
     this.changed();
@@ -531,7 +522,7 @@ export class BoardService {
       }
     }
     for (const task of this.store.listTasksByStatus('in_review')) {
-      if (task.stage === 'reviewing' && !this.reviewing.has(this.workspaceOf(task.repo) ?? '')) {
+      if (task.stage === 'reviewing' && !this.reviewing.has(task.workspaceId)) {
         this.store.updateTask(task.id, { stage: 'awaiting_review' });
         this.changed();
       }
@@ -558,12 +549,10 @@ export class BoardService {
       // Hold until every prerequisite is done. A deleted prerequisite no
       // longer binds; a failed one holds the task until a human resolves it.
       if (this.unmetDependencies(task)) continue;
-      const ws = this.workspaceOf(task.repo);
-      const free = ws ? freeByWs.get(ws) : undefined;
+      const ws = task.workspaceId;
+      const free = freeByWs.get(ws);
       if (!free || free.size === 0) {
-        const hasDeveloper = ws
-          ? this.store.listWorkers(ws).some((worker) => worker.enabled && worker.role === 'developer')
-          : false;
+        const hasDeveloper = this.store.listWorkers(ws).some((worker) => worker.enabled && worker.role === 'developer');
         if (!hasDeveloper) {
           this.notifyBlocker(
             task,
@@ -671,8 +660,7 @@ export class BoardService {
     let specSection = '';
     if (task.specId) {
       const plan = this.plan();
-      const workspaceId = this.code.repos.get(task.repo)?.workspace_id;
-      const spec = plan && workspaceId ? plan.specs.list(workspaceId).find((s) => s.id === task.specId) : undefined;
+      const spec = plan ? plan.specs.list(task.workspaceId).find((s) => s.id === task.specId) : undefined;
       if (spec) {
         const content = spec.content.length > MAX_SPEC_CHARS ? `${spec.content.slice(0, MAX_SPEC_CHARS)}\n… (spec truncated)` : spec.content;
         specSection = `\n## Specification: ${spec.title}\n${content}\n`;
@@ -775,10 +763,12 @@ ${acceptance}${specSection}
     }
     this.store.updateTask(taskId, prPatch);
     this.store.insertEvent(taskId, hadPr ? 'pr_updated' : 'pr_opened', prUrl);
-    this.notifyUser(task.repo, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board?task=${taskId}`);
+    this.notifyUser(task, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board?task=${taskId}`);
     this.changed();
     // Warm the PR cache so the review cycle sees the new head promptly.
-    void this.code.sync.syncRepo(task.repo).catch(() => undefined);
+    if (task.createdBy) {
+      void this.code.sync.syncRepo(task.repo, task.workspaceId, task.createdBy).catch(() => undefined);
+    }
     this.kick();
   }
 
@@ -790,7 +780,7 @@ ${acceptance}${specSection}
   private async reviewCycle(): Promise<void> {
     for (const task of this.store.listTasksByStatus('in_review')) {
       if (task.runId || !task.prNumber) continue;
-      const config = this.configFor(task.repo);
+      const config = this.configFor(task);
       const pr = this.code.prs.get(task.repo, task.prNumber);
       if (!pr) continue; // cache hasn't seen the PR yet — next pass
       if (pr.state === 'merged') {
@@ -815,7 +805,7 @@ ${acceptance}${specSection}
         this.clearBlocker(task.id, 'reviewer');
       }
       if (task.stage === 'awaiting_review' && config.autoReview) {
-        const reviewer = this.resolveReviewer(config, task.repo);
+        const reviewer = this.resolveReviewer(config, task.workspaceId);
         // Review paused until the workspace has an enabled reviewer worker.
         if (!reviewer) {
           this.notifyBlocker(
@@ -828,7 +818,7 @@ ${acceptance}${specSection}
         }
         this.clearBlocker(task.id, 'reviewer');
         if (Date.now() < (this.reviewBackoff.get(task.id) ?? 0)) continue;
-        if (!this.reviewing.has(this.workspaceOf(task.repo) ?? '')) void this.runReview(task.id, reviewer.name);
+        if (!this.reviewing.has(task.workspaceId)) void this.runReview(task.id, reviewer.name);
         continue;
       }
 
@@ -839,7 +829,10 @@ ${acceptance}${specSection}
         : pr.reviewDecision === 'approved';
       // Nothing actionable would come out of a checks fetch — skip the API call.
       if ((!approved || !config.autoMerge) && !config.autoFixCi) continue;
-      const summary = await this.code.prChecks.trySummary(task.repo, task.prNumber);
+      // Legacy tasks may predate ownership. They stay visible but must never
+      // inherit whichever profile happens to have an active request now.
+      if (!task.createdBy) continue;
+      const summary = await this.code.prChecks.trySummary(task.repo, task.prNumber, task.createdBy);
       if (!summary) continue;
       // Unknown = the fetch failed (token/permissions) — neither green enough
       // to merge nor evidence of failure worth a fix_ci cycle.
@@ -858,17 +851,15 @@ ${acceptance}${specSection}
 
   /**
    * The reviewer worker for a task: the configured pin when valid, otherwise —
-   * pin unset (null = automatic resolution, mirroring mergeAccountId) — the
+   * pin unset (null = automatic resolution) — the
    * workspace's first enabled reviewer. A fresh workspace with reviewer
    * workers must review out of the box, not sit silently paused.
    */
-  private resolveReviewer(config: BoardConfig, repo: string): WorkerRecord | undefined {
+  private resolveReviewer(config: BoardConfig, workspaceId: string): WorkerRecord | undefined {
     if (config.reviewerWorkerId) {
       const pinned = this.store.getWorker(config.reviewerWorkerId);
       return pinned?.enabled && pinned.role === 'reviewer' ? pinned : undefined;
     }
-    const workspaceId = this.workspaceOf(repo);
-    if (!workspaceId) return undefined;
     return this.store.listWorkers(workspaceId).find((w) => w.enabled && w.role === 'reviewer');
   }
 
@@ -876,18 +867,19 @@ ${acceptance}${specSection}
   private async runReview(taskId: string, reviewerName: string): Promise<void> {
     const guard = this.store.getTask(taskId);
     if (!guard) return;
-    const ws = this.workspaceOf(guard.repo) ?? '';
+    const ws = guard.workspaceId;
     if (this.reviewing.has(ws)) return;
     this.reviewing.add(ws);
     try {
       const task = this.store.getTask(taskId);
       if (!task || task.status !== 'in_review' || !task.prNumber) return;
-      const config = this.configFor(task.repo);
+      const config = this.configFor(task);
       this.store.updateTask(taskId, { stage: 'reviewing' });
       this.store.insertEvent(taskId, 'review_started', `${reviewerName} is reviewing PR #${task.prNumber}`);
       this.changed();
 
-      const result = await this.code.prReviews.analyzePr(task.repo, task.prNumber, {
+      if (!task.createdBy) throw new Error('task has no GitHub account owner');
+      const result = await this.code.prReviews.analyzePr(task.repo, task.prNumber, task.createdBy, {
         context: this.reviewBriefing(task, config),
       });
       const fresh = this.store.getTask(taskId);
@@ -909,7 +901,7 @@ ${acceptance}${specSection}
       // Publish the verdict on the PR: the audit trail, and what a
       // review-fix run reads its feedback from.
       try {
-        await this.code.prReviews.apply(result.id);
+        await this.code.prReviews.apply(result.id, undefined, task.createdBy);
       } catch (err) {
         this.store.insertEvent(taskId, 'review_post_failed', String(err).slice(0, 300));
       }
@@ -922,7 +914,7 @@ ${acceptance}${specSection}
           // Non-blocking review: auto-merge only acts on 'approve', so this
           // card waits for a human call — say so instead of parking silently.
           this.notifyUser(
-            task.repo,
+            task,
             'action_required',
             `Board task needs a decision: ${task.title.slice(0, 60)}`,
             `The review left comments on PR #${task.prNumber} without approving. Merge it from the task, queue it back to its worker, or mark it done.`,
@@ -932,7 +924,7 @@ ${acceptance}${specSection}
           // Approved with auto-merge off: the human owns the merge — hand them
           // the task (its Merge button) rather than leaving the card to sit.
           this.notifyUser(
-            task.repo,
+            task,
             'action_required',
             `Board task ready to merge: ${task.title.slice(0, 60)}`,
             `The review approved PR #${task.prNumber}. Auto-merge is off — merge it from the task or on GitHub.`,
@@ -997,7 +989,7 @@ ${acceptance}${specSection}
       throw new Error('only a task in review with an open PR can be merged');
     }
     this.mergeBackoff.delete(id);
-    await this.mergeTask(task, this.configFor(task.repo));
+    await this.mergeTask(task, this.configFor(task));
     const fresh = this.store.getTask(id)!;
     if (fresh.status !== 'done') throw new Error(fresh.lastError ?? 'merge failed');
     return fresh;
@@ -1011,10 +1003,8 @@ ${acceptance}${specSection}
         task.repo,
         (candidate) => candidate.mergePr(task.repo, task.prNumber!, config.mergeMethod),
         {
-          accountId: config.mergeAccountId ?? undefined,
-          // Board automation is system-owned and must not inherit the request
-          // that happened to enqueue or manually advance the task.
-          username: null,
+          username: task.createdBy,
+          workspaceId: task.workspaceId,
         },
       );
       if (!client || !result) {
@@ -1022,7 +1012,7 @@ ${acceptance}${specSection}
           lastError:
             tried.length > 0
               ? `merge blocked: none of the connected GitHub accounts (${tried.join(', ')}) can merge pull requests in this repo`
-              : 'merge blocked: no usable GitHub account for this repo — set a merge account in Flow',
+              : `merge blocked: ${task.createdBy || 'the task owner'} has no personal GitHub account with merge access to this repo`,
         });
         this.mergeBackoff.set(task.id, Date.now() + MERGE_BACKOFF_MS);
         this.changed();
@@ -1038,7 +1028,9 @@ ${acceptance}${specSection}
         .catch((err) => log.warn('board: branch delete after merge failed', { taskId: task.id, err: String(err) }));
       this.mergeBackoff.delete(task.id);
       this.complete(task.id, `merged PR #${task.prNumber} (${config.mergeMethod})`);
-      void this.code.sync.syncRepo(task.repo).catch(() => undefined);
+      if (task.createdBy) {
+        void this.code.sync.syncRepo(task.repo, task.workspaceId, task.createdBy).catch(() => undefined);
+      }
     } catch (err) {
       this.mergeBackoff.set(task.id, Date.now() + MERGE_BACKOFF_MS);
       this.store.updateTask(task.id, { lastError: `merge failed: ${String(err).slice(0, 300)}` });
@@ -1081,12 +1073,12 @@ ${acceptance}${specSection}
   private attemptFail(taskId: string, reason: string): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
-    const config = this.configFor(task.repo);
+    const config = this.configFor(task);
     const attempts = task.attempts + 1;
     this.store.insertEvent(taskId, 'attempt_failed', reason.slice(0, 500));
     if (attempts >= config.maxAttempts) {
       this.store.updateTask(taskId, { attempts, runId: null, status: 'failed', lastError: reason.slice(0, 500) });
-      this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
+      this.notifyUser(task, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
     } else {
       const backTo: TaskPatch =
         task.stage && WORK_STAGES.has(task.stage)
@@ -1110,7 +1102,7 @@ ${acceptance}${specSection}
     this.retryBackoff.delete(taskId);
     this.store.updateTask(taskId, { status: 'done', stage: null, runId: null, finishedAt: Date.now(), lastError: null });
     this.store.insertEvent(taskId, 'done', how);
-    this.notifyUser(task.repo, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
+    this.notifyUser(task, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
     this.changed();
     // Tasks waiting on this one may be dispatchable now.
     this.kick();
@@ -1125,7 +1117,7 @@ ${acceptance}${specSection}
     this.retryBackoff.delete(taskId);
     this.store.updateTask(taskId, { ...extra, status: 'failed', stage: null, runId: null, lastError: reason.slice(0, 500) });
     this.store.insertEvent(taskId, 'failed', reason.slice(0, 500));
-    this.notifyUser(task.repo, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
+    this.notifyUser(task, 'error', `Board task failed: ${task.title.slice(0, 60)}`, reason.slice(0, 200), `#/board?task=${taskId}`);
     this.changed();
   }
 
@@ -1142,7 +1134,7 @@ ${acceptance}${specSection}
   private notifyBlocker(task: TaskRecord, blocker: string, title: string, body: string): void {
     if (this.store.hasActiveBlocker(task.id, blocker)) return;
     this.store.insertEvent(task.id, 'blocker_notified', blocker);
-    this.notifyUser(task.repo, 'action_required', title, body, `#/board?task=${task.id}`);
+    this.notifyUser(task, 'action_required', title, body, `#/board?task=${task.id}`);
   }
 
   private clearBlocker(taskId: string, blocker: string): void {
@@ -1156,10 +1148,11 @@ ${acceptance}${specSection}
     this.clearBlocker(taskId, 'reviewer');
   }
 
-  private notifyUser(repo: string, kind: 'finished' | 'error' | 'info' | 'action_required', title: string, body: string, href: string): void {
+  private notifyUser(task: TaskRecord, kind: 'finished' | 'error' | 'info' | 'action_required', title: string, body: string, href: string): void {
     this.notify.emit({
       kind,
-      workspaceId: this.code.repos.get(repo)?.workspace_id ?? null,
+      workspaceId: task.workspaceId,
+      repo: task.repo,
       title,
       body,
       href,

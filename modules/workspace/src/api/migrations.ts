@@ -75,4 +75,16 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 3,
+    name: 'notification_repo_scope',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE notifications ADD COLUMN repo TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => undefined,
+  },
 ]);

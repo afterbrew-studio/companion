@@ -7,6 +7,8 @@ export interface NotificationInput {
   readonly kind: BaseNotificationKind;
   /** Workspace the event belongs to; null = instance-wide. */
   readonly workspaceId: string | null;
+  /** Repository whose cached/activity data the notification exposes. */
+  readonly repo?: string | null;
   readonly title: string;
   readonly body?: string;
   readonly href?: string | null;
@@ -25,6 +27,7 @@ export interface NotificationEmitter {
 export interface LegacyNotificationInput {
   id?: string;
   workspaceId: string | null;
+  repo?: string | null;
   kind: BaseNotificationKind;
   title: string;
   body?: string;
@@ -44,7 +47,15 @@ export interface LegacyNotificationInput {
  */
 export function legacyNotifications(emitter: () => NotificationEmitter): { insert(n: LegacyNotificationInput): void } {
   return {
-    insert: (n) => emitter().emit({ kind: n.kind, workspaceId: n.workspaceId, title: n.title, body: n.body, href: n.href }),
+    insert: (n) =>
+      emitter().emit({
+        kind: n.kind,
+        workspaceId: n.workspaceId,
+        repo: n.repo,
+        title: n.title,
+        body: n.body,
+        href: n.href,
+      }),
   };
 }
 

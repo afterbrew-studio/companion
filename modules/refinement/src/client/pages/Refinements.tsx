@@ -144,7 +144,7 @@ function NewRefinementModal({
   const [story, setStory] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const effectiveRepo = repo ?? repos[0]?.fullName ?? null;
+  const effectiveRepo = repo ?? repos.find((candidate) => candidate.githubAccessible)?.fullName ?? null;
 
   // Picking a repo pre-fills the branch the agent will read (editable).
   useEffect(() => {
@@ -153,10 +153,11 @@ function NewRefinementModal({
   }, [effectiveRepo, repos]);
 
   const submit = async (): Promise<void> => {
-    if (!effectiveRepo || title.trim().length < 3 || story.trim().length < 8) return;
+    if (!current || !effectiveRepo || title.trim().length < 3 || story.trim().length < 8) return;
     setBusy(true);
     try {
       const { refinement } = await refinementApi.create({
+        workspaceId: current.id,
         repo: effectiveRepo,
         branch: branch.trim() || undefined,
         title: title.trim(),
@@ -179,13 +180,19 @@ function NewRefinementModal({
               ariaLabel="Repository"
               value={effectiveRepo}
               onChange={(v) => setRepo(v)}
-              options={repos.map((r) => ({ value: r.fullName, label: r.fullName }))}
+              options={repos.map((r) => ({
+                value: r.fullName,
+                label: r.fullName,
+                disabled: !r.githubAccessible,
+                hint: r.githubAccessible ? undefined : 'GitHub access required',
+              }))}
               searchable
             />
           </Field>
           <Field label="Branch" hint="The decomposition agent reads the code as of this branch.">
             <BranchPicker
               repo={effectiveRepo}
+              workspaceId={current?.id ?? ''}
               value={branch}
               onChange={setBranch}
               defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}

@@ -12,6 +12,8 @@ const automationSchema = z.object({
   autoMerge: z.boolean().optional(),
 });
 
+const webhookSchema = z.object({ accountId: z.string().min(1).max(60) });
+
 const messageSchema = z.object({
   text: z.string().min(1).max(32_000),
   /** Repo the conversation currently focuses on (the panel's scope select). */
@@ -70,6 +72,13 @@ export default defineRoutes((ctx) => {
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
     workspace.requireAccessible(user, id);
 
+  const requirePersonalRepoAccess = async (user: AuthUser | null, fullName: string): Promise<void> => {
+    const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
+      username: user?.username ?? null,
+    });
+    if (!client) throw badRequest(`your connected GitHub accounts cannot access ${fullName}`);
+  };
+
   return [
     // ---------- per-repo automation switches + webhook receiver -------------------
 
@@ -78,13 +87,26 @@ export default defineRoutes((ctx) => {
       path: '/api/repos/:owner/:name/automation',
       access: 'automations:manage',
       body: automationSchema,
-      handler: ({ params, body, user }) => {
+      handler: async ({ params, body, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
+        const ownerId = code.repos.automationOwner(fullName);
+        if (ownerId && ownerId !== user!.username) {
+          throw badRequest('these automations are managed by another Companion profile');
+        }
         if (body.autoTriage !== undefined) code.repos.setAutomation(fullName, 'auto_triage', body.autoTriage);
         if (body.digest !== undefined) code.repos.setAutomation(fullName, 'digest_enabled', body.digest);
         if (body.staleSweep !== undefined) code.repos.setAutomation(fullName, 'stale_enabled', body.staleSweep);
         if (body.prGate !== undefined) code.repos.setAutomation(fullName, 'pr_gate', body.prGate);
         if (body.autoMerge !== undefined) code.repos.setAutomation(fullName, 'auto_merge', body.autoMerge);
+        const row = code.repos.get(fullName)!;
+        const anyEnabled =
+          row.auto_triage === 1 ||
+          row.digest_enabled === 1 ||
+          row.stale_enabled === 1 ||
+          row.pr_gate === 1 ||
+          row.auto_merge === 1;
+        code.repos.setAutomationOwner(fullName, anyEnabled ? user!.username : null);
         ctx.broadcast({ t: 'repos.changed' });
         return { repo: code.repos.getRecord(fullName)! };
       },
@@ -94,9 +116,23 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/repos/:owner/:name/webhook',
       access: 'automations:manage',
-      handler: ({ params, user }) => {
+      body: webhookSchema,
+      handler: async ({ params, body, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        return automations.ensureWebhook(fullName);
+        const account = code.githubAccounts.row(body.accountId);
+        if (!account || account.ownerId !== user!.username || !account.purposes.includes('webhooks')) {
+          throw badRequest('choose one of your GitHub accounts enabled for webhooks');
+        }
+        const { client } = await code.githubAccounts.verifiedClientFor('webhooks', fullName, {
+          accountId: account.id,
+          username: user!.username,
+        });
+        if (!client) throw badRequest(`your GitHub account cannot access ${fullName}`);
+        try {
+          return automations.ensureWebhook(fullName, user!.username, account.id, account.login);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
       },
     }),
 
@@ -106,7 +142,11 @@ export default defineRoutes((ctx) => {
       access: 'automations:manage',
       handler: ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        automations.disableWebhook(fullName);
+        try {
+          automations.disableWebhook(fullName, user!.username);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
         return { ok: true };
       },
     }),
@@ -118,7 +158,11 @@ export default defineRoutes((ctx) => {
       access: 'automations:manage',
       handler: ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
-        return { webhook: automations.webhookInfo(fullName) };
+        const registration = code.repos.getWebhookRegistration(fullName);
+        const accountLogin = registration?.accountId && registration.ownerId === user!.username
+          ? (code.githubAccounts.row(registration.accountId)?.login ?? null)
+          : null;
+        return { webhook: automations.webhookInfo(fullName, user!.username, accountLogin) };
       },
     }),
 
@@ -147,11 +191,12 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/repos/:owner/:name/digest-now',
       access: 'automations:manage',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
         // Kick off and return: the run takes minutes and must not hold the
         // request open. Progress streams via runs.changed/reports.changed.
-        automations.startDigest(fullName);
+        automations.startDigest(fullName, user!.username);
         return { ok: true };
       },
     }),
@@ -160,8 +205,9 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/repos/:owner/:name/stale-now',
       access: 'automations:manage',
-      handler: ({ params, user }) => {
+      handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
         automations.runStaleSweep(fullName);
         return { ok: true };
       },

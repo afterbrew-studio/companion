@@ -146,17 +146,16 @@ export class RunsStore {
   /**
    * OperateService.canSeeRun resolved to a SQL clause, shared by the usage
    * aggregates: null scope = no restriction (admin); otherwise the viewer's
-   * own attended chats, repo-less automated runs, and runs on the
-   * pre-resolved accessible repos.
+   * own attended chats, repo-less automated runs, and repo work explicitly
+   * authorized by that same profile's personal GitHub account.
    */
   private usageWhere(scope: UsageScope): { clause: string; params: Array<string | number> } {
-    const inRepos = scope.repos.length > 0 ? ` OR repo IN (${scope.repos.map(() => '?').join(', ')})` : '';
     return {
       clause: ` AND (
         (kind IN ('interactive', 'assistant') AND user_id = ?)
-        OR (kind NOT IN ('interactive', 'assistant') AND (repo IS NULL${inRepos}))
+        OR (kind NOT IN ('interactive', 'assistant') AND (repo IS NULL OR user_id = ?))
       )`,
-      params: [scope.username, ...scope.repos],
+      params: [scope.username, scope.username],
     };
   }
 
@@ -206,7 +205,7 @@ export class RunsStore {
 }
 
 /** Pre-resolved visibility for usage aggregates. */
-export type UsageScope = { username: string; repos: readonly string[] };
+export type UsageScope = { username: string };
 
 export interface UsageDayRow {
   bucket: number;

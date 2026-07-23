@@ -39,36 +39,47 @@ export class Automations {
     private readonly checkouts: Checkouts,
     private readonly webhookTunnel: WebhookTunnel,
     private readonly specs: Specs,
-    private readonly github: (repo?: string) => GitHubClient | null,
+    private readonly github: (repo: string, username: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
   // ---------- webhooks -----------------------------------------------------------
 
   /** Enable the receiver for a repo: mint (or return) its HMAC secret. */
-  ensureWebhook(repo: string): WebhookInfo {
-    let secret = this.store.repos.getWebhookSecret(repo);
-    if (!secret) {
-      secret = randomBytes(24).toString('hex');
-      this.store.repos.setWebhookSecret(repo, secret);
-      this.broadcast({ t: 'repos.changed' });
+  ensureWebhook(repo: string, ownerId: string, accountId: string, accountLogin: string): WebhookInfo {
+    const existing = this.store.repos.getWebhookRegistration(repo);
+    if (existing?.ownerId && existing.ownerId !== ownerId) {
+      throw new Error('this webhook is managed by another Companion profile');
     }
-    const path = `/webhooks/github/${repo}`;
-    return { path, secret, url: this.webhookTunnel.deliveryUrl(path) };
+    const secret = existing?.secret ?? randomBytes(24).toString('hex');
+    this.store.repos.setWebhookRegistration(repo, secret, ownerId, accountId);
+    this.broadcast({ t: 'repos.changed' });
+    return this.webhookInfo(repo, ownerId, accountLogin)!;
   }
 
   /** Disable the receiver for a repo: deliveries 401/404 until re-enabled. */
-  disableWebhook(repo: string): void {
-    this.store.repos.setWebhookSecret(repo, null);
+  disableWebhook(repo: string, ownerId: string): void {
+    const registration = this.store.repos.getWebhookRegistration(repo);
+    if (registration?.ownerId !== ownerId) throw new Error('only the webhook owner can disable it');
+    this.store.repos.clearWebhookRegistration(repo);
     this.broadcast({ t: 'repos.changed' });
   }
 
   /** Current receiver info WITHOUT enabling — null while disabled. */
-  webhookInfo(repo: string): WebhookInfo | null {
-    const secret = this.store.repos.getWebhookSecret(repo);
-    if (!secret) return null;
+  webhookInfo(repo: string, viewerId: string, accountLogin: string | null): WebhookInfo | null {
+    const registration = this.store.repos.getWebhookRegistration(repo);
+    if (!registration) return null;
     const path = `/webhooks/github/${repo}`;
-    return { path, secret, url: this.webhookTunnel.deliveryUrl(path) };
+    const managedByYou = registration.ownerId === viewerId;
+    return {
+      path,
+      secret: managedByYou ? registration.secret : null,
+      url: this.webhookTunnel.deliveryUrl(path),
+      ownerId: registration.ownerId,
+      accountId: registration.accountId,
+      accountLogin,
+      managedByYou,
+    };
   }
 
   /**
@@ -80,8 +91,9 @@ export class Automations {
     headers: Record<string, string | string[] | undefined>,
     rawBody: Buffer,
   ): { status: number; body: string } {
-    const secret = this.store.repos.getWebhookSecret(repo);
-    if (!secret) return { status: 404, body: 'webhook not configured for this repo' };
+    const registration = this.store.repos.getWebhookRegistration(repo);
+    if (!registration) return { status: 404, body: 'webhook not configured for this repo' };
+    const { secret, ownerId } = registration;
 
     const signature = String(headers['x-hub-signature-256'] ?? '');
     if (!verifySignature(secret, rawBody, signature)) {
@@ -103,23 +115,24 @@ export class Automations {
     // the store yet and died on "unknown issue".
     const action = String(payload.action ?? '');
     const repoRow = this.store.repos.get(repo);
+    const automationOwnerId = repoRow?.automation_owner_id ?? null;
     if (eventName === 'issues') {
       const issue = payload.issue as GhIssue | undefined;
       if (issue?.number && !issue.pull_request) {
         this.sync.applyIssue(repo, issue);
         if (action === 'opened') {
           const number = issue.number;
-          if (repoRow?.auto_triage === 1) {
+          if (automationOwnerId && repoRow?.auto_triage === 1) {
             log.info('webhook: auto-triage queued', { repo, issue: number });
             void this.triage
-              .triageIssue(repo, number)
+              .triageIssue(repo, number, automationOwnerId)
               .catch((err) =>
                 this.automationFailed(repo, `Auto-triage failed for ${repo}#${number}`, err, `#/repos/${repo}/issues/${number}`),
               );
           }
           // Issue-type pipelines flagged auto-run fire for every opened issue
           // (failures per pipeline are caught + logged inside autoRun).
-          this.pipelines.autoRunForIssue(repo, number);
+          if (ownerId) this.pipelines.autoRunForIssue(repo, number, ownerId);
         }
       }
     }
@@ -128,33 +141,32 @@ export class Automations {
       if (pr?.number) {
         this.sync.applyPull(repo, pr);
         // A merge is when specs can silently rot — check them against the diff.
-        if (action === 'closed' && pr.merged_at) {
+        if (ownerId && action === 'closed' && pr.merged_at) {
           const number = pr.number;
           void this.specs
-            .checkDriftForMergedPr(repo, number)
+            .checkDriftForMergedPr(repo, number, ownerId)
             .catch((err) =>
               this.automationFailed(repo, `Spec drift check failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
             );
         }
         if ((action === 'opened' || action === 'ready_for_review') && pr.draft !== true) {
           const number = pr.number;
-          if (repoRow?.pr_gate === 1) {
+          if (automationOwnerId && repoRow?.pr_gate === 1) {
             log.info('webhook: PR gate queued', { repo, pr: number });
             void this.prReviews
-              .gate(repo, number)
+              .gate(repo, number, automationOwnerId)
               .catch((err) =>
                 this.automationFailed(repo, `PR gate failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
               );
           }
           // User-defined pipelines flagged auto-run fire for every opened PR
           // (failures per pipeline are caught + logged inside autoRun).
-          this.pipelines.autoRunForPr(repo, number);
+          if (ownerId) this.pipelines.autoRunForPr(repo, number, ownerId);
         }
       }
     }
     // Background reconcile for whatever the payload didn't carry (comment
     // counts, anything else that changed since the last poll).
-    void this.sync.syncRepo(repo).catch(() => undefined);
 
     this.store.reports.insert({
       issueNumber: null,
@@ -184,16 +196,17 @@ export class Automations {
   /** Run due schedules. Digest/stale/briefing run per period; auto-merge every tick. */
   async tick(now = Date.now()): Promise<void> {
     for (const repo of this.store.repos.list()) {
-      if (repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
+      const ownerId = repo.automation_owner_id ?? null;
+      if (ownerId && repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
         // Fire-and-forget: runDigest stamps lastRun synchronously, so the next
         // tick won't re-fire while this one is still working.
-        this.startDigest(repo.full_name);
+        this.startDigest(repo.full_name, ownerId);
       }
       if (repo.stale_enabled === 1 && this.due(`stale:${repo.full_name}`, now)) {
         this.runStaleSweep(repo.full_name);
       }
-      if (repo.auto_merge === 1) {
-        await this.autoMergeSweep(repo.full_name).catch((err) =>
+      if (ownerId && repo.auto_merge === 1) {
+        await this.autoMergeSweep(repo.full_name, ownerId).catch((err) =>
           log.warn('auto-merge sweep failed', { repo: repo.full_name, err: String(err) }),
         );
       }
@@ -218,8 +231,8 @@ export class Automations {
    * (which also refreshes the human decision) right before merging — the cache
    * nominates, GitHub confirms. A failed merge backs off for 6 hours.
    */
-  async autoMergeSweep(repo: string): Promise<void> {
-    const client = this.github(repo);
+  async autoMergeSweep(repo: string, userId: string): Promise<void> {
+    const client = this.github(repo, userId);
     if (!client) return;
     const candidates = this.store.prs
       .list(repo)
@@ -235,7 +248,7 @@ export class Automations {
       const guard = `automerge:${repo}#${pr.number}`;
       if (!this.due(guard, Date.now(), 6 * 60 * 60_000)) continue;
       this.store.settings.set(`lastRun:${guard}`, String(Date.now()));
-      const fresh = await this.prChecks.trySummary(repo, pr.number);
+      const fresh = await this.prChecks.trySummary(repo, pr.number, userId);
       const row = this.store.prs.get(repo, pr.number);
       if (
         !fresh ||
@@ -253,7 +266,6 @@ export class Automations {
           .catch(() => undefined);
         log.info('auto-merged PR', { repo, prNumber: pr.number });
         this.notify(repo, 'finished', `Auto-merged ${repo}#${pr.number}`, pr.title, `#/repos/${repo}/prs/${pr.number}`);
-        void this.sync.syncRepo(repo).catch(() => undefined);
       } catch (err) {
         this.automationFailed(repo, `Auto-merge failed for ${repo}#${pr.number}`, err, `#/repos/${repo}/prs/${pr.number}`);
       }
@@ -352,9 +364,10 @@ export class Automations {
     this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
       workspaceId,
+      repo: null,
       kind: 'info',
       title: `Briefing ready — ${ws.name}`,
-      body: `${needsYou.length} item(s) waiting on you · ${recent.length} agent run(s) in the last 24h`,
+      body: 'A new workspace briefing is ready.',
       href: '#/automations',
       createdAt: Date.now(),
     });
@@ -369,10 +382,10 @@ export class Automations {
    * digest quietly completes). Failures land in the inbox; the report lands
    * via `reports.changed`. Returns false when one is already running.
    */
-  startDigest(repo: string): boolean {
+  startDigest(repo: string, userId?: string): boolean {
     if (this.digestsInFlight.has(repo)) return false;
     this.digestsInFlight.add(repo);
-    void this.runDigest(repo)
+    void this.runDigest(repo, userId)
       .catch((err) => this.automationFailed(repo, `Digest failed for ${repo}`, err, '#/digest'))
       .finally(() => this.digestsInFlight.delete(repo));
     return true;
@@ -385,7 +398,7 @@ export class Automations {
    * the project is heading. Falls back to the deterministic fact sheet when the
    * agent (or the clone) is unavailable, so the report always lands.
    */
-  async runDigest(repo: string): Promise<void> {
+  async runDigest(repo: string, userId?: string): Promise<void> {
     const since = Number(this.store.settings.get(`lastRun:digest:${repo}`) ?? 0) || Date.now() - 86_400_000;
     this.store.settings.set(`lastRun:digest:${repo}`, String(Date.now()));
 
@@ -439,10 +452,10 @@ export class Automations {
       freshIssues.length === 0 && merged.length === 0 && failingPrs.length === 0 && recentRuns.length === 0;
 
     let body = quiet ? 'Quiet since the last digest — nothing shipped, failed, or arrived.' : facts.join('\n\n');
-    if (!quiet && this.checkouts.hasClone(repo)) {
+    if (!quiet && userId && this.checkouts.hasClone(repo)) {
       try {
         // Fresh git history is the "what actually landed" source for the agent.
-        await this.checkouts.fetch(repo).catch(() => undefined);
+        await this.checkouts.fetch(repo, undefined, userId).catch(() => undefined);
         const sinceIso = new Date(since).toISOString();
         const { finalMessage } = await this.orchestrator.runOneShot({
           kind: 'report',
@@ -450,6 +463,7 @@ export class Automations {
           title: `Digest: ${repo}`,
           cwd: this.checkouts.cloneDir(repo),
           repo,
+          userId,
           prompt:
             `You are writing the daily digest for ${repo} — the AI review a maintainer reads first thing. Do not modify any files.\n\n` +
             `Ground truth from Companion's tracker (trust it; add judgement, don't restate it verbatim):\n\n${facts.join('\n\n')}\n\n` +
@@ -523,6 +537,7 @@ export class Automations {
     this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
       workspaceId: this.store.repos.get(repo)?.workspace_id ?? null,
+      repo,
       kind,
       title,
       body,
@@ -537,6 +552,7 @@ export class Automations {
     this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
       workspaceId: this.store.repos.get(repo)?.workspace_id ?? null,
+      repo,
       kind: 'error',
       title,
       body: String(err),

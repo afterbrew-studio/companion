@@ -48,7 +48,7 @@ export default defineServices((ctx) => {
     operate.orchestrator,
     operate.checkouts,
     proposals,
-    (repo) => code.githubAccounts.clientFor('fetch', { repo }),
+    (repo, username) => code.githubAccounts.clientFor('fetch', { repo, username }),
     ctx.broadcast,
   );
   const docs = new Docs(store, operate.orchestrator, operate.checkouts, ctx.broadcast);

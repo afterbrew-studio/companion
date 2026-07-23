@@ -22,8 +22,8 @@ export const planApi = {
   // proposals
   workspaceProposals: (id: string) =>
     request<{ proposals: ProposalRecord[] }>(`/api/workspaces/${id}/proposals`),
-  createProposal: (repo: string, title: string, body: string) =>
-    post<{ proposal: ProposalRecord }>('/api/proposals', { repo, title, body }),
+  createProposal: (workspaceId: string, repo: string, title: string, body: string) =>
+    post<{ proposal: ProposalRecord }>('/api/proposals', { workspaceId, repo, title, body }),
   analyzeProposal: (id: string) => post<{ queued: true }>(`/api/proposals/${id}/analyze`),
   approveProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/approve`),
   finishProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/finish`),
@@ -35,13 +35,13 @@ export const planApi = {
   saveSpecsConfig: (id: string, dir: string | null) =>
     put<{ config: AreaStorageConfig; imported: number }>(`/api/workspaces/${id}/specs-config`, { dir }),
   getSpec: (id: string) => request<{ spec: SpecRecord }>(`/api/specs/${id}`),
-  createSpec: (repo: string, title: string, content: string, storage?: AreaStorage) =>
-    post<{ spec: SpecRecord }>('/api/specs', { repo, title, content, storage }),
+  createSpec: (workspaceId: string, repo: string, title: string, content: string, storage?: AreaStorage) =>
+    post<{ spec: SpecRecord }>('/api/specs', { workspaceId, repo, title, content, storage }),
   updateSpec: (id: string, fields: { title?: string; content?: string }) =>
     patch<{ spec: SpecRecord }>(`/api/specs/${id}`, fields),
   deleteSpec: (id: string) => del<{ ok: true }>(`/api/specs/${id}`),
-  generateSpec: (repo: string, instructions: string, storage?: AreaStorage) =>
-    post<{ queued: true }>('/api/specs/generate', { repo, instructions, storage }),
+  generateSpec: (workspaceId: string, repo: string, instructions: string, storage?: AreaStorage) =>
+    post<{ queued: true }>('/api/specs/generate', { workspaceId, repo, instructions, storage }),
   dismissSpecDrift: (id: string) => post<{ ok: true }>(`/api/specs/${id}/dismiss-drift`),
   captureSpecFromProposal: (proposalId: string) =>
     post<{ queued: true }>(`/api/proposals/${proposalId}/capture-spec`),

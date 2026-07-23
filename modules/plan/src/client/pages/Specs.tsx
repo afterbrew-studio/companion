@@ -162,6 +162,7 @@ export function SpecsPage(): JSX.Element {
       {creating ? (
         <SpecEditorModal
           mode={creating}
+          workspaceId={current.id}
           repos={repos}
           configDir={configDir}
           onClose={() => setCreating(null)}
@@ -316,19 +317,21 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
 
 function SpecEditorModal({
   mode,
+  workspaceId,
   repos,
   configDir,
   onClose,
   onDone,
 }: {
   mode: 'write' | 'generate';
+  workspaceId: string;
   repos: RepoRecord[];
   /** Workspace specs directory; null = virtual-only workspace. */
   configDir: string | null;
   onClose: () => void;
   onDone: () => void;
 }): JSX.Element {
-  const [repo, setRepo] = useState(repos[0]?.fullName ?? '');
+  const [repo, setRepo] = useState(repos.find((candidate) => candidate.githubAccessible)?.fullName ?? '');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -342,9 +345,9 @@ function SpecEditorModal({
     setError(null);
     try {
       if (mode === 'generate') {
-        await api.generateSpec(repo, instructions.trim(), storage);
+        await api.generateSpec(workspaceId, repo, instructions.trim(), storage);
       } else {
-        await api.createSpec(repo, title.trim(), content, storage);
+        await api.createSpec(workspaceId, repo, title.trim(), content, storage);
       }
       onDone();
     } catch (err) {
@@ -360,8 +363,9 @@ function SpecEditorModal({
           <Field label="Repository" className="min-w-0 flex-1">
             <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)} required>
               {repos.map((r) => (
-                <option key={r.fullName} value={r.fullName}>
+                <option key={r.fullName} value={r.fullName} disabled={!r.githubAccessible}>
                   {r.fullName}
+                  {r.githubAccessible ? '' : ' — access required'}
                 </option>
               ))}
             </select>

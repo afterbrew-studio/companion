@@ -30,7 +30,7 @@ const HTTP_TIMEOUT_MS = 30_000;
  * the agent's local paths — opaque here, round-tripped verbatim.
  *
  * Git operations that touch the network carry the hub's GitHub credential
- * (`githubTokenFor`, per repo so account pins apply), so the agent machine
+ * (`githubTokenFor`, per repo and owning profile), so the agent machine
  * needs no GitHub configuration of its own.
  */
 export class RemoteRunnerBackend implements RunnerBackend {
@@ -244,10 +244,12 @@ export class RemoteRunnerBackend implements RunnerBackend {
     await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo, username)) });
   }
 
-  /** Spread-ready `{ githubToken }` when the hub has a credential for the repo. */
-  private async ghToken(repo: string, username?: string | null): Promise<{ githubToken?: string }> {
+  /** Every remote network operation carries the run owner's verified token;
+   * never let the runner fall back to a machine-wide credential. */
+  private async ghToken(repo: string, username?: string | null): Promise<{ githubToken: string }> {
     const token = await this.githubTokenFor(repo, username);
-    return token ? { githubToken: token } : {};
+    if (!token) throw new Error(`no personal GitHub credential with access to ${repo}`);
+    return { githubToken: token };
   }
 
   // ---------- event stream ----------

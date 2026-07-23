@@ -17,6 +17,7 @@ import {
 } from '@companion/ui';
 import { useLive, type RouteProps } from '@companion/core/client';
 import { useAuth } from '@companion/module-core/client';
+import { useWorkspace } from '@companion/module-workspace/client';
 import type { SlopDetectionResult } from '../../contract/index.js';
 import { slopApi } from '../api.js';
 import { SlopMeter } from '../components/SlopMeter.js';
@@ -29,6 +30,7 @@ import { ACTION_LABEL, STATUS_META, STRENGTH_TONE } from '../detection-meta.js';
 export default function SlopDetection({ params }: RouteProps): JSX.Element {
   const id = params.id!;
   const { can } = useAuth();
+  const { current } = useWorkspace();
   // undefined = loading, null = not found (or inaccessible — same 404 either way).
   const [detection, setDetection] = useState<SlopDetectionResult | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -92,13 +94,13 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
         <button className="btn-ghost" disabled={busy} onClick={() => void act(() => slopApi.dismiss(d.id))}>
           Dismiss
         </button>
-        {canRefine ? (
+        {canRefine && current ? (
           <button
             className="btn-ghost"
             disabled={busy}
             onClick={() =>
               void act(async () => {
-                const { refinementId } = await slopApi.moveToRefinement(d.id);
+                const { refinementId } = await slopApi.moveToRefinement(d.id, current.id);
                 window.location.hash = `/refinement/${refinementId}`;
               })
             }

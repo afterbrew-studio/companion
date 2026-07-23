@@ -52,6 +52,7 @@ export interface UseWorkspacePrs {
   readonly hasMore: boolean;
   readonly loadMore: () => void;
   readonly error: string | null;
+  readonly unavailableRepos: readonly string[];
 
   readonly canActPrs: boolean;
   readonly canRunPipelines: boolean;
@@ -126,10 +127,12 @@ export function useWorkspacePrs(): UseWorkspacePrs {
       if (msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') reload();
     });
   }, [reload]);
-  const refreshError = useWorkspaceRefresh(workspaceId);
+  const refresh = useWorkspaceRefresh(workspaceId);
+  const unavailable = new Set(refresh.unavailableRepos);
+  const visiblePrs = prs.filter((pr) => !unavailable.has(pr.repo));
 
   const bulkAiReview = (): void => {
-    const targets = prs.filter((pr) => selection.has(prKey(pr)));
+    const targets = visiblePrs.filter((pr) => selection.has(prKey(pr)));
     void runBulk(targets, (pr) => api.analyzePr(pr.repo, pr.number), {
       label: (pr) => `#${pr.number}`,
       onSettled: (total, failures) => {
@@ -141,7 +144,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   };
   const bulkRunPipeline = (): void => {
     if (!bulkPipeline) return;
-    const targets = prs.filter((pr) => selection.has(prKey(pr)));
+    const targets = visiblePrs.filter((pr) => selection.has(prKey(pr)));
     void runBulk(targets, (pr) => api.runPipeline(pr.repo, pr.number, bulkPipeline), {
       label: (pr) => `#${pr.number}`,
       onSettled: (total, failures) => {
@@ -192,18 +195,19 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     repos,
     facets,
     counts,
-    prs,
+    prs: visiblePrs,
     total,
     loading,
     hasMore,
     loadMore,
-    error: listError ?? refreshError,
+    error: listError ?? refresh.error,
+    unavailableRepos: refresh.unavailableRepos,
     canActPrs,
     canRunPipelines,
     pipelines,
     selected: selection.selected,
     toggleSelected: selection.toggle,
-    selectAllLoaded: () => selection.selectAll(prs.map(prKey)),
+    selectAllLoaded: () => selection.selectAll(visiblePrs.map(prKey)),
     clearSelected: selection.clear,
     bulkPipeline,
     setBulkPipeline,

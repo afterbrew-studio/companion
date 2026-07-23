@@ -46,4 +46,27 @@ export default defineMigrations([
       db.exec(`ALTER TABLE refine_items DROP COLUMN depends_on`);
     },
   },
+  {
+    version: 3,
+    name: 'refinement_workspace',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(refinements)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'workspace_id')) {
+        db.exec(`ALTER TABLE refinements ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`);
+      }
+      db.exec(`
+        UPDATE refinements
+        SET workspace_id = COALESCE(
+          (SELECT rw.workspace_id FROM repo_workspaces rw
+           WHERE rw.repo = refinements.repo ORDER BY rw.created_at, rw.workspace_id LIMIT 1),
+          (SELECT r.workspace_id FROM repos r WHERE r.full_name = refinements.repo),
+          ''
+        )
+        WHERE workspace_id = '';
+        CREATE INDEX IF NOT EXISTS idx_refinements_workspace
+          ON refinements(workspace_id, updated_at);
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

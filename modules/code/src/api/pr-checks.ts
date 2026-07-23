@@ -22,24 +22,26 @@ export class PrChecks {
 
   constructor(
     private readonly store: CodeStore,
-    private readonly github: (repo: string) => GitHubClient | null,
+    private readonly github: (repo: string, username: string) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
   /** Live-fetch the summary for a PR and refresh the cached snapshot. */
-  async fetchSummary(repo: string, prNumber: number): Promise<ChecksSummary> {
-    const key = `${repo}#${prNumber}`;
+  async fetchSummary(repo: string, prNumber: number, username: string): Promise<ChecksSummary> {
+    // A user without access must never join a request authenticated as someone
+    // else merely because both asked for the same PR at the same time.
+    const key = `${username}:${repo}#${prNumber}`;
     const pending = this.inflight.get(key);
     if (pending) return pending;
-    const job = this.fetchFresh(repo, prNumber).finally(() => this.inflight.delete(key));
+    const job = this.fetchFresh(repo, prNumber, username).finally(() => this.inflight.delete(key));
     this.inflight.set(key, job);
     return job;
   }
 
   /** Best-effort variant for callers that can live without checks (agents). */
-  async trySummary(repo: string, prNumber: number): Promise<ChecksSummary | null> {
+  async trySummary(repo: string, prNumber: number, username: string): Promise<ChecksSummary | null> {
     try {
-      return await this.fetchSummary(repo, prNumber);
+      return await this.fetchSummary(repo, prNumber, username);
     } catch (err) {
       log.warn('checks fetch failed', { repo, prNumber, err: String(err) });
       return null;
@@ -54,7 +56,7 @@ export class PrChecks {
    * the list endpoint. Each finished fetch broadcasts prs.changed, so badges
    * stream into the open list view as they land.
    */
-  preloadWorkspace(workspaceId: string, prs: ReadonlyArray<PrRecord>): void {
+  preloadWorkspace(workspaceId: string, prs: ReadonlyArray<PrRecord>, username: string): void {
     const now = Date.now();
     if ((this.lastWorkspacePreload.get(workspaceId) ?? 0) > now - 60_000) return;
     this.lastWorkspacePreload.set(workspaceId, now);
@@ -69,13 +71,13 @@ export class PrChecks {
     void (async () => {
       // Sequential on purpose: bounded GitHub pressure, snapshots land one by one.
       for (const pr of queue) {
-        await this.trySummary(pr.repo, pr.number);
+        await this.trySummary(pr.repo, pr.number, username);
       }
     })();
   }
 
   /** Refresh snapshots for the most recently updated open PRs of a repo. */
-  async refreshOpenPrs(repo: string, max = 25): Promise<void> {
+  async refreshOpenPrs(repo: string, username: string, max = 25): Promise<void> {
     // Skip snapshot-fresh PRs: this rides the 2-min sync tick at several GitHub
     // requests per PR, and ungated it would eat the PAT budget on busy repos.
     const now = Date.now();
@@ -84,14 +86,14 @@ export class PrChecks {
       .filter((pr) => pr.state === 'open' && (!pr.checks || pr.checks.fetchedAt < now - 5 * 60_000))
       .slice(0, max);
     for (const pr of open) {
-      await this.trySummary(repo, pr.number);
+      await this.trySummary(repo, pr.number, username);
     }
   }
 
-  private async fetchFresh(repo: string, prNumber: number): Promise<ChecksSummary> {
+  private async fetchFresh(repo: string, prNumber: number, username: string): Promise<ChecksSummary> {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    const client = this.github(repo);
+    const client = this.github(repo, username);
     if (!client || !pr.headSha) {
       return { ...emptySnapshot(), repo, prNumber, headSha: pr?.headSha ?? null, runs: [] };
     }

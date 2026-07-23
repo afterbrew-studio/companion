@@ -18,7 +18,7 @@ export interface RefinementDetail {
 export const refinementApi = {
   list: (workspaceId: string) =>
     request<{ refinements: RefinementListEntry[] }>(`/api/workspaces/${workspaceId}/refinements`),
-  create: (input: { repo: string; branch?: string; title: string; story: string }) =>
+  create: (input: { workspaceId: string; repo: string; branch?: string; title: string; story: string }) =>
     post<{ refinement: RefinementRecord }>('/api/refinements', input),
   get: (id: string) => request<RefinementDetail>(`/api/refinements/${id}`),
   update: (id: string, fields: { title?: string; story?: string; branch?: string }) =>

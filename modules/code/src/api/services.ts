@@ -18,8 +18,8 @@ import { CodeService } from './code-service.js';
 
 /**
  * Construct the GitHub/code domain: the sync-cache stores, the narrow store
- * facade, the multi-account registry (adopting the legacy single PAT on first
- * boot), the poller + CI-checks pair, and the triage/review/fix/pipeline
+ * facade, the personal multi-account registry, request-owned sync + CI checks,
+ * and the triage/review/fix/pipeline
  * services — then publish the bundle as `code`. Wiring mirrors the legacy
  * composition root's construction order; the git-credential seam into operate
  * is plugged in at onEnable (jobs.ts), not here.
@@ -47,6 +47,12 @@ export default defineServices((ctx) => {
        WHERE workspace_id IS NULL`,
     )
     .run();
+  ctx.db
+    .prepare(
+      `INSERT OR IGNORE INTO repo_workspaces (repo, workspace_id, created_at)
+       SELECT full_name, workspace_id, ? FROM repos WHERE workspace_id IS NOT NULL`,
+    )
+    .run(Date.now());
 
   // Stores, in the legacy store/db.ts construction order.
   const triageStore = new TriageStore(ctx.db);
@@ -75,15 +81,26 @@ export default defineServices((ctx) => {
   });
 
   // GitHub accounts registry: each PAT is bound to purposes (fetch, runs,
-  // pipelines, webhooks); consumers resolve a client per purpose. The legacy
-  // single settings-table token migrates into the registry on first boot.
+  // pipelines, webhooks); consumers resolve a client per purpose and owner.
+  // An unowned legacy token is intentionally never adopted.
   const ghAccounts = new GitHubAccounts(store);
   ghAccounts.migrateLegacyToken();
 
-  const sync = new GitHubSync(store, (repo) => ghAccounts.clientFor('fetch', { repo }), ctx.broadcast);
-  const prChecks = new PrChecks(store, (repo) => ghAccounts.clientFor('fetch', { repo }), ctx.broadcast);
+  const sync = new GitHubSync(
+    store,
+    async (repo, workspaceId, username) => {
+      const { client } = await ghAccounts.verifiedClientFor('fetch', repo, { workspaceId, username });
+      return client;
+    },
+    ctx.broadcast,
+  );
+  const prChecks = new PrChecks(
+    store,
+    (repo, username) => ghAccounts.clientFor('fetch', { repo, username }),
+    ctx.broadcast,
+  );
   // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
-  sync.onSynced = (repo) => prChecks.refreshOpenPrs(repo);
+  sync.onSynced = (repo, username) => prChecks.refreshOpenPrs(repo, username);
 
   const triage = new Triage(
     store,
@@ -114,6 +131,8 @@ export default defineServices((ctx) => {
             ? undefined
             : { username },
       ),
+    async (repo, username) =>
+      (await ghAccounts.verifiedClientFor('runs', repo, { username })).client !== null,
     prChecks,
     ctx.broadcast,
   );

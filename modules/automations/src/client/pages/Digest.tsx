@@ -62,8 +62,8 @@ export function DigestPage(): JSX.Element {
                 onChange={(e) => setSelected(e.target.value)}
               >
                 {repos.map((r) => (
-                  <option key={r.fullName} value={r.fullName}>
-                    {r.fullName}
+                  <option key={r.fullName} value={r.fullName} disabled={!r.githubAccessible}>
+                    {r.fullName}{r.githubAccessible ? '' : ' — access required'}
                   </option>
                 ))}
               </select>
@@ -103,10 +103,20 @@ export function DigestPage(): JSX.Element {
             </a>
           }
         />
+      ) : !repos.some((candidate) => candidate.githubAccessible) ? (
+        <EmptyState
+          title="GitHub access required"
+          hint="Connect one of your personal GitHub accounts with access to a repository in this workspace."
+          action={
+            <a className="btn" href="#/github">
+              Open GitHub accounts
+            </a>
+          }
+        />
       ) : latest ? (
         <article className={`card ${generating ? 'mt-4' : ''} anim-in`} aria-label="Latest digest">
           <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-2.5 text-sm dark:border-zinc-800">
-            <span className="badge">digest</span>
+            <span className="dim text-xs uppercase tracking-wide">digest</span>
             <strong className="min-w-0 flex-1 truncate">{latest.repo}</strong>
             <span className="dim">{timeAgo(latest.createdAt)}</span>
           </div>

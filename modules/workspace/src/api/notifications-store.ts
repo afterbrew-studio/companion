@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
 import type { NotificationRecord } from '../contract/index.js';
 
+// Fresh workspace/platform notifications use an explicit non-repo sentinel.
+// NULL is reserved for rows written before repo access was enforced and those
+// rows fail closed in list(); their contents cannot be scoped reliably.
+const NON_REPO_SCOPE = '@workspace';
+
 /** The notification inbox — bounded to 30 days, workspace-scoped or instance-wide. */
 export class NotificationsStore {
   constructor(private readonly db: Database.Database) {}
@@ -8,10 +13,10 @@ export class NotificationsStore {
   insert(n: Omit<NotificationRecord, 'readAt'>): void {
     this.db
       .prepare(
-        `INSERT INTO notifications (id, workspace_id, kind, title, body, href, created_at)
-         VALUES (@id, @workspaceId, @kind, @title, @body, @href, @createdAt)`,
+        `INSERT INTO notifications (id, workspace_id, repo, kind, title, body, href, created_at)
+         VALUES (@id, @workspaceId, @repo, @kind, @title, @body, @href, @createdAt)`,
       )
-      .run(n);
+      .run({ ...n, repo: n.repo ?? NON_REPO_SCOPE });
     // Keep the inbox bounded — anything past 30 days is stale.
     this.db.prepare(`DELETE FROM notifications WHERE created_at < ?`).run(Date.now() - 30 * 24 * 3600_000);
   }
@@ -32,17 +37,17 @@ export class NotificationsStore {
     if (workspaceId) {
       rows = this.db
         .prepare(
-          `SELECT * FROM notifications WHERE workspace_id = ? OR workspace_id IS NULL
+          `SELECT * FROM notifications WHERE repo IS NOT NULL AND (workspace_id = ? OR workspace_id IS NULL)
            ORDER BY created_at DESC LIMIT ?`,
         )
         .all(workspaceId, limit);
     } else if (accessibleIds === undefined) {
-      rows = this.db.prepare(`SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?`).all(limit);
+      rows = this.db.prepare(`SELECT * FROM notifications WHERE repo IS NOT NULL ORDER BY created_at DESC LIMIT ?`).all(limit);
     } else {
       const placeholders = accessibleIds.map(() => '?').join(', ');
       const cond = accessibleIds.length > 0 ? `OR workspace_id IN (${placeholders})` : '';
       rows = this.db
-        .prepare(`SELECT * FROM notifications WHERE workspace_id IS NULL ${cond} ORDER BY created_at DESC LIMIT ?`)
+        .prepare(`SELECT * FROM notifications WHERE repo IS NOT NULL AND (workspace_id IS NULL ${cond}) ORDER BY created_at DESC LIMIT ?`)
         .all(...accessibleIds, limit);
     }
     return (rows as NotificationRow[]).map(rowToNotification);
@@ -75,6 +80,7 @@ export class NotificationsStore {
 interface NotificationRow {
   id: string;
   workspace_id: string | null;
+  repo: string | null;
   kind: string;
   title: string;
   body: string;
@@ -87,6 +93,7 @@ function rowToNotification(row: NotificationRow): NotificationRecord {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    repo: row.repo === NON_REPO_SCOPE ? null : row.repo,
     kind: row.kind as NotificationRecord['kind'],
     title: row.title,
     body: row.body,

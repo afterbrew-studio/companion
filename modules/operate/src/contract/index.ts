@@ -43,8 +43,8 @@ declare module '@companion/contracts' {
  * Cross-module seam: where network git credentials come from. GitHub accounts
  * are owned by module-code (which depends on operate), so code PLUGS its
  * resolver in via `services.get('operate').setGithubTokenSource(...)` at
- * onEnable — inversion of control; operate never imports code. The default
- * source falls back to the legacy `github_token` settings key.
+ * onEnable — inversion of control; operate never imports code. The default is
+ * fail-closed until code registers its personal-account resolver.
  */
 export interface GithubTokenSource {
   /**
@@ -119,6 +119,8 @@ export interface QueuedRunEntry {
   readonly title: string;
   readonly repo: string | null;
   readonly issueNumber: number | null;
+  /** Profile whose personal GitHub access authorized this repo-bound work. */
+  readonly userId: string | null;
   /** Scheduling weight — higher starts sooner; sets the initial place in line. */
   readonly priority: number;
   readonly enqueuedAt: number;

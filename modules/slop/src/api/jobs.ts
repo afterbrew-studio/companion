@@ -27,6 +27,8 @@ export default defineJobs({
     }
     ctx.services
       .get('operate')
-      .orchestrator.registerResumer('slop-detect', (a) => slop.detect(String(a.repo), Number(a.number)));
+      .orchestrator.registerResumer('slop-detect', (a) =>
+        slop.detect(String(a.repo), Number(a.number), String(a.userId)),
+      );
   },
 });

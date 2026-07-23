@@ -52,6 +52,7 @@ export interface UseWorkspaceIssues {
   readonly hasMore: boolean;
   readonly loadMore: () => void;
   readonly error: string | null;
+  readonly unavailableRepos: readonly string[];
 
   readonly canActIssues: boolean;
   readonly canRunPipelines: boolean;
@@ -129,10 +130,12 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
       if (msg.t === 'issues.changed' || msg.t === 'triage.changed') reload();
     });
   }, [reload]);
-  const refreshError = useWorkspaceRefresh(workspaceId);
+  const refresh = useWorkspaceRefresh(workspaceId);
+  const unavailable = new Set(refresh.unavailableRepos);
+  const visibleIssues = issues.filter((issue) => !unavailable.has(issue.repo));
 
   const bulkAiTriage = (): void => {
-    const targets = issues.filter((i) => selection.has(issueKey(i)));
+    const targets = visibleIssues.filter((i) => selection.has(issueKey(i)));
     void runBulk(targets, (i) => api.triageIssue(i.repo, i.number), {
       label: (i) => `#${i.number}`,
       onSettled: (total, failures) => {
@@ -144,7 +147,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   };
   const bulkRunPipeline = (): void => {
     if (!bulkPipeline) return;
-    const targets = issues.filter((i) => selection.has(issueKey(i)));
+    const targets = visibleIssues.filter((i) => selection.has(issueKey(i)));
     void runBulk(targets, (i) => api.runPipelineOnIssue(i.repo, i.number, bulkPipeline), {
       label: (i) => `#${i.number}`,
       onSettled: (total, failures) => {
@@ -200,18 +203,19 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     repos,
     facets,
     counts,
-    issues,
+    issues: visibleIssues,
     total,
     loading,
     hasMore,
     loadMore,
-    error: listError ?? refreshError,
+    error: listError ?? refresh.error,
+    unavailableRepos: refresh.unavailableRepos,
     canActIssues,
     canRunPipelines,
     pipelines,
     selected: selection.selected,
     toggleSelected: selection.toggle,
-    selectAllLoaded: () => selection.selectAll(issues.map(issueKey)),
+    selectAllLoaded: () => selection.selectAll(visibleIssues.map(issueKey)),
     clearSelected: selection.clear,
     bulkPipeline,
     setBulkPipeline,

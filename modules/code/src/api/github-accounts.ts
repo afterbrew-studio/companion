@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  GITHUB_PURPOSES,
   type GitHubAccountRecord,
   type GitHubAccountScope,
   type GitHubPurpose,
@@ -17,18 +16,21 @@ import type { GithubAccountRow } from './github-accounts-store.js';
  * adding a repo that is already connected elsewhere: account eligibility must
  * be checked against the requested destination, not the existing connection.
  */
-type ResolveCtx = { repo?: string; accountId?: string; username?: string | null; workspaceId?: string };
+type ResolveCtx = {
+  repo?: string;
+  accountId?: string;
+  username?: string | null;
+  workspaceId?: string;
+};
 
 /** How long a repo-access probe result (per account) stays trusted. */
 const ACCESS_TTL_MS = 5 * 60_000;
 
 /**
- * Registry of connected GitHub accounts (PATs). Each is bound to purposes
- * ('fetch' | 'runs' | 'pipelines' | 'webhooks'), to where it may act (shared |
- * delegated), and to an owner. A user's OWN account is preferred when they
- * invoke an action; everything else falls back to the shared default accounts
- * (ownerId null) an admin manages. Resolution order: explicit accountId → the
- * invoking user's own eligible account → repo pin → shared default.
+ * Registry of personal GitHub accounts (PATs). Every credential belongs to a
+ * Companion profile and can only be resolved for that same profile. Multiple
+ * accounts per user are supported; workspace selection only decides which of
+ * their own accounts is eligible, never who may borrow it.
  */
 export class GitHubAccounts {
   private readonly clients = new Map<string, GitHubClient>();
@@ -37,49 +39,49 @@ export class GitHubAccounts {
 
   constructor(private readonly store: CodeStore) {}
 
-  /** One-time adoption of the legacy single PAT into the registry as a shared default. */
+  /** Legacy instance-wide PATs are deliberately not adopted: there is no safe
+   * owner to assign them to. The admin reconnects it from their own profile. */
   migrateLegacyToken(): void {
-    const token = this.store.settings.get('github_token');
-    if (!token || this.store.githubAccounts.list().length > 0) return;
-    const id = `gha-${randomUUID().slice(0, 12)}`;
-    this.store.githubAccounts.insert({
-      id,
-      login: '',
-      token,
-      purposes: GITHUB_PURPOSES,
-      scope: 'shared',
-      workspaceIds: [],
-      ownerId: null,
-      createdAt: Date.now(),
-    });
-    new GitHubClient(token)
-      .viewer()
-      .then((v) => this.store.githubAccounts.update(id, { login: v.login }))
-      .catch((err) => log.warn('legacy GitHub token failed validation during migration', { err: String(err) }));
-    log.info('migrated legacy GitHub token into the accounts registry');
+    // Kept as a compatibility hook for the module lifecycle. Importantly this
+    // is a no-op: an unowned token must never become a credential for everyone.
   }
 
   list(): GitHubAccountRecord[] {
-    return this.store.githubAccounts.list().map(toRecord);
+    return this.store.githubAccounts
+      .list()
+      .filter((row): row is GithubAccountRow & { ownerId: string } => row.ownerId !== null)
+      .map(toRecord);
   }
 
   /** Validate the token, then insert (or replace the token of the same login). */
   async add(
     token: string,
     purposes: readonly GitHubPurpose[],
-    scope: GitHubAccountScope = 'shared',
+    ownerId: string,
+    scope: GitHubAccountScope = 'all',
     workspaceIds: readonly string[] = [],
-    ownerId: string | null = null,
   ): Promise<GitHubAccountRecord> {
     const client = new GitHubClient(token);
     const viewer = await client.viewer();
-    const existing = this.store.githubAccounts.list().find((a) => a.login === viewer.login);
+    // The same GitHub login may be connected independently by different
+    // Companion users. One user's connect flow must never replace another's.
+    // Never let one user's connect flow overwrite another user's token.
+    const existing = this.store.githubAccounts
+      .list()
+      .find((a) => a.login === viewer.login && a.ownerId === ownerId);
     if (existing) {
       this.store.githubAccounts.update(existing.id, { token, purposes, scope, workspaceIds });
       this.clients.set(existing.id, client);
       this.clearAccessCache(existing.id);
       // Ownership stays with whoever first connected the account.
-      return toRecord({ ...existing, login: viewer.login, purposes: [...purposes], scope, workspaceIds: [...workspaceIds] });
+      return toRecord({
+        ...existing,
+        login: viewer.login,
+        purposes: [...purposes],
+        scope,
+        workspaceIds: [...workspaceIds],
+        ownerId,
+      });
     }
     const id = `gha-${randomUUID().slice(0, 12)}`;
     const createdAt = Date.now();
@@ -92,19 +94,24 @@ export class GitHubAccounts {
     id: string,
     fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },
   ): GitHubAccountRecord {
-    const row = this.store.githubAccounts.list().find((a) => a.id === id);
+    const row = this.store.githubAccounts
+      .list()
+      .find((a): a is GithubAccountRow & { ownerId: string } => a.id === id && a.ownerId !== null);
     if (!row) throw new Error(`unknown GitHub account: ${id}`);
     this.store.githubAccounts.update(id, fields);
-    const updated = this.store.githubAccounts.list().find((a) => a.id === id) ?? row;
+    const updated = this.store.githubAccounts
+      .list()
+      .find((a): a is GithubAccountRow & { ownerId: string } => a.id === id && a.ownerId !== null) ?? row;
     return toRecord(updated);
   }
 
   /** The stored row (owner check for management gates). */
   row(id: string): GithubAccountRow | undefined {
-    return this.store.githubAccounts.list().find((a) => a.id === id);
+    return this.store.githubAccounts.list().find((a) => a.id === id && a.ownerId !== null);
   }
 
   remove(id: string): void {
+    this.store.repos.orphanWebhookRegistrationsForAccount(id);
     this.store.githubAccounts.delete(id);
     this.clients.delete(id);
     this.clearAccessCache(id);
@@ -159,7 +166,9 @@ export class GitHubAccounts {
     fullName: string,
     ctx?: Omit<ResolveCtx, 'repo'>,
   ): Promise<string | null> {
-    return (await this.verifiedRowFor(purpose, fullName, ctx)).row?.token ?? null;
+    const { row } = await this.verifiedRowFor(purpose, fullName, ctx);
+    if (!row || !(await this.hasAccess(row, fullName))) return null;
+    return row.token;
   }
 
   /** Access-verified client for a repo-bound API action. This is the write-side
@@ -263,17 +272,16 @@ export class GitHubAccounts {
       this.repoAccess.set(key, { ok: true, at: Date.now() });
       return true;
     } catch (err) {
-      // Only a definitive GitHub "you can't see this" is a negative; a network
-      // blip must not disqualify an account (git would fail either way). GitHub
-      // also answers 403 for PRIMARY/SECONDARY RATE LIMITING — caching that as
-      // "no access" would de-credential every healthy account for the TTL.
+      // Authorization gates fail closed: an outage must not expose a cache
+      // populated by someone else. Cache only definitive credential failures;
+      // transient errors are retried on the next request.
       const definitive =
         err instanceof GitHubError && [401, 403, 404].includes(err.status) && !/rate limit/i.test(err.message);
       if (definitive) {
         this.repoAccess.set(key, { ok: false, at: Date.now() });
         return false;
       }
-      return true;
+      return false;
     }
   }
 
@@ -301,58 +309,39 @@ export class GitHubAccounts {
   }
 
   /**
-   * Every account that may act, in precedence order: explicit `accountId` the
-   * caller may use → the invoking user's own eligible account → the repo pin →
-   * shared defaults (delegated-to-workspace before shared, purpose-holders
-   * before the purposeless fallback). A personal account (owned by someone) is
-   * usable ONLY by its owner — it is never a default and never acts for another
-   * user, on any resolution path.
+   * Every personal account the current Companion profile may use, in
+   * precedence order. Purpose, owner, and workspace selection are hard
+   * boundaries on every path, including explicit account selection.
    */
   private candidatesFor(purpose: GitHubPurpose, ctx?: ResolveCtx): GithubAccountRow[] {
     const rows = this.store.githubAccounts.list();
-    const repoRow = ctx?.repo ? this.store.repos.get(ctx.repo) : undefined;
-    const workspaceId = ctx?.workspaceId ?? repoRow?.workspace_id ?? null;
+    const workspaceIds = ctx?.workspaceId
+      ? [ctx.workspaceId]
+      : ctx?.repo
+        ? this.store.repos.workspaceIds(ctx.repo)
+        : [];
     // An explicit null means system-owned work and must not inherit a request
     // that happened to enqueue it. Omission alone falls back to the invoker.
     const username = ctx && 'username' in ctx ? ctx.username : (currentUser()?.username ?? null);
+    if (!username) return [];
     const eligibleHere = (r: GithubAccountRow): boolean =>
-      r.scope === 'shared' || (workspaceId !== null && r.workspaceIds.includes(workspaceId));
-    const usable = (r: GithubAccountRow): boolean => r.ownerId === null || r.ownerId === username;
+      r.ownerId === username &&
+      r.purposes.includes(purpose) &&
+      (r.scope === 'all' || workspaceIds.some((id) => r.workspaceIds.includes(id)));
 
     const ordered: GithubAccountRow[] = [];
 
     // 1. Explicit per-action account override — only if the caller may use it.
     if (ctx?.accountId) {
-      const explicit = rows.find((r) => r.id === ctx.accountId && usable(r));
-      if (explicit) ordered.push(explicit);
+      const explicit = rows.find((r) => r.id === ctx.accountId && eligibleHere(r));
+      // Explicit selection is fail-closed. An ineligible account must not
+      // silently fall through to a more privileged credential.
+      return explicit ? [explicit] : [];
     }
 
     // 2. The invoking user's own account, if it holds the purpose and is
     //    eligible here — a maintainer acts as themselves when they've connected.
-    if (username) {
-      const mine = rows.find((r) => r.ownerId === username && r.purposes.includes(purpose) && eligibleHere(r));
-      if (mine) ordered.push(mine);
-    }
-
-    // 3. Repo pin (an admin forcing an account for this repo) — shared, or the
-    //    caller's own; a pin to someone else's personal account is ignored.
-    if (repoRow?.github_account_id) {
-      const pinned = rows.find((r) => r.id === repoRow.github_account_id && usable(r));
-      if (pinned) ordered.push(pinned);
-    }
-
-    // 4. Shared default accounts only (ownerId null), eligible for the
-    //    workspace — delegated-to-it before shared. No personal-account
-    //    fallback: with no shared default, an action without an owning account
-    //    gets none.
-    const pool = rows.filter((r) => r.ownerId === null);
-    const eligible = workspaceId
-      ? [
-          ...pool.filter((r) => r.scope === 'delegated' && r.workspaceIds.includes(workspaceId)),
-          ...pool.filter((r) => r.scope === 'shared'),
-        ]
-      : pool.filter((r) => r.scope === 'shared');
-    ordered.push(...eligible.filter((r) => r.purposes.includes(purpose)), ...eligible);
+    ordered.push(...rows.filter(eligibleHere));
 
     // Dedupe, keeping the first (highest-precedence) occurrence.
     const seen = new Set<string>();
@@ -360,7 +349,7 @@ export class GitHubAccounts {
   }
 }
 
-function toRecord(r: GithubAccountRow): GitHubAccountRecord {
+function toRecord(r: GithubAccountRow & { ownerId: string }): GitHubAccountRecord {
   return {
     id: r.id,
     login: r.login,

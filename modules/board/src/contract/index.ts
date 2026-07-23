@@ -77,6 +77,8 @@ export interface TaskAttachmentInput {
 
 export interface TaskRecord {
   readonly id: string;
+  /** Workspace board that owns this task, independent of other memberships of the repo. */
+  readonly workspaceId: string;
   readonly repo: string;
   /** Branch the worker starts from and the resulting PR targets. */
   readonly targetBranch: string;
@@ -146,11 +148,7 @@ export interface BoardConfig {
   /** Merge automatically once review approves and checks are green. */
   readonly autoMerge: boolean;
   readonly mergeMethod: 'merge' | 'squash' | 'rebase';
-  /**
-   * Connected GitHub account that performs merges (one with merge rights on
-   * the board's repos). Must be a shared/delegated account — personal accounts
-   * never act unattended. Null = automatic resolution.
-   */
+  /** @deprecated Storage compatibility only; always null. Merges use the task owner's account. */
   readonly mergeAccountId: string | null;
   /** Failing checks on a task's PR send it back to its worker. */
   readonly autoFixCi: boolean;

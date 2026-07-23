@@ -66,7 +66,7 @@ export class SlopService {
     private readonly code: CodeService,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
-    private readonly github: (ctx?: { repo?: string; accountId?: string }) => GitHubClient | null,
+    private readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null,
     private readonly refinement: () => RefinementService | undefined,
     /** The label the 'label' action applies — module config, read live. */
     private readonly slopLabel: () => string,
@@ -176,6 +176,7 @@ export class SlopService {
   private prepare(
     repo: string,
     prNumber: number,
+    userId: string,
   ): { pr: PrRecord; ruleSet: SlopRuleRecord[] } {
     const pr = this.code.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
@@ -183,14 +184,14 @@ export class SlopService {
     if (!workspaceId) throw new Error(`repo ${repo} is not connected`);
     const ruleSet = this.rules(workspaceId).filter((rule) => rule.enabled);
     if (ruleSet.length === 0) throw new Error('no detection rules are enabled for this workspace');
-    if (!this.github({ repo })) throw new Error('GitHub is not configured');
+    if (!this.github({ repo, username: userId })) throw new Error('your GitHub accounts cannot access this repository');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     return { pr, ruleSet };
   }
 
   /** Throws when a detection cannot start (unknown PR, empty rule set, no clone…). */
-  validateDetect(repo: string, prNumber: number): void {
-    this.prepare(repo, prNumber);
+  validateDetect(repo: string, prNumber: number, userId: string): void {
+    this.prepare(repo, prNumber, userId);
   }
 
   /**
@@ -210,8 +211,8 @@ export class SlopService {
    * agent phase resolves — a failure (checkout, dead run, parse miss) lands as
    * status 'failed', never a fabricated verdict and never a silent vanish.
    */
-  async detect(repo: string, prNumber: number): Promise<SlopDetectionResult> {
-    const { pr, ruleSet } = this.prepare(repo, prNumber);
+  async detect(repo: string, prNumber: number, userId: string): Promise<SlopDetectionResult> {
+    const { pr, ruleSet } = this.prepare(repo, prNumber, userId);
 
     // The row exists (and broadcasts) BEFORE the minutes-long agent phase, so
     // the page shows a live 'running' card the moment a detection is queued.
@@ -247,11 +248,14 @@ export class SlopService {
             title: `Slop check PR #${prNumber}: ${pr.title.slice(0, 60)}`,
             cwd,
             repo,
+            userId,
             issueNumber: prNumber,
             prompt: detectionPrompt(pr, ruleSet),
             timeoutMs: DETECT_TIMEOUT_MS,
-            resume: { type: 'slop-detect', args: { repo, number: prNumber } },
+            resume: { type: 'slop-detect', args: { repo, number: prNumber, userId } },
           }),
+        undefined,
+        userId,
       );
       runId = oneShot.runId;
       verdict = parseSlopVerdict(oneShot.finalMessage ?? '', ruleSet);
@@ -295,8 +299,9 @@ export class SlopService {
   async detectForGate(
     repo: string,
     prNumber: number,
+    userId: string,
   ): Promise<{ aiLikelihood: number; confidence: string; summary: string; detail: string | null }> {
-    const result = await this.detect(repo, prNumber);
+    const result = await this.detect(repo, prNumber, userId);
     if (!result.verdict) throw new Error(result.error ?? 'detection produced no verdict');
     return {
       aiLikelihood: result.verdict.aiLikelihood,
@@ -334,7 +339,7 @@ export class SlopService {
    */
   async apply(
     id: string,
-    opts: { action?: SlopAction; accountId?: string },
+    opts: { action?: SlopAction; accountId?: string; userId: string },
   ): Promise<{ repo: string; number: number; action: SlopAction }> {
     const result = this.store.getDetection(id);
     if (!result?.verdict) throw new Error('detection not found or has no verdict');
@@ -342,7 +347,7 @@ export class SlopService {
     const action = opts.action ?? result.verdict.recommendedAction;
 
     if (action !== 'none') {
-      const client = this.github({ repo: result.repo, accountId: opts.accountId });
+      const client = this.github({ repo: result.repo, accountId: opts.accountId, username: opts.userId });
       if (!client) throw new Error('GitHub is not configured');
       const hints = result.verdict.reviewerHints;
       const body =
@@ -384,7 +389,7 @@ export class SlopService {
   /** Turn a rejected low-oversight PR into a clean refinement starting from
    *  its base branch. The detection stays as audit history and records that
    *  the human chose refinement instead of applying a GitHub-side action. */
-  moveToRefinement(id: string): SlopMoveToRefinementResult {
+  moveToRefinement(id: string, workspaceId: string): SlopMoveToRefinementResult {
     const result = this.store.getDetection(id);
     if (!result?.verdict) throw new Error('detection not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`detection is ${result.status}, not pending`);
@@ -408,6 +413,7 @@ export class SlopService {
       .join('\n\n')
       .slice(0, 32_000);
     const refinement = refinementService.create({
+      workspaceId,
       repo: result.repo,
       branch: pr.baseRef,
       title: `Rework: ${pr.title}`.slice(0, 200),
