@@ -86,25 +86,25 @@ export default defineServices(async (ctx) => {
   // An unowned legacy token is intentionally never adopted.
   const ghAccounts = new GitHubAccounts(store);
   ghAccounts.migrateLegacyToken();
-  const bootstrapUsername = ctx.services.get('core').envBootstrappedUsername();
-  if (bootstrapUsername) {
+  const primaryAdmin = ctx.services.get('core').primaryAdminUsername();
+  if (primaryAdmin) {
     const localGh = readActiveLocalGhAccount();
     if (localGh) {
       try {
         const connected = await ghAccounts.add(
           localGh.token,
           ['fetch', 'runs', 'pipelines', 'webhooks'],
-          bootstrapUsername,
+          primaryAdmin,
           'all',
         );
-        ctx.log.info('connected active local gh account to env-bootstrapped user', {
+        ctx.log.info('connected active local gh account to primary admin', {
           githubLogin: connected.login,
-          username: bootstrapUsername,
+          username: primaryAdmin,
         });
       } catch (err) {
-        ctx.log.warn('could not connect active local gh account during first-user bootstrap', {
+        ctx.log.warn('could not connect active local gh account to primary admin', {
           expectedGithubLogin: localGh.login,
-          username: bootstrapUsername,
+          username: primaryAdmin,
           err: String(err),
         });
       }
