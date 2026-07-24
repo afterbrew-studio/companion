@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import { assertPlannerTransition } from '../dist/api/planner-machine.js';
-import { parseArtifactBundle, parseClarification } from '../dist/api/prompts.js';
+import { discussionPrompt, parseArtifactBundle, parseClarification, parsePlannerDiscussion, parsePlannerRevision } from '../dist/api/prompts.js';
 import { PlannerService } from '../dist/api/planner-service.js';
 import { PlannerRevisionConflict, PlannerStore } from '../dist/api/planner-store.js';
 
@@ -71,6 +71,53 @@ test('artifact bundle parsing is strict and never fabricates a missing model res
   assert.deepEqual(parseArtifactBundle(JSON.stringify({ documentation: draft, specification: draft, implementationPlan: draft })).documentation, draft);
   assert.throws(() => parseArtifactBundle(''));
   assert.throws(() => parseArtifactBundle(JSON.stringify({ documentation: draft, specification: draft })));
+});
+
+test('discussion parser distinguishes explanations, changes and one structured decision', () => {
+  const discussionSession = { analysis: null };
+  const explanation = parsePlannerDiscussion(JSON.stringify({
+    intent: 'explanation', answer: 'These are implementation findings, not tasks.', references: ['architecture'], changeInstruction: null, clarification: null,
+  }), discussionSession);
+  assert.equal(explanation.intent, 'explanation');
+  assert.equal(explanation.changeInstruction, null);
+  assert.deepEqual(explanation.references[0], {
+    context: 'architecture', location: 'Architecture and integration', label: 'Architecture', count: 0,
+  });
+
+  const change = parsePlannerDiscussion(JSON.stringify({
+    intent: 'change_request', answer: 'I will prepare a smaller MVP.', references: ['mvp'], changeInstruction: 'Reduce the MVP to five essential capabilities.', clarification: null,
+  }), discussionSession);
+  assert.equal(change.intent, 'change_request');
+  assert.match(change.changeInstruction, /five essential/);
+
+  let id = 0;
+  const clarification = parsePlannerDiscussion(JSON.stringify({
+    intent: 'clarification_needed',
+    answer: 'I need to know which list should be shorter.',
+    references: [],
+    changeInstruction: null,
+    clarification: { question: 'What should be reduced?', options: question().options },
+  }), discussionSession, (prefix) => `${prefix}-${++id}`);
+  assert.equal(clarification.clarification.options.length, 3);
+  assert.equal(clarification.clarification.options.filter((option) => option.recommended).length, 1);
+  assert.ok(clarification.clarification.options.every((option) => option.id.startsWith('pdo-')));
+
+  assert.throws(() => parsePlannerDiscussion(JSON.stringify({
+    intent: 'clarification_needed', answer: 'Choose.', changeInstruction: null,
+    references: [],
+    clarification: { question: 'Which?', options: question().options.slice(0, 2) },
+  }), discussionSession));
+  assert.throws(() => parsePlannerDiscussion(JSON.stringify({
+    intent: 'explanation', answer: 'Look in a section that does not exist.', references: ['behavior_specification'], changeInstruction: null, clarification: null,
+  }), discussionSession));
+});
+
+test('revision parser requires one coherent brief and planning bundle', () => {
+  const draft = { title: 'Listing analytics', content: 'A sufficiently detailed markdown artifact describing listing analytics.' };
+  const artifacts = { documentation: draft, specification: draft, implementationPlan: draft };
+  const revision = parsePlannerRevision(JSON.stringify({ summary: 'Reduced the MVP.', brief: { ...brief, mvp: ['One', 'Two'] }, artifacts }));
+  assert.deepEqual(revision.brief.mvp, ['One', 'Two']);
+  assert.throws(() => parsePlannerRevision(JSON.stringify({ summary: 'Missing brief.', artifacts })));
 });
 
 test('planner state machine accepts the workflow and rejects skips or edits after launch', () => {
@@ -143,6 +190,13 @@ function createService(store, overrides = {}) {
         return record;
       },
       get: (id) => docs.get(id),
+      update: (id, fields) => {
+        const current = docs.get(id);
+        if (!current) throw new Error('doc not found');
+        const record = { ...current, ...fields };
+        docs.set(id, record);
+        return record;
+      },
     },
     specs: {
       create: (workspaceId, repo, title, content) => {
@@ -151,6 +205,13 @@ function createService(store, overrides = {}) {
         return record;
       },
       get: (id) => specs.get(id),
+      update: (id, fields) => {
+        const current = specs.get(id);
+        if (!current) throw new Error('spec not found');
+        const record = { ...current, ...fields };
+        specs.set(id, record);
+        return record;
+      },
     },
     proposals: {
       create: (workspaceId, repo, title, body) => {
@@ -158,7 +219,14 @@ function createService(store, overrides = {}) {
         proposals.set(record.id, record);
         return record;
       },
-      analyze: async (id) => ({ ...proposals.get(id), analysis, analysisRunId: 'run-analysis' }),
+      update: (id, fields) => {
+        const current = proposals.get(id);
+        if (!current) throw new Error('proposal not found');
+        const record = { ...current, ...fields };
+        proposals.set(id, record);
+        return record;
+      },
+      analyze: async (id) => ({ ...proposals.get(id), analysis: overrides.proposalAnalysis ?? analysis, analysisRunId: 'run-analysis' }),
       list: () => [],
     },
     ...overrides.plan,
@@ -189,6 +257,186 @@ async function waitFor(read, predicate, timeoutMs = 1_000) {
   }
   throw new Error('timed out waiting for planner state');
 }
+
+test('plan discussion explains questions and turns clear changes into a pending revision', async () => {
+  const draft = { title: 'Listing analytics', content: 'A sufficiently detailed planning artifact for listing analytics behavior.' };
+  const artifacts = { documentation: draft, specification: draft, implementationPlan: draft };
+
+  {
+    const { db, store } = storeFixture();
+    store.insert({ ...session(), step: 'analysis_review', status: 'waiting_for_user', analysis, artifacts });
+    const { service } = createService(store, {
+      operate: {
+        checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+        orchestrator: { runOneShot: async () => ({ finalMessage: JSON.stringify({
+          intent: 'explanation',
+          answer: 'The architecture list records findings. It does not create ten Board tasks.',
+          references: ['architecture'],
+          changeInstruction: null,
+          clarification: null,
+        }) }) },
+      },
+    });
+    service.discuss('idea-1', 0, 'Why are there so many architecture items?', 'architecture', 'alice');
+    const answered = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'waiting_for_user' && value.messages.length === 2);
+    assert.equal(answered.messages[0].context, 'architecture');
+    assert.equal(answered.messages[1].intent, 'explanation');
+    assert.equal(answered.pendingRevision, null);
+    db.close();
+  }
+
+  {
+    const { db, store } = storeFixture();
+    store.insert({ ...session(), step: 'analysis_review', status: 'waiting_for_user', analysis, artifacts });
+    const outputs = [
+      JSON.stringify({
+        intent: 'change_request',
+        answer: 'I will prepare a smaller first release for review.',
+        references: ['mvp'],
+        changeInstruction: 'Reduce the first release to five essential capabilities.',
+        clarification: null,
+      }),
+      JSON.stringify({ summary: 'Reduced the first release.', brief: { ...brief, mvp: ['Five grouped capabilities'] }, artifacts }),
+    ];
+    const { service } = createService(store, {
+      operate: {
+        checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+        orchestrator: { runOneShot: async () => ({ finalMessage: outputs.shift() ?? null }) },
+      },
+    });
+    service.discuss('idea-1', 0, 'Reduce the MVP to five points.', 'mvp', 'alice');
+    const revised = await waitFor(() => store.get('idea-1'), (value) => value?.pendingRevision !== null && value.status === 'waiting_for_user');
+    assert.equal(revised.pendingRevision.summary, 'Reduced the first release.');
+    assert.equal(revised.messages.filter((message) => message.intent === 'change_request').length, 2);
+    assert.equal(outputs.length, 0);
+    db.close();
+  }
+});
+
+test('retry resumes an interrupted discussion instead of treating it as a revision', async () => {
+  const { db, store } = storeFixture();
+  const draft = { title: 'Listing analytics', content: 'A sufficiently detailed planning artifact for listing analytics behavior.' };
+  const artifacts = { documentation: draft, specification: draft, implementationPlan: draft };
+  store.insert({
+    ...session(),
+    step: 'analysis_review',
+    status: 'failed',
+    analysis,
+    artifacts,
+    messages: [{
+      id: 'pm-1', role: 'user', content: 'Explain the main privacy risk.', createdAt: Date.now(), context: 'risks',
+    }],
+  });
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async () => ({ finalMessage: JSON.stringify({
+        intent: 'explanation',
+        answer: 'The main risk is collecting more user data than the feature needs.',
+        references: ['risks'],
+        changeInstruction: null,
+        clarification: null,
+      }) }) },
+    },
+  });
+
+  service.retry('idea-1', 0, 'alice');
+  const answered = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'waiting_for_user');
+  assert.equal(answered.pendingRevision, null);
+  assert.equal(answered.messages.at(-1).intent, 'explanation');
+  assert.equal(answered.messages.at(-1).context, 'risks');
+  db.close();
+});
+
+test('follow-up changes build on the pending revision and block task preparation until reviewed', async () => {
+  const { db, store } = storeFixture();
+  const currentDraft = { title: 'Current plan', content: 'The currently accepted implementation plan and its original scope.' };
+  const pendingDraft = { title: 'Pending plan', content: 'PENDING REVISION MARKER with a smaller reviewed first release.' };
+  const revisedDraft = { title: 'Revised plan', content: 'A combined revision that keeps the smaller release and adds the follow-up change.' };
+  const pendingRevision = {
+    summary: 'Smaller release proposed.',
+    brief: { ...brief, mvp: ['Smaller first release'] },
+    artifacts: { documentation: pendingDraft, specification: pendingDraft, implementationPlan: pendingDraft },
+  };
+  store.insert({
+    ...session(),
+    step: 'analysis_review',
+    status: 'waiting_for_user',
+    analysis,
+    proposalId: 'prop-1',
+    artifacts: { documentation: currentDraft, specification: currentDraft, implementationPlan: currentDraft },
+    pendingRevision,
+  });
+  let revisionPromptText = '';
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async (options) => {
+        revisionPromptText = options.prompt;
+        return { finalMessage: JSON.stringify({
+          summary: 'Combined both requested changes.',
+          brief: { ...brief, mvp: ['Smaller first release'], assumptions: [...brief.assumptions, 'Keep import local'] },
+          artifacts: { documentation: revisedDraft, specification: revisedDraft, implementationPlan: revisedDraft },
+        }) };
+      } },
+    },
+  });
+
+  assert.throws(() => service.prepareTasks('idea-1', 0, 'alice'), /apply or discard/);
+  service.requestRevision('idea-1', 0, 'Also keep the import local to the browser.', 'alice');
+  const revised = await waitFor(() => store.get('idea-1'), (value) => value?.pendingRevision?.summary === 'Combined both requested changes.');
+  assert.match(revisionPromptText, /PENDING REVISION MARKER/);
+  assert.equal(revised.pendingRevision.artifacts.implementationPlan.title, 'Revised plan');
+  assert.deepEqual(revised.pendingRevision.brief.mvp, ['Smaller first release']);
+  db.close();
+});
+
+test('applying a revision keeps the approved MVP canonical in the Ideas analysis and discussion index', async () => {
+  const { db, store } = storeFixture();
+  const currentDraft = { title: 'Current plan', content: 'The currently accepted implementation plan and its original scope.' };
+  const revisedDraft = { title: 'Five-part plan', content: 'The revised implementation plan groups the first release into five capabilities.' };
+  const revisedBrief = { ...brief, mvp: ['Import', 'Parse', 'Map', 'Preview', 'Persist'] };
+  const verboseAnalysis = { ...analysis, mvp: Array.from({ length: 12 }, (_, index) => `Expanded finding ${index + 1}`) };
+  store.insert({
+    ...session(),
+    step: 'analysis_review',
+    status: 'waiting_for_user',
+    analysis: verboseAnalysis,
+    docId: 'doc-1',
+    specId: 'spec-1',
+    proposalId: 'prop-1',
+    artifacts: { documentation: currentDraft, specification: currentDraft, implementationPlan: currentDraft },
+    pendingRevision: {
+      summary: 'Group the MVP into five capabilities.',
+      brief: revisedBrief,
+      artifacts: { documentation: revisedDraft, specification: revisedDraft, implementationPlan: revisedDraft },
+    },
+  });
+  const { service, docs, specs, proposals } = createService(store, { proposalAnalysis: verboseAnalysis });
+  docs.set('doc-1', { id: 'doc-1', workspaceId: 'ws-1', title: currentDraft.title, content: currentDraft.content });
+  specs.set('spec-1', { id: 'spec-1', workspaceId: 'ws-1', repo: 'owner/repo', title: currentDraft.title, content: currentDraft.content });
+  proposals.set('prop-1', { id: 'prop-1', workspaceId: 'ws-1', repo: 'owner/repo', title: currentDraft.title, body: currentDraft.content, analysis: verboseAnalysis });
+
+  service.applyRevision('idea-1', 0, 'alice');
+  const applied = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'analysis_review' && value.status === 'waiting_for_user');
+  assert.deepEqual(applied.brief.mvp, revisedBrief.mvp);
+  assert.deepEqual(applied.analysis.mvp, revisedBrief.mvp);
+  assert.equal(applied.analysis.mvp.length, 5);
+  const prompt = discussionPrompt({ session: applied, message: 'Where are the five MVP points?', context: 'mvp' });
+  assert.match(prompt, /"location":"Release boundary","label":"MVP","count":5/);
+  db.close();
+});
+
+test('old pending revisions inherit the approved brief when read from storage', () => {
+  const { db, store } = storeFixture();
+  const draft = { title: 'Legacy revision', content: 'A legacy pending revision created before briefs were synchronized.' };
+  store.insert({
+    ...session(),
+    pendingRevision: { summary: 'Legacy change', artifacts: { documentation: draft, specification: draft, implementationPlan: draft } },
+  });
+  assert.deepEqual(store.get('idea-1').pendingRevision.brief, brief);
+  db.close();
+});
 
 test('store enforces expectedRevision and leaves a useful 409 payload source', () => {
   const { db, store } = storeFixture();

@@ -8,6 +8,8 @@ import type {
   FeatureBrief,
   FeaturePlanningSession,
   PlannerAnswer,
+  PlannerDiscussionContext,
+  PlannerMessage,
   PlannerSessionDetail,
 } from '../contract/index.js';
 import { isReadOnlyPlannerSession } from './planner-machine.js';
@@ -15,9 +17,11 @@ import { PlannerRevisionConflict, PlannerStore, type PlannerSessionPatch } from 
 import {
   artifactsPrompt,
   clarificationPrompt,
+  discussionPrompt,
   emptyFeatureBrief,
   parseArtifactBundle,
   parseClarification,
+  parsePlannerDiscussion,
   parsePlannerRevision,
   revisionPrompt,
 } from './prompts.js';
@@ -249,6 +253,21 @@ export class PlannerService {
       void this.applyRevisionAndAnalyze(id, userId);
       return started;
     }
+    if (current.step === 'analysis_review') {
+      const lastUserMessage = [...current.messages].reverse().find((message) => message.role === 'user');
+      const instruction = lastUserMessage?.content.trim();
+      if (!instruction) throw new Error('the revision request is no longer available');
+      this.ensureRunCapacity(userId);
+      const retryingDiscussion = lastUserMessage?.context !== undefined;
+      const started = this.store.update(id, {
+        status: 'working', activeAction: retryingDiscussion ? 'discussing' : 'revising', lastError: null,
+        activeQueueId: null, activeRunId: null,
+      }, { expectedRevision, event: retryingDiscussion ? 'discussion_retried' : 'revision_retried' });
+      this.changed(id);
+      if (retryingDiscussion) void this.runDiscussion(id, instruction, lastUserMessage.context, userId);
+      else void this.runRevision(id, instruction, userId);
+      return started;
+    }
     if (current.step === 'refinement') {
       this.ensureRunCapacity(userId);
       const started = this.store.update(id, {
@@ -276,10 +295,41 @@ export class PlannerService {
     return started;
   }
 
+  discuss(
+    id: string,
+    expectedRevision: number,
+    message: string,
+    context: PlannerDiscussionContext | undefined,
+    userId: string,
+  ): FeaturePlanningSession {
+    const current = this.requireMutable(id);
+    if (current.activeAction === 'discussing' || current.activeAction === 'revising') return current;
+    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.analysis || !current.artifacts) {
+      throw new Error('plan discussion is available after the implementation analysis is ready');
+    }
+    const value = message.trim();
+    if (!value || value.length > MAX_MESSAGE_LENGTH) throw new Error('message must be between 1 and 4000 characters');
+    this.ensureRunCapacity(userId);
+    const normalizedContext = context ?? 'plan_summary';
+    const userMessage: PlannerMessage = {
+      id: messageId(), role: 'user', content: value, createdAt: Date.now(), context: normalizedContext,
+    };
+    const started = this.store.update(id, {
+      status: 'working', activeAction: 'discussing', lastError: null,
+      messages: appendMessages(current.messages, [userMessage]),
+      activeQueueId: null, activeRunId: null,
+    }, { expectedRevision, event: 'discussion_started', detail: { context: normalizedContext } });
+    this.changed(id);
+    void this.runDiscussion(id, value, normalizedContext, userId);
+    return started;
+  }
+
   requestRevision(id: string, expectedRevision: number, instruction: string, userId: string): FeaturePlanningSession {
     const current = this.requireMutable(id);
-    if (current.activeAction === 'revising') return current;
-    if (current.step !== 'analysis_review' || !current.artifacts) throw new Error('analysis is not ready for revision');
+    if (current.activeAction === 'discussing' || current.activeAction === 'revising') return current;
+    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.artifacts) {
+      throw new Error('analysis is not ready for revision');
+    }
     const value = instruction.trim();
     if (!value || value.length > MAX_MESSAGE_LENGTH) throw new Error('revision request must be between 1 and 4000 characters');
     this.ensureRunCapacity(userId);
@@ -296,7 +346,9 @@ export class PlannerService {
   applyRevision(id: string, expectedRevision: number, userId: string): FeaturePlanningSession {
     const current = this.requireMutable(id);
     if (current.activeAction === 'analyzing') return current;
-    if (current.step !== 'analysis_review' || !current.pendingRevision) throw new Error('there is no pending revision');
+    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.pendingRevision) {
+      throw new Error('there is no pending revision');
+    }
     this.ensureRunCapacity(userId);
     const started = this.store.update(id, {
       step: 'analysis', status: 'working', activeAction: 'analyzing', lastError: null,
@@ -307,12 +359,25 @@ export class PlannerService {
     return started;
   }
 
+  discardRevision(id: string, expectedRevision: number): FeaturePlanningSession {
+    const current = this.requireMutable(id);
+    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.pendingRevision) {
+      throw new Error('there is no pending revision');
+    }
+    return this.updateAndBroadcast(id, {
+      pendingRevision: null,
+      status: 'waiting_for_user',
+      lastError: null,
+    }, expectedRevision, 'revision_discarded');
+  }
+
   prepareTasks(id: string, expectedRevision: number, userId: string): FeaturePlanningSession {
     const current = this.requireMutable(id);
     if (current.activeAction === 'decomposing') return current;
-    if (current.step !== 'analysis_review' || !current.analysis || !current.proposalId) {
+    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.analysis || !current.proposalId) {
       throw new Error('the implementation plan is not ready');
     }
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before preparing tasks');
     this.ensureRunCapacity(userId);
     const started = this.store.update(id, {
       step: 'refinement', status: 'working', activeAction: 'decomposing', lastError: null,
@@ -499,31 +564,79 @@ export class PlannerService {
         onStarted: (runId) => this.trackStarted(id, runId),
       });
       if (!proposal.analysis) throw new Error('analysis completed without a validated result');
+      // The brief is the product boundary approved by the user. Proposal
+      // analysis may expand those groups into implementation findings, but the
+      // Ideas review must keep the visible MVP count and wording canonical.
+      const analysis = { ...proposal.analysis, mvp: session.brief.mvp };
       this.updateAndBroadcast(id, {
         step: 'analysis_review', status: 'waiting_for_user', activeAction: null,
         activeQueueId: null, activeRunId: null, lastError: null,
-        analysis: proposal.analysis, analysisRunId: proposal.analysisRunId,
+        analysis, analysisRunId: proposal.analysisRunId,
       }, undefined, 'analysis_ready');
     } catch (err) {
       this.fail(id, err);
     }
   }
 
-  private async runRevision(id: string, instruction: string, userId: string): Promise<void> {
+  private async runDiscussion(
+    id: string,
+    message: string,
+    context: PlannerDiscussionContext | undefined,
+    userId: string,
+  ): Promise<void> {
     try {
       const session = this.mustGet(id);
       await this.ensureClone(session, userId);
-      const output = await this.runStructured(id, userId, 'Revise implementation plan', revisionPrompt(instruction, session.brief, session.artifacts!));
+      const output = await this.runStructured(id, userId, 'Discuss implementation plan', discussionPrompt({
+        session,
+        message,
+        ...(context ? { context } : {}),
+      }));
+      const result = parsePlannerDiscussion(output, session);
+      const assistantMessage: PlannerMessage = {
+        id: messageId(),
+        role: 'assistant',
+        content: result.clarification?.question ?? result.answer,
+        createdAt: Date.now(),
+        intent: result.intent,
+        context,
+        references: result.references,
+        ...(result.clarification ? { options: result.clarification.options } : {}),
+      };
+      this.updateAndBroadcast(id, {
+        messages: appendMessages(this.mustGet(id).messages, [assistantMessage]),
+        status: result.intent === 'change_request' ? 'working' : 'waiting_for_user',
+        activeAction: result.intent === 'change_request' ? 'revising' : null,
+        activeQueueId: null,
+        activeRunId: null,
+        lastError: null,
+      }, undefined, result.intent === 'change_request' ? 'discussion_change_requested' : 'discussion_answered', { intent: result.intent });
+      if (result.intent === 'change_request') {
+        await this.runRevision(id, result.changeInstruction, userId, true);
+      }
+    } catch (err) {
+      this.failConversation(id, err);
+    }
+  }
+
+  private async runRevision(id: string, instruction: string, userId: string, fromDiscussion = false): Promise<void> {
+    try {
+      const session = this.mustGet(id);
+      await this.ensureClone(session, userId);
+      const revisionBase = session.pendingRevision?.artifacts ?? session.artifacts!;
+      const briefBase = session.pendingRevision?.brief ?? session.brief;
+      const output = await this.runStructured(id, userId, 'Revise implementation plan', revisionPrompt(instruction, briefBase, revisionBase));
       const pendingRevision = parsePlannerRevision(output);
       this.updateAndBroadcast(id, {
         pendingRevision, status: 'waiting_for_user', activeAction: null,
         activeQueueId: null, activeRunId: null, lastError: null,
         messages: appendMessages(this.mustGet(id).messages, [{
-          id: messageId(), role: 'assistant', content: pendingRevision.summary, createdAt: Date.now(),
+          id: messageId(), role: 'assistant', content: pendingRevision.summary, createdAt: Date.now(), intent: 'change_request',
         }]),
       }, undefined, 'revision_ready');
     } catch (err) {
-      this.fail(id, err);
+      if (fromDiscussion) this.failConversation(id, err);
+      else this.fail(id, err);
     }
   }
 
@@ -541,7 +654,7 @@ export class PlannerService {
         title: revision.artifacts.implementationPlan.title, body: revision.artifacts.implementationPlan.content,
       });
       session = this.updateAndBroadcast(id, {
-        artifacts: revision.artifacts, pendingRevision: null, analysis: null, analysisRunId: null,
+        brief: revision.brief, artifacts: revision.artifacts, pendingRevision: null, analysis: null, analysisRunId: null,
       }, undefined, 'revision_applied');
       await this.analyze(session.id, userId);
     } catch (err) {
@@ -658,6 +771,24 @@ export class PlannerService {
       }, undefined, 'failed', { error: message });
     } catch (updateError) {
       log.warn('planner failure state could not be stored', { id, err: String(updateError) });
+    }
+  }
+
+  private failConversation(id: string, err: unknown): void {
+    const session = this.store.get(id);
+    if (!session || session.step !== 'analysis_review' || session.status !== 'working') return;
+    const technicalMessage = String(err instanceof Error ? err.message : err).slice(0, 4_000);
+    log.warn('planner discussion failed', { id, action: session.activeAction, err: technicalMessage });
+    const message = err instanceof ZodError
+      ? 'I could not interpret the planning response safely. Nothing was changed. Please try asking again.'
+      : 'I could not finish that answer. Nothing was changed. Please try again.';
+    try {
+      this.updateAndBroadcast(id, {
+        status: 'waiting_for_user', activeAction: null, activeQueueId: null, activeRunId: null, lastError: null,
+        messages: appendMessages(session.messages, [{ id: messageId(), role: 'system', content: message, createdAt: Date.now() }]),
+      }, undefined, 'discussion_failed', { error: message });
+    } catch (updateError) {
+      log.warn('planner discussion failure could not be stored', { id, err: String(updateError) });
     }
   }
 

@@ -4,6 +4,7 @@ import type {
   ArtifactBundle,
   FeatureBrief,
   FeaturePlanningSession,
+  PlannerDiscussionContext,
   PlannerSessionDetail,
 } from '../contract/index.js';
 
@@ -26,7 +27,10 @@ export const ideasApi = {
   retry: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/retry`, revision(expectedRevision)),
   requestRevision: (id: string, expectedRevision: number, instruction: string) =>
     post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/revision`, { expectedRevision, instruction }),
+  discuss: (id: string, expectedRevision: number, message: string, context?: PlannerDiscussionContext) =>
+    post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/discuss`, { expectedRevision, message, ...(context ? { context } : {}) }),
   applyRevision: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/apply-revision`, revision(expectedRevision)),
+  discardRevision: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/discard-revision`, revision(expectedRevision)),
   prepareTasks: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/prepare-tasks`, revision(expectedRevision)),
   updateItem: (id: string, itemId: string, expectedRevision: number, fields: RefineItemUpdate) =>
     patch<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/items/${itemId}`, { expectedRevision, ...fields }),

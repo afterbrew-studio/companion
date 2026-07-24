@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AuthUser } from '@companion/contracts';
 import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@companion/core/server';
+import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import { artifactBundleSchema, featureBriefSchema } from './prompts.js';
 import { PlannerRevisionConflict } from './planner-store.js';
 
@@ -21,6 +22,10 @@ const answerSchema = revisionSchema.extend({
 const confirmBriefSchema = revisionSchema.extend({ brief: featureBriefSchema }).strict();
 const artifactsSchema = revisionSchema.extend({ artifacts: artifactBundleSchema }).strict();
 const revisionRequestSchema = revisionSchema.extend({ instruction: z.string().trim().min(1).max(4_000) }).strict();
+const discussionRequestSchema = revisionSchema.extend({
+  message: z.string().trim().min(1).max(4_000),
+  context: z.enum(PLANNER_DISCUSSION_CONTEXTS).optional(),
+}).strict();
 const patchItemSchema = revisionSchema.extend({
   title: z.string().trim().min(1).max(200).optional(),
   description: z.string().max(32_000).optional(),
@@ -105,8 +110,12 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.retry(params.id, body.expectedRevision, user!.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/revision', access: 'planner:manage', body: revisionRequestSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.requestRevision(params.id, body.expectedRevision, body.instruction, user!.username)) }; } }),
+    route({ method: 'POST', path: '/api/ideas/:id/discuss', access: 'planner:manage', body: discussionRequestSchema,
+      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.discuss(params.id, body.expectedRevision, body.message, body.context, user!.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/apply-revision', access: 'planner:manage', body: revisionSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.applyRevision(params.id, body.expectedRevision, user!.username)) }; } }),
+    route({ method: 'POST', path: '/api/ideas/:id/discard-revision', access: 'planner:manage', body: revisionSchema,
+      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.discardRevision(params.id, body.expectedRevision)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/prepare-tasks', access: 'planner:manage', body: revisionSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.prepareTasks(params.id, body.expectedRevision, user!.username)) }; } }),
     route({ method: 'PATCH', path: '/api/ideas/:id/items/:itemId', access: 'planner:manage', body: patchItemSchema,

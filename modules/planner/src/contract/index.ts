@@ -37,7 +37,28 @@ export type PlannerStep =
 
 export type PlannerStatus = 'draft' | 'working' | 'waiting_for_user' | 'failed' | 'completed' | 'cancelled';
 
-export type PlannerAction = 'clarifying' | 'generating_artifacts' | 'creating_artifacts' | 'analyzing' | 'revising' | 'decomposing' | 'launching';
+export type PlannerAction = 'clarifying' | 'generating_artifacts' | 'creating_artifacts' | 'analyzing' | 'discussing' | 'revising' | 'decomposing' | 'launching';
+
+export const PLANNER_DISCUSSION_CONTEXTS = [
+  'plan_summary',
+  'implementation_steps',
+  'code_areas',
+  'review_items',
+  'architecture',
+  'data_model_and_migrations',
+  'api_and_ui',
+  'authorization_privacy_security',
+  'dependencies',
+  'costs',
+  'tests',
+  'mvp',
+  'later',
+  'risks',
+  'open_decisions',
+] as const;
+
+export type PlannerDiscussionContext = typeof PLANNER_DISCUSSION_CONTEXTS[number];
+export type PlannerDiscussionIntent = 'explanation' | 'change_request' | 'clarification_needed';
 
 export interface FeatureBrief {
   readonly problem: string;
@@ -77,6 +98,17 @@ export interface PlannerMessage {
   readonly role: 'user' | 'assistant' | 'system';
   readonly content: string;
   readonly createdAt: number;
+  readonly intent?: PlannerDiscussionIntent;
+  readonly context?: PlannerDiscussionContext;
+  readonly options?: readonly [PlannerQuestionOption, PlannerQuestionOption, PlannerQuestionOption];
+  readonly references?: ReadonlyArray<PlannerDiscussionReference>;
+}
+
+export interface PlannerDiscussionReference {
+  readonly context: PlannerDiscussionContext;
+  readonly location: string;
+  readonly label: string;
+  readonly count: number | null;
 }
 
 export interface ArtifactDraft {
@@ -98,8 +130,35 @@ export interface ClarificationResult {
 
 export interface PlannerRevision {
   readonly summary: string;
+  readonly brief: FeatureBrief;
   readonly artifacts: ArtifactBundle;
 }
+
+export type PlannerDiscussionResult =
+  | {
+      readonly intent: 'explanation';
+      readonly answer: string;
+      readonly references: ReadonlyArray<PlannerDiscussionReference>;
+      readonly changeInstruction: null;
+      readonly clarification: null;
+    }
+  | {
+      readonly intent: 'change_request';
+      readonly answer: string;
+      readonly references: ReadonlyArray<PlannerDiscussionReference>;
+      readonly changeInstruction: string;
+      readonly clarification: null;
+    }
+  | {
+      readonly intent: 'clarification_needed';
+      readonly answer: string;
+      readonly references: ReadonlyArray<PlannerDiscussionReference>;
+      readonly changeInstruction: null;
+      readonly clarification: {
+        readonly question: string;
+        readonly options: readonly [PlannerQuestionOption, PlannerQuestionOption, PlannerQuestionOption];
+      };
+    };
 
 export interface PlannerConfirmations {
   readonly brief: boolean;

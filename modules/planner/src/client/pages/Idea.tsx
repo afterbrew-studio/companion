@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AccentField, ChevronDown, CopyText, DiffView, EmptyState, ErrorBar, Field, Markdown, Page, PageHeader, PageLoading, QuestionIcon, SparkleIcon, Spinner, Tooltip } from '@companion/ui';
+import { onServerMessage } from '@companion/core/client';
+import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, Markdown, Page, PageHeader, PageLoading, QuestionIcon, SparkleIcon, Spinner, Tooltip } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';
@@ -7,11 +8,13 @@ import type {
   ArtifactBundle,
   FeatureBrief,
   FeaturePlanningSession,
+  PlannerDiscussionContext,
   PlannerMessage,
   PlannerQuestion,
   PlannerRevision,
 } from '../../contract/index.js';
 import { ideasApi } from '../api.js';
+import { extractStreamingJsonString } from '../discussion-stream.js';
 import { useIdeas } from '../hooks/useIdeas.js';
 
 const STEPS: Array<{ key: FeaturePlanningSession['step']; label: string }> = [
@@ -35,9 +38,16 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   const [artifactTab, setArtifactTab] = useState<keyof ArtifactBundle>('documentation');
   const [preview, setPreview] = useState(true);
   const [answers, setAnswers] = useState<Record<string, { optionId: string | null; value: string }>>({});
-  const [revisionRequest, setRevisionRequest] = useState('');
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  const [discussionContext, setDiscussionContext] = useState<PlannerDiscussionContext>('plan_summary');
+  const [discussionDraft, setDiscussionDraft] = useState('');
+  const [discussionRequestPending, setDiscussionRequestPending] = useState(false);
   const [mergeIds, setMergeIds] = useState<string[]>([]);
   const session = state.detail?.session ?? null;
+  const discussionStreamingText = useDiscussionStream(
+    session,
+    discussionRequestPending || session?.activeAction === 'discussing',
+  );
   const questionSet = session?.questions.map((question) => question.id).join('|') ?? '';
   const artifactsDirty = useMemo(
     () => artifacts !== null && session?.artifacts !== null && JSON.stringify(artifacts) !== JSON.stringify(session?.artifacts),
@@ -78,9 +88,41 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   if (state.missing || !state.detail || !session) return <EmptyState title="Idea not found" hint="It may have been removed or belong to another workspace." />;
 
   const canManage = can('planner:manage') && session.status !== 'completed' && session.status !== 'cancelled';
+  const planStaysVisible = session.step === 'analysis_review' && session.analysis !== null;
+  const interactionDisabled = !canManage || busy || session.status === 'working';
+  const canDiscuss = canManage
+    && session.step === 'analysis_review'
+    && session.status === 'waiting_for_user'
+    && session.analysis !== null
+    && session.artifacts !== null;
+  const openDiscussion = (context: PlannerDiscussionContext = 'plan_summary'): void => {
+    setDiscussionContext(context);
+    setDiscussionOpen(true);
+  };
+  const focusPlanReference = (context: PlannerDiscussionContext): void => {
+    setDiscussionContext(context);
+    if (window.matchMedia('(max-width: 767px)').matches) setDiscussionOpen(false);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.getElementById(`analysis-context-${context}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }));
+  };
+  const sendDiscussion = async (message: string, context = discussionContext): Promise<void> => {
+    const value = message.trim();
+    if (!value || !canDiscuss) return;
+    setDiscussionRequestPending(true);
+    try {
+      await act(async () => {
+        await ideasApi.discuss(id, session.revision, value, context);
+        setDiscussionDraft('');
+      });
+    } finally {
+      setDiscussionRequestPending(false);
+    }
+  };
   return (
-    <Page className="max-w-6xl">
-      <IdeaHeader session={session} />
+    <div className="flex min-h-full min-w-0">
+      <Page className="min-w-0 max-w-6xl flex-1">
+      <IdeaHeader session={session} onDiscuss={() => openDiscussion()} />
       <Stepper current={session.step} />
       <ErrorBar error={state.error} className="my-4" />
 
@@ -122,7 +164,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
         </section>
       ) : null}
 
-      {session.status !== 'working' && session.status !== 'failed' ? (
+      {(session.status !== 'working' && session.status !== 'failed') || planStaysVisible ? (
         <>
           {session.step === 'clarification' ? (
             <Clarification
@@ -167,14 +209,11 @@ export default function Idea({ id }: { id: string }): JSX.Element {
               analysis={session.analysis}
               artifacts={session.artifacts}
               pending={session.pendingRevision}
-              revisionRequest={revisionRequest}
-              setRevisionRequest={setRevisionRequest}
-              disabled={!canManage || busy}
-              onRequest={() => act(async () => {
-                await ideasApi.requestRevision(id, session.revision, revisionRequest);
-                setRevisionRequest('');
-              })}
+              focusedContext={discussionContext}
+              disabled={interactionDisabled}
+              onDiscuss={openDiscussion}
               onApply={() => act(() => ideasApi.applyRevision(id, session.revision))}
+              onDiscard={() => act(() => ideasApi.discardRevision(id, session.revision))}
               onApprove={() => act(() => ideasApi.prepareTasks(id, session.revision))}
             />
           ) : null}
@@ -203,18 +242,31 @@ export default function Idea({ id }: { id: string }): JSX.Element {
         </>
       ) : null}
 
-      {session.messages.length > 0 ? <ConversationHistory messages={session.messages} /> : null}
-
       {canManage && session.status !== 'working' && session.status !== 'failed' ? (
         <div className="mt-8 border-t border-zinc-200 pt-4 dark:border-zinc-800">
           <button className="btn-danger-ghost" disabled={busy} onClick={() => void act(() => ideasApi.cancel(id, session.revision))}>Cancel planning session</button>
         </div>
       ) : null}
-    </Page>
+      </Page>
+      <DiscussionPanel
+        open={discussionOpen}
+        session={session}
+        context={discussionContext}
+        draft={discussionDraft}
+        streamingText={discussionStreamingText}
+        setDraft={setDiscussionDraft}
+        canSend={canDiscuss}
+        busy={busy || discussionRequestPending || session.activeAction === 'discussing' || session.activeAction === 'revising'}
+        onContext={setDiscussionContext}
+        onReference={focusPlanReference}
+        onSend={sendDiscussion}
+        onClose={() => setDiscussionOpen(false)}
+      />
+    </div>
   );
 }
 
-function IdeaHeader({ session }: { session: FeaturePlanningSession }): JSX.Element {
+function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; onDiscuss: () => void }): JSX.Element {
   const [showOriginal, setShowOriginal] = useState(false);
   const panelId = `original-idea-${session.id}`;
   return (
@@ -236,7 +288,14 @@ function IdeaHeader({ session }: { session: FeaturePlanningSession }): JSX.Eleme
             </button>
           </div>
         )}
-        actions={<a className="btn-ghost" href="#/ideas">All ideas</a>}
+        actions={(
+          <>
+            <button type="button" className="btn-ghost" onClick={onDiscuss}>
+              <SparkleIcon /> {session.step === 'analysis_review' ? 'Discuss plan' : 'Conversation'}
+            </button>
+            <a className="btn-ghost" href="#/ideas">All ideas</a>
+          </>
+        )}
       />
       {showOriginal ? (
         <section id={panelId} className="mb-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-900/70 sm:p-5" aria-label="Original idea message">
@@ -637,9 +696,10 @@ function ArtifactReview({ artifacts, dirty, tab, preview, disabled, onTab, onPre
   );
 }
 
-function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevisionRequest, disabled, onRequest, onApply, onApprove }: {
-  analysis: ProposalAnalysis; artifacts: ArtifactBundle | null; pending: PlannerRevision | null; revisionRequest: string; setRevisionRequest: (value: string) => void; disabled: boolean;
-  onRequest: () => Promise<void>; onApply: () => Promise<void>; onApprove: () => Promise<void>;
+function AnalysisReview({ analysis, artifacts, pending, disabled, focusedContext, onDiscuss, onApply, onDiscard, onApprove }: {
+  analysis: ProposalAnalysis; artifacts: ArtifactBundle | null; pending: PlannerRevision | null; disabled: boolean;
+  focusedContext: PlannerDiscussionContext;
+  onDiscuss: (context?: PlannerDiscussionContext) => void; onApply: () => Promise<void>; onDiscard: () => Promise<void>; onApprove: () => Promise<void>;
 }): JSX.Element {
   const [activeChapterTitle, setActiveChapterTitle] = useState('Architecture and integration');
   const chapters: ReadonlyArray<AnalysisChapter> = [
@@ -647,35 +707,35 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
       title: 'Architecture and integration',
       description: 'How the feature fits the current system and its trust boundaries.',
       groups: [
-        { label: 'Architecture', values: analysis.architecture },
-        { label: 'Data model and migrations', values: analysis.dataModelAndMigrations },
-        { label: 'API and UI', values: analysis.apiAndUi },
-        { label: 'Authorization, privacy and security', values: analysis.authorizationPrivacySecurity },
+        { label: 'Architecture', values: analysis.architecture, context: 'architecture' },
+        { label: 'Data model and migrations', values: analysis.dataModelAndMigrations, context: 'data_model_and_migrations' },
+        { label: 'API and UI', values: analysis.apiAndUi, context: 'api_and_ui' },
+        { label: 'Authorization, privacy and security', values: analysis.authorizationPrivacySecurity, context: 'authorization_privacy_security' },
       ],
     },
     {
       title: 'Code impact',
       description: 'The areas likely to change, including dependencies and cost considerations.',
       groups: [
-        { label: 'Areas and files', values: analysis.touchedAreas, mono: true },
-        { label: 'Dependencies', values: analysis.dependencies },
-        { label: 'Potential costs', values: analysis.costs },
+        { label: 'Areas and files', values: analysis.touchedAreas, mono: true, context: 'code_areas' },
+        { label: 'Dependencies', values: analysis.dependencies, context: 'dependencies' },
+        { label: 'Potential costs', values: analysis.costs, context: 'costs' },
       ],
     },
     {
       title: 'Delivery and validation',
       description: 'The implementation sequence and how the result will be verified.',
       groups: [
-        { label: 'Implementation steps', values: analysis.steps },
-        { label: 'Tests', values: analysis.tests },
+        { label: 'Implementation steps', values: analysis.steps, context: 'implementation_steps' },
+        { label: 'Tests', values: analysis.tests, context: 'tests' },
       ],
     },
     {
       title: 'Release boundary',
       description: 'What belongs in the first release and what is intentionally deferred.',
       groups: [
-        { label: 'MVP', values: analysis.mvp },
-        { label: 'Later', values: analysis.later },
+        { label: 'MVP', values: analysis.mvp, context: 'mvp' },
+        { label: 'Later', values: analysis.later, context: 'later' },
       ],
     },
     {
@@ -683,11 +743,15 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
       description: 'The items that can materially change scope, safety or delivery.',
       alwaysVisible: true,
       groups: [
-        { label: 'Risks', values: analysis.risks, empty: 'No material risks were identified.' },
-        { label: 'Open decisions', values: analysis.openDecisions, empty: 'No open decisions remain.' },
+        { label: 'Risks', values: analysis.risks, empty: 'No material risks were identified.', context: 'risks' },
+        { label: 'Open decisions', values: analysis.openDecisions, empty: 'No open decisions remain.', context: 'open_decisions' },
       ],
     },
   ];
+  const focusedChapterTitle = chapters.find((chapter) => chapter.groups.some((group) => group.context === focusedContext))?.title ?? null;
+  useEffect(() => {
+    if (focusedChapterTitle) setActiveChapterTitle(focusedChapterTitle);
+  }, [focusedChapterTitle]);
   const visibleChapters = chapters.filter((chapter) => chapter.alwaysVisible || analysisChapterCount(chapter) > 0);
   const activeChapter = visibleChapters.find((chapter) => chapter.title === activeChapterTitle) ?? visibleChapters[0]!;
   const reviewItems = analysis.risks.length + analysis.openDecisions.length;
@@ -703,9 +767,9 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
             <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">{analysis.summary}</p>
           </div>
           <div className="grid w-full shrink-0 grid-cols-3 rounded-xl border border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-950/35 lg:w-[22rem]" role="list" aria-label="Implementation plan summary">
-            <AnalysisMetric label="Steps" value={analysis.steps.length} description="Implementation steps suggested by the analysis. These are not Board tasks." />
-            <AnalysisMetric label="Code areas" value={analysis.touchedAreas.length} description="Files or code areas that the implementation may need to change." />
-            <AnalysisMetric label="Review items" value={reviewItems} description="Risks and open decisions that deserve attention before approval." />
+            <AnalysisMetric label="Steps" value={analysis.steps.length} description="Implementation steps suggested by the analysis. These are not Board tasks." onDiscuss={() => onDiscuss('implementation_steps')} />
+            <AnalysisMetric label="Code areas" value={analysis.touchedAreas.length} description="Files or code areas that the implementation may need to change." onDiscuss={() => onDiscuss('code_areas')} />
+            <AnalysisMetric label="Review items" value={reviewItems} description="Risks and open decisions that deserve attention before approval." onDiscuss={() => onDiscuss('review_items')} />
           </div>
         </div>
       </header>
@@ -734,7 +798,7 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
             })}
           </nav>
         </div>
-        <AnalysisChapterView key={activeChapter.title} chapter={activeChapter} />
+        <AnalysisChapterView key={activeChapter.title} chapter={activeChapter} focusedContext={focusedContext} onDiscuss={onDiscuss} />
       </section>
 
       {pending ? (
@@ -744,29 +808,22 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
               <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">Proposed revision</h3><span className="badge-accent">Waiting for approval</span></div>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">{pending.summary}</p>
             </div>
-            <button type="button" className="btn shrink-0 whitespace-nowrap" disabled={disabled} onClick={() => void onApply()}>Apply and re-analyze</button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button type="button" className="btn-ghost whitespace-nowrap" disabled={disabled} onClick={() => void onDiscard()}>Discard revision</button>
+              <button type="button" className="btn whitespace-nowrap" disabled={disabled} onClick={() => void onApply()}>Apply and re-analyze</button>
+            </div>
           </div>
           {artifacts ? <DiffView diff={revisionDiff(artifacts, pending.artifacts)} className="mt-5" /> : null}
         </section>
-      ) : (
-        <section className="border-t border-zinc-200 px-5 py-6 dark:border-zinc-800 sm:px-7">
-          <Field label="Want something changed before approval?" hint="Describe the outcome, not the implementation. The agent will show a revision before changing any artifact.">
-            <AccentField className="mt-2">
-              <textarea
-                className="input min-h-24 w-full resize-y leading-6"
-                disabled={disabled}
-                value={revisionRequest}
-                onChange={(event) => setRevisionRequest(event.target.value)}
-                placeholder="For example: keep analytics anonymous and avoid a paid vendor for the MVP."
-              />
-            </AccentField>
-          </Field>
-        </section>
-      )}
+      ) : null}
       <footer className="flex flex-col gap-4 border-t border-zinc-200 bg-zinc-50/70 px-5 py-5 dark:border-zinc-800 dark:bg-zinc-950/35 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-        <p className="max-w-xl text-xs leading-5 text-zinc-500 dark:text-zinc-400">Approval locks this plan and asks the planner to prepare reviewable tasks. It does not start coding yet.</p>
+        <div className="max-w-xl">
+          <button type="button" className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-emerald-700 outline-none hover:text-emerald-600 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300" onClick={() => onDiscuss('plan_summary')}>
+            <SparkleIcon className="size-3.5" /> Ask a question or request a change
+          </button>
+          <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">Approval locks this plan and asks the planner to prepare reviewable tasks. It does not start coding yet.</p>
+        </div>
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-          {!pending ? <button type="button" className="btn-ghost justify-center whitespace-nowrap active:translate-y-px" disabled={disabled || !revisionRequest.trim()} onClick={() => void onRequest()}>Propose changes</button> : null}
           <button
             type="button"
             className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md bg-emerald-600 px-4 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400 dark:focus-visible:ring-offset-zinc-950"
@@ -784,6 +841,7 @@ function AnalysisReview({ analysis, artifacts, pending, revisionRequest, setRevi
 interface AnalysisGroup {
   readonly label: string;
   readonly values: ReadonlyArray<string>;
+  readonly context: PlannerDiscussionContext;
   readonly mono?: boolean;
   readonly empty?: string;
 }
@@ -795,34 +853,48 @@ interface AnalysisChapter {
   readonly alwaysVisible?: boolean;
 }
 
-function AnalysisMetric({ label, value, description }: { label: string; value: number; description: string }): JSX.Element {
+function AnalysisMetric({ label, value, description, onDiscuss }: { label: string; value: number; description: string; onDiscuss: () => void }): JSX.Element {
   return (
     <Tooltip content={description} side="bottom" className="w-full min-w-0 border-r border-zinc-200 last:border-r-0 dark:border-zinc-800">
-      <span
+      <button
+        type="button"
         role="listitem"
-        tabIndex={0}
-        aria-label={`${label}: ${value}. ${description}`}
-        className="flex min-h-[4.5rem] w-full cursor-help flex-col items-center justify-center px-2 py-3 text-center outline-none transition-colors hover:bg-white/80 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 dark:hover:bg-zinc-900/70 dark:focus-visible:bg-zinc-900"
+        aria-label={`${label}: ${value}. ${description} Open this topic in the planning conversation.`}
+        className="flex min-h-[4.5rem] w-full cursor-pointer flex-col items-center justify-center px-2 py-3 text-center outline-none transition-colors hover:bg-white/80 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 active:translate-y-px dark:hover:bg-zinc-900/70 dark:focus-visible:bg-zinc-900"
+        onClick={onDiscuss}
       >
         <span className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100" aria-hidden="true">{value}</span>
         <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
           {label}
           <QuestionIcon className="size-3 text-zinc-400 dark:text-zinc-500" />
         </span>
-      </span>
+      </button>
     </Tooltip>
   );
 }
 
-function AnalysisChapterView({ chapter }: { chapter: AnalysisChapter }): JSX.Element {
+function AnalysisChapterView({ chapter, focusedContext, onDiscuss }: {
+  chapter: AnalysisChapter;
+  focusedContext: PlannerDiscussionContext;
+  onDiscuss: (context: PlannerDiscussionContext) => void;
+}): JSX.Element {
   const groups = chapter.groups.filter((group) => group.values.length > 0 || group.empty !== undefined);
   const [activeGroupLabel, setActiveGroupLabel] = useState(groups[0]!.label);
+  const focusedGroupLabel = groups.find((group) => group.context === focusedContext)?.label ?? null;
+  useEffect(() => {
+    if (focusedGroupLabel) setActiveGroupLabel(focusedGroupLabel);
+  }, [focusedGroupLabel]);
   const activeGroup = groups.find((group) => group.label === activeGroupLabel) ?? groups[0]!;
   return (
     <section className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/45 dark:border-zinc-800 dark:bg-zinc-950/20">
-      <header className="border-b border-zinc-200 px-5 py-5 dark:border-zinc-800 sm:px-6">
-        <h4 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{chapter.title}</h4>
-        <p className="mt-1 max-w-2xl text-xs leading-5 text-zinc-500 dark:text-zinc-400">{chapter.description}</p>
+      <header className="flex flex-col gap-3 border-b border-zinc-200 px-5 py-5 dark:border-zinc-800 sm:flex-row sm:items-start sm:justify-between sm:px-6">
+        <div>
+          <h4 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{chapter.title}</h4>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-zinc-500 dark:text-zinc-400">{chapter.description}</p>
+        </div>
+        <button type="button" className="btn-ghost h-8 shrink-0 self-start px-2.5 text-xs" onClick={() => onDiscuss(activeGroup.context)}>
+          <SparkleIcon className="size-3.5" /> Ask agent
+        </button>
       </header>
       {groups.length > 1 ? (
         <div className="overflow-x-auto border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
@@ -857,7 +929,7 @@ function AnalysisGroupView({ group }: { group: AnalysisGroup }): JSX.Element {
   const visible = expanded ? group.values : group.values.slice(0, 5);
   const remaining = group.values.length - visible.length;
   return (
-    <section className="mx-auto max-w-3xl">
+    <section id={`analysis-context-${group.context}`} className="mx-auto max-w-3xl scroll-mt-20">
       <div className="flex items-center justify-between gap-3">
         <h5 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{group.label}</h5>
         <span className="text-xs tabular-nums text-zinc-400 dark:text-zinc-500">{group.values.length} {group.values.length === 1 ? 'item' : 'items'}</span>
@@ -952,27 +1024,304 @@ function Launched({ session }: { session: FeaturePlanningSession }): JSX.Element
   return <Panel><span className="badge-ok">Work started</span><h2 className="mt-3 text-xl font-semibold">Tasks are now managed by the Board</h2><p className="dim mt-2 text-sm">This planning session is preserved as read-only history. Continue edits, reviews and agent operations from the task cards.</p><div className="mt-5 flex flex-wrap gap-2"><a className="btn" href="#/board">Open Task Board</a>{session.taskIds.map((taskId) => <a key={taskId} className="btn-ghost" href={`#/board?task=${encodeURIComponent(taskId)}`}>{taskId}</a>)}</div></Panel>;
 }
 
-function ConversationHistory({ messages }: { messages: ReadonlyArray<PlannerMessage> }): JSX.Element {
+const MAX_DISCUSSION_STREAM_BUFFER = 64_000;
+const MAX_BUFFERED_RUNS = 8;
+
+/**
+ * Discussion runs use the platform's normal run event stream. Before the
+ * session refresh reveals the exact run id, keep a tiny bounded buffer of
+ * visible chunks; once the id arrives, only that run is rendered. This avoids
+ * a second streaming transport and prevents raw strict-JSON output from ever
+ * reaching the chat UI.
+ */
+function useDiscussionStream(session: FeaturePlanningSession | null, armed: boolean): string {
+  const [text, setText] = useState('');
+  const buffersRef = useRef(new Map<string, string>());
+  const activeRunRef = useRef<string | null>(null);
+  const armedRef = useRef(armed);
+
+  useEffect(() => {
+    buffersRef.current.clear();
+    activeRunRef.current = null;
+    setText('');
+  }, [session?.id]);
+
+  useEffect(() => {
+    armedRef.current = armed;
+    const activeRunId = session?.activeAction === 'discussing' ? session.activeRunId : null;
+    if (!armed) {
+      buffersRef.current.clear();
+      activeRunRef.current = null;
+      setText('');
+      return;
+    }
+    if (!activeRunId || activeRunId === activeRunRef.current) return;
+    activeRunRef.current = activeRunId;
+    const buffered = buffersRef.current.get(activeRunId) ?? '';
+    buffersRef.current = new Map(buffered ? [[activeRunId, buffered]] : []);
+    setText(extractStreamingJsonString(buffered, 'answer'));
+  }, [armed, session?.activeAction, session?.activeRunId]);
+
+  useEffect(() => onServerMessage((message) => {
+    if (!armedRef.current || message.t !== 'event') return;
+    const activeRunId = activeRunRef.current;
+    if (activeRunId && message.runId !== activeRunId) return;
+    const event = message.event;
+    if (event.type !== 'assistant_chunk' && event.type !== 'assistant_message') return;
+
+    const buffers = buffersRef.current;
+    if (!buffers.has(message.runId) && buffers.size >= MAX_BUFFERED_RUNS) {
+      const oldest = buffers.keys().next().value as string | undefined;
+      if (oldest) buffers.delete(oldest);
+    }
+    const current = buffers.get(message.runId) ?? '';
+    const next = event.type === 'assistant_chunk'
+      ? `${current}${(event as { readonly delta?: string }).delta ?? ''}`
+      : (event as { readonly content?: string }).content ?? current;
+    const bounded = next.slice(-MAX_DISCUSSION_STREAM_BUFFER);
+    buffers.set(message.runId, bounded);
+    if (message.runId === activeRunRef.current) {
+      setText(extractStreamingJsonString(bounded, 'answer'));
+    }
+  }), []);
+
+  return text;
+}
+
+function DiscussionPanel({ open, session, context, draft, streamingText, setDraft, canSend, busy, onContext, onReference, onSend, onClose }: {
+  open: boolean;
+  session: FeaturePlanningSession;
+  context: PlannerDiscussionContext;
+  draft: string;
+  streamingText: string;
+  setDraft: (value: string) => void;
+  canSend: boolean;
+  busy: boolean;
+  onContext: (context: PlannerDiscussionContext) => void;
+  onReference: (context: PlannerDiscussionContext) => void;
+  onSend: (message: string, context?: PlannerDiscussionContext) => Promise<void>;
+  onClose: () => void;
+}): JSX.Element {
+  const listRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const followLatest = useRef(true);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (list && followLatest.current) list.scrollTop = list.scrollHeight;
+  }, [session.messages.length, streamingText, busy]);
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onCloseRef.current();
+    };
+    const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+  const contextName = discussionContextLabel(context);
+  const available = session.step === 'analysis_review' && session.analysis !== null && session.artifacts !== null;
   return (
-    <details className="group mt-5 rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-2xl p-5 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-zinc-950 sm:p-6 [&::-webkit-details-marker]:hidden">
-        <span>
-          <span className="block text-base font-semibold">Planning conversation</span>
-          <span className="mt-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">Review the decisions and answers saved with this idea.</span>
-        </span>
-        <span className="shrink-0 text-xs font-medium text-zinc-600 group-open:hidden dark:text-zinc-300">Show {messages.length} messages</span>
-        <span className="hidden shrink-0 text-xs font-medium text-zinc-600 group-open:inline dark:text-zinc-300">Hide messages</span>
-      </summary>
-      <div className="max-h-[32rem] space-y-3 overflow-y-auto border-t border-zinc-200 p-5 dark:border-zinc-800 sm:p-6">
-        {messages.map((message) => (
-          <article key={message.id} className={`rounded-xl p-4 text-sm ${message.role === 'user' ? 'ml-auto max-w-[90%] bg-zinc-100 dark:bg-zinc-800' : 'mr-auto max-w-[90%] border border-zinc-200 dark:border-zinc-800'}`}>
-            <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">{message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Planner' : 'System'}</p>
-            <p className="whitespace-pre-wrap leading-6">{message.content}</p>
-          </article>
-        ))}
+    <aside
+      className={`flex shrink-0 flex-col bg-white transition-[width,transform,visibility] duration-200 ease-in-out motion-reduce:transition-none max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-50 max-md:h-dvh max-md:w-full max-md:shadow-2xl md:sticky md:top-0 md:h-[calc(100dvh-2.75rem)] md:self-start md:overflow-hidden dark:bg-zinc-950 ${
+        open
+          ? 'border-l border-zinc-200 max-md:translate-x-0 md:w-[26rem] dark:border-zinc-800'
+          : 'invisible max-md:translate-x-full md:w-0'
+      }`}
+      role="complementary"
+      aria-label="Planning conversation"
+      aria-hidden={!open}
+    >
+      <div className="flex h-full w-full min-w-0 flex-col md:w-[26rem]">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-zinc-200 px-3.5 dark:border-zinc-800">
+          <span className="flex size-6 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" aria-hidden="true">
+            <SparkleIcon className="size-3.5" />
+          </span>
+          <div className="min-w-0 flex-1 text-[13px] font-semibold">Planning conversation</div>
+          <IconButton label="Close planning conversation" onClick={onClose}>
+            <CloseIcon className="size-3.5" />
+          </IconButton>
+        </div>
+        <header className="shrink-0 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+              <span className="shrink-0 text-zinc-500 dark:text-zinc-400">Focus</span>
+              <strong className="truncate font-medium text-zinc-800 dark:text-zinc-100">{contextName}</strong>
+              {context !== 'plan_summary' ? <button type="button" className="shrink-0 cursor-pointer text-emerald-700 outline-none hover:text-emerald-600 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" onClick={() => onContext('plan_summary')}>Use whole plan</button> : null}
+            </div>
+            <span className="badge-accent shrink-0">Review before apply</span>
+          </div>
+        </header>
+
+        <div
+          ref={listRef}
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5"
+          aria-live="polite"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+          }}
+        >
+          {session.messages.map((message) => (
+            <DiscussionMessage
+              key={message.id}
+              message={message}
+              canRespond={canSend && !busy}
+              onChoose={(value) => void onSend(value, message.context ?? context)}
+              onCustom={() => composerRef.current?.focus()}
+              onReference={onReference}
+            />
+          ))}
+          {streamingText.trim() ? (
+            <StreamingDiscussionMessage text={streamingText} />
+          ) : busy ? (
+            <div className="mr-auto flex max-w-[92%] items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <Spinner /> {session.activeAction === 'revising' ? 'Preparing a reviewable revision…' : 'Reviewing the plan and your question…'}
+            </div>
+          ) : null}
+        </div>
+
+        <form
+          className="shrink-0 border-t border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/35"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (draft.trim() && canSend && !busy) void onSend(draft, context);
+          }}
+        >
+          {available ? (
+            <>
+              <AccentField>
+                <textarea
+                  ref={composerRef}
+                  className="input min-h-24 w-full resize-none leading-6"
+                  maxLength={4_000}
+                  disabled={!canSend || busy}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      if (draft.trim() && canSend && !busy) void onSend(draft, context);
+                    }
+                  }}
+                  placeholder={`Ask about ${contextName.toLowerCase()} or describe what you want changed…`}
+                  aria-label="Message the planning agent"
+                />
+              </AccentField>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{draft.length.toLocaleString()} / 4,000 · Enter to send · Shift + Enter for a new line</span>
+                <button type="submit" className="btn h-9 px-3" disabled={!canSend || busy || !draft.trim()}>Send</button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+              {session.step === 'launched' || session.status === 'completed'
+                ? 'This session is read-only. Continue implementation discussions from the Task Board.'
+                : 'Discussion becomes available when the implementation plan reaches review.'}
+            </p>
+          )}
+        </form>
       </div>
-    </details>
+    </aside>
   );
+}
+
+function StreamingDiscussionMessage({ text }: { text: string }): JSX.Element {
+  return (
+    <article className="mr-auto max-w-[92%]" aria-label="Planner response streaming">
+      <div className="mb-1.5 px-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Planner</div>
+      <div className="select-text whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm leading-6 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+        {text}
+        <span className="ml-1 inline-block h-3.5 w-px animate-pulse bg-emerald-500 align-[-1px] motion-reduce:animate-none" aria-hidden="true" />
+      </div>
+    </article>
+  );
+}
+
+function DiscussionMessage({ message, canRespond, onChoose, onCustom, onReference }: {
+  message: PlannerMessage;
+  canRespond: boolean;
+  onChoose: (value: string) => void;
+  onCustom: () => void;
+  onReference: (context: PlannerDiscussionContext) => void;
+}): JSX.Element {
+  const user = message.role === 'user';
+  const system = message.role === 'system';
+  return (
+    <article className={`group/message ${user ? 'ml-auto max-w-[92%]' : 'mr-auto max-w-[92%]'}`}>
+      <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{user ? 'You' : system ? 'System' : 'Planner'}</span>
+          {message.intent ? <span className={message.intent === 'change_request' ? 'badge-accent' : message.intent === 'clarification_needed' ? 'badge-warn' : 'badge'}>{discussionIntentLabel(message.intent)}</span> : null}
+        </div>
+        <CopyText value={message.content} title="Copy message" ariaLabel="Copy message" className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-zinc-500 opacity-0 outline-none hover:bg-zinc-200 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-500 group-hover/message:opacity-100 dark:hover:bg-zinc-800">Copy</CopyText>
+      </div>
+      <div className={`select-text whitespace-pre-wrap break-words rounded-xl px-4 py-3 text-sm leading-6 ${user ? 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200' : system ? 'border border-red-200 bg-red-50/60 text-red-800 dark:border-red-900/70 dark:bg-red-950/10 dark:text-red-200' : 'border border-zinc-200 bg-white text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'}`}>
+        {message.content}
+      </div>
+      {message.references && message.references.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Verified plan sources">
+          {message.references.map((reference) => (
+            <button
+              key={reference.context}
+              type="button"
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/60 px-2.5 py-1 text-[11px] font-medium text-emerald-800 outline-none transition-colors hover:border-emerald-400 hover:bg-emerald-100 focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/40"
+              title="Show this verified source in the plan"
+              onClick={() => onReference(reference.context)}
+            >
+              <span aria-hidden="true">↗</span>
+              <span>{reference.location} → {reference.label}{reference.count === null ? '' : ` · ${reference.count} ${reference.count === 1 ? 'item' : 'items'}`}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {message.options ? (
+        <div className="mt-2 grid gap-2">
+          {message.options.map((option) => (
+            <button key={option.id} type="button" className="cursor-pointer rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-left outline-none transition-colors hover:border-emerald-400 hover:bg-emerald-50/30 focus-visible:ring-2 focus-visible:ring-emerald-500 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/10" disabled={!canRespond} onClick={() => onChoose(option.label)}>
+              <span className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-800 dark:text-zinc-200"><span>{option.label}</span>{option.recommended ? <span className="badge-ok">Recommended</span> : null}</span>
+              <span className="mt-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">{option.description}</span>
+            </button>
+          ))}
+          <button type="button" className="btn-ghost justify-center text-xs" disabled={!canRespond} onClick={onCustom}>Something else…</button>
+        </div>
+      ) : null}
+      {message.intent === 'explanation' && canRespond ? (
+        <button type="button" className="mt-1.5 cursor-pointer px-1 text-[11px] font-medium text-zinc-500 outline-none hover:text-emerald-700 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-zinc-400 dark:hover:text-emerald-400" onClick={() => onChoose('Treat my previous message as a change request and prepare a reviewable revision.')}>Turn this into a change</button>
+      ) : null}
+    </article>
+  );
+}
+
+function discussionIntentLabel(intent: NonNullable<PlannerMessage['intent']>): string {
+  if (intent === 'change_request') return 'Change requested';
+  if (intent === 'clarification_needed') return 'Decision needed';
+  return 'Explanation';
+}
+
+function discussionContextLabel(context: PlannerDiscussionContext): string {
+  const labels: Readonly<Record<PlannerDiscussionContext, string>> = {
+    plan_summary: 'Whole plan',
+    implementation_steps: 'Implementation steps',
+    code_areas: 'Code areas',
+    review_items: 'Review items',
+    architecture: 'Architecture',
+    data_model_and_migrations: 'Data model and migrations',
+    api_and_ui: 'API and UI',
+    authorization_privacy_security: 'Authorization, privacy and security',
+    dependencies: 'Dependencies',
+    costs: 'Potential costs',
+    tests: 'Tests and validation',
+    mvp: 'MVP',
+    later: 'Later work',
+    risks: 'Risks',
+    open_decisions: 'Open decisions',
+  };
+  return labels[context];
 }
 
 type BriefListKey = 'audience' | 'mvp' | 'outOfScope' | 'assumptions' | 'risks' | 'openDecisions';
@@ -1055,6 +1404,7 @@ function actionLabel(session: FeaturePlanningSession): string {
     case 'generating_artifacts': return 'Drafting documentation, specification and implementation plan';
     case 'creating_artifacts': return 'Creating planning artifacts';
     case 'analyzing': return 'Analyzing the plan against the codebase';
+    case 'discussing': return 'Answering your planning question';
     case 'revising': return 'Preparing a reviewable revision';
     case 'decomposing': return 'Turning the plan into executable tasks';
     case 'launching': return 'Creating and queueing tasks';

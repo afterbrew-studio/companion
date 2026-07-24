@@ -1,8 +1,10 @@
 import type Database from 'better-sqlite3';
 import { safeParse } from '@companion/services';
 import type {
+  FeatureBrief,
   FeaturePlanningSession,
   PlannerEventRecord,
+  PlannerRevision,
 } from '../contract/index.js';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import { assertPlannerTransition } from './planner-machine.js';
@@ -188,6 +190,19 @@ function toParams(session: FeaturePlanningSession): Record<string, unknown> {
 }
 
 function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
+  const brief = safeParse<FeatureBrief>(row.brief_json, {
+    problem: row.idea,
+    audience: [],
+    goal: '',
+    mvp: [],
+    outOfScope: [],
+    assumptions: [],
+    risks: [],
+    openDecisions: [],
+  });
+  const storedRevision = row.pending_revision_json
+    ? safeParse<(Omit<PlannerRevision, 'brief'> & { readonly brief?: FeatureBrief }) | null>(row.pending_revision_json, null)
+    : null;
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -201,21 +216,14 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     revision: row.revision,
     activeAction: row.active_action,
     lastError: row.last_error,
-    brief: safeParse(row.brief_json, {
-      problem: row.idea,
-      audience: [],
-      goal: '',
-      mvp: [],
-      outOfScope: [],
-      assumptions: [],
-      risks: [],
-      openDecisions: [],
-    }),
+    brief,
     questions: safeParse(row.questions_json, []),
     answers: safeParse(row.answers_json, []),
     messages: safeParse(row.messages_json, []),
     artifacts: row.artifacts_json ? safeParse(row.artifacts_json, null) : null,
-    pendingRevision: row.pending_revision_json ? safeParse(row.pending_revision_json, null) : null,
+    // Revisions created before brief synchronization remain reviewable and
+    // inherit the last approved brief until the user proposes another change.
+    pendingRevision: storedRevision ? { ...storedRevision, brief: storedRevision.brief ?? brief } : null,
     confirmations: safeParse(row.confirmations_json, { brief: false, artifacts: false, analysis: false, launch: false }),
     docId: row.doc_id,
     specId: row.spec_id,
