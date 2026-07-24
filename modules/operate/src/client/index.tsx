@@ -15,7 +15,7 @@ import { onboarding } from './onboarding.js';
 
 // The shell and downstream modules (code/plan/automations) reach these by
 // name — everything else is routed.
-export { RunQueueIndicator } from './components/RunQueue.js';
+export { RunQueueIndicator, RunnerCapacityBanner } from './components/RunQueue.js';
 export { TokenBurnWidget } from './components/TokenBurn.js';
 export { AgentActivity } from './components/AgentActivity.js';
 export { AskSheet } from './components/AskSheet.js';
@@ -26,6 +26,7 @@ export { useRun } from './hooks/useRun.js';
 export type { UseRun } from './hooks/useRun.js';
 export { useRuns } from './hooks/useRuns.js';
 export { useRunQueue } from './hooks/useRunQueue.js';
+export { useRunnerCapacity } from './hooks/useRunnerCapacity.js';
 export { useAiActivity } from './hooks/useAiActivity.js';
 export type { AiActivity } from './hooks/useAiActivity.js';
 export { useMoxxyStatus } from './hooks/useMoxxyStatus.js';

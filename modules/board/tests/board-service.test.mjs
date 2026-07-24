@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { BoardService } from '../dist/api/board-service.js';
 import { BoardStore } from '../dist/api/board-store.js';
 
-function fixture() {
+function fixture({ hasFreeCapacity = () => true, createGoalRun = async () => ({ id: 'run-1', branch: 'task-branch' }) } = {}) {
   const db = new Database(':memory:');
   db.exec(`
     CREATE TABLE board_workers (
@@ -12,7 +12,7 @@ function fixture() {
       role TEXT NOT NULL, enabled INTEGER NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE TABLE board_tasks (
-      id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL,
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL,
       target_branch TEXT NOT NULL DEFAULT 'main',
       description TEXT NOT NULL DEFAULT '', acceptance TEXT NOT NULL DEFAULT '', spec_id TEXT,
       attachments TEXT NOT NULL DEFAULT '[]', depends_on TEXT NOT NULL DEFAULT '[]',
@@ -40,12 +40,12 @@ function fixture() {
     repos: { get: (name) => (name === 'owner/repo' ? repo : undefined) },
     prs: { get: () => ({ state: 'open', reviewDecision: null, checks: null }) },
     prReviews: { listForPr: () => [] },
-    fixes: { discard: async () => undefined },
+    fixes: { discard: async () => undefined, createGoalRun },
   };
   const makeService = () => new BoardService(
     store,
     code,
-    { runsStore: { get: () => undefined } },
+    { runsStore: { get: () => undefined }, runners: { hasFreeCapacity } },
     { canAccessRepo: () => true },
     () => undefined,
     () => undefined,
@@ -54,10 +54,22 @@ function fixture() {
   return { db, store, notifications, makeService };
 }
 
+function insertDeveloper(store) {
+  store.insertWorker({
+    id: 'wkr-1',
+    workspaceId: 'ws-1',
+    name: 'Developer',
+    role: 'developer',
+    enabled: true,
+    createdAt: Date.now(),
+  });
+}
+
 function insertTask(store, overrides = {}) {
   const now = Date.now();
   store.insertTask({
     id: overrides.id ?? 'tsk-1',
+    workspaceId: 'ws-1',
     repo: 'owner/repo',
     targetBranch: 'main',
     title: 'Lifecycle test',
@@ -140,7 +152,7 @@ test('manual completion clears the reviewer blocker', async () => {
   db.close();
 });
 
-test('retry transitions stay silent until the task finally fails', () => {
+test('retry transitions stay silent until the task finally fails', async () => {
   const { db, store, notifications, makeService } = fixture();
   insertTask(store);
 
@@ -157,11 +169,12 @@ test('retry transitions stay silent until the task finally fails', () => {
   assert.equal(store.getTask('tsk-1').status, 'failed');
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].kind, 'error');
+  await new Promise((resolve) => setImmediate(resolve));
   service.dispose();
   db.close();
 });
 
-test('remediation work does not notify while it is running', () => {
+test('remediation work does not notify while it is running', async () => {
   const { db, store, notifications, makeService } = fixture();
   insertTask(store, {
     status: 'in_review',
@@ -175,6 +188,7 @@ test('remediation work does not notify while it is running', () => {
   service.bindBack('tsk-1', 'address_review', 'changes requested', store.getConfig('ws-1'));
   assert.equal(store.getTask('tsk-1').status, 'ready');
   assert.equal(notifications.length, 0);
+  await new Promise((resolve) => setImmediate(resolve));
   service.dispose();
   db.close();
 });
@@ -191,5 +205,64 @@ test('deleting a blocked task removes its durable blocker state', async () => {
   await service.deleteTask('tsk-1');
   assert.equal(store.hasActiveBlocker('tsk-1', 'developer'), false);
   assert.deepEqual(store.listEvents('tsk-1'), []);
+  db.close();
+});
+
+test('runner saturation keeps a task ready and a released slot wakes dispatch', async () => {
+  let capacityAvailable = false;
+  let signalStarted;
+  const started = new Promise((resolve) => {
+    signalStarted = resolve;
+  });
+  const { db, store, makeService } = fixture({
+    hasFreeCapacity: () => capacityAvailable,
+    createGoalRun: async () => {
+      signalStarted();
+      return { id: 'run-after-capacity', branch: 'task-branch' };
+    },
+  });
+  insertTask(store);
+  insertDeveloper(store);
+
+  const service = makeService();
+  await service.tick();
+  assert.equal(store.getTask('tsk-1').status, 'ready');
+  assert.equal(store.getTask('tsk-1').attempts, 0);
+  assert.equal(store.getTask('tsk-1').assignedWorkerId, null);
+
+  capacityAvailable = true;
+  service.onRunChanged({ id: 'some-other-run', status: 'completed' });
+  await started;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(store.getTask('tsk-1').status, 'in_progress');
+  assert.equal(store.getTask('tsk-1').runId, 'run-after-capacity');
+  assert.equal(store.getTask('tsk-1').attempts, 0);
+  service.dispose();
+  db.close();
+});
+
+test('a capacity race returns the task to ready without consuming an attempt', async () => {
+  let capacityAvailable = true;
+  const { db, store, makeService } = fixture({
+    hasFreeCapacity: () => capacityAvailable,
+    createGoalRun: async () => {
+      capacityAvailable = false;
+      throw new Error('runner slot disappeared');
+    },
+  });
+  insertTask(store);
+  insertDeveloper(store);
+
+  const service = makeService();
+  await service.tick();
+
+  const task = store.getTask('tsk-1');
+  assert.equal(task.status, 'ready');
+  assert.equal(task.attempts, 0);
+  assert.equal(task.assignedWorkerId, null);
+  assert.equal(task.lastError, null);
+  assert.equal(store.listEvents('tsk-1')[0].kind, 'waiting_for_runner');
+  service.dispose();
   db.close();
 });

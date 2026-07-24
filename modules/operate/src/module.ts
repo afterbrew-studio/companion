@@ -59,7 +59,7 @@ export default defineManifest({
       max: 365,
     },
   ],
-  permissions: ['runs:read', 'runs:act', 'runners:manage', 'skills:manage'],
+  permissions: ['runs:read', 'runs:act', 'runners:manage', 'runners:connect', 'skills:manage'],
   messages: [
     'event',
     'turn',

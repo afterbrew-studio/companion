@@ -37,10 +37,9 @@ export const DOT_TONE: Record<RunnerStatus, StatusTone> = {
 };
 
 /**
- * Execution machines. Admins see every machine (the undeletable local runner,
- * shared instance runners, everyone's personal ones); maintainers see and
- * manage only machines they own — attached to run THEIR triggered agent work
- * on their own model subscription. Health is polled by the daemon and pushed
+ * Execution machines. Everyone sees the shared pool plus only their own
+ * private machines; admins can manage the shared pool without gaining sight
+ * of other users' private machines. Health is polled by the daemon and pushed
  * over WS.
  */
 export function RunnersPage(): JSX.Element {
@@ -53,11 +52,7 @@ export function RunnersPage(): JSX.Element {
     <Page>
       <PageHeader
         title="Runners"
-        subtitle={
-          admin
-            ? 'Machines that execute agent work — this one, shared ones, and everyone\'s personal machines'
-            : 'Your machines — agent work you trigger runs on them, on your own subscription'
-        }
+        subtitle="Shared machines available to everyone, plus private machines only you can see and use"
         actions={
           <button className="btn" onClick={() => setCreating(true)}>
             Add machine
@@ -143,6 +138,7 @@ function RunnerCard({
   const [updateNote, setUpdateNote] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const local = runner.kind === 'local';
+  const manageable = runner.ownerId === me || (runner.ownerId === null && admin);
   const { health } = runner;
   // The agent binary itself is outdated: only an on-machine update fixes that
   // (an old agent has no remote-update endpoint either).
@@ -214,8 +210,8 @@ function RunnerCard({
 
   const scopeNote =
     runner.scope === 'shared'
-      ? 'shared'
-      : `delegated to ${runner.workspaceIds.length} ${runner.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`;
+      ? 'all workspaces'
+      : `${runner.workspaceIds.length} ${runner.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`;
   // A blocked id whose module is disabled has no descriptor — show it raw.
   // (?? [] survives a daemon still on a pre-task dist during the restart gap.)
   const taskLabel = (id: string): string => (tasks.find((t) => t.id === id)?.label ?? id).toLowerCase();
@@ -236,19 +232,15 @@ function RunnerCard({
         <span className="text-sm font-medium">{runner.name}</span>
         <span className="chip">{runner.kind}</span>
         {local ? <span className="dim">this machine</span> : null}
-        {admin ? (
-          <Tooltip
-            content={
-              runner.ownerId === null
-                ? 'shared — any eligible run can land here'
-                : `personal — only runs ${runner.ownerId === me ? 'you trigger' : `${runner.ownerId} triggers`} land here`
-            }
-          >
-            <span className="chip">
-              {runner.ownerId === null ? 'shared' : runner.ownerId === me ? 'yours' : runner.ownerId}
-            </span>
-          </Tooltip>
-        ) : null}
+        <Tooltip
+          content={
+            runner.ownerId === null
+              ? 'shared — any eligible run can land here; admins manage its settings'
+              : 'private — only runs you trigger can land here'
+          }
+        >
+          <span className="chip">{runner.ownerId === null ? 'shared' : 'private'}</span>
+        </Tooltip>
         <span className="flex-1" />
         {/* Health/test controls live by the title now, not in a footer. */}
         {probe !== null && probe !== 'busy' ? (
@@ -259,7 +251,11 @@ function RunnerCard({
             {probe.ok ? '✓' : '✕'} {probe.note}
           </span>
         ) : null}
-        {local ? (
+        {!manageable ? (
+          <Tooltip content="Shared runner settings are managed by admins">
+            <Switch label={`${runner.name} enabled`} checked={runner.enabled} disabled onChange={() => undefined} />
+          </Tooltip>
+        ) : local ? (
           <Tooltip content="the local runner is always on">
             <Switch label={`${runner.name} enabled`} checked disabled onChange={() => undefined} />
           </Tooltip>
@@ -271,12 +267,14 @@ function RunnerCard({
             onChange={(v) => void setEnabled(v)}
           />
         )}
-        <IconButton label="Test connection" disabled={probe === 'busy'} onClick={() => void testConnection()}>
-          <svg viewBox="0 0 16 16" fill="none" className={`size-4 ${probe === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden>
-            <path d="M13 8a5 5 0 1 1-1.46-3.54" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            <path d="M13 2.5V5.5H10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </IconButton>
+        {manageable ? (
+          <IconButton label="Test connection" disabled={probe === 'busy'} onClick={() => void testConnection()}>
+            <svg viewBox="0 0 16 16" fill="none" className={`size-4 ${probe === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden>
+              <path d="M13 8a5 5 0 1 1-1.46-3.54" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <path d="M13 2.5V5.5H10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </IconButton>
+        ) : null}
       </div>
 
       <div className="dim mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[18px]">
@@ -324,27 +322,33 @@ companion-runner stop && companion-runner --background`}
           </span>
           <span className="flex-1" />
           {updateNote ? <span className="dim">{updateNote}</span> : null}
-          <button className="btn-ghost shrink-0" disabled={updating} onClick={() => void updateMoxxy()}>
-            {updating ? 'Updating… (npm i -g @moxxy/cli)' : 'Update moxxy'}
-          </button>
+          {manageable ? (
+            <button className="btn-ghost shrink-0" disabled={updating} onClick={() => void updateMoxxy()}>
+              {updating ? 'Updating… (npm i -g @moxxy/cli)' : 'Update moxxy'}
+            </button>
+          ) : (
+            <span className="dim">An admin can update it.</span>
+          )}
         </div>
       ) : updateNote ? (
         <p className="dim mt-3 text-[13px]">{updateNote}</p>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-        <button className="btn-ghost" onClick={onEdit}>
-          Edit
-        </button>
-        {!local ? (
-          <>
-            <span className="action-sep" aria-hidden />
-            <button className="btn-danger-ghost" disabled={busy} onClick={() => void remove()}>
-              Delete
-            </button>
-          </>
-        ) : null}
-      </div>
+      {manageable ? (
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
+          <button className="btn-ghost" onClick={onEdit}>
+            Edit
+          </button>
+          {!local ? (
+            <>
+              <span className="action-sep" aria-hidden />
+              <button className="btn-danger-ghost" disabled={busy} onClick={() => void remove()}>
+                Delete
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {confirmElement}
     </article>
   );
@@ -466,7 +470,7 @@ function RunnerModal({
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   // Ownership is set at creation and immutable after: admins choose shared vs
-  // personal; everyone else's machine is personal by definition.
+  // private; everyone else's machine is private by definition.
   const [shared, setShared] = useState(admin);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -541,13 +545,13 @@ function RunnerModal({
             </label>
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input type="radio" name="ownership" checked={!shared} onChange={() => setShared(false)} />
-              Personal
+              Private
               <span className="dim text-xs">— only runs you trigger land here, on this machine's subscription</span>
             </label>
           </fieldset>
         ) : (
           <p className="dim text-xs">
-            This machine is yours: only agent runs you trigger are placed on it, using the model providers configured
+            This machine is private: only agent runs you trigger are placed on it, using the model providers configured
             there — your subscription, your keys.
           </p>
         )}

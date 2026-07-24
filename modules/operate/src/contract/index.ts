@@ -183,7 +183,7 @@ export interface TokenUsage {
 
 export type RunnerKind = 'local' | 'remote';
 
-/** `shared` runners serve any workspace; `delegated` only their assigned ones. */
+/** Workspace reach: `shared` serves any workspace; `delegated` only assigned ones. */
 export type RunnerScope = 'shared' | 'delegated';
 
 export type RunnerStatus = 'online' | 'degraded' | 'offline' | 'unknown';
@@ -303,11 +303,17 @@ export interface RunnerRecord {
   readonly createdAt: number;
 }
 
+/** Viewer-specific runner-pool occupancy: shared runners plus their own private ones. */
+export interface RunnerCapacitySnapshot {
+  readonly active: number;
+  readonly capacity: number;
+}
+
 export interface CreateRunnerRequest {
   readonly name: string;
   readonly endpoint: string;
   readonly token: string;
-  /** Admin-only: true = instance-wide (no owner). Everyone else's runner is personal. */
+  /** Admin-only: true = instance-wide (no owner). Otherwise the runner is private to its creator. */
   readonly shared?: boolean;
   readonly scope?: RunnerScope;
   readonly workspaceIds?: ReadonlyArray<string>;

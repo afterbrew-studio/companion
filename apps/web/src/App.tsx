@@ -23,7 +23,7 @@ import {
   type OnboardingMode,
 } from '@companion/module-core/client';
 import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
-import { RunQueueIndicator, operateApi } from '@companion/module-operate/client';
+import { RunnerCapacityBanner, RunQueueIndicator, operateApi } from '@companion/module-operate/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
 import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
 import {
@@ -470,6 +470,7 @@ function Shell(): JSX.Element {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <RunnerCapacityBanner />
         <TopBar
           hash={hash}
           chordPending={chordPending}

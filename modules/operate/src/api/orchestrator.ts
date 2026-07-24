@@ -972,7 +972,7 @@ export class Orchestrator implements RunnerEventSink {
   /** The scheduler's live state for the UI: running count, capacity, and the line. */
   queueSnapshot(): RunQueueSnapshot {
     return {
-      active: this.oneShotActive,
+      active: this.oneShotActive + this.store.runs.activeNonQueueCount(),
       capacity: Math.max(1, this.runners.totalCapacity()),
       entries: this.oneShotQueue.map((q, i) => ({
         id: q.id,
