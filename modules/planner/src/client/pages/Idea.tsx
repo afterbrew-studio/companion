@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { onServerMessage } from '@companion/core/client';
-import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip } from '@companion/ui';
+import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip, useConfirm } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';
@@ -31,6 +31,7 @@ const STEPS: Array<{ key: FeaturePlanningSession['step']; label: string }> = [
 
 export default function Idea({ id }: { id: string }): JSX.Element {
   const { can } = useAuth();
+  const { confirmDanger, confirmElement } = useConfirm();
   const state = useIdeas(id);
   const [busy, setBusy] = useState(false);
   const [brief, setBrief] = useState<FeatureBrief | null>(null);
@@ -99,6 +100,15 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   };
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     await runAction(fn);
+  };
+  const cancelSession = async (): Promise<void> => {
+    if (!session) return;
+    const confirmed = await confirmDanger({
+      title: 'Cancel this plan?',
+      message: 'The entire planning session will be closed and removed from Ideas. You will not be able to resume it.',
+      confirmLabel: 'Cancel plan',
+    });
+    if (confirmed) await act(() => ideasApi.cancel(id, session.revision));
   };
 
   if (state.loading) return <PageLoading label="Loading idea…" />;
@@ -174,7 +184,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
             {canManage ? (
               <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
                 <button className="btn" disabled={busy} onClick={() => void act(() => session.step === 'tasks_review' ? ideasApi.launch(id, session.revision) : ideasApi.retry(id, session.revision))}>{busy ? <><Spinner /> Retrying…</> : 'Retry step'}</button>
-                <button className="btn-ghost" disabled={busy} onClick={() => void act(() => ideasApi.cancel(id, session.revision))}>Cancel</button>
+                <button className="btn-ghost" disabled={busy} onClick={() => void cancelSession()}>Cancel</button>
               </div>
             ) : null}
           </div>
@@ -269,10 +279,11 @@ export default function Idea({ id }: { id: string }): JSX.Element {
 
       {canManage && session.status !== 'working' && session.status !== 'failed' ? (
         <div className="mt-8 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-          <button className="btn-danger-ghost" disabled={busy} onClick={() => void act(() => ideasApi.cancel(id, session.revision))}>Cancel planning session</button>
+          <button className="btn-danger-ghost" disabled={busy} onClick={() => void cancelSession()}>Cancel planning session</button>
         </div>
       ) : null}
       </Page>
+      {confirmElement}
       <DiscussionPanel
         open={discussionOpen}
         session={session}
