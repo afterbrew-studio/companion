@@ -28,6 +28,21 @@ export function Field({
 }
 
 /**
+ * Focus frame for text-entry controls. The shared `accent-field` class owns
+ * the stable focus ring and optional motion, while the native input keeps its
+ * label, ref and validation semantics.
+ */
+export function AccentField({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}): JSX.Element {
+  return <span className={`accent-field block rounded-lg ${className}`}>{children}</span>;
+}
+
+/**
  * Right-aligned action row closing a form or modal (Cancel + primary).
  * `divider` adds the top rule used by larger modals.
  */

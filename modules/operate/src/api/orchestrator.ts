@@ -755,9 +755,18 @@ export class Orchestrator implements RunnerEventSink {
      * for work that can't be replayed from args alone (e.g. pipeline steps).
      */
     resume?: { type: string; args: Record<string, unknown> };
+    /** Called as soon as the unattended job has a cancellable queue identity. */
+    onQueued?: (queueId: string) => void;
+    /** Called after the queue item becomes a concrete run. */
+    onStarted?: (runId: string) => void;
   }): Promise<{ runId: string; finalMessage: string | null }> {
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
       const run = await this.createRun(opts);
+      try {
+        opts.onStarted?.(run.id);
+      } catch (err) {
+        log.warn('one-shot onStarted callback failed', { runId: run.id, err: String(err) });
+      }
       try {
         const wait = this.waitForTurn(run.id, opts.timeoutMs ?? 10 * 60_000);
         await this.sendPrompt(run.id, opts.prompt);
@@ -798,6 +807,7 @@ export class Orchestrator implements RunnerEventSink {
         issueNumber: opts.issueNumber ?? null,
         userId: opts.userId ?? null,
         resume: opts.resume,
+        onQueued: opts.onQueued,
       },
       job,
     );
@@ -819,6 +829,7 @@ export class Orchestrator implements RunnerEventSink {
       issueNumber: number | null;
       userId: string | null;
       resume?: { type: string; args: Record<string, unknown> };
+      onQueued?: (queueId: string) => void;
     },
     job: () => Promise<T>,
   ): Promise<T> {
@@ -852,6 +863,11 @@ export class Orchestrator implements RunnerEventSink {
         cancel: () => reject(new Error('run cancelled before it started')),
       };
       this.oneShotQueue.push(item);
+      try {
+        meta.onQueued?.(item.id);
+      } catch (err) {
+        log.warn('one-shot onQueued callback failed', { queueId: item.id, err: String(err) });
+      }
       this.sortQueue();
       this.pumpQueue();
       this.broadcastQueue();

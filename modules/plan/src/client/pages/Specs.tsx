@@ -494,7 +494,7 @@ function EditSpecModal({
   );
 }
 
-/** Spec → feature: file a proposal carrying the spec; analysis starts immediately. */
+/** Spec → Ideas: open the guided planner with the specification prefilled. */
 function CreateFeatureModal({
   spec,
   onClose,
@@ -506,51 +506,24 @@ function CreateFeatureModal({
 }): JSX.Element {
   const [title, setTitle] = useState(spec.title);
   const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [filed, setFiled] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (e: React.FormEvent): Promise<void> => {
+  const submit = (e: React.FormEvent): void => {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const { proposal } = await api.createFeatureFromSpec(spec.id, {
-        title: title.trim() || undefined,
-        notes: notes.trim() || undefined,
-      });
-      setFiled(proposal.id);
-    } catch (err) {
-      setError(String(err));
-      setBusy(false);
-    }
+    const idea = [
+      `Plan and implement the feature described by the existing specification "${title.trim() || spec.title}".`,
+      notes.trim() ? `Additional scope:\n${notes.trim()}` : '',
+      `Specification:\n${spec.content}`,
+    ].filter(Boolean).join('\n\n').slice(0, 8_000);
+    sessionStorage.setItem('companion.idea.prefill', JSON.stringify({ repo: spec.repo, idea }));
+    onFiled();
+    window.location.hash = '/ideas';
   };
-
-  if (filed) {
-    return (
-      <Modal title="Feature filed" onClose={onFiled}>
-        <p className="text-sm">
-          The proposal is filed and its feasibility analysis is running. Follow it in{' '}
-          <a className="linkish" href="#/proposals" onClick={onFiled}>
-            Proposals
-          </a>
-          .
-        </p>
-        <div className="mt-4 flex justify-end">
-          <button className="btn" onClick={onFiled}>
-            Done
-          </button>
-        </div>
-      </Modal>
-    );
-  }
 
   return (
     <Modal title={`Create feature from spec — ${spec.title}`} onClose={onClose}>
-      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
+      <form className="flex flex-col gap-3" onSubmit={submit}>
         <p className="dim text-[13px]">
-          Files a proposal carrying the full specification as implementation context, then starts the
-          feasibility analysis — the normal approve → implement flow takes it from there.
+          Opens Ideas with this specification prefilled. The guided planner confirms scope, builds the
+          remaining artifacts, prepares tasks and asks before any agent starts coding.
         </p>
         <Field label="Feature title">
           <input
@@ -570,13 +543,12 @@ function CreateFeatureModal({
             placeholder="e.g. only the first two sections for now; skip the admin surface"
           />
         </Field>
-        <ErrorBar error={error} />
         <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" type="submit" disabled={busy || !title.trim()}>
-            {busy ? 'Filing…' : 'File & analyze'}
+          <button className="btn" type="submit" disabled={!title.trim()}>
+            Continue in Ideas
           </button>
         </FormActions>
       </form>

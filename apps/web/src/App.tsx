@@ -294,7 +294,7 @@ function Shell(): JSX.Element {
     setMobileOpen(false);
   }, [hash]);
 
-  // Land on the first module the role can see (business → Proposals).
+  // Land on the first module the role can see (business → Ideas).
   useEffect(() => {
     const path = hash.replace(/^#/, '');
     const isBare = path === '/' || path === '/overview';

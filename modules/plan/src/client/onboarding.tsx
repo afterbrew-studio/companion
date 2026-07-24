@@ -13,16 +13,16 @@ function PlanArt({ playing }: { playing: boolean }): JSX.Element {
   );
 }
 
-/** module-plan's slice of the welcome tour (proposals / specs / docs). */
+/** module-plan's slice of the welcome tour (the reusable knowledge artifacts). */
 export const onboarding = defineOnboarding([
   {
     key: 'plan',
     order: 30,
-    need: 'proposals:read',
-    title: 'Plan: proposals, specs & docs',
-    body: 'Describe a change in plain language — an agent assesses feasibility, then implements it into a PR. Specifications ground that work in how your code should behave; documentation is indexed so every agent knows your project.',
-    chips: ['Proposals', 'Specifications', 'Documentation'],
+    need: 'specs:read',
+    title: 'Plan: specifications & documentation',
+    body: 'Specifications describe how your code should behave, while documentation gives every agent the product and system context it needs.',
+    chips: ['Specifications', 'Documentation'],
     art: (playing) => <PlanArt playing={playing} />,
-    cta: { label: 'Write a proposal', href: '#/proposals' },
+    cta: { label: 'Browse specifications', href: '#/specs' },
   },
 ]);

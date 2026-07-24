@@ -95,11 +95,11 @@ export function DashboardPage(): JSX.Element {
           href="#/runs"
         />
         <StatTile
-          label="Proposals to act on"
+          label="Legacy proposals"
           loading={actionableProposals === null}
           value={actionableProposals?.length ?? 0}
           tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
-          href="#/proposals"
+          href="#/legacy-proposals"
         />
       </div>
 
@@ -171,12 +171,12 @@ export function DashboardPage(): JSX.Element {
               </a>
             ))}
             {actionableProposals?.slice(0, 6).map((p) => (
-              <a key={p.id} href="#/proposals" className="row-link">
+              <a key={p.id} href="#/legacy-proposals" className="row-link">
                 <StatusDot tone="amber" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{p.title}</span>
                   <span className="dim block truncate text-xs">
-                    proposal {p.status === 'review' ? 'ready for review' : 'awaiting approval'}
+                    legacy proposal {p.status === 'review' ? 'ready for review' : 'awaiting approval'}
                   </span>
                 </span>
                 <span className="dim shrink-0">{timeAgo(p.updatedAt)}</span>

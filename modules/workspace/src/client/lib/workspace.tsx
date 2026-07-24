@@ -4,7 +4,7 @@ import type { WorkspaceRecord } from '../../contract/index.js';
 import { workspaceApi } from '../api.js';
 
 /**
- * The active workspace scopes the three main areas (Proposals, Issues, Pull
+ * The active workspace scopes the three main areas (Ideas, Issues, Pull
  * Requests) and the pipelines library. Selection persists per browser.
  */
 

@@ -29,6 +29,24 @@ const importSchema = z.object({
   targetBranch: z.string().trim().min(1).max(200).optional(),
 });
 
+const patchItemSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(32_000).optional(),
+  acceptance: z.string().max(16_000).optional(),
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  dependsOnIds: z.array(z.string().min(1)).max(20).optional(),
+}).strict();
+
+const moveItemSchema = z.object({ direction: z.enum(['up', 'down']) }).strict();
+
+const mergeItemsSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(2).max(20),
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(32_000).optional(),
+  acceptance: z.string().max(16_000).optional(),
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+}).strict();
+
 const saveMethodSchema = z.object({
   name: z.string().trim().min(2).max(80),
   description: z.string().max(300).default(''),
@@ -184,6 +202,52 @@ export default defineRoutes((ctx) => {
               body.targetBranch,
             ),
           };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    route({
+      method: 'PATCH',
+      path: '/api/refinements/:id/items/:itemId',
+      access: 'refine:manage',
+      body: patchItemSchema,
+      handler: ({ params, body, user }) => {
+        requireRefinement(user, params.id);
+        try {
+          return { item: refinement.updateItem(params.id, params.itemId, body) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/refinements/:id/items/:itemId/move',
+      access: 'refine:manage',
+      body: moveItemSchema,
+      handler: ({ params, body, user }) => {
+        requireRefinement(user, params.id);
+        try {
+          return { items: refinement.moveItem(params.id, params.itemId, body.direction) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/refinements/:id/items/merge',
+      access: 'refine:manage',
+      body: mergeItemsSchema,
+      handler: ({ params, body, user }) => {
+        requireRefinement(user, params.id);
+        const { itemIds, ...fields } = body;
+        try {
+          return { item: refinement.mergeItems(params.id, itemIds, fields) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

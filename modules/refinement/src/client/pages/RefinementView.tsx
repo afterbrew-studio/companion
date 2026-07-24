@@ -17,7 +17,7 @@ import {
 import { useAuth } from '@companion/module-core/client';
 import type { TaskPriority } from '@companion/module-board/contract';
 import { BranchPicker } from '@companion/module-code/client';
-import type { RefineItemRecord, RefineMethodDraft, RefineMethodRecord, RefinementRecord } from '../../contract/index.js';
+import type { RefineItemRecord, RefineItemUpdate, RefineMethodDraft, RefineMethodRecord, RefinementRecord } from '../../contract/index.js';
 import { useRefinement } from '../hooks/useRefinement.js';
 import { StatusBadge } from './Refinements.js';
 
@@ -139,6 +139,9 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
             onImport={actions.importItem}
             onImportAll={actions.importAll}
             onDismiss={actions.dismissItem}
+            onUpdate={actions.updateItem}
+            onMove={actions.moveItem}
+            onMerge={actions.mergeItems}
           />
         ) : refinement.status === 'ready' ? (
           <EmptyState title="The agent proposed no tasks" hint="Refine the story or pick another method, then decompose again." />
@@ -360,6 +363,9 @@ function ItemsSection({
   onImport,
   onImportAll,
   onDismiss,
+  onUpdate,
+  onMove,
+  onMerge,
 }: {
   items: RefineItemRecord[];
   proposedCount: number;
@@ -370,17 +376,24 @@ function ItemsSection({
   onImport: (itemId: string, queue: boolean, targetBranch?: string) => Promise<void>;
   onImportAll: (queue: boolean, targetBranch?: string) => Promise<void>;
   onDismiss: (itemId: string) => Promise<void>;
+  onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<void>;
+  onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
+  onMerge: (itemIds: string[]) => Promise<void>;
 }): JSX.Element {
   const [queue, setQueue] = useState(false);
   const [targetBranch, setTargetBranch] = useState(defaultTargetBranch);
   const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
 
   useEffect(() => setTargetBranch(defaultTargetBranch), [defaultTargetBranch]);
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true);
-    await fn();
-    setBusy(false);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -415,6 +428,11 @@ function ItemsSection({
             >
               Import all ({proposedCount})
             </button>
+            {selected.length > 1 ? (
+              <button className="btn-ghost" disabled={busy} onClick={() => void run(async () => { await onMerge(selected); setSelected([]); })}>
+                Merge selected ({selected.length})
+              </button>
+            ) : null}
             <a className="dim text-xs font-medium hover:underline" href="#/board">
               open board →
             </a>
@@ -428,6 +446,11 @@ function ItemsSection({
             item={item}
             canManage={canManage}
             busy={busy}
+            items={items}
+            selected={selected.includes(item.id)}
+            onSelect={(checked) => setSelected(checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))}
+            onUpdate={(fields) => void run(() => onUpdate(item.id, fields))}
+            onMove={(direction) => void run(() => onMove(item.id, direction))}
             onImport={() => void run(() => onImport(item.id, queue, targetBranch.trim() || defaultTargetBranch))}
             onDismiss={() => void run(() => onDismiss(item.id))}
           />
@@ -441,16 +464,33 @@ function ItemCard({
   item,
   canManage,
   busy,
+  items,
+  selected,
+  onSelect,
+  onUpdate,
+  onMove,
   onImport,
   onDismiss,
 }: {
   item: RefineItemRecord;
   canManage: boolean;
   busy: boolean;
+  items: RefineItemRecord[];
+  selected: boolean;
+  onSelect: (selected: boolean) => void;
+  onUpdate: (fields: RefineItemUpdate) => void;
+  onMove: (direction: 'up' | 'down') => void;
   onImport: () => void;
   onDismiss: () => void;
 }): JSX.Element {
   const dimmed = item.status === 'dismissed';
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(item.title);
+  const [description, setDescription] = useState(item.description);
+  const [acceptance, setAcceptance] = useState(item.acceptance);
+  const [priority, setPriority] = useState(item.priority);
+  const byOrd = useMemo(() => new Map(items.map((entry) => [entry.ord, entry.id])), [items]);
+  const [dependsOnIds, setDependsOnIds] = useState<string[]>(item.dependsOn.flatMap((ord) => byOrd.get(ord) ? [byOrd.get(ord)!] : []));
   return (
     <article
       className={`rounded-lg border bg-white p-3 dark:bg-zinc-900 ${
@@ -458,6 +498,7 @@ function ItemCard({
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
+        {item.status === 'proposed' && canManage ? <input type="checkbox" aria-label={`Select ${item.title} for merge`} checked={selected} disabled={busy} onChange={(event) => onSelect(event.target.checked)} /> : null}
         <span className="dim text-xs tabular-nums">{item.ord + 1}.</span>
         <h3 className="min-w-0 flex-1 text-[13px] leading-snug font-medium">{item.title}</h3>
         <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${PRIORITY_CLS[item.priority]}`}>
@@ -473,6 +514,9 @@ function ItemCard({
         ) : null}
         {item.status === 'proposed' && canManage ? (
           <span className="flex shrink-0 items-center gap-1.5">
+            <button className="btn-ghost h-8 px-2" disabled={busy || item === items[0]} aria-label="Move up" onClick={() => onMove('up')}>↑</button>
+            <button className="btn-ghost h-8 px-2" disabled={busy || item === items[items.length - 1]} aria-label="Move down" onClick={() => onMove('down')}>↓</button>
+            <button className="btn-ghost" disabled={busy} onClick={() => setEditing((value) => !value)}>{editing ? 'Close' : 'Edit'}</button>
             <button className="btn" disabled={busy} onClick={onImport}>
               Import
             </button>
@@ -488,6 +532,18 @@ function ItemCard({
           <span className="dim text-xs">dismissed</span>
         ) : null}
       </div>
+      {editing && item.status === 'proposed' ? (
+        <div className="mt-3 grid gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          <Field label="Title"><input className="input" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} /></Field>
+          <Field label="Description"><textarea className="input min-h-20" value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
+          <Field label="Acceptance criteria"><textarea className="input min-h-20" value={acceptance} onChange={(event) => setAcceptance(event.target.value)} /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Priority"><select className="input" value={priority} onChange={(event) => setPriority(Number(event.target.value) as TaskPriority)}>{[0, 1, 2, 3].map((value) => <option key={value} value={value}>P{value}</option>)}</select></Field>
+            <Field label="Dependencies"><select multiple className="input min-h-24" value={dependsOnIds} onChange={(event) => setDependsOnIds([...event.target.selectedOptions].map((option) => option.value))}>{items.filter((candidate) => candidate.id !== item.id && candidate.status !== 'dismissed').map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select></Field>
+          </div>
+          <div className="flex justify-end"><button className="btn" disabled={busy || !title.trim()} onClick={() => { onUpdate({ title, description, acceptance, priority, dependsOnIds }); setEditing(false); }}>Save task</button></div>
+        </div>
+      ) : null}
       {item.description || item.acceptance ? (
         <details className="mt-1.5">
           <summary className="dim cursor-pointer text-xs hover:underline">Details</summary>

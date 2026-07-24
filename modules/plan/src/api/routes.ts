@@ -16,6 +16,11 @@ const proposalSchema = z.object({
   body: z.string().min(1),
 });
 
+const patchProposalSchema = z.object({
+  title: z.string().min(3).max(200).optional(),
+  body: z.string().min(1).max(256_000).optional(),
+}).strict();
+
 // ---------- specs ----------
 
 const storageSchema = z.enum(['virtual', 'repo']).optional();
@@ -161,6 +166,35 @@ export default defineRoutes((ctx) => {
           .analyze(params.id, user!.username)
           .catch((err) => log.warn('analysis failed', { id: params.id, err: String(err) }));
         return accepted({ queued: true });
+      },
+    }),
+
+    route({
+      method: 'PATCH',
+      path: '/api/proposals/:id',
+      access: 'proposals:create',
+      body: patchProposalSchema,
+      handler: ({ params, body, user }) => {
+        requireProposal(user, params.id);
+        try {
+          return { proposal: plan.proposals.update(params.id, body) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/proposals/:id/accept-plan',
+      access: 'proposals:act',
+      handler: ({ params, user }) => {
+        requireProposal(user, params.id);
+        try {
+          return { proposal: plan.proposals.acceptPlan(params.id) };
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
       },
     }),
 

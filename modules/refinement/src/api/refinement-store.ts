@@ -248,6 +248,36 @@ export class RefinementStore {
     this.db.prepare(`UPDATE refine_items SET status = ?, task_id = ? WHERE id = ?`).run(status, taskId, id);
   }
 
+  /** Rewrite proposed rows atomically; imported/dismissed rows are never edited or deleted. */
+  rewriteProposed(
+    refinementId: string,
+    items: readonly RefineItemRecord[],
+    removeIds: readonly string[] = [],
+    dependencyUpdates: ReadonlyArray<{ readonly id: string; readonly dependsOn: ReadonlyArray<number> }> = [],
+  ): void {
+    this.db.transaction(() => {
+      const remove = this.db.prepare(
+        `DELETE FROM refine_items WHERE id = ? AND refinement_id = ? AND status = 'proposed'`,
+      );
+      for (const id of removeIds) remove.run(id, refinementId);
+      const update = this.db.prepare(`
+        UPDATE refine_items SET ord = @ord, title = @title, description = @description,
+          acceptance = @acceptance, priority = @priority, depends_on = @dependsOn
+        WHERE id = @id AND refinement_id = @refinementId AND status = 'proposed'
+      `);
+      for (const item of items) {
+        const result = update.run({ ...item, dependsOn: JSON.stringify(item.dependsOn) });
+        if (result.changes !== 1) throw new Error(`item ${item.id} is no longer editable`);
+      }
+      const updateDependencies = this.db.prepare(
+        `UPDATE refine_items SET depends_on = ? WHERE id = ? AND refinement_id = ?`,
+      );
+      for (const update of dependencyUpdates) {
+        updateDependencies.run(JSON.stringify(update.dependsOn), update.id, refinementId);
+      }
+    })();
+  }
+
   // ---------- methods (user-defined; built-ins live in builtin-methods.ts) ----------
 
   insertMethod(m: RefineMethodRecord & { workspaceId: string }): void {

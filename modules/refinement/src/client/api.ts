@@ -1,7 +1,8 @@
-import { del, post, put, request } from '@companion/core/client';
+import { del, patch, post, put, request } from '@companion/core/client';
 import type {
   RefineContextOptions,
   RefineItemRecord,
+  RefineItemUpdate,
   RefineMethodDraft,
   RefineMethodRecord,
   RefinementListEntry,
@@ -31,6 +32,12 @@ export const refinementApi = {
     post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}/import`, { queue, targetBranch }),
   dismissItem: (id: string, itemId: string) =>
     post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}/dismiss`),
+  updateItem: (id: string, itemId: string, fields: RefineItemUpdate) =>
+    patch<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/${itemId}`, fields),
+  moveItem: (id: string, itemId: string, direction: 'up' | 'down') =>
+    post<{ items: RefineItemRecord[] }>(`/api/refinements/${id}/items/${itemId}/move`, { direction }),
+  mergeItems: (id: string, itemIds: string[], fields: { title?: string; description?: string; acceptance?: string; priority?: 0 | 1 | 2 | 3 }) =>
+    post<{ item: RefineItemRecord }>(`/api/refinements/${id}/items/merge`, { itemIds, ...fields }),
   importAll: (id: string, queue: boolean, targetBranch?: string) =>
     post<{ imported: number }>(`/api/refinements/${id}/import-all`, { queue, targetBranch }),
   methods: (workspaceId: string) =>

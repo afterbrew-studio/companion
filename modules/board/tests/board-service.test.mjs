@@ -12,7 +12,7 @@ function fixture() {
       role TEXT NOT NULL, enabled INTEGER NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE TABLE board_tasks (
-      id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL,
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL,
       target_branch TEXT NOT NULL DEFAULT 'main',
       description TEXT NOT NULL DEFAULT '', acceptance TEXT NOT NULL DEFAULT '', spec_id TEXT,
       attachments TEXT NOT NULL DEFAULT '[]', depends_on TEXT NOT NULL DEFAULT '[]',
@@ -58,6 +58,7 @@ function insertTask(store, overrides = {}) {
   const now = Date.now();
   store.insertTask({
     id: overrides.id ?? 'tsk-1',
+    workspaceId: 'ws-1',
     repo: 'owner/repo',
     targetBranch: 'main',
     title: 'Lifecycle test',

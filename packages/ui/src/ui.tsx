@@ -852,11 +852,13 @@ export function CopyText({
   children,
   className = '',
   title,
+  ariaLabel,
 }: {
   value: string;
   children: ReactNode;
   className?: string;
   title?: string;
+  ariaLabel?: string;
 }): JSX.Element {
   const [copied, setCopied] = useState(false);
   return (
@@ -864,7 +866,7 @@ export function CopyText({
       type="button"
       className={`inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-left font-[inherit] text-inherit hover:opacity-80 ${className}`}
       title={copied ? 'Copied!' : (title ?? `Copy "${value}"`)}
-      aria-label={`Copy ${value}`}
+      aria-label={ariaLabel ?? `Copy ${value}`}
       onClick={() => {
         void navigator.clipboard?.writeText(value).then(() => {
           setCopied(true);
@@ -891,17 +893,20 @@ export function Tooltip({
   content,
   children,
   className = '',
+  side = 'top',
 }: {
   content: ReactNode;
   children: ReactNode;
   className?: string;
+  side?: 'top' | 'bottom';
 }): JSX.Element {
+  const position = side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5';
   return (
     <span className={`group/tip relative inline-flex ${className}`}>
       {children}
       <span
         role="tooltip"
-        className="pointer-events-none invisible absolute bottom-full left-1/2 z-40 mb-1.5 w-max max-w-72 -translate-x-1/2 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs leading-snug text-zinc-700 opacity-0 shadow-md transition-opacity delay-150 group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+        className={`pointer-events-none invisible absolute left-1/2 z-40 w-max max-w-72 -translate-x-1/2 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs leading-snug text-zinc-700 opacity-0 shadow-md transition-opacity delay-150 group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 ${position}`}
       >
         {content}
       </span>

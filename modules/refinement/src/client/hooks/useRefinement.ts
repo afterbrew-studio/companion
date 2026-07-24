@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ApiError, useLive } from '@companion/core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import type { RefineContextOptions, RefineMethodDraft, RefineMethodRecord } from '../../contract/index.js';
+import type { RefineContextOptions, RefineItemUpdate, RefineMethodDraft, RefineMethodRecord } from '../../contract/index.js';
 import { refinementApi, type RefinementDetail } from '../api.js';
 
 export interface RefinementActions {
@@ -11,6 +11,9 @@ export interface RefinementActions {
   importItem(itemId: string, queue: boolean, targetBranch?: string): Promise<void>;
   importAll(queue: boolean, targetBranch?: string): Promise<void>;
   dismissItem(itemId: string): Promise<void>;
+  updateItem(itemId: string, fields: RefineItemUpdate): Promise<void>;
+  moveItem(itemId: string, direction: 'up' | 'down'): Promise<void>;
+  mergeItems(itemIds: string[]): Promise<void>;
   /** Resolves true when deleted (the caller navigates away). */
   remove(): Promise<boolean>;
   saveMethod(fields: { name: string; description: string; instructions: string }): Promise<void>;
@@ -94,6 +97,9 @@ export function useRefinement(id: string): {
         act(() => refinementApi.importItem(id, itemId, queue, targetBranch)),
       importAll: (queue, targetBranch) => act(() => refinementApi.importAll(id, queue, targetBranch)),
       dismissItem: (itemId) => act(() => refinementApi.dismissItem(id, itemId)),
+      updateItem: (itemId, fields) => act(() => refinementApi.updateItem(id, itemId, fields)),
+      moveItem: (itemId, direction) => act(() => refinementApi.moveItem(id, itemId, direction)),
+      mergeItems: (itemIds) => act(() => refinementApi.mergeItems(id, itemIds, {})),
       remove: async () => {
         try {
           await refinementApi.remove(id);

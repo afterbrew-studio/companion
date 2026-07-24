@@ -41,6 +41,16 @@ export interface ProposalAnalysis {
   readonly steps: ReadonlyArray<string>;
   readonly touchedAreas: ReadonlyArray<string>;
   readonly risks: ReadonlyArray<string>;
+  readonly architecture: ReadonlyArray<string>;
+  readonly dataModelAndMigrations: ReadonlyArray<string>;
+  readonly apiAndUi: ReadonlyArray<string>;
+  readonly authorizationPrivacySecurity: ReadonlyArray<string>;
+  readonly tests: ReadonlyArray<string>;
+  readonly dependencies: ReadonlyArray<string>;
+  readonly costs: ReadonlyArray<string>;
+  readonly mvp: ReadonlyArray<string>;
+  readonly later: ReadonlyArray<string>;
+  readonly openDecisions: ReadonlyArray<string>;
 }
 
 export interface ProposalRecord {

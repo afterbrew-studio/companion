@@ -4,6 +4,7 @@ import workspaceManifest from '@companion/module-workspace/manifest';
 import operateManifest from '@companion/module-operate/manifest';
 import codeManifest from '@companion/module-code/manifest';
 import planManifest from '@companion/module-plan/manifest';
+import plannerManifest from '@companion/module-planner/manifest';
 import playgroundManifest from '@companion/module-playground/manifest';
 import boardManifest from '@companion/module-board/manifest';
 import refinementManifest from '@companion/module-refinement/manifest';
@@ -20,6 +21,7 @@ import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import '@companion/module-code/contract';
 import '@companion/module-plan/contract';
+import '@companion/module-planner/contract';
 import '@companion/module-playground/contract';
 import '@companion/module-board/contract';
 import '@companion/module-refinement/contract';
@@ -44,6 +46,7 @@ export const MODULES: readonly InstalledModule[] = [
   { manifest: playgroundManifest, load: () => import('@companion/module-playground/api').then((m) => m.default) },
   { manifest: boardManifest, load: () => import('@companion/module-board/api').then((m) => m.default) },
   { manifest: refinementManifest, load: () => import('@companion/module-refinement/api').then((m) => m.default) },
+  { manifest: plannerManifest, load: () => import('@companion/module-planner/api').then((m) => m.default) },
   { manifest: slopManifest, load: () => import('@companion/module-slop/api').then((m) => m.default) },
   { manifest: automationsManifest, load: () => import('@companion/module-automations/api').then((m) => m.default) },
   { manifest: adminManifest, load: () => import('@companion/module-admin/api').then((m) => m.default) },
