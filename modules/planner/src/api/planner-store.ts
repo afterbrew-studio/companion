@@ -5,6 +5,7 @@ import type {
   FeaturePlanningSession,
   PlannerEventRecord,
   PlannerRevision,
+  RepositoryPlanningContext,
 } from '../contract/index.js';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import { assertPlannerTransition } from './planner-machine.js';
@@ -24,13 +25,13 @@ export class PlannerStore {
     this.db.prepare(`
       INSERT INTO planner_sessions (
         id, workspace_id, repo, branch, target_branch, author, title, idea, step, status, revision,
-        active_action, last_error, brief_json, questions_json, answers_json, messages_json,
+        active_action, last_error, repository_context_json, brief_json, questions_json, answers_json, messages_json,
         artifacts_json, pending_revision_json, confirmations_json, doc_id, spec_id, proposal_id,
         analysis_json, analysis_run_id, refinement_id, task_ids_json, active_queue_id, active_run_id,
         created_at, updated_at
       ) VALUES (
         @id, @workspaceId, @repo, @branch, @targetBranch, @author, @title, @idea, @step, @status, @revision,
-        @activeAction, @lastError, @brief, @questions, @answers, @messages,
+        @activeAction, @lastError, @repositoryContext, @brief, @questions, @answers, @messages,
         @artifacts, @pendingRevision, @confirmations, @docId, @specId, @proposalId,
         @analysis, @analysisRunId, @refinementId, @taskIds, @activeQueueId, @activeRunId,
         @createdAt, @updatedAt
@@ -80,7 +81,8 @@ export class PlannerStore {
         UPDATE planner_sessions SET
           title = @title, idea = @idea, step = @step, status = @status, revision = @revision,
           target_branch = @targetBranch,
-          active_action = @activeAction, last_error = @lastError, brief_json = @brief,
+          active_action = @activeAction, last_error = @lastError,
+          repository_context_json = @repositoryContext, brief_json = @brief,
           questions_json = @questions, answers_json = @answers, messages_json = @messages,
           artifacts_json = @artifacts, pending_revision_json = @pendingRevision,
           confirmations_json = @confirmations, doc_id = @docId, spec_id = @specId,
@@ -148,6 +150,7 @@ interface PlannerSessionRow {
   revision: number;
   active_action: FeaturePlanningSession['activeAction'];
   last_error: string | null;
+  repository_context_json: string | null;
   brief_json: string;
   questions_json: string;
   answers_json: string;
@@ -179,6 +182,7 @@ interface PlannerEventRow {
 function toParams(session: FeaturePlanningSession): Record<string, unknown> {
   return {
     ...session,
+    repositoryContext: session.repositoryContext ? JSON.stringify(session.repositoryContext) : null,
     brief: JSON.stringify(session.brief),
     questions: JSON.stringify(session.questions),
     answers: JSON.stringify(session.answers),
@@ -219,6 +223,9 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     revision: row.revision,
     activeAction: row.active_action,
     lastError: row.last_error,
+    repositoryContext: row.repository_context_json
+      ? safeParse<RepositoryPlanningContext | null>(row.repository_context_json, null)
+      : null,
     brief,
     questions: safeParse(row.questions_json, []),
     answers: safeParse(row.answers_json, []),

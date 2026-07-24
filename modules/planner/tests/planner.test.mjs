@@ -2,7 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import { assertPlannerTransition } from '../dist/api/planner-machine.js';
-import { discussionPrompt, parseArtifactBundle, parseClarification, parsePlannerDiscussion, parsePlannerRevision } from '../dist/api/prompts.js';
+import {
+  clarificationPrompt,
+  discussionPrompt,
+  parseArtifactBundle,
+  parseClarification,
+  parseInitialClarification,
+  parsePlannerDiscussion,
+  parsePlannerRevision,
+  revisionPrompt,
+} from '../dist/api/prompts.js';
 import { PlannerService } from '../dist/api/planner-service.js';
 import { PlannerRevisionConflict, PlannerStore } from '../dist/api/planner-store.js';
 
@@ -16,6 +25,27 @@ const brief = {
   risks: ['Privacy'],
   openDecisions: [],
 };
+
+const repositoryContext = {
+  summary: 'A React and TypeScript application backed by Supabase.',
+  runtimeAndStack: ['React', 'TypeScript', 'Vite'],
+  architecture: ['Feature code is grouped by domain'],
+  dataAndIntegrations: ['Supabase stores application data'],
+  authorizationAndSecurity: ['Row-level security protects user data'],
+  testingAndDelivery: ['Vitest covers application behavior'],
+  relevantPaths: ['src/features', 'src/lib/supabase.ts'],
+  constraints: ['Reuse the existing UI and data-access patterns'],
+};
+
+function initialClarification(fields = {}) {
+  return JSON.stringify({
+    summary: 'Repository context is ready.',
+    repositoryContext,
+    brief,
+    questions: [],
+    ...fields,
+  });
+}
 
 function question(recommended = 0) {
   return {
@@ -65,6 +95,45 @@ test('clarification parser assigns server ids and accepts at most three well-for
   assert.equal(parsed.questions[0].options.length, 3);
   assert.equal(parsed.questions[0].options.filter((option) => option.recommended).length, 1);
   assert.ok(parsed.questions[0].options.every((option) => option.id.startsWith('po-')));
+});
+
+test('initial clarification requires one bounded reusable repository snapshot', () => {
+  const parsed = parseInitialClarification(initialClarification({ questions: [question()] }));
+  assert.deepEqual(parsed.repositoryContext, repositoryContext);
+  assert.equal(parsed.questions.length, 1);
+  assert.throws(() => parseInitialClarification(JSON.stringify({ summary: 'Missing context.', brief, questions: [] })));
+});
+
+test('follow-up clarification uses the cached snapshot and only the latest answer delta', () => {
+  const prompt = clarificationPrompt({
+    idea: 'A long original idea that should not be repeated',
+    brief,
+    answers: [{ question: 'Retention?', answer: 'Thirty days' }],
+    maxQuestions: 3,
+    repositoryContext,
+  });
+  assert.match(prompt, /repository discovery is already complete/);
+  assert.match(prompt, /Thirty days/);
+  assert.match(prompt, /Feature code is grouped by domain/);
+  assert.doesNotMatch(prompt, /A long original idea that should not be repeated/);
+  assert.doesNotMatch(prompt, /Study the repository|Inspect the repository once/);
+});
+
+test('legacy planning prompts inspect the checkout when no repository snapshot exists', () => {
+  const legacyRevision = revisionPrompt('Keep the feature small.', brief, {
+    documentation: { title: 'Docs', content: 'Current documentation.' },
+    specification: { title: 'Spec', content: 'Current specification.' },
+    implementationPlan: { title: 'Plan', content: 'Current implementation plan.' },
+  }, null);
+  assert.match(legacyRevision, /inspect and search the checked-out repository/);
+  assert.doesNotMatch(legacyRevision, /working directory is intentionally an empty scratch space/);
+
+  const legacyDiscussion = discussionPrompt({
+    session: { ...session(), analysis, artifacts: null },
+    message: 'Explain the plan.',
+  });
+  assert.match(legacyDiscussion, /inspect and search the checked-out repository/);
+  assert.doesNotMatch(legacyDiscussion, /working directory is intentionally an empty scratch space/);
 });
 
 test('clarification parser safely caps verbose model brief lists', () => {
@@ -163,6 +232,7 @@ function storeFixture() {
       target_branch TEXT NOT NULL DEFAULT '',
       author TEXT NOT NULL, title TEXT NOT NULL, idea TEXT NOT NULL, step TEXT NOT NULL,
       status TEXT NOT NULL, revision INTEGER NOT NULL, active_action TEXT, last_error TEXT,
+      repository_context_json TEXT,
       brief_json TEXT NOT NULL, questions_json TEXT NOT NULL, answers_json TEXT NOT NULL,
       messages_json TEXT NOT NULL, artifacts_json TEXT, pending_revision_json TEXT,
       confirmations_json TEXT NOT NULL, doc_id TEXT, spec_id TEXT, proposal_id TEXT,
@@ -182,7 +252,7 @@ function session() {
   return {
     id: 'idea-1', workspaceId: 'ws-1', repo: 'owner/repo', branch: 'main', targetBranch: 'main', author: 'alice',
     title: 'Analytics', idea: 'Add analytics', step: 'idea', status: 'draft', revision: 0,
-    activeAction: null, lastError: null, brief, questions: [], answers: [], messages: [], artifacts: null,
+    activeAction: null, lastError: null, repositoryContext: null, brief, questions: [], answers: [], messages: [], artifacts: null,
     pendingRevision: null, confirmations: { brief: false, artifacts: false, analysis: false, launch: false },
     docId: null, specId: null, proposalId: null, analysis: null, analysisRunId: null,
     refinementId: null, taskIds: [], activeQueueId: null, activeRunId: null, createdAt: now, updatedAt: now,
@@ -299,14 +369,16 @@ test('clarification persists submitted answers and includes them in the next pla
   const { db, store } = storeFixture();
   store.insert(session());
   const prompts = [];
+  const runOptions = [];
   const outputs = [
-    JSON.stringify({ summary: 'One decision is needed.', brief, questions: [question()] }),
+    initialClarification({ summary: 'One decision is needed.', questions: [question()] }),
     JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
   ];
   const { service } = createService(store, {
     operate: {
       checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
       orchestrator: { runOneShot: async (options) => {
+        runOptions.push(options);
         prompts.push(options.prompt);
         return { runId: `run-${prompts.length}`, finalMessage: outputs.shift() ?? null };
       } },
@@ -325,7 +397,11 @@ test('clarification persists submitted answers and includes them in the next pla
   assert.equal(ready.answers.length, 1);
   assert.equal(ready.answers[0].question, activeQuestion.prompt);
   assert.equal(ready.answers[0].value, selected.label);
+  assert.deepEqual(ready.repositoryContext, repositoryContext);
+  assert.equal(runOptions[0].cwd, '/tmp/planner-test');
+  assert.equal(runOptions[1].cwd, undefined);
   assert.ok(prompts[1].includes(`${activeQuestion.prompt}: ${selected.label}`));
+  assert.doesNotMatch(prompts[1], /Study the repository|Inspect the repository once/);
   db.close();
 });
 
@@ -333,7 +409,7 @@ test('planner checkpoints raise actionable inbox notifications with a direct ide
   const { db, store } = storeFixture();
   store.insert(session());
   const outputs = [
-    JSON.stringify({ summary: 'One decision is needed.', brief, questions: [question()] }),
+    initialClarification({ summary: 'One decision is needed.', questions: [question()] }),
     JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
   ];
   const { service, notifications } = createService(store, {
@@ -392,6 +468,7 @@ test('the fifth clarification round consolidates its answers and cannot produce 
     ...session(),
     step: 'clarification',
     status: 'waiting_for_user',
+    repositoryContext,
     questions: [currentQuestion],
     answers: Array.from({ length: 4 }, (_, index) => storedAnswer(index + 1)),
   });
@@ -427,6 +504,7 @@ test('the fifth clarification round consolidates its answers and cannot produce 
   assert.match(prompts[0], /at most 0 question\(s\)/);
   assert.match(prompts[0], /"questions": \[\] exactly/);
   assert.ok(prompts[0].includes(`${currentQuestion.prompt}: ${currentQuestion.options[0].label}`));
+  assert.doesNotMatch(prompts[0], /Previous answer/);
   db.close();
 });
 
@@ -437,6 +515,7 @@ test('fifteen submitted clarification answers end questioning even before the ro
     ...session(),
     step: 'clarification',
     status: 'waiting_for_user',
+    repositoryContext,
     questions: [currentQuestion],
     answers: Array.from({ length: 14 }, (_, index) => storedAnswer(index + 1)),
   });
@@ -498,7 +577,7 @@ test('a stopped clarification failure cannot fail its replacement run', async ()
 
   runs[1].resolve({
     runId: 'run-2',
-    finalMessage: JSON.stringify({ summary: 'Replacement result.', brief, questions: [question()] }),
+    finalMessage: initialClarification({ summary: 'Replacement result.', questions: [question()] }),
   });
   const completed = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'waiting_for_user');
   assert.equal(completed.questions.length, 1);
@@ -534,9 +613,8 @@ test('a late successful clarification cannot replace newer questions', async () 
 
   runs[1].resolve({
     runId: 'run-2',
-    finalMessage: JSON.stringify({
+    finalMessage: initialClarification({
       summary: 'Newest result.',
-      brief,
       questions: [{ ...question(), prompt: 'Newest question' }],
     }),
   });
@@ -545,9 +623,8 @@ test('a late successful clarification cannot replace newer questions', async () 
 
   runs[0].resolve({
     runId: 'run-1',
-    finalMessage: JSON.stringify({
+    finalMessage: initialClarification({
       summary: 'Stale result.',
-      brief,
       questions: [{ ...question(), prompt: 'Stale question' }],
     }),
   });

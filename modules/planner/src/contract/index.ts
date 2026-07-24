@@ -71,6 +71,23 @@ export interface FeatureBrief {
   readonly openDecisions: ReadonlyArray<string>;
 }
 
+/**
+ * Compact, immutable repository knowledge captured during the first planning
+ * run. Later product decisions use this instead of repeatedly scanning the
+ * checkout; the final Proposal analysis still validates the completed plan
+ * against the live repository.
+ */
+export interface RepositoryPlanningContext {
+  readonly summary: string;
+  readonly runtimeAndStack: ReadonlyArray<string>;
+  readonly architecture: ReadonlyArray<string>;
+  readonly dataAndIntegrations: ReadonlyArray<string>;
+  readonly authorizationAndSecurity: ReadonlyArray<string>;
+  readonly testingAndDelivery: ReadonlyArray<string>;
+  readonly relevantPaths: ReadonlyArray<string>;
+  readonly constraints: ReadonlyArray<string>;
+}
+
 export interface PlannerQuestionOption {
   readonly id: string;
   readonly label: string;
@@ -128,6 +145,10 @@ export interface ClarificationResult {
   readonly questions: ReadonlyArray<PlannerQuestion>;
 }
 
+export interface InitialClarificationResult extends ClarificationResult {
+  readonly repositoryContext: RepositoryPlanningContext;
+}
+
 export interface PlannerRevision {
   readonly summary: string;
   readonly brief: FeatureBrief;
@@ -181,6 +202,7 @@ export interface FeaturePlanningSession {
   readonly revision: number;
   readonly activeAction: PlannerAction | null;
   readonly lastError: string | null;
+  readonly repositoryContext: RepositoryPlanningContext | null;
   readonly brief: FeatureBrief;
   readonly questions: ReadonlyArray<PlannerQuestion>;
   readonly answers: ReadonlyArray<PlannerAnswer>;

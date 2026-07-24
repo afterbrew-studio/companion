@@ -740,7 +740,9 @@ export class Orchestrator implements RunnerEventSink {
   runOneShot(opts: {
     kind: RunKind;
     title: string;
-    cwd: string;
+    /** Prepared repository checkout. Omit for a clean scratch run that must
+     * not inspect or repeatedly tokenize repository contents. */
+    cwd?: string;
     repo?: string | null;
     /** Profile whose personal GitHub account authorizes access to `repo`. */
     userId?: string | null;

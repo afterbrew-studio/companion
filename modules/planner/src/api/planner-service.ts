@@ -22,6 +22,7 @@ import {
   emptyFeatureBrief,
   parseArtifactBundle,
   parseClarification,
+  parseInitialClarification,
   parsePlannerDiscussion,
   parsePlannerRevision,
   revisionPrompt,
@@ -85,6 +86,7 @@ export class PlannerService {
       revision: 0,
       activeAction: null,
       lastError: null,
+      repositoryContext: null,
       brief: emptyFeatureBrief(idea),
       questions: [],
       answers: [],
@@ -502,21 +504,28 @@ export class PlannerService {
     const lease = this.claimAction(id, 'clarifying');
     try {
       const session = this.mustGet(id);
-      await this.ensureClone(session, userId);
+      const needsRepositoryScan = session.repositoryContext === null;
+      if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
-      const answers = session.answers.map((answer) => ({
+      const answers = this.latestClarificationAnswers(id, session).map((answer) => ({
         question: answer.question,
         answer: answer.value,
       }));
-      const maxQuestions = this.remainingClarificationQuestions(id, answers.length);
-      const result = await this.runStructured(id, userId, 'Clarify idea', clarificationPrompt({
+      const maxQuestions = this.remainingClarificationQuestions(id, session.answers.length);
+      const prompt = clarificationPrompt({
         idea: session.idea,
         brief: session.brief,
         answers,
         maxQuestions,
-      }), lease);
+        repositoryContext: session.repositoryContext,
+      });
+      const result = await this.runStructured(id, userId, 'Clarify idea', prompt, lease, {
+        repositoryAccess: needsRepositoryScan,
+      });
       if (!this.ownsAction(id, lease)) return;
-      const parsed = parseClarification(result);
+      const initialResult = needsRepositoryScan ? parseInitialClarification(result) : null;
+      const parsed = initialResult ?? parseClarification(result);
+      const repositoryContext = initialResult?.repositoryContext ?? session.repositoryContext;
       // The model still updates the brief after the last answers, but cannot
       // extend clarification beyond the durable session budget.
       const questions = parsed.questions.slice(0, maxQuestions);
@@ -528,12 +537,16 @@ export class PlannerService {
         activeQueueId: null,
         activeRunId: null,
         lastError: null,
+        repositoryContext,
         brief: parsed.brief,
         questions,
         messages: appendMessages(this.mustGet(id).messages, [{
           id: messageId(), role: 'assistant', content: parsed.summary, createdAt: Date.now(),
         }]),
-      }, undefined, questions.length > 0 ? 'questions_ready' : 'brief_ready', { questions: questions.length });
+      }, undefined, questions.length > 0 ? 'questions_ready' : 'brief_ready', {
+        questions: questions.length,
+        contextMode: needsRepositoryScan ? 'repository_scan' : 'cached_snapshot',
+      });
     } catch (err) {
       if (this.ownsAction(id, lease)) this.fail(id, err);
     } finally {
@@ -545,9 +558,17 @@ export class PlannerService {
     const lease = this.claimAction(id, 'generating_artifacts');
     try {
       const session = this.mustGet(id);
-      await this.ensureClone(session, userId);
+      const needsRepositoryScan = session.repositoryContext === null;
+      if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
-      const output = await this.runStructured(id, userId, 'Draft planning artifacts', artifactsPrompt(session.idea, session.brief), lease);
+      const output = await this.runStructured(
+        id,
+        userId,
+        'Draft planning artifacts',
+        artifactsPrompt(session.idea, session.brief, session.repositoryContext),
+        lease,
+        { repositoryAccess: needsRepositoryScan },
+      );
       if (!this.ownsAction(id, lease)) return;
       const artifacts = parseArtifactBundle(output);
       this.updateAndBroadcast(id, {
@@ -634,13 +655,14 @@ export class PlannerService {
     const lease = this.claimAction(id, 'discussing');
     try {
       const session = this.mustGet(id);
-      await this.ensureClone(session, userId);
+      const needsRepositoryScan = session.repositoryContext === null;
+      if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
       const output = await this.runStructured(id, userId, 'Discuss implementation plan', discussionPrompt({
         session,
         message,
         ...(context ? { context } : {}),
-      }), lease);
+      }), lease, { repositoryAccess: needsRepositoryScan });
       if (!this.ownsAction(id, lease)) return;
       const result = parsePlannerDiscussion(output, session);
       const assistantMessage: PlannerMessage = {
@@ -675,11 +697,19 @@ export class PlannerService {
     const lease = this.claimAction(id, 'revising');
     try {
       const session = this.mustGet(id);
-      await this.ensureClone(session, userId);
+      const needsRepositoryScan = session.repositoryContext === null;
+      if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
       const revisionBase = session.pendingRevision?.artifacts ?? session.artifacts!;
       const briefBase = session.pendingRevision?.brief ?? session.brief;
-      const output = await this.runStructured(id, userId, 'Revise implementation plan', revisionPrompt(instruction, briefBase, revisionBase), lease);
+      const output = await this.runStructured(
+        id,
+        userId,
+        'Revise implementation plan',
+        revisionPrompt(instruction, briefBase, revisionBase, session.repositoryContext),
+        lease,
+        { repositoryAccess: needsRepositoryScan },
+      );
       if (!this.ownsAction(id, lease)) return;
       const pendingRevision = parsePlannerRevision(output);
       this.updateAndBroadcast(id, {
@@ -780,11 +810,20 @@ export class PlannerService {
     title: string,
     prompt: string,
     lease: PlannerActionLease,
+    options: { readonly repositoryAccess?: boolean } = {},
   ): Promise<string> {
     const session = this.mustGet(id);
+    const repositoryAccess = options.repositoryAccess ?? true;
+    log.info('planner structured run', {
+      id,
+      title,
+      contextMode: repositoryAccess ? 'repository_scan' : 'cached_snapshot',
+      promptChars: prompt.length,
+    });
     const result = await this.operate.orchestrator.runOneShot({
       kind: 'analysis', task: 'planner.analyses', title: `${title}: ${session.title}`.slice(0, 100),
-      cwd: this.operate.checkouts.cloneDir(session.repo), repo: session.repo, userId, prompt, timeoutMs: RUN_TIMEOUT_MS,
+      ...(repositoryAccess ? { cwd: this.operate.checkouts.cloneDir(session.repo) } : {}),
+      repo: session.repo, userId, prompt, timeoutMs: RUN_TIMEOUT_MS,
       onQueued: (queueId) => this.trackQueued(id, queueId, lease),
       onStarted: (runId) => this.trackStarted(id, runId, lease),
     });
@@ -823,6 +862,21 @@ export class PlannerService {
       .length;
     if (answeredRounds >= MAX_CLARIFICATION_ROUNDS) return 0;
     return Math.min(MAX_QUESTIONS_PER_ROUND, Math.max(0, MAX_CLARIFICATION_ANSWERS - answerCount));
+  }
+
+  private latestClarificationAnswers(
+    id: string,
+    session: FeaturePlanningSession,
+  ): ReadonlyArray<PlannerAnswer> {
+    const events = this.store.listEvents(id);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.kind !== 'clarification_answered') continue;
+      const count = event.detail.count;
+      if (typeof count !== 'number' || !Number.isInteger(count) || count < 1) return [];
+      return session.answers.slice(-Math.min(count, MAX_QUESTIONS_PER_ROUND));
+    }
+    return [];
   }
 
   private trackQueued(id: string, queueId: string, lease: PlannerActionLease): void {

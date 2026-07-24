@@ -74,4 +74,17 @@ export default defineMigrations([
     // their recorded merge target during module lifecycle changes is unsafe.
     down: () => undefined,
   },
+  {
+    version: 3,
+    name: 'planner_repository_context',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(planner_sessions)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'repository_context_json')) {
+        db.exec(`ALTER TABLE planner_sessions ADD COLUMN repository_context_json TEXT`);
+      }
+    },
+    // The snapshot is additive session history. SQLite cannot safely remove a
+    // column in-place while preserving active planning sessions.
+    down: () => undefined,
+  },
 ]);
