@@ -62,13 +62,19 @@ export default function Idea({ id }: { id: string }): JSX.Element {
 
   useEffect(() => {
     if (!session) return;
-    const defaults: Record<string, { optionId: string | null; value: string }> = {};
-    for (const question of session.questions) {
-      const recommended = question.options.find((option) => option.recommended);
-      defaults[question.id] = { optionId: recommended?.id ?? null, value: '' };
-    }
-    setAnswers(defaults);
+    setAnswers((current) => {
+      const next: Record<string, { optionId: string | null; value: string }> = {};
+      for (const question of session.questions) {
+        const recommended = question.options.find((option) => option.recommended);
+        next[question.id] = current[question.id] ?? { optionId: recommended?.id ?? null, value: '' };
+      }
+      return next;
+    });
   }, [questionSet]);
+
+  useEffect(() => {
+    if (session?.status === 'cancelled') window.location.hash = '/ideas';
+  }, [session?.status]);
 
   const runAction = async (
     fn: () => Promise<unknown>,

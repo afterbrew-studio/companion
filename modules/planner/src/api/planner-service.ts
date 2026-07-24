@@ -31,14 +31,25 @@ type RefinementService = ServiceMap['refinement'];
 type BoardService = ServiceMap['board'];
 type CodeService = ServiceMap['code'];
 type OperateService = ServiceMap['operate'];
+type PlannerAction = NonNullable<FeaturePlanningSession['activeAction']>;
+
+interface PlannerActionLease {
+  readonly token: string;
+  readonly action: PlannerAction;
+}
 
 const MAX_IDEA_LENGTH = 8_000;
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_MESSAGES = 100;
 const MAX_ACTIVE_RUNS_PER_USER = 2;
+const MAX_CLARIFICATION_ROUNDS = 5;
+const MAX_CLARIFICATION_ANSWERS = 15;
+const MAX_QUESTIONS_PER_ROUND = 3;
 const RUN_TIMEOUT_MS = 12 * 60_000;
 
 export class PlannerService {
+  private readonly actionLeases = new Map<string, PlannerActionLease>();
+
   constructor(
     private readonly store: PlannerStore,
     private readonly plan: PlanService,
@@ -96,7 +107,9 @@ export class PlannerService {
   }
 
   list(workspaceId: string): FeaturePlanningSession[] {
-    return this.store.listByWorkspace(workspaceId);
+    return this.store
+      .listByWorkspace(workspaceId)
+      .filter((session) => session.status !== 'cancelled');
   }
 
   get(id: string): FeaturePlanningSession | undefined {
@@ -455,6 +468,7 @@ export class PlannerService {
       status: 'failed', activeAction: null, activeQueueId: null, activeRunId: null,
       lastError: 'Stopped by user. This step can be retried.',
     }, expectedRevision, 'stopped');
+    this.actionLeases.delete(id);
     if (current.activeQueueId) this.operate.orchestrator.cancelQueued(current.activeQueueId);
     if (current.activeRunId) await this.operate.orchestrator.stopRun(current.activeRunId).catch(() => undefined);
     return this.store.get(id) ?? stopped;
@@ -466,6 +480,7 @@ export class PlannerService {
     const cancelled = this.updateAndBroadcast(id, {
       status: 'cancelled', activeAction: null, activeQueueId: null, activeRunId: null, lastError: null,
     }, expectedRevision, 'cancelled');
+    this.actionLeases.delete(id);
     if (current.activeQueueId) this.operate.orchestrator.cancelQueued(current.activeQueueId);
     if (current.activeRunId) await this.operate.orchestrator.stopRun(current.activeRunId).catch(() => undefined);
     return this.store.get(id) ?? cancelled;
@@ -473,21 +488,34 @@ export class PlannerService {
 
   resetDangling(): number {
     const count = this.store.resetDangling();
+    this.actionLeases.clear();
     if (count > 0) this.changed();
     return count;
   }
 
   private async runClarification(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'clarifying');
     try {
       const session = this.mustGet(id);
       await this.ensureClone(session, userId);
+      if (!this.ownsAction(id, lease)) return;
       const answers = session.answers.map((answer) => ({
         question: answer.question,
         answer: answer.value,
       }));
-      const result = await this.runStructured(id, userId, 'Clarify idea', clarificationPrompt({ idea: session.idea, brief: session.brief, answers }));
+      const maxQuestions = this.remainingClarificationQuestions(id, answers.length);
+      const result = await this.runStructured(id, userId, 'Clarify idea', clarificationPrompt({
+        idea: session.idea,
+        brief: session.brief,
+        answers,
+        maxQuestions,
+      }), lease);
+      if (!this.ownsAction(id, lease)) return;
       const parsed = parseClarification(result);
-      const nextStep = parsed.questions.length > 0 ? 'clarification' : 'scope_review';
+      // The model still updates the brief after the last answers, but cannot
+      // extend clarification beyond the durable session budget.
+      const questions = parsed.questions.slice(0, maxQuestions);
+      const nextStep = questions.length > 0 ? 'clarification' : 'scope_review';
       this.updateAndBroadcast(id, {
         step: nextStep,
         status: 'waiting_for_user',
@@ -496,21 +524,26 @@ export class PlannerService {
         activeRunId: null,
         lastError: null,
         brief: parsed.brief,
-        questions: parsed.questions,
+        questions,
         messages: appendMessages(this.mustGet(id).messages, [{
           id: messageId(), role: 'assistant', content: parsed.summary, createdAt: Date.now(),
         }]),
-      }, undefined, parsed.questions.length > 0 ? 'questions_ready' : 'brief_ready', { questions: parsed.questions.length });
+      }, undefined, questions.length > 0 ? 'questions_ready' : 'brief_ready', { questions: questions.length });
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async runArtifactGeneration(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'generating_artifacts');
     try {
       const session = this.mustGet(id);
       await this.ensureClone(session, userId);
-      const output = await this.runStructured(id, userId, 'Draft planning artifacts', artifactsPrompt(session.idea, session.brief));
+      if (!this.ownsAction(id, lease)) return;
+      const output = await this.runStructured(id, userId, 'Draft planning artifacts', artifactsPrompt(session.idea, session.brief), lease);
+      if (!this.ownsAction(id, lease)) return;
       const artifacts = parseArtifactBundle(output);
       this.updateAndBroadcast(id, {
         artifacts,
@@ -521,11 +554,14 @@ export class PlannerService {
         lastError: null,
       }, undefined, 'artifact_drafts_ready');
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async persistArtifactsAndAnalyze(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'creating_artifacts');
     try {
       let session = this.mustGet(id);
       const artifacts = session.artifacts!;
@@ -548,11 +584,14 @@ export class PlannerService {
       }, undefined, 'analysis_started');
       await this.analyze(id, userId);
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async analyze(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'analyzing');
     try {
       const session = this.mustGet(id);
       const doc = session.docId ? this.plan.docs.get(session.docId) : undefined;
@@ -560,9 +599,10 @@ export class PlannerService {
       const proposal = await this.plan.proposals.analyze(session.proposalId!, userId, {
         documentation: doc ? [{ title: doc.title, content: doc.content }] : [],
         specifications: spec ? [{ title: spec.title, content: spec.content }] : [],
-        onQueued: (queueId) => this.trackQueued(id, queueId),
-        onStarted: (runId) => this.trackStarted(id, runId),
+        onQueued: (queueId) => this.trackQueued(id, queueId, lease),
+        onStarted: (runId) => this.trackStarted(id, runId, lease),
       });
+      if (!this.ownsAction(id, lease)) return;
       if (!proposal.analysis) throw new Error('analysis completed without a validated result');
       // The brief is the product boundary approved by the user. Proposal
       // analysis may expand those groups into implementation findings, but the
@@ -574,7 +614,9 @@ export class PlannerService {
         analysis, analysisRunId: proposal.analysisRunId,
       }, undefined, 'analysis_ready');
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
@@ -584,14 +626,17 @@ export class PlannerService {
     context: PlannerDiscussionContext | undefined,
     userId: string,
   ): Promise<void> {
+    const lease = this.claimAction(id, 'discussing');
     try {
       const session = this.mustGet(id);
       await this.ensureClone(session, userId);
+      if (!this.ownsAction(id, lease)) return;
       const output = await this.runStructured(id, userId, 'Discuss implementation plan', discussionPrompt({
         session,
         message,
         ...(context ? { context } : {}),
-      }));
+      }), lease);
+      if (!this.ownsAction(id, lease)) return;
       const result = parsePlannerDiscussion(output, session);
       const assistantMessage: PlannerMessage = {
         id: messageId(),
@@ -615,17 +660,22 @@ export class PlannerService {
         await this.runRevision(id, result.changeInstruction, userId, true);
       }
     } catch (err) {
-      this.failConversation(id, err);
+      if (this.ownsAction(id, lease)) this.failConversation(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async runRevision(id: string, instruction: string, userId: string, fromDiscussion = false): Promise<void> {
+    const lease = this.claimAction(id, 'revising');
     try {
       const session = this.mustGet(id);
       await this.ensureClone(session, userId);
+      if (!this.ownsAction(id, lease)) return;
       const revisionBase = session.pendingRevision?.artifacts ?? session.artifacts!;
       const briefBase = session.pendingRevision?.brief ?? session.brief;
-      const output = await this.runStructured(id, userId, 'Revise implementation plan', revisionPrompt(instruction, briefBase, revisionBase));
+      const output = await this.runStructured(id, userId, 'Revise implementation plan', revisionPrompt(instruction, briefBase, revisionBase), lease);
+      if (!this.ownsAction(id, lease)) return;
       const pendingRevision = parsePlannerRevision(output);
       this.updateAndBroadcast(id, {
         pendingRevision, status: 'waiting_for_user', activeAction: null,
@@ -635,12 +685,17 @@ export class PlannerService {
         }]),
       }, undefined, 'revision_ready');
     } catch (err) {
-      if (fromDiscussion) this.failConversation(id, err);
-      else this.fail(id, err);
+      if (this.ownsAction(id, lease)) {
+        if (fromDiscussion) this.failConversation(id, err);
+        else this.fail(id, err);
+      }
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async applyRevisionAndAnalyze(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'analyzing');
     try {
       let session = this.mustGet(id);
       const revision = session.pendingRevision!;
@@ -658,11 +713,14 @@ export class PlannerService {
       }, undefined, 'revision_applied');
       await this.analyze(session.id, userId);
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
   private async createRefinement(id: string, userId: string): Promise<void> {
+    const lease = this.claimAction(id, 'decomposing');
     try {
       let session = this.mustGet(id);
       this.plan.proposals.acceptPlan(session.proposalId!);
@@ -692,9 +750,10 @@ export class PlannerService {
         docIds: session.docId ? [session.docId] : [],
       });
       await this.refinement.runDecompose(refinementId, method, userId, {
-        onQueued: (queueId) => this.trackQueued(id, queueId),
-        onStarted: (runId) => this.trackStarted(id, runId),
+        onQueued: (queueId) => this.trackQueued(id, queueId, lease),
+        onStarted: (runId) => this.trackStarted(id, runId, lease),
       });
+      if (!this.ownsAction(id, lease)) return;
       const completed = this.refinement.get(refinementId);
       if (completed?.refinement.status !== 'ready') {
         throw new Error(completed?.refinement.error ?? 'task decomposition failed');
@@ -704,17 +763,25 @@ export class PlannerService {
         activeQueueId: null, activeRunId: null, lastError: null,
       }, undefined, 'tasks_ready', { count: completed.items.filter((item) => item.status === 'proposed').length });
     } catch (err) {
-      this.fail(id, err);
+      if (this.ownsAction(id, lease)) this.fail(id, err);
+    } finally {
+      this.releaseAction(id, lease);
     }
   }
 
-  private async runStructured(id: string, userId: string, title: string, prompt: string): Promise<string> {
+  private async runStructured(
+    id: string,
+    userId: string,
+    title: string,
+    prompt: string,
+    lease: PlannerActionLease,
+  ): Promise<string> {
     const session = this.mustGet(id);
     const result = await this.operate.orchestrator.runOneShot({
       kind: 'analysis', task: 'planner.analyses', title: `${title}: ${session.title}`.slice(0, 100),
       cwd: this.operate.checkouts.cloneDir(session.repo), repo: session.repo, userId, prompt, timeoutMs: RUN_TIMEOUT_MS,
-      onQueued: (queueId) => this.trackQueued(id, queueId),
-      onStarted: (runId) => this.trackStarted(id, runId),
+      onQueued: (queueId) => this.trackQueued(id, queueId, lease),
+      onStarted: (runId) => this.trackStarted(id, runId, lease),
     });
     if (result.finalMessage === null) throw new Error('the planning agent ended without a response');
     return result.finalMessage;
@@ -745,16 +812,44 @@ export class PlannerService {
     }
   }
 
-  private trackQueued(id: string, queueId: string): void {
-    const session = this.store.get(id);
-    if (!session || !session.activeAction || session.status !== 'working') return;
+  private remainingClarificationQuestions(id: string, answerCount: number): number {
+    const answeredRounds = this.store.listEvents(id)
+      .filter((event) => event.kind === 'clarification_answered')
+      .length;
+    if (answeredRounds >= MAX_CLARIFICATION_ROUNDS) return 0;
+    return Math.min(MAX_QUESTIONS_PER_ROUND, Math.max(0, MAX_CLARIFICATION_ANSWERS - answerCount));
+  }
+
+  private trackQueued(id: string, queueId: string, lease: PlannerActionLease): void {
+    if (!this.ownsAction(id, lease)) return;
     this.updateAndBroadcast(id, { activeQueueId: queueId }, undefined, 'run_queued', { queueId });
   }
 
-  private trackStarted(id: string, runId: string): void {
-    const session = this.store.get(id);
-    if (!session || !session.activeAction || session.status !== 'working') return;
+  private trackStarted(id: string, runId: string, lease: PlannerActionLease): void {
+    if (!this.ownsAction(id, lease)) return;
     this.updateAndBroadcast(id, { activeQueueId: null, activeRunId: runId }, undefined, 'run_started', { runId });
+  }
+
+  private claimAction(id: string, action: PlannerAction): PlannerActionLease {
+    const session = this.mustGet(id);
+    if (session.status !== 'working' || session.activeAction !== action) {
+      throw new Error(`planner action ${action} is no longer active`);
+    }
+    const lease = { token: randomUUID(), action };
+    this.actionLeases.set(id, lease);
+    return lease;
+  }
+
+  private ownsAction(id: string, lease: PlannerActionLease): boolean {
+    const active = this.actionLeases.get(id);
+    const session = this.store.get(id);
+    return active?.token === lease.token
+      && session?.status === 'working'
+      && session.activeAction === lease.action;
+  }
+
+  private releaseAction(id: string, lease: PlannerActionLease): void {
+    if (this.actionLeases.get(id)?.token === lease.token) this.actionLeases.delete(id);
   }
 
   private fail(id: string, err: unknown, patch: PlannerSessionPatch = {}): void {

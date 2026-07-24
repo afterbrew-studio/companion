@@ -29,6 +29,34 @@ function question(recommended = 0) {
   };
 }
 
+function storedQuestion() {
+  const raw = question();
+  return {
+    id: 'pq-current',
+    prompt: raw.prompt,
+    whyItMatters: raw.whyItMatters,
+    options: raw.options.map((option, index) => ({ id: `po-${index + 1}`, ...option })),
+  };
+}
+
+function storedAnswer(index) {
+  return {
+    questionId: `pq-old-${index}`,
+    question: `Previous question ${index}`,
+    optionId: null,
+    value: `Previous answer ${index}`,
+    createdAt: Date.now() - index,
+  };
+}
+
+function seedClarificationRounds(db, count) {
+  const insert = db.prepare(`
+    INSERT INTO planner_events (session_id, kind, detail_json, created_at)
+    VALUES ('idea-1', 'clarification_answered', '{}', ?)
+  `);
+  for (let index = 0; index < count; index += 1) insert.run(Date.now() - count + index);
+}
+
 test('clarification parser assigns server ids and accepts at most three well-formed questions', () => {
   let id = 0;
   const parsed = parseClarification(JSON.stringify({ summary: 'Clear enough.', brief, questions: [question(), question(1), question(2)] }), (prefix) => `${prefix}-${++id}`);
@@ -257,6 +285,219 @@ async function waitFor(read, predicate, timeoutMs = 1_000) {
   }
   throw new Error('timed out waiting for planner state');
 }
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('clarification persists submitted answers and includes them in the next planning prompt', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const prompts = [];
+  const outputs = [
+    JSON.stringify({ summary: 'One decision is needed.', brief, questions: [question()] }),
+    JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
+  ];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async (options) => {
+        prompts.push(options.prompt);
+        return { runId: `run-${prompts.length}`, finalMessage: outputs.shift() ?? null };
+      } },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const waiting = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'waiting_for_user');
+  const activeQuestion = waiting.questions[0];
+  const selected = activeQuestion.options[0];
+  service.answer('idea-1', waiting.revision, {
+    answers: [{ questionId: activeQuestion.id, optionId: selected.id }],
+  }, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+
+  assert.equal(ready.answers.length, 1);
+  assert.equal(ready.answers[0].question, activeQuestion.prompt);
+  assert.equal(ready.answers[0].value, selected.label);
+  assert.ok(prompts[1].includes(`${activeQuestion.prompt}: ${selected.label}`));
+  db.close();
+});
+
+test('the fifth clarification round consolidates its answers and cannot produce more questions', async () => {
+  const { db, store } = storeFixture();
+  const currentQuestion = storedQuestion();
+  store.insert({
+    ...session(),
+    step: 'clarification',
+    status: 'waiting_for_user',
+    questions: [currentQuestion],
+    answers: Array.from({ length: 4 }, (_, index) => storedAnswer(index + 1)),
+  });
+  seedClarificationRounds(db, 4);
+  const prompts = [];
+  const finalBrief = { ...brief, goal: 'Use the answer from the final allowed round.' };
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async (options) => {
+        prompts.push(options.prompt);
+        return {
+          runId: 'run-final-round',
+          finalMessage: JSON.stringify({
+            summary: 'The final answers are incorporated.',
+            brief: finalBrief,
+            questions: [question()],
+          }),
+        };
+      } },
+    },
+  });
+
+  service.answer('idea-1', 0, {
+    answers: [{ questionId: currentQuestion.id, optionId: currentQuestion.options[0].id }],
+  }, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+
+  assert.equal(ready.answers.length, 5);
+  assert.equal(ready.answers[4].value, currentQuestion.options[0].label);
+  assert.deepEqual(ready.brief, finalBrief);
+  assert.deepEqual(ready.questions, []);
+  assert.match(prompts[0], /at most 0 question\(s\)/);
+  assert.match(prompts[0], /"questions": \[\] exactly/);
+  assert.ok(prompts[0].includes(`${currentQuestion.prompt}: ${currentQuestion.options[0].label}`));
+  db.close();
+});
+
+test('fifteen submitted clarification answers end questioning even before the round cap', async () => {
+  const { db, store } = storeFixture();
+  const currentQuestion = storedQuestion();
+  store.insert({
+    ...session(),
+    step: 'clarification',
+    status: 'waiting_for_user',
+    questions: [currentQuestion],
+    answers: Array.from({ length: 14 }, (_, index) => storedAnswer(index + 1)),
+  });
+  seedClarificationRounds(db, 3);
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async () => ({
+        runId: 'run-answer-cap',
+        finalMessage: JSON.stringify({ summary: 'The brief is ready.', brief, questions: [question()] }),
+      }) },
+    },
+  });
+
+  service.answer('idea-1', 0, {
+    answers: [{ questionId: currentQuestion.id, value: 'A final custom answer' }],
+  }, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+
+  assert.equal(ready.answers.length, 15);
+  assert.equal(ready.answers[14].value, 'A final custom answer');
+  assert.deepEqual(ready.questions, []);
+  db.close();
+});
+
+test('a stopped clarification failure cannot fail its replacement run', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const runs = [];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: {
+        runOneShot: (options) => {
+          const pending = deferred();
+          const number = runs.length + 1;
+          runs.push(pending);
+          options.onQueued?.(`queue-${number}`);
+          options.onStarted?.(`run-${number}`);
+          return pending.promise;
+        },
+        stopRun: async () => undefined,
+      },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const first = await waitFor(() => store.get('idea-1'), (value) => value?.activeRunId === 'run-1');
+  await service.stop('idea-1', first.revision);
+  const stopped = store.get('idea-1');
+  service.retry('idea-1', stopped.revision, 'alice');
+  await waitFor(() => store.get('idea-1'), (value) => value?.activeRunId === 'run-2');
+
+  runs[0].resolve({ runId: 'run-1', finalMessage: null });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const replacement = store.get('idea-1');
+  assert.equal(replacement.status, 'working');
+  assert.equal(replacement.activeRunId, 'run-2');
+
+  runs[1].resolve({
+    runId: 'run-2',
+    finalMessage: JSON.stringify({ summary: 'Replacement result.', brief, questions: [question()] }),
+  });
+  const completed = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'waiting_for_user');
+  assert.equal(completed.questions.length, 1);
+  db.close();
+});
+
+test('a late successful clarification cannot replace newer questions', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const runs = [];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: {
+        runOneShot: (options) => {
+          const pending = deferred();
+          const number = runs.length + 1;
+          runs.push(pending);
+          options.onQueued?.(`queue-${number}`);
+          options.onStarted?.(`run-${number}`);
+          return pending.promise;
+        },
+        stopRun: async () => undefined,
+      },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const first = await waitFor(() => store.get('idea-1'), (value) => value?.activeRunId === 'run-1');
+  await service.stop('idea-1', first.revision);
+  service.retry('idea-1', store.get('idea-1').revision, 'alice');
+  await waitFor(() => store.get('idea-1'), (value) => value?.activeRunId === 'run-2');
+
+  runs[1].resolve({
+    runId: 'run-2',
+    finalMessage: JSON.stringify({
+      summary: 'Newest result.',
+      brief,
+      questions: [{ ...question(), prompt: 'Newest question' }],
+    }),
+  });
+  const newest = await waitFor(() => store.get('idea-1'), (value) => value?.questions[0]?.prompt === 'Newest question');
+  const newestRevision = newest.revision;
+
+  runs[0].resolve({
+    runId: 'run-1',
+    finalMessage: JSON.stringify({
+      summary: 'Stale result.',
+      brief,
+      questions: [{ ...question(), prompt: 'Stale question' }],
+    }),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const stable = store.get('idea-1');
+  assert.equal(stable.questions[0].prompt, 'Newest question');
+  assert.equal(stable.revision, newestRevision);
+  db.close();
+});
 
 test('plan discussion explains questions and turns clear changes into a pending revision', async () => {
   const draft = { title: 'Listing analytics', content: 'A sufficiently detailed planning artifact for listing analytics behavior.' };
@@ -599,5 +840,7 @@ test('stop and cancel persist terminal intent before interrupting queued or runn
   assert.equal(cancelled.status, 'cancelled');
   assert.deepEqual(cancelledQueues, ['queue-1']);
   assert.deepEqual(stoppedRuns, ['run-1']);
+  assert.deepEqual(service.list('ws-1').map((item) => item.id), ['idea-1']);
+  assert.equal(service.get('idea-2')?.status, 'cancelled');
   db.close();
 });

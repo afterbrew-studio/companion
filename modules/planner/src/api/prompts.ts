@@ -214,7 +214,18 @@ export function clarificationPrompt(input: {
   idea: string;
   brief: FeatureBrief;
   answers: ReadonlyArray<{ question: string; answer: string }>;
+  maxQuestions: number;
 }): string {
+  const questionsExample = input.maxQuestions === 0
+    ? '[]'
+    : `[{
+    "prompt": "...", "whyItMatters": "...",
+    "options": [
+      { "label": "...", "description": "consequence", "recommended": true },
+      { "label": "...", "description": "consequence", "recommended": false },
+      { "label": "...", "description": "consequence", "recommended": false }
+    ]
+  }]`;
   return `You are a senior product manager, software architect, security reviewer, and delivery lead helping a non-technical user plan one feature.
 
 ${READ_ONLY}
@@ -228,7 +239,7 @@ ${JSON.stringify(input.brief)}
 Answers supplied so far:
 ${input.answers.length > 0 ? input.answers.map((answer) => `- ${answer.question}: ${answer.answer}`).join('\n') : '(none)'}
 
-Study the repository before deciding what is genuinely unknown. Make safe, explicit assumptions for non-critical choices. Ask only decisions that materially change product behavior, privacy, cost, security, or scope. Ask at most three questions. Each question must have exactly three mutually exclusive options and exactly one recommended option. Do not generate ids. Keep every brief array focused, non-redundant, and at most 20 items long.
+Study the repository before deciding what is genuinely unknown. Make safe, explicit assumptions for non-critical choices. This round may return at most ${input.maxQuestions} question(s). ${input.maxQuestions === 0 ? 'The clarification budget is exhausted: incorporate every supplied answer into the brief and return "questions": [] exactly.' : 'Ask only decisions that materially change product behavior, privacy, cost, security, or scope.'} Each returned question must have exactly three mutually exclusive options and exactly one recommended option. Do not generate ids. Keep every brief array focused, non-redundant, and at most 20 items long.
 
 Reply with ONLY strict JSON, no markdown or prose, matching exactly:
 {
@@ -237,14 +248,7 @@ Reply with ONLY strict JSON, no markdown or prose, matching exactly:
     "problem": "...", "audience": ["..."], "goal": "...", "mvp": ["..."],
     "outOfScope": ["..."], "assumptions": ["..."], "risks": ["..."], "openDecisions": ["..."]
   },
-  "questions": [{
-    "prompt": "...", "whyItMatters": "...",
-    "options": [
-      { "label": "...", "description": "consequence", "recommended": true },
-      { "label": "...", "description": "consequence", "recommended": false },
-      { "label": "...", "description": "consequence", "recommended": false }
-    ]
-  }]
+  "questions": ${questionsExample}
 }`;
 }
 
