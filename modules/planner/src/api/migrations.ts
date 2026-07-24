@@ -61,4 +61,17 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    version: 2,
+    name: 'planner_target_branch',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(planner_sessions)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'target_branch')) {
+        db.exec(`ALTER TABLE planner_sessions ADD COLUMN target_branch TEXT NOT NULL DEFAULT ''`);
+      }
+    },
+    // Existing sessions may already reference launched Board tasks. Removing
+    // their recorded merge target during module lifecycle changes is unsafe.
+    down: () => undefined,
+  },
 ]);

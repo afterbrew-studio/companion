@@ -23,13 +23,13 @@ export class PlannerStore {
   insert(session: FeaturePlanningSession): void {
     this.db.prepare(`
       INSERT INTO planner_sessions (
-        id, workspace_id, repo, branch, author, title, idea, step, status, revision,
+        id, workspace_id, repo, branch, target_branch, author, title, idea, step, status, revision,
         active_action, last_error, brief_json, questions_json, answers_json, messages_json,
         artifacts_json, pending_revision_json, confirmations_json, doc_id, spec_id, proposal_id,
         analysis_json, analysis_run_id, refinement_id, task_ids_json, active_queue_id, active_run_id,
         created_at, updated_at
       ) VALUES (
-        @id, @workspaceId, @repo, @branch, @author, @title, @idea, @step, @status, @revision,
+        @id, @workspaceId, @repo, @branch, @targetBranch, @author, @title, @idea, @step, @status, @revision,
         @activeAction, @lastError, @brief, @questions, @answers, @messages,
         @artifacts, @pendingRevision, @confirmations, @docId, @specId, @proposalId,
         @analysis, @analysisRunId, @refinementId, @taskIds, @activeQueueId, @activeRunId,
@@ -79,6 +79,7 @@ export class PlannerStore {
       const result = this.db.prepare(`
         UPDATE planner_sessions SET
           title = @title, idea = @idea, step = @step, status = @status, revision = @revision,
+          target_branch = @targetBranch,
           active_action = @activeAction, last_error = @lastError, brief_json = @brief,
           questions_json = @questions, answers_json = @answers, messages_json = @messages,
           artifacts_json = @artifacts, pending_revision_json = @pendingRevision,
@@ -138,6 +139,7 @@ interface PlannerSessionRow {
   workspace_id: string;
   repo: string;
   branch: string;
+  target_branch: string;
   author: string;
   title: string;
   idea: string;
@@ -208,6 +210,7 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     workspaceId: row.workspace_id,
     repo: row.repo,
     branch: row.branch,
+    targetBranch: row.target_branch || row.branch,
     author: row.author,
     title: row.title,
     idea: row.idea,

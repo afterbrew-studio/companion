@@ -76,6 +76,7 @@ export class PlannerService {
       workspaceId: input.workspaceId,
       repo: input.repo,
       branch: repo.default_branch,
+      targetBranch: repo.default_branch,
       author,
       title: input.title?.trim().slice(0, 200) || deriveTitle(idea),
       idea,
@@ -433,7 +434,7 @@ export class PlannerService {
     return this.touch(id, expectedRevision, 'refinement_item_dismissed', { itemId });
   }
 
-  launch(id: string, expectedRevision: number, userId: string): FeaturePlanningSession {
+  launch(id: string, expectedRevision: number, userId: string, targetBranch?: string): FeaturePlanningSession {
     const current = this.mustGet(id);
     if (current.step === 'launched') return current;
     if (isReadOnlyPlannerSession(current.step, current.status)) throw new Error('this planning session is read-only');
@@ -443,12 +444,14 @@ export class PlannerService {
     if (!refinement || refinement.workspaceId !== current.workspaceId || refinement.repo !== current.repo) {
       throw new Error('the linked refinement no longer matches this idea');
     }
-    const started = this.store.update(id, {
-      status: 'working', activeAction: 'launching', lastError: null,
-    }, { expectedRevision, event: 'launch_started' });
+    const selectedTargetBranch = targetBranch?.trim() || current.targetBranch;
+    if (!selectedTargetBranch || selectedTargetBranch.length > 300) throw new Error('target branch is invalid');
+    this.store.update(id, {
+      status: 'working', activeAction: 'launching', lastError: null, targetBranch: selectedTargetBranch,
+    }, { expectedRevision, event: 'launch_started', detail: { targetBranch: selectedTargetBranch } });
     this.changed(id);
     try {
-      this.refinement.importAll(current.refinementId, userId, true, current.branch);
+      this.refinement.importAll(current.refinementId, userId, true, selectedTargetBranch);
       const items = this.refinement.get(current.refinementId)?.items ?? [];
       const taskIds = items.flatMap((item) => item.taskId ? [item.taskId] : []);
       return this.updateAndBroadcast(id, {

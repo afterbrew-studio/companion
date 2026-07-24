@@ -160,6 +160,7 @@ function storeFixture() {
   db.exec(`
     CREATE TABLE planner_sessions (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo TEXT NOT NULL, branch TEXT NOT NULL,
+      target_branch TEXT NOT NULL DEFAULT '',
       author TEXT NOT NULL, title TEXT NOT NULL, idea TEXT NOT NULL, step TEXT NOT NULL,
       status TEXT NOT NULL, revision INTEGER NOT NULL, active_action TEXT, last_error TEXT,
       brief_json TEXT NOT NULL, questions_json TEXT NOT NULL, answers_json TEXT NOT NULL,
@@ -179,7 +180,7 @@ function storeFixture() {
 function session() {
   const now = Date.now();
   return {
-    id: 'idea-1', workspaceId: 'ws-1', repo: 'owner/repo', branch: 'main', author: 'alice',
+    id: 'idea-1', workspaceId: 'ws-1', repo: 'owner/repo', branch: 'main', targetBranch: 'main', author: 'alice',
     title: 'Analytics', idea: 'Add analytics', step: 'idea', status: 'draft', revision: 0,
     activeAction: null, lastError: null, brief, questions: [], answers: [], messages: [], artifacts: null,
     pendingRevision: null, confirmations: { brief: false, artifacts: false, analysis: false, launch: false },
@@ -852,10 +853,11 @@ test('double final confirmation imports once with queue enabled and returns the 
     },
   });
 
-  const launched = service.launch('idea-1', 0, 'alice');
+  const launched = service.launch('idea-1', 0, 'alice', 'release/next');
   const repeated = service.launch('idea-1', 0, 'alice');
   assert.equal(imports, 1);
-  assert.deepEqual(importArgs, ['ref-1', 'alice', true, 'main']);
+  assert.deepEqual(importArgs, ['ref-1', 'alice', true, 'release/next']);
+  assert.equal(launched.targetBranch, 'release/next');
   assert.deepEqual(launched.taskIds, ['task-1']);
   assert.equal(repeated.revision, launched.revision);
   assert.equal(repeated.status, 'completed');
@@ -868,6 +870,44 @@ test('double final confirmation imports once with queue enabled and returns the 
     body: 'Analytics: 1 task was created and queued.',
     href: '#/ideas/idea-1',
   });
+  db.close();
+});
+
+test('launch retry keeps the selected target branch after an import failure', () => {
+  const { db, store } = storeFixture();
+  store.insert({
+    ...session(),
+    step: 'tasks_review',
+    status: 'waiting_for_user',
+    refinementId: 'ref-1',
+  });
+  const importBranches = [];
+  let shouldFail = true;
+  const { service } = createService(store, {
+    refinement: {
+      importAll: (_id, _userId, _queue, targetBranch) => {
+        importBranches.push(targetBranch);
+        if (shouldFail) {
+          shouldFail = false;
+          throw new Error('temporary import failure');
+        }
+      },
+      get: () => ({
+        refinement: { id: 'ref-1', workspaceId: 'ws-1', repo: 'owner/repo' },
+        items: [{ id: 'ri-1', taskId: 'task-1' }],
+      }),
+    },
+  });
+
+  assert.throws(() => service.launch('idea-1', 0, 'alice', 'release/next'), /temporary import failure/);
+  const failed = store.get('idea-1');
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.targetBranch, 'release/next');
+
+  const launched = service.launch('idea-1', failed.revision, 'alice');
+  assert.deepEqual(importBranches, ['release/next', 'release/next']);
+  assert.equal(launched.status, 'completed');
+  assert.equal(launched.targetBranch, 'release/next');
   db.close();
 });
 

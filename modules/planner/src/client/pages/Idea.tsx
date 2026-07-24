@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { onServerMessage } from '@companion/core/client';
 import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip, useConfirm } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
+import { BranchPicker } from '@companion/module-code/client';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';
 import type {
@@ -267,7 +268,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
                 await ideasApi.mergeItems(id, session.revision, mergeIds);
                 setMergeIds([]);
               })}
-              onLaunch={() => act(() => ideasApi.launch(id, session.revision))}
+              onLaunch={(targetBranch) => act(() => ideasApi.launch(id, session.revision, targetBranch))}
               canExecute={can('planner:execute')}
               canManageBoard={can('board:manage')}
             />
@@ -1023,6 +1024,10 @@ function TaskReviewGuide(): JSX.Element {
           <dt className="text-sm font-medium">Order and combine</dt>
           <dd className="dim mt-1 text-xs leading-5">Arrows organize the review order. Combine joins related tasks. Dismiss removes work that is not needed.</dd>
         </div>
+        <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 sm:col-span-2 sm:px-5">
+          <dt className="text-sm font-medium">Target branch</dt>
+          <dd className="dim mt-1 text-xs leading-5">The branch that every task pull request will target and eventually merge into. Agents still do their work on separate task branches.</dd>
+        </div>
       </dl>
     </section>
   );
@@ -1032,18 +1037,23 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
   session: FeaturePlanningSession; items: ReadonlyArray<RefineItemRecord>;
   board: NonNullable<ReturnType<typeof useIdeas>['detail']>['board']; mergeIds: string[]; setMergeIds: (ids: string[]) => void; disabled: boolean;
   onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<string | null>; onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
-  onDismiss: (itemId: string) => Promise<void>; onMerge: () => Promise<void>; onLaunch: () => Promise<void>; canExecute: boolean; canManageBoard: boolean;
+  onDismiss: (itemId: string) => Promise<void>; onMerge: () => Promise<void>; onLaunch: (targetBranch: string) => Promise<void>; canExecute: boolean; canManageBoard: boolean;
 }): JSX.Element {
   const proposed = useMemo(() => items.filter((item) => item.status === 'proposed'), [items]);
   const developers = board.workers.filter((worker) => worker.enabled && worker.role === 'developer');
   const [openItemId, setOpenItemId] = useState<string | null>(() => proposed[0]?.id ?? items[0]?.id ?? null);
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
+  const [targetBranch, setTargetBranch] = useState(session.targetBranch);
   const mergeAvailable = proposed.length > 1;
   const selectedItems = mergeIds.flatMap((id) => {
     const item = proposed.find((candidate) => candidate.id === id);
     return item ? [item] : [];
   });
+
+  useEffect(() => {
+    setTargetBranch(session.targetBranch);
+  }, [session.id, session.targetBranch]);
 
   useEffect(() => {
     if (openItemId !== null && !items.some((item) => item.id === openItemId)) {
@@ -1165,7 +1175,22 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
       <aside className="space-y-4">
         <Panel>
           <h2 className="font-semibold">Launch summary</h2>
-          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"><dt className="dim">Tasks</dt><dd>{proposed.length}</dd><dt className="dim">Repository</dt><dd className="break-all font-mono text-xs">{session.repo}</dd><dt className="dim">Branch</dt><dd className="font-mono text-xs">{session.branch}</dd><dt className="dim">Developers</dt><dd>{developers.length}</dd></dl>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"><dt className="dim">Tasks</dt><dd>{proposed.length}</dd><dt className="dim">Repository</dt><dd className="break-all font-mono text-xs">{session.repo}</dd><dt className="dim">Developers</dt><dd>{developers.length}</dd></dl>
+          <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <p className="text-sm font-medium">Target branch</p>
+            <p className="dim mt-1 text-xs leading-5">Task pull requests will be opened against this branch.</p>
+            <div className="mt-3">
+              <BranchPicker
+                repo={session.repo}
+                workspaceId={session.workspaceId}
+                value={targetBranch}
+                onChange={setTargetBranch}
+                defaultBranch={session.branch}
+                disabled={disabled}
+                ariaLabel="Task pull request target branch"
+              />
+            </div>
+          </div>
         </Panel>
         <Panel>
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1180,7 +1205,7 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
           {board.config.autoMerge ? <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">Auto-merge is enabled. Approved work with green checks may merge without another manual confirmation.</p> : null}
           {developers.length === 0 ? <p className="mt-3 rounded-lg bg-zinc-100 p-3 text-xs dark:bg-zinc-800">No developer worker is available. Tasks will remain Ready and start automatically when a worker becomes available.</p> : null}
         </Panel>
-        <div className="rounded-xl border-2 border-zinc-900 p-4 dark:border-zinc-100"><p className="text-sm font-semibold">This starts real agent work</p><p className="dim mt-1 text-xs">Tasks are created with queue enabled and become read-only here.</p><button className="btn mt-4 w-full justify-center" disabled={disabled || !canExecute || proposed.length === 0} onClick={() => void onLaunch()}>Create tasks & start work</button></div>
+        <div className="rounded-xl border-2 border-zinc-900 p-4 dark:border-zinc-100"><p className="text-sm font-semibold">This starts real agent work</p><p className="dim mt-1 text-xs">Tasks are created with queue enabled and their pull requests target <span className="font-mono text-zinc-700 dark:text-zinc-200">{targetBranch || 'the selected branch'}</span>.</p><button className="btn mt-4 w-full justify-center" disabled={disabled || !canExecute || proposed.length === 0 || !targetBranch.trim()} onClick={() => void onLaunch(targetBranch)}>Create tasks & start work</button></div>
       </aside>
       </div>
     </>

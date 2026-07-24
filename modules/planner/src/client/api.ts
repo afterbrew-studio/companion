@@ -40,7 +40,8 @@ export const ideasApi = {
     post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/items/${itemId}/dismiss`, revision(expectedRevision)),
   mergeItems: (id: string, expectedRevision: number, itemIds: string[]) =>
     post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/items/merge`, { expectedRevision, itemIds }),
-  launch: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/launch`, revision(expectedRevision)),
+  launch: (id: string, expectedRevision: number, targetBranch?: string) =>
+    post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/launch`, { expectedRevision, ...(targetBranch ? { targetBranch } : {}) }),
   stop: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/stop`, revision(expectedRevision)),
   cancel: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/cancel`, revision(expectedRevision)),
 };

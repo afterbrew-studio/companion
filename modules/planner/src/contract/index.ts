@@ -172,6 +172,7 @@ export interface FeaturePlanningSession {
   readonly workspaceId: string;
   readonly repo: string;
   readonly branch: string;
+  readonly targetBranch: string;
   readonly author: string;
   readonly title: string;
   readonly idea: string;

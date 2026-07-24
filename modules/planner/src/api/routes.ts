@@ -6,6 +6,9 @@ import { artifactBundleSchema, featureBriefSchema } from './prompts.js';
 import { PlannerRevisionConflict } from './planner-store.js';
 
 const revisionSchema = z.object({ expectedRevision: z.number().int().min(0) }).strict();
+const launchSchema = revisionSchema.extend({
+  targetBranch: z.string().trim().min(1).max(300).optional(),
+}).strict();
 const createSchema = z.object({
   workspaceId: z.string().min(1).max(100),
   repo: z.string().min(1).max(300),
@@ -126,8 +129,8 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.dismissRefinementItem(params.id, body.expectedRevision, params.itemId)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/items/merge', access: 'planner:manage', body: mergeSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); const { expectedRevision, itemIds, ...fields } = body; return { session: action(() => planner.mergeRefinementItems(params.id, expectedRevision, itemIds, fields)) }; } }),
-    route({ method: 'POST', path: '/api/ideas/:id/launch', access: 'planner:execute', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.launch(params.id, body.expectedRevision, user!.username)) }; } }),
+    route({ method: 'POST', path: '/api/ideas/:id/launch', access: 'planner:execute', body: launchSchema,
+      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.launch(params.id, body.expectedRevision, user!.username, body.targetBranch)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/stop', access: 'planner:manage', body: revisionSchema,
       handler: async ({ params, body, user }) => { requireSession(user, params.id); return { session: await asyncAction(() => planner.stop(params.id, body.expectedRevision)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/cancel', access: 'planner:manage', body: revisionSchema,
