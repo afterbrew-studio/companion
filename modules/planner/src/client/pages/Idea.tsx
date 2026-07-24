@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { onServerMessage } from '@companion/core/client';
-import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, Markdown, Page, PageHeader, PageLoading, QuestionIcon, SparkleIcon, Spinner, Tooltip } from '@companion/ui';
+import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip } from '@companion/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';
@@ -70,18 +70,29 @@ export default function Idea({ id }: { id: string }): JSX.Element {
     setAnswers(defaults);
   }, [questionSet]);
 
-  const act = async (fn: () => Promise<unknown>): Promise<void> => {
+  const runAction = async (
+    fn: () => Promise<unknown>,
+    options: { refreshOnError?: boolean } = {},
+  ): Promise<string | null> => {
     setBusy(true);
     state.setError(null);
     try {
       await fn();
       await state.refresh();
+      return null;
     } catch (err) {
-      state.setError(String(err));
-      await state.refresh();
+      const message = String(err);
+      if (options.refreshOnError !== false) await state.refresh();
+      // refresh() clears an existing request error after a successful GET, so
+      // publish the mutation error only after the optional recovery refresh.
+      state.setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
+  };
+  const act = async (fn: () => Promise<unknown>): Promise<void> => {
+    await runAction(fn);
   };
 
   if (state.loading) return <PageLoading label="Loading idea…" />;
@@ -226,7 +237,14 @@ export default function Idea({ id }: { id: string }): JSX.Element {
               mergeIds={mergeIds}
               setMergeIds={setMergeIds}
               disabled={!canManage || busy}
-              onUpdate={(itemId, fields) => act(() => ideasApi.updateItem(id, itemId, session.revision, fields))}
+              onUpdate={async (itemId, fields) => {
+                const error = await runAction(
+                  () => ideasApi.updateItem(id, itemId, session.revision, fields),
+                  { refreshOnError: false },
+                );
+                if (error) state.setError(friendlyTaskUpdateError(error));
+                return error;
+              }}
               onMove={(itemId, direction) => act(() => ideasApi.moveItem(id, itemId, session.revision, direction))}
               onDismiss={(itemId) => act(() => ideasApi.dismissItem(id, itemId, session.revision))}
               onMerge={() => act(async () => {
@@ -235,10 +253,11 @@ export default function Idea({ id }: { id: string }): JSX.Element {
               })}
               onLaunch={() => act(() => ideasApi.launch(id, session.revision))}
               canExecute={can('planner:execute')}
+              canManageBoard={can('board:manage')}
             />
           ) : null}
 
-          {session.step === 'launched' ? <Launched session={session} /> : null}
+          {session.step === 'launched' ? <Launched session={session} onReviewHistory={() => openDiscussion()} /> : null}
         </>
       ) : null}
 
@@ -290,7 +309,7 @@ function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; o
         )}
         actions={(
           <>
-            <button type="button" className="btn-ghost" onClick={onDiscuss}>
+            <button type="button" className="btn-ghost gap-1.5" onClick={onDiscuss}>
               <SparkleIcon /> {session.step === 'analysis_review' ? 'Discuss plan' : 'Conversation'}
             </button>
             <a className="btn-ghost" href="#/ideas">All ideas</a>
@@ -963,21 +982,168 @@ function analysisChapterCount(chapter: AnalysisChapter): number {
   return chapter.groups.reduce((total, group) => total + group.values.length, 0);
 }
 
-function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, onUpdate, onMove, onDismiss, onMerge, onLaunch, canExecute }: {
+function TaskReviewGuide(): JSX.Element {
+  return (
+    <section className="mt-5 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" aria-labelledby="task-review-guide-title">
+      <div className="px-4 py-4 sm:px-5">
+        <h2 id="task-review-guide-title" className="font-semibold">How task review works</h2>
+        <p className="dim mt-1 text-sm">Review the work before agents start. Saving here changes only the plan.</p>
+      </div>
+      <dl className="grid border-t border-zinc-200 dark:border-zinc-800 sm:grid-cols-2">
+        <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 sm:border-r sm:px-5">
+          <dt className="text-sm font-medium">Task content</dt>
+          <dd className="dim mt-1 text-xs leading-5">Open a task to check its description and the criteria used to decide when it is complete.</dd>
+        </div>
+        <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 sm:px-5">
+          <dt className="text-sm font-medium">Priority</dt>
+          <dd className="dim mt-1 text-xs leading-5">P0 is most urgent. Priority influences what should be picked first, but it does not block other tasks.</dd>
+        </div>
+        <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 sm:border-b-0 sm:border-r sm:px-5">
+          <dt className="text-sm font-medium">This task starts after</dt>
+          <dd className="dim mt-1 text-xs leading-5">A task waits until every selected prerequisite is complete. Tasks without prerequisites can run in parallel.</dd>
+        </div>
+        <div className="px-4 py-3 sm:px-5">
+          <dt className="text-sm font-medium">Order and combine</dt>
+          <dd className="dim mt-1 text-xs leading-5">Arrows organize the review order. Combine joins related tasks. Dismiss removes work that is not needed.</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, onUpdate, onMove, onDismiss, onMerge, onLaunch, canExecute, canManageBoard }: {
   session: FeaturePlanningSession; items: ReadonlyArray<RefineItemRecord>;
   board: NonNullable<ReturnType<typeof useIdeas>['detail']>['board']; mergeIds: string[]; setMergeIds: (ids: string[]) => void; disabled: boolean;
-  onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<void>; onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
-  onDismiss: (itemId: string) => Promise<void>; onMerge: () => Promise<void>; onLaunch: () => Promise<void>; canExecute: boolean;
+  onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<string | null>; onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
+  onDismiss: (itemId: string) => Promise<void>; onMerge: () => Promise<void>; onLaunch: () => Promise<void>; canExecute: boolean; canManageBoard: boolean;
 }): JSX.Element {
-  const proposed = items.filter((item) => item.status === 'proposed');
+  const proposed = useMemo(() => items.filter((item) => item.status === 'proposed'), [items]);
   const developers = board.workers.filter((worker) => worker.enabled && worker.role === 'developer');
+  const [openItemId, setOpenItemId] = useState<string | null>(() => proposed[0]?.id ?? items[0]?.id ?? null);
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
+  const mergeAvailable = proposed.length > 1;
+  const selectedItems = mergeIds.flatMap((id) => {
+    const item = proposed.find((candidate) => candidate.id === id);
+    return item ? [item] : [];
+  });
+
+  useEffect(() => {
+    if (openItemId !== null && !items.some((item) => item.id === openItemId)) {
+      setOpenItemId(proposed[0]?.id ?? items[0]?.id ?? null);
+    }
+  }, [items, openItemId, proposed]);
+
+  useEffect(() => {
+    const proposedIds = new Set(proposed.map((item) => item.id));
+    const validMergeIds = mergeIds.filter((id) => proposedIds.has(id));
+    if (validMergeIds.length !== mergeIds.length) setMergeIds(validMergeIds);
+  }, [mergeIds, proposed, setMergeIds]);
+
+  useEffect(() => {
+    if (mergeAvailable) return;
+    setMergeMode(false);
+    setMergeConfirmOpen(false);
+    if (mergeIds.length > 0) setMergeIds([]);
+  }, [mergeAvailable, mergeIds.length, setMergeIds]);
+
+  useEffect(() => {
+    if (!mergeConfirmOpen || mergeIds.length > 0) return;
+    setMergeConfirmOpen(false);
+    setMergeMode(false);
+  }, [mergeConfirmOpen, mergeIds.length]);
+
+  const stopMerging = (): void => {
+    setMergeMode(false);
+    setMergeConfirmOpen(false);
+    setMergeIds([]);
+  };
+
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <>
+      <TaskReviewGuide />
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <Panel>
-        <h2 className="text-lg font-semibold">Review tasks</h2>
-        <p className="dim mt-1 text-sm">Edit wording, priority, dependencies and order. Imported tasks are locked.</p>
-        <div className="mt-5 grid gap-3">{items.map((item, index) => <TaskEditor key={item.id} item={item} index={index} items={items} selected={mergeIds.includes(item.id)} disabled={disabled} onSelect={(selected) => setMergeIds(selected ? [...mergeIds, item.id] : mergeIds.filter((id) => id !== item.id))} onUpdate={onUpdate} onMove={onMove} onDismiss={onDismiss} />)}</div>
-        {mergeIds.length > 1 ? <div className="mt-4 flex justify-end"><button className="btn-ghost" disabled={disabled} onClick={() => void onMerge()}>Merge {mergeIds.length} selected tasks</button></div> : null}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Review {proposed.length} tasks</h2>
+            <p className="dim mt-1 text-sm">Open one task at a time. Adjust its content, dependencies or execution order before launch.</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span className="rounded-md bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              {proposed.length} proposed
+            </span>
+            {mergeAvailable && !mergeMode ? (
+              <button type="button" className="btn-ghost" disabled={disabled} onClick={() => setMergeMode(true)}>
+                Combine tasks
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {mergeMode ? (
+          <div className="mt-5 flex flex-col gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {mergeIds.length === 0 ? 'Select at least two related tasks' : `${mergeIds.length} ${mergeIds.length === 1 ? 'task' : 'tasks'} selected`}
+              </p>
+              <p className="mt-0.5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
+                Selected tasks will become one. Their content, priority and dependencies will be combined.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button type="button" className="btn-ghost" disabled={disabled} onClick={stopMerging}>Cancel</button>
+              <button type="button" className="btn" disabled={disabled || mergeIds.length < 2} onClick={() => setMergeConfirmOpen(true)}>
+                Combine {mergeIds.length >= 2 ? `${mergeIds.length} tasks` : 'tasks'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <ol className="mt-5 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/40 divide-y divide-zinc-200 dark:border-zinc-800 dark:bg-zinc-950/20 dark:divide-zinc-800">
+          {items.length === 0 ? <li className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">No tasks were prepared for this plan.</li> : items.map((item, index) => (
+            <TaskEditor
+              key={item.id}
+              item={item}
+              index={index}
+              items={items}
+              open={openItemId === item.id}
+              selected={mergeIds.includes(item.id)}
+              mergeMode={mergeMode}
+              disabled={disabled}
+              onToggle={() => setOpenItemId(openItemId === item.id ? null : item.id)}
+              onSelect={(selected) => setMergeIds(selected ? [...mergeIds, item.id] : mergeIds.filter((id) => id !== item.id))}
+              onUpdate={onUpdate}
+              onMove={onMove}
+              onDismiss={onDismiss}
+            />
+          ))}
+        </ol>
+
+        {mergeConfirmOpen ? (
+          <Modal title={`Combine ${selectedItems.length} tasks?`} onClose={() => setMergeConfirmOpen(false)}>
+            <p className="text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+              These tasks will become one task. Their descriptions, acceptance criteria and external dependencies will be combined automatically.
+            </p>
+            <ol className="mt-4 grid gap-2 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-950/60">
+              {selectedItems.map((item) => (
+                <li key={item.id} className="flex gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <span className="text-zinc-400 dark:text-zinc-500" aria-hidden="true">{selectedItems.indexOf(item) + 1}.</span>
+                  <span>{item.title}</span>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+              Other tasks that depend on these items will be updated to depend on the combined task.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-ghost" disabled={disabled} onClick={() => setMergeConfirmOpen(false)}>Cancel</button>
+              <button type="button" className="btn" disabled={disabled || selectedItems.length < 2} onClick={() => void onMerge()}>
+                Combine tasks
+              </button>
+            </div>
+          </Modal>
+        ) : null}
       </Panel>
       <aside className="space-y-4">
         <Panel>
@@ -985,43 +1151,339 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"><dt className="dim">Tasks</dt><dd>{proposed.length}</dd><dt className="dim">Repository</dt><dd className="break-all font-mono text-xs">{session.repo}</dd><dt className="dim">Branch</dt><dd className="font-mono text-xs">{session.branch}</dd><dt className="dim">Developers</dt><dd>{developers.length}</dd></dl>
         </Panel>
         <Panel>
-          <h2 className="font-semibold">Board automation</h2>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h2 className="font-semibold">Board automation</h2>
+            {canManageBoard ? <a className="text-xs font-medium text-emerald-600 outline-none hover:text-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" href="#/board">Configure</a> : null}
+          </div>
+          <p className="dim mt-1 text-xs leading-5">
+            These settings are inherited from Task Board and cannot be changed from Ideas.
+            {canManageBoard ? ' Open Task Board and choose Flow to edit them.' : ' A workspace maintainer can change them in Task Board under Flow.'}
+          </p>
           <ul className="mt-3 space-y-2 text-sm"><Setting label="Auto review" enabled={board.config.autoReview} /><Setting label="Auto-fix CI" enabled={board.config.autoFixCi} /><Setting label={`Auto merge (${board.config.mergeMethod})`} enabled={board.config.autoMerge} /></ul>
           {board.config.autoMerge ? <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">Auto-merge is enabled. Approved work with green checks may merge without another manual confirmation.</p> : null}
           {developers.length === 0 ? <p className="mt-3 rounded-lg bg-zinc-100 p-3 text-xs dark:bg-zinc-800">No developer worker is available. Tasks will remain Ready and start automatically when a worker becomes available.</p> : null}
         </Panel>
         <div className="rounded-xl border-2 border-zinc-900 p-4 dark:border-zinc-100"><p className="text-sm font-semibold">This starts real agent work</p><p className="dim mt-1 text-xs">Tasks are created with queue enabled and become read-only here.</p><button className="btn mt-4 w-full justify-center" disabled={disabled || !canExecute || proposed.length === 0} onClick={() => void onLaunch()}>Create tasks & start work</button></div>
       </aside>
-    </div>
+      </div>
+    </>
   );
 }
 
-function TaskEditor({ item, index, items, selected, disabled, onSelect, onUpdate, onMove, onDismiss }: {
-  item: RefineItemRecord; index: number; items: ReadonlyArray<RefineItemRecord>; selected: boolean; disabled: boolean;
-  onSelect: (selected: boolean) => void; onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<void>;
+const TASK_PRIORITY_META: Record<RefineItemRecord['priority'], { label: string; className: string }> = {
+  0: { label: 'P0 urgent', className: 'text-red-600 dark:text-red-400' },
+  1: { label: 'P1 high', className: 'text-amber-600 dark:text-amber-400' },
+  2: { label: 'P2 normal', className: 'text-zinc-600 dark:text-zinc-300' },
+  3: { label: 'P3 someday', className: 'text-zinc-400 dark:text-zinc-500' },
+};
+
+function dependencyWouldCreateCycle(itemId: string, candidateId: string, items: ReadonlyArray<RefineItemRecord>): boolean {
+  const byOrd = new Map(items.map((item) => [item.ord, item]));
+  const candidate = items.find((item) => item.id === candidateId);
+  const visited = new Set<string>();
+  const reachesEditedItem = (current: RefineItemRecord): boolean => {
+    if (current.id === itemId) return true;
+    if (visited.has(current.id)) return false;
+    visited.add(current.id);
+    return current.dependsOn.some((ord) => {
+      const dependency = byOrd.get(ord);
+      return dependency ? reachesEditedItem(dependency) : false;
+    });
+  };
+  return candidate ? reachesEditedItem(candidate) : false;
+}
+
+function TaskEditor({ item, index, items, open, selected, mergeMode, disabled, onToggle, onSelect, onUpdate, onMove, onDismiss }: {
+  item: RefineItemRecord; index: number; items: ReadonlyArray<RefineItemRecord>; open: boolean; selected: boolean; mergeMode: boolean; disabled: boolean;
+  onToggle: () => void;
+  onSelect: (selected: boolean) => void; onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<string | null>;
   onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>; onDismiss: (itemId: string) => Promise<void>;
 }): JSX.Element {
   const [title, setTitle] = useState(item.title);
   const [description, setDescription] = useState(item.description);
   const [acceptance, setAcceptance] = useState(item.acceptance);
   const [priority, setPriority] = useState(item.priority);
+  const [editing, setEditing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showFullDescription, setShowFullDescription] = useState(false);
+  const [showAllCriteria, setShowAllCriteria] = useState(false);
   const byOrd = useMemo(() => new Map(items.map((entry) => [entry.ord, entry.id])), [items]);
+  const blockedDependencyIds = useMemo(() => new Set(
+    items
+      .filter((candidate) => candidate.id !== item.id && dependencyWouldCreateCycle(item.id, candidate.id, items))
+      .map((candidate) => candidate.id),
+  ), [item.id, items]);
   const [dependsOnIds, setDependsOnIds] = useState<string[]>(item.dependsOn.flatMap((ord) => byOrd.get(ord) ? [byOrd.get(ord)!] : []));
-  useEffect(() => { setTitle(item.title); setDescription(item.description); setAcceptance(item.acceptance); setPriority(item.priority); setDependsOnIds(item.dependsOn.flatMap((ord) => byOrd.get(ord) ? [byOrd.get(ord)!] : [])); }, [item, byOrd]);
+  const acceptanceItems = taskLines(acceptance);
+  const visibleCriteria = showAllCriteria ? acceptanceItems : acceptanceItems.slice(0, 4);
+  const dependencyItems = dependsOnIds.flatMap((id) => {
+    const dependencyIndex = items.findIndex((candidate) => candidate.id === id);
+    const dependency = items[dependencyIndex];
+    return dependency ? [{ item: dependency, index: dependencyIndex }] : [];
+  });
+  const draftDependencySummary = dependencyItems.length === 0
+    ? `Task ${index + 1} can start independently.`
+    : `Task ${index + 1} will wait for ${dependencyItems.map((dependency) => `task ${dependency.index + 1}`).join(' and ')} to finish.`;
+  const persistedDependencyItems = item.dependsOn.flatMap((ord) => {
+    const dependencyIndex = items.findIndex((candidate) => candidate.ord === ord);
+    const dependency = items[dependencyIndex];
+    return dependency ? [{ item: dependency, index: dependencyIndex }] : [];
+  });
+  const dependencySummary = persistedDependencyItems.length === 0
+    ? `Task ${index + 1} has no prerequisites and can start independently.`
+    : `Task ${index + 1} waits for ${persistedDependencyItems.map((dependency) => `task ${dependency.index + 1}`).join(' and ')} to finish.`;
+  const resetDraft = (): void => {
+    setTitle(item.title);
+    setDescription(item.description);
+    setAcceptance(item.acceptance);
+    setPriority(item.priority);
+    setDependsOnIds(item.dependsOn.flatMap((ord) => byOrd.get(ord) ? [byOrd.get(ord)!] : []));
+    setSaveError(null);
+  };
+
+  useEffect(() => {
+    resetDraft();
+  }, [item, byOrd]);
+
+  useEffect(() => {
+    if (!open) {
+      setEditing(false);
+      setShowFullDescription(false);
+      setShowAllCriteria(false);
+    }
+  }, [open]);
+
   const editable = item.status === 'proposed' && !disabled;
+  const saveChanges = async (): Promise<void> => {
+    setSaveError(null);
+    const error = await onUpdate(item.id, { title, description, acceptance, priority, dependsOnIds });
+    if (error) {
+      setSaveError(friendlyTaskUpdateError(error));
+      return;
+    }
+    setEditing(false);
+  };
   return (
-    <article className={`rounded-xl border p-4 ${item.status === 'proposed' ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-100 opacity-70 dark:border-zinc-800'}`}>
-      <div className="flex items-center gap-2"><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={selected} disabled={!editable} onChange={(event) => onSelect(event.target.checked)} /> merge</label><span className="badge">#{index + 1}</span><span className="badge">{item.status}</span><span className="flex-1" /><button className="btn-ghost h-8 px-2" disabled={!editable || index === 0} aria-label="Move task up" onClick={() => void onMove(item.id, 'up')}>↑</button><button className="btn-ghost h-8 px-2" disabled={!editable || index === items.length - 1} aria-label="Move task down" onClick={() => void onMove(item.id, 'down')}>↓</button></div>
-      <div className="mt-3 grid gap-3"><Field label="Title"><AccentField><input className="input w-full" disabled={!editable} value={title} onChange={(event) => setTitle(event.target.value)} /></AccentField></Field><Field label="Description"><AccentField><textarea className="input min-h-20 w-full" disabled={!editable} value={description} onChange={(event) => setDescription(event.target.value)} /></AccentField></Field><Field label="Acceptance criteria"><AccentField><textarea className="input min-h-20 w-full" disabled={!editable} value={acceptance} onChange={(event) => setAcceptance(event.target.value)} /></AccentField></Field>
-        <div className="grid gap-3 sm:grid-cols-2"><Field label="Priority"><select className="input" disabled={!editable} value={priority} onChange={(event) => setPriority(Number(event.target.value) as 0 | 1 | 2 | 3)}>{[0, 1, 2, 3].map((value) => <option key={value} value={value}>P{value}</option>)}</select></Field><Field label="Dependencies"><select multiple className="input min-h-24" disabled={!editable} value={dependsOnIds} onChange={(event) => setDependsOnIds([...event.target.selectedOptions].map((option) => option.value))}>{items.filter((candidate) => candidate.id !== item.id && candidate.status !== 'dismissed').map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select></Field></div>
+    <li className={`${selected ? 'bg-emerald-500/5' : open ? 'bg-white dark:bg-zinc-900' : 'transition-colors hover:bg-white/70 dark:hover:bg-zinc-900/60'} ${item.status === 'dismissed' ? 'opacity-60' : ''}`}>
+      <div className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-2 px-3 py-3 sm:flex sm:px-4">
+        <span className={`flex size-8 shrink-0 items-center justify-center rounded-md text-xs font-medium tabular-nums ${open ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'}`} aria-hidden="true">
+          {String(index + 1).padStart(2, '0')}
+        </span>
+
+        <button type="button" className="min-w-0 flex-1 cursor-pointer rounded-md px-1.5 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-expanded={open} aria-label={`${item.title}. ${dependencySummary}`} onClick={onToggle}>
+          <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.title}</span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <span className={`font-medium ${TASK_PRIORITY_META[item.priority].className}`}>{TASK_PRIORITY_META[item.priority].label}</span>
+            <span>{acceptanceItems.length} {acceptanceItems.length === 1 ? 'criterion' : 'criteria'}</span>
+            {persistedDependencyItems.length === 0 ? <span>No dependencies</span> : (
+              <Tooltip
+                side="bottom"
+                content={(
+                  <span className="block">
+                    <span className="block font-medium text-zinc-900 dark:text-zinc-100">Task {index + 1} waits until:</span>
+                    {persistedDependencyItems.map((dependency) => (
+                      <span key={dependency.item.id} className="mt-1 block">Task {dependency.index + 1}: {dependency.item.title}</span>
+                    ))}
+                  </span>
+                )}
+              >
+                <span className="cursor-help underline decoration-dotted underline-offset-2">{persistedDependencyItems.length} {persistedDependencyItems.length === 1 ? 'dependency' : 'dependencies'}</span>
+              </Tooltip>
+            )}
+            {item.status !== 'proposed' ? <span className="capitalize">{item.status}</span> : null}
+          </span>
+        </button>
+
+        <div className="col-start-2 flex shrink-0 items-center justify-end gap-1 sm:col-auto sm:ml-auto">
+          {mergeMode && item.status === 'proposed' ? (
+            <label className={`flex h-8 shrink-0 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors ${selected ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'} ${editable ? 'cursor-pointer hover:border-emerald-500/50' : 'cursor-default'}`}>
+              <input
+                type="checkbox"
+                className="size-3.5 cursor-pointer accent-emerald-600 disabled:cursor-default"
+                checked={selected}
+                disabled={!editable}
+                onChange={(event) => onSelect(event.target.checked)}
+              />
+              Select
+            </label>
+          ) : null}
+          <Tooltip content="Move earlier">
+            <button type="button" className="flex size-8 cursor-pointer items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-default disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" disabled={!editable || index === 0} aria-label="Move task earlier" onClick={() => void onMove(item.id, 'up')}>↑</button>
+          </Tooltip>
+          <Tooltip content="Move later">
+            <button type="button" className="flex size-8 cursor-pointer items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-default disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" disabled={!editable || index === items.length - 1} aria-label="Move task later" onClick={() => void onMove(item.id, 'down')}>↓</button>
+          </Tooltip>
+          <button type="button" className="flex size-8 cursor-pointer items-center justify-center rounded-md outline-none transition-colors hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-zinc-800" aria-label={open ? 'Collapse task' : 'Open task'} aria-expanded={open} onClick={onToggle}>
+            <ChevronDown open={open} />
+          </button>
+        </div>
       </div>
-      {item.status === 'proposed' ? <div className="mt-4 flex justify-end gap-2"><button className="btn-danger-ghost" disabled={!editable} onClick={() => void onDismiss(item.id)}>Dismiss</button><button className="btn-ghost" disabled={!editable || !title.trim()} onClick={() => void onUpdate(item.id, { title, description, acceptance, priority, dependsOnIds })}>Save task</button></div> : item.taskId ? <a className="mt-3 inline-block text-sm underline" href={`#/board?task=${encodeURIComponent(item.taskId)}`}>Open task {item.taskId}</a> : null}
-    </article>
+
+      {open ? (
+        <div className="border-t border-zinc-200 px-4 py-5 dark:border-zinc-800 sm:px-5">
+          {editing ? (
+            <div className="grid gap-4">
+              <Field label="Title"><AccentField><input className="input w-full" disabled={!editable} value={title} onChange={(event) => setTitle(event.target.value)} /></AccentField></Field>
+              <Field label="Description"><AccentField><textarea className="input min-h-28 w-full resize-y leading-5" disabled={!editable} value={description} onChange={(event) => setDescription(event.target.value)} /></AccentField></Field>
+              <Field label="Acceptance criteria"><AccentField><textarea className="input min-h-32 w-full resize-y leading-5" disabled={!editable} value={acceptance} onChange={(event) => setAcceptance(event.target.value)} /></AccentField></Field>
+              <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+                <Field label="Priority">
+                  <select className="input w-full" disabled={!editable} value={priority} onChange={(event) => setPriority(Number(event.target.value) as 0 | 1 | 2 | 3)}>
+                    <option value={0}>P0 - urgent</option>
+                    <option value={1}>P1 - high</option>
+                    <option value={2}>P2 - normal</option>
+                    <option value={3}>P3 - someday</option>
+                  </select>
+                </Field>
+                <Field label="This task starts after" hint="Choose only tasks that must finish before this one can start.">
+                  <div className="grid gap-1.5">
+                    <p className="mb-1 rounded-lg bg-zinc-50 px-3 py-2 text-xs font-medium leading-5 text-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-300">
+                      {draftDependencySummary}
+                    </p>
+                    {items.filter((candidate) => candidate.id !== item.id && candidate.status !== 'dismissed').map((candidate) => {
+                      const candidateIndex = items.findIndex((entry) => entry.id === candidate.id);
+                      const active = dependsOnIds.includes(candidate.id);
+                      const cycleBlocked = !active && blockedDependencyIds.has(candidate.id);
+                      return (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 ${cycleBlocked ? 'cursor-not-allowed border-zinc-200 bg-zinc-50/70 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-600' : active ? 'cursor-pointer border-emerald-500/50 bg-emerald-500/5 text-zinc-900 dark:text-zinc-100' : 'cursor-pointer border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800'}`}
+                          aria-pressed={active}
+                          disabled={!editable || cycleBlocked}
+                          onClick={() => {
+                            setSaveError(null);
+                            setDependsOnIds(active ? dependsOnIds.filter((id) => id !== candidate.id) : [...dependsOnIds, candidate.id]);
+                          }}
+                        >
+                          <span className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border text-[10px] ${active ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-zinc-300 text-transparent dark:border-zinc-600'}`}>✓</span>
+                          <span className="min-w-0">
+                            <span className="block truncate">{candidateIndex + 1}. {candidate.title}</span>
+                            {cycleBlocked ? <span className="mt-0.5 block text-[11px] leading-4 text-amber-700 dark:text-amber-400">Task {candidateIndex + 1} already starts after this task. Selecting it would create a circular wait.</span> : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              </div>
+              {saveError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-800 dark:border-red-900/70 dark:bg-red-950/20 dark:text-red-300">{saveError}</p> : null}
+              <div className="flex flex-wrap justify-between gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                <button className="btn-danger-ghost" disabled={!editable} onClick={() => void onDismiss(item.id)}>Dismiss task</button>
+                <div className="flex gap-2">
+                  <button className="btn-ghost" type="button" onClick={() => { resetDraft(); setEditing(false); }}>Cancel</button>
+                  <button className="btn" disabled={!editable || !title.trim()} onClick={() => void saveChanges()}>Save changes</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <dl className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs dark:bg-zinc-950/50">
+                <div className="flex items-center gap-2">
+                  <dt className="text-zinc-500 dark:text-zinc-400">Priority</dt>
+                  <dd className={`font-medium ${TASK_PRIORITY_META[item.priority].className}`}>{TASK_PRIORITY_META[item.priority].label}</dd>
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <dt className="text-zinc-500 dark:text-zinc-400">This task starts after</dt>
+                  <dd className="flex min-w-0 flex-wrap gap-1.5">
+                    {dependencyItems.length > 0 ? dependencyItems.map((dependency) => (
+                      <span key={dependency.item.id} className="max-w-full truncate rounded-md border border-zinc-200 bg-white px-2 py-1 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                        {dependency.index + 1}. {dependency.item.title}
+                      </span>
+                    )) : <span className="text-zinc-500 dark:text-zinc-400">No dependencies</span>}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="min-w-0">
+                <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Description</h3>
+                <p className={`mt-2 text-sm leading-6 whitespace-pre-wrap text-zinc-700 dark:text-zinc-300 ${showFullDescription ? '' : 'line-clamp-4'}`}>{description || 'No description provided.'}</p>
+                {description.length > 280 ? <button type="button" className="mt-2 cursor-pointer text-xs font-medium text-emerald-600 hover:text-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" onClick={() => setShowFullDescription(!showFullDescription)}>{showFullDescription ? 'Show less' : 'Read full description'}</button> : null}
+
+                <h3 className="mt-5 text-xs font-medium text-zinc-500 dark:text-zinc-400">Acceptance criteria</h3>
+                {visibleCriteria.length > 0 ? (
+                  <ol className="mt-2 grid gap-2">
+                    {visibleCriteria.map((criterion, criterionIndex) => (
+                      <li key={`${criterion}-${criterionIndex}`} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+                        <span className="pt-0.5 text-xs tabular-nums text-zinc-400 dark:text-zinc-500">{String(criterionIndex + 1).padStart(2, '0')}</span>
+                        <span>{criterion}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">No acceptance criteria provided.</p>}
+                {acceptanceItems.length > 4 ? <button type="button" className="mt-3 cursor-pointer text-xs font-medium text-emerald-600 hover:text-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" onClick={() => setShowAllCriteria(!showAllCriteria)}>{showAllCriteria ? 'Show fewer criteria' : `Show ${acceptanceItems.length - 4} more`}</button> : null}
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                {item.status === 'proposed' ? (
+                  <>
+                    <button className="btn-danger-ghost" disabled={!editable} onClick={() => void onDismiss(item.id)}>Dismiss task</button>
+                    <button className="btn-ghost" disabled={!editable} onClick={() => setEditing(true)}>Edit task</button>
+                  </>
+                ) : item.taskId ? <a className="btn-ghost" href={`#/board?task=${encodeURIComponent(item.taskId)}`}>Open task {item.taskId}</a> : <span className="dim">This task is locked.</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
-function Launched({ session }: { session: FeaturePlanningSession }): JSX.Element {
-  return <Panel><span className="badge-ok">Work started</span><h2 className="mt-3 text-xl font-semibold">Tasks are now managed by the Board</h2><p className="dim mt-2 text-sm">This planning session is preserved as read-only history. Continue edits, reviews and agent operations from the task cards.</p><div className="mt-5 flex flex-wrap gap-2"><a className="btn" href="#/board">Open Task Board</a>{session.taskIds.map((taskId) => <a key={taskId} className="btn-ghost" href={`#/board?task=${encodeURIComponent(taskId)}`}>{taskId}</a>)}</div></Panel>;
+function taskLines(value: string): string[] {
+  return lines(value).map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, ''));
+}
+
+function Launched({ session, onReviewHistory }: { session: FeaturePlanningSession; onReviewHistory: () => void }): JSX.Element {
+  const taskLabel = `${session.taskIds.length} ${session.taskIds.length === 1 ? 'task' : 'tasks'}`;
+  return (
+    <>
+      <section className="relative mt-5 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900" aria-labelledby="launched-title">
+        <div className="pointer-events-none absolute left-1/2 top-14 size-56 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl dark:bg-emerald-400/10" aria-hidden="true" />
+        <div className="relative mx-auto flex max-w-3xl flex-col items-center px-5 py-10 text-center sm:px-8 sm:py-12 lg:py-14">
+          <div className="flex size-20 items-center justify-center rounded-full border border-emerald-500/60 bg-emerald-500/5 text-emerald-600 shadow-[inset_0_1px_0_rgb(255_255_255/0.7)] dark:bg-emerald-500/10 dark:text-emerald-400 dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]" aria-hidden="true">
+            <SmileIcon className="size-12" />
+          </div>
+          <h2 id="launched-title" className="mt-6 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">Your tasks are on the Board</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">Planning is complete. Your tasks are ready and the Board will coordinate the work from here.</p>
+
+          <dl className="mt-8 grid w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/70 text-left divide-y divide-zinc-200 dark:border-zinc-800 dark:bg-zinc-950/30 dark:divide-zinc-800 sm:grid-cols-[0.75fr_1.5fr_0.75fr] sm:divide-x sm:divide-y-0">
+            <div className="min-w-0 px-5 py-4 text-center">
+              <dt className="text-xs text-zinc-500 dark:text-zinc-400">Created</dt>
+              <dd className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{taskLabel}</dd>
+            </div>
+            <div className="min-w-0 px-5 py-4 text-center">
+              <dt className="text-xs text-zinc-500 dark:text-zinc-400">Repository</dt>
+              <dd className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100" title={session.repo}>{session.repo}</dd>
+            </div>
+            <div className="min-w-0 px-5 py-4 text-center">
+              <dt className="text-xs text-zinc-500 dark:text-zinc-400">Branch</dt>
+              <dd className="mt-1 truncate font-mono text-sm font-medium text-zinc-900 dark:text-zinc-100" title={session.branch}>{session.branch}</dd>
+            </div>
+          </dl>
+
+          <p className="mt-6 flex max-w-xl items-start justify-center gap-2 text-left text-sm leading-5 text-zinc-600 dark:text-zinc-300 sm:items-center sm:text-center">
+            <span className="mt-1 size-2 shrink-0 rounded-full bg-emerald-500 sm:mt-0" aria-hidden="true" />
+            Agents will start automatically when a developer becomes available.
+          </p>
+          <div className="mt-7 flex w-full flex-col justify-center gap-2.5 sm:w-auto sm:flex-row">
+            <a
+              className="inline-flex h-10 cursor-pointer items-center justify-center whitespace-nowrap rounded-md bg-emerald-600 px-5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-px dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400 dark:focus-visible:ring-offset-zinc-900"
+              href="#/board"
+            >
+              Open Task Board
+            </a>
+            <button type="button" className="btn-ghost h-10 justify-center whitespace-nowrap px-5 active:translate-y-px" onClick={onReviewHistory}>Review planning history</button>
+          </div>
+        </div>
+      </section>
+
+      <aside className="mx-auto mt-4 flex max-w-3xl items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3 text-sm leading-5 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+        <LockIcon className="mt-0.5 size-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
+        <p>This idea is now read-only. Further changes happen on the Board.</p>
+      </aside>
+    </>
+  );
 }
 
 const MAX_DISCUSSION_STREAM_BUFFER = 64_000;
@@ -1385,6 +1847,17 @@ function friendlySessionError(error: string | null): string {
     return 'The planner returned data in an unexpected format. Retry the step to generate a new response.';
   }
   return error;
+}
+
+function friendlyTaskUpdateError(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes('cycle') || normalized.includes('circular')) {
+    return 'These prerequisites would create a circular wait between tasks. Remove the conflicting selection and save again.';
+  }
+  if (normalized.includes('revision') || normalized.includes('conflict') || normalized.includes('409')) {
+    return 'This plan changed in another tab. Reload the latest task values, review them, and try again.';
+  }
+  return 'The task could not be saved. Your editor is still open, so review the values and try again.';
 }
 
 function failedStepTitle(step: FeaturePlanningSession['step']): string {

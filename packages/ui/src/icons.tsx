@@ -56,6 +56,18 @@ export function CheckIcon({ className = 'size-4' }: { className?: string }): JSX
   );
 }
 
+/** Friendly success face for completed flows and positive empty states. */
+export function SmileIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="9" cy="10" r="1" fill="currentColor" />
+      <circle cx="15" cy="10" r="1" fill="currentColor" />
+      <path d="M8 14c1 1.5 2.3 2.2 4 2.2s3-.7 4-2.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** Clock face for pending or in-progress states. */
 export function ClockIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
   return (
