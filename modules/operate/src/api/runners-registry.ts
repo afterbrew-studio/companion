@@ -200,15 +200,13 @@ export class Runners {
     // piling onto whichever runner currently shows zero live gateways.
     const active = this.store.runs.activeCountsByRunner();
     const load = (row: RunnerRow): number => {
-      const assigned = active.get(row.id === LOCAL_RUNNER_ID ? null : row.id) ?? 0;
-      const live = this.backend(row.id).liveIds().length;
-      return Math.max(assigned, live) / Math.max(1, row.max_runs);
+      return this.activeRuns(row, active) / Math.max(1, row.max_runs);
     };
 
     if (pinned) {
       // An explicit repo pin wins, but not over a runner that can't run anything.
       const pin = eligible.find((r) => r.id === pinned);
-      if (pin && online(pin) && ready(pin)) return this.normalize(pin.id);
+      if (pin && online(pin) && ready(pin) && load(pin) < 1) return this.normalize(pin.id);
     }
     // The user's own machines come first (that's what they connected them
     // for), then shared runners; within each tier least-loaded first. An own
@@ -219,6 +217,7 @@ export class Runners {
     const usable = eligible
       .filter(online)
       .filter(ready)
+      .filter((row) => load(row) < 1)
       .sort((a, b) => own(a) - own(b) || load(a) - load(b));
     const served = (row: RunnerRow): boolean => {
       if (!wantedProviders || wantedProviders.length === 0) return true;
@@ -239,20 +238,60 @@ export class Runners {
    * only runners whose block-list accepts it count (chat-slot gating).
    */
   totalCapacity(userId: string | null = null, task: string | null = null): number {
-    const online = (row: RunnerRow): boolean => {
-      const h = this.health.get(row.id);
-      // Remote capacity is counted only after a successful, protocol-compatible
-      // probe. The in-process local runner remains available during startup.
-      if (!h || h.status === 'unknown') return row.id === LOCAL_RUNNER_ID;
-      return h.status === 'online';
-    };
     let sum = 0;
     for (const row of this.store.runners.list()) {
       if (row.owner_id !== null && row.owner_id !== userId) continue;
       if (!this.allows(row, task)) continue;
-      if (row.enabled === 1 && online(row)) sum += Math.max(0, row.max_runs);
+      if (row.enabled === 1 && this.isOnline(row)) sum += Math.max(0, row.max_runs);
     }
     return sum;
+  }
+
+  /** Occupancy of the pool this user can schedule against: shared + their own. */
+  capacitySnapshot(userId: string | null = null): { active: number; capacity: number } {
+    const counts = this.store.runs.activeCountsByRunner();
+    let active = 0;
+    let capacity = 0;
+    for (const row of this.store.runners.list()) {
+      if (row.owner_id !== null && row.owner_id !== userId) continue;
+      if (row.enabled !== 1 || !this.isOnline(row)) continue;
+      capacity += Math.max(0, row.max_runs);
+      active += this.activeRuns(row, counts);
+    }
+    return { active, capacity: Math.max(1, capacity) };
+  }
+
+  /** Whether an eligible, healthy runner can accept this task right now. */
+  hasFreeCapacity(repo: string | null, task: string | null, userId: string | null = null): boolean {
+    const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
+    const counts = this.store.runs.activeCountsByRunner();
+    const eligible = this.store.runners
+      .eligibleFor(workspaceId, userId)
+      .filter((row) => this.allows(row, task))
+      .filter((row) => this.isOnline(row) && this.hasReadyProvider(row));
+    // Task filters never make work impossible: the local runner remains the
+    // last resort when every machine blocks this task, matching place().
+    const candidates =
+      eligible.length > 0 ? eligible : this.store.runners.list().filter((row) => row.id === LOCAL_RUNNER_ID);
+    return candidates.some(
+      (row) => this.activeRuns(row, counts) < Math.max(1, row.max_runs),
+    );
+  }
+
+  /** Reconcile persisted assignments with backend/reported liveness. */
+  private activeRuns(row: RunnerRow, counts: ReadonlyMap<string | null, number>): number {
+    const assigned = counts.get(row.id === LOCAL_RUNNER_ID ? null : row.id) ?? 0;
+    const tracked = this.backend(row.id).liveIds().length;
+    const reported = this.health.get(row.id)?.liveRuns ?? 0;
+    return Math.max(assigned, tracked, reported);
+  }
+
+  private isOnline(row: RunnerRow): boolean {
+    const health = this.health.get(row.id);
+    // Remote capacity is counted only after a successful, protocol-compatible
+    // probe. The in-process local runner remains available during startup.
+    if (!health || health.status === 'unknown') return row.id === LOCAL_RUNNER_ID;
+    return health.status === 'online';
   }
 
   /** True when the task isn't on the runner's block-list (null task = always). */

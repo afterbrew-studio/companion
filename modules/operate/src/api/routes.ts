@@ -285,23 +285,28 @@ export default defineRoutes((ctx) => {
 
     // ---------- runners: execution machines ---------------------------------------
     // Admins manage shared instance runners; everyone manages their own machines
-    // (runners:connect). Personal machines never become visible through role.
+    // (runners:connect). Private machines never become visible through role.
 
     route({
-      // Admins see shared + own machines; everyone else only their own. Ships
-      // task descriptors alongside for the per-runner task filter.
+      // Shared machines are visible to every user; private machines stay
+      // owner-only, including from admins. Ships task descriptors alongside
+      // for the per-runner task filter.
       method: 'GET',
       path: '/api/runners',
       access: 'runners:connect',
-      handler: ({ user }) => {
-        const canManageShared = !!user && ctx.rbac.has(user.role, 'runners:manage');
-        return {
-          runners: op.runners
-            .list()
-            .filter((runner) => runner.ownerId === user?.username || (canManageShared && runner.ownerId === null)),
-          tasks: op.runTaskDescriptors(),
-        };
-      },
+      handler: ({ user }) => ({
+        runners: op.runners.list().filter((runner) => runner.ownerId === null || runner.ownerId === user?.username),
+        tasks: op.runTaskDescriptors(),
+      }),
+    }),
+
+    route({
+      // Capacity is safe instance health: no run titles, repos, or owner ids.
+      // It is viewer-specific because their private runners extend the pool.
+      method: 'GET',
+      path: '/api/runners/capacity',
+      access: 'runners:connect',
+      handler: ({ user }) => op.runners.capacitySnapshot(user?.username ?? null),
     }),
 
     route({
@@ -314,7 +319,7 @@ export default defineRoutes((ctx) => {
           throw badRequest('a delegated runner needs at least one workspace');
         }
         if (body.scope === 'delegated') requireAccessibleWorkspaceIds(user, body.workspaceIds ?? []);
-        // A shared instance runner is admin-only; everyone else's is personal.
+        // A shared instance runner is admin-only; everyone else's is private.
         const ownerId = ctx.rbac.has(user!.role, 'runners:manage') && body.shared ? null : user!.username;
         return created({ runner: await op.runners.create(body, ownerId) });
       },

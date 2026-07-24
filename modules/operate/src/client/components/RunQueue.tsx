@@ -3,6 +3,7 @@ import { CloseIcon, IconButton, timeAgo } from '@companion/ui';
 import type { QueuedRunEntry, RunKind } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunQueue } from '../hooks/useRunQueue.js';
+import { useRunnerCapacity } from '../hooks/useRunnerCapacity.js';
 
 /**
  * Header indicator for the run scheduler: appears only when runners are at
@@ -19,6 +20,28 @@ const KIND_LABEL: Record<RunKind, string> = {
   implement: 'Implement',
   report: 'Report',
 };
+
+/** Persistent shell banner while the viewer's whole eligible pool is full. */
+export function RunnerCapacityBanner(): JSX.Element | null {
+  const { active, capacity } = useRunnerCapacity();
+  if (active < capacity) return null;
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+      role="status"
+      aria-live="polite"
+    >
+      <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+      <span>
+        <strong>Runner pool is at capacity.</strong> New automated tasks will wait and start automatically as soon as a
+        slot becomes free.
+      </span>
+      <span className="ml-auto shrink-0 tabular-nums">
+        {active} / {capacity} busy
+      </span>
+    </div>
+  );
+}
 
 export function RunQueueIndicator(): JSX.Element | null {
   const { active, capacity, entries } = useRunQueue();

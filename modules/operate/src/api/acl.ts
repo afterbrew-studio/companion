@@ -2,9 +2,9 @@ import { defineAcl } from '@companion/core/server';
 import '../contract/index.js';
 
 /**
- * The execution plane: admin holds all; maintainer drives runs, curates
- * skills, and connects their OWN runner machines (runners:connect) — shared
- * instance runners stay admin-managed (runners:manage); business gets none.
+ * The execution plane: every role can see shared runners and connect private
+ * machines (runners:connect); shared instance runners stay admin-managed
+ * (runners:manage). Maintainers additionally drive runs and curate skills.
  */
 export default defineAcl({
   permissions: [
@@ -17,5 +17,6 @@ export default defineAcl({
   grants: {
     admin: '*',
     maintainer: ['runs:read', 'runs:act', 'runners:connect', 'skills:manage'],
+    business: ['runners:connect'],
   },
 });

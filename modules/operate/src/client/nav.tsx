@@ -70,8 +70,7 @@ export const nav = defineNav([
     label: 'Runners',
     hash: '#/runners',
     shortcut: 'n',
-    // runners:connect so maintainers reach their personal machines; admins
-    // hold it too (grants are additive), seeing every machine.
+    // Every role can inspect the shared pool and connect private machines.
     permission: 'runners:connect',
     section: 'operate',
     order: 10,

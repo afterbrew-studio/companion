@@ -19,9 +19,9 @@ export const onboarding = defineOnboarding([
   {
     key: 'runners',
     order: 60,
-    need: 'runners:manage',
+    need: 'runners:connect',
     title: 'Scale across machines',
-    body: 'Agent work runs on this machine by default. Attach more machines as runners — shared across workspaces or delegated to specific ones — to run more agents in parallel.',
+    body: 'Agent work uses the shared runner pool by default. Attach your own private machine to run your work with its model providers; admins can also expand the shared pool.',
     chips: ['Runners'],
     art: (playing) => <RunnersArt playing={playing} />,
   },

@@ -29,6 +29,7 @@ type PlanService = ServiceMap['plan'];
 
 /** Run statuses that end a run without a reviewable diff. */
 const TERMINAL_FAIL = new Set<RunStatus>(['failed', 'stopped', 'abandoned', 'interrupted']);
+const SLOT_RELEASED = new Set<RunStatus>(['completed', 'failed', 'stopped', 'abandoned', 'interrupted']);
 
 /** Stages that mean "queued/running work of this kind" (valid in ready/in_progress). */
 const WORK_STAGES: ReadonlySet<TaskStage> = new Set(['build', 'address_review', 'fix_ci']);
@@ -476,6 +477,10 @@ export class BoardService {
   /** React to operate's run lifecycle (wired to the server bus in jobs.ts). */
   onRunChanged(run: RunRecord): void {
     if (this.disposed) return;
+    // Any terminal run may free the first slot a Ready card is waiting for,
+    // including runs owned by another module. Wake dispatch immediately rather
+    // than waiting for the 45-second safety-net tick.
+    if (SLOT_RELEASED.has(run.status)) this.kick();
     const task = this.store.taskByRunId(run.id);
     if (!task || task.runId !== run.id) return;
     if (run.status === 'review') {
@@ -549,6 +554,10 @@ export class BoardService {
       // Hold until every prerequisite is done. A deleted prerequisite no
       // longer binds; a failed one holds the task until a human resolves it.
       if (this.unmetDependencies(task)) continue;
+      // Runner saturation is queueing, not a failed attempt. Keep the card in
+      // Ready and the worker unclaimed; a terminal run event (or heartbeat)
+      // retries dispatch until capacity appears.
+      if (!this.operate.runners.hasFreeCapacity(task.repo, 'board.worker', task.createdBy)) continue;
       const ws = task.workspaceId;
       const free = freeByWs.get(ws);
       if (!free || free.size === 0) {
@@ -651,6 +660,21 @@ export class BoardService {
       this.store.insertEvent(task.id, 'run_started', `run ${run.id}`);
       this.changed();
     } catch (err) {
+      // A slot can disappear between the preflight above and provisioning. If
+      // that race happened, return to Ready without consuming the remediation
+      // ceiling; the next released slot wakes dispatch again.
+      if (!this.operate.runners.hasFreeCapacity(task.repo, 'board.worker', task.createdBy)) {
+        this.store.updateTask(task.id, {
+          status: 'ready',
+          stage,
+          runId: null,
+          assignedWorkerId: null,
+          lastError: null,
+        });
+        this.store.insertEvent(task.id, 'waiting_for_runner', 'all eligible runner slots are busy');
+        this.changed();
+        return;
+      }
       this.attemptFail(task.id, `could not start work: ${String(err)}`);
     }
   }

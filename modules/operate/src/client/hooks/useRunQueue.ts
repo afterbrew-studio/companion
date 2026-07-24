@@ -20,6 +20,6 @@ export function useRunQueue(): RunQueueSnapshot {
       setQueue(EMPTY);
     }
   }, []);
-  useLive(refresh, (msg) => msg.t === 'queue.changed' || msg.t === 'runs.changed');
+  useLive(refresh, (msg) => msg.t === 'queue.changed' || msg.t === 'run.changed' || msg.t === 'runs.changed');
   return queue;
 }
