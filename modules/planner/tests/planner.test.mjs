@@ -210,6 +210,7 @@ function createService(store, overrides = {}) {
   const docs = new Map();
   const specs = new Map();
   const proposals = new Map();
+  const notifications = [];
   const plan = {
     docs: {
       create: (workspaceId, fields) => {
@@ -271,9 +272,10 @@ function createService(store, overrides = {}) {
     { listBoard: () => ({ config: {}, workers: [] }) },
     { repos: { get: () => undefined, inWorkspace: () => false } },
     overrides.operate ?? { orchestrator: {}, checkouts: {} },
+    overrides.notify ?? { emit: (notification) => notifications.push(notification) },
     () => undefined,
   );
-  return { service, plan, docs, specs, proposals };
+  return { service, plan, docs, specs, proposals, notifications };
 }
 
 async function waitFor(read, predicate, timeoutMs = 1_000) {
@@ -323,6 +325,62 @@ test('clarification persists submitted answers and includes them in the next pla
   assert.equal(ready.answers[0].question, activeQuestion.prompt);
   assert.equal(ready.answers[0].value, selected.label);
   assert.ok(prompts[1].includes(`${activeQuestion.prompt}: ${selected.label}`));
+  db.close();
+});
+
+test('planner checkpoints raise actionable inbox notifications with a direct idea link', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const outputs = [
+    JSON.stringify({ summary: 'One decision is needed.', brief, questions: [question()] }),
+    JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
+  ];
+  const { service, notifications } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async () => ({ finalMessage: outputs.shift() ?? null }) },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const questionsReady = await waitFor(() => store.get('idea-1'), (value) => value?.questions.length === 1);
+  assert.deepEqual(notifications[0], {
+    kind: 'action_required',
+    workspaceId: 'ws-1',
+    repo: 'owner/repo',
+    title: 'Your idea needs answers',
+    body: 'Analytics: 1 decision is ready for you.',
+    href: '#/ideas/idea-1',
+  });
+
+  const activeQuestion = questionsReady.questions[0];
+  service.answer('idea-1', questionsReady.revision, {
+    answers: [{ questionId: activeQuestion.id, optionId: activeQuestion.options[0].id }],
+  }, 'alice');
+  await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[1].title, 'Review the first release');
+  assert.equal(notifications[1].href, '#/ideas/idea-1');
+  db.close();
+});
+
+test('planner failures create one error notification without replacing the failed state', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const { service, notifications } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async () => ({ finalMessage: null }) },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const failed = await waitFor(() => store.get('idea-1'), (value) => value?.status === 'failed');
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'error');
+  assert.equal(notifications[0].href, '#/ideas/idea-1');
+  assert.match(notifications[0].body, /ended without a response/);
+  assert.match(failed.lastError, /ended without a response/);
   db.close();
 });
 
@@ -781,7 +839,7 @@ test('double final confirmation imports once with queue enabled and returns the 
   });
   let imports = 0;
   let importArgs;
-  const { service } = createService(store, {
+  const { service, notifications } = createService(store, {
     refinement: {
       importAll: (...args) => {
         imports += 1;
@@ -801,6 +859,15 @@ test('double final confirmation imports once with queue enabled and returns the 
   assert.deepEqual(launched.taskIds, ['task-1']);
   assert.equal(repeated.revision, launched.revision);
   assert.equal(repeated.status, 'completed');
+  assert.equal(notifications.length, 1);
+  assert.deepEqual(notifications[0], {
+    kind: 'finished',
+    workspaceId: 'ws-1',
+    repo: 'owner/repo',
+    title: 'Your idea is now on the Board',
+    body: 'Analytics: 1 task was created and queued.',
+    href: '#/ideas/idea-1',
+  });
   db.close();
 });
 
@@ -823,7 +890,7 @@ test('stop and cancel persist terminal intent before interrupting queued or runn
   });
   const cancelledQueues = [];
   const stoppedRuns = [];
-  const { service } = createService(store, {
+  const { service, notifications } = createService(store, {
     operate: {
       orchestrator: {
         cancelQueued: (id) => cancelledQueues.push(id),
@@ -840,6 +907,7 @@ test('stop and cancel persist terminal intent before interrupting queued or runn
   assert.equal(cancelled.status, 'cancelled');
   assert.deepEqual(cancelledQueues, ['queue-1']);
   assert.deepEqual(stoppedRuns, ['run-1']);
+  assert.deepEqual(notifications, []);
   assert.deepEqual(service.list('ws-1').map((item) => item.id), ['idea-1']);
   assert.equal(service.get('idea-2')?.status, 'cancelled');
   db.close();

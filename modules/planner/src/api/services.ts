@@ -17,6 +17,7 @@ export default defineServices((ctx) => {
     ctx.services.get('board'),
     ctx.services.get('code'),
     operate,
+    ctx.notify,
     ctx.broadcast,
   ));
 });

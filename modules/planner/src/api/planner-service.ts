@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import type { AuthUser, ServiceMap, SpaServerMessage } from '@companion/contracts';
+import type { NotificationEmitter, NotificationInput } from '@companion/core/server';
 import { log } from '@companion/services';
 import type { RefineItemUpdate } from '@companion/module-refinement/contract';
 import type {
@@ -57,6 +58,7 @@ export class PlannerService {
     private readonly board: BoardService,
     private readonly code: CodeService,
     private readonly operate: OperateService,
+    private readonly notify: NotificationEmitter,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -919,14 +921,116 @@ export class PlannerService {
     event?: string,
     detail?: Readonly<Record<string, unknown>>,
   ): FeaturePlanningSession {
+    const previous = this.mustGet(id);
     const session = this.store.update(id, patch, { expectedRevision, event, detail });
     this.changed(id);
+    this.notifyTransition(previous, session, event, detail);
     return session;
+  }
+
+  /**
+   * Raise inbox entries only for meaningful workflow hand-offs. Intermediate
+   * persistence updates still broadcast live state, but do not create noise in
+   * the user's notification history.
+   */
+  private notifyTransition(
+    previous: FeaturePlanningSession,
+    session: FeaturePlanningSession,
+    event?: string,
+    detail?: Readonly<Record<string, unknown>>,
+  ): void {
+    const input = plannerNotification(previous, session, event, detail);
+    if (!input) return;
+    try {
+      this.notify.emit(input);
+    } catch (err) {
+      // Inbox delivery is secondary to preserving a completed planner
+      // checkpoint. A notification storage problem must not make an already
+      // successful planning action appear to have failed.
+      log.warn('planner notification could not be emitted', { id: session.id, event, err: String(err) });
+    }
   }
 
   private changed(_sessionId?: string): void {
     this.broadcast({ t: 'planner.changed' });
   }
+}
+
+function plannerNotification(
+  previous: FeaturePlanningSession,
+  session: FeaturePlanningSession,
+  event?: string,
+  detail?: Readonly<Record<string, unknown>>,
+): NotificationInput | null {
+  const base = {
+    workspaceId: session.workspaceId,
+    repo: session.repo,
+    href: `#/ideas/${session.id}`,
+  } as const;
+
+  if (event === 'failed' && previous.status !== 'failed' && session.status === 'failed') {
+    return {
+      ...base,
+      kind: 'error',
+      title: 'Idea planning needs attention',
+      body: `${session.title}: ${session.lastError || 'A planning step failed. Open the idea to retry.'}`,
+    };
+  }
+
+  if (event === 'discussion_failed' && previous.status === 'working' && session.status === 'waiting_for_user') {
+    return {
+      ...base,
+      kind: 'error',
+      title: 'The planner could not answer',
+      body: `${session.title}: nothing was changed. Open the conversation and try again.`,
+    };
+  }
+
+  if (event === 'launched' && previous.status === 'working' && session.status === 'completed') {
+    const count = Array.isArray(detail?.taskIds) ? detail.taskIds.length : session.taskIds.length;
+    return {
+      ...base,
+      kind: 'finished',
+      title: 'Your idea is now on the Board',
+      body: `${session.title}: ${count} ${count === 1 ? 'task was' : 'tasks were'} created and queued.`,
+    };
+  }
+
+  if (previous.status !== 'working' || session.status !== 'waiting_for_user') return null;
+
+  const actionRequired: Readonly<Record<string, { readonly title: string; readonly body: string }>> = {
+    questions_ready: {
+      title: 'Your idea needs answers',
+      body: `${session.title}: ${session.questions.length} ${session.questions.length === 1 ? 'decision is' : 'decisions are'} ready for you.`,
+    },
+    brief_ready: {
+      title: 'Review the first release',
+      body: `${session.title}: the proposed outcome and MVP are ready for review.`,
+    },
+    artifact_drafts_ready: {
+      title: 'Planning drafts are ready',
+      body: `${session.title}: review the documentation, specification and implementation plan.`,
+    },
+    analysis_ready: {
+      title: 'Review the implementation plan',
+      body: `${session.title}: the codebase analysis is complete and ready for your decision.`,
+    },
+    discussion_answered: {
+      title: 'The planner replied',
+      body: `${session.title}: your planning conversation has a new answer.`,
+    },
+    revision_ready: {
+      title: 'Review the proposed plan changes',
+      body: `${session.title}: a revision is ready to apply or discard.`,
+    },
+    tasks_ready: {
+      title: 'Tasks are ready for review',
+      body: `${session.title}: review task content, order and dependencies before starting work.`,
+    },
+  };
+  const notification = event ? actionRequired[event] : undefined;
+  if (!notification) return null;
+  return { ...base, kind: 'action_required', ...notification };
 }
 
 function deriveTitle(idea: string): string {
