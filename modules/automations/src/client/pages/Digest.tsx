@@ -56,7 +56,7 @@ export function DigestPage(): JSX.Element {
           <>
             {repos.length > 1 ? (
               <select
-                className="input input-sm"
+                className="input"
                 aria-label="Repository"
                 value={selected ?? ''}
                 onChange={(e) => setSelected(e.target.value)}

@@ -109,6 +109,11 @@
 }
 
 @layer components {
+  /* CONTROL HEIGHT: every interactive control that can share a line — .btn and
+     its variants, .input, select.input, the Dropdown trigger — is h-9. Anything
+     placed beside them (icon buttons, segmented clusters) must be pinned to h-9
+     too, or the row visibly steps. `.input-sm` (h-8) is the one dense tier, and
+     it is only correct when everything on that line is also h-8. */
   .btn {
     @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-default disabled:opacity-50 dark:bg-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-600;
   }

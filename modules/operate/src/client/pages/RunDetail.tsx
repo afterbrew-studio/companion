@@ -195,7 +195,7 @@ function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunR
 
   return (
     <select
-      className="input input-sm max-w-48"
+      className="input max-w-48"
       aria-label="Model for this run"
       title="Model for this run (from the moxxy gateway)"
       value={current}

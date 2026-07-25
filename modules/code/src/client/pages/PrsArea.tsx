@@ -201,7 +201,7 @@ export function PrsAreaPage(): JSX.Element {
           {canRunPipelines && pipelines.length > 0 ? (
             <>
               <select
-                className="input input-sm"
+                className="input"
                 aria-label="Pipeline to run against the selected PRs"
                 value={bulkPipeline}
                 onChange={(e) => setBulkPipeline(e.target.value)}

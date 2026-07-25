@@ -88,7 +88,7 @@ export function BranchPicker({
         disabled={disabled || !repo || failed}
         triggerClassName={
           compact
-            ? 'flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-left font-mono text-xs transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
+            ? 'flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-left font-mono text-xs transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
             : undefined
         }
       />

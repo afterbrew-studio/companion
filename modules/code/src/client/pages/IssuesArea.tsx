@@ -182,7 +182,7 @@ export function IssuesAreaPage(): JSX.Element {
           {canRunPipelines && pipelines.length > 0 ? (
             <>
               <select
-                className="input input-sm"
+                className="input"
                 aria-label="Issue pipeline to run against the selected issues"
                 value={bulkPipeline}
                 onChange={(e) => setBulkPipeline(e.target.value)}

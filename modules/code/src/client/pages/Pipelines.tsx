@@ -425,7 +425,7 @@ function PlatformRunButton({
   return (
     <span className="flex items-center gap-2">
       {repos.length > 1 ? (
-        <select className="input input-sm" aria-label="Repo to run against" value={repo} onChange={(e) => setRepo(e.target.value)}>
+        <select className="input" aria-label="Repo to run against" value={repo} onChange={(e) => setRepo(e.target.value)}>
           {repos.map((r) => (
             <option key={r} value={r}>
               {r.split('/')[1]}
@@ -602,7 +602,7 @@ function PipelineEditor({
             ))}
             {stepDefs.length > 0 ? (
               <select
-                className="input input-sm"
+                className="input"
                 aria-label="Add step from library"
                 value=""
                 onChange={(e) => {

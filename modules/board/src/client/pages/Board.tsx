@@ -301,7 +301,7 @@ function HeaderChip({
         type="button"
         aria-label={label}
         onClick={onClick}
-        className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
       >
         {children}
       </button>
@@ -471,8 +471,9 @@ export default function Board({ query }: RouteProps): JSX.Element {
                 several of my accounts are eligible — nothing to decide then. */}
             {scopedRepo ? <RepoAccountPicker repo={scopedRepo} className="w-44" /> : null}
             {/* Board settings sit in one segmented cluster so the only filled
-                button in the header is the action people actually came for. */}
-            <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+                button in the header is the action people actually came for.
+                h-9 pins the cluster to the shared control height. */}
+            <div className="flex h-9 items-center gap-0.5 rounded-lg border border-zinc-200 px-0.5 dark:border-zinc-700">
               <HeaderChip
                 label={`Workers — ${busyCount} of ${capacity} busy`}
                 tip={

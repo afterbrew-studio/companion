@@ -112,7 +112,7 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
         <div className="flex flex-wrap items-end gap-3">
           {repos.length > 0 ? (
             <Field label="Repository (optional)">
-              <select className="input input-sm" value={repo} onChange={(e) => setRepo(e.target.value)}>
+              <select className="input" value={repo} onChange={(e) => setRepo(e.target.value)}>
                 <option value="">Scratch — no repository</option>
                 {repos.map((r) => (
                   <option key={r.fullName} value={r.fullName} disabled={!r.cloneReady}>
@@ -125,7 +125,7 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
           ) : null}
           {skills.length > 0 ? (
             <Field label="Skill to preload (optional)">
-              <select className="input input-sm" value={skill} onChange={(e) => setSkill(e.target.value)}>
+              <select className="input" value={skill} onChange={(e) => setSkill(e.target.value)}>
                 <option value="">None</option>
                 {skills.map((name) => (
                   <option key={name} value={name}>
@@ -137,7 +137,7 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
           ) : null}
           <Field label="Time limit">
             <select
-              className="input input-sm"
+              className="input"
               value={timeoutMs}
               onChange={(e) => setTimeoutMs(Number(e.target.value))}
             >

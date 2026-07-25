@@ -186,7 +186,9 @@ export function Dropdown<T extends string>({
         aria-label={ariaLabel}
         className={
           triggerClassName ??
-          'flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-left text-[13px] font-medium transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
+          // h-9 is the platform's control height — .btn, .btn-ghost and .input
+          // all sit on it, so a dropdown never breaks the line it shares.
+          'flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-left text-[13px] font-medium transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-500'
         }
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {

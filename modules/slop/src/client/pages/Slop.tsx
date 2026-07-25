@@ -88,7 +88,11 @@ export default function Slop(): JSX.Element {
         actions={
           <div className="flex items-center gap-1.5">
             {can('slop:manage') ? (
-              <IconButton label="Detection rules" onClick={() => (window.location.hash = '/slop/rules')}>
+              <IconButton
+                label="Detection rules"
+                className="flex size-9 items-center justify-center"
+                onClick={() => (window.location.hash = '/slop/rules')}
+              >
                 <NavIcon>
                   <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
                   <circle cx="16" cy="7" r="2" />

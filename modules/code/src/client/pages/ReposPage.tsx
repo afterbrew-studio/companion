@@ -269,7 +269,7 @@ function RepoCard({
         {/* A pin is pointless while only the local runner exists — hide it. */}
         {runners.length > 1 ? (
           <select
-            className="input input-sm"
+            className="input"
             value={repo.runnerId ?? ''}
             disabled={busy}
             aria-label={`Runner executing agent work for ${repo.fullName}`}
