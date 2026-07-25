@@ -10,6 +10,7 @@ import {
   EmptyState,
   ErrorBar,
   Field,
+  FlowIcon,
   FormActions,
   IconButton,
   Markdown,
@@ -17,11 +18,13 @@ import {
   Modal,
   PageHeader,
   PageLoading,
+  PlusIcon,
   SettingRow,
   StatusDot,
   StatusGlyph,
   Switch,
   Tooltip,
+  WorkersIcon,
   timeAgo,
   useConfirm,
   type StatusTone,
@@ -280,6 +283,32 @@ function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachmen
   );
 }
 
+/** One segment of the header's settings cluster: glyph, optional live count, tooltip. */
+function HeaderChip({
+  label,
+  tip,
+  onClick,
+  children,
+}: {
+  label: string;
+  tip: string;
+  onClick: () => void;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <Tooltip content={tip}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
+
 export default function Board({ query }: RouteProps): JSX.Element {
   const { current } = useWorkspace();
   const { tasks, workers, config, loaded, error, setError } = useBoard(current?.id);
@@ -404,6 +433,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
   if (!loaded) return <PageLoading label="Loading the board…" />;
 
   const busyCount = workers.filter((w) => w.busy).length;
+  const capacity = workers.filter((w) => w.enabled).length;
   const inFlight = visibleTasks.filter((t) => t.status === 'in_progress' || t.status === 'in_review').length;
   const decisions = byColumn.get('needs_decision')?.length ?? 0;
 
@@ -412,8 +442,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
       <PageHeader
         title="Task Board"
         subtitle={
-          `${inFlight} in flight · ${busyCount}/${workers.filter((w) => w.enabled).length || 0} workers busy` +
-          (decisions > 0 ? ` · ${decisions} need${decisions === 1 ? 's' : ''} your decision` : '')
+          `${inFlight} in flight` + (decisions > 0 ? ` · ${decisions} need${decisions === 1 ? 's' : ''} your decision` : '')
         }
         actions={
           <>
@@ -441,13 +470,29 @@ export default function Board({ query }: RouteProps): JSX.Element {
             {/* Which of my credentials acts on the scoped repo. Hidden unless
                 several of my accounts are eligible — nothing to decide then. */}
             {scopedRepo ? <RepoAccountPicker repo={scopedRepo} className="w-44" /> : null}
-            <button className="btn-ghost" onClick={() => setManagingWorkers(true)}>
-              Workers
-            </button>
-            <button className="btn-ghost" onClick={() => setConfiguring(true)}>
-              Flow
-            </button>
+            {/* Board settings sit in one segmented cluster so the only filled
+                button in the header is the action people actually came for. */}
+            <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+              <HeaderChip
+                label={`Workers — ${busyCount} of ${capacity} busy`}
+                tip={
+                  capacity === 0
+                    ? 'No workers yet — add one to start building'
+                    : `${busyCount} of ${capacity} worker${capacity === 1 ? '' : 's'} busy`
+                }
+                onClick={() => setManagingWorkers(true)}
+              >
+                <WorkersIcon className="size-4" />
+                <span className="text-[13px] tabular-nums">
+                  {busyCount}/{capacity}
+                </span>
+              </HeaderChip>
+              <HeaderChip label="Flow" tip="Flow — review, merge and retry rules" onClick={() => setConfiguring(true)}>
+                <FlowIcon className="size-4" />
+              </HeaderChip>
+            </div>
             <button className="btn" onClick={() => setCreating(true)}>
+              <PlusIcon className="size-3.5" />
               New task
             </button>
           </>
@@ -807,83 +852,95 @@ function NewTaskModal({
   };
 
   return (
-    <Modal title="New task" onClose={onClose}>
-      <div className="flex flex-col gap-4">
-        <Field label="Repository">
-          <Dropdown
-            ariaLabel="Repository"
-            value={effectiveRepo}
-            onChange={(v) => setRepo(v)}
-            options={repos.map((r) => ({
-              value: r.fullName,
-              label: r.fullName,
-              disabled: !canBoardPush(r),
-              hint: canBoardPush(r) ? undefined : accessHint(r),
-            }))}
-            searchable
-          />
-        </Field>
-        <Field label="Target branch" hint="The worker starts here and opens the pull request back to this branch.">
-          <BranchPicker
-            repo={effectiveRepo}
-            workspaceId={workspaceId}
-            value={targetBranch}
-            onChange={setTargetBranch}
-            defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}
-            ariaLabel="Target branch"
-          />
-        </Field>
-        <Field label="Title">
-          <input
-            className="input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ship the CSV export"
-            maxLength={200}
-          />
-        </Field>
-        <Field label="Description" hint="Definition of ready — scope, context and constraints the worker needs.">
-          <textarea
-            className="input min-h-28"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={20_000}
-          />
-        </Field>
-        <Field label="Acceptance criteria" hint="Definition of done — the worker builds against it, the reviewer checks against it.">
-          <textarea
-            className="input min-h-20"
-            value={acceptance}
-            onChange={(e) => setAcceptance(e.target.value)}
-            maxLength={10_000}
-          />
-        </Field>
-        <AttachmentEditor attachments={attachments} onChange={setAttachments} onError={onError} />
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Priority">
-            <Dropdown
-              ariaLabel="Priority"
-              value={String(priority) as '0' | '1' | '2' | '3'}
-              onChange={(v) => setPriority(Number(v) as TaskPriority)}
-              options={PRIORITY_OPTIONS}
-            />
-          </Field>
-          {specs.length > 0 ? (
-            <Field label="Spec" hint="Handed to the worker as context.">
-              <Dropdown
-                ariaLabel="Spec"
-                value={specId}
-                onChange={(v) => setSpecId(v)}
-                options={[{ value: '', label: 'None' }, ...specs.map((s) => ({ value: s.id, label: s.title }))]}
-                placeholder="None"
+    <Modal title="New task" onClose={onClose} wide>
+      {/* Two columns: what the worker is asked to build on the left, where and
+          how it runs in the right rail. Stacks below md, brief first. */}
+      <div className="flex flex-col gap-5">
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] md:gap-0">
+          <div className="flex flex-col gap-4 md:pr-6">
+            <Field label="Title">
+              <input
+                className="input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ship the CSV export"
+                maxLength={200}
+                autoFocus
               />
             </Field>
-          ) : null}
+            <Field label="Description" hint="Definition of ready — scope, context and constraints the worker needs.">
+              <textarea
+                className="input min-h-36"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={20_000}
+              />
+            </Field>
+            <Field
+              label="Acceptance criteria"
+              hint="Definition of done — the worker builds against it, the reviewer checks against it."
+            >
+              <textarea
+                className="input min-h-24"
+                value={acceptance}
+                onChange={(e) => setAcceptance(e.target.value)}
+                maxLength={10_000}
+              />
+            </Field>
+            <AttachmentEditor attachments={attachments} onChange={setAttachments} onError={onError} />
+          </div>
+          <div className="flex flex-col gap-4 border-zinc-200 md:border-l md:pl-6 dark:border-zinc-800">
+            <Field label="Repository">
+              <Dropdown
+                ariaLabel="Repository"
+                value={effectiveRepo}
+                onChange={(v) => setRepo(v)}
+                options={repos.map((r) => ({
+                  value: r.fullName,
+                  label: r.fullName,
+                  disabled: !canBoardPush(r),
+                  hint: canBoardPush(r) ? undefined : accessHint(r),
+                }))}
+                searchable
+              />
+            </Field>
+            <Field label="Target branch" hint="The worker starts here and opens the pull request back to it.">
+              <BranchPicker
+                repo={effectiveRepo}
+                workspaceId={workspaceId}
+                value={targetBranch}
+                onChange={setTargetBranch}
+                defaultBranch={repos.find((candidate) => candidate.fullName === effectiveRepo)?.defaultBranch}
+                ariaLabel="Target branch"
+              />
+            </Field>
+            <Field label="Priority">
+              <Dropdown
+                ariaLabel="Priority"
+                value={String(priority) as '0' | '1' | '2' | '3'}
+                onChange={(v) => setPriority(Number(v) as TaskPriority)}
+                options={PRIORITY_OPTIONS}
+              />
+            </Field>
+            {specs.length > 0 ? (
+              <Field label="Spec" hint="Handed to the worker as context.">
+                <Dropdown
+                  ariaLabel="Spec"
+                  value={specId}
+                  onChange={(v) => setSpecId(v)}
+                  options={[{ value: '', label: 'None' }, ...specs.map((s) => ({ value: s.id, label: s.title }))]}
+                  placeholder="None"
+                />
+              </Field>
+            ) : null}
+            <div className="rounded-lg border border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+              <SettingRow title="Queue immediately" description="Straight to Ready — the next free worker picks it up.">
+                <Switch checked={queue} onChange={setQueue} label="Queue immediately" />
+              </SettingRow>
+            </div>
+          </div>
         </div>
-        <SettingRow title="Queue immediately" description="Straight to Ready — the next free worker picks it up.">
-          <Switch checked={queue} onChange={setQueue} label="Queue immediately" />
-        </SettingRow>
-        <FormActions>
+        <FormActions className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
           <button className="btn-ghost" onClick={onClose}>
             Cancel
           </button>

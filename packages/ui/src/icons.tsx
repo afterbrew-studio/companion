@@ -102,6 +102,43 @@ export function KebabIcon({ className = 'size-4' }: { className?: string }): JSX
   );
 }
 
+/** Plus — the mark on any "create a new thing" primary button. */
+export function PlusIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Two figures — a pool of workers/people and its capacity. */
+export function WorkersIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="6" cy="5.6" r="2.4" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M2.4 13.2c0-2 1.6-3.4 3.6-3.4s3.6 1.4 3.6 3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M10.7 3.5a2.4 2.4 0 0 1 0 4.2M11.5 9.7c1.3.4 2.1 1.7 2.1 3.1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Fork of nodes — an automated flow branching into its outcomes. */
+export function FlowIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="3.4" cy="8" r="1.7" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="12.6" cy="4.2" r="1.7" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="12.6" cy="11.8" r="1.7" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M5.1 8h2.3c1 0 1.8-.8 1.8-1.8 0-1 .8-1.9 1.8-2M5.1 8h2.3c1 0 1.8.8 1.8 1.8 0 1 .8 1.9 1.8 2"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 /** Flask — experiments and dry runs (the Playground's mark). */
 export function FlaskIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
   return (
