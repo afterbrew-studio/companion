@@ -20,6 +20,12 @@
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
+@property --accent-field-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
 /*
  * Semantic accent palette. The platform is monochrome: accent-* resolves to
  * zinc, primary controls invert (near-black on light, near-white on dark),
@@ -144,6 +150,91 @@
   }
   .input {
     @apply h-9 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-400;
+  }
+  /* Text-entry fields get a restrained accent orbit while focused. The stable
+     ring remains underneath, so motion never carries focus alone. */
+  .accent-field {
+    position: relative;
+    isolation: isolate;
+    transition: box-shadow 160ms ease-out;
+  }
+  .accent-field > .input {
+    display: block;
+  }
+  .accent-field::before {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    inset: -1px;
+    padding: 1px;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background: conic-gradient(
+      from var(--accent-field-angle),
+      transparent 0deg 292deg,
+      rgb(16 185 129 / 0.08) 306deg,
+      rgb(16 185 129 / 0.8) 326deg,
+      rgb(167 243 208) 336deg,
+      rgb(16 185 129 / 0.9) 346deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    transition: opacity 140ms ease-out;
+  }
+  .accent-field:focus-within {
+    box-shadow: 0 0 0 1px rgb(16 185 129 / 0.55);
+  }
+  .accent-field:focus-within::before {
+    opacity: 1;
+  }
+  .accent-field:focus-within > .input {
+    border-color: rgb(16 185 129 / 0.65);
+  }
+  .ideas-composer-ambient {
+    isolation: isolate;
+  }
+  .ideas-composer-ambient::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    inset: -28% 2% -40%;
+    pointer-events: none;
+    background: radial-gradient(
+      ellipse at center,
+      rgb(16 185 129 / 0.045) 0%,
+      rgb(16 185 129 / 0.018) 42%,
+      transparent 72%
+    );
+  }
+  .dark .ideas-composer-ambient::before {
+    background: radial-gradient(
+      ellipse at center,
+      rgb(16 185 129 / 0.085) 0%,
+      rgb(16 185 129 / 0.03) 42%,
+      transparent 72%
+    );
+  }
+  .ideas-history-accordion {
+    display: grid;
+    grid-template-rows: 0fr;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .ideas-history-accordion > div {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .ideas-history-accordion[data-open='true'] {
+    grid-template-rows: 1fr;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
   }
   /* Compact companion to .input for dense inline controls: `input input-sm`. */
   .input-sm {
@@ -335,6 +426,28 @@
 
 /* Motion: entrance + shimmer, disabled for reduced-motion users. */
 @media (prefers-reduced-motion: no-preference) {
+  .ideas-history-accordion {
+    transition:
+      grid-template-rows 260ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 180ms ease-out,
+      visibility 0s linear 260ms;
+  }
+  .ideas-history-accordion[data-open='true'] {
+    transition:
+      grid-template-rows 260ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 180ms ease-out,
+      visibility 0s linear 0s;
+  }
+
+  @keyframes accent-field-orbit {
+    to {
+      --accent-field-angle: 360deg;
+    }
+  }
+  .accent-field:focus-within::before {
+    animation: accent-field-orbit 2.2s linear infinite;
+  }
+
   /* Agentic build/loader views (PR preview, digest live) animations. */
   @keyframes ppv-float {
     0%, 100% { transform: translateY(0) scale(1); }

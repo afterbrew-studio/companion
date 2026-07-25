@@ -70,7 +70,7 @@ export const onboarding = defineOnboarding([
     key: 'assistant',
     order: 50,
     title: 'AI Help — your platform copilot',
-    body: 'The sparkle in the top-right corner opens AI Help. Ask it anything about your workspace, or just tell it what to do — run a pipeline, find an issue, file a proposal — and it does it, scoped to your access.',
+    body: 'The sparkle in the top-right corner opens AI Help. Ask it about your workspace or tell it to navigate, run a pipeline, or find an issue. For new feature work, Ideas provides the reviewable guided workflow.',
     chips: ['Top-right ✦'],
     art: (playing) => <SparkArt playing={playing} />,
   },

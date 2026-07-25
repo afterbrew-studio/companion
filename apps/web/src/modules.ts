@@ -13,6 +13,7 @@ export const CLIENT_LOADERS: Readonly<Record<string, ClientLoader>> = {
   operate: () => import('@companion/module-operate/client'),
   code: () => import('@companion/module-code/client'),
   plan: () => import('@companion/module-plan/client'),
+  planner: () => import('@companion/module-planner/client'),
   playground: () => import('@companion/module-playground/client'),
   board: () => import('@companion/module-board/client'),
   refinement: () => import('@companion/module-refinement/client'),

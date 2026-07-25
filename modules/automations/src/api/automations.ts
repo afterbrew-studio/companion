@@ -311,7 +311,7 @@ export class Automations {
       ...reviewRuns.map((r) => `- Agent change awaiting review: [${r.title}](#/runs/${r.id}/preview)`),
       ...pendingReviews.map((pr) => `- AI review to post: [${pr.repo}#${pr.number}](#/repos/${pr.repo}/prs/${pr.number}/review) — ${pr.title}`),
       ...pendingTriage.map((i) => `- Triage to apply: [${i.repo}#${i.number}](#/repos/${i.repo}/issues/${i.number}) — ${i.title}`),
-      ...pendingProposals.map((p) => `- Proposal ${p.status === 'review' ? 'ready for review' : 'awaiting approval'}: [${p.title}](#/proposals)`),
+      ...pendingProposals.map((p) => `- Legacy proposal ${p.status === 'review' ? 'ready for review' : 'awaiting approval'}: [${p.title}](#/legacy-proposals)`),
     ];
     sections.push(`## Needs you (${needsYou.length})\n${needsYou.length ? needsYou.join('\n') : 'Inbox zero — nothing is waiting on you.'}`);
 

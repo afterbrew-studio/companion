@@ -25,6 +25,9 @@ export const planApi = {
   createProposal: (workspaceId: string, repo: string, title: string, body: string) =>
     post<{ proposal: ProposalRecord }>('/api/proposals', { workspaceId, repo, title, body }),
   analyzeProposal: (id: string) => post<{ queued: true }>(`/api/proposals/${id}/analyze`),
+  updateProposal: (id: string, fields: { title?: string; body?: string }) =>
+    patch<{ proposal: ProposalRecord }>(`/api/proposals/${id}`, fields),
+  acceptProposalPlan: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/accept-plan`),
   approveProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/approve`),
   finishProposal: (id: string) => post<{ proposal: ProposalRecord }>(`/api/proposals/${id}/finish`),
   rejectProposal: (id: string) => post<{ ok: true }>(`/api/proposals/${id}/reject`),

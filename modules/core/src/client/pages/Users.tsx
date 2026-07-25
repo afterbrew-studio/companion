@@ -29,8 +29,8 @@ import { useUsers } from '../hooks/useUsers.js';
 
 const ROLE_HELP: Record<Role, string> = {
   admin: 'Platform settings and users, plus full capabilities in accessible workspaces',
-  maintainer: 'Issues, PRs, proposals, pipelines, runs, automations',
-  business: 'Proposals only',
+  maintainer: 'Ideas, issues, PRs, planning, pipelines, runs, automations',
+  business: 'Guided Ideas workflow and workspace visibility',
 };
 
 /** User management (admin): accounts, roles/scopes, resets, disable/delete. */

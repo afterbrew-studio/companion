@@ -73,6 +73,15 @@ export interface RefineItemRecord {
   readonly createdAt: number;
 }
 
+export interface RefineItemUpdate {
+  readonly title?: string;
+  readonly description?: string;
+  readonly acceptance?: string;
+  readonly priority?: TaskPriority;
+  /** Stable sibling identities; the service translates them to persisted ords. */
+  readonly dependsOnIds?: ReadonlyArray<string>;
+}
+
 /** A decomposition method — built-in or user-defined per workspace. */
 export interface RefineMethodRecord {
   readonly id: string;              // 'builtin-…' or `rm-<uuid12>`

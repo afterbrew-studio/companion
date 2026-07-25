@@ -2,7 +2,7 @@ import { defineClientRoutes, page } from '@companion/core/client';
 
 export const routes = defineClientRoutes([
   {
-    match: { prefix: '/proposals' },
+    match: { prefix: '/legacy-proposals' },
     permission: 'proposals:read',
     component: page(() => import('./pages/Proposals.js').then((m) => m.ProposalsPage)),
   },

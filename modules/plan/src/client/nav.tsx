@@ -31,17 +31,6 @@ export const sections = defineSections([{ id: 'plan', label: 'Plan', order: 20 }
 
 export const nav = defineNav([
   {
-    key: 'proposals',
-    label: 'Proposals',
-    hash: '#/proposals',
-    shortcut: 'p',
-    permission: 'proposals:read',
-    section: 'plan',
-    order: 0,
-    freshOn: (msg) => (msg.t === 'proposals.changed' ? 'proposals' : null),
-    icon: icons.proposals,
-  },
-  {
     key: 'specs',
     label: 'Specifications',
     hash: '#/specs',

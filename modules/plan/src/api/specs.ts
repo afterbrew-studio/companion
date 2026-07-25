@@ -63,6 +63,10 @@ export class Specs {
     return this.store.specs.listWorkspace(workspaceId);
   }
 
+  get(id: string): SpecRecord | undefined {
+    return this.store.specs.get(id);
+  }
+
   // ---------- storage configuration -------------------------------------------
 
   private configKey(workspaceId: string): string {
