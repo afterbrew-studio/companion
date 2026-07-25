@@ -1,105 +1,108 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ModelCatalogProvider } from '../../contract/index.js';
+import { useLive } from '@companion/core/client';
+import type { ProviderCatalog } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 
 /**
- * The model-providers admin data: the merged provider list (config + whatever
- * the gateway reports), the disabled-model set, and the model catalog. The
- * error setter is exposed for the page's enable/import actions.
+ * The merged provider/model catalog plus the instance policy that hides parts
+ * of it. Machines fetch their own models on the daemon side, so this hook only
+ * reads — and re-reads on `runners.changed`, which is how a background refresh
+ * reaches the page without anyone clicking. Toggles apply optimistically and
+ * the server's answer replaces local state.
  */
 export function useProviders(): {
-  providers: Array<{ name: string; enabled: boolean }> | null;
-  disabledModels: string[];
-  catalog: ModelCatalogProvider[];
-  catalogFresh: boolean | null;
+  catalog: ProviderCatalog | null;
   error: string | null;
   setError: (e: string | null) => void;
   refresh: () => Promise<void>;
+  refetchFromMachines: () => Promise<void>;
+  refetching: boolean;
   isModelDisabled: (provider: string, id: string) => boolean;
   toggleProvider: (name: string) => void;
   toggleModel: (provider: string, id: string) => void;
   removeManualId: (id: string) => void;
 } {
-  const [providers, setProviders] = useState<Array<{ name: string; enabled: boolean }> | null>(null);
-  const [disabledModels, setDisabledModels] = useState<string[]>([]);
-  const [catalog, setCatalog] = useState<ModelCatalogProvider[]>([]);
-  const [catalogFresh, setCatalogFresh] = useState<boolean | null>(null);
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refetching, setRefetching] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [settings, cat] = await Promise.all([api.getProviderSettings(), api.getModelsCatalog().catch(() => null)]);
-      // Providers known to config plus providers the gateway reports.
-      const names = new Set(settings.providers.map((p) => p.name));
-      const merged = [...settings.providers];
-      for (const p of cat?.providers ?? []) {
-        if (!names.has(p.name)) merged.push({ name: p.name, enabled: p.enabled });
-      }
-      setProviders(merged.sort((a, b) => a.name.localeCompare(b.name)));
-      setDisabledModels(settings.disabledModels);
-      setCatalog(cat?.providers ?? []);
-      setCatalogFresh(cat?.fresh ?? null);
+      setCatalog(await api.providerCatalog());
       setError(null);
     } catch (err) {
       setError(String(err));
-      setProviders([]);
+      setCatalog((prev) => prev ?? EMPTY);
     }
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'runners.changed');
 
-  // Optimistic settings mutations: update local state, persist, then re-sync.
-  const save = async (
-    nextProviders: Array<{ name: string; enabled: boolean }>,
-    nextModels: string[],
-  ): Promise<void> => {
+  const save = async (next: ProviderCatalog): Promise<void> => {
+    setCatalog(next);
     setError(null);
     try {
-      await api.setProviderSettings(
-        nextProviders.filter((p) => !p.enabled).map((p) => p.name),
-        nextModels,
+      setCatalog(
+        await api.setProviderPolicy(
+          next.providers.filter((p) => !p.enabled).map((p) => p.name),
+          [...next.disabledModels],
+        ),
       );
-      await refresh();
     } catch (err) {
       setError(String(err));
+      await refresh();
     }
   };
+
   const isModelDisabled = (provider: string, id: string): boolean =>
-    disabledModels.includes(id) || disabledModels.includes(`${provider}/${id}`);
-  const toggleProvider = (name: string): void => {
-    if (!providers) return;
-    const next = providers.map((p) => (p.name === name ? { ...p, enabled: !p.enabled } : p));
-    setProviders(next);
-    void save(next, disabledModels);
-  };
-  const toggleModel = (provider: string, id: string): void => {
-    if (!providers) return;
-    const next = isModelDisabled(provider, id)
-      ? disabledModels.filter((m) => m !== id && m !== `${provider}/${id}`)
-      : [...disabledModels, id];
-    setDisabledModels(next);
-    void save(providers, next);
-  };
-  const removeManualId = (id: string): void => {
-    if (!providers) return;
-    const next = disabledModels.filter((m) => m !== id);
-    setDisabledModels(next);
-    void save(providers, next);
-  };
+    (catalog?.disabledModels ?? []).some((m) => m === id || m === `${provider}/${id}`);
 
   return {
-    providers,
-    disabledModels,
     catalog,
-    catalogFresh,
     error,
     setError,
     refresh,
+    refetching,
+    refetchFromMachines: async () => {
+      setRefetching(true);
+      setError(null);
+      try {
+        setCatalog(await api.refreshProviderCatalog());
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setRefetching(false);
+      }
+    },
     isModelDisabled,
-    toggleProvider,
-    toggleModel,
-    removeManualId,
+    toggleProvider: (name) => {
+      if (!catalog) return;
+      void save({
+        ...catalog,
+        providers: catalog.providers.map((p) => (p.name === name ? { ...p, enabled: !p.enabled } : p)),
+      });
+    },
+    toggleModel: (provider, id) => {
+      if (!catalog) return;
+      const disabledModels = isModelDisabled(provider, id)
+        ? catalog.disabledModels.filter((m) => m !== id && m !== `${provider}/${id}`)
+        : [...catalog.disabledModels, id];
+      void save({ ...catalog, disabledModels });
+    },
+    removeManualId: (id) => {
+      if (!catalog) return;
+      void save({ ...catalog, disabledModels: catalog.disabledModels.filter((m) => m !== id) });
+    },
   };
 }
+
+const EMPTY: ProviderCatalog = {
+  providers: [],
+  machines: [],
+  disabledModels: [],
+  defaultModel: '',
+  fetchedAt: null,
+};

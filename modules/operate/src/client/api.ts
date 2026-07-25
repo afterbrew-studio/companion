@@ -3,8 +3,8 @@ import { del, patch, post, put, request } from '@companion/core/client';
 import type {
   CreateRunnerRequest,
   ModelCatalog,
-  ModelCatalogProvider,
   MoxxyStatus,
+  ProviderCatalog,
   RunQueueSnapshot,
   RunRecord,
   RunnerMoxxyUpdateResult,
@@ -64,16 +64,12 @@ export const operateApi = {
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
   updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
-  // providers + models
+  // providers + models (one merged catalog; machines fetch their own)
   importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
-  getModelsCatalog: () =>
-    request<{ providers: ModelCatalogProvider[]; defaultModel: string; fresh: boolean }>('/api/models-catalog'),
-  getProviderSettings: () =>
-    request<{ providers: Array<{ name: string; enabled: boolean }>; disabledModels: string[] }>(
-      '/api/settings/providers',
-    ),
-  setProviderSettings: (disabledProviders: string[], disabledModels: string[]) =>
-    put<{ ok: true }>('/api/settings/providers', { disabledProviders, disabledModels }),
+  providerCatalog: () => request<ProviderCatalog>('/api/providers'),
+  setProviderPolicy: (disabledProviders: string[], disabledModels: string[]) =>
+    put<ProviderCatalog>('/api/providers', { disabledProviders, disabledModels }),
+  refreshProviderCatalog: () => post<ProviderCatalog>('/api/providers/refresh'),
 
   // model pins (per action kind)
   getModelPins: () =>

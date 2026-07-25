@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@companion/contracts';
 import type { AgentStorageCleanupRequest } from '@companion/types';
 import type {
+  CatalogMachine,
+  CatalogModel,
+  CatalogProvider,
   CreateRunnerRequest,
   GitCredentialResolver,
   ModelCatalogModel,
   ModelCatalogProvider,
+  ProviderCatalog,
   RunnerCatalog,
   RunnerHealth,
   RunnerPinnableKind,
@@ -19,12 +23,17 @@ import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
+import { configuredProviderNames } from '../exec/home.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import { LocalRunnerBackend } from './local-backend.js';
 import { RemoteRunnerBackend } from './remote-backend.js';
 
 const HEALTH_POLL_MS = 30_000;
 const STORAGE_CLEANUP_MS = 6 * 60 * 60_000;
+/** How long a machine's fetched catalog is trusted before a background re-probe. */
+const CATALOG_TTL_MS = 6 * 60 * 60_000;
+/** Backoff after a failed probe so an unreachable machine isn't retried every tick. */
+const CATALOG_RETRY_MS = 10 * 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
   moxxyVersion: null,
@@ -50,6 +59,16 @@ export class Runners {
   private healthTimer: NodeJS.Timeout | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private readonly cleanupInFlight = new Set<string>();
+  /** In-flight catalog fetches, so concurrent callers share one probe. */
+  private readonly catalogInFlight = new Map<string, Promise<RunnerCatalog | null>>();
+  /** Last fetch attempt per runner — drives the failure backoff. */
+  private readonly catalogAttempt = new Map<string, number>();
+  /**
+   * model id (bare AND `provider/id`) → providers serving it, merged across
+   * every machine. Placement resolves a model's providers per run, so it reads
+   * this map instead of re-parsing catalog JSON out of SQLite each time.
+   */
+  private modelProviders = new Map<string, Set<string>>();
 
   constructor(
     private readonly store: OperateStore,
@@ -77,6 +96,7 @@ export class Runners {
     );
     this.backends.set(LOCAL_RUNNER_ID, this.local);
     this.rebuildRemotes();
+    this.rebuildModelIndex();
   }
 
   /** The always-present local backend (used for shutdown-all). */
@@ -316,6 +336,25 @@ export class Runners {
         this.probeOne(id).catch((err) => log.warn('runner health probe failed', { runner: id, err: String(err) })),
       ),
     );
+    await this.refreshStalestCatalog();
+  }
+
+  /**
+   * One stale machine per poll tick — that's what makes the catalog current
+   * without anyone clicking, and the drip keeps a whole fleet from spawning
+   * probe gateways at once (each probe is a real moxxy process).
+   */
+  private async refreshStalestCatalog(): Promise<void> {
+    const now = Date.now();
+    const due = this.store.runners
+      .list()
+      .filter((row) => row.enabled === 1 && this.isOnline(row) && this.catalogStale(row, now))
+      .sort((a, b) => (a.catalog?.fetchedAt ?? 0) - (b.catalog?.fetchedAt ?? 0))[0];
+    if (due) await this.refreshCatalog(due.id).catch(() => undefined);
+  }
+
+  private catalogStale(row: RunnerRow, now = Date.now()): boolean {
+    return !row.catalog || now - row.catalog.fetchedAt > CATALOG_TTL_MS;
   }
 
   healthFor(id: string): RunnerHealth {
@@ -388,7 +427,9 @@ export class Runners {
     });
     this.rebuildRemotes();
     await this.probeOne(id);
-    await this.probeCatalog(id);
+    // Binding a machine attaches its models straight away — nobody should have
+    // to go fetch them before pinning one.
+    await this.refreshCatalog(id, true);
     this.broadcast({ t: 'runners.changed' });
     return this.get(id)!;
   }
@@ -421,7 +462,10 @@ export class Runners {
       });
       this.rebuildRemotes();
       await this.probeOne(id);
+      // A re-pointed machine is a different machine: its old models are stale.
+      if (req.endpoint !== undefined || req.token !== undefined) await this.refreshCatalog(id, true);
     }
+    if (req.enabled !== undefined) this.rebuildModelIndex();
     this.broadcast({ t: 'runners.changed' });
     return this.get(id)!;
   }
@@ -432,6 +476,8 @@ export class Runners {
     if (backend instanceof RemoteRunnerBackend) backend.dispose();
     this.backends.delete(id);
     this.health.delete(id);
+    this.catalogAttempt.delete(id);
+    this.rebuildModelIndex();
     // Repos pinned to this runner fall back to auto-placement.
     for (const repo of this.store.repos.list()) {
       if (repo.runner_id === id) this.store.repos.setRunner(repo.full_name, null);
@@ -469,7 +515,7 @@ export class Runners {
     const health = await this.probeOne(id);
     const ok = health.status === 'online' || health.status === 'degraded';
     // Only bother fetching the (heavier) catalog when the runner is reachable.
-    const catalog = ok ? await this.probeCatalog(id) : (this.store.runners.get(id)?.catalog ?? null);
+    const catalog = ok ? await this.refreshCatalog(id, true) : (this.store.runners.get(id)?.catalog ?? null);
     this.broadcast({ t: 'runners.changed' });
     return { ok, health, catalog };
   }
@@ -539,26 +585,161 @@ export class Runners {
     };
   }
 
+  // ---------- catalogs: the one source of provider/model truth ----------
+
+  /**
+   * A machine's models, fetched if the cached copy is missing or past its TTL.
+   * Concurrent callers share one probe, and a failed probe backs off — this is
+   * the only entry point, so no caller can stampede a machine.
+   */
+  async refreshCatalog(id: string, force = false): Promise<RunnerCatalog | null> {
+    const row = this.store.runners.get(id);
+    if (!row) return null;
+    const now = Date.now();
+    if (!force && !this.catalogStale(row, now)) return row.catalog;
+    const inFlight = this.catalogInFlight.get(id);
+    if (inFlight) return inFlight;
+    if (!force && now - (this.catalogAttempt.get(id) ?? 0) < CATALOG_RETRY_MS) return row.catalog;
+    this.catalogAttempt.set(id, now);
+    const job = this.probeCatalog(id).finally(() => this.catalogInFlight.delete(id));
+    this.catalogInFlight.set(id, job);
+    return job;
+  }
+
+  /**
+   * Every online machine at once. `force` is the page's explicit Refresh;
+   * unforced it respects the TTL and the failure backoff, so calling it on a
+   * page load costs nothing when catalogs are current.
+   */
+  async refreshAllCatalogs(force = true): Promise<void> {
+    const rows = this.store.runners.list().filter((row) => row.enabled === 1 && this.isOnline(row));
+    await Promise.all(rows.map((row) => this.refreshCatalog(row.id, force).catch(() => undefined)));
+  }
+
+  /**
+   * Free refresh off a gateway that is already up for a real run — no probe
+   * process. Never clears a known catalog: an empty answer here means the
+   * session couldn't report, not that the machine lost its providers.
+   */
+  noteLiveSession(runnerId: string | null, runId: string): void {
+    const id = runnerId ?? LOCAL_RUNNER_ID;
+    if (!this.catalogDue(id)) return;
+    void this.backends
+      .get(id)
+      ?.sessionInfo(runId)
+      .then((info) => this.noteSessionInfo(runnerId, info))
+      .catch(() => undefined);
+  }
+
+  /** Same, for session info a caller already holds — costs one parse. */
+  noteSessionInfo(runnerId: string | null, info: unknown): void {
+    const id = runnerId ?? LOCAL_RUNNER_ID;
+    if (!this.catalogDue(id)) return;
+    const catalog = parseCatalog(info as SessionInfo);
+    if (catalog.providers.length > 0) this.storeCatalog(id, catalog);
+  }
+
+  private catalogDue(id: string): boolean {
+    const row = this.store.runners.get(id);
+    return row !== undefined && this.catalogStale(row);
+  }
+
+  /**
+   * Every machine's catalog merged into one instance-wide view: a model shows
+   * up once, carrying the machines that can serve it. Providers configured in
+   * the imported moxxy home but served nowhere are listed with no models, so
+   * the page can say *why* instead of going blank.
+   */
+  catalogSnapshot(defaultModel: string): ProviderCatalog {
+    const rows = this.store.runners.list().filter((row) => row.enabled === 1);
+    const disabledProviders = this.disabledSet('disabledProviders');
+    const disabledModels = this.disabledSet('disabledModels');
+    const providers = new Map<string, { machines: Set<string>; models: Map<string, CatalogModel> }>();
+    const entry = (name: string) => {
+      let found = providers.get(name);
+      if (!found) providers.set(name, (found = { machines: new Set(), models: new Map() }));
+      return found;
+    };
+    for (const name of configuredProviderNames()) entry(name);
+    for (const name of disabledProviders) entry(name);
+
+    const machines: CatalogMachine[] = [];
+    let fetchedAt: number | null = null;
+    for (const row of rows) {
+      const models = new Set<string>();
+      for (const provider of row.catalog?.providers ?? []) {
+        const merged = entry(provider.name);
+        // Only a credential-ready provider contributes models: listing models
+        // no machine can actually serve is what made the old page misleading.
+        if (!provider.ready) continue;
+        merged.machines.add(row.id);
+        for (const model of provider.models) {
+          models.add(model.id);
+          const existing = merged.models.get(model.id);
+          merged.models.set(model.id, {
+            id: model.id,
+            contextWindow: model.contextWindow ?? existing?.contextWindow ?? null,
+            machines: [...(existing?.machines ?? []), row.id],
+          });
+        }
+      }
+      const at = row.catalog?.fetchedAt ?? null;
+      if (at !== null) fetchedAt = Math.max(fetchedAt ?? 0, at);
+      machines.push({
+        id: row.id,
+        name: row.name,
+        online: this.isOnline(row),
+        fetchedAt: at,
+        modelCount: models.size,
+      });
+    }
+
+    return {
+      providers: [...providers.entries()]
+        .map(([name, merged]): CatalogProvider => ({
+          name,
+          enabled: !disabledProviders.has(name),
+          machines: [...merged.machines],
+          models: [...merged.models.values()].sort((a, b) => a.id.localeCompare(b.id)),
+        }))
+        .sort((a, b) => b.models.length - a.models.length || a.name.localeCompare(b.name)),
+      machines,
+      disabledModels: [...disabledModels],
+      defaultModel,
+      fetchedAt,
+    };
+  }
+
+  /** Providers that can serve `model`, merged across machines (null = unknown). */
+  providersForModel(model: string | null): string[] | null {
+    if (!model) return null;
+    const names = this.modelProviders.get(model);
+    return names && names.size > 0 ? [...names] : null;
+  }
+
+  private disabledSet(key: 'disabledProviders' | 'disabledModels'): Set<string> {
+    try {
+      const raw = this.store.settings.get(key);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
   /**
    * Fetch a runner's own provider/model catalog by spawning a throwaway gateway
    * on that runner and reading moxxy's session info. Heavier than a health
-   * probe, so it only runs on explicit "Test connection" / add / edit — not the
-   * periodic poll. Cached on the runner row for the pin UI and routing.
+   * probe — go through refreshCatalog, which dedupes and backs off.
    */
-  async probeCatalog(id: string): Promise<RunnerCatalog | null> {
+  private async probeCatalog(id: string): Promise<RunnerCatalog | null> {
     const backend = this.backends.get(id);
     if (!backend) return null;
     const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
     try {
       const cwd = await backend.scratchDir(probeId);
       await backend.spawn(probeId, cwd);
-      const info = (await backend.sessionInfo(probeId)) as {
-        activeProvider?: unknown;
-        providers?: unknown;
-        readyProviders?: unknown;
-      } | null;
-      const catalog = parseCatalog(info);
-      this.store.runners.setCatalog(id, catalog);
+      const catalog = parseCatalog((await backend.sessionInfo(probeId)) as SessionInfo);
+      this.storeCatalog(id, catalog);
       return catalog;
     } catch (err) {
       log.warn('runner catalog probe failed', { runner: id, err: String(err) });
@@ -567,14 +748,43 @@ export class Runners {
       await backend.stop(probeId).catch(() => undefined);
     }
   }
+
+  private storeCatalog(id: string, catalog: RunnerCatalog): void {
+    this.store.runners.setCatalog(id, catalog);
+    this.rebuildModelIndex();
+    this.broadcast({ t: 'runners.changed' });
+  }
+
+  /** Rebuild the model → providers map. Small data; rebuilt only on writes. */
+  private rebuildModelIndex(): void {
+    const index = new Map<string, Set<string>>();
+    for (const row of this.store.runners.list()) {
+      if (row.enabled !== 1) continue;
+      for (const provider of row.catalog?.providers ?? []) {
+        for (const model of provider.models) {
+          for (const key of [model.id, `${provider.name}/${model.id}`]) {
+            let names = index.get(key);
+            if (!names) index.set(key, (names = new Set()));
+            names.add(provider.name);
+          }
+        }
+      }
+    }
+    this.modelProviders = index;
+  }
 }
 
+type SessionInfo = { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null;
+
 /** Parse moxxy session info into a per-runner catalog (providers + real readiness). */
-function parseCatalog(
-  info: { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null,
-): RunnerCatalog {
+function parseCatalog(info: SessionInfo): RunnerCatalog {
+  // Readiness gates placement AND what the catalog shows. A moxxy build that
+  // doesn't report the field at all leaves it unknown — fall back to `enabled`
+  // rather than declaring every machine credential-less now that catalogs are
+  // fetched for everyone, not only when someone asked.
+  const reportsReadiness = Array.isArray(info?.readyProviders);
   const ready = new Set(
-    Array.isArray(info?.readyProviders) ? info!.readyProviders.filter((p): p is string => typeof p === 'string') : [],
+    reportsReadiness ? (info!.readyProviders as unknown[]).filter((p): p is string => typeof p === 'string') : [],
   );
   const providers: ModelCatalogProvider[] = (Array.isArray(info?.providers) ? info!.providers : [])
     .map((raw): ModelCatalogProvider | null => {
@@ -589,7 +799,8 @@ function parseCatalog(
             : null;
         })
         .filter((m): m is ModelCatalogModel => m !== null);
-      return { name: p.name, enabled: p.enabled !== false, ready: ready.has(p.name), models };
+      const enabled = p.enabled !== false;
+      return { name: p.name, enabled, ready: reportsReadiness ? ready.has(p.name) : enabled, models };
     })
     .filter((p): p is ModelCatalogProvider => p !== null);
   const active = typeof info?.activeProvider === 'string' ? info.activeProvider : null;

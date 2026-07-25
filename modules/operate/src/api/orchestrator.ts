@@ -381,6 +381,9 @@ export class Orchestrator implements RunnerEventSink {
         }
         await placedBackend.spawn(id, cwd!);
         this.setStatus(id, 'running');
+        // The gateway is up anyway — top up that machine's catalog for free if
+        // it has gone stale (never blocks the run).
+        this.runners.noteLiveSession(placedOn, id);
         break;
       } catch (err) {
         this.runners.recheckHealth(placedOn);
@@ -532,20 +535,17 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   /**
-   * Enabled providers that serve `model`, from the cached catalog. null =
-   * no constraint derivable (no model, empty/stale catalog, or unknown model
-   * id) — placement and the per-turn check then behave as before.
+   * Enabled providers that serve `model`, merged across every machine's
+   * catalog. null = no constraint derivable (no model, nothing fetched yet, or
+   * an unknown model id) — placement and the per-turn check then behave as
+   * before.
    */
   private providersForModel(model: string | null): string[] | null {
-    if (!model) return null;
-    const catalog = this.readCatalogCache();
-    if (!catalog || catalog.length === 0) return null;
+    const names = this.runners.providersForModel(model);
+    if (!names) return null;
     const disabled = this.disabledProviders();
-    const names = catalog
-      .filter((p) => p.models.some((m) => m.id === model || `${p.name}/${m.id}` === model))
-      .map((p) => p.name)
-      .filter((name) => !disabled.has(name));
-    return names.length > 0 ? names : null;
+    const allowed = names.filter((name) => !disabled.has(name));
+    return allowed.length > 0 ? allowed : null;
   }
 
   /** Connected providers + models, read live from the run's gateway. */
@@ -584,87 +584,15 @@ export class Orchestrator implements RunnerEventSink {
         };
       })
       .filter((p): p is ModelCatalogProvider => p !== null);
-    // Cache the provider/model catalog so settings pages can offer dropdowns
-    // even when no gateway is live anymore.
-    try {
-      this.store.settings.set('modelCatalogCache', JSON.stringify({ providers }));
-    } catch {
-      // cache is best-effort
-    }
+    // A live gateway is the cheapest catalog there is — hand what we just read
+    // to the registry (the single owner) so the settings view stays current.
+    this.runners.noteSessionInfo(this.store.runs.get(runId)?.runner_id ?? null, info);
     return {
       activeProvider: typeof info?.activeProvider === 'string' ? info.activeProvider : null,
       providers,
       current: this.store.runs.get(runId)?.model ?? this.config.defaultModel,
       defaultModel: this.config.defaultModel,
     };
-  }
-
-  /**
-   * Daemon-wide catalog for settings pages: read fresh from any live gateway,
-   * else the cached copy from the last live one — and when neither exists,
-   * probe: spawn a temporary gateway just to ask moxxy for the catalog, cache
-   * it, and reap the process. Users never need to know model ids by heart.
-   */
-  async sharedModelCatalog(): Promise<{
-    providers: ModelCatalogProvider[];
-    defaultModel: string;
-    fresh: boolean;
-  }> {
-    const liveId = this.runners.localBackend.liveIds()[0];
-    if (liveId) {
-      try {
-        const catalog = await this.modelCatalog(liveId);
-        return { providers: [...catalog.providers], defaultModel: this.config.defaultModel, fresh: true };
-      } catch {
-        // fall through to the cache
-      }
-    }
-    let cached = this.readCatalogCache();
-    if (!cached) {
-      await this.probeCatalog();
-      cached = this.readCatalogCache();
-    }
-    return { providers: cached ?? [], defaultModel: this.config.defaultModel, fresh: false };
-  }
-
-  private readCatalogCache(): ModelCatalogProvider[] | null {
-    try {
-      const raw = this.store.settings.get('modelCatalogCache');
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { providers?: ModelCatalogProvider[] };
-      return parsed.providers ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  /** Single-flight, cooldown-guarded temporary-gateway catalog probe. */
-  private catalogProbe: Promise<void> | null = null;
-  private lastCatalogProbeAt = 0;
-
-  private probeCatalog(): Promise<void> {
-    if (this.catalogProbe) return this.catalogProbe;
-    if (Date.now() - this.lastCatalogProbeAt < 60_000) return Promise.resolve();
-    this.lastCatalogProbeAt = Date.now();
-    const job = (async () => {
-      const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
-      // The catalog probe is a local convenience — spawn on the local backend.
-      const local = this.runners.localBackend;
-      try {
-        const cwd = await local.scratchDir(probeId);
-        await local.spawn(probeId, cwd);
-        await this.modelCatalog(probeId); // success path writes the cache
-        log.info('model catalog probed via temporary gateway');
-      } catch (err) {
-        log.warn('model catalog probe failed', { err: String(err) });
-      } finally {
-        await local.stop(probeId).catch(() => undefined);
-      }
-    })();
-    this.catalogProbe = job.finally(() => {
-      this.catalogProbe = null;
-    });
-    return this.catalogProbe;
   }
 
   /**

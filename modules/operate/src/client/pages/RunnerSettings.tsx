@@ -10,6 +10,7 @@ import {
   PageLoading,
   Section,
   SettingRow,
+  timeAgo,
 } from '@companion/ui';
 import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import { useAuth } from '@companion/module-core/client';
@@ -146,23 +147,15 @@ function SettingsForm({
     }
   };
 
-  // Probe the machine and pull its model catalog into the pin dropdowns.
-  // Doubles as a reachability check — the note reports what came back.
+  // Models arrive on their own (bind, live runs, staleness timer) and land here
+  // over the runners broadcast; this only forces an early re-read.
   const fetchModels = async (): Promise<void> => {
     setFetching(true);
     setPinsNote(null);
     try {
       const result = await api.probeRunner(runner.id);
       setCatalog(result.catalog);
-      const ready = (result.catalog?.providers ?? []).filter((p) => p.ready);
-      const modelCount = new Set(ready.flatMap((p) => p.models.map((m) => m.id))).size;
-      setPinsNote(
-        !result.ok
-          ? (result.health.detail ?? 'unreachable')
-          : modelCount > 0
-            ? `${modelCount} model${modelCount === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'}.`
-            : 'Reachable, but no provider with credentials was found on this machine.',
-      );
+      if (!result.ok) setPinsNote(result.health.detail ?? 'unreachable');
     } catch (err) {
       setPinsNote(String(err));
     } finally {
@@ -374,10 +367,10 @@ function SettingsForm({
             <SettingRow
               className="px-4 py-3"
               title="Available models"
-              description={pinsNote ?? 'Refresh the provider catalog from this machine before choosing model pins.'}
+              description={pinsNote ?? describeCatalog(catalog)}
             >
               <button type="button" className="btn-ghost" disabled={fetching} onClick={() => void fetchModels()}>
-                {fetching ? 'Fetching…' : 'Fetch models'}
+                {fetching ? 'Refreshing…' : 'Refresh'}
               </button>
             </SettingRow>
             <div className="px-4 py-3">
@@ -392,6 +385,14 @@ function SettingsForm({
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value) => b.includes(value));
+}
+
+function describeCatalog(catalog: RunnerCatalog | null): string {
+  if (!catalog) return 'This machine reports its models on its own — usually within a minute of connecting.';
+  const ready = catalog.providers.filter((p) => p.ready);
+  const models = new Set(ready.flatMap((p) => p.models.map((m) => m.id))).size;
+  if (models === 0) return `No provider with credentials on this machine (read ${timeAgo(catalog.fetchedAt)}).`;
+  return `${models} model${models === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'} · read ${timeAgo(catalog.fetchedAt)}.`;
 }
 
 /** A bordered, selectable option card — the app's two-choice radio idiom. */

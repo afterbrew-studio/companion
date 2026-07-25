@@ -399,6 +399,48 @@ export interface SetRunModelRequest {
   readonly provider?: string;
 }
 
+/**
+ * The instance-wide provider/model view: every runner's own catalog merged into
+ * one list, so a model appears once with the machines that can serve it. There
+ * is no second catalog — runner catalogs are the only source, refreshed by the
+ * daemon (bind, health TTL, live runs, provider import).
+ */
+export interface ProviderCatalog {
+  readonly providers: ReadonlyArray<CatalogProvider>;
+  readonly machines: ReadonlyArray<CatalogMachine>;
+  /** Instance policy: disabled model ids, bare (`opus`) or scoped (`p/opus`). */
+  readonly disabledModels: ReadonlyArray<string>;
+  readonly defaultModel: string;
+  /** Newest per-machine fetch across the pool; null = nothing fetched yet. */
+  readonly fetchedAt: number | null;
+}
+
+export interface CatalogProvider {
+  readonly name: string;
+  /** Instance policy — agents may use it (independent of machine readiness). */
+  readonly enabled: boolean;
+  /** Runner ids whose moxxy resolved credentials for this provider. */
+  readonly machines: ReadonlyArray<string>;
+  readonly models: ReadonlyArray<CatalogModel>;
+}
+
+export interface CatalogModel {
+  readonly id: string;
+  readonly contextWindow: number | null;
+  /** Runner ids that can serve this model. */
+  readonly machines: ReadonlyArray<string>;
+}
+
+/** A machine's standing in the merged catalog — why it does (not) contribute. */
+export interface CatalogMachine {
+  readonly id: string;
+  readonly name: string;
+  readonly online: boolean;
+  /** When this machine's catalog was last fetched; null = never. */
+  readonly fetchedAt: number | null;
+  readonly modelCount: number;
+}
+
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
 export interface WebhookTunnelState {
   readonly enabled: boolean;

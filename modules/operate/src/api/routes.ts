@@ -3,7 +3,7 @@ import { defineRoutes, route, created, badRequest, notFound } from '@companion/c
 import type { AuthUser } from '@companion/contracts';
 import type { MoxxyStatus, RunRecord } from '../contract/index.js';
 import { paths } from '@companion/services';
-import { configuredProviderNames, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
+import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -394,41 +394,24 @@ export default defineRoutes((ctx) => {
     // ---------- moxxy status + provider/model settings ---------------------------
 
     route({
-      // Providers + models as moxxy's gateway reports them (live or last-cached).
+      // Every machine's catalog merged into one list. A pure read that answers
+      // from cache and nudges a background top-up; whatever it finds reaches the
+      // page over `runners.changed`.
       method: 'GET',
-      path: '/api/models-catalog',
-      access: 'settings:manage',
-      handler: () => op.orchestrator.sharedModelCatalog(),
-    }),
-
-    route({
-      method: 'GET',
-      path: '/api/settings/providers',
+      path: '/api/providers',
       access: 'settings:manage',
       handler: () => {
-        const parse = (key: string): string[] => {
-          try {
-            const raw = settings.get(key);
-            return raw ? (JSON.parse(raw) as string[]) : [];
-          } catch {
-            return [];
-          }
-        };
-        // Configured provider names (shared helper — same set runners
-        // advertise in health), plus disabled leftovers so they stay visible.
-        const names = new Set<string>(configuredProviderNames());
-        const disabledProviders = parse('disabledProviders');
-        for (const name of disabledProviders) names.add(name);
-        return {
-          providers: [...names].sort().map((name) => ({ name, enabled: !disabledProviders.includes(name) })),
-          disabledModels: parse('disabledModels'),
-        };
+        // Self-limiting: unforced refreshes are no-ops while catalogs are
+        // within their TTL, so opening the page costs nothing on the machines.
+        void op.runners.refreshAllCatalogs(false);
+        return op.runners.catalogSnapshot(ctx.config.defaultModel);
       },
     }),
 
     route({
+      // Instance policy: which providers/models agents may use anywhere.
       method: 'PUT',
-      path: '/api/settings/providers',
+      path: '/api/providers',
       access: 'settings:manage',
       body: z.object({
         disabledProviders: z.array(z.string().min(1).max(100)).max(100),
@@ -437,7 +420,18 @@ export default defineRoutes((ctx) => {
       handler: ({ body }) => {
         settings.set('disabledProviders', JSON.stringify(body.disabledProviders));
         settings.set('disabledModels', JSON.stringify(body.disabledModels));
-        return { ok: true };
+        return op.runners.catalogSnapshot(ctx.config.defaultModel);
+      },
+    }),
+
+    route({
+      // Force a re-read from every online machine (the page's only button).
+      method: 'POST',
+      path: '/api/providers/refresh',
+      access: 'settings:manage',
+      handler: async () => {
+        await op.runners.refreshAllCatalogs();
+        return op.runners.catalogSnapshot(ctx.config.defaultModel);
       },
     }),
 
@@ -496,7 +490,13 @@ export default defineRoutes((ctx) => {
       path: '/api/moxxy/import-providers',
       access: 'settings:manage',
       body: importSchema,
-      handler: ({ body }) => importProvidersFromDailyMoxxy(body.sourceHome),
+      handler: ({ body }) => {
+        const result = importProvidersFromDailyMoxxy(body.sourceHome);
+        // New credentials mean new models: re-read this machine in the
+        // background so the page fills in without a second click.
+        void op.runners.refreshCatalog(LOCAL_RUNNER_ID, true);
+        return result;
+      },
     }),
 
     route({
