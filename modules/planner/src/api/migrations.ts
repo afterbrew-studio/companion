@@ -87,4 +87,92 @@ export default defineMigrations([
     // column in-place while preserving active planning sessions.
     down: () => undefined,
   },
+  {
+    version: 4,
+    name: 'planner_clarification_state',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(planner_sessions)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'clarification_state_json')) {
+        db.exec(`ALTER TABLE planner_sessions ADD COLUMN clarification_state_json TEXT`);
+      }
+      const sessions = db.prepare(`
+        SELECT id, questions_json, answers_json
+        FROM planner_sessions
+        WHERE clarification_state_json IS NULL
+      `).all() as Array<{ id: string; questions_json: string; answers_json: string }>;
+      const eventsFor = db.prepare(`
+        SELECT kind, detail_json
+        FROM planner_events
+        WHERE session_id = ? AND kind IN ('questions_ready', 'clarification_answered', 'brief_ready')
+        ORDER BY id
+      `);
+      const save = db.prepare(`UPDATE planner_sessions SET clarification_state_json = ? WHERE id = ?`);
+      for (const session of sessions) {
+        const questions = parseJsonArray(session.questions_json);
+        const answers = parseJsonArray(session.answers_json);
+        const events = eventsFor.all(session.id) as Array<{ kind: string; detail_json: string }>;
+        let roundsCreated = 0;
+        let completedRounds = 0;
+        let questionSetId: string | null = null;
+        for (const event of events) {
+          const detail = parseJsonObject(event.detail_json);
+          const round = typeof detail.round === 'number' && Number.isInteger(detail.round) ? detail.round : 0;
+          if (event.kind === 'questions_ready') {
+            roundsCreated = Math.max(roundsCreated, round || roundsCreated + 1);
+            questionSetId = typeof detail.questionSetId === 'string' ? detail.questionSetId : questionSetId;
+          } else if (event.kind === 'clarification_answered') {
+            completedRounds = Math.max(completedRounds, round || completedRounds + 1);
+          } else if (event.kind === 'brief_ready') {
+            questionSetId = null;
+          }
+        }
+        roundsCreated = Math.max(roundsCreated, completedRounds, questions.length > 0 ? completedRounds + 1 : 0);
+        const resolvedDecisionKeys = Array.from(new Set(answers.flatMap((answer) => {
+          const record = answer && typeof answer === 'object'
+            ? answer as Record<string, unknown>
+            : null;
+          const key = record && typeof record.decisionKey === 'string'
+            ? record.decisionKey
+            : null;
+          return key ? [key] : [];
+        })));
+        save.run(JSON.stringify({
+          currentRound: questions.length > 0 ? Math.max(1, roundsCreated) : roundsCreated,
+          roundsCreated,
+          completedRounds,
+          answerCount: answers.length,
+          questionSetId: questions.length > 0 ? questionSetId : null,
+          resolvedDecisionKeys,
+          roundLimit: 5,
+          answerLimit: 15,
+          completionReason: null,
+          completionExplanation: null,
+          unresolvedDecisions: [],
+        }), session.id);
+      }
+    },
+    // Clarification state is additive session history and remains readable by
+    // older code, which simply ignores the column.
+    down: () => undefined,
+  },
 ]);
+
+function parseJsonArray(value: string): unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}

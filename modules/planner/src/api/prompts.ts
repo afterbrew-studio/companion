@@ -18,17 +18,19 @@ import type {
 
 const boundedString = z.string().trim().min(1).max(4_000);
 const boundedList = z.array(boundedString).max(20);
+const mvpList = z.array(boundedString).max(8);
 
-// Model output may split one concern into many small bullets. Accept a bounded
-// surplus, then keep the session brief at the same size the editor supports.
-const modelBoundedList = z.array(boundedString).max(100).transform((items) => items.slice(0, 20));
+// The first pass may be verbose, but it must never be silently truncated. The
+// service can run one explicit, brief-only compression pass when validation
+// reports that the model exceeded the persisted limits.
+const modelBoundedList = z.array(boundedString).max(100);
 
 export const featureBriefSchema = z
   .object({
     problem: boundedString,
     audience: boundedList,
     goal: boundedString,
-    mvp: boundedList,
+    mvp: mvpList,
     outOfScope: boundedList,
     assumptions: boundedList,
     risks: boundedList,
@@ -59,6 +61,7 @@ const rawOptionSchema = z
 
 const rawQuestionSchema = z
   .object({
+    decisionKey: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/),
     prompt: z.string().trim().min(1).max(500),
     whyItMatters: z.string().trim().min(1).max(500),
     options: z.tuple([rawOptionSchema, rawOptionSchema, rawOptionSchema]),
@@ -70,13 +73,21 @@ const rawQuestionSchema = z
     }
   });
 
+const clarificationFields = {
+  summary: z.string().trim().min(1).max(2_000),
+  readiness: z.enum(['ready', 'needs_input']),
+  readinessReason: z.string().trim().min(1).max(2_000),
+  blockingDecisions: z.array(z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/)).max(3),
+  brief: modelFeatureBriefSchema,
+  questions: z.array(rawQuestionSchema).max(3),
+} as const;
+
 const clarificationSchema = z
   .object({
-    summary: z.string().trim().min(1).max(2_000),
-    brief: modelFeatureBriefSchema,
-    questions: z.array(rawQuestionSchema).max(3),
+    ...clarificationFields,
   })
-  .strict();
+  .strict()
+  .superRefine(validateReadiness);
 
 const repositoryContextItem = z.string().trim().min(1).max(600);
 const repositoryContextList = z.array(repositoryContextItem).max(8);
@@ -96,12 +107,51 @@ export const repositoryPlanningContextSchema = z
 
 const initialClarificationSchema = z
   .object({
-    summary: z.string().trim().min(1).max(2_000),
+    ...clarificationFields,
     repositoryContext: repositoryPlanningContextSchema,
-    brief: modelFeatureBriefSchema,
-    questions: z.array(rawQuestionSchema).max(3),
   })
-  .strict();
+  .strict()
+  .superRefine(validateReadiness);
+
+interface ReadinessPayload {
+  readonly readiness: 'ready' | 'needs_input';
+  readonly blockingDecisions: ReadonlyArray<string>;
+  readonly questions: ReadonlyArray<{ readonly decisionKey: string }>;
+}
+
+function validateReadiness(result: ReadinessPayload, ctx: z.RefinementCtx): void {
+  if (result.readiness === 'ready') {
+    if (result.questions.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['questions'], message: 'ready results cannot contain questions' });
+    }
+    if (result.blockingDecisions.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['blockingDecisions'], message: 'ready results cannot contain blocking decisions' });
+    }
+    return;
+  }
+  if (result.questions.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['questions'], message: 'needs_input requires at least one question' });
+  }
+  const questionKeys = new Set(result.questions.map((question) => question.decisionKey));
+  const blockingKeys = new Set(result.blockingDecisions);
+  if (blockingKeys.size !== questionKeys.size) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['blockingDecisions'],
+      message: 'blocking decisions must match the question decision keys exactly',
+    });
+  }
+  for (const key of result.blockingDecisions) {
+    if (!questionKeys.has(key)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['blockingDecisions'], message: `blocking decision ${key} has no question` });
+    }
+  }
+  for (const key of questionKeys) {
+    if (!blockingKeys.has(key)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['blockingDecisions'], message: `question ${key} is not marked as blocking` });
+    }
+  }
+}
 
 const artifactDraftSchema = z
   .object({
@@ -181,7 +231,14 @@ const defaultIdFactory: IdFactory = (prefix) => `${prefix}-${randomUUID().slice(
 
 export function parseClarification(text: string, idFactory: IdFactory = defaultIdFactory): ClarificationResult {
   const parsed = clarificationSchema.parse(extractModelJson(text));
-  return { summary: parsed.summary, brief: parsed.brief, questions: withQuestionIds(parsed.questions, idFactory) };
+  return {
+    summary: parsed.summary,
+    readiness: parsed.readiness,
+    readinessReason: parsed.readinessReason,
+    blockingDecisions: parsed.blockingDecisions,
+    brief: parsed.brief,
+    questions: withQuestionIds(parsed.questions, idFactory),
+  };
 }
 
 export function parseInitialClarification(
@@ -191,6 +248,9 @@ export function parseInitialClarification(
   const parsed = initialClarificationSchema.parse(extractModelJson(text));
   return {
     summary: parsed.summary,
+    readiness: parsed.readiness,
+    readinessReason: parsed.readinessReason,
+    blockingDecisions: parsed.blockingDecisions,
     repositoryContext: parsed.repositoryContext,
     brief: parsed.brief,
     questions: withQuestionIds(parsed.questions, idFactory),
@@ -203,6 +263,7 @@ function withQuestionIds(
 ): PlannerQuestion[] {
   return rawQuestions.map((question) => ({
     id: idFactory('pq'),
+    decisionKey: question.decisionKey,
     prompt: question.prompt,
     whyItMatters: question.whyItMatters,
     options: question.options.map((option) => ({
@@ -218,6 +279,10 @@ export function parseArtifactBundle(text: string): ArtifactBundle {
 
 export function parsePlannerRevision(text: string): PlannerRevision {
   return revisionSchema.parse(extractModelJson(text));
+}
+
+export function parseCompactedBrief(text: string): FeatureBrief {
+  return featureBriefSchema.parse(extractModelJson(text));
 }
 
 export function parsePlannerDiscussion(
@@ -264,12 +329,16 @@ export function clarificationPrompt(input: {
   answers: ReadonlyArray<{ question: string; answer: string }>;
   maxQuestions: number;
   repositoryContext: RepositoryPlanningContext | null;
+  resolvedDecisionKeys: ReadonlyArray<string>;
 }): string {
   const initialDiscovery = input.repositoryContext === null;
+  const currentBrief = initialDiscovery
+    ? null
+    : removeVerbatimOriginalIdea(input.brief, input.idea);
   const questionsExample = input.maxQuestions === 0
     ? '[]'
     : `[{
-    "prompt": "...", "whyItMatters": "...",
+    "decisionKey": "stable_snake_case_key", "prompt": "...", "whyItMatters": "...",
     "options": [
       { "label": "...", "description": "consequence", "recommended": true },
       { "label": "...", "description": "consequence", "recommended": false },
@@ -292,23 +361,66 @@ ${initialDiscovery ? `Initial idea:\n${input.idea}\n` : ''}
 
 ${initialDiscovery ? 'Inspect the repository once and create a compact, reusable repositoryContext. Record only verified facts relevant to later planning: no source code, secrets, credentials, speculative claims, or repeated prose. Keep each context array at most 8 items and relevantPaths at most 12 items.' : `Verified repository snapshot captured by the first run:\n${JSON.stringify(input.repositoryContext)}`}
 
-Current brief:
-${JSON.stringify(input.brief)}
+${initialDiscovery ? 'Build the first condensed brief directly from the initial idea and verified repository facts.' : `Current condensed brief:\n${JSON.stringify(currentBrief)}`}
 
 Answers supplied in the latest round:
 ${input.answers.length > 0 ? input.answers.map((answer) => `- ${answer.question}: ${answer.answer}`).join('\n') : '(none)'}
 
-${initialDiscovery ? 'Use the repository scan to distinguish verified technical facts from genuine product decisions.' : 'Do not repeat repository discovery or reconstruct the original request. The current brief already contains the original idea and decisions from older rounds; incorporate only the latest answers as its delta.'} Make safe, explicit assumptions for non-critical choices. This round may return at most ${input.maxQuestions} question(s). ${input.maxQuestions === 0 ? 'The clarification budget is exhausted: incorporate every supplied answer into the brief and return "questions": [] exactly.' : 'Ask only decisions that materially change product behavior, privacy, cost, security, or scope.'} Each returned question must have exactly three mutually exclusive options and exactly one recommended option. Do not generate ids. Keep every brief array focused, non-redundant, and at most 20 items long.
+Decisions already resolved (never ask these again):
+${JSON.stringify(input.resolvedDecisionKeys)}
+
+${initialDiscovery ? 'Use the repository scan to distinguish verified technical facts from genuine product decisions.' : 'Do not repeat repository discovery or reconstruct the original request. The current brief already contains the original idea and decisions from older rounds; incorporate only the latest answers as its delta.'}
+
+Choose readiness explicitly:
+- "ready" when the brief is sufficient to define a useful MVP. Put non-critical uncertainty into assumptions or openDecisions and return no questions.
+- "needs_input" only when a concrete unanswered decision materially changes product behavior or MVP boundaries, privacy/security/compliance, significant cost, an irreversible architecture choice, target audience, or business model.
+
+Make safe, explicit assumptions for all other choices. This round may return at most ${input.maxQuestions} question(s). ${input.maxQuestions === 0 ? 'The clarification budget is exhausted: incorporate every supplied answer, choose "ready", and return empty blockingDecisions and questions arrays.' : 'Every question must correspond to a genuinely blocking decision.'} Give each decision a stable snake_case decisionKey and use the same keys in blockingDecisions. Never reuse a resolved decisionKey. Each returned question must have exactly three mutually exclusive options and exactly one recommended option. Do not generate technical ids. Consolidate the MVP into 5-7 outcome-oriented items, never more than 8. Keep other arrays focused, non-redundant, and at most 20 items long.
 
 Reply with ONLY strict JSON, no markdown or prose, matching exactly:
 {
   "summary": "plain-language summary"${repositoryContextShape},
+  "readiness": "ready|needs_input",
+  "readinessReason": "why the brief is ready or what is genuinely blocked",
+  "blockingDecisions": ["stable_decision_key"],
   "brief": {
     "problem": "...", "audience": ["..."], "goal": "...", "mvp": ["..."],
     "outOfScope": ["..."], "assumptions": ["..."], "risks": ["..."], "openDecisions": ["..."]
   },
   "questions": ${questionsExample}
 }`;
+}
+
+function removeVerbatimOriginalIdea(brief: FeatureBrief, idea: string): FeatureBrief {
+  const original = idea.trim();
+  if (!original) return brief;
+  const withoutOriginal = (value: string): string => value.includes(original)
+    ? value.replaceAll(original, 'The product outcome captured during initial discovery')
+    : value;
+  return {
+    problem: withoutOriginal(brief.problem),
+    audience: brief.audience.map(withoutOriginal),
+    goal: withoutOriginal(brief.goal),
+    mvp: brief.mvp.map(withoutOriginal),
+    outOfScope: brief.outOfScope.map(withoutOriginal),
+    assumptions: brief.assumptions.map(withoutOriginal),
+    risks: brief.risks.map(withoutOriginal),
+    openDecisions: brief.openDecisions.map(withoutOriginal),
+  };
+}
+
+export function compactBriefPrompt(brief: FeatureBrief, validationIssues: ReadonlyArray<string>): string {
+  return `${CACHED_CONTEXT_ONLY}
+
+You are compressing an already-grounded feature brief. Do not add, remove, or reinterpret requirements. Merge overlapping bullets while preserving every product, security, privacy, cost, and delivery constraint.
+
+Current brief:
+${JSON.stringify(brief)}
+
+Validation issues:
+${validationIssues.join('\n')}
+
+Return ONLY the strict JSON brief object. The MVP must contain 5-7 consolidated outcome-oriented items and never more than 8. Every other array may contain at most 20 non-redundant items. Preserve the exact keys: problem, audience, goal, mvp, outOfScope, assumptions, risks, openDecisions.`;
 }
 
 export function artifactsPrompt(

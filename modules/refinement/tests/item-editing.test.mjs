@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { RefinementService } from '../dist/api/refinement-service.js';
 import { RefinementStore } from '../dist/api/refinement-store.js';
 
-function fixture(boardOverride = {}) {
+function fixture(boardOverride = {}, serviceOverrides = {}) {
   const db = new Database(':memory:');
   db.exec(`
     CREATE TABLE refinements (
@@ -33,7 +33,15 @@ function fixture(boardOverride = {}) {
     { id: 'c', refinementId: 'ref-1', ord: 2, title: 'C', description: 'C', acceptance: 'C', priority: 2, dependsOn: [1], status: 'proposed', taskId: null, createdAt: now },
   ]);
   const board = { createTask: () => ({ id: 'tsk-default' }), addTaskDependencies() {}, ...boardOverride };
-  const service = new RefinementService(store, { specs: { list: () => [] }, docs: { list: () => [], get: () => undefined } }, board, { repos: { get: () => ({ default_branch: 'main' }), inWorkspace: () => true } }, {}, {}, () => undefined);
+  const service = new RefinementService(
+    store,
+    { specs: { list: () => [] }, docs: { list: () => [], get: () => undefined } },
+    board,
+    { repos: { get: () => ({ default_branch: 'main' }), inWorkspace: () => true } },
+    serviceOverrides.orchestrator ?? {},
+    serviceOverrides.checkouts ?? {},
+    () => undefined,
+  );
   return { db, store, service };
 }
 
@@ -76,5 +84,80 @@ test('partial queued import is retryable and never duplicates completed items', 
   assert.deepEqual(calls.map((call) => call.title), ['A', 'B', 'B', 'C']);
   assert.ok(calls.every((call) => call.queue === true));
   assert.deepEqual(service.get('ref-1').items.map((item) => item.taskId), ['tsk-A', 'tsk-B', 'tsk-C']);
+  db.close();
+});
+
+test('Ideas refinement reuses its repository snapshot without cloning or creating a worktree', async () => {
+  let runInput;
+  let completion;
+  let checkoutCalls = 0;
+  const { db, service } = fixture({}, {
+    orchestrator: {
+      runOneShot: async (input) => {
+        runInput = input;
+        input.onStarted?.('run-cached-refinement');
+        return {
+          runId: 'run-cached-refinement',
+          finalMessage: JSON.stringify({
+            summary: 'Two grounded vertical slices.',
+            tasks: [
+              { title: 'Ship the first slice', description: 'Use the existing feature module.', acceptance: '- Works', priority: 1, dependsOn: [] },
+              { title: 'Verify the flow', description: 'Cover the shipped behavior.', acceptance: '- Tests pass', priority: 2, dependsOn: [0] },
+            ],
+          }),
+        };
+      },
+    },
+    checkouts: {
+      clone: async () => { checkoutCalls += 1; throw new Error('must not clone'); },
+      addWorktreeAtBranch: async () => { checkoutCalls += 1; throw new Error('must not create worktree'); },
+      removeWorktree: async () => { checkoutCalls += 1; throw new Error('must not remove worktree'); },
+    },
+  });
+  const method = {
+    id: 'builtin-test', workspaceId: null, name: 'Vertical slices', description: 'Test method',
+    instructions: 'Create grounded vertical slices.', builtin: true, createdAt: 0, updatedAt: 0,
+  };
+
+  await service.runDecompose('ref-1', method, 'alice', {
+    repositorySnapshot: JSON.stringify({ summary: 'Modular TypeScript application', architecture: ['Feature modules'] }),
+    onCompleted: (metrics) => { completion = metrics; },
+  });
+
+  const result = service.get('ref-1');
+  assert.equal(result.refinement.status, 'ready');
+  assert.equal(result.items.length, 2);
+  assert.equal(checkoutCalls, 0);
+  assert.equal('cwd' in runInput, false);
+  assert.match(runInput.prompt, /repository discovery is already complete/);
+  assert.match(runInput.prompt, /Modular TypeScript application/);
+  assert.match(runInput.prompt, /Do not inspect, search, clone/);
+  assert.equal(completion.runId, 'run-cached-refinement');
+  assert.equal(completion.contextMode, 'cached_snapshot');
+  assert.equal(completion.promptChars, runInput.prompt.length);
+  db.close();
+});
+
+test('cached refinement rejects an oversized prompt before starting a run', async () => {
+  let runs = 0;
+  let checkoutCalls = 0;
+  const { db, store, service } = fixture({}, {
+    orchestrator: { runOneShot: async () => { runs += 1; throw new Error('must not run'); } },
+    checkouts: { clone: async () => { checkoutCalls += 1; throw new Error('must not clone'); } },
+  });
+  store.update('ref-1', { story: 'x'.repeat(79_000) });
+  const method = {
+    id: 'builtin-test', workspaceId: null, name: 'Vertical slices', description: 'Test method',
+    instructions: 'Create grounded vertical slices.', builtin: true, createdAt: 0, updatedAt: 0,
+  };
+
+  await service.runDecompose('ref-1', method, 'alice', {
+    repositorySnapshot: JSON.stringify({ summary: 'cached' }),
+  });
+
+  assert.equal(runs, 0);
+  assert.equal(checkoutCalls, 0);
+  assert.equal(service.get('ref-1').refinement.status, 'failed');
+  assert.match(service.get('ref-1').refinement.error, /cached refinement prompt exceeds/);
   db.close();
 });

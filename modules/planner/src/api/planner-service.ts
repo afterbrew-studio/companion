@@ -12,16 +12,20 @@ import type {
   PlannerDiscussionContext,
   PlannerMessage,
   PlannerSessionDetail,
+  PlannerQuestion,
 } from '../contract/index.js';
 import { isReadOnlyPlannerSession } from './planner-machine.js';
-import { PlannerRevisionConflict, PlannerStore, type PlannerSessionPatch } from './planner-store.js';
+import { PlannerQuestionSetConflict, PlannerRevisionConflict, PlannerStore, type PlannerSessionPatch } from './planner-store.js';
+import { emptyClarificationState, plannerProgress } from './planner-progress.js';
 import {
   artifactsPrompt,
   clarificationPrompt,
+  compactBriefPrompt,
   discussionPrompt,
   emptyFeatureBrief,
   parseArtifactBundle,
   parseClarification,
+  parseCompactedBrief,
   parseInitialClarification,
   parsePlannerDiscussion,
   parsePlannerRevision,
@@ -44,9 +48,8 @@ const MAX_IDEA_LENGTH = 8_000;
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_MESSAGES = 100;
 const MAX_ACTIVE_RUNS_PER_USER = 2;
-const MAX_CLARIFICATION_ROUNDS = 5;
-const MAX_CLARIFICATION_ANSWERS = 15;
 const MAX_QUESTIONS_PER_ROUND = 3;
+const MAX_CACHED_CLARIFICATION_PROMPT = 40_000;
 const RUN_TIMEOUT_MS = 12 * 60_000;
 
 export class PlannerService {
@@ -72,7 +75,8 @@ export class PlannerService {
       throw new Error(`repo ${input.repo} is not connected to this workspace`);
     }
     const now = Date.now();
-    const session: FeaturePlanningSession = {
+    const clarification = emptyClarificationState();
+    const sessionWithoutProgress: Omit<FeaturePlanningSession, 'progress'> = {
       id: `idea-${randomUUID().slice(0, 12)}`,
       workspaceId: input.workspaceId,
       repo: input.repo,
@@ -87,6 +91,7 @@ export class PlannerService {
       activeAction: null,
       lastError: null,
       repositoryContext: null,
+      clarification,
       brief: emptyFeatureBrief(idea),
       questions: [],
       answers: [],
@@ -105,6 +110,10 @@ export class PlannerService {
       activeRunId: null,
       createdAt: now,
       updatedAt: now,
+    };
+    const session: FeaturePlanningSession = {
+      ...sessionWithoutProgress,
+      progress: plannerProgress(sessionWithoutProgress),
     };
     this.store.insert(session);
     this.changed(session.id);
@@ -129,6 +138,7 @@ export class PlannerService {
     return {
       session,
       events: this.store.listEvents(id),
+      usage: this.store.usage(id),
       refinementItems,
       board: { config: snapshot.config, workers: snapshot.workers },
     };
@@ -158,14 +168,17 @@ export class PlannerService {
   answer(
     id: string,
     expectedRevision: number,
-    input: { answers: ReadonlyArray<{ questionId: string; optionId?: string | null; value?: string }> },
+    input: { questionSetId: string; answers: ReadonlyArray<{ questionId: string; optionId?: string | null; value?: string }> },
     userId: string,
   ): FeaturePlanningSession {
     const current = this.requireMutable(id);
-    if (current.activeAction === 'clarifying') return current;
     if (current.step !== 'clarification' || current.status !== 'waiting_for_user') {
       throw new Error('this session is not waiting for clarification answers');
     }
+    if (!current.clarification.questionSetId || input.questionSetId !== current.clarification.questionSetId) {
+      throw new PlannerQuestionSetConflict(current);
+    }
+    if (current.activeAction === 'clarifying') return current;
     const now = Date.now();
     const round: PlannerAnswer[] = current.questions.map((question) => {
       const submitted = input.answers.find((answer) => answer.questionId === question.id);
@@ -173,7 +186,14 @@ export class PlannerService {
       const option = submitted.optionId ? question.options.find((entry) => entry.id === submitted.optionId) : undefined;
       const value = (option?.label ?? submitted.value ?? '').trim();
       if (!value || value.length > MAX_MESSAGE_LENGTH) throw new Error('each answer must be between 1 and 4000 characters');
-      return { questionId: question.id, question: question.prompt, optionId: option?.id ?? null, value, createdAt: now };
+      return {
+        questionId: question.id,
+        decisionKey: question.decisionKey,
+        question: question.prompt,
+        optionId: option?.id ?? null,
+        value,
+        createdAt: now,
+      };
     });
     const answerText = current.questions
       .map((question) => `${question.prompt}\n${round.find((answer) => answer.questionId === question.id)!.value}`)
@@ -184,12 +204,29 @@ export class PlannerService {
       answers: [...current.answers, ...round],
       messages,
       questions: [],
+      clarification: {
+        ...current.clarification,
+        completedRounds: Math.max(current.clarification.completedRounds, current.clarification.currentRound),
+        answerCount: current.clarification.answerCount + round.length,
+        questionSetId: null,
+        resolvedDecisionKeys: Array.from(new Set([
+          ...current.clarification.resolvedDecisionKeys,
+          ...round.map((answer) => answer.decisionKey),
+        ])),
+        unresolvedDecisions: current.clarification.unresolvedDecisions.filter(
+          (key) => !round.some((answer) => answer.decisionKey === key),
+        ),
+      },
       status: 'working',
       activeAction: 'clarifying',
       lastError: null,
       activeQueueId: null,
       activeRunId: null,
-    }, { expectedRevision, event: 'clarification_answered', detail: { count: round.length } });
+    }, {
+      expectedRevision,
+      event: 'clarification_answered',
+      detail: { count: round.length, round: current.clarification.currentRound, questionSetId: input.questionSetId },
+    });
     this.changed(id);
     void this.runClarification(id, userId);
     return started;
@@ -511,25 +548,69 @@ export class PlannerService {
         question: answer.question,
         answer: answer.value,
       }));
-      const maxQuestions = this.remainingClarificationQuestions(id, session.answers.length);
+      const maxQuestions = this.remainingClarificationQuestions(id, session.clarification.answerCount);
       const prompt = clarificationPrompt({
         idea: session.idea,
         brief: session.brief,
         answers,
         maxQuestions,
         repositoryContext: session.repositoryContext,
+        resolvedDecisionKeys: session.clarification.resolvedDecisionKeys,
       });
       const result = await this.runStructured(id, userId, 'Clarify idea', prompt, lease, {
         repositoryAccess: needsRepositoryScan,
+        round: session.clarification.completedRounds + 1,
       });
       if (!this.ownsAction(id, lease)) return;
       const initialResult = needsRepositoryScan ? parseInitialClarification(result) : null;
       const parsed = initialResult ?? parseClarification(result);
       const repositoryContext = initialResult?.repositoryContext ?? session.repositoryContext;
-      // The model still updates the brief after the last answers, but cannot
-      // extend clarification beyond the durable session budget.
-      const questions = parsed.questions.slice(0, maxQuestions);
-      const nextStep = questions.length > 0 ? 'clarification' : 'scope_review';
+      const filteredQuestions = filterNewQuestions(parsed.questions, session);
+      const budgetReached = maxQuestions === 0
+        || session.clarification.completedRounds >= session.clarification.roundLimit
+        || session.clarification.answerCount >= session.clarification.answerLimit;
+      const questions = parsed.readiness === 'needs_input' && !budgetReached
+        ? filteredQuestions.slice(0, maxQuestions)
+        : [];
+      const hasNewQuestionSet = questions.length > 0;
+      const completionReason = hasNewQuestionSet
+        ? null
+        : budgetReached
+          ? 'limit_reached' as const
+          : parsed.readiness === 'ready'
+            ? 'ready' as const
+            : 'no_new_decisions' as const;
+      const unresolvedFromRun = hasNewQuestionSet || parsed.readiness === 'ready'
+        ? []
+        : parsed.blockingDecisions.filter(
+            (key) => !session.clarification.resolvedDecisionKeys.includes(key),
+          );
+      const unresolvedDecisions = completionReason === 'ready'
+        ? []
+        : Array.from(new Set([
+            ...session.clarification.unresolvedDecisions,
+            ...unresolvedFromRun,
+          ]));
+      const briefWithUnresolvedDecisions = unresolvedDecisions.length > 0
+        ? {
+            ...parsed.brief,
+            openDecisions: Array.from(new Set([
+              ...parsed.brief.openDecisions,
+              ...unresolvedDecisions.map((key) => `Review unresolved decision: ${humanizeDecisionKey(key)}`),
+            ])),
+          }
+        : parsed.brief;
+      const finalBrief = await this.ensureBriefFits(
+        id,
+        userId,
+        briefWithUnresolvedDecisions,
+        lease,
+        session.clarification.completedRounds + 1,
+      );
+      if (!this.ownsAction(id, lease)) return;
+      const nextStep = hasNewQuestionSet ? 'clarification' : 'scope_review';
+      const nextRound = hasNewQuestionSet ? session.clarification.roundsCreated + 1 : session.clarification.currentRound;
+      const questionSetId = hasNewQuestionSet ? `questions-${randomUUID().slice(0, 12)}` : null;
       this.updateAndBroadcast(id, {
         step: nextStep,
         status: 'waiting_for_user',
@@ -538,13 +619,26 @@ export class PlannerService {
         activeRunId: null,
         lastError: null,
         repositoryContext,
-        brief: parsed.brief,
+        clarification: {
+          ...session.clarification,
+          currentRound: nextRound,
+          roundsCreated: hasNewQuestionSet ? session.clarification.roundsCreated + 1 : session.clarification.roundsCreated,
+          questionSetId,
+          completionReason,
+          completionExplanation: hasNewQuestionSet ? null : parsed.readinessReason,
+          unresolvedDecisions,
+        },
+        brief: finalBrief,
         questions,
         messages: appendMessages(this.mustGet(id).messages, [{
           id: messageId(), role: 'assistant', content: parsed.summary, createdAt: Date.now(),
         }]),
       }, undefined, questions.length > 0 ? 'questions_ready' : 'brief_ready', {
         questions: questions.length,
+        readiness: parsed.readiness,
+        round: nextRound,
+        questionSetId,
+        completionReason,
         contextMode: needsRepositoryScan ? 'repository_scan' : 'cached_snapshot',
       });
     } catch (err) {
@@ -622,11 +716,14 @@ export class PlannerService {
       const session = this.mustGet(id);
       const doc = session.docId ? this.plan.docs.get(session.docId) : undefined;
       const spec = session.specId ? this.plan.specs.get(session.specId) : undefined;
+      const repositorySnapshot = serializeRepositorySnapshot(session);
       const proposal = await this.plan.proposals.analyze(session.proposalId!, userId, {
         documentation: doc ? [{ title: doc.title, content: doc.content }] : [],
         specifications: spec ? [{ title: spec.title, content: spec.content }] : [],
+        ...(repositorySnapshot ? { repositorySnapshot } : {}),
         onQueued: (queueId) => this.trackQueued(id, queueId, lease),
         onStarted: (runId) => this.trackStarted(id, runId, lease),
+        onCompleted: (metrics) => this.recordRunUsage(id, 'Analyze implementation plan', metrics),
       });
       if (!this.ownsAction(id, lease)) return;
       if (!proposal.analysis) throw new Error('analysis completed without a validated result');
@@ -784,9 +881,12 @@ export class PlannerService {
         specIds: session.specId ? [session.specId] : [],
         docIds: session.docId ? [session.docId] : [],
       });
+      const repositorySnapshot = serializeRepositorySnapshot(session);
       await this.refinement.runDecompose(refinementId, method, userId, {
+        ...(repositorySnapshot ? { repositorySnapshot } : {}),
         onQueued: (queueId) => this.trackQueued(id, queueId, lease),
         onStarted: (runId) => this.trackStarted(id, runId, lease),
+        onCompleted: (metrics) => this.recordRunUsage(id, 'Prepare implementation tasks', metrics),
       });
       if (!this.ownsAction(id, lease)) return;
       const completed = this.refinement.get(refinementId);
@@ -810,10 +910,14 @@ export class PlannerService {
     title: string,
     prompt: string,
     lease: PlannerActionLease,
-    options: { readonly repositoryAccess?: boolean } = {},
+    options: { readonly repositoryAccess?: boolean; readonly round?: number | null } = {},
   ): Promise<string> {
     const session = this.mustGet(id);
     const repositoryAccess = options.repositoryAccess ?? true;
+    if (title === 'Clarify idea' && !repositoryAccess && prompt.length > MAX_CACHED_CLARIFICATION_PROMPT) {
+      throw new Error(`cached clarification prompt exceeds ${MAX_CACHED_CLARIFICATION_PROMPT} characters`);
+    }
+    const startedAt = Date.now();
     log.info('planner structured run', {
       id,
       title,
@@ -827,8 +931,38 @@ export class PlannerService {
       onQueued: (queueId) => this.trackQueued(id, queueId, lease),
       onStarted: (runId) => this.trackStarted(id, runId, lease),
     });
+    this.recordRunUsage(id, title, {
+      runId: result.runId,
+      contextMode: repositoryAccess ? 'repository_scan' : 'cached_snapshot',
+      promptChars: prompt.length,
+      durationMs: Date.now() - startedAt,
+    }, options.round ?? null);
     if (result.finalMessage === null) throw new Error('the planning agent ended without a response');
     return result.finalMessage;
+  }
+
+  private recordRunUsage(
+    id: string,
+    action: string,
+    metrics: {
+      readonly runId: string;
+      readonly contextMode: 'repository_scan' | 'cached_snapshot';
+      readonly promptChars: number;
+      readonly durationMs: number;
+    },
+    round: number | null = null,
+  ): void {
+    const run = this.operate.orchestrator.getRun(metrics.runId);
+    this.store.appendEvent(id, 'planner_run_completed', {
+      runId: metrics.runId,
+      action,
+      round,
+      contextMode: metrics.contextMode,
+      promptChars: metrics.promptChars,
+      inputTokens: run?.inputTokens ?? 0,
+      outputTokens: run?.outputTokens ?? 0,
+      durationMs: metrics.durationMs,
+    });
   }
 
   private async ensureClone(session: FeaturePlanningSession, userId: string): Promise<void> {
@@ -857,11 +991,26 @@ export class PlannerService {
   }
 
   private remainingClarificationQuestions(id: string, answerCount: number): number {
-    const answeredRounds = this.store.listEvents(id)
-      .filter((event) => event.kind === 'clarification_answered')
-      .length;
-    if (answeredRounds >= MAX_CLARIFICATION_ROUNDS) return 0;
-    return Math.min(MAX_QUESTIONS_PER_ROUND, Math.max(0, MAX_CLARIFICATION_ANSWERS - answerCount));
+    const clarification = this.mustGet(id).clarification;
+    if (clarification.completedRounds >= clarification.roundLimit) return 0;
+    return Math.min(MAX_QUESTIONS_PER_ROUND, Math.max(0, clarification.answerLimit - answerCount));
+  }
+
+  private async ensureBriefFits(
+    id: string,
+    userId: string,
+    brief: FeatureBrief,
+    lease: PlannerActionLease,
+    round: number,
+  ): Promise<FeatureBrief> {
+    const issues = briefValidationIssues(brief);
+    if (issues.length === 0) return brief;
+    const prompt = compactBriefPrompt(brief, issues);
+    const result = await this.runStructured(id, userId, 'Compact feature brief', prompt, lease, {
+      repositoryAccess: false,
+      round,
+    });
+    return parseCompactedBrief(result);
   }
 
   private latestClarificationAnswers(
@@ -1013,6 +1162,11 @@ export class PlannerService {
   }
 }
 
+function serializeRepositorySnapshot(session: FeaturePlanningSession): string | undefined {
+  if (!session.repositoryContext) return undefined;
+  return JSON.stringify(session.repositoryContext);
+}
+
 function plannerNotification(
   previous: FeaturePlanningSession,
   session: FeaturePlanningSession,
@@ -1108,4 +1262,56 @@ function appendMessages(
 ): FeaturePlanningSession['messages'] {
   const combined = [...current, ...incoming];
   return combined.slice(Math.max(0, combined.length - MAX_MESSAGES));
+}
+
+function filterNewQuestions(
+  questions: ReadonlyArray<PlannerQuestion>,
+  session: FeaturePlanningSession,
+): PlannerQuestion[] {
+  const knownKeys = new Set(session.clarification.resolvedDecisionKeys);
+  const knownPrompts = new Set(session.answers.map((answer) => normalizeQuestionText(answer.question)));
+  const acceptedKeys = new Set<string>();
+  const acceptedPrompts = new Set<string>();
+  return questions.filter((question) => {
+    const normalizedPrompt = normalizeQuestionText(question.prompt);
+    if (
+      knownKeys.has(question.decisionKey)
+      || knownPrompts.has(normalizedPrompt)
+      || acceptedKeys.has(question.decisionKey)
+      || acceptedPrompts.has(normalizedPrompt)
+    ) return false;
+    acceptedKeys.add(question.decisionKey);
+    acceptedPrompts.add(normalizedPrompt);
+    return true;
+  });
+}
+
+function normalizeQuestionText(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function humanizeDecisionKey(value: string): string {
+  const label = value.replace(/_/g, ' ');
+  return `${label.slice(0, 1).toUpperCase()}${label.slice(1)}`;
+}
+
+function briefValidationIssues(brief: FeatureBrief): string[] {
+  const issues: string[] = [];
+  if (brief.mvp.length > 8) issues.push('MVP must contain at most 8 consolidated items');
+  const boundedLists: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+    ['audience', brief.audience],
+    ['outOfScope', brief.outOfScope],
+    ['assumptions', brief.assumptions],
+    ['risks', brief.risks],
+    ['openDecisions', brief.openDecisions],
+  ];
+  for (const [name, values] of boundedLists) {
+    if (values.length > 20) issues.push(`${name} must contain at most 20 items`);
+  }
+  return issues;
 }

@@ -18,17 +18,14 @@ import { ideasApi } from '../api.js';
 import { extractStreamingJsonString } from '../discussion-stream.js';
 import { useIdeas } from '../hooks/useIdeas.js';
 
-const STEPS: Array<{ key: FeaturePlanningSession['step']; label: string }> = [
-  { key: 'idea', label: 'Idea' },
-  { key: 'clarification', label: 'Questions' },
-  { key: 'scope_review', label: 'MVP' },
-  { key: 'artifacts_review', label: 'Artifacts' },
-  { key: 'analysis', label: 'Analysis' },
-  { key: 'analysis_review', label: 'Plan review' },
-  { key: 'refinement', label: 'Tasks' },
-  { key: 'tasks_review', label: 'Task review' },
-  { key: 'launched', label: 'Launched' },
-];
+type QuestionAnswerDraft = Record<string, { optionId: string | null; value: string }>;
+
+interface StoredQuestionDraft {
+  readonly questionSetId: string;
+  readonly answers: QuestionAnswerDraft;
+  readonly summary: ReadonlyArray<{ readonly question: string; readonly answer: string }>;
+  readonly savedAt: number;
+}
 
 export default function Idea({ id }: { id: string }): JSX.Element {
   const { can } = useAuth();
@@ -39,7 +36,9 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   const [artifacts, setArtifacts] = useState<ArtifactBundle | null>(null);
   const [artifactTab, setArtifactTab] = useState<keyof ArtifactBundle>('documentation');
   const [preview, setPreview] = useState(true);
-  const [answers, setAnswers] = useState<Record<string, { optionId: string | null; value: string }>>({});
+  const [answers, setAnswers] = useState<QuestionAnswerDraft>({});
+  const [staleQuestionDraft, setStaleQuestionDraft] = useState<StoredQuestionDraft | null>(null);
+  const [answersSaved, setAnswersSaved] = useState<number | null>(null);
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const [discussionContext, setDiscussionContext] = useState<PlannerDiscussionContext>('plan_summary');
   const [discussionDraft, setDiscussionDraft] = useState('');
@@ -51,6 +50,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
     discussionRequestPending || session?.activeAction === 'discussing',
   );
   const questionSet = session?.questions.map((question) => question.id).join('|') ?? '';
+  const activeQuestionSetId = session?.clarification.questionSetId ?? null;
   const artifactsDirty = useMemo(
     () => artifacts !== null && session?.artifacts !== null && JSON.stringify(artifacts) !== JSON.stringify(session?.artifacts),
     [artifacts, session?.artifacts],
@@ -63,16 +63,22 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   }, [session?.revision]);
 
   useEffect(() => {
-    if (!session) return;
-    setAnswers((current) => {
-      const next: Record<string, { optionId: string | null; value: string }> = {};
-      for (const question of session.questions) {
-        const recommended = question.options.find((option) => option.recommended);
-        next[question.id] = current[question.id] ?? { optionId: recommended?.id ?? null, value: '' };
-      }
-      return next;
+    if (!session || !activeQuestionSetId || session.questions.length === 0) return;
+    const stored = readQuestionDraft(session.id, activeQuestionSetId);
+    setAnswers(stored?.answers ?? initialQuestionAnswers(session.questions));
+    setStaleQuestionDraft(findStaleQuestionDraft(session.id, activeQuestionSetId));
+    setAnswersSaved(null);
+  }, [session?.id, activeQuestionSetId, questionSet]);
+
+  useEffect(() => {
+    if (!session || !activeQuestionSetId || session.questions.length === 0 || Object.keys(answers).length === 0) return;
+    writeQuestionDraft(session.id, {
+      questionSetId: activeQuestionSetId,
+      answers,
+      summary: summarizeQuestionDraft(session.questions, answers),
+      savedAt: Date.now(),
     });
-  }, [questionSet]);
+  }, [session?.id, activeQuestionSetId, answers, questionSet]);
 
   useEffect(() => {
     if (session?.status === 'cancelled') window.location.hash = '/ideas';
@@ -151,7 +157,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
     <div className="flex min-h-full min-w-0">
       <Page className="min-w-0 max-w-6xl flex-1">
       <IdeaHeader session={session} onDiscuss={() => openDiscussion()} />
-      <Stepper current={session.step} />
+      <Stepper session={session} />
       <ErrorBar error={state.error} className="my-4" />
 
       {session.status === 'working' ? (
@@ -161,7 +167,10 @@ export default function Idea({ id }: { id: string }): JSX.Element {
               <span className="mt-1"><Spinner /></span>
               <div>
                 <h2 className="font-semibold">{actionLabel(session)}</h2>
-                <p className="dim mt-1 text-sm">The agent is reading the repository in read-only mode. You can leave this page; progress is saved.</p>
+                <p className="dim mt-1 text-sm">
+                  {answersSaved === null ? null : <span className="font-medium text-emerald-700 dark:text-emerald-400">{answersSaved} answers saved. </span>}
+                  {workingDescription(session)}
+                </p>
               </div>
             </div>
             {canManage ? <button className="btn-ghost" disabled={busy} onClick={() => void act(() => ideasApi.stop(id, session.revision))}>Stop</button> : null}
@@ -195,17 +204,47 @@ export default function Idea({ id }: { id: string }): JSX.Element {
       {(session.status !== 'working' && session.status !== 'failed') || planStaysVisible ? (
         <>
           {session.step === 'clarification' ? (
-            <Clarification
-              questions={session.questions}
-              answers={answers}
-              setAnswers={setAnswers}
-              disabled={!canManage || busy}
-              onSubmit={() => act(() => ideasApi.answer(id, session.revision, session.questions.map((question) => ({
-                questionId: question.id,
-                optionId: answers[question.id]?.optionId,
-                value: answers[question.id]?.value,
-              }))))}
-            />
+            <>
+              {staleQuestionDraft ? (
+                <StaleQuestionDraftNotice
+                  draft={staleQuestionDraft}
+                  onLatest={() => setStaleQuestionDraft(null)}
+                  onCopy={() => void copyQuestionDraft(staleQuestionDraft, session.questions)}
+                />
+              ) : null}
+              <Clarification
+                round={Math.max(1, session.clarification.currentRound)}
+                answersSaved={answersSaved}
+                questions={session.questions}
+                answers={answers}
+                setAnswers={setAnswers}
+                disabled={!canManage || busy}
+                onSubmit={async () => {
+                  const questionSetId = session.clarification.questionSetId;
+                  if (!questionSetId) {
+                    state.setError('These questions are no longer current. Open the latest question round.');
+                    return;
+                  }
+                  const submitted = session.questions.map((question) => ({
+                    questionId: question.id,
+                    optionId: answers[question.id]?.optionId,
+                    value: answers[question.id]?.value,
+                  }));
+                  const error = await runAction(
+                    () => ideasApi.answer(id, session.revision, questionSetId, submitted),
+                    { refreshOnError: true },
+                  );
+                  if (error) {
+                    if (error.includes('409') || error.includes('no longer current')) {
+                      setStaleQuestionDraft(readQuestionDraft(session.id, questionSetId));
+                    }
+                    return;
+                  }
+                  removeQuestionDraft(session.id, questionSetId);
+                  setAnswersSaved(submitted.length);
+                }}
+              />
+            </>
           ) : null}
 
           {session.step === 'scope_review' && brief ? (
@@ -357,10 +396,10 @@ function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; o
   );
 }
 
-function Stepper({ current }: { current: FeaturePlanningSession['step'] }): JSX.Element {
-  const currentIndex = STEPS.findIndex((step) => step.key === current);
-  const currentStep = STEPS[currentIndex] ?? STEPS[0]!;
-  const nextStep = STEPS[currentIndex + 1];
+function Stepper({ session }: { session: FeaturePlanningSession }): JSX.Element {
+  const { stages, currentIndex, completed } = session.progress;
+  const currentStep = stages[currentIndex] ?? stages[0]!;
+  const nextStep = stages[currentIndex + 1];
   return (
     <nav className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/60" aria-label="Planning progress">
       <div className="flex items-center justify-between gap-4">
@@ -368,32 +407,34 @@ function Stepper({ current }: { current: FeaturePlanningSession['step'] }): JSX.
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Planning progress</p>
           <p className="mt-0.5 text-sm font-semibold">{currentStep.label}</p>
         </div>
-        <p className="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">Step {currentIndex + 1} of {STEPS.length}</p>
+        <p className="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">Step {currentIndex + 1} of {stages.length}</p>
       </div>
-      <div className="mt-3 grid grid-cols-9 gap-1.5" aria-hidden="true">
-        {STEPS.map((step, index) => {
+      <div className="mt-3 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }} aria-hidden="true">
+        {stages.map((step, index) => {
           const active = index === currentIndex;
           const complete = index < currentIndex;
           return (
             <span
-              key={step.key}
+              key={step.id}
               className={`h-1.5 rounded-full ${complete ? 'bg-emerald-500' : active ? 'bg-zinc-900 dark:bg-zinc-100' : 'bg-zinc-200 dark:bg-zinc-700'}`}
             />
           );
         })}
       </div>
       <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-zinc-500 dark:text-zinc-400">
-        <span>{currentIndex > 0 ? `${currentIndex} completed` : 'Getting started'}</span>
+        <span>{completed > 0 ? `${completed} completed` : 'Getting started'}</span>
         <span>{nextStep ? `Next: ${nextStep.label}` : 'Planning complete'}</span>
       </div>
       <ol className="sr-only">
-        {STEPS.map((step, index) => <li key={step.key} aria-current={index === currentIndex ? 'step' : undefined}>{step.label}</li>)}
+        {stages.map((step, index) => <li key={step.id} aria-current={index === currentIndex ? 'step' : undefined}>{step.label}</li>)}
       </ol>
     </nav>
   );
 }
 
-function Clarification({ questions, answers, setAnswers, disabled, onSubmit }: {
+function Clarification({ round, answersSaved, questions, answers, setAnswers, disabled, onSubmit }: {
+  round: number;
+  answersSaved: number | null;
   questions: ReadonlyArray<PlannerQuestion>;
   answers: Record<string, { optionId: string | null; value: string }>;
   setAnswers: (answers: Record<string, { optionId: string | null; value: string }>) => void;
@@ -406,8 +447,14 @@ function Clarification({ questions, answers, setAnswers, disabled, onSubmit }: {
   });
   return (
     <Panel>
-      <h2 className="text-lg font-semibold">A few decisions before we define the MVP</h2>
-      <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">Choose a recommendation or write your own answer. Technical defaults are handled for you.</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Question round {round}</p>
+          <h2 className="mt-1 text-lg font-semibold">A few decisions before we define the MVP</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">Only decisions that materially change the feature are shown. Technical defaults become explicit assumptions.</p>
+        </div>
+        {answersSaved === null ? null : <span className="badge-ok shrink-0">{answersSaved} answers saved</span>}
+      </div>
       <div className="mt-6 grid gap-7">
         {questions.map((question, questionIndex) => (
           <fieldset key={question.id} className={questionIndex > 0 ? 'border-t border-zinc-200 pt-7 dark:border-zinc-800' : undefined}>
@@ -461,6 +508,27 @@ function Clarification({ questions, answers, setAnswers, disabled, onSubmit }: {
       </div>
       <div className="mt-7 flex justify-end"><button className="btn whitespace-nowrap" disabled={disabled || !allAnswered} onClick={() => void onSubmit()}>Continue with answers</button></div>
     </Panel>
+  );
+}
+
+function StaleQuestionDraftNotice({ draft, onLatest, onCopy }: {
+  draft: StoredQuestionDraft;
+  onLatest: () => void;
+  onCopy: () => void;
+}): JSX.Element {
+  return (
+    <section role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-amber-950 dark:text-amber-100">Your draft belongs to an earlier question round</h2>
+          <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200">Another tab advanced this idea. The local draft from {new Date(draft.savedAt).toLocaleTimeString()} is still available and was not submitted.</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button type="button" className="btn-ghost" onClick={onCopy}>Copy my draft</button>
+          <button type="button" className="btn" onClick={onLatest}>Open latest questions</button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1828,6 +1896,97 @@ function discussionContextLabel(context: PlannerDiscussionContext): string {
   return labels[context];
 }
 
+const QUESTION_DRAFT_PREFIX = 'companion:planner-question-draft:';
+
+function questionDraftKey(sessionId: string, questionSetId: string): string {
+  return `${QUESTION_DRAFT_PREFIX}${sessionId}:${questionSetId}`;
+}
+
+function initialQuestionAnswers(questions: ReadonlyArray<PlannerQuestion>): QuestionAnswerDraft {
+  return Object.fromEntries(questions.map((question) => {
+    const recommended = question.options.find((option) => option.recommended) ?? null;
+    return [question.id, { optionId: recommended?.id ?? null, value: '' }];
+  }));
+}
+
+function summarizeQuestionDraft(
+  questions: ReadonlyArray<PlannerQuestion>,
+  answers: QuestionAnswerDraft,
+): StoredQuestionDraft['summary'] {
+  return questions.flatMap((question) => {
+    const answer = answers[question.id];
+    if (!answer) return [];
+    const option = answer.optionId === null ? null : question.options.find((candidate) => candidate.id === answer.optionId);
+    const value = answer.value.trim() || option?.label || '';
+    return value ? [{ question: question.prompt, answer: value }] : [];
+  });
+}
+
+function readQuestionDraft(sessionId: string, questionSetId: string): StoredQuestionDraft | null {
+  try {
+    const raw = window.sessionStorage.getItem(questionDraftKey(sessionId, questionSetId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredQuestionDraft>;
+    if (parsed.questionSetId !== questionSetId || !parsed.answers || typeof parsed.savedAt !== 'number') return null;
+    return {
+      questionSetId,
+      answers: parsed.answers,
+      summary: Array.isArray(parsed.summary) ? parsed.summary.filter((item): item is { question: string; answer: string } => (
+        typeof item === 'object' && item !== null
+        && typeof (item as { question?: unknown }).question === 'string'
+        && typeof (item as { answer?: unknown }).answer === 'string'
+      )) : [],
+      savedAt: parsed.savedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeQuestionDraft(sessionId: string, draft: StoredQuestionDraft): void {
+  try {
+    window.sessionStorage.setItem(questionDraftKey(sessionId, draft.questionSetId), JSON.stringify(draft));
+  } catch {
+    // Draft persistence is a progressive enhancement. A full storage area must
+    // never prevent the user from answering the active question set.
+  }
+}
+
+function removeQuestionDraft(sessionId: string, questionSetId: string): void {
+  try {
+    window.sessionStorage.removeItem(questionDraftKey(sessionId, questionSetId));
+  } catch {
+    // See writeQuestionDraft: submitting an answer must not depend on storage.
+  }
+}
+
+function findStaleQuestionDraft(sessionId: string, activeQuestionSetId: string): StoredQuestionDraft | null {
+  try {
+    const prefix = `${QUESTION_DRAFT_PREFIX}${sessionId}:`;
+    let newest: StoredQuestionDraft | null = null;
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (!key?.startsWith(prefix) || key === questionDraftKey(sessionId, activeQuestionSetId)) continue;
+      const questionSetId = key.slice(prefix.length);
+      const candidate = readQuestionDraft(sessionId, questionSetId);
+      if (candidate && (newest === null || candidate.savedAt > newest.savedAt)) newest = candidate;
+    }
+    return newest;
+  } catch {
+    return null;
+  }
+}
+
+async function copyQuestionDraft(draft: StoredQuestionDraft, currentQuestions: ReadonlyArray<PlannerQuestion>): Promise<void> {
+  const summary = draft.summary.length > 0
+    ? draft.summary
+    : summarizeQuestionDraft(currentQuestions, draft.answers);
+  const text = summary.length > 0
+    ? summary.map((item) => `${item.question}\n${item.answer}`).join('\n\n')
+    : JSON.stringify(draft.answers, null, 2);
+  await navigator.clipboard.writeText(text);
+}
+
 type BriefListKey = 'audience' | 'mvp' | 'outOfScope' | 'assumptions' | 'risks' | 'openDecisions';
 
 function GrowingTextarea({ value, onChange, disabled, className = '' }: {
@@ -1925,6 +2084,20 @@ function actionLabel(session: FeaturePlanningSession): string {
     case 'launching': return 'Creating and queueing tasks';
     default: return 'Planning in progress';
   }
+}
+
+function workingDescription(session: FeaturePlanningSession): string {
+  if (session.activeAction === 'clarifying') {
+    return session.clarification.completedRounds > 0
+      ? 'Preparing the next decision from the saved brief and repository snapshot. Previous answers will not be asked again.'
+      : 'Reading the repository once and checking whether any product decisions still block a useful first release.';
+  }
+  if (session.activeAction === 'generating_artifacts') return 'Turning the approved brief into consistent documentation, specification and implementation drafts.';
+  if (session.activeAction === 'creating_artifacts') return 'Saving the approved planning drafts and linking them to this idea.';
+  if (session.activeAction === 'analyzing') return 'Validating the implementation plan and surfacing the areas that deserve review.';
+  if (session.activeAction === 'decomposing') return 'Preparing reviewable tasks from the accepted plan.';
+  if (session.activeAction === 'launching') return 'Creating Board tasks with the selected branch and saved dependencies.';
+  return 'The planner is completing this checkpoint. You can leave this page and return later.';
 }
 
 function revisionDiff(current: ArtifactBundle, next: ArtifactBundle): string {
