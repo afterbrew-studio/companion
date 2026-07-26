@@ -73,9 +73,8 @@ export interface FeatureBrief {
 
 /**
  * Compact, immutable repository knowledge captured during the first planning
- * run. Later product decisions use this instead of repeatedly scanning the
- * checkout; the final Proposal analysis still validates the completed plan
- * against the live repository.
+ * run. All later Ideas stages, including Proposal analysis and Refinement,
+ * reuse it instead of repeatedly scanning and tokenizing the checkout.
  */
 export interface RepositoryPlanningContext {
   readonly summary: string;

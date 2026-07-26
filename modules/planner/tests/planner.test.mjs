@@ -377,7 +377,11 @@ function createService(store, overrides = {}) {
         proposals.set(id, record);
         return record;
       },
-      analyze: async (id) => ({ ...proposals.get(id), analysis: overrides.proposalAnalysis ?? analysis, analysisRunId: 'run-analysis' }),
+      analyze: async (id, _userId, context) => {
+        overrides.onProposalAnalyze?.(context);
+        return { ...proposals.get(id), analysis: overrides.proposalAnalysis ?? analysis, analysisRunId: 'run-analysis' };
+      },
+      acceptPlan: () => undefined,
       list: () => [],
     },
     ...overrides.plan,
@@ -1194,6 +1198,110 @@ test('artifact retry keeps successful ids and creates only the missing records',
   assert.equal(docCreates, 1);
   assert.equal(specCreates, 2);
   assert.equal(proposalCreates, 1);
+  db.close();
+});
+
+test('Ideas passes its repository snapshot to proposal analysis and records cached usage', async () => {
+  const { db, store } = storeFixture();
+  const draft = { title: 'Listing analytics', content: 'A detailed artifact for listing analytics and its implementation.' };
+  store.insert({
+    ...session(),
+    repositoryContext,
+    step: 'artifacts_review',
+    status: 'waiting_for_user',
+    artifacts: { documentation: draft, specification: draft, implementationPlan: draft },
+  });
+  let receivedContext;
+  const { service } = createService(store, {
+    onProposalAnalyze: (context) => {
+      receivedContext = context;
+      context.onCompleted?.({
+        runId: 'run-analysis',
+        contextMode: 'cached_snapshot',
+        promptChars: 4_200,
+        durationMs: 125,
+      });
+    },
+    operate: {
+      orchestrator: {
+        getRun: (runId) => runId === 'run-analysis'
+          ? { inputTokens: 2_400, outputTokens: 360 }
+          : undefined,
+      },
+    },
+  });
+
+  service.createArtifacts('idea-1', 0, 'alice');
+  await waitFor(() => store.get('idea-1'), (value) => value?.step === 'analysis_review');
+  const usage = service.detail('idea-1', { id: 'alice' }).usage;
+
+  assert.deepEqual(JSON.parse(receivedContext.repositorySnapshot), repositoryContext);
+  assert.equal(usage.repositoryScanRuns, 0);
+  assert.equal(usage.cachedSnapshotRuns, 1);
+  assert.equal(usage.totalInputTokens, 2_400);
+  assert.equal(usage.totalOutputTokens, 360);
+  assert.equal(usage.runs[0].action, 'Analyze implementation plan');
+  db.close();
+});
+
+test('Ideas passes the same repository snapshot to refinement and records cached usage', async () => {
+  const { db, store } = storeFixture();
+  const draft = { title: 'Listing analytics', content: 'A detailed artifact for listing analytics and its implementation.' };
+  store.insert({
+    ...session(),
+    repositoryContext,
+    step: 'analysis_review',
+    status: 'waiting_for_user',
+    artifacts: { documentation: draft, specification: draft, implementationPlan: draft },
+    docId: 'doc-1',
+    specId: 'spec-1',
+    proposalId: 'prop-1',
+    analysis,
+  });
+  let decompositionComplete = false;
+  let receivedContext;
+  const proposedItem = { id: 'ri-1', status: 'proposed' };
+  const { service } = createService(store, {
+    refinement: {
+      create: () => ({ id: 'ref-1' }),
+      get: () => decompositionComplete
+        ? { refinement: { id: 'ref-1', status: 'ready', error: null }, items: [proposedItem] }
+        : { refinement: { id: 'ref-1', status: 'draft', error: null }, items: [] },
+      startDecompose: () => ({
+        id: 'method-1',
+        prompt: 'Decompose the implementation plan.',
+        source: 'builtin',
+      }),
+      runDecompose: async (_id, _method, _userId, context) => {
+        receivedContext = context;
+        context.onCompleted?.({
+          runId: 'run-refinement',
+          contextMode: 'cached_snapshot',
+          promptChars: 5_100,
+          durationMs: 160,
+        });
+        decompositionComplete = true;
+      },
+    },
+    operate: {
+      orchestrator: {
+        getRun: (runId) => runId === 'run-refinement'
+          ? { inputTokens: 2_800, outputTokens: 420 }
+          : undefined,
+      },
+    },
+  });
+
+  service.prepareTasks('idea-1', 0, 'alice');
+  await waitFor(() => store.get('idea-1'), (value) => value?.step === 'tasks_review');
+  const usage = service.detail('idea-1', { id: 'alice' }).usage;
+
+  assert.deepEqual(JSON.parse(receivedContext.repositorySnapshot), repositoryContext);
+  assert.equal(usage.repositoryScanRuns, 0);
+  assert.equal(usage.cachedSnapshotRuns, 1);
+  assert.equal(usage.totalInputTokens, 2_800);
+  assert.equal(usage.totalOutputTokens, 420);
+  assert.equal(usage.runs[0].action, 'Prepare implementation tasks');
   db.close();
 });
 

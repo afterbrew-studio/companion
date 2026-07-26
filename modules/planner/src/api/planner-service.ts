@@ -716,11 +716,14 @@ export class PlannerService {
       const session = this.mustGet(id);
       const doc = session.docId ? this.plan.docs.get(session.docId) : undefined;
       const spec = session.specId ? this.plan.specs.get(session.specId) : undefined;
+      const repositorySnapshot = serializeRepositorySnapshot(session);
       const proposal = await this.plan.proposals.analyze(session.proposalId!, userId, {
         documentation: doc ? [{ title: doc.title, content: doc.content }] : [],
         specifications: spec ? [{ title: spec.title, content: spec.content }] : [],
+        ...(repositorySnapshot ? { repositorySnapshot } : {}),
         onQueued: (queueId) => this.trackQueued(id, queueId, lease),
         onStarted: (runId) => this.trackStarted(id, runId, lease),
+        onCompleted: (metrics) => this.recordRunUsage(id, 'Analyze implementation plan', metrics),
       });
       if (!this.ownsAction(id, lease)) return;
       if (!proposal.analysis) throw new Error('analysis completed without a validated result');
@@ -878,9 +881,12 @@ export class PlannerService {
         specIds: session.specId ? [session.specId] : [],
         docIds: session.docId ? [session.docId] : [],
       });
+      const repositorySnapshot = serializeRepositorySnapshot(session);
       await this.refinement.runDecompose(refinementId, method, userId, {
+        ...(repositorySnapshot ? { repositorySnapshot } : {}),
         onQueued: (queueId) => this.trackQueued(id, queueId, lease),
         onStarted: (runId) => this.trackStarted(id, runId, lease),
+        onCompleted: (metrics) => this.recordRunUsage(id, 'Prepare implementation tasks', metrics),
       });
       if (!this.ownsAction(id, lease)) return;
       const completed = this.refinement.get(refinementId);
@@ -925,19 +931,38 @@ export class PlannerService {
       onQueued: (queueId) => this.trackQueued(id, queueId, lease),
       onStarted: (runId) => this.trackStarted(id, runId, lease),
     });
-    const run = this.operate.orchestrator.getRun(result.runId);
-    this.store.appendEvent(id, 'planner_run_completed', {
+    this.recordRunUsage(id, title, {
       runId: result.runId,
-      action: title,
-      round: options.round ?? null,
       contextMode: repositoryAccess ? 'repository_scan' : 'cached_snapshot',
       promptChars: prompt.length,
-      inputTokens: run?.inputTokens ?? 0,
-      outputTokens: run?.outputTokens ?? 0,
       durationMs: Date.now() - startedAt,
-    });
+    }, options.round ?? null);
     if (result.finalMessage === null) throw new Error('the planning agent ended without a response');
     return result.finalMessage;
+  }
+
+  private recordRunUsage(
+    id: string,
+    action: string,
+    metrics: {
+      readonly runId: string;
+      readonly contextMode: 'repository_scan' | 'cached_snapshot';
+      readonly promptChars: number;
+      readonly durationMs: number;
+    },
+    round: number | null = null,
+  ): void {
+    const run = this.operate.orchestrator.getRun(metrics.runId);
+    this.store.appendEvent(id, 'planner_run_completed', {
+      runId: metrics.runId,
+      action,
+      round,
+      contextMode: metrics.contextMode,
+      promptChars: metrics.promptChars,
+      inputTokens: run?.inputTokens ?? 0,
+      outputTokens: run?.outputTokens ?? 0,
+      durationMs: metrics.durationMs,
+    });
   }
 
   private async ensureClone(session: FeaturePlanningSession, userId: string): Promise<void> {
@@ -1135,6 +1160,11 @@ export class PlannerService {
   private changed(_sessionId?: string): void {
     this.broadcast({ t: 'planner.changed' });
   }
+}
+
+function serializeRepositorySnapshot(session: FeaturePlanningSession): string | undefined {
+  if (!session.repositoryContext) return undefined;
+  return JSON.stringify(session.repositoryContext);
 }
 
 function plannerNotification(

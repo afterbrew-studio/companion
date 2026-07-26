@@ -88,6 +88,78 @@ test('invalid model output stores failure while returning a user-safe error', as
   db.close();
 });
 
+test('Ideas proposal analysis reuses its repository snapshot without checkout access', async () => {
+  const { db, proposalsStore } = proposalStore();
+  const now = Date.now();
+  proposalsStore.insert({
+    id: 'prop-cached', workspaceId: 'ws-1', repo: 'owner/repo', title: 'Analyze from cache', body: 'Body',
+    status: 'draft', analysis: null, analysisRunId: null, implementRunId: null,
+    branch: null, prUrl: null, createdAt: now, updatedAt: now,
+  });
+  let runInput;
+  let completion;
+  let checkoutCalls = 0;
+  const service = new Proposals(
+    { proposals: proposalsStore },
+    {
+      runOneShot: async (input) => {
+        runInput = input;
+        input.onStarted?.('run-cached');
+        return { runId: 'run-cached', finalMessage: JSON.stringify(richAnalysis) };
+      },
+    },
+    { createGoalRun: () => { throw new Error('must not implement'); } },
+    {
+      hasClone: () => { checkoutCalls += 1; throw new Error('must not inspect checkout'); },
+      cloneDir: () => { checkoutCalls += 1; throw new Error('must not resolve checkout'); },
+    },
+    () => undefined,
+  );
+
+  const result = await service.analyze('prop-cached', 'alice', {
+    repositorySnapshot: JSON.stringify({ summary: 'React application', architecture: ['Feature modules'] }),
+    documentation: [{ title: 'Feature', content: 'Expected user behavior' }],
+    onCompleted: (metrics) => { completion = metrics; },
+  });
+
+  assert.equal(result.status, 'analyzed');
+  assert.equal(checkoutCalls, 0);
+  assert.equal('cwd' in runInput, false);
+  assert.match(runInput.prompt, /repository discovery is already complete/);
+  assert.match(runInput.prompt, /React application/);
+  assert.match(runInput.prompt, /Do not inspect, search, clone/);
+  assert.equal(completion.runId, 'run-cached');
+  assert.equal(completion.contextMode, 'cached_snapshot');
+  assert.equal(completion.promptChars, runInput.prompt.length);
+  db.close();
+});
+
+test('cached proposal analysis rejects an oversized prompt before starting a run', async () => {
+  const { db, proposalsStore } = proposalStore();
+  const now = Date.now();
+  proposalsStore.insert({
+    id: 'prop-oversized', workspaceId: 'ws-1', repo: 'owner/repo', title: 'Oversized', body: 'x'.repeat(79_000),
+    status: 'draft', analysis: null, analysisRunId: null, implementRunId: null,
+    branch: null, prUrl: null, createdAt: now, updatedAt: now,
+  });
+  let runs = 0;
+  const service = new Proposals(
+    { proposals: proposalsStore },
+    { runOneShot: async () => { runs += 1; throw new Error('must not run'); } },
+    { createGoalRun: () => { throw new Error('must not implement'); } },
+    {},
+    () => undefined,
+  );
+
+  await assert.rejects(
+    service.analyze('prop-oversized', 'alice', { repositorySnapshot: JSON.stringify({ summary: 'cached' }) }),
+    /cached proposal analysis prompt exceeds/,
+  );
+  assert.equal(runs, 0);
+  assert.equal(proposalsStore.get('prop-oversized').status, 'draft');
+  db.close();
+});
+
 function proposalStore() {
   const db = new Database(':memory:');
   db.exec(`
