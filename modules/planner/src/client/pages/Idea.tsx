@@ -122,7 +122,8 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   if (state.missing || !state.detail || !session) return <EmptyState title="Idea not found" hint="It may have been removed or belong to another workspace." />;
 
   const canManage = can('planner:manage') && session.status !== 'completed' && session.status !== 'cancelled';
-  const planStaysVisible = session.step === 'analysis_review' && session.analysis !== null;
+  const conversationWorking = session.activeAction === 'discussing' || session.activeAction === 'revising';
+  const planStaysVisible = conversationWorking && isDiscussionAvailable(session);
   const interactionDisabled = !canManage || busy || session.status === 'working';
   const defaultDiscussionContext = discussionContextForStep(session.step, artifactTab);
   const canDiscuss = canManage
@@ -162,7 +163,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
       <Stepper session={session} />
       <ErrorBar error={state.error} className="my-4" />
 
-      {session.status === 'working' ? (
+      {session.status === 'working' && !conversationWorking ? (
         <Panel>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <div className="flex flex-1 items-start gap-3">
