@@ -3,7 +3,7 @@ import type { AuthUser } from '@companion/contracts';
 import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@companion/core/server';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import { artifactBundleSchema, featureBriefSchema } from './prompts.js';
-import { PlannerRevisionConflict } from './planner-store.js';
+import { PlannerQuestionSetConflict, PlannerRevisionConflict } from './planner-store.js';
 
 const revisionSchema = z.object({ expectedRevision: z.number().int().min(0) }).strict();
 const launchSchema = revisionSchema.extend({
@@ -16,6 +16,7 @@ const createSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
 }).strict();
 const answerSchema = revisionSchema.extend({
+  questionSetId: z.string().min(1).max(200),
   answers: z.array(z.object({
     questionId: z.string().min(1),
     optionId: z.string().min(1).nullable().optional(),
@@ -60,7 +61,9 @@ export default defineRoutes((ctx) => {
     try {
       return fn();
     } catch (err) {
-      if (err instanceof PlannerRevisionConflict) throw new HttpError(409, err.message);
+      if (err instanceof PlannerRevisionConflict || err instanceof PlannerQuestionSetConflict) {
+        throw new HttpError(409, err.message);
+      }
       throw badRequest(String(err instanceof Error ? err.message : err));
     }
   };
@@ -68,7 +71,9 @@ export default defineRoutes((ctx) => {
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof PlannerRevisionConflict) throw new HttpError(409, err.message);
+      if (err instanceof PlannerRevisionConflict || err instanceof PlannerQuestionSetConflict) {
+        throw new HttpError(409, err.message);
+      }
       throw badRequest(String(err instanceof Error ? err.message : err));
     }
   };

@@ -16,8 +16,16 @@ export const ideasApi = {
     post<{ session: FeaturePlanningSession }>('/api/ideas', input),
   get: (id: string) => request<PlannerSessionDetail>(`/api/ideas/${id}`),
   clarify: (id: string, expectedRevision: number) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/clarify`, revision(expectedRevision)),
-  answer: (id: string, expectedRevision: number, answers: Array<{ questionId: string; optionId?: string | null; value?: string }>) =>
-    post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/answers`, { expectedRevision, answers }),
+  answer: (
+    id: string,
+    expectedRevision: number,
+    questionSetId: string,
+    answers: Array<{ questionId: string; optionId?: string | null; value?: string }>,
+  ) => post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/answers`, {
+    expectedRevision,
+    questionSetId,
+    answers,
+  }),
   confirmBrief: (id: string, expectedRevision: number, brief: FeatureBrief) =>
     post<{ session: FeaturePlanningSession }>(`/api/ideas/${id}/confirm-brief`, { expectedRevision, brief }),
   saveArtifacts: (id: string, expectedRevision: number, artifacts: ArtifactBundle) =>

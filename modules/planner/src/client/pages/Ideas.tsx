@@ -13,18 +13,6 @@ const EXAMPLES = [
   'Let customers pay for promoted listings',
 ];
 
-const STEP_LABELS: Readonly<Record<FeaturePlanningSession['step'], string>> = {
-  idea: 'Idea',
-  clarification: 'Questions',
-  scope_review: 'MVP review',
-  artifacts_review: 'Artifacts review',
-  analysis: 'Analysis',
-  analysis_review: 'Plan review',
-  refinement: 'Tasks',
-  tasks_review: 'Task review',
-  launched: 'Launched',
-};
-
 export default function Ideas(): JSX.Element {
   const { current } = useWorkspace();
   const { can } = useAuth();
@@ -205,6 +193,7 @@ export default function Ideas(): JSX.Element {
 }
 
 function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSession; tabIndex?: number }): JSX.Element {
+  const currentStage = session.progress.stages[session.progress.currentIndex];
   return (
     <a href={`#/ideas/${session.id}`} tabIndex={tabIndex} className="group flex cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 dark:hover:bg-zinc-800/50 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
@@ -212,7 +201,7 @@ function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSession; tabI
         <p className="dim mt-1 truncate font-mono text-xs">{session.repo}</p>
       </div>
       <div className="flex shrink-0 items-center gap-3 sm:justify-end">
-        <span className="dim text-xs">{STEP_LABELS[session.step]}</span>
+        <span className="dim text-xs">{currentStage?.label ?? 'Planning'}</span>
         <span className={session.status === 'failed' ? 'badge-danger' : session.status === 'completed' ? 'badge-ok' : 'badge'}>{session.status.replaceAll('_', ' ')}</span>
         <span className="dim min-w-14 text-right text-xs">{timeAgo(session.updatedAt)}</span>
         <span className="text-zinc-400 transition-transform group-hover:translate-x-0.5 dark:text-zinc-500" aria-hidden="true">→</span>

@@ -5,6 +5,7 @@ import { assertPlannerTransition } from '../dist/api/planner-machine.js';
 import {
   clarificationPrompt,
   discussionPrompt,
+  emptyFeatureBrief,
   parseArtifactBundle,
   parseClarification,
   parseInitialClarification,
@@ -13,13 +14,14 @@ import {
   revisionPrompt,
 } from '../dist/api/prompts.js';
 import { PlannerService } from '../dist/api/planner-service.js';
-import { PlannerRevisionConflict, PlannerStore } from '../dist/api/planner-store.js';
+import { emptyClarificationState, plannerProgress } from '../dist/api/planner-progress.js';
+import { PlannerQuestionSetConflict, PlannerRevisionConflict, PlannerStore } from '../dist/api/planner-store.js';
 
 const brief = {
   problem: 'People cannot see listing performance.',
   audience: ['Listing owners'],
   goal: 'Show useful view counts.',
-  mvp: ['Count listing views'],
+  mvp: ['Count listing views', 'Show totals', 'Respect privacy', 'Reuse existing access rules', 'Test the user flow'],
   outOfScope: ['Paid analytics vendor'],
   assumptions: ['Anonymous aggregation is enough'],
   risks: ['Privacy'],
@@ -38,17 +40,35 @@ const repositoryContext = {
 };
 
 function initialClarification(fields = {}) {
+  const questions = fields.questions ?? [];
   return JSON.stringify({
     summary: 'Repository context is ready.',
+    readiness: questions.length > 0 ? 'needs_input' : 'ready',
+    readinessReason: questions.length > 0 ? 'A product decision is still blocking the brief.' : 'The brief is complete enough for MVP review.',
+    blockingDecisions: questions.map((entry) => entry.decisionKey),
     repositoryContext,
     brief,
-    questions: [],
+    questions,
     ...fields,
   });
 }
 
-function question(recommended = 0) {
+function clarification(fields = {}) {
+  const questions = fields.questions ?? [];
+  return JSON.stringify({
+    summary: 'The brief was updated.',
+    readiness: questions.length > 0 ? 'needs_input' : 'ready',
+    readinessReason: questions.length > 0 ? 'A product decision is still blocking the brief.' : 'The brief is complete enough for MVP review.',
+    blockingDecisions: questions.map((entry) => entry.decisionKey),
+    brief,
+    questions,
+    ...fields,
+  });
+}
+
+function question(recommended = 0, decisionKey = 'data_retention') {
   return {
+    decisionKey,
     prompt: 'How long should data be retained?',
     whyItMatters: 'It changes privacy and storage cost.',
     options: [0, 1, 2].map((index) => ({
@@ -63,6 +83,7 @@ function storedQuestion() {
   const raw = question();
   return {
     id: 'pq-current',
+    decisionKey: raw.decisionKey,
     prompt: raw.prompt,
     whyItMatters: raw.whyItMatters,
     options: raw.options.map((option, index) => ({ id: `po-${index + 1}`, ...option })),
@@ -72,6 +93,7 @@ function storedQuestion() {
 function storedAnswer(index) {
   return {
     questionId: `pq-old-${index}`,
+    decisionKey: `previous_decision_${index}`,
     question: `Previous question ${index}`,
     optionId: null,
     value: `Previous answer ${index}`,
@@ -89,7 +111,9 @@ function seedClarificationRounds(db, count) {
 
 test('clarification parser assigns server ids and accepts at most three well-formed questions', () => {
   let id = 0;
-  const parsed = parseClarification(JSON.stringify({ summary: 'Clear enough.', brief, questions: [question(), question(1), question(2)] }), (prefix) => `${prefix}-${++id}`);
+  const parsed = parseClarification(clarification({
+    questions: [question(0, 'retention'), question(1, 'billing'), question(2, 'audience')],
+  }), (prefix) => `${prefix}-${++id}`);
   assert.equal(parsed.questions.length, 3);
   assert.equal(parsed.questions[0].id, 'pq-1');
   assert.equal(parsed.questions[0].options.length, 3);
@@ -105,9 +129,10 @@ test('initial clarification requires one bounded reusable repository snapshot', 
 });
 
 test('follow-up clarification uses the cached snapshot and only the latest answer delta', () => {
+  const originalIdea = 'A long original idea that should not be repeated';
   const prompt = clarificationPrompt({
-    idea: 'A long original idea that should not be repeated',
-    brief,
+    idea: originalIdea,
+    brief: { ...brief, problem: originalIdea },
     answers: [{ question: 'Retention?', answer: 'Thirty days' }],
     maxQuestions: 3,
     repositoryContext,
@@ -115,8 +140,21 @@ test('follow-up clarification uses the cached snapshot and only the latest answe
   assert.match(prompt, /repository discovery is already complete/);
   assert.match(prompt, /Thirty days/);
   assert.match(prompt, /Feature code is grouped by domain/);
-  assert.doesNotMatch(prompt, /A long original idea that should not be repeated/);
+  assert.doesNotMatch(prompt, new RegExp(originalIdea));
   assert.doesNotMatch(prompt, /Study the repository|Inspect the repository once/);
+});
+
+test('initial clarification includes the original idea only once', () => {
+  const originalIdea = 'Build enterprise licensing with modular entitlements';
+  const prompt = clarificationPrompt({
+    idea: originalIdea,
+    brief: emptyFeatureBrief(originalIdea),
+    answers: [],
+    maxQuestions: 3,
+    repositoryContext: null,
+    resolvedDecisionKeys: [],
+  });
+  assert.equal(prompt.split(originalIdea).length - 1, 1);
 });
 
 test('legacy planning prompts inspect the checkout when no repository snapshot exists', () => {
@@ -136,31 +174,43 @@ test('legacy planning prompts inspect the checkout when no repository snapshot e
   assert.doesNotMatch(legacyDiscussion, /working directory is intentionally an empty scratch space/);
 });
 
-test('clarification parser safely caps verbose model brief lists', () => {
+test('clarification parser preserves verbose model brief lists for explicit compaction', () => {
   const verboseBrief = {
     ...brief,
     mvp: Array.from({ length: 24 }, (_, index) => `MVP item ${index + 1}`),
     assumptions: Array.from({ length: 22 }, (_, index) => `Assumption ${index + 1}`),
   };
-  const parsed = parseClarification(JSON.stringify({ summary: 'Clear enough.', brief: verboseBrief, questions: [] }));
-  assert.equal(parsed.brief.mvp.length, 20);
-  assert.equal(parsed.brief.mvp[19], 'MVP item 20');
-  assert.equal(parsed.brief.assumptions.length, 20);
+  const parsed = parseClarification(clarification({ brief: verboseBrief }));
+  assert.equal(parsed.brief.mvp.length, 24);
+  assert.equal(parsed.brief.mvp[23], 'MVP item 24');
+  assert.equal(parsed.brief.assumptions.length, 22);
 });
 
 test('clarification parser retains a hard safety limit for model brief lists', () => {
   const runawayBrief = { ...brief, mvp: Array.from({ length: 101 }, (_, index) => `MVP item ${index + 1}`) };
-  assert.throws(() => parseClarification(JSON.stringify({ summary: 'Too verbose.', brief: runawayBrief, questions: [] })));
+  assert.throws(() => parseClarification(clarification({ brief: runawayBrief })));
 });
 
 test('clarification parser rejects too many questions, wrong option counts and ambiguous recommendations', () => {
-  assert.throws(() => parseClarification(JSON.stringify({ summary: 'x', brief, questions: [question(), question(), question(), question()] })));
-  assert.throws(() => parseClarification(JSON.stringify({ summary: 'x', brief, questions: [{ ...question(), options: question().options.slice(0, 2) }] })));
+  assert.throws(() => parseClarification(clarification({ questions: [question(), question(), question(), question()] })));
+  assert.throws(() => parseClarification(clarification({ questions: [{ ...question(), options: question().options.slice(0, 2) }] })));
   const ambiguous = question();
   ambiguous.options[1].recommended = true;
-  assert.throws(() => parseClarification(JSON.stringify({ summary: 'x', brief, questions: [ambiguous] })));
+  assert.throws(() => parseClarification(clarification({ questions: [ambiguous] })));
   assert.throws(() => parseClarification('null'));
   assert.throws(() => parseClarification('not json'));
+});
+
+test('clarification readiness must agree with its blocking questions', () => {
+  assert.throws(() => parseClarification(clarification({
+    readiness: 'ready', readinessReason: 'Ready.', blockingDecisions: [], questions: [question()],
+  })));
+  assert.throws(() => parseClarification(clarification({
+    readiness: 'needs_input', readinessReason: 'Blocked.', blockingDecisions: [], questions: [],
+  })));
+  assert.throws(() => parseClarification(clarification({
+    readiness: 'needs_input', readinessReason: 'Blocked.', blockingDecisions: [], questions: [question()],
+  })));
 });
 
 test('artifact bundle parsing is strict and never fabricates a missing model result', () => {
@@ -232,7 +282,7 @@ function storeFixture() {
       target_branch TEXT NOT NULL DEFAULT '',
       author TEXT NOT NULL, title TEXT NOT NULL, idea TEXT NOT NULL, step TEXT NOT NULL,
       status TEXT NOT NULL, revision INTEGER NOT NULL, active_action TEXT, last_error TEXT,
-      repository_context_json TEXT,
+      repository_context_json TEXT, clarification_state_json TEXT,
       brief_json TEXT NOT NULL, questions_json TEXT NOT NULL, answers_json TEXT NOT NULL,
       messages_json TEXT NOT NULL, artifacts_json TEXT, pending_revision_json TEXT,
       confirmations_json TEXT NOT NULL, doc_id TEXT, spec_id TEXT, proposal_id TEXT,
@@ -249,14 +299,15 @@ function storeFixture() {
 
 function session() {
   const now = Date.now();
-  return {
+  const sessionWithoutProgress = {
     id: 'idea-1', workspaceId: 'ws-1', repo: 'owner/repo', branch: 'main', targetBranch: 'main', author: 'alice',
     title: 'Analytics', idea: 'Add analytics', step: 'idea', status: 'draft', revision: 0,
-    activeAction: null, lastError: null, repositoryContext: null, brief, questions: [], answers: [], messages: [], artifacts: null,
+    activeAction: null, lastError: null, repositoryContext: null, clarification: emptyClarificationState(), brief, questions: [], answers: [], messages: [], artifacts: null,
     pendingRevision: null, confirmations: { brief: false, artifacts: false, analysis: false, launch: false },
     docId: null, specId: null, proposalId: null, analysis: null, analysisRunId: null,
     refinementId: null, taskIds: [], activeQueueId: null, activeRunId: null, createdAt: now, updatedAt: now,
   };
+  return { ...sessionWithoutProgress, progress: plannerProgress(sessionWithoutProgress) };
 }
 
 const analysis = {
@@ -336,13 +387,20 @@ function createService(store, overrides = {}) {
     get: () => ({ items: [] }),
     ...overrides.refinement,
   };
+  const operate = {
+    checkouts: { ...(overrides.operate?.checkouts ?? {}) },
+    orchestrator: {
+      getRun: () => undefined,
+      ...(overrides.operate?.orchestrator ?? {}),
+    },
+  };
   const service = new PlannerService(
     store,
     plan,
     refinement,
     { listBoard: () => ({ config: {}, workers: [] }) },
     { repos: { get: () => undefined, inWorkspace: () => false } },
-    overrides.operate ?? { orchestrator: {}, checkouts: {} },
+    operate,
     overrides.notify ?? { emit: (notification) => notifications.push(notification) },
     () => undefined,
   );
@@ -365,6 +423,230 @@ function deferred() {
   return { promise, resolve };
 }
 
+test('planner progress contains only real question rounds', () => {
+  const initial = session();
+  assert.equal(initial.progress.total, 6);
+  assert.equal(initial.progress.currentIndex, 0);
+  assert.equal(initial.progress.stages[0].label, 'Idea');
+
+  const firstRound = {
+    ...initial,
+    step: 'clarification',
+    status: 'waiting_for_user',
+    clarification: {
+      ...initial.clarification,
+      currentRound: 1,
+      roundsCreated: 1,
+      questionSetId: 'questions-1',
+    },
+  };
+  const firstProgress = plannerProgress(firstRound);
+  assert.equal(firstProgress.total, 7);
+  assert.equal(firstProgress.currentIndex, 1);
+  assert.equal(firstProgress.stages[1].label, 'Question round 1');
+
+  const secondRound = {
+    ...firstRound,
+    clarification: {
+      ...firstRound.clarification,
+      currentRound: 2,
+      roundsCreated: 2,
+      completedRounds: 1,
+      questionSetId: 'questions-2',
+    },
+  };
+  const secondProgress = plannerProgress(secondRound);
+  assert.equal(secondProgress.total, 8);
+  assert.equal(secondProgress.currentIndex, 2);
+  assert.equal(secondProgress.stages[2].label, 'Question round 2');
+
+  const reviewProgress = plannerProgress({
+    ...secondRound,
+    step: 'scope_review',
+    status: 'waiting_for_user',
+    clarification: { ...secondRound.clarification, questionSetId: null, completionReason: 'ready' },
+  });
+  assert.equal(reviewProgress.total, 8);
+  assert.equal(reviewProgress.currentIndex, 3);
+  assert.equal(reviewProgress.stages[3].label, 'MVP');
+});
+
+test('a complete idea reaches MVP after one repository scan and records usage', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const runOptions = [];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: {
+        runOneShot: async (options) => {
+          runOptions.push(options);
+          return { runId: 'run-complete-idea', finalMessage: initialClarification() };
+        },
+        getRun: () => ({ inputTokens: 1_200, outputTokens: 180 }),
+      },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+  const detail = service.detail('idea-1', { id: 'alice' });
+
+  assert.equal(runOptions.length, 1);
+  assert.equal(runOptions[0].cwd, '/tmp/planner-test');
+  assert.equal(ready.clarification.roundsCreated, 0);
+  assert.equal(ready.progress.total, 6);
+  assert.equal(ready.progress.stages[ready.progress.currentIndex].label, 'MVP');
+  assert.equal(detail.usage.repositoryScanRuns, 1);
+  assert.equal(detail.usage.cachedSnapshotRuns, 0);
+  assert.equal(detail.usage.totalInputTokens, 1_200);
+  assert.equal(detail.usage.totalOutputTokens, 180);
+  db.close();
+});
+
+test('a stale question set is rejected without saving answers', () => {
+  const { db, store } = storeFixture();
+  const activeQuestion = storedQuestion();
+  store.insert({
+    ...session(),
+    step: 'clarification',
+    status: 'waiting_for_user',
+    questions: [activeQuestion],
+    clarification: {
+      ...emptyClarificationState(),
+      currentRound: 1,
+      roundsCreated: 1,
+      questionSetId: 'questions-current',
+    },
+  });
+  const { service } = createService(store);
+
+  assert.throws(() => service.answer('idea-1', 0, {
+    questionSetId: 'questions-stale',
+    answers: [{ questionId: activeQuestion.id, optionId: activeQuestion.options[0].id }],
+  }, 'alice'), PlannerQuestionSetConflict);
+  const unchanged = store.get('idea-1');
+  assert.equal(unchanged.revision, 0);
+  assert.equal(unchanged.answers.length, 0);
+  assert.equal(unchanged.clarification.questionSetId, 'questions-current');
+  db.close();
+});
+
+test('duplicate decision keys and normalized question text cannot create another round', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const repeatedByText = question(1, 'retention_policy_duplicate');
+  const outputs = [
+    initialClarification({ questions: [question(0, 'data_retention')] }),
+    clarification({
+      readiness: 'needs_input',
+      readinessReason: 'The model attempted to ask the same decision again.',
+      blockingDecisions: ['data_retention', 'retention_policy_duplicate'],
+      questions: [question(0, 'data_retention'), repeatedByText],
+    }),
+  ];
+  const prompts = [];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: { runOneShot: async (options) => {
+        prompts.push(options.prompt);
+        return { runId: `run-duplicate-${prompts.length}`, finalMessage: outputs.shift() ?? null };
+      } },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const waiting = await waitFor(() => store.get('idea-1'), (value) => value?.questions.length === 1);
+  const activeQuestion = waiting.questions[0];
+  service.answer('idea-1', waiting.revision, {
+    questionSetId: waiting.clarification.questionSetId,
+    answers: [{ questionId: activeQuestion.id, optionId: activeQuestion.options[0].id }],
+  }, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+
+  assert.equal(ready.clarification.roundsCreated, 1);
+  assert.equal(ready.clarification.completionReason, 'no_new_decisions');
+  assert.deepEqual(ready.clarification.unresolvedDecisions, ['retention_policy_duplicate']);
+  assert.ok(ready.brief.openDecisions.includes('Review unresolved decision: Retention policy duplicate'));
+  assert.deepEqual(ready.questions, []);
+  assert.equal(ready.progress.total, 7);
+  assert.doesNotMatch(prompts[1], /Add analytics/);
+  db.close();
+});
+
+test('an oversized MVP is compacted once without another repository scan', async () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const oversizedBrief = {
+    ...brief,
+    mvp: Array.from({ length: 12 }, (_, index) => `Detailed capability ${index + 1}`),
+  };
+  const compactedBrief = {
+    ...brief,
+    mvp: Array.from({ length: 6 }, (_, index) => `Consolidated capability ${index + 1}`),
+  };
+  const runOptions = [];
+  const outputs = [
+    initialClarification({ brief: oversizedBrief }),
+    JSON.stringify(compactedBrief),
+  ];
+  const { service } = createService(store, {
+    operate: {
+      checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
+      orchestrator: {
+        runOneShot: async (options) => {
+          runOptions.push(options);
+          return { runId: `run-compaction-${runOptions.length}`, finalMessage: outputs.shift() ?? null };
+        },
+        getRun: (runId) => runId === 'run-compaction-1'
+          ? { inputTokens: 2_000, outputTokens: 300 }
+          : { inputTokens: 500, outputTokens: 100 },
+      },
+    },
+  });
+
+  service.startClarification('idea-1', 0, 'alice');
+  const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
+  const usage = service.detail('idea-1', { id: 'alice' }).usage;
+
+  assert.equal(runOptions.length, 2);
+  assert.equal(runOptions[0].cwd, '/tmp/planner-test');
+  assert.equal(runOptions[1].cwd, undefined);
+  assert.deepEqual(ready.brief, compactedBrief);
+  assert.ok(ready.brief.mvp.length <= 8);
+  assert.match(runOptions[1].prompt, /MVP must contain at most 8 consolidated items/);
+  assert.doesNotMatch(runOptions[1].prompt, /Add analytics|Feature code is grouped by domain|repositoryContext/);
+  assert.equal(usage.repositoryScanRuns, 1);
+  assert.equal(usage.cachedSnapshotRuns, 1);
+  assert.ok(usage.runs[1].inputTokens <= usage.runs[0].inputTokens / 2);
+  db.close();
+});
+
+test('legacy sessions infer stable decision and progress state on read', () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  const legacyQuestion = storedQuestion();
+  delete legacyQuestion.decisionKey;
+  const legacyAnswer = storedAnswer(1);
+  delete legacyAnswer.decisionKey;
+  db.prepare(`
+    UPDATE planner_sessions
+    SET step = 'clarification', status = 'waiting_for_user', clarification_state_json = NULL,
+      questions_json = ?, answers_json = ?
+    WHERE id = 'idea-1'
+  `).run(JSON.stringify([legacyQuestion]), JSON.stringify([legacyAnswer]));
+
+  const normalized = store.get('idea-1');
+  assert.match(normalized.questions[0].decisionKey, /^how_long_should_data_be_retained/);
+  assert.match(normalized.answers[0].decisionKey, /^previous_question_1/);
+  assert.equal(normalized.clarification.answerCount, 1);
+  assert.equal(normalized.clarification.roundsCreated, 2);
+  assert.match(normalized.clarification.questionSetId, /^legacy-/);
+  assert.equal(normalized.progress.total, 8);
+  db.close();
+});
+
 test('clarification persists submitted answers and includes them in the next planning prompt', async () => {
   const { db, store } = storeFixture();
   store.insert(session());
@@ -372,7 +654,7 @@ test('clarification persists submitted answers and includes them in the next pla
   const runOptions = [];
   const outputs = [
     initialClarification({ summary: 'One decision is needed.', questions: [question()] }),
-    JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
+    clarification({ summary: 'The brief is ready.' }),
   ];
   const { service } = createService(store, {
     operate: {
@@ -390,6 +672,7 @@ test('clarification persists submitted answers and includes them in the next pla
   const activeQuestion = waiting.questions[0];
   const selected = activeQuestion.options[0];
   service.answer('idea-1', waiting.revision, {
+    questionSetId: waiting.clarification.questionSetId,
     answers: [{ questionId: activeQuestion.id, optionId: selected.id }],
   }, 'alice');
   const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
@@ -402,6 +685,8 @@ test('clarification persists submitted answers and includes them in the next pla
   assert.equal(runOptions[1].cwd, undefined);
   assert.ok(prompts[1].includes(`${activeQuestion.prompt}: ${selected.label}`));
   assert.doesNotMatch(prompts[1], /Study the repository|Inspect the repository once/);
+  assert.doesNotMatch(prompts[1], /Add analytics/);
+  assert.ok(prompts[1].length < 40_000);
   db.close();
 });
 
@@ -410,7 +695,7 @@ test('planner checkpoints raise actionable inbox notifications with a direct ide
   store.insert(session());
   const outputs = [
     initialClarification({ summary: 'One decision is needed.', questions: [question()] }),
-    JSON.stringify({ summary: 'The brief is ready.', brief, questions: [] }),
+    clarification({ summary: 'The brief is ready.' }),
   ];
   const { service, notifications } = createService(store, {
     operate: {
@@ -432,6 +717,7 @@ test('planner checkpoints raise actionable inbox notifications with a direct ide
 
   const activeQuestion = questionsReady.questions[0];
   service.answer('idea-1', questionsReady.revision, {
+    questionSetId: questionsReady.clarification.questionSetId,
     answers: [{ questionId: activeQuestion.id, optionId: activeQuestion.options[0].id }],
   }, 'alice');
   await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
@@ -469,10 +755,13 @@ test('the fifth clarification round consolidates its answers and cannot produce 
     step: 'clarification',
     status: 'waiting_for_user',
     repositoryContext,
+    clarification: {
+      ...emptyClarificationState(), currentRound: 5, roundsCreated: 5, completedRounds: 4,
+      answerCount: 4, questionSetId: 'question-set-5',
+    },
     questions: [currentQuestion],
     answers: Array.from({ length: 4 }, (_, index) => storedAnswer(index + 1)),
   });
-  seedClarificationRounds(db, 4);
   const prompts = [];
   const finalBrief = { ...brief, goal: 'Use the answer from the final allowed round.' };
   const { service } = createService(store, {
@@ -482,17 +771,14 @@ test('the fifth clarification round consolidates its answers and cannot produce 
         prompts.push(options.prompt);
         return {
           runId: 'run-final-round',
-          finalMessage: JSON.stringify({
-            summary: 'The final answers are incorporated.',
-            brief: finalBrief,
-            questions: [question()],
-          }),
+          finalMessage: clarification({ summary: 'The final answers are incorporated.', brief: finalBrief }),
         };
       } },
     },
   });
 
   service.answer('idea-1', 0, {
+    questionSetId: 'question-set-5',
     answers: [{ questionId: currentQuestion.id, optionId: currentQuestion.options[0].id }],
   }, 'alice');
   const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');
@@ -502,7 +788,7 @@ test('the fifth clarification round consolidates its answers and cannot produce 
   assert.deepEqual(ready.brief, finalBrief);
   assert.deepEqual(ready.questions, []);
   assert.match(prompts[0], /at most 0 question\(s\)/);
-  assert.match(prompts[0], /"questions": \[\] exactly/);
+  assert.match(prompts[0], /"questions": \[\]/);
   assert.ok(prompts[0].includes(`${currentQuestion.prompt}: ${currentQuestion.options[0].label}`));
   assert.doesNotMatch(prompts[0], /Previous answer/);
   db.close();
@@ -516,21 +802,25 @@ test('fifteen submitted clarification answers end questioning even before the ro
     step: 'clarification',
     status: 'waiting_for_user',
     repositoryContext,
+    clarification: {
+      ...emptyClarificationState(), currentRound: 4, roundsCreated: 4, completedRounds: 3,
+      answerCount: 14, questionSetId: 'question-set-4',
+    },
     questions: [currentQuestion],
     answers: Array.from({ length: 14 }, (_, index) => storedAnswer(index + 1)),
   });
-  seedClarificationRounds(db, 3);
   const { service } = createService(store, {
     operate: {
       checkouts: { clone: async () => undefined, cloneDir: () => '/tmp/planner-test' },
       orchestrator: { runOneShot: async () => ({
         runId: 'run-answer-cap',
-        finalMessage: JSON.stringify({ summary: 'The brief is ready.', brief, questions: [question()] }),
+        finalMessage: clarification({ summary: 'The brief is ready.' }),
       }) },
     },
   });
 
   service.answer('idea-1', 0, {
+    questionSetId: 'question-set-4',
     answers: [{ questionId: currentQuestion.id, value: 'A final custom answer' }],
   }, 'alice');
   const ready = await waitFor(() => store.get('idea-1'), (value) => value?.step === 'scope_review');

@@ -1,14 +1,20 @@
 import type Database from 'better-sqlite3';
 import { safeParse } from '@companion/services';
 import type {
+  ClarificationState,
   FeatureBrief,
   FeaturePlanningSession,
+  PlannerAnswer,
   PlannerEventRecord,
+  PlannerQuestion,
   PlannerRevision,
+  PlannerUsageRun,
+  PlannerUsageSummary,
   RepositoryPlanningContext,
 } from '../contract/index.js';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import { assertPlannerTransition } from './planner-machine.js';
+import { emptyClarificationState, plannerProgress } from './planner-progress.js';
 
 export class PlannerRevisionConflict extends Error {
   constructor(readonly current: FeaturePlanningSession) {
@@ -16,7 +22,13 @@ export class PlannerRevisionConflict extends Error {
   }
 }
 
-export type PlannerSessionPatch = Partial<Omit<FeaturePlanningSession, 'id' | 'workspaceId' | 'repo' | 'branch' | 'author' | 'createdAt' | 'updatedAt' | 'revision'>>;
+export class PlannerQuestionSetConflict extends Error {
+  constructor(readonly current: FeaturePlanningSession) {
+    super('these questions are no longer current; open the latest question round before submitting');
+  }
+}
+
+export type PlannerSessionPatch = Partial<Omit<FeaturePlanningSession, 'id' | 'workspaceId' | 'repo' | 'branch' | 'author' | 'createdAt' | 'updatedAt' | 'revision' | 'progress'>>;
 
 export class PlannerStore {
   constructor(private readonly db: Database.Database) {}
@@ -25,13 +37,13 @@ export class PlannerStore {
     this.db.prepare(`
       INSERT INTO planner_sessions (
         id, workspace_id, repo, branch, target_branch, author, title, idea, step, status, revision,
-        active_action, last_error, repository_context_json, brief_json, questions_json, answers_json, messages_json,
+        active_action, last_error, repository_context_json, clarification_state_json, brief_json, questions_json, answers_json, messages_json,
         artifacts_json, pending_revision_json, confirmations_json, doc_id, spec_id, proposal_id,
         analysis_json, analysis_run_id, refinement_id, task_ids_json, active_queue_id, active_run_id,
         created_at, updated_at
       ) VALUES (
         @id, @workspaceId, @repo, @branch, @targetBranch, @author, @title, @idea, @step, @status, @revision,
-        @activeAction, @lastError, @repositoryContext, @brief, @questions, @answers, @messages,
+        @activeAction, @lastError, @repositoryContext, @clarification, @brief, @questions, @answers, @messages,
         @artifacts, @pendingRevision, @confirmations, @docId, @specId, @proposalId,
         @analysis, @analysisRunId, @refinementId, @taskIds, @activeQueueId, @activeRunId,
         @createdAt, @updatedAt
@@ -70,19 +82,20 @@ export class PlannerStore {
       if (opts.expectedRevision !== undefined && current.revision !== opts.expectedRevision) {
         throw new PlannerRevisionConflict(current);
       }
-      const next: FeaturePlanningSession = {
+      const nextWithoutProgress: Omit<FeaturePlanningSession, 'progress'> = {
         ...current,
         ...patch,
         revision: current.revision + 1,
         updatedAt: Date.now(),
       };
+      const next: FeaturePlanningSession = { ...nextWithoutProgress, progress: plannerProgress(nextWithoutProgress) };
       assertPlannerTransition(current.step, current.status, next.step, next.status);
       const result = this.db.prepare(`
         UPDATE planner_sessions SET
           title = @title, idea = @idea, step = @step, status = @status, revision = @revision,
           target_branch = @targetBranch,
           active_action = @activeAction, last_error = @lastError,
-          repository_context_json = @repositoryContext, brief_json = @brief,
+          repository_context_json = @repositoryContext, clarification_state_json = @clarification, brief_json = @brief,
           questions_json = @questions, answers_json = @answers, messages_json = @messages,
           artifacts_json = @artifacts, pending_revision_json = @pendingRevision,
           confirmations_json = @confirmations, doc_id = @docId, spec_id = @specId,
@@ -108,6 +121,24 @@ export class PlannerStore {
       detail: safeParse<Record<string, unknown>>(row.detail_json, {}),
       createdAt: row.created_at,
     }));
+  }
+
+  appendEvent(sessionId: string, kind: string, detail: Readonly<Record<string, unknown>>): void {
+    this.insertEvent(sessionId, kind, detail);
+  }
+
+  usage(sessionId: string): PlannerUsageSummary {
+    const rows = this.db
+      .prepare(`SELECT detail_json FROM planner_events WHERE session_id = ? AND kind = 'planner_run_completed' ORDER BY id`)
+      .all(sessionId) as Array<{ detail_json: string }>;
+    const runs = rows.map((row) => safeParse<PlannerUsageRun | null>(row.detail_json, null)).filter(isUsageRun);
+    return {
+      runs,
+      totalInputTokens: runs.reduce((sum, run) => sum + run.inputTokens, 0),
+      totalOutputTokens: runs.reduce((sum, run) => sum + run.outputTokens, 0),
+      repositoryScanRuns: runs.filter((run) => run.contextMode === 'repository_scan').length,
+      cachedSnapshotRuns: runs.filter((run) => run.contextMode === 'cached_snapshot').length,
+    };
   }
 
   resetDangling(): number {
@@ -151,6 +182,7 @@ interface PlannerSessionRow {
   active_action: FeaturePlanningSession['activeAction'];
   last_error: string | null;
   repository_context_json: string | null;
+  clarification_state_json: string | null;
   brief_json: string;
   questions_json: string;
   answers_json: string;
@@ -183,6 +215,7 @@ function toParams(session: FeaturePlanningSession): Record<string, unknown> {
   return {
     ...session,
     repositoryContext: session.repositoryContext ? JSON.stringify(session.repositoryContext) : null,
+    clarification: JSON.stringify(session.clarification),
     brief: JSON.stringify(session.brief),
     questions: JSON.stringify(session.questions),
     answers: JSON.stringify(session.answers),
@@ -209,7 +242,10 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
   const storedRevision = row.pending_revision_json
     ? safeParse<(Omit<PlannerRevision, 'brief'> & { readonly brief?: FeatureBrief }) | null>(row.pending_revision_json, null)
     : null;
-  return {
+  const questions = normalizeQuestions(safeParse<PlannerQuestion[]>(row.questions_json, []));
+  const answers = normalizeAnswers(safeParse<PlannerAnswer[]>(row.answers_json, []), questions);
+  const clarification = normalizeClarificationState(row.clarification_state_json, questions, answers);
+  const sessionWithoutProgress: Omit<FeaturePlanningSession, 'progress'> = {
     id: row.id,
     workspaceId: row.workspace_id,
     repo: row.repo,
@@ -227,8 +263,9 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
       ? safeParse<RepositoryPlanningContext | null>(row.repository_context_json, null)
       : null,
     brief,
-    questions: safeParse(row.questions_json, []),
-    answers: safeParse(row.answers_json, []),
+    clarification,
+    questions,
+    answers,
     messages: safeParse(row.messages_json, []),
     artifacts: row.artifacts_json ? safeParse(row.artifacts_json, null) : null,
     // Revisions created before brief synchronization remain reviewable and
@@ -247,4 +284,58 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  return { ...sessionWithoutProgress, progress: plannerProgress(sessionWithoutProgress) };
+}
+
+function normalizeQuestions(questions: PlannerQuestion[]): PlannerQuestion[] {
+  return questions.map((question) => ({
+    ...question,
+    decisionKey: question.decisionKey || legacyDecisionKey(question.prompt, question.id),
+  }));
+}
+
+function normalizeAnswers(answers: PlannerAnswer[], activeQuestions: ReadonlyArray<PlannerQuestion>): PlannerAnswer[] {
+  return answers.map((answer) => ({
+    ...answer,
+    decisionKey: answer.decisionKey
+      || activeQuestions.find((question) => question.id === answer.questionId)?.decisionKey
+      || legacyDecisionKey(answer.question, answer.questionId),
+  }));
+}
+
+function normalizeClarificationState(
+  raw: string | null,
+  questions: ReadonlyArray<PlannerQuestion>,
+  answers: ReadonlyArray<PlannerAnswer>,
+): ClarificationState {
+  const fallback = emptyClarificationState();
+  const stored = raw ? safeParse<Partial<ClarificationState>>(raw, {}) : {};
+  const resolvedDecisionKeys = Array.from(new Set([
+    ...(stored.resolvedDecisionKeys ?? []),
+    ...answers.map((answer) => answer.decisionKey),
+  ]));
+  const inferredCompletedRounds = answers.length > 0 ? Math.ceil(answers.length / 3) : 0;
+  const roundsCreated = Math.max(stored.roundsCreated ?? 0, inferredCompletedRounds, questions.length > 0 ? inferredCompletedRounds + 1 : 0);
+  return {
+    currentRound: stored.currentRound ?? (questions.length > 0 ? Math.max(1, roundsCreated) : roundsCreated),
+    roundsCreated,
+    completedRounds: Math.max(stored.completedRounds ?? 0, inferredCompletedRounds),
+    answerCount: Math.max(stored.answerCount ?? 0, answers.length),
+    questionSetId: questions.length > 0 ? stored.questionSetId ?? `legacy-${questions[0]?.id ?? 'questions'}` : null,
+    resolvedDecisionKeys,
+    roundLimit: stored.roundLimit ?? fallback.roundLimit,
+    answerLimit: stored.answerLimit ?? fallback.answerLimit,
+    completionReason: stored.completionReason ?? null,
+    completionExplanation: stored.completionExplanation ?? null,
+    unresolvedDecisions: stored.unresolvedDecisions ?? [],
+  };
+}
+
+function legacyDecisionKey(prompt: string, id: string): string {
+  const normalized = prompt.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 56);
+  return normalized || `legacy_${id.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 48)}`;
+}
+
+function isUsageRun(value: PlannerUsageRun | null): value is PlannerUsageRun {
+  return value !== null && typeof value.runId === 'string' && typeof value.promptChars === 'number';
 }

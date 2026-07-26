@@ -97,6 +97,7 @@ export interface PlannerQuestionOption {
 
 export interface PlannerQuestion {
   readonly id: string;
+  readonly decisionKey: string;
   readonly prompt: string;
   readonly whyItMatters: string;
   readonly options: readonly [PlannerQuestionOption, PlannerQuestionOption, PlannerQuestionOption];
@@ -104,6 +105,7 @@ export interface PlannerQuestion {
 
 export interface PlannerAnswer {
   readonly questionId: string;
+  readonly decisionKey: string;
   readonly question: string;
   readonly optionId: string | null;
   readonly value: string;
@@ -141,6 +143,9 @@ export interface ArtifactBundle {
 
 export interface ClarificationResult {
   readonly summary: string;
+  readonly readiness: 'ready' | 'needs_input';
+  readonly readinessReason: string;
+  readonly blockingDecisions: ReadonlyArray<string>;
   readonly brief: FeatureBrief;
   readonly questions: ReadonlyArray<PlannerQuestion>;
 }
@@ -188,6 +193,55 @@ export interface PlannerConfirmations {
   readonly launch: boolean;
 }
 
+export type ClarificationCompletionReason = 'ready' | 'limit_reached' | 'no_new_decisions';
+
+export interface ClarificationState {
+  readonly currentRound: number;
+  readonly roundsCreated: number;
+  readonly completedRounds: number;
+  readonly answerCount: number;
+  readonly questionSetId: string | null;
+  readonly resolvedDecisionKeys: ReadonlyArray<string>;
+  readonly roundLimit: number;
+  readonly answerLimit: number;
+  readonly completionReason: ClarificationCompletionReason | null;
+  readonly completionExplanation: string | null;
+  readonly unresolvedDecisions: ReadonlyArray<string>;
+}
+
+export interface PlannerProgressStage {
+  readonly id: string;
+  readonly label: string;
+  readonly state: 'completed' | 'current' | 'upcoming';
+  readonly detail: string | null;
+}
+
+export interface PlannerProgress {
+  readonly stages: ReadonlyArray<PlannerProgressStage>;
+  readonly currentIndex: number;
+  readonly completed: number;
+  readonly total: number;
+}
+
+export interface PlannerUsageRun {
+  readonly runId: string;
+  readonly action: string;
+  readonly round: number | null;
+  readonly contextMode: 'repository_scan' | 'cached_snapshot';
+  readonly promptChars: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly durationMs: number;
+}
+
+export interface PlannerUsageSummary {
+  readonly runs: ReadonlyArray<PlannerUsageRun>;
+  readonly totalInputTokens: number;
+  readonly totalOutputTokens: number;
+  readonly repositoryScanRuns: number;
+  readonly cachedSnapshotRuns: number;
+}
+
 export interface FeaturePlanningSession {
   readonly id: string;
   readonly workspaceId: string;
@@ -203,6 +257,8 @@ export interface FeaturePlanningSession {
   readonly activeAction: PlannerAction | null;
   readonly lastError: string | null;
   readonly repositoryContext: RepositoryPlanningContext | null;
+  readonly clarification: ClarificationState;
+  readonly progress: PlannerProgress;
   readonly brief: FeatureBrief;
   readonly questions: ReadonlyArray<PlannerQuestion>;
   readonly answers: ReadonlyArray<PlannerAnswer>;
@@ -234,6 +290,7 @@ export interface PlannerEventRecord {
 export interface PlannerSessionDetail {
   readonly session: FeaturePlanningSession;
   readonly events: ReadonlyArray<PlannerEventRecord>;
+  readonly usage: PlannerUsageSummary;
   readonly refinementItems: ReadonlyArray<RefineItemRecord>;
   readonly board: {
     readonly config: BoardConfig;
