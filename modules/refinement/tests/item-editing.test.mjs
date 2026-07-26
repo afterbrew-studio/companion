@@ -68,6 +68,33 @@ test('merging rewrites dependents to the surviving item and imported items stay 
   db.close();
 });
 
+test('AI task revisions atomically preserve identity and validate the dependency graph', () => {
+  const { db, service } = fixture();
+  const revised = service.replaceProposedItems('ref-1', [
+    { id: 'a', title: 'Revised A', description: 'New A', acceptance: '- A works', priority: 0, dependsOnIds: [] },
+    { id: 'b', title: 'Revised B', description: 'New B', acceptance: '- B works', priority: 1, dependsOnIds: [] },
+    { id: 'c', title: 'Revised C', description: 'New C', acceptance: '- C works', priority: 2, dependsOnIds: ['a', 'b'] },
+  ]);
+  assert.deepEqual(revised.map((item) => item.id), ['a', 'b', 'c']);
+  assert.deepEqual(revised.map((item) => item.title), ['Revised A', 'Revised B', 'Revised C']);
+  assert.deepEqual(revised.find((item) => item.id === 'c').dependsOn, [0, 1]);
+
+  const stable = service.get('ref-1').items;
+  assert.throws(() => service.replaceProposedItems('ref-1', [
+    { id: 'a', title: 'A', description: 'A', acceptance: 'A', priority: 2, dependsOnIds: [] },
+    { id: 'b', title: 'B', description: 'B', acceptance: 'B', priority: 2, dependsOnIds: [] },
+  ]), /every proposed task exactly once/);
+  assert.deepEqual(service.get('ref-1').items, stable);
+
+  assert.throws(() => service.replaceProposedItems('ref-1', [
+    { id: 'a', title: 'A', description: 'A', acceptance: 'A', priority: 2, dependsOnIds: ['b'] },
+    { id: 'b', title: 'B', description: 'B', acceptance: 'B', priority: 2, dependsOnIds: ['a'] },
+    { id: 'c', title: 'C', description: 'C', acceptance: 'C', priority: 2, dependsOnIds: [] },
+  ]), /form a cycle/);
+  assert.deepEqual(service.get('ref-1').items, stable);
+  db.close();
+});
+
 test('partial queued import is retryable and never duplicates completed items', () => {
   const calls = [];
   let failOnce = true;

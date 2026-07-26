@@ -124,20 +124,22 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   const canManage = can('planner:manage') && session.status !== 'completed' && session.status !== 'cancelled';
   const planStaysVisible = session.step === 'analysis_review' && session.analysis !== null;
   const interactionDisabled = !canManage || busy || session.status === 'working';
+  const defaultDiscussionContext = discussionContextForStep(session.step, artifactTab);
   const canDiscuss = canManage
-    && session.step === 'analysis_review'
     && session.status === 'waiting_for_user'
-    && session.analysis !== null
-    && session.artifacts !== null;
-  const openDiscussion = (context: PlannerDiscussionContext = 'plan_summary'): void => {
+    && isDiscussionAvailable(session);
+  const openDiscussion = (context: PlannerDiscussionContext = defaultDiscussionContext): void => {
     setDiscussionContext(context);
     setDiscussionOpen(true);
   };
   const focusPlanReference = (context: PlannerDiscussionContext): void => {
     setDiscussionContext(context);
+    if (context === 'documentation') setArtifactTab('documentation');
+    if (context === 'specification') setArtifactTab('specification');
+    if (context === 'implementation_plan') setArtifactTab('implementationPlan');
     if (window.matchMedia('(max-width: 767px)').matches) setDiscussionOpen(false);
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      document.getElementById(`analysis-context-${context}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById(discussionElementId(context))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
   };
   const sendDiscussion = async (message: string, context = discussionContext): Promise<void> => {
@@ -251,7 +253,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
             <BriefReview
               brief={brief}
               onChange={setBrief}
-              disabled={!canManage || busy}
+              disabled={!canManage || busy || session.pendingRevision !== null}
               onConfirm={() => act(() => ideasApi.confirmBrief(id, session.revision, brief))}
             />
           ) : null}
@@ -262,7 +264,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
               dirty={artifactsDirty}
               tab={artifactTab}
               preview={preview}
-              disabled={!canManage || busy}
+              disabled={!canManage || busy || session.pendingRevision !== null}
               onTab={setArtifactTab}
               onPreview={setPreview}
               onChange={setArtifacts}
@@ -275,7 +277,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
             <AnalysisReview
               analysis={session.analysis}
               artifacts={session.artifacts}
-              pending={session.pendingRevision}
+              pending={session.pendingRevision?.kind === 'plan' ? session.pendingRevision : null}
               focusedContext={discussionContext}
               disabled={interactionDisabled}
               onDiscuss={openDiscussion}
@@ -286,30 +288,44 @@ export default function Idea({ id }: { id: string }): JSX.Element {
           ) : null}
 
           {session.step === 'tasks_review' ? (
-            <TaskReview
-              session={session}
-              items={state.detail.refinementItems}
-              board={state.detail.board}
-              mergeIds={mergeIds}
-              setMergeIds={setMergeIds}
-              disabled={!canManage || busy}
-              onUpdate={async (itemId, fields) => {
-                const error = await runAction(
-                  () => ideasApi.updateItem(id, itemId, session.revision, fields),
-                  { refreshOnError: false },
-                );
-                if (error) state.setError(friendlyTaskUpdateError(error));
-                return error;
-              }}
-              onMove={(itemId, direction) => act(() => ideasApi.moveItem(id, itemId, session.revision, direction))}
-              onDismiss={(itemId) => act(() => ideasApi.dismissItem(id, itemId, session.revision))}
-              onMerge={() => act(async () => {
-                await ideasApi.mergeItems(id, session.revision, mergeIds);
-                setMergeIds([]);
-              })}
-              onLaunch={(targetBranch) => act(() => ideasApi.launch(id, session.revision, targetBranch))}
-              canExecute={can('planner:execute')}
-              canManageBoard={can('board:manage')}
+            <div id="planner-context-tasks" className="scroll-mt-20">
+              <TaskReview
+                session={session}
+                items={state.detail.refinementItems}
+                board={state.detail.board}
+                mergeIds={mergeIds}
+                setMergeIds={setMergeIds}
+                disabled={!canManage || busy || session.pendingRevision !== null}
+                onUpdate={async (itemId, fields) => {
+                  const error = await runAction(
+                    () => ideasApi.updateItem(id, itemId, session.revision, fields),
+                    { refreshOnError: false },
+                  );
+                  if (error) state.setError(friendlyTaskUpdateError(error));
+                  return error;
+                }}
+                onMove={(itemId, direction) => act(() => ideasApi.moveItem(id, itemId, session.revision, direction))}
+                onDismiss={(itemId) => act(() => ideasApi.dismissItem(id, itemId, session.revision))}
+                onMerge={() => act(async () => {
+                  await ideasApi.mergeItems(id, session.revision, mergeIds);
+                  setMergeIds([]);
+                })}
+                onLaunch={(targetBranch) => act(() => ideasApi.launch(id, session.revision, targetBranch))}
+                canExecute={can('planner:execute')}
+                canManageBoard={can('board:manage')}
+              />
+            </div>
+          ) : null}
+
+          {session.pendingRevision && session.pendingRevision.kind !== 'plan' ? (
+            <CheckpointRevisionReview
+              revision={session.pendingRevision}
+              currentBrief={session.brief}
+              currentArtifacts={session.artifacts}
+              currentTasks={state.detail.refinementItems}
+              disabled={interactionDisabled}
+              onApply={() => act(() => ideasApi.applyRevision(id, session.revision))}
+              onDiscard={() => act(() => ideasApi.discardRevision(id, session.revision))}
             />
           ) : null}
 
@@ -539,7 +555,7 @@ function BriefReview({ brief, onChange, disabled, onConfirm }: { brief: FeatureB
   const [showAllMvp, setShowAllMvp] = useState(false);
   const updateList = (key: BriefListKey, value: string): void => onChange({ ...brief, [key]: lines(value) });
   return (
-    <section className="mt-5 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <section id="planner-context-brief" className="mt-5 scroll-mt-20 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <header className="border-b border-zinc-200 px-5 py-5 dark:border-zinc-800 sm:px-7 sm:py-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -780,6 +796,7 @@ function ArtifactReview({ artifacts, dirty, tab, preview, disabled, onTab, onPre
   const labels: Record<keyof ArtifactBundle, string> = { documentation: 'Documentation', specification: 'Specification', implementationPlan: 'Implementation plan' };
   const draft = artifacts[tab];
   return (
+    <div id={`planner-context-${artifactDiscussionContext(tab)}`} className="scroll-mt-20">
     <Panel>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">Review planning artifacts</h2><span className={dirty ? 'badge-warn' : 'badge-ok'}>{dirty ? 'Unsaved edits' : 'Drafts saved'}</span></div><p className="dim mt-1 text-sm">Drafts are private to this session until you create the canonical records.</p></div>
@@ -798,6 +815,98 @@ function ArtifactReview({ artifacts, dirty, tab, preview, disabled, onTab, onPre
       </div>
       <div className="mt-6 flex flex-col justify-end gap-2 sm:flex-row"><button className="btn-ghost" disabled={disabled || !dirty} onClick={() => void onSave()}>Save draft edits</button><button className="btn" disabled={disabled || dirty} title={dirty ? 'Save draft edits before creating artifacts' : undefined} onClick={() => void onCreate()}>Create planning artifacts</button></div>
     </Panel>
+    </div>
+  );
+}
+
+function CheckpointRevisionReview({ revision, currentBrief, currentArtifacts, currentTasks, disabled, onApply, onDiscard }: {
+  revision: PlannerRevision;
+  currentBrief: FeatureBrief | null;
+  currentArtifacts: ArtifactBundle | null;
+  currentTasks: ReadonlyArray<RefineItemRecord>;
+  disabled: boolean;
+  onApply: () => Promise<void>;
+  onDiscard: () => Promise<void>;
+}): JSX.Element | null {
+  if (revision.kind === 'plan') return null;
+  const taskChanges = revision.kind === 'tasks' && revision.tasks
+    ? revision.tasks.filter((task) => {
+      const current = currentTasks.find((candidate) => candidate.id === task.id);
+      if (!current) return true;
+      const currentDependencyIds = current.dependsOn.flatMap((ord) => {
+        const dependency = currentTasks.find((candidate) => candidate.ord === ord);
+        return dependency ? [dependency.id] : [];
+      });
+      return current.title !== task.title
+        || current.description !== task.description
+        || current.acceptance !== task.acceptance
+        || current.priority !== task.priority
+        || JSON.stringify(currentDependencyIds) !== JSON.stringify(task.dependsOnIds);
+    })
+    : [];
+  const title = revision.kind === 'brief'
+    ? 'Proposed MVP revision'
+    : revision.kind === 'artifacts'
+      ? 'Proposed artifact revision'
+      : 'Proposed task revision';
+  const applyLabel = revision.kind === 'brief'
+    ? 'Apply MVP changes'
+    : revision.kind === 'artifacts'
+      ? 'Apply draft changes'
+      : 'Apply task changes';
+  return (
+    <section className="mt-5 overflow-hidden rounded-xl border border-emerald-300 bg-emerald-50/30 dark:border-emerald-900 dark:bg-emerald-950/10" aria-labelledby="checkpoint-revision-title">
+      <div className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="checkpoint-revision-title" className="font-semibold">{title}</h2>
+            <span className="badge-accent">Waiting for approval</span>
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">{revision.summary}</p>
+          <p className="mt-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">Nothing changes until you apply this proposal.</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button type="button" className="btn-ghost whitespace-nowrap" disabled={disabled} onClick={() => void onDiscard()}>Discard change</button>
+          <button type="button" className="btn whitespace-nowrap" disabled={disabled} onClick={() => void onApply()}>{applyLabel}</button>
+        </div>
+      </div>
+      {revision.kind === 'brief' && revision.brief ? (
+        <dl className="grid border-t border-emerald-200/70 bg-white/60 dark:border-emerald-900/70 dark:bg-zinc-950/25 sm:grid-cols-3">
+          <RevisionMetric label="MVP items" current={currentBrief?.mvp.length ?? 0} next={revision.brief.mvp.length} />
+          <RevisionMetric label="Open decisions" current={currentBrief?.openDecisions.length ?? 0} next={revision.brief.openDecisions.length} />
+          <RevisionMetric label="Risks" current={currentBrief?.risks.length ?? 0} next={revision.brief.risks.length} />
+        </dl>
+      ) : null}
+      {revision.kind === 'artifacts' && revision.artifacts && currentArtifacts ? (
+        <div className="border-t border-emerald-200/70 px-5 py-5 dark:border-emerald-900/70 sm:px-6">
+          <DiffView diff={revisionDiff(currentArtifacts, revision.artifacts)} />
+        </div>
+      ) : null}
+      {revision.kind === 'tasks' && revision.tasks ? (
+        <div className="border-t border-emerald-200/70 px-5 py-5 dark:border-emerald-900/70 sm:px-6">
+          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{taskChanges.length} {taskChanges.length === 1 ? 'task will change' : 'tasks will change'}</p>
+          {taskChanges.length > 0 ? (
+            <ol className="mt-3 grid gap-2">
+              {taskChanges.map((task) => (
+                <li key={task.id} className="flex items-start justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-3 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <span className="min-w-0 font-medium text-zinc-800 dark:text-zinc-200">{task.title}</span>
+                  <span className={`shrink-0 text-xs font-medium ${TASK_PRIORITY_META[task.priority].className}`}>{TASK_PRIORITY_META[task.priority].label}</span>
+                </li>
+              ))}
+            </ol>
+          ) : <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">The proposal does not change any task fields.</p>}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RevisionMetric({ label, current, next }: { label: string; current: number; next: number }): JSX.Element {
+  return (
+    <div className="border-b border-emerald-200/70 px-5 py-4 last:border-b-0 dark:border-emerald-900/70 sm:border-b-0 sm:border-r sm:last:border-r-0">
+      <dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dd className="mt-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">{current} <span className="px-1 text-zinc-400">→</span> {next}</dd>
+    </div>
   );
 }
 
@@ -918,7 +1027,7 @@ function AnalysisReview({ analysis, artifacts, pending, disabled, focusedContext
               <button type="button" className="btn whitespace-nowrap" disabled={disabled} onClick={() => void onApply()}>Apply and re-analyze</button>
             </div>
           </div>
-          {artifacts ? <DiffView diff={revisionDiff(artifacts, pending.artifacts)} className="mt-5" /> : null}
+          {artifacts && pending.artifacts ? <DiffView diff={revisionDiff(artifacts, pending.artifacts)} className="mt-5" /> : null}
         </section>
       ) : null}
       <footer className="flex flex-col gap-4 border-t border-zinc-200 bg-zinc-50/70 px-5 py-5 dark:border-zinc-800 dark:bg-zinc-950/35 sm:flex-row sm:items-center sm:justify-between sm:px-7">
@@ -1696,7 +1805,8 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
     };
   }, [open]);
   const contextName = discussionContextLabel(context);
-  const available = session.step === 'analysis_review' && session.analysis !== null && session.artifacts !== null;
+  const available = isDiscussionAvailable(session);
+  const checkpointContext = discussionContextForStep(session.step, 'implementationPlan');
   return (
     <aside
       className={`flex shrink-0 flex-col bg-white transition-[width,transform,visibility] duration-200 ease-in-out motion-reduce:transition-none max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-50 max-md:h-dvh max-md:w-full max-md:shadow-2xl md:sticky md:top-0 md:h-[calc(100dvh-2.75rem)] md:self-start md:overflow-hidden dark:bg-zinc-950 ${
@@ -1723,7 +1833,7 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
             <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
               <span className="shrink-0 text-zinc-500 dark:text-zinc-400">Focus</span>
               <strong className="truncate font-medium text-zinc-800 dark:text-zinc-100">{contextName}</strong>
-              {context !== 'plan_summary' ? <button type="button" className="shrink-0 cursor-pointer text-emerald-700 outline-none hover:text-emerald-600 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" onClick={() => onContext('plan_summary')}>Use whole plan</button> : null}
+              {context !== checkpointContext ? <button type="button" className="shrink-0 cursor-pointer text-emerald-700 outline-none hover:text-emerald-600 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" onClick={() => onContext(checkpointContext)}>Use checkpoint</button> : null}
             </div>
             <span className="badge-accent shrink-0">Review before apply</span>
           </div>
@@ -1793,7 +1903,7 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
             <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
               {session.step === 'launched' || session.status === 'completed'
                 ? 'This session is read-only. Continue implementation discussions from the Task Board.'
-                : 'Discussion becomes available when the implementation plan reaches review.'}
+                : 'Discussion becomes available after clarification, at each review checkpoint.'}
             </p>
           )}
         </form>
@@ -1877,6 +1987,11 @@ function discussionIntentLabel(intent: NonNullable<PlannerMessage['intent']>): s
 
 function discussionContextLabel(context: PlannerDiscussionContext): string {
   const labels: Readonly<Record<PlannerDiscussionContext, string>> = {
+    brief: 'Product brief and MVP',
+    documentation: 'Documentation',
+    specification: 'Specification',
+    implementation_plan: 'Implementation plan draft',
+    tasks: 'Proposed tasks',
     plan_summary: 'Whole plan',
     implementation_steps: 'Implementation steps',
     code_areas: 'Code areas',
@@ -1894,6 +2009,39 @@ function discussionContextLabel(context: PlannerDiscussionContext): string {
     open_decisions: 'Open decisions',
   };
   return labels[context];
+}
+
+function isDiscussionAvailable(session: FeaturePlanningSession): boolean {
+  if (session.step === 'scope_review') return session.brief !== null;
+  if (session.step === 'artifacts_review') return session.artifacts !== null;
+  if (session.step === 'analysis_review') return session.analysis !== null && session.artifacts !== null;
+  if (session.step === 'tasks_review') return session.refinementId !== null;
+  return false;
+}
+
+function discussionContextForStep(
+  step: FeaturePlanningSession['step'],
+  artifactTab: keyof ArtifactBundle,
+): PlannerDiscussionContext {
+  if (step === 'scope_review') return 'brief';
+  if (step === 'artifacts_review') return artifactDiscussionContext(artifactTab);
+  if (step === 'tasks_review') return 'tasks';
+  return 'plan_summary';
+}
+
+function artifactDiscussionContext(tab: keyof ArtifactBundle): PlannerDiscussionContext {
+  if (tab === 'documentation') return 'documentation';
+  if (tab === 'specification') return 'specification';
+  return 'implementation_plan';
+}
+
+function discussionElementId(context: PlannerDiscussionContext): string {
+  if (context === 'brief') return 'planner-context-brief';
+  if (context === 'documentation' || context === 'specification' || context === 'implementation_plan') {
+    return `planner-context-${context}`;
+  }
+  if (context === 'tasks') return 'planner-context-tasks';
+  return `analysis-context-${context}`;
 }
 
 const QUESTION_DRAFT_PREFIX = 'companion:planner-question-draft:';

@@ -40,6 +40,11 @@ export type PlannerStatus = 'draft' | 'working' | 'waiting_for_user' | 'failed' 
 export type PlannerAction = 'clarifying' | 'generating_artifacts' | 'creating_artifacts' | 'analyzing' | 'discussing' | 'revising' | 'decomposing' | 'launching';
 
 export const PLANNER_DISCUSSION_CONTEXTS = [
+  'brief',
+  'documentation',
+  'specification',
+  'implementation_plan',
+  'tasks',
   'plan_summary',
   'implementation_steps',
   'code_areas',
@@ -153,10 +158,23 @@ export interface InitialClarificationResult extends ClarificationResult {
   readonly repositoryContext: RepositoryPlanningContext;
 }
 
+export type PlannerRevisionKind = 'brief' | 'artifacts' | 'plan' | 'tasks';
+
+export interface PlannerTaskRevisionItem {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly acceptance: string;
+  readonly priority: 0 | 1 | 2 | 3;
+  readonly dependsOnIds: ReadonlyArray<string>;
+}
+
 export interface PlannerRevision {
+  readonly kind: PlannerRevisionKind;
   readonly summary: string;
-  readonly brief: FeatureBrief;
-  readonly artifacts: ArtifactBundle;
+  readonly brief: FeatureBrief | null;
+  readonly artifacts: ArtifactBundle | null;
+  readonly tasks: ReadonlyArray<PlannerTaskRevisionItem> | null;
 }
 
 export type PlannerDiscussionResult =

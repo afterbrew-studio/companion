@@ -240,7 +240,7 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     openDecisions: [],
   });
   const storedRevision = row.pending_revision_json
-    ? safeParse<(Omit<PlannerRevision, 'brief'> & { readonly brief?: FeatureBrief }) | null>(row.pending_revision_json, null)
+    ? safeParse<StoredPlannerRevision | null>(row.pending_revision_json, null)
     : null;
   const questions = normalizeQuestions(safeParse<PlannerQuestion[]>(row.questions_json, []));
   const answers = normalizeAnswers(safeParse<PlannerAnswer[]>(row.answers_json, []), questions);
@@ -268,9 +268,7 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     answers,
     messages: safeParse(row.messages_json, []),
     artifacts: row.artifacts_json ? safeParse(row.artifacts_json, null) : null,
-    // Revisions created before brief synchronization remain reviewable and
-    // inherit the last approved brief until the user proposes another change.
-    pendingRevision: storedRevision ? { ...storedRevision, brief: storedRevision.brief ?? brief } : null,
+    pendingRevision: normalizePlannerRevision(storedRevision, brief),
     confirmations: safeParse(row.confirmations_json, { brief: false, artifacts: false, analysis: false, launch: false }),
     docId: row.doc_id,
     specId: row.spec_id,
@@ -285,6 +283,26 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
     updatedAt: row.updated_at,
   };
   return { ...sessionWithoutProgress, progress: plannerProgress(sessionWithoutProgress) };
+}
+
+type StoredPlannerRevision = Partial<PlannerRevision> & {
+  readonly summary: string;
+  readonly kind?: PlannerRevision['kind'];
+};
+
+function normalizePlannerRevision(
+  stored: StoredPlannerRevision | null,
+  fallbackBrief: FeatureBrief,
+): PlannerRevision | null {
+  if (!stored) return null;
+  const kind = stored.kind ?? 'plan';
+  return {
+    kind,
+    summary: stored.summary,
+    brief: stored.brief ?? (kind === 'tasks' ? null : fallbackBrief),
+    artifacts: stored.artifacts ?? null,
+    tasks: stored.tasks ?? null,
+  };
 }
 
 function normalizeQuestions(questions: PlannerQuestion[]): PlannerQuestion[] {

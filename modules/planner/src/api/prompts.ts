@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { extractModelJson } from '@companion/services';
+import type { RefineItemRecord } from '@companion/module-refinement/contract';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import type {
   ArtifactBundle,
@@ -13,6 +14,7 @@ import type {
   PlannerDiscussionResult,
   PlannerQuestion,
   PlannerRevision,
+  PlannerTaskRevisionItem,
   RepositoryPlanningContext,
 } from '../contract/index.js';
 
@@ -168,13 +170,37 @@ export const artifactBundleSchema = z
   })
   .strict();
 
-const revisionSchema = z
+const legacyRevisionSchema = z
   .object({
     summary: z.string().trim().min(1).max(2_000),
     brief: modelFeatureBriefSchema,
     artifacts: artifactBundleSchema,
   })
   .strict();
+
+const taskRevisionItemSchema = z.object({
+  id: boundedString,
+  title: z.string().trim().min(1).max(200),
+  description: z.string().max(32_000),
+  acceptance: z.string().max(32_000),
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
+  dependsOnIds: z.array(boundedString).max(20),
+}).strict();
+
+const revisionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('brief'), summary: boundedString, brief: modelFeatureBriefSchema,
+    artifacts: z.null(), tasks: z.null(),
+  }).strict(),
+  z.object({
+    kind: z.enum(['artifacts', 'plan']), summary: boundedString, brief: modelFeatureBriefSchema,
+    artifacts: artifactBundleSchema, tasks: z.null(),
+  }).strict(),
+  z.object({
+    kind: z.literal('tasks'), summary: boundedString, brief: z.null(), artifacts: z.null(),
+    tasks: z.array(taskRevisionItemSchema).min(1).max(20),
+  }).strict(),
+]);
 
 const discussionReferencesSchema = z.array(z.enum(PLANNER_DISCUSSION_CONTEXTS)).max(3)
   .superRefine((references, ctx) => {
@@ -278,7 +304,10 @@ export function parseArtifactBundle(text: string): ArtifactBundle {
 }
 
 export function parsePlannerRevision(text: string): PlannerRevision {
-  return revisionSchema.parse(extractModelJson(text));
+  const json: unknown = extractModelJson(text);
+  if (typeof json === 'object' && json !== null && 'kind' in json) return revisionSchema.parse(json);
+  const legacy = legacyRevisionSchema.parse(json);
+  return { kind: 'plan', summary: legacy.summary, brief: legacy.brief, artifacts: legacy.artifacts, tasks: null };
 }
 
 export function parseCompactedBrief(text: string): FeatureBrief {
@@ -289,10 +318,17 @@ export function parsePlannerDiscussion(
   text: string,
   session: FeaturePlanningSession,
   idFactory: IdFactory = defaultIdFactory,
+  refinementItems: ReadonlyArray<RefineItemRecord> = [],
 ): PlannerDiscussionResult {
   const parsed = discussionSchema.parse(extractModelJson(text));
-  const catalog = discussionReferenceCatalog(session);
-  const references = parsed.references.map((context) => catalog[context]);
+  const catalog = discussionReferenceCatalog(session, refinementItems);
+  const visibleContexts = visibleDiscussionContexts(session.step);
+  const references = parsed.references.map((context) => {
+    if (visibleContexts && !visibleContexts.has(context)) {
+      throw new Error(`discussion reference ${context} is not visible at ${session.step}`);
+    }
+    return catalog[context];
+  });
   if (parsed.intent !== 'clarification_needed') return { ...parsed, references };
   const withId = (option: z.infer<typeof rawOptionSchema>) => ({ id: idFactory('pdo'), ...option });
   const [first, second, third] = parsed.clarification.options;
@@ -488,7 +524,32 @@ Return a proposed revision only. Update the brief and all three artifacts so the
 }`;
 }
 
+export function reviewRevisionPrompt(input: {
+  session: FeaturePlanningSession;
+  instruction: string;
+  refinementItems: ReadonlyArray<RefineItemRecord>;
+}): string {
+  const snapshot = input.session.repositoryContext;
+  const common = `${snapshot ? CACHED_CONTEXT_ONLY : READ_ONLY}\n\nRequested change:\n${input.instruction}\n\nCurrent planning step: ${input.session.step}\n\nVerified repository snapshot:\n${JSON.stringify(snapshot)}`;
+  if (input.session.step === 'scope_review') {
+    return `${common}\n\nCurrent brief:\n${JSON.stringify(input.session.pendingRevision?.brief ?? input.session.brief)}\n\nRevise only the product brief. Preserve unaffected detail. Return ONLY strict JSON:\n{"kind":"brief","summary":"what will change and why","brief":{"problem":"...","audience":["..."],"goal":"...","mvp":["..."],"outOfScope":["..."],"assumptions":["..."],"risks":["..."],"openDecisions":["..."]},"artifacts":null,"tasks":null}`;
+  }
+  if (input.session.step === 'artifacts_review') {
+    return `${common}\n\nCurrent brief:\n${JSON.stringify(input.session.pendingRevision?.brief ?? input.session.brief)}\n\nCurrent artifact drafts:\n${JSON.stringify(input.session.pendingRevision?.artifacts ?? input.session.artifacts)}\n\nRevise the brief and all three draft artifacts so they remain coherent. Return ONLY strict JSON:\n{"kind":"artifacts","summary":"what will change and why","brief":{"problem":"...","audience":["..."],"goal":"...","mvp":["..."],"outOfScope":["..."],"assumptions":["..."],"risks":["..."],"openDecisions":["..."]},"artifacts":{"documentation":{"title":"...","content":"markdown"},"specification":{"title":"...","content":"markdown"},"implementationPlan":{"title":"...","content":"markdown"}},"tasks":null}`;
+  }
+  if (input.session.step === 'tasks_review') {
+    const currentTasks = taskRevisionBase(input.session.pendingRevision?.tasks, input.refinementItems);
+    return `${common}\n\nCurrent proposed tasks:\n${JSON.stringify(currentTasks)}\n\nRevise task wording, acceptance criteria, priorities or dependencies only. Keep exactly the same task ids and number of tasks; do not reorder, merge, add or remove tasks. Every dependency id must reference another listed task and cycles are forbidden. Return ONLY strict JSON:\n{"kind":"tasks","summary":"what will change and why","brief":null,"artifacts":null,"tasks":[{"id":"existing-id","title":"...","description":"...","acceptance":"...","priority":0,"dependsOnIds":["existing-id"]}]}`;
+  }
+  return `${common}\n\nApproved brief:\n${JSON.stringify(input.session.pendingRevision?.brief ?? input.session.brief)}\n\nCurrent artifacts:\n${JSON.stringify(input.session.pendingRevision?.artifacts ?? input.session.artifacts)}\n\nCurrent validated analysis:\n${JSON.stringify(input.session.analysis)}\n\nRevise the brief and artifacts coherently. The proposal will be re-analyzed after approval. Return ONLY strict JSON:\n{"kind":"plan","summary":"what will change and why","brief":{"problem":"...","audience":["..."],"goal":"...","mvp":["..."],"outOfScope":["..."],"assumptions":["..."],"risks":["..."],"openDecisions":["..."]},"artifacts":{"documentation":{"title":"...","content":"markdown"},"specification":{"title":"...","content":"markdown"},"implementationPlan":{"title":"...","content":"markdown"}},"tasks":null}`;
+}
+
 const DISCUSSION_CONTEXT_LABELS: Readonly<Record<PlannerDiscussionContext, string>> = {
+  brief: 'the product brief and MVP',
+  documentation: 'the documentation draft',
+  specification: 'the specification draft',
+  implementation_plan: 'the implementation plan draft',
+  tasks: 'the proposed tasks',
   plan_summary: 'the overall implementation plan',
   implementation_steps: 'implementation steps',
   code_areas: 'affected code areas and files',
@@ -510,6 +571,7 @@ export function discussionPrompt(input: {
   session: FeaturePlanningSession;
   message: string;
   context?: PlannerDiscussionContext;
+  refinementItems?: ReadonlyArray<RefineItemRecord>;
 }): string {
   const hasSnapshot = input.session.repositoryContext !== null;
   const recentConversation = input.session.messages.slice(-12).map((message) => ({
@@ -521,7 +583,12 @@ export function discussionPrompt(input: {
     specification: excerpt(input.session.artifacts.specification),
     implementationPlan: excerpt(input.session.artifacts.implementationPlan, 24_000),
   } : null;
-  const visiblePlanIndex = Object.values(discussionReferenceCatalog(input.session));
+  const catalog = discussionReferenceCatalog(input.session, input.refinementItems);
+  const visibleContexts = visibleDiscussionContexts(input.session.step);
+  const visiblePlanIndex = Object.values(catalog).filter((reference) => !visibleContexts || visibleContexts.has(reference.context));
+  const taskContext = input.session.step === 'tasks_review'
+    ? taskRevisionBase(input.session.pendingRevision?.tasks, input.refinementItems ?? [])
+    : null;
   return `You are the planning partner for a non-technical user reviewing one feature plan.
 
 ${hasSnapshot ? CACHED_CONTEXT_ONLY : READ_ONLY}
@@ -561,6 +628,9 @@ ${JSON.stringify(input.session.analysis)}
 Current planning artifacts (bounded excerpts):
 ${JSON.stringify(artifactContext)}
 
+Current proposed tasks:
+${JSON.stringify(taskContext)}
+
 Pending revision summary:
 ${input.session.pendingRevision?.summary ?? '(none)'}
 
@@ -578,6 +648,7 @@ Reply with ONLY strict JSON, no markdown or prose. Emit keys in the exact order 
 
 export function discussionReferenceCatalog(
   session: FeaturePlanningSession,
+  refinementItems: ReadonlyArray<RefineItemRecord> = [],
 ): Readonly<Record<PlannerDiscussionContext, PlannerDiscussionReference>> {
   const analysis = session.analysis;
   const reference = (
@@ -587,6 +658,11 @@ export function discussionReferenceCatalog(
     count: number | null,
   ): PlannerDiscussionReference => ({ context, location, label, count });
   return {
+    brief: reference('brief', 'MVP review', 'Product brief and MVP', session.brief?.mvp.length ?? 0),
+    documentation: reference('documentation', 'Planning artifacts', 'Documentation', session.artifacts ? 1 : 0),
+    specification: reference('specification', 'Planning artifacts', 'Specification', session.artifacts ? 1 : 0),
+    implementation_plan: reference('implementation_plan', 'Planning artifacts', 'Implementation plan', session.artifacts ? 1 : 0),
+    tasks: reference('tasks', 'Task review', 'Proposed tasks', refinementItems.filter((item) => item.status === 'proposed').length),
     plan_summary: reference('plan_summary', 'Plan review', 'Implementation plan summary', null),
     implementation_steps: reference('implementation_steps', 'Delivery and validation', 'Implementation steps', analysis?.steps.length ?? 0),
     code_areas: reference('code_areas', 'Code impact', 'Areas and files', analysis?.touchedAreas.length ?? 0),
@@ -603,6 +679,54 @@ export function discussionReferenceCatalog(
     risks: reference('risks', 'Risks and decisions', 'Risks', analysis?.risks.length ?? 0),
     open_decisions: reference('open_decisions', 'Risks and decisions', 'Open decisions', analysis?.openDecisions.length ?? 0),
   };
+}
+
+const ANALYSIS_DISCUSSION_CONTEXTS: ReadonlySet<PlannerDiscussionContext> = new Set([
+  'plan_summary',
+  'implementation_steps',
+  'code_areas',
+  'review_items',
+  'architecture',
+  'data_model_and_migrations',
+  'api_and_ui',
+  'authorization_privacy_security',
+  'dependencies',
+  'costs',
+  'tests',
+  'mvp',
+  'later',
+  'risks',
+  'open_decisions',
+]);
+
+function visibleDiscussionContexts(
+  step: FeaturePlanningSession['step'] | undefined,
+): ReadonlySet<PlannerDiscussionContext> | null {
+  if (step === 'scope_review') return new Set(['brief']);
+  if (step === 'artifacts_review') return new Set(['brief', 'documentation', 'specification', 'implementation_plan']);
+  if (step === 'analysis_review') return ANALYSIS_DISCUSSION_CONTEXTS;
+  if (step === 'tasks_review') return new Set(['tasks']);
+  // Compatibility for parser callers handling legacy partial session records.
+  return null;
+}
+
+function taskRevisionBase(
+  pending: ReadonlyArray<PlannerTaskRevisionItem> | null | undefined,
+  items: ReadonlyArray<RefineItemRecord>,
+): ReadonlyArray<PlannerTaskRevisionItem> {
+  if (pending) return pending;
+  const byOrd = new Map(items.map((item) => [item.ord, item.id]));
+  return items.filter((item) => item.status === 'proposed').sort((a, b) => a.ord - b.ord).map((item) => ({
+    id: item.id,
+    title: item.title,
+    description: item.description,
+    acceptance: item.acceptance,
+    priority: item.priority,
+    dependsOnIds: item.dependsOn.flatMap((ord) => {
+      const id = byOrd.get(ord);
+      return id ? [id] : [];
+    }),
+  }));
 }
 
 function excerpt(draft: ArtifactBundle['documentation'], maxLength = 12_000): { title: string; content: string; truncated: boolean } {

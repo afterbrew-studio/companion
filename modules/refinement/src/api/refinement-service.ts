@@ -424,6 +424,56 @@ export class RefinementService {
     return this.store.getItem(itemId)!;
   }
 
+  /**
+   * Atomically applies an AI-proposed edit to the complete set of proposed
+   * items. Stable ids and ordering are preserved; merge, dismiss and reorder
+   * remain explicit human actions in the task-review UI.
+   */
+  replaceProposedItems(
+    id: string,
+    revisions: ReadonlyArray<{
+      readonly id: string;
+      readonly title: string;
+      readonly description: string;
+      readonly acceptance: string;
+      readonly priority: TaskPriority;
+      readonly dependsOnIds: ReadonlyArray<string>;
+    }>,
+  ): RefineItemRecord[] {
+    const refinement = this.store.get(id);
+    if (!refinement) throw new Error('refinement not found');
+    if (refinement.status === 'decomposing') throw new Error('cannot edit while decomposition is running');
+    const all = this.store.listItems(id);
+    const proposed = all.filter((item) => item.status === 'proposed').sort((a, b) => a.ord - b.ord);
+    const proposedIds = new Set(proposed.map((item) => item.id));
+    const revisionIds = revisions.map((item) => item.id);
+    if (new Set(revisionIds).size !== revisionIds.length
+      || revisionIds.length !== proposed.length
+      || revisionIds.some((itemId) => !proposedIds.has(itemId))) {
+      throw new Error('task revision must contain every proposed task exactly once');
+    }
+    const currentById = new Map(proposed.map((item) => [item.id, item]));
+    const rewritten = revisions.map((revision) => {
+      const current = currentById.get(revision.id)!;
+      const dependencies = [...new Set(revision.dependsOnIds)];
+      if (dependencies.some((dependencyId) => dependencyId === revision.id || !proposedIds.has(dependencyId))) {
+        throw new Error('task revision contains an invalid dependency');
+      }
+      return {
+        ...current,
+        title: revision.title,
+        description: revision.description,
+        acceptance: revision.acceptance,
+        priority: revision.priority,
+        dependsOn: dependencies.map((dependencyId) => currentById.get(dependencyId)!.ord),
+      };
+    });
+    if (hasDependencyCycle(rewritten)) throw new Error('task revision dependencies would form a cycle');
+    this.store.rewriteProposed(id, rewritten);
+    this.changed();
+    return this.store.listItems(id);
+  }
+
   moveItem(id: string, itemId: string, direction: 'up' | 'down'): RefineItemRecord[] {
     const { items } = this.requireEditableItem(id, itemId);
     const proposed = items.filter((entry) => entry.status === 'proposed').sort((a, b) => a.ord - b.ord);

@@ -259,12 +259,53 @@ test('discussion parser distinguishes explanations, changes and one structured d
   }), discussionSession));
 });
 
-test('revision parser requires one coherent brief and planning bundle', () => {
+test('revision parser accepts each checkpoint shape and rejects incoherent payloads', () => {
   const draft = { title: 'Listing analytics', content: 'A sufficiently detailed markdown artifact describing listing analytics.' };
   const artifacts = { documentation: draft, specification: draft, implementationPlan: draft };
-  const revision = parsePlannerRevision(JSON.stringify({ summary: 'Reduced the MVP.', brief: { ...brief, mvp: ['One', 'Two'] }, artifacts }));
-  assert.deepEqual(revision.brief.mvp, ['One', 'Two']);
+  const legacy = parsePlannerRevision(JSON.stringify({ summary: 'Reduced the MVP.', brief: { ...brief, mvp: ['One', 'Two'] }, artifacts }));
+  assert.equal(legacy.kind, 'plan');
+  assert.deepEqual(legacy.brief.mvp, ['One', 'Two']);
+  assert.equal(parsePlannerRevision(JSON.stringify({
+    kind: 'brief', summary: 'Clarified the first release.', brief, artifacts: null, tasks: null,
+  })).kind, 'brief');
+  assert.equal(parsePlannerRevision(JSON.stringify({
+    kind: 'artifacts', summary: 'Aligned the drafts.', brief, artifacts, tasks: null,
+  })).kind, 'artifacts');
+  const tasks = [{
+    id: 'task-a', title: 'Ship analytics', description: 'Implement the reviewed slice.',
+    acceptance: '- Analytics are visible', priority: 1, dependsOnIds: [],
+  }];
+  assert.deepEqual(parsePlannerRevision(JSON.stringify({
+    kind: 'tasks', summary: 'Clarified the task.', brief: null, artifacts: null, tasks,
+  })).tasks, tasks);
   assert.throws(() => parsePlannerRevision(JSON.stringify({ summary: 'Missing brief.', artifacts })));
+  assert.throws(() => parsePlannerRevision(JSON.stringify({
+    kind: 'tasks', summary: 'Invalid mixed revision.', brief, artifacts: null, tasks,
+  })));
+});
+
+test('discussion references are limited to content visible at the current checkpoint', () => {
+  const explanation = (references) => JSON.stringify({
+    intent: 'explanation', answer: 'Here is the grounded answer.', references,
+    changeInstruction: null, clarification: null,
+  });
+  const scope = { ...session(), step: 'scope_review', status: 'waiting_for_user' };
+  assert.equal(parsePlannerDiscussion(explanation(['brief']), scope).references[0].context, 'brief');
+  assert.throws(() => parsePlannerDiscussion(explanation(['architecture']), scope), /not visible/);
+
+  const artifacts = { ...session(), step: 'artifacts_review', status: 'waiting_for_user', artifacts: {
+    documentation: { title: 'Docs', content: 'A sufficiently detailed documentation draft for the feature.' },
+    specification: { title: 'Spec', content: 'A sufficiently detailed specification draft for the feature.' },
+    implementationPlan: { title: 'Plan', content: 'A sufficiently detailed implementation plan for the feature.' },
+  } };
+  assert.equal(parsePlannerDiscussion(explanation(['specification']), artifacts).references[0].context, 'specification');
+  assert.throws(() => parsePlannerDiscussion(explanation(['tasks']), artifacts), /not visible/);
+
+  const planReview = { ...session(), step: 'analysis_review', status: 'waiting_for_user', analysis };
+  assert.equal(parsePlannerDiscussion(explanation(['architecture']), planReview).references[0].context, 'architecture');
+  const taskReview = { ...session(), step: 'tasks_review', status: 'waiting_for_user', refinementId: 'ref-1' };
+  assert.equal(parsePlannerDiscussion(explanation(['tasks']), taskReview).references[0].context, 'tasks');
+  assert.throws(() => parsePlannerDiscussion(explanation(['mvp']), taskReview), /not visible/);
 });
 
 test('planner state machine accepts the workflow and rejects skips or edits after launch', () => {
@@ -1096,6 +1137,65 @@ test('applying a revision keeps the approved MVP canonical in the Ideas analysis
   const prompt = discussionPrompt({ session: applied, message: 'Where are the five MVP points?', context: 'mvp' });
   assert.match(prompt, /"location":"Release boundary","label":"MVP","count":5/);
   db.close();
+});
+
+test('checkpoint revisions change canonical data only after explicit apply', () => {
+  const draft = { title: 'Current draft', content: 'A sufficiently detailed current planning artifact for this feature.' };
+  const revisedDraft = { title: 'Revised draft', content: 'A sufficiently detailed revised planning artifact for this feature.' };
+
+  {
+    const { db, store } = storeFixture();
+    const revisedBrief = { ...brief, goal: 'A revised product outcome.' };
+    store.insert({
+      ...session(), step: 'scope_review', status: 'waiting_for_user',
+      pendingRevision: { kind: 'brief', summary: 'Revise the outcome.', brief: revisedBrief, artifacts: null, tasks: null },
+    });
+    const { service } = createService(store);
+    assert.equal(store.get('idea-1').brief.goal, brief.goal);
+    service.applyRevision('idea-1', 0, 'alice');
+    assert.equal(store.get('idea-1').brief.goal, revisedBrief.goal);
+    assert.equal(store.get('idea-1').pendingRevision, null);
+    db.close();
+  }
+
+  {
+    const { db, store } = storeFixture();
+    const revisedBrief = { ...brief, assumptions: [...brief.assumptions, 'Use the reviewed terminology'] };
+    const revisedArtifacts = { documentation: revisedDraft, specification: revisedDraft, implementationPlan: revisedDraft };
+    store.insert({
+      ...session(), step: 'artifacts_review', status: 'waiting_for_user',
+      artifacts: { documentation: draft, specification: draft, implementationPlan: draft },
+      pendingRevision: { kind: 'artifacts', summary: 'Align the drafts.', brief: revisedBrief, artifacts: revisedArtifacts, tasks: null },
+    });
+    const { service } = createService(store);
+    service.applyRevision('idea-1', 0, 'alice');
+    const applied = store.get('idea-1');
+    assert.equal(applied.artifacts.documentation.title, 'Revised draft');
+    assert.deepEqual(applied.brief.assumptions, revisedBrief.assumptions);
+    db.close();
+  }
+
+  {
+    const { db, store } = storeFixture();
+    const taskRevision = [{
+      id: 'task-a', title: 'Clarified task', description: 'The revised task description.',
+      acceptance: '- The revised result is verified', priority: 1, dependsOnIds: [],
+    }];
+    const calls = [];
+    store.insert({
+      ...session(), step: 'tasks_review', status: 'waiting_for_user', refinementId: 'ref-1',
+      pendingRevision: { kind: 'tasks', summary: 'Clarify the task.', brief: null, artifacts: null, tasks: taskRevision },
+    });
+    const { service } = createService(store, {
+      refinement: { replaceProposedItems: (id, tasks) => calls.push({ id, tasks }) },
+    });
+    assert.throws(() => service.applyRevision('idea-1', 99, 'alice'), PlannerRevisionConflict);
+    assert.equal(calls.length, 0);
+    service.applyRevision('idea-1', 0, 'alice');
+    assert.deepEqual(calls, [{ id: 'ref-1', tasks: taskRevision }]);
+    assert.equal(store.get('idea-1').pendingRevision, null);
+    db.close();
+  }
 });
 
 test('old pending revisions inherit the approved brief when read from storage', () => {
