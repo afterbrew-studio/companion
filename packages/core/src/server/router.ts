@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import type { AuthUser, Authenticator, Permission, RouteAccess } from '@companion/contracts';
 import { withRequestUser, type Logger } from '@companion/services';
+import type { AuditEvent } from './capabilities.js';
 
 /**
  * The typed route factory + the dynamic router. A `route({...})` value declares
@@ -45,16 +46,31 @@ export const notFound = (what: string): HttpError => new HttpError(404, what);
 export const badRequest = (why: string): HttpError => new HttpError(400, why);
 export const forbidden = (why: string): HttpError => new HttpError(403, why);
 
-/** Wrap a handler's return value to send a non-200 status. */
+/** Wrap a handler's return value to send a non-200 status, or a non-JSON body. */
 export class Reply {
   constructor(
     readonly status: number,
     readonly body: unknown,
+    /**
+     * Set to send `body` (a string) verbatim instead of JSON-encoding it. Needed
+     * by exports: an NDJSON document run through JSON.stringify becomes one
+     * quoted string with literal `\n`, which no ingester accepts.
+     */
+    readonly contentType?: string,
+    /** Extra response headers. `Location` for a redirect is the only current use. */
+    readonly headers?: Readonly<Record<string, string>>,
   ) {}
 }
 
 export const created = (body: unknown): Reply => new Reply(201, body);
 export const accepted = (body: unknown): Reply => new Reply(202, body);
+/** A downloadable, non-JSON document (NDJSON export, CSV, …). */
+export const document = (body: string, contentType: string, filename?: string): Reply =>
+  new Reply(200, body, filename ? `${contentType}; filename="${filename}"` : contentType);
+
+/** Send the browser elsewhere. Needed by handshakes that run before any session exists. */
+export const redirect = (location: string, status: 302 | 303 = 302): Reply =>
+  new Reply(status, '', 'text/plain; charset=utf-8', { location });
 
 export interface RouteContext<P extends string, B> {
   readonly params: PathParams<P>;
@@ -144,9 +160,19 @@ export class DynamicRouter {
   constructor(
     private readonly auth: Authenticator,
     private readonly log: Logger,
+    /** Emits one record per mutating request; the kernel swallows sink failures. */
+    private readonly audit: (event: AuditEvent) => void = () => {},
   ) {}
 
   mount(moduleId: string, routes: readonly CompiledRoute[]): void {
+    for (const r of routes) {
+      // First match wins in dispatch, so a path claimed by two modules would
+      // silently route to whichever mounted first. Refuse instead of guessing.
+      const clash = this.flat.find((m) => m.method === r.method && m.path === r.path && m.moduleId !== moduleId);
+      if (clash) {
+        throw new HttpError(409, `route ${r.method} ${r.path} is already mounted by module '${clash.moduleId}'`);
+      }
+    }
     for (const r of routes) r.moduleId = moduleId;
     this.mounted.set(moduleId, routes);
     this.disabled.delete(moduleId);
@@ -176,6 +202,8 @@ export class DynamicRouter {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const method = (req.method ?? 'GET') as HttpMethod;
     const path = url.pathname;
+    /** The route we committed to, so the catch block can audit a refusal. */
+    let matched: CompiledRoute | null = null;
 
     try {
       let pathMatched = false;
@@ -184,6 +212,7 @@ export class DynamicRouter {
         if (!match) continue;
         pathMatched = true;
         if (r.method !== method) continue;
+        matched = r;
 
         const token = bearerToken(req, url);
         const user = this.auth.verify(token);
@@ -201,7 +230,12 @@ export class DynamicRouter {
         });
         const rawBody = method === 'GET' ? {} : await readBody(req);
         const result = await withRequestUser(user, () => r.run(params, url.searchParams, rawBody, user, token));
-        if (result instanceof Reply) return json(res, result.status, result.body);
+        const status = result instanceof Reply ? result.status : 200;
+        // AFTER the handler: recording an attempt that then threw would claim
+        // changes that never happened. Failures are audited in sendError, with
+        // their real status.
+        this.recordIfMutating(r, user, status);
+        if (result instanceof Reply) return send(res, result);
         return json(res, 200, result);
       }
       if (pathMatched) return json(res, 405, { error: `method ${method} not allowed on ${path}` });
@@ -211,7 +245,33 @@ export class DynamicRouter {
       }
       return json(res, 404, { error: `no route: ${method} ${path}` });
     } catch (err) {
+      // A refused mutation is exactly what an auditor wants to see, so record it
+      // with the status the client got. `matched` is null when nothing matched.
+      const status = statusOf(err) ?? (err instanceof z.ZodError ? 400 : 500);
+      if (matched) this.recordIfMutating(matched, this.actorOf(req, url), status);
       return sendError(res, err, method, path, this.log);
+    }
+  }
+
+  /** Reads are not audited: they would bury the writes and the table is append-only. */
+  private recordIfMutating(route: CompiledRoute, user: AuthUser | null, status: number): void {
+    if (route.method === 'GET') return;
+    this.audit({
+      at: Date.now(),
+      actor: user?.username ?? null,
+      action: `${route.method} ${route.path}`,
+      access: route.access as string,
+      status,
+      module: route.moduleId ?? null,
+    });
+  }
+
+  /** Best-effort actor for the failure path; a bad token simply audits as null. */
+  private actorOf(req: IncomingMessage, url: URL): AuthUser | null {
+    try {
+      return this.auth.verify(bearerToken(req, url));
+    } catch {
+      return null;
     }
   }
 }
@@ -232,6 +292,18 @@ export function bearerToken(req: IncomingMessage, url: URL): string | null {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) return header.slice('Bearer '.length);
   return url.searchParams.get('token');
+}
+
+/** A Reply either carries a verbatim string body with its own type, or JSON. */
+function send(res: ServerResponse, reply: Reply): void {
+  if (!reply.contentType || typeof reply.body !== 'string') return json(res, reply.status, reply.body);
+  const raw = Buffer.from(reply.body, 'utf8');
+  res.writeHead(reply.status, {
+    'content-type': reply.contentType,
+    'content-length': raw.byteLength,
+    ...reply.headers,
+  });
+  res.end(raw);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

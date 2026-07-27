@@ -93,7 +93,6 @@ export class UsersStore {
     this.sessions.deleteForUser(username);
   }
 
-  /** Enabled admins — deletion/demotion guards keep this above zero. */
   countActiveAdmins(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0`).get() as { n: number })
       .n;

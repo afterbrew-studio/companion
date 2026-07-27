@@ -10,6 +10,8 @@ export default defineAcl({
   permissions: [
     { id: 'users:manage', title: 'Create and manage user accounts' },
     { id: 'settings:manage', title: 'Manage instance settings' },
+    { id: 'modules:manage', title: 'Install, enable and configure modules' },
+    { id: 'audit:read', title: 'Read and export the audit trail' },
   ],
   grants: {
     admin: '*',
