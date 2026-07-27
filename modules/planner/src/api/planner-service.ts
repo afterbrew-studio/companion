@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import type { AuthUser, ServiceMap, SpaServerMessage } from '@moxxy-ai/companion-sdk';
 import type { NotificationEmitter, NotificationInput } from '@moxxy-ai/companion-sdk/server';
 import { log } from '@moxxy-ai/companion-sdk/server';
-import type { RefineItemUpdate } from '@companion/module-refinement/contract';
+import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';
 import type {
   ArtifactBundle,
   FeatureBrief,
@@ -11,6 +11,7 @@ import type {
   PlannerAnswer,
   PlannerDiscussionContext,
   PlannerMessage,
+  PlannerRevision,
   PlannerSessionDetail,
   PlannerQuestion,
 } from '../contract/index.js';
@@ -29,7 +30,7 @@ import {
   parseInitialClarification,
   parsePlannerDiscussion,
   parsePlannerRevision,
-  revisionPrompt,
+  reviewRevisionPrompt,
 } from './prompts.js';
 
 type PlanService = ServiceMap['plan'];
@@ -238,6 +239,7 @@ export class PlannerService {
     if (current.step !== 'scope_review' || current.status !== 'waiting_for_user') {
       throw new Error('the feature brief is not ready for confirmation');
     }
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before continuing');
     this.ensureRunCapacity(userId);
     const started = this.store.update(id, {
       brief,
@@ -259,6 +261,7 @@ export class PlannerService {
     if (current.step !== 'artifacts_review' || current.status === 'working') {
       throw new Error('artifact drafts cannot be edited now');
     }
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before editing drafts');
     return this.updateAndBroadcast(id, {
       artifacts,
       pendingRevision: null,
@@ -270,6 +273,7 @@ export class PlannerService {
     const current = this.requireMutable(id);
     if (current.activeAction === 'creating_artifacts' || current.activeAction === 'analyzing') return current;
     if (current.step !== 'artifacts_review' || !current.artifacts) throw new Error('artifact drafts are not ready');
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before continuing');
     this.ensureRunCapacity(userId);
     const started = this.store.update(id, {
       status: 'working',
@@ -308,7 +312,7 @@ export class PlannerService {
       void this.applyRevisionAndAnalyze(id, userId);
       return started;
     }
-    if (current.step === 'analysis_review') {
+    if (isDiscussionReviewStep(current.step)) {
       const lastUserMessage = [...current.messages].reverse().find((message) => message.role === 'user');
       const instruction = lastUserMessage?.content.trim();
       if (!instruction) throw new Error('the revision request is no longer available');
@@ -359,13 +363,13 @@ export class PlannerService {
   ): FeaturePlanningSession {
     const current = this.requireMutable(id);
     if (current.activeAction === 'discussing' || current.activeAction === 'revising') return current;
-    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.analysis || !current.artifacts) {
-      throw new Error('plan discussion is available after the implementation analysis is ready');
+    if (!isDiscussionReviewStep(current.step) || current.status !== 'waiting_for_user' || !hasReviewContent(current)) {
+      throw new Error('planning discussion is not available at this step');
     }
     const value = message.trim();
     if (!value || value.length > MAX_MESSAGE_LENGTH) throw new Error('message must be between 1 and 4000 characters');
     this.ensureRunCapacity(userId);
-    const normalizedContext = context ?? 'plan_summary';
+    const normalizedContext = context ?? defaultDiscussionContext(current.step);
     const userMessage: PlannerMessage = {
       id: messageId(), role: 'user', content: value, createdAt: Date.now(), context: normalizedContext,
     };
@@ -382,8 +386,8 @@ export class PlannerService {
   requestRevision(id: string, expectedRevision: number, instruction: string, userId: string): FeaturePlanningSession {
     const current = this.requireMutable(id);
     if (current.activeAction === 'discussing' || current.activeAction === 'revising') return current;
-    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.artifacts) {
-      throw new Error('analysis is not ready for revision');
+    if (!isDiscussionReviewStep(current.step) || current.status !== 'waiting_for_user' || !hasReviewContent(current)) {
+      throw new Error('this planning checkpoint is not ready for revision');
     }
     const value = instruction.trim();
     if (!value || value.length > MAX_MESSAGE_LENGTH) throw new Error('revision request must be between 1 and 4000 characters');
@@ -400,9 +404,29 @@ export class PlannerService {
 
   applyRevision(id: string, expectedRevision: number, userId: string): FeaturePlanningSession {
     const current = this.requireMutable(id);
+    if (current.revision !== expectedRevision) throw new PlannerRevisionConflict(current);
     if (current.activeAction === 'analyzing') return current;
-    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.pendingRevision) {
+    if (!isDiscussionReviewStep(current.step) || current.status !== 'waiting_for_user' || !current.pendingRevision) {
       throw new Error('there is no pending revision');
+    }
+    const revision = current.pendingRevision;
+    if (revision.kind === 'brief' && current.step === 'scope_review' && revision.brief) {
+      return this.updateAndBroadcast(id, {
+        brief: revision.brief, pendingRevision: null, lastError: null,
+      }, expectedRevision, 'brief_revision_applied');
+    }
+    if (revision.kind === 'artifacts' && current.step === 'artifacts_review' && revision.brief && revision.artifacts) {
+      return this.updateAndBroadcast(id, {
+        brief: revision.brief, artifacts: revision.artifacts, pendingRevision: null, lastError: null,
+        confirmations: { ...current.confirmations, artifacts: false },
+      }, expectedRevision, 'artifact_revision_applied');
+    }
+    if (revision.kind === 'tasks' && current.step === 'tasks_review' && revision.tasks && current.refinementId) {
+      this.refinement.replaceProposedItems(current.refinementId, revision.tasks);
+      return this.updateAndBroadcast(id, { pendingRevision: null, lastError: null }, expectedRevision, 'task_revision_applied');
+    }
+    if (revision.kind !== 'plan' || current.step !== 'analysis_review' || !revision.brief || !revision.artifacts) {
+      throw new Error('the pending revision does not match this planning checkpoint');
     }
     this.ensureRunCapacity(userId);
     const started = this.store.update(id, {
@@ -416,7 +440,7 @@ export class PlannerService {
 
   discardRevision(id: string, expectedRevision: number): FeaturePlanningSession {
     const current = this.requireMutable(id);
-    if (current.step !== 'analysis_review' || current.status !== 'waiting_for_user' || !current.pendingRevision) {
+    if (!isDiscussionReviewStep(current.step) || current.status !== 'waiting_for_user' || !current.pendingRevision) {
       throw new Error('there is no pending revision');
     }
     return this.updateAndBroadcast(id, {
@@ -446,12 +470,14 @@ export class PlannerService {
 
   updateRefinementItem(id: string, expectedRevision: number, itemId: string, fields: RefineItemUpdate): FeaturePlanningSession {
     const current = this.requireTaskReview(id, expectedRevision);
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before editing tasks');
     this.refinement.updateItem(current.refinementId!, itemId, fields);
     return this.touch(id, expectedRevision, 'refinement_item_edited', { itemId });
   }
 
   moveRefinementItem(id: string, expectedRevision: number, itemId: string, direction: 'up' | 'down'): FeaturePlanningSession {
     const current = this.requireTaskReview(id, expectedRevision);
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before editing tasks');
     this.refinement.moveItem(current.refinementId!, itemId, direction);
     return this.touch(id, expectedRevision, 'refinement_item_moved', { itemId, direction });
   }
@@ -463,12 +489,14 @@ export class PlannerService {
     fields: { title?: string; description?: string; acceptance?: string; priority?: 0 | 1 | 2 | 3 },
   ): FeaturePlanningSession {
     const current = this.requireTaskReview(id, expectedRevision);
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before editing tasks');
     this.refinement.mergeItems(current.refinementId!, itemIds, fields);
     return this.touch(id, expectedRevision, 'refinement_items_merged', { itemIds });
   }
 
   dismissRefinementItem(id: string, expectedRevision: number, itemId: string): FeaturePlanningSession {
     const current = this.requireTaskReview(id, expectedRevision);
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before editing tasks');
     this.refinement.dismissItem(current.refinementId!, itemId);
     return this.touch(id, expectedRevision, 'refinement_item_dismissed', { itemId });
   }
@@ -479,6 +507,7 @@ export class PlannerService {
     if (isReadOnlyPlannerSession(current.step, current.status)) throw new Error('this planning session is read-only');
     if (current.activeAction === 'launching') return current;
     if (current.step !== 'tasks_review' || !current.refinementId) throw new Error('tasks are not ready to launch');
+    if (current.pendingRevision) throw new Error('apply or discard the pending revision before starting work');
     const refinement = this.refinement.get(current.refinementId)?.refinement;
     if (!refinement || refinement.workspaceId !== current.workspaceId || refinement.repo !== current.repo) {
       throw new Error('the linked refinement no longer matches this idea');
@@ -752,35 +781,39 @@ export class PlannerService {
     const lease = this.claimAction(id, 'discussing');
     try {
       const session = this.mustGet(id);
+      const refinementItems = this.reviewRefinementItems(session);
       const needsRepositoryScan = session.repositoryContext === null;
       if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
       const output = await this.runStructured(id, userId, 'Discuss implementation plan', discussionPrompt({
         session,
         message,
+        refinementItems,
         ...(context ? { context } : {}),
       }), lease, { repositoryAccess: needsRepositoryScan });
       if (!this.ownsAction(id, lease)) return;
-      const result = parsePlannerDiscussion(output, session);
+      const result = parsePlannerDiscussion(output, session, undefined, refinementItems);
+      const intent = result.intent;
       const assistantMessage: PlannerMessage = {
         id: messageId(),
         role: 'assistant',
         content: result.clarification?.question ?? result.answer,
         createdAt: Date.now(),
-        intent: result.intent,
+        intent,
         context,
         references: result.references,
         ...(result.clarification ? { options: result.clarification.options } : {}),
       };
       this.updateAndBroadcast(id, {
         messages: appendMessages(this.mustGet(id).messages, [assistantMessage]),
-        status: result.intent === 'change_request' ? 'working' : 'waiting_for_user',
-        activeAction: result.intent === 'change_request' ? 'revising' : null,
+        status: intent === 'change_request' ? 'working' : 'waiting_for_user',
+        activeAction: intent === 'change_request' ? 'revising' : null,
         activeQueueId: null,
         activeRunId: null,
         lastError: null,
-      }, undefined, result.intent === 'change_request' ? 'discussion_change_requested' : 'discussion_answered', { intent: result.intent });
-      if (result.intent === 'change_request') {
+      }, undefined, intent === 'change_request' ? 'discussion_change_requested' : 'discussion_answered', { intent });
+      if (intent === 'change_request') {
+        if (!result.changeInstruction) throw new Error('change request did not include a revision instruction');
         await this.runRevision(id, result.changeInstruction, userId, true);
       }
     } catch (err) {
@@ -797,18 +830,20 @@ export class PlannerService {
       const needsRepositoryScan = session.repositoryContext === null;
       if (needsRepositoryScan) await this.ensureClone(session, userId);
       if (!this.ownsAction(id, lease)) return;
-      const revisionBase = session.pendingRevision?.artifacts ?? session.artifacts!;
-      const briefBase = session.pendingRevision?.brief ?? session.brief;
+      const refinementItems = this.reviewRefinementItems(session);
       const output = await this.runStructured(
         id,
         userId,
-        'Revise implementation plan',
-        revisionPrompt(instruction, briefBase, revisionBase, session.repositoryContext),
+        'Revise planning checkpoint',
+        reviewRevisionPrompt({ session, instruction, refinementItems }),
         lease,
         { repositoryAccess: needsRepositoryScan },
       );
       if (!this.ownsAction(id, lease)) return;
       const pendingRevision = parsePlannerRevision(output);
+      if (!revisionMatchesStep(pendingRevision.kind, session.step)) {
+        throw new Error(`the model returned a ${pendingRevision.kind} revision for ${session.step}`);
+      }
       this.updateAndBroadcast(id, {
         pendingRevision, status: 'waiting_for_user', activeAction: null,
         activeQueueId: null, activeRunId: null, lastError: null,
@@ -831,6 +866,9 @@ export class PlannerService {
     try {
       let session = this.mustGet(id);
       const revision = session.pendingRevision!;
+      if (revision.kind !== 'plan' || !revision.brief || !revision.artifacts) {
+        throw new Error('the implementation plan revision is incomplete');
+      }
       this.plan.docs.update(session.docId!, {
         title: revision.artifacts.documentation.title, content: revision.artifacts.documentation.content,
       });
@@ -1079,7 +1117,7 @@ export class PlannerService {
 
   private failConversation(id: string, err: unknown): void {
     const session = this.store.get(id);
-    if (!session || session.step !== 'analysis_review' || session.status !== 'working') return;
+    if (!session || !isDiscussionReviewStep(session.step) || session.status !== 'working') return;
     const technicalMessage = String(err instanceof Error ? err.message : err).slice(0, 4_000);
     log.warn('planner discussion failed', { id, action: session.activeAction, err: technicalMessage });
     const message = err instanceof ZodError
@@ -1108,6 +1146,11 @@ export class PlannerService {
       throw new Error('tasks are not ready for editing');
     }
     return current;
+  }
+
+  private reviewRefinementItems(session: FeaturePlanningSession): RefineItemRecord[] {
+    if (session.step !== 'tasks_review' || !session.refinementId) return [];
+    return this.refinement.get(session.refinementId)?.items ?? [];
   }
 
   private mustGet(id: string): FeaturePlanningSession {
@@ -1160,6 +1203,42 @@ export class PlannerService {
   private changed(_sessionId?: string): void {
     this.broadcast({ t: 'planner.changed' });
   }
+}
+
+const DISCUSSION_REVIEW_STEPS = new Set<FeaturePlanningSession['step']>([
+  'scope_review',
+  'artifacts_review',
+  'analysis_review',
+  'tasks_review',
+]);
+
+function isDiscussionReviewStep(step: FeaturePlanningSession['step']): boolean {
+  return DISCUSSION_REVIEW_STEPS.has(step);
+}
+
+function defaultDiscussionContext(step: FeaturePlanningSession['step']): PlannerDiscussionContext {
+  if (step === 'scope_review') return 'brief';
+  if (step === 'artifacts_review') return 'implementation_plan';
+  if (step === 'tasks_review') return 'tasks';
+  return 'plan_summary';
+}
+
+function hasReviewContent(session: FeaturePlanningSession): boolean {
+  if (session.step === 'scope_review') return session.brief !== null;
+  if (session.step === 'artifacts_review') return session.artifacts !== null;
+  if (session.step === 'analysis_review') return session.analysis !== null;
+  if (session.step === 'tasks_review') return session.refinementId !== null;
+  return false;
+}
+
+function revisionMatchesStep(
+  kind: PlannerRevision['kind'],
+  step: FeaturePlanningSession['step'],
+): boolean {
+  return (kind === 'brief' && step === 'scope_review')
+    || (kind === 'artifacts' && step === 'artifacts_review')
+    || (kind === 'plan' && step === 'analysis_review')
+    || (kind === 'tasks' && step === 'tasks_review');
 }
 
 function serializeRepositorySnapshot(session: FeaturePlanningSession): string | undefined {
