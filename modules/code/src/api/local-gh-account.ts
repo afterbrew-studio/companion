@@ -9,17 +9,17 @@ export interface LocalGhAccount {
 }
 
 /**
- * Read the active github.com identity from the operator's gh keyring. This is
- * used at daemon boot to attach the operator's identity to the oldest enabled
- * admin; it is never a runtime credential fallback and the token is never
- * logged or written outside the account store.
+ * Read the operator's active identity for `host` from their gh keyring. Used at
+ * daemon boot to attach that identity to the oldest enabled admin; it is never a
+ * runtime credential fallback and the token is never logged or written outside
+ * the account store.
  */
-export async function readActiveLocalGhAccount(): Promise<LocalGhAccount | null> {
+export async function readActiveLocalGhAccount(host = 'github.com'): Promise<LocalGhAccount | null> {
   if (process.env.COMPANION_IMPORT_LOCAL_GH === 'false') return null;
   try {
     const { stdout: raw } = await execFileP(
       'gh',
-      ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'],
+      ['auth', 'status', '--active', '--hostname', host, '--json', 'hosts'],
       { encoding: 'utf8', timeout: 5_000 },
     );
     const parsed = JSON.parse(raw) as {
@@ -28,12 +28,12 @@ export async function readActiveLocalGhAccount(): Promise<LocalGhAccount | null>
     // `gh auth status` verifies GitHub over the network. The local identity is
     // still valid input when that probe reports `state: error`; `GitHubAccounts`
     // performs the authoritative token check before persisting anything.
-    const account = parsed.hosts?.['github.com']?.find(
+    const account = parsed.hosts?.[host]?.find(
       (candidate) => candidate.active === true && typeof candidate.login === 'string',
     );
     const login = typeof account?.login === 'string' ? account.login.trim() : '';
     if (!login) return null;
-    const { stdout } = await execFileP('gh', ['auth', 'token', '--hostname', 'github.com'], {
+    const { stdout } = await execFileP('gh', ['auth', 'token', '--hostname', host], {
       encoding: 'utf8',
       timeout: 5_000,
     });

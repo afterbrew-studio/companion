@@ -14,12 +14,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@companion/contracts": "workspace:*",
     "@companion/types": "workspace:*",
-    "jsonrepair": "^3.15.0"
+    "jsonrepair": "^3.15.0",
+    "undici": "^7.16.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

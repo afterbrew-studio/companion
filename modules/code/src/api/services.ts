@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
@@ -84,12 +84,12 @@ export default defineServices((ctx) => {
   // GitHub accounts registry: each PAT is bound to purposes (fetch, runs,
   // pipelines, webhooks); consumers resolve a client per purpose and owner.
   // An unowned legacy token is intentionally never adopted.
-  const ghAccounts = new GitHubAccounts(store);
+  const ghAccounts = new GitHubAccounts(store, ctx.config.github.apiUrl);
   ghAccounts.migrateLegacyToken();
   const importActiveLocalGh = async (): Promise<boolean> => {
     const primaryAdmin = ctx.services.get('core').primaryAdminUsername();
     if (!primaryAdmin) return false;
-    const localGh = await readActiveLocalGhAccount();
+    const localGh = await readActiveLocalGhAccount(ctx.config.github.host);
     if (!localGh) return false;
     try {
       const connected = await ghAccounts.add(

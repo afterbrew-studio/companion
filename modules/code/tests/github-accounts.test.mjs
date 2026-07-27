@@ -16,7 +16,9 @@ function fixture({ repoWorkspace = 'ws-existing' } = {}) {
     },
   ];
   const store = {
-    githubAccounts: { list: () => accounts },
+    // The resolver consults per-repo bindings before falling back to scope, so
+    // the stub has to answer that too: "no binding" is the interesting default.
+    githubAccounts: { list: () => accounts, binding: () => null, bindingsFor: () => ({}) },
     repos: {
       get: (fullName) =>
         fullName === 'moxxy-ai/companion' ? { full_name: fullName, workspace_id: repoWorkspace } : undefined,
@@ -32,7 +34,7 @@ test('unowned legacy accounts are invisible and never resolve', () => {
     scope: 'all', workspaceIds: [], ownerId: null, createdAt: 0,
   };
   const store = {
-    githubAccounts: { list: () => [legacy] },
+    githubAccounts: { list: () => [legacy], binding: () => null, bindingsFor: () => ({}) },
     repos: { workspaceIds: () => ['ws-a'] },
   };
   const accounts = new GitHubAccounts(store);

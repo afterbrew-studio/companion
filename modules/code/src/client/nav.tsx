@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
 
 /**
  * module-code's sidebar contributions. It owns the Code group; the repos and
@@ -61,6 +61,9 @@ export const nav = defineNav([
     permission: 'issues:read',
     section: 'workspace',
     order: 0,
+    // The front page when code is in the build and the viewer may see issues;
+    // otherwise the shell falls back to the first entry their role can reach.
+    home: 0,
     icon: icons.overview,
   },
   {

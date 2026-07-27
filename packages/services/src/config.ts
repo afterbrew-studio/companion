@@ -25,8 +25,14 @@ export const paths = {
   db: (): string => join(companionHome(), 'companion.db'),
   daemonConfig: (): string => join(companionHome(), 'companiond.json'),
   envFile: (): string => join(companionHome(), '.env'),
+  /** Bearer token the local CLI authenticates with (mode 0600, minted at boot). */
+  cliToken: (): string => join(companionHome(), 'cli-token'),
+  /** Offline, signed entitlement file. Absent on every OSS install. */
+  license: (): string => join(companionHome(), 'license.jwt'),
   /** Marker requesting a fresh database on the NEXT boot (see requestDbRecreate). */
   recreateDbMarker: (): string => join(companionHome(), 'recreate-db'),
+  /** Out-of-tree modules, one directory per module id. */
+  externalModules: (): string => join(companionHome(), 'modules'),
 };
 
 /**
@@ -74,6 +80,16 @@ export interface DaemonConfig {
   defaultModel: string;
   /** URL remote runners use to reach this daemon's REST API. */
   publicUrl?: string;
+  /**
+   * Which GitHub this instance talks to. Defaults to github.com; point it at a
+   * GitHub Enterprise Server by setting both. `apiUrl` must include the API path
+   * GHES serves under (`https://ghe.corp/api/v3`), which composes correctly with
+   * every `${apiUrl}${path}` call because the resource paths are identical.
+   *
+   * Daemon-level rather than module config: `code` speaks the REST API and
+   * `operate` clones over git, and operate cannot read a dependent's config.
+   */
+  github: { readonly apiUrl: string; readonly host: string };
   /** Accounts sourced from the .env files. */
   users: readonly UserCredential[];
 }
@@ -82,11 +98,15 @@ const DEFAULTS = {
   host: '127.0.0.1',
   port: 8901,
   maxLiveRuns: 3,
+  githubApiUrl: 'https://api.github.com',
+  githubHost: 'github.com',
 };
 
 interface StoredConfig {
   host?: string;
   port?: number;
+  githubApiUrl?: string;
+  githubHost?: string;
   maxLiveRuns?: number;
   moxxyCliPath?: string;
   publicUrl?: string;
@@ -133,6 +153,10 @@ export function loadDaemonConfig(): DaemonConfig {
     moxxyCliPath: stored.moxxyCliPath,
     defaultModel: env.COMPANION_MODEL?.trim() || DEFAULT_MODEL,
     publicUrl: env.COMPANION_PUBLIC_URL?.trim() || stored.publicUrl || undefined,
+    github: {
+      apiUrl: (env.COMPANION_GITHUB_API_URL?.trim() || stored.githubApiUrl || DEFAULTS.githubApiUrl).replace(/\/+$/, ''),
+      host: env.COMPANION_GITHUB_HOST?.trim() || stored.githubHost || DEFAULTS.githubHost,
+    },
     users,
   };
 }

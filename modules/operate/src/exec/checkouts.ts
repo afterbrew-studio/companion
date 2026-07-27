@@ -69,7 +69,11 @@ export class Checkouts {
    * The thunk resolves per repo, profile and required access, and may be async
    * because access is probed at GitHub. Only network operations resolve it.
    */
-  constructor(private readonly token: GitCredentialResolver) {}
+  constructor(
+    private readonly token: GitCredentialResolver,
+    /** Host clones go to; a GitHub Enterprise Server serves the same paths. */
+    private readonly gitHost: string = 'github.com',
+  ) {}
 
   /** The explicit per-operation personal credential wins; the resolver is for local calls. */
   private async creds(
@@ -104,7 +108,7 @@ export class Checkouts {
       if (existsSync(join(dir, '.git'))) return;
       mkdirSync(dir, { recursive: true });
       await this.git(
-        ['clone', '--quiet', `https://github.com/${fullName}.git`, dir],
+        ['clone', '--quiet', `https://${this.gitHost}/${fullName}.git`, dir],
         undefined,
         await this.creds(fullName, token, username),
       );

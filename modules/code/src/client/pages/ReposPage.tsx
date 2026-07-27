@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIntent } from '@companion/core/client';
+import { useIntent } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace, useWorkspaceMembers, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
@@ -22,7 +22,7 @@ import {
   timeAgo,
   useConfirm,
   useDebounced,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import type { RepoCandidate, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { RepoAccountPicker } from '../components/RepoAccountPicker.js';
@@ -142,6 +142,7 @@ function RepoCard({
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
+  const { githubHost } = useAuth();
   const [busy, setBusy] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
@@ -208,7 +209,7 @@ function RepoCard({
       <div className="flex flex-wrap items-center gap-2">
         <a
           className="font-medium hover:underline"
-          href={`https://github.com/${repo.fullName}`}
+          href={`https://${githubHost}/${repo.fullName}`}
           target="_blank"
           rel="noreferrer"
         >
@@ -393,6 +394,7 @@ function AddRepoModal({
   onClose: () => void;
   onDone: () => void;
 }): JSX.Element {
+  const { githubHost } = useAuth();
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -444,7 +446,7 @@ function AddRepoModal({
         <Field label="Repository">
           <input
             className="input"
-            placeholder="owner/name or https://github.com/owner/name"
+            placeholder={`owner/name or https://${githubHost}/owner/name`}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             autoFocus

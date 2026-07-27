@@ -12,19 +12,23 @@ export class GitHubError extends Error {
   }
 }
 
-const API = 'https://api.github.com';
+/** github.com; a GitHub Enterprise Server instance serves the same paths under `/api/v3`. */
+export const DEFAULT_API = 'https://api.github.com';
 
 export class GitHubClient {
   private readonly etags = new Map<string, { etag: string; body: unknown }>();
   private readonly branchCache = new Map<string, { at: number; branches: GhBranch[] }>();
   private readonly branchInflight = new Map<string, Promise<GhBranch[]>>();
 
-  constructor(private readonly token: string) {}
+  constructor(
+    private readonly token: string,
+    private readonly api: string = DEFAULT_API,
+  ) {}
 
   /** GET with ETag cache. Returns the cached body on 304. */
   async get<T>(path: string): Promise<T> {
     const cached = this.etags.get(path);
-    const res = await fetch(`${API}${path}`, {
+    const res = await fetch(`${this.api}${path}`, {
       headers: {
         ...this.headers(),
         ...(cached ? { 'if-none-match': cached.etag } : {}),
@@ -194,7 +198,7 @@ export class GitHubClient {
     const files: GhPrFile[] = [];
     let full = false;
     for (let page = 1; page <= maxPages; page++) {
-      const res = await fetch(`${API}/repos/${fullName}/pulls/${number}/files?per_page=100&page=${page}`, {
+      const res = await fetch(`${this.api}/repos/${fullName}/pulls/${number}/files?per_page=100&page=${page}`, {
         headers: this.headers(),
       });
       if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}/files`);
@@ -220,7 +224,7 @@ export class GitHubClient {
     number: number,
     method: 'merge' | 'squash' | 'rebase' = 'squash',
   ): Promise<{ merged: boolean; message: string }> {
-    const res = await fetch(`${API}/repos/${fullName}/pulls/${number}/merge`, {
+    const res = await fetch(`${this.api}/repos/${fullName}/pulls/${number}/merge`, {
       method: 'PUT',
       headers: { ...this.headers(), 'content-type': 'application/json' },
       body: JSON.stringify({ merge_method: method }),
@@ -241,7 +245,7 @@ export class GitHubClient {
   async deleteMergedPrBranch(fullName: string, number: number): Promise<boolean> {
     const pr = await this.pull(fullName, number);
     if (pr.head.repo?.full_name !== fullName) return false;
-    const res = await fetch(`${API}/repos/${fullName}/git/refs/heads/${encodeURIComponent(pr.head.ref)}`, {
+    const res = await fetch(`${this.api}/repos/${fullName}/git/refs/heads/${encodeURIComponent(pr.head.ref)}`, {
       method: 'DELETE',
       headers: this.headers(),
     });
@@ -260,7 +264,7 @@ export class GitHubClient {
   }
 
   private async send<T>(method: string, path: string, payload: unknown): Promise<T> {
-    const res = await fetch(`${API}${path}`, {
+    const res = await fetch(`${this.api}${path}`, {
       method,
       headers: { ...this.headers(), 'content-type': 'application/json' },
       body: JSON.stringify(payload),

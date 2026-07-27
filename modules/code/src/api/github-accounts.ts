@@ -9,8 +9,8 @@ import {
   type RepoCandidate,
   type RepoPermission,
 } from '../contract/index.js';
-import { log, currentUser } from '@companion/services';
-import { GitHubClient, GitHubError } from './github-client.js';
+import { log, currentUser } from '@moxxy-ai/companion-sdk/server';
+import { DEFAULT_API, GitHubClient, GitHubError } from './github-client.js';
 import type { CodeStore } from './code-store.js';
 import type { GithubAccountRow } from './github-accounts-store.js';
 
@@ -68,7 +68,11 @@ export class GitHubAccounts {
   /** `${accountId}:${repo}` → probed repo reach (TTL'd, cleared on account changes). */
   private readonly repoAccess = new Map<string, RepoReach>();
 
-  constructor(private readonly store: CodeStore) {}
+  constructor(
+    private readonly store: CodeStore,
+    /** Which GitHub every client for this instance talks to (github.com or GHES). */
+    private readonly api: string = DEFAULT_API,
+  ) {}
 
   /** Legacy instance-wide PATs are deliberately not adopted: there is no safe
    * owner to assign them to. The admin reconnects it from their own profile. */
@@ -92,7 +96,7 @@ export class GitHubAccounts {
     scope: GitHubAccountScope = 'all',
     workspaceIds: readonly string[] = [],
   ): Promise<GitHubAccountRecord> {
-    const client = new GitHubClient(token);
+    const client = new GitHubClient(token, this.api);
     const viewer = await client.viewer();
     // The same GitHub login may be connected independently by different
     // Companion users. One user's connect flow must never replace another's.
@@ -400,7 +404,7 @@ export class GitHubAccounts {
   clientOf(row: GithubAccountRow): GitHubClient {
     let client = this.clients.get(row.id);
     if (!client) {
-      client = new GitHubClient(row.token);
+      client = new GitHubClient(row.token, this.api);
       this.clients.set(row.id, client);
     }
     return client;
