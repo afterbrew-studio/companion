@@ -241,7 +241,7 @@ it is.
 
 ---
 
-## 6. Network and identity constraints **[partly available]**
+## 6. Network and identity constraints **[available]**
 
 ### GitHub Enterprise Server **[available]**
 
@@ -363,10 +363,19 @@ config is unaffected.
 No Vault module ships. The seam is core work and is done; the backend is a
 module anyone can write.
 
-### Still not built
-- **GitHub App credentials.** Only personal access tokens. An organisation on
-  GitHub Enterprise Cloud with SAML SSO must SSO-authorise each token, and
-  organisations that ban PATs outright cannot connect at all.
+### GitHub App credentials **[available]**
+
+An account connects with a personal access token or with a **GitHub App
+installation**. The second exists for the organisation that cannot use the
+first: GitHub Enterprise Cloud with SAML SSO requires every token to be
+SSO-authorised, and some organisations ban PATs outright.
+
+Create the app, give it Metadata read plus Contents, Issues and Pull requests
+read-write, generate a private key, and install it on the organisation. Connect
+it from the GitHub accounts page with the App ID, the Installation ID and the
+PEM. The key is stored server-side and never sent back to a browser; the
+hour-long installation token is cached and re-minted by a background job with a
+25-minute margin, so one failed refresh interrupts nothing.
 
 A custom CA works today via `NODE_EXTRA_CA_CERTS` (a Node-level setting, mounted
 into the container), which a TLS-intercepting proxy will need.
@@ -449,11 +458,10 @@ The sequencing, with what each mechanism cost, is in
 [`docs/game-plan.md`](docs/game-plan.md). Every phase P0 to P9 is built.
 
 The full list of what is not built, with what exists in each case, is
-[`docs/open-items.md`](docs/open-items.md). Three of them appear on this page,
-and none is a mechanism: **GitHub App credentials** (§6, the one that blocks an organisation
-banning personal access tokens), **commercial modules** to put behind the
-entitlement gate, and a **Vault or KMS backend** for the secret store. The seams
-for the last two exist and are tested; what is missing is a module.
+[`docs/open-items.md`](docs/open-items.md). Two of them appear on this page,
+and neither is a mechanism: **commercial modules** to put behind the entitlement
+gate, and a **Vault or KMS backend** for the secret store. Both seams exist and
+are tested; what is missing is a module.
 
 If you are evaluating Companion for an organisation, the two questions worth
 raising first are whether you need GitHub Enterprise or an egress proxy (§6),

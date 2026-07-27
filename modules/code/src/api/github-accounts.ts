@@ -11,6 +11,7 @@ import {
 } from '../contract/index.js';
 import { log, currentUser } from '@moxxy-ai/companion-sdk/server';
 import { DEFAULT_API, GitHubClient, GitHubError } from './github-client.js';
+import { installationLogin, mintInstallationToken } from './github-app.js';
 import type { CodeStore } from './code-store.js';
 import type { GithubAccountRow } from './github-accounts-store.js';
 
@@ -120,9 +121,137 @@ export class GitHubAccounts {
     }
     const id = `gha-${randomUUID().slice(0, 12)}`;
     const createdAt = Date.now();
-    this.store.githubAccounts.insert({ id, login: viewer.login, token, purposes, scope, workspaceIds, ownerId, createdAt });
+    this.store.githubAccounts.insert({
+      id,
+      login: viewer.login,
+      token,
+      purposes,
+      scope,
+      workspaceIds,
+      ownerId,
+      createdAt,
+      kind: 'pat',
+    });
     this.clients.set(id, client);
-    return { id, login: viewer.login, purposes: [...purposes], scope, workspaceIds: [...workspaceIds], ownerId, createdAt };
+    return {
+      id,
+      login: viewer.login,
+      purposes: [...purposes],
+      scope,
+      workspaceIds: [...workspaceIds],
+      ownerId,
+      createdAt,
+      kind: 'pat',
+      appId: null,
+      installationId: null,
+      tokenExpiresAt: null,
+    };
+  }
+
+  /**
+   * Connect a GitHub App installation. The private key is verified by using it:
+   * a bad PEM, a wrong App ID or an uninstalled app all fail here, at connect
+   * time, with a message naming the likely cause, rather than at the first
+   * clone hours later.
+   */
+  async addApp(
+    app: { appId: string; installationId: string; privateKey: string },
+    purposes: readonly GitHubPurpose[],
+    ownerId: string,
+    scope: GitHubAccountScope = 'all',
+    workspaceIds: readonly string[] = [],
+  ): Promise<GitHubAccountRecord> {
+    const login = await installationLogin(this.api, app.appId, app.installationId, app.privateKey);
+    const minted = await mintInstallationToken(this.api, app.appId, app.installationId, app.privateKey);
+
+    const existing = this.store.githubAccounts
+      .list()
+      .find((a) => a.login === login && a.ownerId === ownerId && a.kind === 'app');
+    if (existing) {
+      this.store.githubAccounts.update(existing.id, { token: minted.token, purposes, scope, workspaceIds });
+      // Before the token, so a rotated key or a moved installation actually
+      // takes effect instead of being reported as connected and ignored.
+      this.store.githubAccounts.setAppCredentials(existing.id, app);
+      this.store.githubAccounts.setInstallationToken(existing.id, minted.token, minted.expiresAt);
+      this.clients.delete(existing.id);
+      this.clearAccessCache(existing.id);
+      return toRecord({
+        ...existing,
+        login,
+        purposes: [...purposes],
+        scope,
+        workspaceIds: [...workspaceIds],
+        ownerId,
+        appId: app.appId,
+        installationId: app.installationId,
+        tokenExpiresAt: minted.expiresAt,
+      });
+    }
+    const id = `gha-${randomUUID().slice(0, 12)}`;
+    const createdAt = Date.now();
+    this.store.githubAccounts.insert({
+      id,
+      login,
+      token: minted.token,
+      purposes,
+      scope,
+      workspaceIds,
+      ownerId,
+      createdAt,
+      kind: 'app',
+      appId: app.appId,
+      installationId: app.installationId,
+      privateKey: app.privateKey,
+      tokenExpiresAt: minted.expiresAt,
+    });
+    return {
+      id,
+      login,
+      purposes: [...purposes],
+      scope,
+      workspaceIds: [...workspaceIds],
+      ownerId,
+      createdAt,
+      kind: 'app',
+      appId: app.appId,
+      installationId: app.installationId,
+      tokenExpiresAt: minted.expiresAt,
+    };
+  }
+
+  /**
+   * Re-mint installation tokens that are close to expiring.
+   *
+   * Proactive rather than on demand, and that is the whole design decision here.
+   * `tokenFor` and `clientFor` are synchronous and handed around as factories by
+   * a dozen call sites, plus `GitHubClient.headers()` is synchronous in every
+   * method. Making the credential async to refresh something that changes once
+   * an hour would ripple through all of it. A cached token in the row plus a
+   * margin confines the change to this method.
+   *
+   * The margin has to exceed the job interval so a single failed run still
+   * leaves a valid token and a second attempt.
+   */
+  async refreshInstallationTokens(marginMs: number, log?: (msg: string) => void): Promise<number> {
+    const due = this.store.githubAccounts
+      .list()
+      .filter((r) => r.kind === 'app' && r.appId && r.installationId && r.privateKey)
+      .filter((r) => (r.tokenExpiresAt ?? 0) - Date.now() < marginMs);
+    let refreshed = 0;
+    for (const row of due) {
+      try {
+        const minted = await mintInstallationToken(this.api, row.appId!, row.installationId!, row.privateKey!);
+        this.store.githubAccounts.setInstallationToken(row.id, minted.token, minted.expiresAt);
+        // The cached client closed over the old token string.
+        this.clients.delete(row.id);
+        refreshed++;
+      } catch (err) {
+        // One unreachable installation must not stop the others; the margin
+        // means this run can fail and the next still beats expiry.
+        log?.(`could not refresh the installation token for '${row.login}': ${String(err)}`);
+      }
+    }
+    return refreshed;
   }
 
   update(
@@ -487,5 +616,9 @@ function toRecord(r: GithubAccountRow & { ownerId: string }): GitHubAccountRecor
     workspaceIds: r.workspaceIds,
     ownerId: r.ownerId,
     createdAt: r.createdAt,
+    kind: r.kind,
+    appId: r.appId,
+    installationId: r.installationId,
+    tokenExpiresAt: r.tokenExpiresAt,
   };
 }

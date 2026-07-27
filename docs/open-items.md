@@ -1,39 +1,46 @@
 # Open items
 
-What is genuinely not built, as of 2026-07-27, after P0 to P9 of
+What is genuinely not built, as of 2026-07-28, after P0 to P9 of
 [`game-plan.md`](game-plan.md) landed.
 
 The list is short on purpose. **Every mechanism from the plan exists**: build
 profiles, generated registries, instance-defined roles, the audit trail with
 retention and export, the entitlement gate, the single-node lock, the GitHub
 endpoint and outbound proxy seams, the secret store seam, the OIDC reference
-module, the published SDK, and out-of-tree modules on both the server and the
-browser. What follows needs content or a decision, not a new mechanism, with one
-exception (§5) that needs neither until a module asks for it.
+module, the published SDK, out-of-tree modules on both the server and the
+browser, and GitHub App credentials.
+
+What follows needs content or a decision, not a new mechanism, with two
+exceptions: §1 is built and kept here for its remaining rough edge, and §5 needs
+nothing until a module asks for it.
 
 Verified against the tree rather than remembered: each entry says what exists and
 what does not, so nobody has to re-derive it.
 
 ---
 
-## 1. GitHub App credentials `[the one that actually blocks someone]`
+## 1. GitHub App credentials `[BUILT]`
 
-**Today:** personal access tokens only, per account, in the multi-account
-registry `modules/code` owns.
+Was the one item that ended conversations. An account now connects either way:
+a personal access token, or a **GitHub App installation** (App ID, Installation
+ID, private key), which is what an organisation banning PATs or requiring
+SSO-authorised tokens can actually use. Same registry, same purposes, same
+per-repo resolution; only how the credential is obtained differs.
 
-**The problem:** an organisation on GitHub Enterprise Cloud with SAML SSO must
-SSO-authorise each token, and an organisation that bans PATs outright cannot
-connect at all. No workaround exists on our side; it is not a configuration
-question.
+The shape worth knowing, because it is not the obvious one: `tokenFor` and
+`clientFor` are **synchronous** and handed around as factories by a dozen call
+sites, and `GitHubClient.headers()` is synchronous in every method. Making the
+credential async to refresh something that changes once an hour would have
+rippled through all of it. Instead the installation token is cached in the
+account row with its expiry, a background job re-mints on a 25-minute margin
+against a 10-minute interval (so one failed run still leaves a valid token and
+another attempt), and `postActivate` refreshes at boot for the daemon that was
+down longer than an hour.
 
-**Why it is first:** every other item on this page is something an evaluator can
-live without or supply themselves. This one ends the conversation.
-
-**Shape of the work:** an installation-based credential (app id, private key,
-installation id) alongside the PAT in the accounts registry, token minting with
-the one-hour expiry that implies, and `gh` / clone paths taught to use it.
-`COMPANION_GITHUB_API_URL` and `COMPANION_GITHUB_HOST` already exist, so the
-endpoint half is done.
+Still open, and small: nothing surfaces "this installation stopped refreshing"
+to an operator beyond a log warning. If an app is uninstalled on GitHub, the
+account keeps its dead token until someone reads the log or a call fails over.
+Worth a health field on the account record when someone hits it.
 
 ## 2. A commercial module `[business decision, not code]`
 

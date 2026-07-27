@@ -263,4 +263,43 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS repo_account_bindings`);
     },
   },
+  {
+    version: 6,
+    name: 'code_github_app_accounts',
+    up: (db) => {
+      // A GitHub App installation as a credential, alongside personal tokens.
+      // Additive on purpose: `token` keeps its meaning for a PAT and becomes the
+      // CACHED installation token for an app, with `token_expires_at` saying
+      // when it dies. One column means one accessor stays synchronous, and the
+      // cache survives a restart instead of re-minting for every account at boot.
+      //
+      // `private_key` is the app's PEM. It sits here rather than in the secret
+      // store because that seam is for per-module CONFIG (one value per key per
+      // module), and this is per-row data, exactly like the PAT beside it.
+      for (const column of [
+        `kind TEXT NOT NULL DEFAULT 'pat'`,
+        `app_id TEXT`,
+        `installation_id TEXT`,
+        `private_key TEXT`,
+        `token_expires_at INTEGER`,
+      ]) {
+        // Idempotent: a re-run on a partially migrated database must not fail.
+        try {
+          db.exec(`ALTER TABLE github_accounts ADD COLUMN ${column}`);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+    },
+    down: (db) => {
+      for (const name of ['kind', 'app_id', 'installation_id', 'private_key', 'token_expires_at']) {
+        try {
+          db.exec(`ALTER TABLE github_accounts DROP COLUMN ${name}`);
+        } catch {
+          // Older SQLite cannot drop columns; leaving them is harmless because
+          // `kind` defaults to 'pat' and the rest are nullable.
+        }
+      }
+    },
+  },
 ]);

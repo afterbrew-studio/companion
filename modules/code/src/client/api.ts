@@ -182,6 +182,14 @@ export const codeApi = {
     scope: GitHubAccountScope = 'all',
     workspaceIds: readonly string[] = [],
   ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts', { token, purposes, scope, workspaceIds }),
+
+  /** Connect a GitHub App installation instead of a personal token. */
+  addGithubAppAccount: (
+    app: { appId: string; installationId: string; privateKey: string },
+    purposes: readonly GitHubPurpose[],
+    scope: GitHubAccountScope,
+    workspaceIds: readonly string[],
+  ) => post<{ account: GitHubAccountRecord }>('/api/github/accounts/app', { ...app, purposes, scope, workspaceIds }),
   updateGithubAccount: (
     id: string,
     fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },

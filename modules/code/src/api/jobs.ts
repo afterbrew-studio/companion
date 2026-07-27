@@ -62,6 +62,27 @@ export default defineJobs({
     );
 
   },
+  /**
+   * Installation tokens last an hour, so they are re-minted well before that.
+   * The margin must exceed the interval: a single failed run then still leaves
+   * a valid token and another attempt before anything expires.
+   */
+  jobs: [
+    {
+      id: 'code.github-app-tokens',
+      everyMs: 10 * 60_000,
+      run: async (ctx) => {
+        const n = await ctx.services
+          .get('code')
+          .githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
+        if (n) ctx.log.info(`refreshed ${n} GitHub App installation token(s)`);
+      },
+    },
+  ],
+  /** A daemon down longer than an hour wakes with every app token expired. */
+  postActivate: async (ctx) => {
+    await ctx.services.get('code').githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
+  },
   onDisable: (ctx) => {
     offSetupCompleted?.();
     offSetupCompleted = null;

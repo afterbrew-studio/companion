@@ -20,7 +20,12 @@ import {
   timeAgo,
   useConfirm,
 } from '@moxxy-ai/companion-sdk/ui';
-import type { GitHubAccountRecord, GitHubAccountScope, GitHubPurpose } from '../../contract/index.js';
+import type {
+  GitHubAccountRecord,
+  GitHubAccountScope,
+  GitHubCredentialKind,
+  GitHubPurpose,
+} from '../../contract/index.js';
 import { GITHUB_PURPOSES } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useGithubAccounts } from '../hooks/useGithubAccounts.js';
@@ -125,7 +130,8 @@ export function GithubAccountsPage(): JSX.Element {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
                     <div className="dim text-xs">
-                      your personal account · connected {timeAgo(a.createdAt)} ·{' '}
+                      {a.kind === 'app' ? `GitHub App installation ${a.installationId ?? ''}` : 'your personal account'}{' '}
+                      · connected {timeAgo(a.createdAt)} ·{' '}
                       {a.scope === 'all'
                         ? 'available in all your workspaces'
                         : `available in ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
@@ -262,7 +268,11 @@ function ConnectAccountModal({
   onClose: () => void;
   onDone: () => void;
 }): JSX.Element {
+  const [kind, setKind] = useState<GitHubCredentialKind>('pat');
   const [token, setToken] = useState('');
+  const [appId, setAppId] = useState('');
+  const [installationId, setInstallationId] = useState('');
+  const [privateKey, setPrivateKey] = useState('');
   const [purposes, setPurposes] = useState<readonly GitHubPurpose[]>(GITHUB_PURPOSES);
   const [scope, setScope] = useState<GitHubAccountScope>('all');
   const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>([]);
@@ -270,6 +280,10 @@ function ConnectAccountModal({
   const [error, setError] = useState<string | null>(null);
 
   const selectedEmpty = scope === 'selected' && workspaceIds.length === 0;
+  const credentialReady =
+    kind === 'pat'
+      ? token.trim().length >= 10
+      : /^\d+$/.test(appId.trim()) && /^\d+$/.test(installationId.trim()) && privateKey.trim().length > 100;
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -280,7 +294,17 @@ function ConnectAccountModal({
     setBusy(true);
     setError(null);
     try {
-      await api.addGithubAccount(token.trim(), purposes, scope, scope === 'selected' ? workspaceIds : []);
+      const ws = scope === 'selected' ? workspaceIds : [];
+      if (kind === 'app') {
+        await api.addGithubAppAccount(
+          { appId: appId.trim(), installationId: installationId.trim(), privateKey: privateKey.trim() },
+          purposes,
+          scope,
+          ws,
+        );
+      } else {
+        await api.addGithubAccount(token.trim(), purposes, scope, ws);
+      }
       onDone();
     } catch (err) {
       setError(String(err));
@@ -291,25 +315,68 @@ function ConnectAccountModal({
   return (
     <Modal wide title="Connect a GitHub account" onClose={onClose}>
       <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
-        {/* Fine-grained PAT — the one required field, spanning the top. */}
-        <Field
-          label="Fine-grained personal access token"
-          hint={
-            <>
-              Needs Contents, Issues, and Pull requests <span className="font-medium">read-write</span>, plus Metadata read.
-            </>
-          }
-        >
-          <input
-            className="input font-mono"
-            type="password"
-            required
-            placeholder="github_pat_…"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            autoFocus
-          />
-        </Field>
+        <FieldGroup label="Credential">
+          <Dropdown ariaLabel="Credential type" value={kind} onChange={setKind} options={KIND_OPTIONS} />
+        </FieldGroup>
+
+        {kind === 'pat' ? (
+          <Field
+            label="Fine-grained personal access token"
+            hint={
+              <>
+                Needs Contents, Issues, and Pull requests <span className="font-medium">read-write</span>, plus Metadata read.
+              </>
+            }
+          >
+            <input
+              className="input font-mono"
+              type="password"
+              required
+              placeholder="github_pat_…"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoFocus
+            />
+          </Field>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="App ID" hint="The numeric id on the app's settings page.">
+                <input
+                  className="input font-mono"
+                  required
+                  inputMode="numeric"
+                  placeholder="123456"
+                  value={appId}
+                  onChange={(e) => setAppId(e.target.value)}
+                  autoFocus
+                />
+              </Field>
+              <Field label="Installation ID" hint="The number at the end of the install URL.">
+                <input
+                  className="input font-mono"
+                  required
+                  inputMode="numeric"
+                  placeholder="7654321"
+                  value={installationId}
+                  onChange={(e) => setInstallationId(e.target.value)}
+                />
+              </Field>
+            </div>
+            <Field
+              label="Private key (PEM)"
+              hint="Generated once in the app's settings. Stored on the server and never sent back to a browser."
+            >
+              <textarea
+                className="input h-32 font-mono text-xs"
+                required
+                placeholder="-----BEGIN RSA PRIVATE KEY-----"
+                value={privateKey}
+                onChange={(e) => setPrivateKey(e.target.value)}
+              />
+            </Field>
+          </div>
+        )}
 
         {/* Two columns: what the account DOES (left) vs who it IS + where it applies (right). */}
         <div className="grid gap-x-6 gap-y-5 md:grid-cols-2">
@@ -361,7 +428,7 @@ function ConnectAccountModal({
           <button
             className="btn"
             type="submit"
-            disabled={busy || token.trim().length < 10 || purposes.length === 0 || selectedEmpty}
+            disabled={busy || !credentialReady || purposes.length === 0 || selectedEmpty}
           >
             {busy ? 'Validating…' : 'Connect'}
           </button>
@@ -380,6 +447,15 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
     </div>
   );
 }
+
+const KIND_OPTIONS = [
+  { value: 'pat', label: 'Personal access token', hint: 'Simplest, and enough for one maintainer.' },
+  {
+    value: 'app',
+    label: 'GitHub App installation',
+    hint: 'For organisations that require SSO-authorised tokens or ban PATs outright.',
+  },
+] as const satisfies ReadonlyArray<{ value: GitHubCredentialKind; label: string; hint: string }>;
 
 const SCOPE_OPTIONS = [
   { value: 'all', label: 'All my workspaces', hint: 'Available anywhere your profile has access.' },

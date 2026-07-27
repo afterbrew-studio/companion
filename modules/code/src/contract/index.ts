@@ -263,7 +263,17 @@ export interface RepoAccountOption {
  */
 export type GitHubAccountScope = 'all' | 'selected';
 
-/** A connected GitHub account (PAT); tokens never leave the daemon. */
+/**
+ * How a connected account authenticates.
+ *
+ * `pat` is a personal access token. `app` is a GitHub App installation, which
+ * exists because a PAT is not always available: an organisation on GitHub
+ * Enterprise Cloud with SAML SSO must SSO-authorise each token, and one that
+ * bans PATs outright cannot connect any other way.
+ */
+export type GitHubCredentialKind = 'pat' | 'app';
+
+/** A connected GitHub account; credentials never leave the daemon. */
 export interface GitHubAccountRecord {
   readonly id: string;
   readonly login: string;
@@ -277,6 +287,12 @@ export interface GitHubAccountRecord {
    */
   readonly ownerId: string;
   readonly createdAt: number;
+  readonly kind: GitHubCredentialKind;
+  /** App installations only, so the UI can name what it is showing. */
+  readonly appId: string | null;
+  readonly installationId: string | null;
+  /** When the cached installation token dies. Null for a PAT. */
+  readonly tokenExpiresAt: number | null;
 }
 
 // ---------- comments / webhooks / briefings -------------------------------------

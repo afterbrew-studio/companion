@@ -51,6 +51,16 @@ const addAccountSchema = z.object({
   shared: z.boolean().optional(),
 });
 
+const addAppAccountSchema = z.object({
+  appId: z.string().trim().regex(/^\d+$/, 'the App ID is the numeric id from the app settings page'),
+  installationId: z.string().trim().regex(/^\d+$/, 'the Installation ID is the number at the end of the install URL'),
+  // A PEM, not a token: generous bounds, shape checked by using it.
+  privateKey: z.string().min(100).max(20_000),
+  purposes: purposesSchema,
+  scope: scopeInputSchema.default('all'),
+  workspaceIds: workspaceIdsSchema.default([]),
+});
+
 const patchAccountSchema = z.object({
   purposes: purposesSchema.optional(),
   scope: scopeInputSchema.optional(),
@@ -1017,6 +1027,32 @@ export default defineRoutes((ctx) => {
         if (scope === 'selected') requireAccessibleWorkspaceIds(user, body.workspaceIds);
         const account = await code.githubAccounts.add(
           body.token,
+          body.purposes,
+          user!.username,
+          scope,
+          scope === 'selected' ? body.workspaceIds : [],
+        );
+        ctx.broadcast({ t: 'repos.changed' });
+        return created({ account });
+      },
+    }),
+
+    route({
+      // A GitHub App installation instead of a personal token. Same registry,
+      // same purposes, same per-repo resolution: only how the credential is
+      // obtained differs.
+      method: 'POST',
+      path: '/api/github/accounts/app',
+      access: 'github:connect',
+      body: addAppAccountSchema,
+      handler: async ({ body, user }) => {
+        const scope = body.scope === 'delegated' || body.scope === 'selected' ? 'selected' : 'all';
+        if (scope === 'selected' && body.workspaceIds.length === 0) {
+          throw badRequest('a workspace-selected account needs at least one workspace');
+        }
+        if (scope === 'selected') requireAccessibleWorkspaceIds(user, body.workspaceIds);
+        const account = await code.githubAccounts.addApp(
+          { appId: body.appId, installationId: body.installationId, privateKey: body.privateKey },
           body.purposes,
           user!.username,
           scope,

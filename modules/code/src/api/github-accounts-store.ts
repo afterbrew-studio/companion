@@ -1,9 +1,12 @@
 import type Database from 'better-sqlite3';
-import type { GitHubAccountScope, GitHubPurpose } from '../contract/index.js';
+import type { GitHubAccountScope, GitHubCredentialKind, GitHubPurpose } from '../contract/index.js';
 
 /**
- * Personal GitHub accounts (PATs) and what each owner uses them for. Workspace
- * selection lives in a side table; it never grants another profile access.
+ * Personal GitHub accounts and what each owner uses them for. A row is either a
+ * personal access token or a GitHub App installation; `token` is the credential
+ * itself for a PAT and the cached, expiring installation token for an app.
+ * Workspace selection lives in a side table; it never grants another profile
+ * access.
  */
 export class GithubAccountsStore {
   constructor(private readonly db: Database.Database) {}
@@ -17,14 +20,59 @@ export class GithubAccountsStore {
     workspaceIds: readonly string[];
     ownerId: string | null;
     createdAt: number;
+    kind?: GitHubCredentialKind;
+    appId?: string | null;
+    installationId?: string | null;
+    privateKey?: string | null;
+    tokenExpiresAt?: number | null;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO github_accounts (id, login, token, purposes, scope, owner_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO github_accounts
+           (id, login, token, purposes, scope, owner_id, created_at,
+            kind, app_id, installation_id, private_key, token_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(a.id, a.login, a.token, JSON.stringify(a.purposes), a.scope, a.ownerId, a.createdAt);
+      .run(
+        a.id,
+        a.login,
+        a.token,
+        JSON.stringify(a.purposes),
+        a.scope,
+        a.ownerId,
+        a.createdAt,
+        a.kind ?? 'pat',
+        a.appId ?? null,
+        a.installationId ?? null,
+        a.privateKey ?? null,
+        a.tokenExpiresAt ?? null,
+      );
     this.setWorkspaces(a.id, a.workspaceIds);
+  }
+
+  /**
+   * Replace the app credentials of an existing row.
+   *
+   * Reconnecting means "use these credentials now": rotating the private key or
+   * pointing at a different installation must actually take effect. Leaving the
+   * old ones in place would report success while the daemon kept authenticating
+   * with the credential the operator just replaced.
+   */
+  setAppCredentials(id: string, app: { appId: string; installationId: string; privateKey: string }): void {
+    this.db
+      .prepare(`UPDATE github_accounts SET kind = 'app', app_id = ?, installation_id = ?, private_key = ? WHERE id = ?`)
+      .run(app.appId, app.installationId, app.privateKey, id);
+  }
+
+  /**
+   * Store a freshly minted installation token. Separate from `update` because
+   * it is the refresh path, not a user edit: it must never touch purposes,
+   * scope or workspaces, and it runs from a background job.
+   */
+  setInstallationToken(id: string, token: string, expiresAt: number): void {
+    this.db
+      .prepare(`UPDATE github_accounts SET token = ?, token_expires_at = ? WHERE id = ?`)
+      .run(token, expiresAt, id);
   }
 
   /** Internal rows including tokens — never returned by the API layer. */
@@ -37,6 +85,11 @@ export class GithubAccountsStore {
       scope: GitHubAccountScope | 'shared' | 'delegated';
       owner_id: string | null;
       created_at: number;
+      kind: GitHubCredentialKind | null;
+      app_id: string | null;
+      installation_id: string | null;
+      private_key: string | null;
+      token_expires_at: number | null;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -48,6 +101,12 @@ export class GithubAccountsStore {
       workspaceIds: r.scope === 'delegated' || r.scope === 'selected' ? this.workspaceIds(r.id) : [],
       ownerId: r.owner_id,
       createdAt: r.created_at,
+      // Rows written before the app migration have no `kind`; they are PATs.
+      kind: r.kind === 'app' ? 'app' : 'pat',
+      appId: r.app_id,
+      installationId: r.installation_id,
+      privateKey: r.private_key,
+      tokenExpiresAt: r.token_expires_at,
     }));
   }
 
@@ -142,10 +201,18 @@ export class GithubAccountsStore {
 export interface GithubAccountRow {
   id: string;
   login: string;
+  /** A PAT, or the cached installation token of a GitHub App. */
   token: string;
   purposes: GitHubPurpose[];
   scope: GitHubAccountScope;
   workspaceIds: string[];
   ownerId: string | null;
   createdAt: number;
+  kind: GitHubCredentialKind;
+  appId: string | null;
+  installationId: string | null;
+  /** The app's PEM. Never leaves the server, exactly like `token`. */
+  privateKey: string | null;
+  /** Epoch ms; null for a PAT, which does not expire on a schedule we know. */
+  tokenExpiresAt: number | null;
 }
