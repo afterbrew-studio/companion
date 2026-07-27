@@ -1,4 +1,4 @@
-import { defineJobs } from '@companion/core/server';
+import { defineJobs } from '@moxxy-ai/companion-sdk/server';
 import type { RunStatus } from '@companion/module-operate/contract';
 import { ProposalsStore } from './proposals-store.js';
 import { SpecsStore } from './specs-store.js';

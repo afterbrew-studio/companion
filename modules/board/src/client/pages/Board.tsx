@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import { useLive, type RouteProps } from '@companion/core/client';
+import { useLive, type RouteProps } from '@moxxy-ai/companion-sdk/client';
 import {
   CopyText,
   DetailGrid,
@@ -28,7 +28,7 @@ import {
   timeAgo,
   useConfirm,
   type StatusTone,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import {

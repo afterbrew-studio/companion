@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { defineRoutes, route, created, accepted, badRequest, notFound } from '@companion/core/server';
-import type { AuthUser } from '@companion/contracts';
+import { defineRoutes, route, created, accepted, badRequest, notFound } from '@moxxy-ai/companion-sdk/server';
+import type { AuthUser } from '@moxxy-ai/companion-sdk';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import { log } from '@companion/services';
+import { log } from '@moxxy-ai/companion-sdk/server';
 import '../contract/index.js';
 import { ProposalsStore } from './proposals-store.js';
 import { SpecsStore } from './specs-store.js';

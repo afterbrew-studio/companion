@@ -1,5 +1,5 @@
-import type { SpaServerMessage } from '@companion/contracts';
-import { log } from '@companion/services';
+import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
+import { log } from '@moxxy-ai/companion-sdk/server';
 import type { WorkspaceSyncResult } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import { GitHubClient, type GhIssue, type GhPull } from './github-client.js';

@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 import { AutomationsStore } from './automations-store.js';
 import { Automations } from './automations.js';
 import { Assistant } from './assistant.js';

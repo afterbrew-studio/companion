@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { likeArg, safeParse } from '@companion/services';
+import { likeArg, safeParse } from '@moxxy-ai/companion-sdk/server';
 import type { ChecksSnapshot, PrRecord } from '../contract/index.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import { reviewSignal, type LatestReviewSignal, type PrReviewsStore } from './pr-reviews-store.js';

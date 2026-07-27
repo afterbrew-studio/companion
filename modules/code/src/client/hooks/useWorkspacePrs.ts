@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage, useBulkRunner } from '@companion/core/client';
+import { onServerMessage, useBulkRunner } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -13,7 +13,7 @@ import {
   useSelection,
   type ContextMenuState,
   type MenuAction,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import type { PipelineRecord, PrRecord, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';

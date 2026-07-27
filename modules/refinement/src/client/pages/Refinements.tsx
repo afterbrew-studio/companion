@@ -11,7 +11,7 @@ import {
   PageLoading,
   Spinner,
   timeAgo,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { BranchPicker, useWorkspaceRepos } from '@companion/module-code/client';

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy-ai/companion-sdk/client';
 import type { BriefingCadence, GitHubAccountRecord, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import { codeApi, RepoUnavailableRow } from '@companion/module-code/client';
 import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@companion/ui';
+import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';

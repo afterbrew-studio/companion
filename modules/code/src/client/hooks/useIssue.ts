@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage } from '@companion/core/client';
+import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { IssueRecord, TriageResult } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';

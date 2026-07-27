@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dropdown, Tooltip } from '@companion/ui';
+import { Dropdown, Tooltip } from '@moxxy-ai/companion-sdk/ui';
 import type { RepoBranchRecord } from '../../contract/index.js';
 import { codeApi } from '../api.js';
 

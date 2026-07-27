@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
 
 function CodeArt({ playing }: { playing: boolean }): JSX.Element {
   return (
@@ -19,7 +19,7 @@ export const onboarding = defineOnboarding([
   {
     key: 'code',
     order: 40,
-    need: 'prs:read',
+    permission: 'prs:read',
     title: 'Code: issues, PRs & pipelines',
     body: 'Triage issues, review pull requests with CI context, and let agents fix failing checks or address review feedback right on the branch. Compose pipelines from typed steps to automate it all.',
     chips: ['Issues', 'Pull Requests', 'Pipelines'],

@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
 
 /**
  * The Playground sidebar group. module-operate declares the SAME section (id
@@ -29,7 +29,7 @@ export const nav = defineNav([
     key: 'playground-pipelines',
     label: 'Pipeline Lab',
     hash: '#/playground/pipelines',
-    shortcut: 't',
+    shortcut: 'j',
     permission: 'playground:run',
     section: 'playground',
     order: 10,

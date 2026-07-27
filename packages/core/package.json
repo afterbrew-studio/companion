@@ -16,13 +16,15 @@
       "default": "./dist/server/index.js"
     },
     "./client": {
-      "source": "./src/client/index.tsx"
+      "source": "./src/client/index.tsx",
+      "types": "./dist/client/index.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.client-types.json",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@companion/contracts": "workspace:*",

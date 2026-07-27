@@ -1,5 +1,5 @@
-import type { SpaServerMessage } from '@companion/contracts';
-import type { PromptAttachment } from '@companion/types';
+import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
+import type { PromptAttachment } from '@moxxy-ai/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { PrRecord } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';

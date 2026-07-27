@@ -1,11 +1,11 @@
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
 import type {
   ChecksSummary,
   CheckRunInfo,
   ChecksSnapshot,
   PrRecord,
 } from '../contract/index.js';
-import { log } from '@companion/services';
+import { log } from '@moxxy-ai/companion-sdk/server';
 import type { CodeStore } from './code-store.js';
 import type { GitHubClient, GhCheckRun, GhCombinedStatus, GhReview } from './github-client.js';
 

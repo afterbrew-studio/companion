@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ErrorBar, Eyebrow, Markdown, timeAgo } from '@companion/ui';
+import { ErrorBar, Eyebrow, Markdown, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { PrReviewResult } from '../../../contract/index.js';
 import { AccountPicker } from '../../components/AccountPicker.js';
 

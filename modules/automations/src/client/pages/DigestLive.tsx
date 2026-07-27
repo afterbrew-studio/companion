@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { Block } from '@companion/module-operate/client';
-import { Eyebrow, Page, Spinner, timeAgo } from '@companion/ui';
+import { Eyebrow, Page, Spinner, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import { useDigestLive } from '../hooks/useDigestLive.js';
 

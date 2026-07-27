@@ -1,4 +1,4 @@
-import { del, post, put, request } from '@companion/core/client';
+import { del, post, put, request } from '@moxxy-ai/companion-sdk/client';
 import type {
   SlopAction,
   SlopDetectionResult,

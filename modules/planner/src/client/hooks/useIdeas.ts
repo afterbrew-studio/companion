@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ApiError, useLive } from '@companion/core/client';
+import { ApiError, useLive } from '@moxxy-ai/companion-sdk/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { FeaturePlanningSession, PlannerSessionDetail } from '../../contract/index.js';
 import { ideasApi } from '../api.js';

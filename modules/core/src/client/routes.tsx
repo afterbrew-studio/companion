@@ -12,8 +12,13 @@ export const routes = defineClientRoutes([
     component: page(() => import('./pages/Profile.js').then((m) => m.ProfilePage)),
   },
   {
+    match: { exact: '/roles' },
+    permission: 'users:manage',
+    component: page(() => import('./pages/Roles.js').then((m) => m.RolesPage)),
+  },
+  {
     match: { prefix: '/modules' },
-    permission: 'settings:manage',
+    permission: 'modules:manage',
     component: page(() => import('./pages/Modules.js').then((m) => m.ModulesPage)),
   },
 ]);

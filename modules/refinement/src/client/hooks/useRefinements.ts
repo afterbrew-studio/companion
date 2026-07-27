@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy-ai/companion-sdk/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type { RefinementListEntry } from '../../contract/index.js';

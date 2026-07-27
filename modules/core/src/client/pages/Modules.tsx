@@ -111,6 +111,11 @@ export function ModulesPage(): JSX.Element {
                   <SlidersIcon />
                 </IconButton>
               ) : null}
+              {!m.entitled ? (
+                <span className="dim text-xs" title={`Requires the '${m.entitlement}' entitlement`}>
+                  unlicensed
+                </span>
+              ) : null}
               {!m.enabled && !m.required ? (
                 <IconButton label={`Uninstall ${m.title}`} danger disabled={busy === m.id} onClick={() => void uninstall(m)}>
                   <TrashIcon />
@@ -118,7 +123,7 @@ export function ModulesPage(): JSX.Element {
               ) : null}
               <Switch
                 checked={m.enabled}
-                disabled={m.required || busy === m.id || (!m.enabled && !m.configured)}
+                disabled={m.required || busy === m.id || (!m.enabled && (!m.configured || !m.entitled))}
                 label={`${m.enabled ? 'Disable' : 'Enable'} ${m.title}`}
                 onChange={() => void toggle(m)}
               />
@@ -136,7 +141,7 @@ export function ModulesPage(): JSX.Element {
             {available.map((m) => (
               <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                 <ModuleInfo mod={m} />
-                <button className="btn" disabled={busy === m.id} onClick={() => void openInstall(m)}>
+                <button className="btn" disabled={busy === m.id || !m.entitled} onClick={() => void openInstall(m)}>
                   {busy === m.id ? 'Installing…' : 'Install'}
                 </button>
               </div>

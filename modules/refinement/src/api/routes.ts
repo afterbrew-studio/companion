@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { accepted, badRequest, created, defineRoutes, notFound, route } from '@companion/core/server';
-import type { AuthUser } from '@companion/contracts';
+import { accepted, badRequest, created, defineRoutes, notFound, route } from '@moxxy-ai/companion-sdk/server';
+import type { AuthUser } from '@moxxy-ai/companion-sdk';
 import type { RefineMethodRecord } from '../contract/index.js';
 import '../contract/index.js';
 

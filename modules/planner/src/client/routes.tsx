@@ -1,4 +1,4 @@
-import { defineClientRoutes, lazyView, type RouteProps } from '@companion/core/client';
+import { defineClientRoutes, lazyView, type RouteProps } from '@moxxy-ai/companion-sdk/client';
 
 const list = lazyView(() => import('./pages/Ideas.js'));
 

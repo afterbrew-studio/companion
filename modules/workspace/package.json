@@ -28,11 +28,8 @@
   },
   "dependencies": {
     "@companion/contracts": "workspace:*",
-    "@companion/core": "workspace:*",
     "@companion/module-core": "workspace:*",
-    "@companion/services": "workspace:*",
-    "@companion/types": "workspace:*",
-    "@companion/ui": "workspace:*",
+    "@moxxy-ai/companion-sdk": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

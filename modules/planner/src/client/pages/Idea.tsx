@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { onServerMessage } from '@companion/core/client';
-import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip, useConfirm } from '@companion/ui';
+import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
+import { AccentField, ChevronDown, CloseIcon, CopyText, DiffView, EmptyState, ErrorBar, Field, IconButton, LockIcon, Markdown, Modal, Page, PageHeader, PageLoading, QuestionIcon, SmileIcon, SparkleIcon, Spinner, Tooltip, useConfirm } from '@moxxy-ai/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { BranchPicker } from '@companion/module-code/client';
 import type { ProposalAnalysis } from '@companion/module-plan/contract';

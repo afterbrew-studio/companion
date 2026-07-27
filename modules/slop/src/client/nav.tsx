@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@companion/core/client';
+import { defineNav, NavIcon } from '@moxxy-ai/companion-sdk/client';
 
 /**
  * One entry in the Code group, after Pipelines (code owns the section; code is

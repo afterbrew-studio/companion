@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { extractModelJson } from '@companion/services';
+import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import type {
   ArtifactBundle,

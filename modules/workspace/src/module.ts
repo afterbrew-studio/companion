@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 export default defineManifest({
   id: 'workspace',

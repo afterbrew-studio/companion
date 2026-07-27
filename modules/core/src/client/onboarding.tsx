@@ -59,7 +59,7 @@ export const onboarding = defineOnboarding([
   {
     key: 'connect',
     order: 20,
-    need: 'settings:manage',
+    permission: 'settings:manage',
     title: 'Connect GitHub, add repositories',
     body: 'Connect a GitHub account, then add repositories into the active workspace from the Repositories page — or press ⌘K and search “Connect repository”. Companion syncs issues and PRs and clones each repo so agents can work on it.',
     chips: ['Settings → GitHub', 'Repositories', '⌘K → Connect repository'],

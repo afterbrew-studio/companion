@@ -41,6 +41,10 @@ function fixture({ hasFreeCapacity = () => true, createGoalRun = async () => ({ 
     prs: { get: () => ({ state: 'open', reviewDecision: null, checks: null }) },
     prReviews: { listForPr: () => [] },
     fixes: { discard: async () => undefined, createGoalRun },
+    // The board is the pusher-of-record, so a task is held until its owner has
+    // an account that can push. These tests are about the blocker lifecycle
+    // AFTER that gate, so grant it.
+    githubAccounts: { verifiedClientFor: async () => ({ client: {}, tried: [] }) },
   };
   const makeService = () => new BoardService(
     store,
@@ -81,7 +85,7 @@ function insertTask(store, overrides = {}) {
     priority: 2,
     status: 'ready',
     stage: 'build',
-    createdBy: null,
+    createdBy: 'owner-profile',
     firstWorker: null,
     assignedWorkerId: null,
     runId: null,

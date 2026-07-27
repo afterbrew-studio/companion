@@ -21,3 +21,15 @@ export function useLive(
     });
   }, [refresh]);
 }
+
+/**
+ * React to a message owned by a module you do NOT depend on. The tag is absent
+ * from this compilation's `SpaServerMessage` union, because the union only
+ * contains the contracts this module imports, so it cannot be compared directly.
+ *
+ * This is the client-side twin of `ctx.services.tryGet` on the server: a soft,
+ * one-way reaction that degrades to "never fires" when the owning module is
+ * absent. Use it only for a refresh or a badge, never to gate behaviour, and
+ * never as a way around declaring a real `dependsOn`.
+ */
+export const isMessage = (msg: { readonly t: string }, tag: string): boolean => msg.t === tag;

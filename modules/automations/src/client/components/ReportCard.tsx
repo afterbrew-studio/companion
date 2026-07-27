@@ -1,4 +1,4 @@
-import { Markdown, timeAgo } from '@companion/ui';
+import { Markdown, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 
 /**

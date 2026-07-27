@@ -3,7 +3,7 @@ import { operateApi } from '@companion/module-operate/client';
 import type { MoxxyStatus } from '@companion/module-operate/contract';
 import { workspaceApi } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy-ai/companion-sdk/client';
 import type { GitHubAccountRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 

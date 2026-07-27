@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 
 /**
  * Registers no service of its own — only the playground's run-task descriptor,

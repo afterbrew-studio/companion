@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "source": "./src/index.ts"
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.types.json",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 /**
  * module-automations — the reactor module: drives the code/plan/operate domains
@@ -14,5 +14,6 @@ export default defineManifest({
   title: 'Automations',
   version: '0.1.0',
   dependsOn: ['plan', 'code', 'operate', 'workspace', 'core'],
+  autoInstall: false,
   permissions: ['automations:manage'],
 });

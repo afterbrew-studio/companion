@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CountBadge } from '@companion/ui';
+import { CountBadge } from '@moxxy-ai/companion-sdk/ui';
 import type { NotificationRecord } from '../../contract/index.js';
 import { useNotifications } from '../hooks/useNotifications.js';
 import { NotificationRow } from './NotificationRow.js';

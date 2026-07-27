@@ -18,7 +18,7 @@ import {
   SearchInput,
   Tabs,
   timeAgo,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, TriageStateIcon } from '../widgets.js';

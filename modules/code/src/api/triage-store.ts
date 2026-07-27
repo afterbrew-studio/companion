@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { safeParse } from '@companion/services';
+import { safeParse } from '@moxxy-ai/companion-sdk/server';
 import type { TriageResult, TriageVerdict } from '../contract/index.js';
 
 /** AI triage verdicts per issue; the latest row per issue wins. */

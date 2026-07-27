@@ -1,4 +1,4 @@
-import { defineJobs } from '@companion/core/server';
+import { defineJobs } from '@moxxy-ai/companion-sdk/server';
 
 /**
  * Replay wiring: a queued detection that was still waiting when the daemon

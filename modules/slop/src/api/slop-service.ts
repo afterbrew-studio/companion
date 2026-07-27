@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { ServiceMap, SpaServerMessage, BusEvents } from '@companion/contracts';
-import { log, paths, extractModelJson } from '@companion/services';
+import type { ServiceMap, SpaServerMessage, BusEvents } from '@moxxy-ai/companion-sdk';
+import { log, paths } from '@moxxy-ai/companion-sdk/server';
+import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
 import type { PrRecord } from '@companion/module-code/contract';
 import type {
   SlopAction,

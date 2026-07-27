@@ -1,4 +1,4 @@
-import { defineJobs } from '@companion/core/server';
+import { defineJobs } from '@moxxy-ai/companion-sdk/server';
 
 /**
  * Boot recovery: a refinement stuck in 'decomposing' lost its one-shot driver

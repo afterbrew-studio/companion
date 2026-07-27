@@ -17,7 +17,7 @@ import {
   useConfirm,
   useListFilter,
   type FilterSelectField,
-} from '@companion/ui';
+} from '@moxxy-ai/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { RepoRecord } from '@companion/module-code/contract';
 import type { ProposalRecord } from '../../contract/index.js';

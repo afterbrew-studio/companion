@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskRequest, MoxxyEvent } from '@companion/types';
-import { onServerMessage } from '@companion/core/client';
-import { CloseIcon, ErrorBar, IconButton, InlineLoading, Markdown, SparkleIcon, Spinner, aiAccentClass } from '@companion/ui';
+import type { AskRequest, MoxxyEvent } from '@moxxy-ai/companion-sdk/agents';
+import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
+import { CloseIcon, ErrorBar, IconButton, InlineLoading, Markdown, SparkleIcon, Spinner, aiAccentClass } from '@moxxy-ai/companion-sdk/ui';
 import type { RepoRecord } from '@companion/module-code/contract';
 import { codeApi } from '@companion/module-code/client';
 import type { RunRecord } from '@companion/module-operate/contract';

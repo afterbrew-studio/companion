@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { operateApi as api } from '@companion/module-operate/client';
 import type { Block } from '@companion/module-operate/client';
-import { ErrorBar, Eyebrow, Markdown, Page, PageLoading, Spinner, timeAgo, useConfirm } from '@companion/ui';
+import { ErrorBar, Eyebrow, Markdown, Page, PageLoading, Spinner, timeAgo, useConfirm } from '@moxxy-ai/companion-sdk/ui';
 import { usePrBuild, type BuildPhase, type UsePrBuild } from './usePrBuild.js';
 import { RailBlock, RailRow } from './rail.js';
 import { PrChanges } from './PrChanges.js';

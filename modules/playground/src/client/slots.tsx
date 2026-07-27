@@ -1,5 +1,5 @@
-import { FlaskIcon, IconButton, Tooltip } from '@companion/ui';
-import { defineSlots } from '@companion/core/client';
+import { FlaskIcon, IconButton, Tooltip } from '@moxxy-ai/companion-sdk/ui';
+import { defineSlots } from '@moxxy-ai/companion-sdk/client';
 
 /**
  * The Skills page (module-operate) exposes a per-skill `skills.item-actions`

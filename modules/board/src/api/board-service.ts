@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { AuthUser, ServiceMap, SpaServerMessage } from '@companion/contracts';
-import type { NotificationEmitter } from '@companion/core/server';
+import type { AuthUser, ServiceMap, SpaServerMessage } from '@moxxy-ai/companion-sdk';
+import type { NotificationEmitter } from '@moxxy-ai/companion-sdk/server';
 import type { RunRecord, RunStatus } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
-import { log } from '@companion/services';
+import { log } from '@moxxy-ai/companion-sdk/server';
 import type {
   BoardConfig,
   SpecOption,

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy-ai/companion-sdk/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
 import type { RepoRecord } from '@companion/module-code/contract';

@@ -1,4 +1,4 @@
-import { defineMigrations } from '@companion/core/server';
+import { defineMigrations } from '@moxxy-ai/companion-sdk/server';
 
 /** v1 = idempotent adopt of today's workspaces + membership tables. */
 export default defineMigrations([

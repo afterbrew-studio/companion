@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
 import type { PrReviewResult, PrReviewVerdict } from '../contract/index.js';
-import { log, extractModelJson } from '@companion/services';
+import { log } from '@moxxy-ai/companion-sdk/server';
+import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
 import { GitHubError, type GitHubClient } from './github-client.js';

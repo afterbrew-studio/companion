@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
 import type {
   PipelineRecord,
   PipelineRunRecord,
@@ -15,7 +15,8 @@ import type {
   PipelineType,
 } from '../contract/index.js';
 import { PIPELINE_TYPE_STEPS } from '../contract/index.js';
-import { log, extractModelJson } from '@companion/services';
+import { log } from '@moxxy-ai/companion-sdk/server';
+import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';

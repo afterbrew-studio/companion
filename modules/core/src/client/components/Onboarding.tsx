@@ -15,7 +15,7 @@ import { useAuth } from '../lib/auth.js';
  * `useKernel().onboarding` — already ordered and covering only enabled modules.
  * A new feature ships its step in its own module and existing users get a
  * "What's new" popup for it automatically. Steps are role-aware (a step whose
- * `need` permission the user lacks is dropped), and the finish button deep-links
+ * declared permission the user lacks is dropped), and the finish button deep-links
  * to the most useful next action. Seen step keys are remembered in localStorage.
  */
 
@@ -38,7 +38,7 @@ export type OnboardingMode = 'full' | 'whatsnew';
 
 /** Steps this role can see. */
 function visibleSteps(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): OnboardingStep[] {
-  return steps.filter((s) => !s.need || can(s.need));
+  return steps.filter((s) => !s.permission || can(s.permission));
 }
 
 /** The best first action for the role: the lowest-order visible step that

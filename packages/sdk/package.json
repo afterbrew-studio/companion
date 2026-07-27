@@ -1,0 +1,59 @@
+{
+  "name": "@moxxy-ai/companion-sdk",
+  "version": "0.1.0",
+  "description": "The public module-authoring surface for Companion.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
+    "./agents": {
+      "types": "./dist/agents.d.ts",
+      "default": "./dist/agents.js"
+    },
+    "./client": {
+      "source": "./src/client.tsx",
+      "types": "./dist/types/client.d.ts"
+    },
+    "./ui": {
+      "source": "./src/ui.ts",
+      "types": "./dist/types/ui.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src/client.tsx",
+    "src/ui.ts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.types.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@companion/contracts": "workspace:*",
+    "@companion/core": "workspace:*",
+    "@companion/services": "workspace:*",
+    "@companion/types": "workspace:*",
+    "@companion/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1",
+    "typescript": "^5.8.0"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "sideEffects": false
+}

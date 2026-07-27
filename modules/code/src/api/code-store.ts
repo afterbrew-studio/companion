@@ -1,5 +1,5 @@
-import { legacyNotifications, type NotificationEmitter } from '@companion/core/server';
-import type { ServiceMap } from '@companion/contracts';
+import { legacyNotifications, type NotificationEmitter } from '@moxxy-ai/companion-sdk/server';
+import type { ServiceMap } from '@moxxy-ai/companion-sdk';
 import type { ReposStore } from './repos-store.js';
 import type { IssuesStore } from './issues-store.js';
 import type { PrsStore } from './prs-store.js';

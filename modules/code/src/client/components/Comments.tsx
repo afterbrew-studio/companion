@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Avatar, ErrorBar, Markdown, Spinner, timeAgo } from '@companion/ui';
+import { Avatar, ErrorBar, Markdown, Spinner, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { CommentRecord } from '../../contract/index.js';
 
 /**

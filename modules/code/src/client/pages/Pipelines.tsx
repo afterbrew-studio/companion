@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@companion/ui';
+import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@moxxy-ai/companion-sdk/ui';
 import type {
   PipelineRecord,
   PipelineStep,

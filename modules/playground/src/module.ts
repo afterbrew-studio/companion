@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 /**
  * module-playground — the agent test bench: try prompts and skills against a
@@ -15,5 +15,9 @@ export default defineManifest({
   // repo access scoping. module-code is a SOFT dep (tryGet) — the pipeline
   // preview needs it, prompt/skill testing does not.
   dependsOn: ['operate', 'workspace', 'core'],
+  autoInstall: false,
   permissions: ['playground:run'],
+  // Soft: the Agent Lab offers a repo picker only when code is enabled AND the
+  // viewer may list repos; with code off the picker is simply absent.
+  consumes: ['repos:read'],
 });

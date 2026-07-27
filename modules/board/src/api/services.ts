@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 import { BoardStore } from './board-store.js';
 import { BoardService } from './board-service.js';
 

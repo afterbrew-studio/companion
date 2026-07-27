@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
 
 /** A workspace folder gathering three repo tiles that settle in. */
 function WorkspaceArt({ playing }: { playing: boolean }): JSX.Element {
@@ -20,7 +20,7 @@ export const onboarding = defineOnboarding([
   {
     key: 'workspaces',
     order: 10,
-    need: 'workspaces:manage',
+    permission: 'workspaces:manage',
     title: 'Start with a workspace',
     body: 'Workspaces group related repositories — Ideas, Issues, and Pull Requests are all scoped to the one you have active. Create and switch workspaces from the switcher at the top of the sidebar, or press ⌘K and search “Create workspace”.',
     chips: ['Sidebar → Workspace', '⌘K → Create workspace'],

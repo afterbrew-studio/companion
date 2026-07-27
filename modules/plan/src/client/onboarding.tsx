@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
 
 function PlanArt({ playing }: { playing: boolean }): JSX.Element {
   return (
@@ -18,7 +18,7 @@ export const onboarding = defineOnboarding([
   {
     key: 'plan',
     order: 30,
-    need: 'specs:read',
+    permission: 'specs:read',
     title: 'Plan: specifications & documentation',
     body: 'Specifications describe how your code should behave, while documentation gives every agent the product and system context it needs.',
     chips: ['Specifications', 'Documentation'],

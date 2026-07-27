@@ -1,4 +1,4 @@
-import { timeAgo } from '@companion/ui';
+import { timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { NotificationKind, NotificationRecord } from '../../contract/index.js';
 
 /** Leading glyph + tone per notification kind, shared by the bell popover and the Inbox page. */

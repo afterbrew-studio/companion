@@ -1,4 +1,5 @@
-import { CheckIcon, ClockIcon, CloseIcon, QuestionIcon, Tooltip } from '@companion/ui';
+import { CheckIcon, ClockIcon, CloseIcon, QuestionIcon, Tooltip } from '@moxxy-ai/companion-sdk/ui';
+import { useAuth } from '@companion/module-core/client';
 import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus } from '@companion/module-code/contract';
 
 /**
@@ -249,8 +250,9 @@ export function TriageLegend(): JSX.Element {
  * role=link span so it can sit inside list-row anchors without nesting <a>s.
  */
 export function GitHubUser({ login, className = '' }: { login: string; className?: string }): JSX.Element {
+  const { githubHost } = useAuth();
   const open = (): void => {
-    window.open(`https://github.com/${encodeURIComponent(login)}`, '_blank', 'noopener');
+    window.open(`https://${githubHost}/${encodeURIComponent(login)}`, '_blank', 'noopener');
   };
   return (
     <Tooltip content={`Open @${login} on GitHub ↗`}>

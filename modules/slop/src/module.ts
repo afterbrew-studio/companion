@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 /**
  * module-slop — AI Slop Detection: a one-shot agent scores a pull request
@@ -15,7 +15,11 @@ export default defineManifest({
   // and detections scope through workspaces.
   dependsOn: ['core', 'workspace', 'code', 'operate'],
   required: false,
+  autoInstall: false,
   permissions: ['slop:read', 'slop:act', 'slop:manage'],
+  // Soft: a detection offers "send to refinement" only when refinement is
+  // enabled and the viewer may manage it. The button hides otherwise.
+  consumes: ['refine:manage'],
   messages: ['slop.changed'],
   config: [
     {

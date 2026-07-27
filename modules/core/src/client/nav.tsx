@@ -25,11 +25,26 @@ export const nav = defineNav([
     ),
   },
   {
+    key: 'roles',
+    label: 'Roles',
+    hash: '#/roles',
+    shortcut: 'q',
+    permission: 'users:manage',
+    section: 'admin',
+    order: 25,
+    icon: (
+      <NavIcon>
+        <path d="M12 3l7 4v5c0 4-3 6.5-7 9-4-2.5-7-5-7-9V7l7-4z" />
+        <path d="M9.5 12l1.8 1.8L15 10" />
+      </NavIcon>
+    ),
+  },
+  {
     key: 'modules',
     label: 'Modules',
     hash: '#/modules',
     shortcut: 'x',
-    permission: 'settings:manage',
+    permission: 'modules:manage',
     section: 'admin',
     order: 40,
     icon: (

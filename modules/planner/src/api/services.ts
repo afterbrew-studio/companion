@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 import { PlannerService } from './planner-service.js';
 import { PlannerStore } from './planner-store.js';
 

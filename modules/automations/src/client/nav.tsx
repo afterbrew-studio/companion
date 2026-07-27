@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@companion/core/client';
+import { defineNav, NavIcon } from '@moxxy-ai/companion-sdk/client';
 
 /**
  * module-automations' sidebar contributions. No group of its own: the

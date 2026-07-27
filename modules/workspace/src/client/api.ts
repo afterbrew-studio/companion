@@ -1,4 +1,4 @@
-import { del, patch, post, qs, request } from '@companion/core/client';
+import { del, patch, post, qs, request } from '@moxxy-ai/companion-sdk/client';
 import type {
   NotificationRecord,
   ReportRecord,

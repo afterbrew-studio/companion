@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy-ai/companion-sdk/server';
 import { SlopStore } from './slop-store.js';
 import { SlopService } from './slop-service.js';
 

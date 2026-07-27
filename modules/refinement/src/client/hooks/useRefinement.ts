@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ApiError, useLive } from '@companion/core/client';
+import { ApiError, useLive } from '@moxxy-ai/companion-sdk/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type { RefineContextOptions, RefineItemUpdate, RefineMethodDraft, RefineMethodRecord } from '../../contract/index.js';

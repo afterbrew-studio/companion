@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 /**
  * module-refinement — product refinement: a user writes an epic, picks a
@@ -16,6 +16,7 @@ export default defineManifest({
   // through workspaces.
   dependsOn: ['core', 'workspace', 'code', 'operate', 'plan', 'board'],
   required: false,
+  autoInstall: false,
   permissions: ['refine:read', 'refine:manage'],
   messages: ['refinement.changed'],
 });

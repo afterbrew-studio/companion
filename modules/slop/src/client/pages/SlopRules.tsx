@@ -12,8 +12,8 @@ import {
   PageLoading,
   Switch,
   useConfirm,
-} from '@companion/ui';
-import { NavIcon } from '@companion/core/client';
+} from '@moxxy-ai/companion-sdk/ui';
+import { NavIcon } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { SlopRuleRecord } from '../../contract/index.js';
 import { slopApi } from '../api.js';

@@ -1,4 +1,4 @@
-import { defineMigrations } from '@companion/core/server';
+import { defineMigrations } from '@moxxy-ai/companion-sdk/server';
 
 export default defineMigrations([
   {

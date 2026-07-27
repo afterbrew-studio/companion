@@ -2,7 +2,7 @@
 // augmentations into the program so `ServiceMap['code' | 'operate' | 'plan' |
 // 'workspace' | 'core']` resolve.
 import '../contract/index.js';
-import type { ServiceMap } from '@companion/contracts';
+import type { ServiceMap } from '@moxxy-ai/companion-sdk';
 
 /**
  * Local aliases for the cross-module types this module consumes. Another

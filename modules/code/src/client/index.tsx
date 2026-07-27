@@ -1,10 +1,11 @@
-import { defineClientModule } from '@companion/core/client';
+import { defineClientModule } from '@moxxy-ai/companion-sdk/client';
 // Carries this module's contract augmentations (Permission/ServiceMap/messages)
 // into every compilation that loads the client slice.
 import '../contract/index.js';
 import manifest from '../module.js';
 import { nav, sections } from './nav.js';
 import { routes } from './routes.js';
+import { slots } from './slots.js';
 import { onboarding } from './onboarding.js';
 
 /**
@@ -28,4 +29,5 @@ export default defineClientModule({
   nav,
   routes,
   onboarding,
+  slots,
 });

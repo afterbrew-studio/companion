@@ -1,4 +1,4 @@
-import { defineClientRoutes, page, lazyView, type RouteProps } from '@companion/core/client';
+import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy-ai/companion-sdk/client';
 
 // Detail pages take typed props; wrap them so RouteProps params feed through
 // with the legacy key-remount semantics (switching targets remounts the page).

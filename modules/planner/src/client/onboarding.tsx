@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
 
 function IdeasArt(): JSX.Element {
   return (
@@ -14,7 +14,7 @@ function IdeasArt(): JSX.Element {
 export const onboarding = defineOnboarding([{
   key: 'ideas',
   order: 25,
-  need: 'planner:read',
+  permission: 'planner:read',
   title: 'Ideas: from outcome to active work',
   body: 'Describe what you want in plain language. Ideas asks only critical decisions, creates the planning artifacts, prepares tasks and shows Board automation before work starts.',
   chips: ['Guided questions', 'Reviewable drafts', 'One final launch'],

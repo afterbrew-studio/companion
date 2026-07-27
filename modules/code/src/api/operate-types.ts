@@ -1,7 +1,7 @@
 // Side-effect import: pulls operate's (and core's/workspace's) ServiceMap
 // augmentations into the program so `ServiceMap['operate']` resolves.
 import '../contract/index.js';
-import type { ServiceMap } from '@companion/contracts';
+import type { ServiceMap } from '@moxxy-ai/companion-sdk';
 
 /**
  * Local aliases for the execution-plane types this module consumes. Another

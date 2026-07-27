@@ -1,5 +1,5 @@
-import { defineSlots } from '@companion/core/client';
-import { ListCard, Section, timeAgo } from '@companion/ui';
+import { defineSlots } from '@moxxy-ai/companion-sdk/client';
+import { ListCard, Section, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import { SlopMeter } from './components/SlopMeter.js';
 import { useSlopDetections } from './hooks/useSlopDetections.js';
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, Field, FormActions, ListCard, Markdown, Modal, Spinner, timeAgo } from '@companion/ui';
+import { ChevronDown, Field, FormActions, ListCard, Markdown, Modal, Spinner, timeAgo } from '@moxxy-ai/companion-sdk/ui';
 import type { PipelineRecord, PipelineRunRecord } from '../../../contract/index.js';
 import { pipelineStatusBadge } from '../../widgets.js';
 

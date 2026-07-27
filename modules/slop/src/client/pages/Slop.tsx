@@ -19,8 +19,8 @@ import {
   timeAgo,
   useListFilter,
   type FilterSelectField,
-} from '@companion/ui';
-import { NavIcon } from '@companion/core/client';
+} from '@moxxy-ai/companion-sdk/ui';
+import { NavIcon } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspaceRepos, codeApi } from '@companion/module-code/client';
 import type { SlopDetectionResult } from '../../contract/index.js';

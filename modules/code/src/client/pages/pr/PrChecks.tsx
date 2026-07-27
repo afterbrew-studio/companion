@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { AiActionMenu, ChevronDown, Markdown, Spinner, timeAgo, type MenuAction } from '@companion/ui';
+import { AiActionMenu, ChevronDown, Markdown, Spinner, timeAgo, type MenuAction } from '@moxxy-ai/companion-sdk/ui';
 import type { CheckRunInfo, ChecksSummary } from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
 import { ChecksIcon } from '../../widgets.js';

@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 /**
  * module-plan — the planning/grounding domain: proposals (idea → analyzed →
@@ -10,6 +10,7 @@ export default defineManifest({
   title: 'Plan',
   version: '0.1.0',
   dependsOn: ['code', 'operate', 'workspace', 'core'],
+  autoInstall: false,
   permissions: [
     'proposals:read',
     'proposals:create',

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { ServiceMap } from '@companion/contracts';
+import type { ServiceMap } from '@moxxy-ai/companion-sdk';
 import type { RepoRecord } from '../contract/index.js';
 
 /** Connected repos and their per-repo automation switches. */

@@ -33,6 +33,13 @@ export interface NavEntry {
   readonly parent?: string;
   /** Nav "new activity" badge: a marker string on a matching live message, else null. */
   readonly freshOn?: (msg: SpaServerMessage) => string | null;
+  /**
+   * Candidate landing page for a bare URL, lowest number wins. The shell has no
+   * business knowing which module owns "the front page": in a build without that
+   * module the next-best permitted entry has to take over, and hardcoding one
+   * makes every narrower profile land on a 404.
+   */
+  readonly home?: number;
 }
 
 /** Whole-segment route matching — no manual ordering (kills the /runners-vs-/runs hazard). */
@@ -73,7 +80,7 @@ export interface OnboardingStep {
   /** Position in the tour (ascending). Leave gaps so modules can slot between. */
   readonly order: number;
   /** Hide unless the viewer holds this permission (the contributing module's own). */
-  readonly need?: Permission;
+  readonly permission?: Permission;
   readonly title: string;
   readonly body: string;
   readonly chips?: readonly string[];
@@ -123,3 +130,5 @@ export * from './intents.js';
 export * from './links.js';
 export * from './use-bulk-runner.js';
 export * from './nav-icon.js';
+export * from './fresh.js';
+export * from './slot.js';

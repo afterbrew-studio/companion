@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage } from '@companion/core/client';
+import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { ReportRecord } from '@companion/module-workspace/contract';

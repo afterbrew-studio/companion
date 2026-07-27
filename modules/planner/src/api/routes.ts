@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { AuthUser } from '@companion/contracts';
-import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@companion/core/server';
+import type { AuthUser } from '@moxxy-ai/companion-sdk';
+import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@moxxy-ai/companion-sdk/server';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import { artifactBundleSchema, featureBriefSchema } from './prompts.js';
 import { PlannerQuestionSetConflict, PlannerRevisionConflict } from './planner-store.js';

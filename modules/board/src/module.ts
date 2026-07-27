@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy-ai/companion-sdk';
 
 export default defineManifest({
   id: 'board',
@@ -9,6 +9,7 @@ export default defineManifest({
   // tryGet) so the board works with planning disabled.
   dependsOn: ['workspace', 'code', 'operate'],
   required: false,
+  autoInstall: false,
   permissions: ['board:read', 'board:manage'],
   messages: ['board.changed'],
 });

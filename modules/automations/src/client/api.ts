@@ -1,5 +1,5 @@
-import type { AskRequest, HistorySegment } from '@companion/types';
-import { del, post, put, request } from '@companion/core/client';
+import type { AskRequest, HistorySegment } from '@moxxy-ai/companion-sdk/agents';
+import { del, post, put, request } from '@moxxy-ai/companion-sdk/client';
 import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/contract';
 

@@ -27,9 +27,35 @@ export interface ModuleDescriptor {
   readonly permissions: readonly string[];
   /** The declared config field spec (metadata only — never values). */
   readonly config: readonly ModuleConfigField[];
+  /** Entitlement this module needs, or null when it is unlicensed OSS. */
+  readonly entitlement: string | null;
+  /** false ⇒ declared an entitlement this instance's licence does not grant. */
+  readonly entitled: boolean;
+  /** Out-of-tree module: its client chunk is fetched from the daemon, not bundled. */
+  readonly externalClient: boolean;
 }
 
 export type ClientLoader = () => Promise<{ readonly default: WebModule }>;
+
+/**
+ * Fetch an out-of-tree module's prebuilt chunk.
+ *
+ * Vite cannot code-split a package it did not know about at build time, so this
+ * is a raw dynamic import of a URL the daemon serves. `@vite-ignore` keeps the
+ * bundler from trying to resolve it; the version query busts the browser cache
+ * when a module is upgraded in place, which is otherwise a very confusing bug
+ * (new server, old UI, no error).
+ *
+ * The chunk's own bare imports (`react`, the SDK subpaths) resolve through the
+ * import map in index.html to the host's modules. Without that map the browser
+ * cannot resolve them at all, which fails loudly. That is deliberate: the
+ * alternative failure, a second React, throws from inside hooks with a stack
+ * that points nowhere near the cause.
+ */
+const loadExternalClient = (d: ModuleDescriptor): Promise<{ readonly default: WebModule }> =>
+  import(/* @vite-ignore */ `/modules/${d.id}/client.js?v=${encodeURIComponent(d.version)}`) as Promise<{
+    readonly default: WebModule;
+  }>;
 
 export interface KernelState {
   /** The whole compiled catalog (installed or merely available) — feeds the Modules admin page. */
@@ -72,8 +98,25 @@ export function ModulesProvider(props: {
       try {
         const { modules: catalog } = await request<{ modules: ModuleDescriptor[] }>('/api/modules');
         if (!alive || mine !== seq.current) return;
-        const enabled = catalog.filter((m) => m.enabled && props.loaders[m.id]);
-        const loaded = await Promise.all(enabled.map((m) => props.loaders[m.id]!().then((mod) => mod.default)));
+        const enabled = catalog.filter((m) => m.enabled && (props.loaders[m.id] || m.externalClient));
+        // One bad out-of-tree chunk must not blank the whole shell, so external
+        // loads are settled and reported, not awaited as a group. A compiled-in
+        // loader failing is a build problem and still aborts: there is no
+        // degraded state worth showing for that.
+        const loaded = (
+          await Promise.all(
+            enabled.map(async (m) => {
+              const compiled = props.loaders[m.id];
+              if (compiled) return (await compiled()).default;
+              try {
+                return (await loadExternalClient(m)).default;
+              } catch (err) {
+                console.error(`[companion] module '${m.id}' has no usable client chunk`, err);
+                return null;
+              }
+            }),
+          )
+        ).filter((m): m is WebModule => m !== null);
         if (!alive || mine !== seq.current) return;
         setDescriptors(catalog);
         setModules(loaded);
