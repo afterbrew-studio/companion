@@ -9,3 +9,6 @@ dist/
 # Claude Code local/runtime files (the shared skills/agents live under .ai/)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Module registries generated from profiles/*.json (pnpm gen:modules)
+apps/*/src/modules.generated.ts

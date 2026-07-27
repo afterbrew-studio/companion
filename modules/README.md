@@ -176,6 +176,13 @@ enabled module depends on (409). Cross-domain **reactions** (reacting to another
 module's event) are **soft** — do them via `ctx.bus` / `ctx.services.tryGet`, not
 `dependsOn`, so they don't create load-order cycles.
 
+`consumes` declares permissions owned by **another** module that you gate on
+without a `dependsOn` edge. A permission leaves the RBAC grid with its owning
+module, so `can()` goes false and your UI must degrade (playground's repo picker
+and slop's "send to refinement" button both do this). Declaring it makes the
+coupling visible; `pnpm acl check` warns about any undeclared one. If absence is
+NOT tolerable, use `dependsOn` instead.
+
 ### Module configuration (`config`) and the install lifecycle
 
 A module declares the settings it needs from the user as a **declarative field
@@ -289,7 +296,8 @@ the old god-object. The pieces you get:
 | `notify` | the shared notification emitter (`ctx.notify.emit({...})`). |
 | `settings` | namespaced key/value over the core-owned `settings` table. |
 | `moduleConfig` | THIS module's declared config (§4): `get(key)` / `values()`, read-only, live, defaults merged. |
-| `rbac` | the live effective RBAC grid reader (`ctx.rbac.has(role, perm)`). |
+| `rbac` | the live effective RBAC grid reader (`ctx.rbac.has(role, perm)`, `roles()`, `catalog()`, `explain()`). Read-only. |
+| `setRoles` | publish this instance's role definitions + grant overrides into the grid. Owned by the module that STORES roles (module-core); nobody else calls it. |
 | `ws` | the WS scope-resolver registry — register per-message visibility in `onEnable`. |
 | `modules` / `isEnabled` | kernel lifecycle control + enabled-checks. |
 | `db`, `log`, `config`, `fts` | handle, logger, daemon config, and probed FTS5 availability. |
@@ -313,9 +321,34 @@ export default defineAcl({
 });
 ```
 
+`grants` is keyed by **built-in role only** (`admin` / `maintainer` / `business`).
+A module cannot know the custom roles an instance defines, so custom roles are
+composed by the instance from the permission catalogue instead: your ACL never
+changes when someone adds a role. Instance grant/revoke overrides are folded on
+top of what you declare here, and an explicit revoke wins.
+
 The runtime `ROLE_PERMISSIONS` grid is **assembled at boot from the enabled
 modules' grants**. Disabling a module drops its permissions from the grid
 immediately (its routes 503, the client `can()` hides its UI on next fetch).
+
+**`acl.ts` is the single authored source for a permission.** The manifest's
+`permissions` array and the contract's `PermissionRegistry` are derived from it:
+
+```
+pnpm acl add <module> <id> --title "..." [--grant admin,maintainer]  # threads all three sites
+pnpm acl sync                                                        # re-derive after editing acl.ts
+pnpm acl check                                                       # the CI gate
+pnpm acl map [--by role|module|permission]                           # the grid, from the repo
+```
+
+`pnpm acl check` runs in CI and fails on: drift between the three sites, a
+permission id / WS message tag / ServiceMap key / route / nav key claimed by two
+modules, a permission gated on but never declared, a grant naming a permission
+its module does not own, an id that is not `<resource>:<verb>`, and any change to
+the effective grid not reflected in `docs/acl-grid.json`. That last one is what
+puts "this PR changes who may do what" into the diff. Against a running daemon,
+`companion acl map --live` and `companion acl explain` answer the same questions
+for the **enabled** set.
 
 ### migrations.ts — tables, with rollback
 
@@ -416,6 +449,33 @@ export default defineRawRoutes((ctx) => {
 Raw routes mount/unmount with the module exactly like normal routes (disabled
 owner → 503, uninstalled → 404). They bypass RBAC by design — keep them rare.
 
+### Contributing a sign-in method (identity modules)
+
+An identity module owns its protocol end to end and touches no hot path:
+
+```ts
+// api/jobs.ts
+export default defineJobs({
+  onEnable: (ctx) => {
+    off = ctx.services.get('core').registerProvider({
+      id: 'oidc', label: 'Sign in with Okta', startUrl: '/api/oidc/start',
+    });
+  },
+  onDisable: () => off?.(),
+});
+```
+
+Own `/api/oidc/start` and the callback as normal `public` routes, verify the
+assertion yourself, then call `signInExternal({ username, email, displayName },
+{ provision, role })` to mint an ordinary session. Read `provision` and `role`
+from module-core's `externalSignup` / `externalSignupRole` config rather than
+inventing your own policy: provisioning is off by default and the kernel refuses
+any role that holds `users:manage`.
+
+Note what is deliberately NOT pluggable: `verify()`. Token verification runs on
+every request and belongs to core; your module contributes only how someone
+proves identity the first time.
+
 ### jobs.ts — lifecycle hooks + background work (optional)
 
 ```ts
@@ -501,14 +561,31 @@ export const widgetsApi = {
 ### slots.tsx / onboarding.tsx (optional)
 
 `defineSlots` renders your component **into another module's page** (inversion of
-control — e.g. an "AI Review" tab on the PR page without `code` importing
-`operate`). `defineOnboarding` contributes one welcome-tour step for your feature,
+control, e.g. an "AI Review" tab on the PR page without `code` importing
+`operate`) **or into the app shell**. The shell imports only `required: true`
+modules, so a slot is the only way your module reaches it:
+
+| Slot | Renders |
+|---|---|
+| `shell.banner` | full-width notice above the page |
+| `shell.topbar` | the status cluster right of the search box |
+| `shell.effects` | a component that returns `null` and exists to run a shell-level effect |
+
+State shared by two contributions must live in ONE component: splitting a button
+and its panel across two slots pushes their shared state back into the shell.
+`NavEntry.home` (lowest wins) claims the landing page for a bare URL; declare it
+only if your module genuinely owns the front page.
+
+To react to a message another module owns, use `isMessage(msg, 'other.changed')`
+from `@companion/core/client`. The tag is absent from your `SpaServerMessage`
+union because you do not import that contract, and with the owner absent the
+reaction never fires. It is the client twin of `ctx.services.tryGet`. `defineOnboarding` contributes one welcome-tour step for your feature,
 gated on **your own** permission and framed by the shared `OnboardingArt`:
 
 ```tsx
 import { defineOnboarding, OnboardingArt } from '@companion/core/client';
 export const onboarding = defineOnboarding([{
-  key: 'widgets', order: 45, need: 'widgets:read',
+  key: 'widgets', order: 45, permission: 'widgets:read',
   title: 'Widgets', body: '…', chips: ['Sidebar → Widgets'],
   art: (playing) => <OnboardingArt>{/* svg */}</OnboardingArt>,
 }]);
@@ -548,25 +625,31 @@ by review:
 
 ---
 
-## 9. Installing the module (wire it into the two apps)
+## 9. Installing the module (add it to a build profile)
 
-A new module is **one line in each app registry** + a rebuild. This is the only
-place the apps name a module:
+A new module is **one line in one profile** + a rebuild. Profiles are the only
+place a build's module set is named:
 
-- `apps/api/src/modules.ts` — add the manifest import, the `import '.../contract'`
-  line, and one `{ manifest, load: () => import('@companion/module-<id>/api').then(m => m.default) }`
-  entry to `MODULES`.
-- `apps/web/src/modules.ts` — add `<id>: () => import('@companion/module-<id>/client')`
-  to `CLIENT_LOADERS`.
+- `profiles/slim.json` is the shipped default (core, workspace, operate, code,
+  admin). `profiles/full.json` `extends` it and adds the rest.
+- The registries `apps/api/src/modules.generated.ts` and
+  `apps/web/src/modules.generated.ts` are **gitignored** and regenerated by
+  `pnpm install`, `dev`, `build` and `typecheck`, so you never run the generator
+  by hand. `COMPANION_PROFILE=full` makes all of them use the full set. A
+  committed registry would drift from the profile the moment someone edited one
+  and not the other.
 - `pnpm-workspace.yaml` already globs `modules/*`, so `pnpm install` links it.
 
-The kernel reconciles the new module into the `modules` table on next boot —
+The generator **fails the build** when a profile is not closed under
+`dependsOn`, or omits a `required: true` module, naming both sides. That check
+is worth more than the codegen: it turns a boot-time 409 (or a module silently
+pruned to disabled) into a build error.
+
+The kernel reconciles the new module into the `modules` table on next boot,
 installed + enabled by default, or waiting under "Available" on the Modules page
 when the manifest says `autoInstall: false` or declares required config without
-defaults (§4) — and activates it in dependency order. No other edits — there is
-no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
-
----
+defaults (§4), and activates it in dependency order. No other edits: there is no
+central route table, no `App.tsx` if-ladder, no `ApiDeps`.
 
 ## 10. Recipe — add a module from scratch
 
@@ -579,18 +662,20 @@ no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
    `api/index.ts`.
 4. Client slice (§7): `nav.tsx`, `routes.tsx`, `pages/*`, `hooks/*`, `api.ts`,
    optional `slots.tsx`/`onboarding.tsx`, then `client/index.tsx`.
-5. Register in both `modules.ts` files (§9); `pnpm install`.
-6. `pnpm -r build && pnpm -r typecheck` until green.
+5. Add the id to `profiles/full.json` (§9); `pnpm install`.
+6. `pnpm build && pnpm typecheck && pnpm acl check` until green.
 7. Boot (`pnpm dev`) and verify with the checklist below.
 
 ---
 
 ## 11. Checklist & gotchas
 
-- [ ] **Thread the permission completely**: in the manifest `permissions`, in
-      `acl.ts` (`permissions` + `grants`), in `contract` (`PermissionRegistry`),
-      on each route `access`, on nav `permission`, and on client route `permission`.
-      A half-threaded permission is a bug.
+- [ ] **Add permissions with `pnpm acl add`**, never by hand: `acl.ts` is the
+      single authored source and the manifest array + `PermissionRegistry` are
+      derived from it. Then gate route `access`, nav `permission` and client
+      route `permission`. `pnpm acl check` fails on a half-threaded permission.
+- [ ] Grants name **built-in roles only**. Custom roles are instance data,
+      composed from the permission catalogue; your ACL never mentions them.
 - [ ] **Broadcast every mutation** (`ctx.broadcast({ t: '<id>.changed' })`) and
       consume it in exactly one client hook via `useLive`.
 - [ ] Relative imports end in **`.js`** (NodeNext), even from `.ts`/`.tsx`.
@@ -609,6 +694,16 @@ no central route table, no `App.tsx` if-ladder, no `ApiDeps`.
       routes/UI. Secrets use `kind: 'secret'` so redaction is structural.
 - [ ] Don't add an npm dependency without justifying it — reach for the platform
       and `@companion/ui` first.
+
+- [ ] The app shell gains **no** import of your module: contribute to a
+      `shell.*` slot instead. `pnpm acl check` fails on a shell import of a
+      non-required module, because it breaks every profile that omits it.
+- [ ] Your module id is in `profiles/full.json` (and `slim.json` only if it
+      belongs in the default build).
+
+Run `pnpm build && pnpm typecheck && pnpm acl check` before calling it done;
+`pnpm gen:modules --profile minimal && pnpm -r typecheck` proves the shell stayed
+free of your module.
 
 **Verify at runtime** (`pnpm dev`, then via the Modules admin page or the API):
 enable/disable your module — its nav/routes appear/vanish and its API flips
@@ -631,3 +726,13 @@ state durable.
 The kernel's lifecycle, the dynamic + raw routers, and the registrant API are the
 public surface you build against; read `packages/core/src/server/kernel.ts` and
 `packages/core/src/client/index.tsx` when you need the exact contract.
+
+---
+
+## 13. Distribution (which edition, which artifact)
+
+This document covers **authoring** a module. Where it lives (OSS vs Enterprise),
+whether it ships enabled by default, build profiles, the module CLI, and the
+out-of-tree loading design are in **`docs/modular-distribution.md`**, which tags
+every mechanism as existing today or planned. Read it before changing what a
+build contains or adding a module outside `modules/*`.

@@ -6,11 +6,15 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter companion-api --filter companion-web dev",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "acl": "node scripts/acl.mjs",
+    "build": "pnpm gen:modules && pnpm -r build",
+    "dev": "pnpm gen:modules && pnpm --parallel --filter companion-api --filter companion-web dev",
+    "gen:modules": "node scripts/gen-modules.mjs",
+    "postinstall": "node scripts/gen-modules.mjs",
+    "prod": "pnpm build && pm2 startOrRestart ecosystem.config.cjs",
+  "sdk:surface": "node scripts/sdk-surface.mjs",
     "test": "pnpm -r test",
-    "prod": "pnpm -r build && pm2 startOrRestart ecosystem.config.cjs"
+    "typecheck": "pnpm gen:modules && pnpm -r typecheck"
   },
   "engines": {
     "node": ">=20"

@@ -1,6 +1,10 @@
 services:
   companion:
-    build: .
+    build:
+      context: .
+      args:
+        # Which modules the image contains; see profiles/*.json.
+        PROFILE: ${COMPANION_PROFILE:-slim}
     image: companion:local
     restart: unless-stopped
     ports:

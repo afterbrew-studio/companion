@@ -1,0 +1,5 @@
+{
+  "name": "minimal",
+  "description": "Identity and workspaces only. Exists to prove the shell has no module dependencies beyond the required two.",
+  "modules": ["core", "workspace"]
+}

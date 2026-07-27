@@ -26,7 +26,34 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Build first (topological order — @companion/contract emits its types
-      # before api/web typecheck against them), then typecheck all.
+      # The module registries are generated from profiles/*.json and gitignored.
+      # Build before typecheck (topological order: @companion/contract emits its
+      # types before api/web typecheck against them).
+      # Build the FULL profile first: it is the superset, so every module's code
+      # is compiled and every dist/ the later steps need exists.
+      - run: pnpm gen:modules --profile full
       - run: pnpm -r build
+      - run: pnpm -r typecheck
+
+      # Framework + module tests. `packages/core` and `packages/services` cover
+      # the logic with no daemon to drive it: the RBAC fold ordering, the licence
+      # gate's fail-closed paths and the single-instance lock. Each of those was
+      # verified by hand once; the tests are what keep it verified.
+      - run: pnpm -r test
+
+      # RBAC gate: the three permission declaration sites must agree, ids must
+      # be unique across modules, and any change to the effective grid must be
+      # reflected in docs/acl-grid.json so it shows up in review. Needs dist/,
+      # so it runs after the build.
+      - run: pnpm acl check
+
+      # ABI gate: `@moxxy-ai/companion-sdk` is a published surface, so a symbol
+      # must not leave it by accident. `/ui` is a wildcard re-export, which makes
+      # deleting a shared component a silent break for external modules.
+      - run: pnpm sdk:surface
+
+      # `minimal` is core + workspace, the two required modules. If the shell
+      # compiles against it, it compiles against every profile, so this is the
+      # regression guard for "the shell depends on no optional module".
+      - run: pnpm gen:modules --profile minimal
       - run: pnpm -r typecheck

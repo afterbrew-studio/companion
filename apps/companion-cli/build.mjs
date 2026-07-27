@@ -24,13 +24,19 @@ await build({
     index: join(here, 'src/index.ts'),
     setup: join(here, 'src/setup.ts'),
     github: join(here, 'src/github.ts'),
+    modules: join(here, 'src/modules.ts'),
+    acl: join(here, 'src/acl.ts'),
+    client: join(here, 'src/client.ts'),
+    repair: join(here, 'src/repair.ts'),
   },
   outdir: dist,
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node20',
-  external: ['@inquirer/prompts'],
+  // better-sqlite3 is a native CJS addon: bundling it produces a `require` that
+  // does not exist in the ESM output. It is a runtime dependency of the package.
+  external: ['@inquirer/prompts', 'better-sqlite3', 'undici'],
   banner: { js: '#!/usr/bin/env node' },
   logLevel: 'info',
 });
@@ -42,7 +48,7 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node20',
-  external: ['better-sqlite3', 'ws'],
+  external: ['better-sqlite3', 'ws', 'undici'],
   banner: { js: nodeBanner },
   // Contract-only imports register TypeScript interfaces and intentionally
   // have no runtime side effects; keep the publish build output readable.

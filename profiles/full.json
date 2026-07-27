@@ -1,0 +1,15 @@
+{
+  "name": "full",
+  "description": "Every OSS module in this repo. The planning cluster (plan, board, refinement, planner) and the reactors (automations, slop, playground) land as Available, not enabled: see each manifest's autoInstall.",
+  "extends": "slim",
+  "modules": [
+    "plan",
+    "board",
+    "refinement",
+    "planner",
+    "automations",
+    "slop",
+    "playground",
+    "oidc"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "slim",
+  "description": "The default build: repositories, agent execution and instance administration. Everything else ships as an installable module in the full build.",
+  "modules": ["core", "workspace", "operate", "code", "admin"]
+}
