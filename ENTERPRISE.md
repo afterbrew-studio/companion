@@ -1,0 +1,460 @@
+# Companion for enterprise
+
+How to run Companion for an organisation rather than one maintainer: which build
+to deploy, how to shape access, what a regulated or air-gapped environment needs,
+and what is not built yet.
+
+This document is honest about the last part. Sections are tagged **[available]**
+or **[not built]**, and the design for anything not built is in
+[`docs/modular-distribution.md`](docs/modular-distribution.md),
+[`docs/acl-and-roles.md`](docs/acl-and-roles.md) and
+[`docs/game-plan.md`](docs/game-plan.md).
+
+---
+
+## 1. Which build to deploy **[available]**
+
+The module set of a build is named in `profiles/*.json` and nowhere else:
+
+| Profile | Contains |
+|---|---|
+| `slim` | `core`, `workspace`, `operate`, `code`, `admin` |
+| `full` | `slim` + `plan`, `board`, `refinement`, `planner`, `automations`, `slop`, `playground`, `oidc` |
+
+```sh
+pnpm gen:modules --profile slim
+pnpm build
+```
+
+Deploy `slim` unless you want the planning and automation surfaces. It is a
+smaller artifact (about a third off the server bundle and half the SPA chunks),
+and every module absent from a build is a module you never have to review,
+audit or explain.
+
+Being in the build is not the same as being on: optional modules land as
+**Available**, and an admin installs them per instance. So one artifact can
+serve teams that want different surfaces.
+
+A third profile, `enterprise` (slim plus modules from a private repo), is the
+intended shape for commercial modules. The build mechanism and the licence gate
+both work today (§7); what does not exist yet is a commercial module to put
+behind them. A module can also be installed **out of tree**, without being in any
+profile: see the out-of-tree section of [`README.md`](README.md).
+
+---
+
+## 2. Deployment **[available]**
+
+Docker is the supported path. The image runs the same bundle the npx package
+does, so what CI tests is what you deploy. Pick the module set at build time:
+
+```sh
+docker build --build-arg PROFILE=slim -t companion:slim .    # or PROFILE=full
+COMPANION_PROFILE=full docker compose up -d --build           # via compose
+```
+
+Note that the profile changes **which code is present**, not the image size: the
+base image and the moxxy CLI dominate, so slim and full are within a megabyte of
+each other. Choose the profile for the surface you are willing to audit.
+
+See the Docker sections of [`README.md`](README.md) for compose, Coolify and
+volume details. Three things matter more here than in a single-user install:
+
+- **Persist both volumes.** `/data` holds the database, clones and the isolated
+  moxxy home; `/root/.moxxy` holds the provider credentials. Losing the second
+  means losing every AI provider on the next redeploy.
+- **Back up `/data/companion.db`.** It is one SQLite file, so a backup is a file
+  copy of the database plus its `-wal`. Write down the restore procedure and
+  test it before you need it.
+- **Stop it gracefully.** The entrypoint execs the daemon as PID 1, so `docker
+  stop` delivers SIGTERM straight to it and every module's `onDisable` runs in
+  reverse dependency order. Give it a real timeout (`stop_grace_period`), do not
+  `kill -9` a busy instance.
+
+### Companion is a single-node appliance. This is decided.
+
+One daemon, one data directory. Execution scales **horizontally already**, just
+not through the daemon: `companion-runner` turns any extra machine into
+execution capacity, so the daemon is the control plane and runners are the data
+plane. That is the split this product needs.
+
+The reason the database is not the thing to change: the daemon holds git clones,
+worktrees, scratch space, run configs and the isolated moxxy home **on local
+disk**. Moving state to Postgres would be necessary for multi-node and nowhere
+near sufficient, because two daemons would still fight over the same checkouts
+and both run every scheduled job. It would cost a rewrite of every store plus an
+async conversion across roughly 55k lines of module code, and not deliver the
+thing it was for.
+
+What the control plane actually has to survive is a GUI, webhooks and
+orchestration. The ceilings you will hit first are GitHub API rate limits and
+agent execution capacity, and both of those live somewhere else.
+
+**So, concretely:**
+
+| Requirement | Answer |
+|---|---|
+| Failover | Active/passive over a shared volume. Recovery time is one daemon boot, measured at about six seconds to healthy. |
+| Scale out execution | Add runners. That is what they are for. |
+| Backup | Copy `companion.db` and its `-wal`, plus the moxxy home volume. |
+| Active/active, multi-region | **No.** Not supported, not planned. If you need it, Companion is not the right fit today. |
+
+A second daemon pointed at the same `COMPANION_HOME` **refuses to start** rather
+than corrupting state, naming the process that holds it. If you scale replicas
+to 2, that is the error you will get, and it is deliberate: give each instance
+its own home, or run active/passive. A daemon killed with `SIGKILL` is taken over
+immediately on restart, so supervisor restart loops are unaffected.
+
+---
+
+## 3. Accounts and roles **[available]**
+
+Seed the first admin through the environment (`COMPANION_ADMIN_USER`,
+`COMPANION_ADMIN_EMAIL`, `COMPANION_ADMIN_PASSWORD`); after that the Users admin
+page owns accounts. Passwords are scrypt hashes; sessions are hashed rows.
+
+Three roles are seeded: `admin`, `maintainer`, `business`. **What they hold is
+yours to change, and you can add your own.** From the Roles page or the CLI:
+
+```sh
+companion role list
+companion role create release-manager --title "Release Manager" --from maintainer
+companion role revoke release-manager settings:manage
+companion user role alice release-manager      # or the Users page
+```
+
+Modules only ever grant capabilities to the three built-in roles; a custom role
+is composed from the permission catalogue. Adding a role therefore never
+requires a code change, and a module upgrade never silently widens a custom role.
+
+Two properties worth knowing:
+
+- **An explicit revoke always wins** over what a module grants. "Maintainers may
+  not merge pull requests" is `companion role revoke maintainer prs:act`.
+- **Overrides survive a module being disabled.** The permission leaves every
+  role while the module is off and comes back exactly as configured when it is
+  re-enabled. Nothing is silently discarded.
+
+### Auditing an access decision
+
+```
+$ companion acl explain alice settings:manage
+DENIED  alice -> settings:manage
+  user 'alice' has role 'release-manager'
+  owned by module 'core' (enabled): Manage instance settings
+  REVOKED by an instance override, which beats every module grant
+  hint: companion role reset release-manager settings:manage
+```
+
+It names the mechanism, not just the verdict, and distinguishes "no such
+permission" from "its module is disabled" from "explicitly revoked here".
+
+### Lockout recovery
+
+Revoking the wrong thing can leave nobody able to fix it through the API. The
+instance refuses the operation that would remove the last account able to manage
+users, but if you get there another way (direct database edit, an account
+deleted out of band), stop the daemon and run:
+
+```sh
+companion role repair --grant-admin <username>
+```
+
+It edits the database directly and refuses to run while the daemon is reachable,
+because a running daemon holds the grid in memory.
+
+---
+
+## 4. Change control **[available]**
+
+**Every mutating API call is audited**, not just RBAC edits. The router is a
+single choke point (every route declares the permission it requires), so the
+trail covers the whole surface without per-feature instrumentation:
+
+```
+actor  status  module  permission      action                            detail
+admin  200     core    users:manage    rbac.change                       created role 'auditor'
+admin  201     core    users:manage    POST /api/roles
+admin  403     core    users:manage    POST /api/roles/:id/permissions
+bob    403     core    modules:manage  POST /api/modules/:id/disable
+```
+
+Properties that matter for an audit:
+
+- **Refusals are recorded** with the status the caller got, so "who tried and was
+  stopped" is answerable, not just "who succeeded".
+- **Reads are not recorded.** In an append-only table they would bury the writes.
+- The action is the route pattern, so the table groups by action rather than
+  fragmenting by id.
+- It is a **table**, independent of log level. The CLI starts the daemon at
+  `COMPANION_LOG_LEVEL=warn`, so a log-based trail would be missing exactly where
+  it matters.
+- A failing audit write never fails the request it is recording.
+
+Read and export it over the API, behind a dedicated `audit:read` permission so a
+custom **auditor** role can read the trail and nothing else:
+
+```sh
+GET /api/audit?actor=alice&since=<epoch-ms>&limit=100   # newest first, keyset-paged
+GET /api/audit/export?since=<epoch-ms>                  # NDJSON, one entry per line
+```
+
+Paging is keyset on `id` (pass the previous page's `nextBefore`), not OFFSET, so
+deep pages of a large trail stay cheap. The export is `application/x-ndjson`,
+which most log pipelines ingest directly.
+
+**Retention** is the `auditRetentionDays` setting on the Core module (default
+365, minimum 7). A daily job sweeps older entries, bounded per run so it cannot
+lock the database. Shortening the window is destructive: export first.
+
+In the repo, `pnpm acl check` runs in CI and fails when the effective permission
+grid changes without `docs/acl-grid.json` being updated, so "this PR changes who
+may do what" is visible in review rather than discovered in production.
+
+**Not built:** a UI over the trail, and shipping entries to an external SIEM.
+`provideAudit` lets a dedicated audit module take over the sink from module-core
+without a core change. See `docs/game-plan.md` P6.
+
+---
+
+## 5. Modules in a managed environment **[available]**
+
+```sh
+companion module list
+companion module install <id> --set key=value
+companion module disable <id>      # reversible: keeps tables and config
+companion module uninstall <id>    # destructive: rolls back migrations, wipes config
+```
+
+`install` runs the module's migrations; `uninstall` rolls them back to zero and
+clears the ledger, so a re-install starts clean. `uninstall` confirms before
+running and requires `--yes` when there is no terminal. There is **no backup
+before uninstall**: take one first.
+
+Module configuration is declarative. Fields marked `secret` never leave the
+daemon: the read API returns only a set/unset flag.
+
+Modules run **in-process** with the database handle and full filesystem access.
+There is no sandbox. Every module in this repo is first-party; treat any future
+third-party module as code you are installing on the host, because that is what
+it is.
+
+---
+
+## 6. Network and identity constraints **[partly available]**
+
+### GitHub Enterprise Server **[available]**
+
+Point the instance at a GHES install with two settings, by environment or in
+`$COMPANION_HOME/companiond.json`:
+
+```sh
+COMPANION_GITHUB_API_URL=https://ghe.corp/api/v3
+COMPANION_GITHUB_HOST=ghe.corp
+```
+
+`apiUrl` must include the path GHES serves its API under (`/api/v3`); the
+resource paths below it are identical to github.com, so everything composes. The
+host drives `git clone`, the `gh --hostname` used to adopt the operator's local
+identity at boot, and every user-facing GitHub link in the UI (the SPA reads it
+from the pre-login bootstrap, so links are correct before anyone signs in).
+
+Verified end to end against a stub API: with `COMPANION_GITHUB_API_URL` pointed
+at it, connecting a token performs its `/user` probe against that host and stores
+the account it returns.
+
+### Outbound HTTP proxy **[available]**
+
+Set the usual variables; the daemon installs a proxy-aware dispatcher at boot and
+every outbound request follows it, including the GitHub REST client.
+
+```sh
+HTTPS_PROXY=http://proxy.corp:3128
+NO_PROXY=ghe.corp,127.0.0.1,.internal
+```
+
+The dispatcher is installed **only** when one of `HTTP_PROXY` / `HTTPS_PROXY` is
+set (lowercase accepted), so an instance without a proxy keeps Node's default
+request path unchanged. `NO_PROXY` is honoured. The daemon logs which variable it
+picked up, so a misconfiguration is visible in the first lines of the log rather
+than as an inexplicable timeout.
+
+Verified against a CONNECT proxy three ways: proxy set routes traffic through it,
+no proxy variable routes none, and `NO_PROXY` covering the target bypasses it.
+
+Note that `git clone` and the moxxy CLI are separate processes: they read the
+same environment, so a proxy set for the container covers them, but they do not
+go through this dispatcher.
+
+### SSO sign-in **[available for OIDC; SAML not built]**
+
+An identity module registers `{ id, label, startUrl }` in its `onEnable`, the
+login page renders a button per provider, and once the module has verified the
+handshake it calls `signInExternal` to mint an ordinary Companion session. Token
+verification is deliberately NOT pluggable, so SSO adds nothing to the
+per-request path.
+
+Just-in-time provisioning is **off by default** (`externalSignup` on the Core
+module) and **can never create an administrator**: provisioning into any role
+that holds `users:manage` is refused. A misconfigured identity provider should
+lock people out rather than hand over the instance. Accounts created this way get
+a password nobody holds, so they are reachable only through their provider.
+
+#### The OIDC module
+
+Ships in the `full` build, is **not** installed by default (identity is never
+something an instance should acquire by accident), and works with Okta, Entra ID,
+Auth0, Google Workspace and Keycloak.
+
+```bash
+companion module install oidc
+companion module config oidc \
+  --set issuer=https://example.okta.com \
+  --set clientId=0oa1b2c3 \
+  --set clientSecret=... \
+  --set usernameClaim=preferred_username
+companion module enable oidc
+```
+
+`COMPANION_PUBLIC_URL` must be set: the provider redirects the browser back to
+`$COMPANION_PUBLIC_URL/api/oidc/callback`, which is the redirect URI to register
+with the provider. Turn provisioning on separately, and pick the role new
+accounts land in:
+
+```bash
+companion module config core --set externalSignup=true --set externalSignupRole=business
+```
+
+Protocol notes, because a security review will ask:
+
+- Authorization Code with **PKCE (S256)** and `state`, both single-use. The
+  `state` lookup is constant-time.
+- The client secret goes in the `Authorization` header, never a query string.
+- The ID token's **signature is not verified**; its `iss`, `aud` and `exp` are.
+  This is OIDC Core 3.1.3.7: the token arrived directly from the token endpoint
+  over TLS to a confidential client. Identity is then read from **userinfo**,
+  not from the token. The alternative (JWKS fetch, `kid` matching, RS256/ES256
+  with key rotation) is a dependency and an attack surface to re-derive what TLS
+  already established.
+- Every sign-in is written to the audit log with the issuer and the claimed
+  username. The two routes are public GETs, so the router does not audit them
+  automatically; the module records the event itself.
+
+SAML is deliberately absent: it needs XML signature verification, which is a
+much larger attack surface. Every provider above offers OIDC.
+
+### Where secrets are stored **[available]**
+
+`kind: 'secret'` module config (client secrets, tokens) lives in the SQLite home
+by default: one file to back up, one file to protect, no extra service. That is
+the right default for an appliance and the wrong one for an organisation that
+already keeps secrets in Vault, AWS Secrets Manager or a KMS-wrapped store and
+audits them there.
+
+So storage is a seam. A module implements `SecretStore` (`get` / `set` /
+`delete` / `keys` / `deleteAll`) and exposes it as `provideSecrets`, the same
+shape as `provideAudit`. On enable the kernel **moves** the secrets already
+stored into the new backend and deletes the originals, so swapping does not
+silently un-configure every module and does not leave plaintext behind in the
+file the swap was meant to empty. The provider's own credentials stay in SQLite,
+because it needs them to reach the backend it is about to become. Non-secret
+config is unaffected.
+
+No Vault module ships. The seam is core work and is done; the backend is a
+module anyone can write.
+
+### Still not built
+- **GitHub App credentials.** Only personal access tokens. An organisation on
+  GitHub Enterprise Cloud with SAML SSO must SSO-authorise each token, and
+  organisations that ban PATs outright cannot connect at all.
+
+A custom CA works today via `NODE_EXTRA_CA_CERTS` (a Node-level setting, mounted
+into the container), which a TLS-intercepting proxy will need.
+`COMPANION_PUBLIC_URL` is available for webhook delivery, though the webhook
+surface still prefers the moxxy proxy tunnel over it.
+
+The split between OSS core work and what belongs in a commercial module is in
+`docs/modular-distribution.md` §10: the seams are core work, because a separate
+module cannot change a constant inside another one.
+
+---
+
+## 7. Licensing and commercial modules **[gate available; modules not built]**
+
+### The entitlement gate **[available]**
+
+A module declares `entitlement: '<feature>'` in its manifest. The kernel then
+refuses to install or enable it without a licence granting that feature, and
+disables it at boot if the licence lapses.
+
+Install the licence at `$COMPANION_HOME/license.jwt`. Verification is **offline**:
+a detached Ed25519 signature over a JSON payload, checked against the issuer key
+the build carries. There is no licence server, no activation call and no
+phone-home, because air-gapped installs are a requirement rather than an edge
+case. It is read at boot and at most once a day, never on a request path.
+
+Refusals name the reason:
+
+```
+module 'slop' requires the 'slop-pro' entitlement: licence for ACME Corp expired 2026-07-26
+module 'slop' requires the 'slop-pro' entitlement: no licence installed
+```
+
+**Expiry degrades, it does not brick.** A licence lapse disables the module at
+the next boot with a warning; its tables, its stored configuration and the rest
+of the instance are untouched, and everyone can still sign in and administer it.
+Renewing the licence and re-enabling restores the module with its configuration
+exactly as it was. Verified by running it.
+
+An OSS build carries no issuer key and therefore satisfies no entitlement. That
+is deliberate: it contains no entitled module, and a build that cannot verify a
+licence must not pretend it can.
+
+Licence enforcement in a self-hosted, source-available product is a contractual
+control with a technical speed bump, not a security boundary. It is designed for
+the honest customer and for audit.
+
+### Commercial modules **[not built]**
+
+The intended shape: enterprise modules live in a separate private repository
+under a commercial licence and are compiled into an `enterprise` build profile,
+while the OSS repository stays MIT and contains no commercial code. The build
+mechanism and the gate both support this today; the modules do not exist yet.
+
+---
+
+## 8. Air-gapped operation **[available]**
+
+No telemetry, no update check, no CDN fetch on any boot or request path, and no
+external fonts or scripts in the SPA. `NODE_EXTRA_CA_CERTS` covers
+TLS-intercepting proxies.
+
+Licence verification is offline by construction: a detached Ed25519 signature
+over a JSON payload at `$COMPANION_HOME/license.jwt`, read at most once a day.
+No licence server, no activation call, no phone-home.
+
+Modules install from a directory. An out-of-tree module is unpacked into
+`$COMPANION_HOME/modules/<id>/` and picked up at boot, so a mounted volume or a
+copied tarball is a complete install path with no registry access; everything
+else is compiled into the build.
+
+**The blocker for a genuinely disconnected deployment is §6, not this section:**
+AI agent runs reach a model provider, and repository sync reaches GitHub.
+
+---
+
+## 9. Getting the parts that are missing
+
+The sequencing, with what each mechanism cost, is in
+[`docs/game-plan.md`](docs/game-plan.md). Every phase P0 to P9 is built.
+
+The full list of what is not built, with what exists in each case, is
+[`docs/open-items.md`](docs/open-items.md). Three of them appear on this page,
+and none is a mechanism: **GitHub App credentials** (§6, the one that blocks an organisation
+banning personal access tokens), **commercial modules** to put behind the
+entitlement gate, and a **Vault or KMS backend** for the secret store. The seams
+for the last two exist and are tested; what is missing is a module.
+
+If you are evaluating Companion for an organisation, the two questions worth
+raising first are whether you need GitHub Enterprise or an egress proxy (§6),
+and whether single-node is acceptable (§2).

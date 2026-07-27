@@ -90,8 +90,16 @@ modules/<id>/src/contract/index.ts   ← DTOs + `declare module` augment RBAC/WS
         client/index.tsx             ← defineClientModule({ manifest, nav, routes, ... })
 ```
 
-Installed via **one line in each app registry**: `apps/api/src/modules.ts`
-(`MODULES`) and `apps/web/src/modules.ts` (`CLIENT_LOADERS`).
+Installed via **one line in a build profile** (`profiles/slim.json`,
+`profiles/full.json`). `pnpm gen:modules --profile <name>` writes the two
+gitignored registries `apps/api/src/modules.generated.ts` (`MODULES`) and
+`apps/web/src/modules.generated.ts` (`CLIENT_LOADERS`), and refuses a profile
+that is not closed under `dependsOn` or omits a `required: true` module.
+
+The app shell imports **only** `required: true` modules (core, workspace).
+Everything else reaches it through `shell.banner` / `shell.topbar` /
+`shell.effects` slots, which is what lets a profile omit a module entirely;
+`pnpm acl check` enforces it.
 
 ## Runtime lifecycle (what "modular" buys)
 

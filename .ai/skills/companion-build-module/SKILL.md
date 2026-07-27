@@ -4,10 +4,12 @@ description: >-
   Build or extend a Companion feature module in the modular framework — the
   Next.js-style convention files (manifest, contract, api slice, client slice),
   the define* registrants, runtime lifecycle (enable/disable/uninstall), open
-  RBAC/WS/service registries, single-owner tables, and wiring into the two app
-  registries. Use for "add a new <domain>", "add a feature to <module>", or any
-  work under modules/*. Supersedes companion-add-backend-area / companion-add-web-area,
-  which describe the pre-modular layered spine that no longer exists.
+  RBAC/WS/service registries, single-owner tables, the `pnpm acl` tooling that
+  threads a permission, the `shell.*` slots a module uses to reach the app shell,
+  and adding the module to a build profile. Use for "add a new <domain>", "add a
+  feature to <module>", or any work under modules/*. Supersedes
+  companion-add-backend-area / companion-add-web-area, which describe the
+  pre-modular layered spine that no longer exists.
 ---
 
 # Build a Companion module
@@ -57,15 +59,59 @@ default-exports through a `define*` helper.
    slice. Resolve other modules through `ctx.services.get(dep)` (hard) or
    `tryGet` (soft) — never a raw foreign JOIN; own your tables, read others'
    through their service or a published `v_*` view.
-4. **Thread RBAC completely** (manifest `permissions` + `acl` `permissions`&`grants`
-   + `contract` `PermissionRegistry` + route `access` + nav/route `permission`).
-   A half-threaded permission is a bug.
+4. **Add permissions with the tool, never by hand.** `acl.ts` is the single
+   authored source; the manifest array and the contract's `PermissionRegistry`
+   are derived from it:
+
+   ```sh
+   pnpm acl add <module> <resource>:<verb> --title "..." [--grant admin,maintainer]
+   pnpm acl sync     # after editing acl.ts directly
+   ```
+
+   Then gate: route `access`, nav `permission`, client route `permission`.
+   Grants are keyed by **built-in role only**; custom roles are composed by the
+   instance and are none of your module's business.
 5. **Broadcast every mutation** (`ctx.broadcast({ t: '<id>.changed' })`) and
    consume it in exactly one client hook via `useLive`.
-6. **Install** = one entry in `apps/api/src/modules.ts` (manifest + contract
-   import + `MODULES` load thunk) and one in `apps/web/src/modules.ts`
-   (`CLIENT_LOADERS`). `pnpm install` links it.
+6. **Install** = add the id to `profiles/full.json` (and `slim.json` only if it
+   belongs in the default build). `pnpm install` links it and regenerates the
+   registries; you never edit those by hand.
 7. **Verify** (see below). Note what you could not verify by running.
+
+## Reaching the app shell
+
+The shell (`apps/web/src/App.tsx`) imports **only** `required: true` modules
+(core, workspace). Yours is not one, so you never add an import there: contribute
+to a `shell.*` slot instead, and a build without your module simply renders
+nothing.
+
+| Slot | Renders |
+|---|---|
+| `shell.banner` | full-width notice above the page (operate: runner capacity) |
+| `shell.topbar` | the status cluster right of the search box (operate: run queue, agent status; automations: AI Help) |
+| `shell.effects` | components that return `null` and exist to run a shell-level effect (code: workspace-scoping the nav freshness badges) |
+
+A slot contribution carries its own `permission`, so it is RBAC-filtered like
+nav. State that two contributions share must live in ONE component: splitting a
+button and its panel across two slots pushes their shared state back into the
+shell, which is the thing being avoided.
+
+`NavEntry.home` (lowest wins) claims the landing page for a bare URL. Declare it
+only if your module genuinely owns the front page; the shell falls back to the
+first entry the role can reach.
+
+## Cross-module reactions on the client
+
+Server-side you use `ctx.services.tryGet` / `ctx.bus`. The client twin is
+`isMessage(msg, 'other.changed')` from `@companion/core/client`: the tag is not
+in your compilation's `SpaServerMessage` union because you do not import that
+module's contract, and with the owner absent the reaction simply never fires.
+Use it for a refresh or a badge, never to gate behaviour.
+
+If you gate UI on a permission another module owns, declare it in the manifest's
+`consumes` and make sure the UI degrades when `can()` goes false, because that
+permission leaves the grid whenever its module is disabled. `pnpm acl check`
+warns about any undeclared use.
 
 ## Hard rules
 
@@ -87,8 +133,26 @@ default-exports through a `define*` helper.
 - Stay in scope. If the task needs a genuinely new framework mechanism (not just
   a new module), stop and surface the design choice with a recommendation.
 
+## Which edition, and how it ships
+
+This skill covers writing the module. For **where it lives (OSS vs Enterprise),
+whether it ships by default, build profiles, and the CLI/Docker delivery path**,
+use `companion-editions-and-distribution`. For a module that must live outside
+this repo, use `companion-external-module`. For the enterprise bar on auth,
+RBAC, audit, secrets and air-gap, use `companion-enterprise-readiness`.
+
 ## Verify
 
+- `pnpm build && pnpm typecheck && pnpm acl check` clean. `acl check` is a real
+  gate, not a formality: it fails on declaration drift, an id claimed by two
+  modules (permission, WS tag, `ServiceMap` key, route, nav key **or nav
+  shortcut**), a permission gated on but declared nowhere, a grant naming a
+  permission your module does not own, an id that is not `<resource>:<verb>`, an
+  undeclared foreign permission, a shell import of a non-required module, and any
+  change to the effective grid not mirrored in `docs/acl-grid.json`.
+- If your module is not in the default build, check the profile that contains it:
+  `pnpm gen:modules --profile full && pnpm -r build`. `minimal` (core + workspace)
+  is the guard that the shell stayed module-free.
 - `pnpm -r build && pnpm -r typecheck` clean (the typecheck is the primary gate;
   fix every unhandled union member / DTO drift it flags).
 - Boot `pnpm dev` and drive the module: its nav/routes appear and its API returns
@@ -98,7 +162,20 @@ default-exports through a `define*` helper.
 
 ## What you return
 
-The module/feature built, files grouped by slice (contract / api / client /
-registries), the permission(s) threaded, the two `modules.ts` edits, the
-build+typecheck result, and an explicit list of what you verified by running vs.
-what still needs manual driving.
+The module/feature built, files grouped by slice (contract / api / client), the
+permission(s) threaded and how (`pnpm acl add` vs hand-edited), the profile
+entry, the `build` + `typecheck` + `acl check` result, and an explicit list of
+what you verified by running vs. what still needs manual driving.
+
+Driving it for real is cheap and worth doing: boot a throwaway daemon on an
+isolated home and port so you never touch the developer's own instance.
+
+```sh
+COMPANION_HOME=/tmp/probe COMPANION_PORT=8977 COMPANION_LOG_LEVEL=warn \
+COMPANION_ADMIN_USER=admin COMPANION_ADMIN_PASSWORD='Test-Pass-12345' \
+  node apps/companion-cli/dist/server.js &
+companion module install <id> --home /tmp/probe --port 8977
+companion acl explain admin <id>:read --home /tmp/probe --port 8977
+```
+
+Then kill it and delete the directory.

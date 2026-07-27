@@ -1,83 +1,111 @@
 ---
 name: companion-contract-and-rbac
 description: >-
-  How to evolve the shared spine — packages/contract — safely: add or change a
-  DTO, add a Permission and thread it end-to-end through roles + routes +
-  modules, add a SpaServerMessage WS event, or extend a union. Use whenever a
-  type crosses the client/server boundary or a new capability/role rule is
-  needed. Getting this wrong silently breaks RBAC or the live stream.
+  How to evolve the shared spine safely: add a DTO that crosses the HTTP/WS
+  boundary, add a Permission and thread it end-to-end, add a SpaServerMessage
+  event, or open one of the declaration-merged registries (permissions, WS
+  messages, services, bus events). Use whenever a type crosses the client/server
+  boundary or a new capability is needed. Getting this wrong silently breaks RBAC
+  or the live stream.
 ---
 
-# Contract & RBAC — the type-safe spine
+# Contract & RBAC
 
-`packages/contract` is imported by both apps as `@companion/contract`
-(`workspace:*`). It is the **only** place a cross-boundary type may be defined.
-Because both the daemon's route table and the SPA's module registry consume the
-same `Permission` map, a capability added here is enforced by the type system on
-both sides — that is the whole design, don't route around it.
+The spine is **open registries**, not closed unions. `packages/contracts`
+declares empty interfaces; each module's `src/contract/index.ts` augments them,
+so the derived unions (`Permission`, `SpaServerMessage`, `ServiceMap`,
+`BusEvents`) are exactly the set of modules in this build. No codegen, no central
+list to edit.
 
-Files: `auth.ts` (roles, permissions, auth DTOs), `workspaces.ts`,
-`pipelines.ts`, `checks.ts`, `moxxy.ts`, `runner-agent.ts`, and `index.ts`
-(barrel re-export + Run/GitHub/notification/etc. types).
+```ts
+// modules/<id>/src/contract/index.ts
+declare module '@companion/contracts' {
+  interface PermissionRegistry { 'widgets:read': true; 'widgets:manage': true }
+  interface ServerMessageRegistry { 'widgets.changed': Record<never, never> }
+  interface ServiceMap { widgets: WidgetService }
+}
+export interface WidgetRecord { readonly id: string; readonly createdAt: number }
+```
 
-## Adding or changing a DTO
+**Compile-checked shape, runtime-checked presence.** A permission or service is
+in the *type* whether or not its module is enabled. Always go through
+`ctx.rbac` / `ctx.services.get` (across a declared `dependsOn`) or `tryGet` (soft);
+never infer presence from the type.
 
-1. Put it in the topical file (or `index.ts` for run/github/notification-ish
-   types), all fields `readonly`, arrays `ReadonlyArray<T>`.
-2. Document non-obvious fields with a short comment (see how `RunRecord` /
-   `RunnerHealth` annotate `null` semantics — "null = unknown → assume capable").
-3. If it's a new file, add `export * from './x.js'` to `index.ts`.
-4. `pnpm --filter @companion/contract build` (or rely on `pnpm dev`'s watch), then
-   `pnpm typecheck` at the root — the compiler flags every consumer that now
-   needs updating on **both** sides. Fix them; don't `any` past them.
+## Adding a DTO
 
-Renaming/removing a field is a breaking change across both apps — let the
-typechecker enumerate the call sites and update each.
+Put it in your module's contract slice, all fields `readonly`. Comment the
+non-obvious ones, especially `null` semantics. Types are erased at runtime, so a
+DTO costs nothing; it exists to keep both sides of one fetch in agreement.
 
-## Adding a Permission (thread it end-to-end)
+Renaming or removing a field is breaking across both slices. Let the typechecker
+enumerate the call sites and fix each; do not `any` past them.
 
-`Permission` is a string union in `auth.ts`. A capability is only real once it
-appears in **every** one of these places:
+## Adding a Permission
 
-1. **`packages/contract/src/auth.ts`** — add the literal to the `Permission`
-   union **and** to the `ALL_PERMISSIONS` array (they must stay in sync), then
-   grant it in `ROLE_PERMISSIONS` for the roles that should have it. `admin`
-   gets `ALL_PERMISSIONS`; `maintainer` is `ALL_PERMISSIONS` minus the
-   admin-only set; `business` is an explicit allowlist.
-2. **Backend route** — set `access: 'your:permission'` on each `route({...})`.
-   The router calls `auth.require(user, access)`; no handler-level checks.
-3. **SPA module** (`apps/web/src/modules.tsx`) — the area's `permission:` field.
-   Nav visibility and RBAC filtering derive from it automatically.
-4. **SPA route guard** (`apps/web/src/App.tsx`) — `guard(can('your:permission'), <Page/>)`.
+**Use the tool.** `acl.ts` is the single authored source; the manifest's
+`permissions` array and the contract's `PermissionRegistry` are derived from it,
+and `pnpm acl check` fails on drift.
 
-Naming is `area:verb` — `read`, `manage`, `act`, `create`, `run`, `connect`.
-Reuse an existing verb if it fits; don't invent a synonym.
+```sh
+pnpm acl add widgets widgets:manage --title "Create and edit widgets" --grant admin,maintainer
+pnpm acl sync    # if you edited acl.ts by hand
+```
 
-Route access has three non-permission values too: `'public'` (no auth, e.g.
-`/api/auth/state`, `/healthz`), `'any'` (any signed-in user regardless of role,
-e.g. `/api/profile`), and a concrete `Permission`.
+Then gate the capability everywhere it is exercised:
+
+1. **Route**: `access: 'widgets:manage'` on each `route({...})`. The router
+   calls `require(user, access)` centrally; never check inside a handler.
+2. **Nav entry** and **client route**: the `permission:` field.
+3. **Programmatic checks**: `ctx.rbac.has(role, perm)` on the server,
+   `can(perm)` on the client, for decisions finer than a whole route (operate
+   uses `runners:manage` this way to separate shared runners from personal ones).
+
+Route `access` also takes `'public'` (no auth) and `'any'` (any signed-in user).
+
+Naming is `<resource>:<verb>`; reuse an existing verb rather than inventing a
+synonym. `acl check` enforces the shape.
+
+**Grants are keyed by built-in role only** (`admin`, `maintainer`, `business`).
+A module cannot know the custom roles an instance defines, and does not need to:
+instance admins compose custom roles from the permission catalogue, and an
+explicit instance revoke beats any module grant. Your `acl.ts` never changes when
+someone adds a role.
 
 ## Adding a live WS event
 
-The server→browser stream is the `SpaServerMessage` union in `index.ts`.
+1. Augment `ServerMessageRegistry` in your contract with `'<area>.changed'`.
+   Coarse `'<area>.changed'` signals trigger a refetch; carry a payload only when
+   the client can patch in place (`run.changed` carries the record).
+2. Declare the tag in the manifest's `messages` so boot-time collision detection
+   sees it.
+3. **Emit** after every mutation: `ctx.broadcast({ t: 'widgets.changed' })`.
+4. **Consume** in exactly one client hook: `useLive(refresh, (msg) => msg.t === 'widgets.changed')`.
 
-1. Add a variant: `| { readonly t: 'widgets.changed'; readonly repo?: string }`.
-   Follow the existing convention — coarse `'<area>.changed'` signals trigger a
-   refetch; `'run.changed'` carries the full record for in-place patching.
-2. **Emit it** from the service after every mutation: `this.broadcast({ t: 'widgets.changed' })`.
-3. **Consume it** on the client in the area's hook:
-   `useLive(refresh, (msg) => msg.t === 'widgets.changed')`.
+**Never write an exhaustive `switch` over `SpaServerMessage['t']`** in
+`packages/*` or `apps/*`. The union is only as complete as the modules in this
+build; equality predicates keep an open module set type-safe, and every existing
+consumer already uses one.
 
-`SpaServerMessage` is exhaustively switched in a few places; the compiler will
-point you at anything that must handle the new variant.
+To react to a message another module owns, use `isMessage(msg, 'other.changed')`
+from `@companion/core/client`: the tag is absent from your union because you do
+not import that module's contract, and the reaction never fires when the owner is
+absent.
 
 ## RBAC facts worth remembering
 
-- `verify()` re-reads role & `disabled` from the account on **every** request,
-  so a demotion or disable takes effect immediately and no token can outrank its
-  account. Role/disable/password changes also delete the user's sessions.
-- The install must always keep **one enabled admin** (`guardLastAdmin`); nobody
-  may change their own role or delete their own account.
-- Private workspaces add a second gate on top of role: `canAccessRepo` /
-  membership. Role says *what kind of thing* you can do; workspace membership
-  says *which workspaces' data* you see. Keep the two concerns separate.
+- `verify()` re-reads role and `disabled` from the account on **every** request,
+  so a demotion takes effect immediately and no token can outrank its account.
+  Role, disable and password changes delete that user's sessions.
+- A permission leaves the grid the moment its owning module is disabled: routes
+  503, `can()` goes false, and any UI gated on it must degrade rather than break.
+  If you gate on a permission you do not own, declare it in the manifest's
+  `consumes`.
+- The install must always keep **at least one enabled account that holds
+  `users:manage`**. That, not "one admin", is the invariant; the roles service
+  refuses any change that would violate it and rolls the write back.
+- Workspace membership is a second, independent gate. Role says *what kind of
+  thing* you may do; workspace access says *whose data* you see. Keep them apart.
+
+For the design behind instance-defined roles and grant overrides, read
+`docs/acl-and-roles.md`.
