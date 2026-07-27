@@ -1,0 +1,450 @@
+{
+  "roles": {
+    "admin": [
+      "audit:read",
+      "automations:manage",
+      "board:manage",
+      "board:read",
+      "docs:manage",
+      "docs:read",
+      "github:connect",
+      "issues:act",
+      "issues:read",
+      "modules:manage",
+      "pipelines:manage",
+      "pipelines:read",
+      "pipelines:run",
+      "planner:execute",
+      "planner:manage",
+      "planner:read",
+      "playground:run",
+      "proposals:act",
+      "proposals:create",
+      "proposals:read",
+      "prs:act",
+      "prs:read",
+      "refine:manage",
+      "refine:read",
+      "reports:read",
+      "repos:manage",
+      "repos:read",
+      "runners:connect",
+      "runners:manage",
+      "runs:act",
+      "runs:read",
+      "settings:manage",
+      "skills:manage",
+      "slop:act",
+      "slop:manage",
+      "slop:read",
+      "specs:manage",
+      "specs:read",
+      "users:manage",
+      "workspaces:create",
+      "workspaces:manage",
+      "workspaces:read"
+    ],
+    "maintainer": [
+      "automations:manage",
+      "board:manage",
+      "board:read",
+      "docs:manage",
+      "docs:read",
+      "github:connect",
+      "issues:act",
+      "issues:read",
+      "pipelines:manage",
+      "pipelines:read",
+      "pipelines:run",
+      "planner:execute",
+      "planner:manage",
+      "planner:read",
+      "playground:run",
+      "proposals:act",
+      "proposals:create",
+      "proposals:read",
+      "prs:act",
+      "prs:read",
+      "refine:manage",
+      "refine:read",
+      "reports:read",
+      "repos:manage",
+      "repos:read",
+      "runners:connect",
+      "runs:act",
+      "runs:read",
+      "skills:manage",
+      "slop:act",
+      "slop:manage",
+      "slop:read",
+      "specs:manage",
+      "specs:read",
+      "workspaces:create",
+      "workspaces:read"
+    ],
+    "business": [
+      "board:read",
+      "docs:manage",
+      "docs:read",
+      "planner:execute",
+      "planner:manage",
+      "planner:read",
+      "proposals:create",
+      "proposals:read",
+      "refine:read",
+      "repos:read",
+      "runners:connect",
+      "slop:read",
+      "specs:manage",
+      "specs:read",
+      "workspaces:read"
+    ]
+  },
+  "permissions": {
+    "audit:read": {
+      "owner": "core",
+      "title": "Read and export the audit trail",
+      "grants": [
+        "admin"
+      ]
+    },
+    "automations:manage": {
+      "owner": "automations",
+      "title": "Configure automations and webhooks",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "board:manage": {
+      "owner": "board",
+      "title": "Manage tasks, workers and board settings",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "board:read": {
+      "owner": "board",
+      "title": "View the task board",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "docs:manage": {
+      "owner": "plan",
+      "title": "Create and edit documentation",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "docs:read": {
+      "owner": "plan",
+      "title": "View documentation",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "github:connect": {
+      "owner": "code",
+      "title": "Connect a GitHub account",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "issues:act": {
+      "owner": "code",
+      "title": "Act on issues (triage, fix, comment)",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "issues:read": {
+      "owner": "code",
+      "title": "View issues and triage results",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "modules:manage": {
+      "owner": "core",
+      "title": "Install, enable and configure modules",
+      "grants": [
+        "admin"
+      ]
+    },
+    "pipelines:manage": {
+      "owner": "code",
+      "title": "Create and edit pipelines",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "pipelines:read": {
+      "owner": "code",
+      "title": "View pipelines and their runs",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "pipelines:run": {
+      "owner": "code",
+      "title": "Run pipelines",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "planner:execute": {
+      "owner": "planner",
+      "title": "Create tasks and start agent work from an approved idea",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "planner:manage": {
+      "owner": "planner",
+      "title": "Create ideas and review planning results",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "planner:read": {
+      "owner": "planner",
+      "title": "View feature planning sessions",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "playground:run": {
+      "owner": "playground",
+      "title": "Test agents, skills and pipelines in the playground",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "proposals:act": {
+      "owner": "plan",
+      "title": "Act on proposals (approve, finish, reject)",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "proposals:create": {
+      "owner": "plan",
+      "title": "File proposals and run their analysis",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "proposals:read": {
+      "owner": "plan",
+      "title": "View change proposals",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "prs:act": {
+      "owner": "code",
+      "title": "Act on pull requests (review, merge, fix)",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "prs:read": {
+      "owner": "code",
+      "title": "View pull requests and reviews",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "refine:manage": {
+      "owner": "refinement",
+      "title": "Create refinements, run decompositions and import tasks",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "refine:read": {
+      "owner": "refinement",
+      "title": "View product refinements",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "reports:read": {
+      "owner": "workspace",
+      "title": "View digests and reports",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "repos:manage": {
+      "owner": "code",
+      "title": "Connect and manage repositories",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "repos:read": {
+      "owner": "code",
+      "title": "View connected repositories",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "runners:connect": {
+      "owner": "operate",
+      "title": "Connect personal runner machines",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "runners:manage": {
+      "owner": "operate",
+      "title": "Manage shared runner machines",
+      "grants": [
+        "admin"
+      ]
+    },
+    "runs:act": {
+      "owner": "operate",
+      "title": "Launch and drive agent runs",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "runs:read": {
+      "owner": "operate",
+      "title": "View agent runs",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "settings:manage": {
+      "owner": "core",
+      "title": "Manage instance settings",
+      "grants": [
+        "admin"
+      ]
+    },
+    "skills:manage": {
+      "owner": "operate",
+      "title": "Manage the skill library",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "slop:act": {
+      "owner": "slop",
+      "title": "Run detections and apply/dismiss verdicts",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "slop:manage": {
+      "owner": "slop",
+      "title": "Create and edit detection rules",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "slop:read": {
+      "owner": "slop",
+      "title": "View AI slop detections and rules",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "specs:manage": {
+      "owner": "plan",
+      "title": "Create and edit specifications",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "specs:read": {
+      "owner": "plan",
+      "title": "View specifications",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "users:manage": {
+      "owner": "core",
+      "title": "Create and manage user accounts",
+      "grants": [
+        "admin"
+      ]
+    },
+    "workspaces:create": {
+      "owner": "workspace",
+      "title": "Create private workspaces",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "workspaces:manage": {
+      "owner": "workspace",
+      "title": "Manage accessible workspaces",
+      "grants": [
+        "admin"
+      ]
+    },
+    "workspaces:read": {
+      "owner": "workspace",
+      "title": "View workspaces",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    }
+  }
+}

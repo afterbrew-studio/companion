@@ -1,5 +1,5 @@
-import type { Role } from '@companion/types';
-import { ROLES } from '@companion/types';
+import type { BuiltinRole } from '@companion/types';
+import { BUILTIN_ROLES } from '@companion/types';
 import type { Permission } from './registries.js';
 
 export interface PermissionSpec {
@@ -8,8 +8,13 @@ export interface PermissionSpec {
   readonly implies?: readonly Permission[];
 }
 
-/** role → the permissions this module grants that role, or `'*'` = all of this module's permissions. */
-export type RoleGrants = Partial<Record<Role, readonly Permission[] | '*'>>;
+/**
+ * Built-in role → the permissions this module grants it, or `'*'` = all of this
+ * module's permissions. Deliberately keyed by BUILT-IN role only: a module
+ * cannot know the custom roles an instance defines, so custom roles are composed
+ * from the permission catalogue by the instance instead (see RbacGrid overrides).
+ */
+export type RoleGrants = Partial<Record<BuiltinRole, readonly Permission[] | '*'>>;
 
 export interface ModuleAcl {
   readonly permissions: readonly PermissionSpec[];
@@ -24,7 +29,7 @@ export interface ModuleAcl {
  */
 export function buildRolePermissions(
   acls: readonly ModuleAcl[],
-): Record<Role, ReadonlySet<Permission>> {
+): Record<BuiltinRole, ReadonlySet<Permission>> {
   const implied = new Map<Permission, readonly Permission[]>();
   for (const acl of acls) {
     for (const p of acl.permissions) if (p.implies?.length) implied.set(p.id, p.implies);
@@ -35,14 +40,14 @@ export function buildRolePermissions(
     for (const dep of implied.get(perm) ?? []) expand(dep, into);
   };
 
-  const grid: Record<Role, Set<Permission>> = {
+  const grid: Record<BuiltinRole, Set<Permission>> = {
     admin: new Set(),
     maintainer: new Set(),
     business: new Set(),
   };
   for (const acl of acls) {
     const own = acl.permissions.map((p) => p.id);
-    for (const role of ROLES) {
+    for (const role of BUILTIN_ROLES) {
       const grant = acl.grants[role];
       if (!grant) continue;
       for (const p of grant === '*' ? own : grant) expand(p, grid[role]);
@@ -52,8 +57,8 @@ export function buildRolePermissions(
 }
 
 export function hasPermission(
-  grid: Record<Role, ReadonlySet<Permission>>,
-  role: Role,
+  grid: Record<BuiltinRole, ReadonlySet<Permission>>,
+  role: BuiltinRole,
   permission: Permission,
 ): boolean {
   return grid[role].has(permission);

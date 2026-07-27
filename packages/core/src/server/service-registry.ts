@@ -22,6 +22,15 @@ export class ServiceRegistry {
   }
 
   register<K extends keyof ServiceMap & string>(key: K, service: ServiceMap[K]): void {
+    // Two modules declaring the same ServiceMap key merge silently in the type
+    // system when the declared types match, so a plain set() lets whichever
+    // module activates second shadow the first with no diagnostic anywhere.
+    // Re-registration by the SAME module is allowed: a failed activation leaves
+    // its keys behind, and the retry must not fail on its own leftovers.
+    const owner = this.owners.get(key);
+    if (this.services.has(key) && owner !== this.activeModule) {
+      throw new Error(`service '${key}' is already registered by module '${owner ?? 'unknown'}'`);
+    }
     this.services.set(key, service);
     if (this.activeModule) this.owners.set(key, this.activeModule);
   }

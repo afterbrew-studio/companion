@@ -8,8 +8,8 @@ import type { CompiledRawRoute } from './raw-router.js';
 import type { Migration } from './migration-runner.js';
 import type { ServiceRegistry } from './service-registry.js';
 import type { ServerBus } from './bus.js';
-import type { NotificationEmitter, SettingsRegistry } from './capabilities.js';
-import type { RbacReader } from './rbac-grid.js';
+import type { AuditSink, NotificationEmitter, SecretStore, SettingsRegistry } from './capabilities.js';
+import type { RbacReader, RoleOverrides } from './rbac-grid.js';
 import type { WsScopeRegistry } from './ws-hub.js';
 
 /**
@@ -28,11 +28,21 @@ export interface ModuleContext {
   readonly broadcast: (msg: SpaServerMessage) => void;
   readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
   readonly notify: NotificationEmitter;
+  /** Record an action for the audit trail. The router covers routes; use this
+   *  for a decision a service makes that no single route describes. */
+  readonly audit: AuditSink;
   readonly settings: SettingsRegistry;
   /** This module's own declared config — read-only, live, defaults merged. */
   readonly moduleConfig: ModuleConfigAccessor;
   /** The live effective RBAC grid (module-core's Auth reads this). */
   readonly rbac: RbacReader;
+  /**
+   * Publish this instance's role definitions and grant overrides into the live
+   * grid. Owned by whichever module STORES roles (module-core); everyone else
+   * reads through `rbac`. Kept off `RbacReader` so that interface stays honest
+   * about being read-only.
+   */
+  readonly setRoles: (overrides: RoleOverrides) => void;
   /** Per-message WS visibility: modules register scope resolvers in onEnable. */
   readonly ws: WsScopeRegistry;
   /** Kernel lifecycle control — module-core's Modules admin surface drives this. */
@@ -69,6 +79,13 @@ export interface ModuleListing {
   readonly permissions: readonly string[];
   /** The declared config field spec (metadata only — never values). */
   readonly config: readonly ModuleConfigField[];
+  /** Entitlement this module needs, or null when it is unlicensed OSS. */
+  readonly entitlement: string | null;
+  /** false ⇒ declared an entitlement this instance's licence does not grant. */
+  readonly entitled: boolean;
+  /** Out-of-tree module whose client chunk the shell must fetch from
+   *  `/modules/<id>/client.js` instead of a compiled-in loader. */
+  readonly externalClient: boolean;
 }
 
 export interface BackgroundJob {
@@ -102,6 +119,12 @@ export interface ServerModule {
   readonly lifecycle?: LifecycleHooks;
   /** module-core only: the authenticator the kernel wires into the router. */
   readonly provideAuthenticator?: (ctx: ModuleContext) => Authenticator;
+  /** The audit sink the router writes through. Last enabled provider wins, so a
+   *  dedicated audit module can take over from module-core's minimal table. */
+  readonly provideAudit?: (ctx: ModuleContext) => AuditSink;
+  /** Storage for `kind: 'secret'` config. Absent everywhere = the SQLite default;
+   *  last enabled provider wins and inherits the values already stored. */
+  readonly provideSecrets?: (ctx: ModuleContext) => SecretStore;
   /** Destructive uninstall for modules whose migrations are not all reversible. */
   purge?(db: Database.Database): void;
 }

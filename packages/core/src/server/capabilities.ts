@@ -74,3 +74,62 @@ export interface Broadcaster {
   broadcast(msg: SpaServerMessage): void;
   pushToUser(username: string, msg: SpaServerMessage): void;
 }
+
+/**
+ * One recorded action. The router emits these for every MUTATING request that
+ * got past authorization, which is what makes coverage near-complete for free:
+ * every route already declares `access`, so there is exactly one place to hook.
+ * Reads are deliberately not recorded, because they would bury the writes.
+ */
+export interface AuditEvent {
+  readonly at: number;
+  /** null only for a `public` route (setup, a rejected login). */
+  readonly actor: string | null;
+  /** `POST /api/modules/:id/enable`: the route PATTERN, not the concrete path,
+   *  so the table groups by action instead of by id. */
+  readonly action: string;
+  /** The permission the route required, or `any` / `public`. */
+  readonly access: string;
+  readonly status: number;
+  /** Module the route belongs to; null for framework-level entries. */
+  readonly module: string | null;
+  /** Free-form detail for events a service emits that no single route describes. */
+  readonly detail?: string;
+}
+
+/**
+ * Where audit events go. Provided by the module that owns the audit table
+ * (module-core today). An absent provider makes auditing a silent no-op rather
+ * than a boot failure: an instance must still serve requests.
+ */
+export interface AuditSink {
+  record(event: AuditEvent): void;
+}
+
+/**
+ * Where `kind: 'secret'` module config actually lives.
+ *
+ * Companion stores secrets in its own SQLite home by default, which is the right
+ * default for a self-hosted appliance: one file to back up, one file to protect,
+ * no extra service to run. It is the wrong default for an organisation that has
+ * already decided secrets live in Vault, AWS Secrets Manager or a KMS-wrapped
+ * store and audits them there. So the storage is a seam, not a fact.
+ *
+ * A module takes it over with `provideSecrets` (the same shape as `provideAudit`).
+ * The kernel then moves any values already held by the previous store into the
+ * new one and deletes the originals, so swapping the backend does not silently
+ * un-configure every module. The provider's OWN secrets stay in the default
+ * store, because it needs them to reach the backend it is about to become.
+ *
+ * Non-secret config is unaffected: it stays in SQLite regardless.
+ */
+export interface SecretStore {
+  /** `null` when unset. */
+  get(moduleId: string, key: string): string | null;
+  set(moduleId: string, key: string, value: string): void;
+  delete(moduleId: string, key: string): void;
+  /** Which keys hold a value, for the configured-ness check that must not read them. */
+  keys(moduleId: string): readonly string[];
+  /** Uninstall's clean slate. */
+  deleteAll(moduleId: string): void;
+}

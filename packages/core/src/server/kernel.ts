@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
-import type { DaemonConfig, Logger } from '@companion/services';
+import type { Authenticator, SpaServerMessage } from '@companion/contracts';
+import { Entitlements, describeLicense, type DaemonConfig, type Logger } from '@companion/services';
 import type { ModuleId, ModuleManifest } from '../manifest.js';
 import type { ModuleConfigState } from '../module-config.js';
 import { DynamicRouter } from './router.js';
@@ -9,14 +9,16 @@ import { ServiceRegistry } from './service-registry.js';
 import { ServerBus } from './bus.js';
 import { MigrationRunner } from './migration-runner.js';
 import { ModuleConfigStore, validatePatch } from './module-config-store.js';
-import { RbacGrid } from './rbac-grid.js';
-import type { NotificationEmitter, SettingsRegistry } from './capabilities.js';
+import { RbacGrid, type AclSource } from './rbac-grid.js';
+import type { AuditEvent, AuditSink, NotificationEmitter, SettingsRegistry } from './capabilities.js';
 import type { ModuleContext, ModuleListing, ServerModule } from './context.js';
 import type { WsScopeRegistry } from './ws-hub.js';
 import { HttpError } from './router.js';
 
 /** A compiled-in module: its cheap static manifest + a lazy loader for the heavy /api barrel. */
 export interface InstalledModule {
+  /** Set by external discovery: the module ships a prebuilt browser chunk. */
+  readonly externalClient?: boolean;
   readonly manifest: ModuleManifest;
   load(): Promise<ServerModule>;
 }
@@ -61,15 +63,23 @@ export class ModuleKernel {
   readonly bus = new ServerBus();
   readonly migrations: MigrationRunner;
   readonly rbac = new RbacGrid();
+  /** Offline licence state, re-read at most once a day; never on a request path. */
+  readonly entitlements = new Entitlements();
   readonly router: DynamicRouter;
   /** Byte-body, self-authenticating routes (webhooks) — the app shell dispatches these. */
   readonly rawRouter: RawRouter;
 
   private authenticator: Authenticator | null = null;
+  /** Set by whichever enabled module provides it; absent = auditing is a no-op. */
+  private auditSink: AuditSink | null = null;
   /** The shared base — `moduleConfig` is the one per-module member, added by moduleCtx(). */
   private readonly ctx: Omit<ModuleContext, 'moduleConfig'>;
   /** Kernel-owned config storage — direct on the DB (never via the service registry). */
   private readonly moduleConfig: ModuleConfigStore;
+  /** `kind: 'secret'` keys per module, from the manifests: known before any load. */
+  private readonly secretFields: Map<string, Set<string>>;
+  /** Set once a module takes over secret storage; its own secrets stay behind. */
+  private secretProvider: ModuleId | null = null;
   private readonly perModuleCtx = new Map<ModuleId, ModuleContext>();
 
   constructor(private readonly opts: KernelOptions) {
@@ -77,7 +87,13 @@ export class ModuleKernel {
     this.log = opts.log;
     for (const m of opts.modules) this.installed.set(m.manifest.id, m);
     this.migrations = new MigrationRunner(this.db, this.log);
-    this.moduleConfig = new ModuleConfigStore(this.db);
+    const secretFields = new Map<string, Set<string>>();
+    for (const m of opts.modules) {
+      const keys = (m.manifest.config ?? []).filter((f) => f.kind === 'secret').map((f) => f.key);
+      if (keys.length) secretFields.set(m.manifest.id, new Set(keys));
+    }
+    this.secretFields = secretFields;
+    this.moduleConfig = new ModuleConfigStore(this.db, (id, key) => this.isSecretField(id, key));
 
     // `settings` is provided by module-core, `notifications` by module-workspace —
     // both required, so these resolve for the whole normal lifetime. If a target
@@ -109,8 +125,10 @@ export class ModuleKernel {
       broadcast: opts.broadcast,
       pushToUser: opts.pushToUser,
       notify,
+      audit: { record: (e) => this.recordAudit(e) },
       settings,
       rbac: this.rbac,
+      setRoles: (o) => this.rbac.setOverrides(o),
       ws: opts.ws,
       modules: {
         list: () => this.moduleList(),
@@ -131,7 +149,43 @@ export class ModuleKernel {
         require: (user, permission) => this.requireAuth().require(user, permission),
       },
       this.log,
+      (e) => this.recordAudit(e),
     );
+  }
+
+  /**
+   * A `kind: 'secret'` field routes to the SecretStore instead of the config
+   * table. The provider's own fields are exempt: they are the credentials for
+   * the backend, so they cannot be kept inside it.
+   */
+  private isSecretField(id: string, key: string): boolean {
+    return id !== this.secretProvider && this.secretFields.get(id)?.has(key) === true;
+  }
+
+  /** Hand secret storage to `id` if it provides one, carrying stored values across. */
+  private adoptSecretStore(id: ModuleId, mod: ServerModule): void {
+    if (!mod.provideSecrets) return;
+    const next = mod.provideSecrets(this.moduleCtx(id));
+    // Set first: the move below must leave the provider's own credentials behind.
+    this.secretProvider = id;
+    this.moduleConfig.useSecretStore(next, [...this.installed.keys()], (n) =>
+      this.log.warn(`moved ${n} secret(s) into the store provided by '${id}'`),
+    );
+    this.log.info(`secret storage provided by '${id}'`);
+  }
+
+  /**
+   * Never let a failing audit sink break the request it is recording. An audit
+   * gap is a problem; a 500 on every write because the trail is unavailable is a
+   * bigger one, so this logs loudly and continues.
+   */
+  private recordAudit(event: AuditEvent): void {
+    if (!this.auditSink) return;
+    try {
+      this.auditSink.record(event);
+    } catch (err) {
+      this.log.error('audit sink failed', err);
+    }
   }
 
   private requireAuth(): Authenticator {
@@ -185,7 +239,7 @@ export class ModuleKernel {
     const rows = new Map(
       (this.db.prepare(`SELECT * FROM modules`).all() as ModuleRow[]).map((r) => [r.id, r]),
     );
-    const cfgKeys = this.moduleConfig.keysByModule();
+    const cfgKeys = this.moduleConfig.keysByModule([...this.installed.keys()]);
     return [...this.installed.values()].map((m) => {
       const id = m.manifest.id;
       const row = rows.get(id);
@@ -200,6 +254,9 @@ export class ModuleKernel {
         configured: this.isConfigured(id, cfgKeys.get(id) ?? new Set()),
         permissions: m.manifest.permissions ?? [],
         config: m.manifest.config ?? [],
+        externalClient: m.externalClient === true,
+        entitlement: m.manifest.entitlement ?? null,
+        entitled: !m.manifest.entitlement || this.entitlements.has(m.manifest.entitlement),
       };
     });
   }
@@ -269,14 +326,30 @@ export class ModuleKernel {
       }
     }
 
+    // An entitled module whose licence lapsed is DISABLED, loudly, not booted
+    // into a broken state and not allowed to take the daemon down. Its data and
+    // configuration survive, so renewing and re-enabling restores it exactly.
+    for (const id of [...enabledSet]) {
+      const feature = this.installed.get(id)?.manifest.entitlement;
+      if (!feature || this.entitlements.has(feature)) continue;
+      this.log.warn(`module '${id}' disabled: '${feature}' is not licensed (${describeLicense(this.entitlements.current())})`);
+      enabledSet.delete(id);
+      this.markState(id, { enabled: false });
+    }
+
     const enabled = this.topoSort([...enabledSet]);
     // Loads are independent (only the activation phases below are ordered), so
     // overlap the dynamic imports instead of paying their sum on cold start.
     const mods = await Promise.all(enabled.map((id) => this.installed.get(id)!.load()));
     enabled.forEach((id, i) => this.loaded.set(id, mods[i]!));
+    this.assertNoCollisions(enabled);
 
     // Grid must be live before any request is served, so Auth sees the perms.
     this.rebuildGrid(enabled);
+
+    // Before ANY module reads its config: a late swap would hand the first
+    // readers the old backend's answers. Last provider in enabled order wins.
+    for (const id of enabled) this.adoptSecretStore(id, this.loaded.get(id)!);
 
     for (const id of enabled) {
       const mod = this.loaded.get(id)!;
@@ -287,9 +360,12 @@ export class ModuleKernel {
     }
 
     // module-core (required, first) provides the authenticator the router uses.
+    // Audit follows the same shape; enabled order means a dedicated audit module
+    // (which sorts after core) takes over from core's minimal table.
     for (const id of enabled) {
       const mod = this.loaded.get(id)!;
       if (mod.provideAuthenticator) this.authenticator = mod.provideAuthenticator(this.moduleCtx(id));
+      if (mod.provideAudit) this.auditSink = mod.provideAudit(this.moduleCtx(id));
     }
     if (!this.authenticator) throw new Error('no module provided an authenticator (module-core missing?)');
 
@@ -307,6 +383,20 @@ export class ModuleKernel {
 
   // ---- lifecycle transitions ----
 
+  /**
+   * 409 unless the module's entitlement is licensed. Checked at install and
+   * enable, not per request: a licence cannot change without someone touching
+   * the filesystem, so a hot-path check would buy nothing.
+   */
+  private assertEntitled(id: ModuleId): void {
+    const feature = this.installed.get(id)?.manifest.entitlement;
+    if (!feature || this.entitlements.has(feature)) return;
+    throw new HttpError(
+      409,
+      `module '${id}' requires the '${feature}' entitlement: ${describeLicense(this.entitlements.current())}`,
+    );
+  }
+
   /** 409 unless every required config field has a stored value or a default. */
   private assertConfigured(id: ModuleId): void {
     const stored = new Set(Object.keys(this.moduleConfig.valuesFor(id)));
@@ -322,6 +412,7 @@ export class ModuleKernel {
   async install(id: ModuleId, config?: Readonly<Record<string, unknown>>): Promise<void> {
     const inst = this.installed.get(id);
     if (!inst) throw new HttpError(404, `unknown module: ${id}`);
+    this.assertEntitled(id);
     if (config && Object.keys(config).length) this.setConfig(id, config);
     if (this.isEnabled(id)) return; // idempotent — config patch (if any) still applied
     this.assertConfigured(id);
@@ -335,6 +426,7 @@ export class ModuleKernel {
     if (!inst) throw new HttpError(404, `unknown module: ${id}`);
     if (this.isEnabled(id)) return;
     if (this.row(id)?.installed === 0) throw new HttpError(409, `install '${id}' first`);
+    this.assertEntitled(id);
     this.assertConfigured(id);
     await this.activate(id, { markInstalled: false });
   }
@@ -350,8 +442,11 @@ export class ModuleKernel {
     try {
       const mod = this.loaded.get(id) ?? (await inst.load());
       this.loaded.set(id, mod);
+      // Candidate last, so the error names the module being enabled.
+      this.assertNoCollisions([...this.enabledIds(), id]);
       const ctx = this.moduleCtx(id);
       if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
+      this.adoptSecretStore(id, mod);
       this.services.setActiveModule(id);
       await mod.registerServices?.(ctx);
       this.services.setActiveModule(null);
@@ -527,13 +622,35 @@ export class ModuleKernel {
     this.db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = @id`).run(args);
   }
 
+  /**
+   * Runtime uniqueness of the ids two modules could both claim. TypeScript
+   * cannot catch these: identical `PermissionRegistry` / `ServerMessageRegistry`
+   * declarations from two contracts merge without error, after which the RBAC
+   * grid would attribute a permission to the wrong owner and disabling one
+   * module would silently strip the other's capability.
+   */
+  private assertNoCollisions(enabled: readonly ModuleId[]): void {
+    const owner = new Map<string, ModuleId>();
+    for (const id of enabled) {
+      const declared = [
+        ...(this.loaded.get(id)?.acl?.permissions ?? []).map((p) => `permission '${p.id}'`),
+        ...(this.installed.get(id)?.manifest.messages ?? []).map((t) => `WS message '${t}'`),
+      ];
+      for (const key of declared) {
+        const prev = owner.get(key);
+        if (prev) throw new HttpError(409, `module '${id}' declares ${key}, already declared by '${prev}'`);
+        owner.set(key, id);
+      }
+    }
+  }
+
   private rebuildGrid(enabled: readonly ModuleId[]): void {
-    const acls: ModuleAcl[] = [];
+    const sources: AclSource[] = [];
     for (const id of enabled) {
       const acl = this.loaded.get(id)?.acl;
-      if (acl) acls.push(acl);
+      if (acl) sources.push({ id, acl });
     }
-    this.rbac.rebuild(acls);
+    this.rbac.rebuild(sources);
   }
 
   private startJobs(id: ModuleId): void {
