@@ -2,9 +2,26 @@ import { chmodSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { consumePendingDbRecreate, loadDaemonConfig, log, paths } from '@companion/services';
-import { ModuleKernel, WsHub } from '@companion/core/server';
-import { MODULES } from './modules.js';
+import {
+  consumePendingDbRecreate,
+  InstanceLock,
+  installOutboundProxy,
+  loadDaemonConfig,
+  log,
+  paths,
+} from '@companion/services';
+import {
+  installAbiBridge,
+  loadExternalModules,
+  ModuleKernel,
+  scanExternalModules,
+  WsHub,
+} from '@companion/core/server';
+import * as sdk from '@moxxy-ai/companion-sdk';
+import { SDK_VERSION } from '@moxxy-ai/companion-sdk';
+import * as sdkServer from '@moxxy-ai/companion-sdk/server';
+import * as sdkAgents from '@moxxy-ai/companion-sdk/agents';
+import { MODULES } from './modules.generated.js';
 import { startHttpServer } from './http/server.js';
 
 /**
@@ -17,6 +34,9 @@ async function main(): Promise<void> {
   // The database, WAL, setup files, and run artifacts may contain credentials.
   // Keep every file created by the daemon private to the OS user by default.
   process.umask(0o077);
+  // Before anything reaches the network: on a network with a mandatory egress
+  // proxy, every outbound call fails without this and there is nothing to turn.
+  await installOutboundProxy();
   const config = loadDaemonConfig();
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
   log.info(`default agent model: ${config.defaultModel}`);
@@ -25,6 +45,13 @@ async function main(): Promise<void> {
   // opens: the previous process dropped the marker and exited; this boot starts
   // from a clean slate and first-boot setup runs again.
   if (consumePendingDbRecreate()) log.warn('recreate-db marker found — starting with a fresh database');
+
+  // Before the database opens: one daemon per COMPANION_HOME. Companion is a
+  // single-node appliance and the home holds clones, worktrees and the moxxy
+  // home, so a second daemon would duplicate every scheduled job and fight over
+  // the same checkouts. Refuse rather than corrupt.
+  const lock = new InstanceLock();
+  lock.acquire();
 
   const dbPath = paths.db();
   const db = new Database(dbPath);
@@ -35,12 +62,36 @@ async function main(): Promise<void> {
 
   // The hub authenticates upgrades through the kernel (module-core's Auth once
   // booted); the kernel pushes through the hub. Both closures run post-boot.
+  // Before any external module is imported: the bridge is what makes the SDK it
+  // resolves the SAME objects this process is using, so `instanceof Reply` holds
+  // across the boundary. See abi-bridge.ts for why a symlink cannot do this.
+  installAbiBridge({
+    dir: paths.externalModules(),
+    version: SDK_VERSION,
+    namespaces: {
+      '.': sdk as unknown as Record<string, unknown>,
+      './server': sdkServer as unknown as Record<string, unknown>,
+      './agents': sdkAgents as unknown as Record<string, unknown>,
+    },
+  });
+  const scan = scanExternalModules(paths.externalModules());
+  // Resolved once, from validated metadata, so the HTTP layer never joins a
+  // request path against a directory.
+  const moduleChunks = new Map(
+    scan.modules.filter((m) => m.meta.client).map((m) => [m.meta.id, join(m.dir, m.meta.client!)]),
+  );
+  for (const p of scan.problems) log.warn(`skipping external module '${p.dir}': ${p.reason}`);
+  const external = await loadExternalModules(scan.modules, (id, err) =>
+    log.error(`external module '${id}' failed to load`, err),
+  );
+  if (external.length) log.info(`external modules: ${external.map((m) => m.manifest.id).join(', ')}`);
+
   const hub: WsHub = new WsHub((token) => kernel.verifyToken(token));
   const kernel = new ModuleKernel({
     db,
     log,
     config,
-    modules: MODULES,
+    modules: [...MODULES, ...external],
     broadcast: (msg) => hub.broadcast(msg),
     pushToUser: (username, msg) => hub.sendToUser(username, msg),
     ws: hub,
@@ -56,6 +107,7 @@ async function main(): Promise<void> {
     kernel,
     hub,
     staticDir: existsSync(join(builtSpa, 'index.html')) ? builtSpa : undefined,
+    moduleChunks,
   });
 
   let shuttingDown = false;
@@ -63,6 +115,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down…');
+    lock.release();
     const force = setTimeout(() => process.exit(0), 6_000);
     force.unref();
     await kernel.shutdown();

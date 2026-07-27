@@ -18,6 +18,7 @@
     "@companion/module-board": "workspace:*",
     "@companion/module-code": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-oidc": "workspace:*",
     "@companion/module-operate": "workspace:*",
     "@companion/module-plan": "workspace:*",
     "@companion/module-planner": "workspace:*",
@@ -26,6 +27,7 @@
     "@companion/module-slop": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@companion/services": "workspace:*",
+    "@moxxy-ai/companion-sdk": "workspace:*",
     "better-sqlite3": "^12.2.0"
   },
   "devDependencies": {

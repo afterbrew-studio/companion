@@ -17,9 +17,15 @@ import {
 } from './setup.js';
 import type { AdminSetup } from './setup.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
+import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
+import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
+
+/** Commands that talk to a running daemon instead of starting one. */
+const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user'] as const;
+type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
-  readonly command: 'start' | 'init' | 'connect-github';
+  readonly command: 'start' | 'init' | 'connect-github' | ClientCommand;
   readonly home: string;
   readonly host?: string;
   readonly port?: number;
@@ -36,6 +42,10 @@ Usage:
   npx @moxxy-ai/companion init        Create the local admin configuration only
   npx @moxxy-ai/companion connect-github
                                        Connect active gh to an existing Companion user
+  npx @moxxy-ai/companion module ...   Inspect and toggle modules (see: module --help)
+  npx @moxxy-ai/companion acl ...      Inspect the live permission grid (see: acl --help)
+  npx @moxxy-ai/companion role ...     Create and edit roles
+  npx @moxxy-ai/companion user role <username> <role>
 
 Options:
   --home <path>    Data directory (default: COMPANION_HOME or ~/.companion)
@@ -53,7 +63,25 @@ The moxxy CLI is optional at startup, but required before running AI agents.
 class SetupCancelled extends Error {}
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const group = CLIENT_COMMANDS.find((c) => c === argv[0]);
+  if (group) {
+    const { cli, rest } = splitClientArgs(argv);
+    if (!rest.length || rest.includes('--help') || rest.includes('-h')) {
+      process.stdout.write(group === 'module' ? MODULE_HELP : ACL_HELP);
+      return;
+    }
+    const options = parseArgs([group, ...cli]);
+    // paths.cliToken() and the stored address both resolve from COMPANION_HOME.
+    process.env.COMPANION_HOME = options.home;
+    const { host, port } = resolveAddress(options);
+    const url = localUrl(host, port);
+    if (group === 'module') await runModuleCommand(parseModuleCommand(rest), url);
+    else await runAclCommand(parseAclCommand(group, rest, options.home), url);
+    return;
+  }
+
+  const options = parseArgs(argv);
   if (options.command === 'connect-github') {
     await connectGithub(options);
     return;
@@ -232,7 +260,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if ((arg === 'init' || arg === 'connect-github') && command === 'start') command = arg;
+    if (CLIENT_COMMANDS.some((c) => c === arg) && command === 'start') command = arg as ClientCommand;
+    else if ((arg === 'init' || arg === 'connect-github') && command === 'start') command = arg;
     else if (arg === '--home') home = requiredValue(argv, ++i, arg);
     else if (arg === '--host') host = requiredValue(argv, ++i, arg);
     else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
@@ -247,6 +276,22 @@ function parseArgs(argv: readonly string[]): CliOptions {
   }
   home = isAbsolute(home) ? home : resolve(home);
   return { command, home, host, port, open, yes, githubFromGh, verbose };
+}
+
+/**
+ * Sub-command arguments belong to the sub-parser, but the connection flags stay
+ * with the CLI: both parsers reject what they do not know, so the split has to
+ * happen before either runs.
+ */
+function splitClientArgs(argv: readonly string[]): { cli: string[]; rest: string[] } {
+  const cli: string[] = [];
+  const rest: string[] = [];
+  for (let i = 1; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === '--home' || arg === '--host' || arg === '--port') cli.push(arg, requiredValue(argv, ++i, arg));
+    else rest.push(arg);
+  }
+  return { cli, rest };
 }
 
 function requiredValue(argv: readonly string[], index: number, option: string): string {

@@ -17,6 +17,7 @@
     "@companion/module-board": "workspace:*",
     "@companion/module-code": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-oidc": "workspace:*",
     "@companion/module-operate": "workspace:*",
     "@companion/module-plan": "workspace:*",
     "@companion/module-planner": "workspace:*",
@@ -25,6 +26,7 @@
     "@companion/module-slop": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@companion/ui": "workspace:*",
+    "@moxxy-ai/companion-sdk": "workspace:*",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

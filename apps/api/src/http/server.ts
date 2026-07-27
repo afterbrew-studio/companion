@@ -29,8 +29,10 @@ export function startHttpServer(opts: {
   hub: WsHub;
   /** Directory of the built SPA (apps/web/dist); optional in dev. */
   staticDir?: string;
+  /** Out-of-tree module id -> absolute path of its prebuilt browser chunk. */
+  moduleChunks?: ReadonlyMap<string, string>;
 }): Promise<Server> {
-  const { host, port, kernel, hub, staticDir } = opts;
+  const { host, port, kernel, hub, staticDir, moduleChunks } = opts;
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
@@ -42,6 +44,14 @@ export function startHttpServer(opts: {
     }
     if (path.startsWith('/api/')) {
       void kernel.router.dispatch(req, res);
+      return;
+    }
+    // An out-of-tree module's browser chunk. Unauthenticated by necessity: this
+    // is fetched by `import()`, which cannot carry a bearer token, and it is
+    // code rather than data, exactly like the SPA bundle served below. The map
+    // is built at boot from validated modules, so a request cannot name a path.
+    if (path.startsWith('/modules/')) {
+      serveModuleChunk(moduleChunks, path, res);
       return;
     }
     // Raw-body routes (webhooks) — self-authenticating, byte-exact bodies, owned
@@ -93,4 +103,29 @@ function serveStatic(root: string, path: string, res: import('node:http').Server
   }
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
   createReadStream(file).pipe(res);
+}
+
+/**
+ * `/modules/<id>/client.js` -> the file the module declared as `moxxy.client`.
+ *
+ * Lookup by id in a map the kernel already validated, never a path join against
+ * the request: the URL contributes an id and nothing else, so there is no
+ * traversal to defend against. `no-cache` rather than `immutable` because a
+ * module can be reinstalled at the same version during development, and the
+ * `?v=` the loader appends already busts the cache on a real upgrade.
+ */
+function serveModuleChunk(
+  chunks: ReadonlyMap<string, string> | undefined,
+  path: string,
+  res: import('node:http').ServerResponse,
+): void {
+  const [, , id, file] = path.split('/');
+  const abs = id && file === 'client.js' ? chunks?.get(id) : undefined;
+  if (!abs || !existsSync(abs)) {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('no such module chunk');
+    return;
+  }
+  res.writeHead(200, { 'content-type': MIME['.js']!, 'cache-control': 'no-cache' });
+  createReadStream(abs).pipe(res);
 }
