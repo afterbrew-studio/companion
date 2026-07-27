@@ -4,7 +4,7 @@ import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 
 export function LoginPage(): JSX.Element {
-  const { login, branding } = useAuth();
+  const { login, branding, providers } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
 
   useEffect(() => {
@@ -73,6 +73,22 @@ export function LoginPage(): JSX.Element {
             'Sign in'
           )}
         </button>
+        {providers.length > 0 ? (
+          <>
+            <div className="dim my-1 flex items-center gap-3 text-xs">
+              <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+              or
+              <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+            {/* A plain link, not a fetch: the handshake is a browser redirect the
+                identity module owns end to end. */}
+            {providers.map((p) => (
+              <a key={p.id} className="btn justify-center" href={p.startUrl}>
+                {p.label}
+              </a>
+            ))}
+          </>
+        ) : null}
       </form>
     </AuthLayout>
   );

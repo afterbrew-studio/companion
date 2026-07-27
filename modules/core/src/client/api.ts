@@ -17,8 +17,11 @@ import type { ModuleConfigState } from '@companion/core';
 import type { ModuleDescriptor, PageQuery } from '@companion/core/client';
 import type {
   AccountInfo,
+  AclMap,
   AuthState,
   CreateUserRequest,
+  RoleDetail,
+  RoleRecord,
   LoginResponse,
   ProfileResponse,
   SessionInfo,
@@ -76,6 +79,16 @@ export const coreApi = {
   updateUser: (username: string, body: UpdateUserRequest) =>
     patch<{ user: UserRecord }>(`/api/users/${username}`, body),
   deleteUser: (username: string) => del<{ ok: true }>(`/api/users/${username}`),
+
+  // roles (admin): the instance's own role definitions
+  listRoles: () => request<{ roles: RoleRecord[] }>('/api/roles'),
+  getRole: (id: string) => request<{ role: RoleDetail }>(`/api/roles/${id}`),
+  createRole: (body: { id: string; title: string; description?: string; from?: string }) =>
+    post<{ role: RoleRecord }>('/api/roles', body),
+  deleteRole: (id: string) => del<{ ok: true }>(`/api/roles/${id}`),
+  adjustRole: (id: string, mode: 'grant' | 'revoke' | 'reset', permissions: readonly string[]) =>
+    post<{ role: RoleDetail }>(`/api/roles/${id}/permissions`, { mode, permissions }),
+  acl: () => request<AclMap>('/api/acl'),
 
   // the signed-in user's own settings
   getProfile: () => request<ProfileResponse>('/api/profile'),

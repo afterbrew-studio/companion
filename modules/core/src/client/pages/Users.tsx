@@ -26,17 +26,18 @@ import type { UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { useUsers } from '../hooks/useUsers.js';
+import { useRoles } from '../hooks/useRoles.js';
+import type { RoleRecord } from '../../contract/index.js';
 
-const ROLE_HELP: Record<Role, string> = {
-  admin: 'Platform settings and users, plus full capabilities in accessible workspaces',
-  maintainer: 'Ideas, issues, PRs, planning, pipelines, runs, automations',
-  business: 'Guided Ideas workflow and workspace visibility',
-};
+/** A role the server no longer knows (deleted while this page was open). */
+const describe = (roles: readonly RoleRecord[], id: Role): string =>
+  roles.find((r) => r.id === id)?.description || 'No description.';
 
 /** User management (admin): accounts, roles/scopes, resets, disable/delete. */
 export function UsersPage(): JSX.Element {
   const { user: me } = useAuth();
   const { search, setSearch, role, setRole, users, total, loading, hasMore, loadMore, reload, error, listError, act } = useUsers();
+  const { roles } = useRoles();
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<UserRecord | null>(null);
   const [viewing, setViewing] = useState<UserRecord | null>(null);
@@ -70,9 +71,7 @@ export function UsersPage(): JSX.Element {
                   onChange={(v) => setRole(v as 'all' | Role)}
                   options={[
                     { value: 'all', label: 'All roles' },
-                    { value: 'admin', label: 'admin' },
-                    { value: 'maintainer', label: 'maintainer' },
-                    { value: 'business', label: 'business' },
+                    ...roles.map((r) => ({ value: r.id, label: r.title })),
                   ]}
                 />
               </FilterField>
@@ -124,13 +123,13 @@ export function UsersPage(): JSX.Element {
       )}
 
       <p className="dim mt-3 text-xs">
-        Role scopes — admin: {ROLE_HELP.admin.toLowerCase()}. Maintainer: {ROLE_HELP.maintainer.toLowerCase()}.
-        Business: {ROLE_HELP.business.toLowerCase()}.
+        {roles.map((r) => `${r.title}: ${r.description || 'no description'}`).join('. ')}
       </p>
 
       {viewing ? (
         <UserModal
           user={viewing}
+          roles={roles}
           isSelf={me?.username === viewing.username}
           error={error}
           onClose={() => setViewing(null)}
@@ -156,6 +155,7 @@ export function UsersPage(): JSX.Element {
       ) : null}
       {adding ? (
         <AddUserModal
+          roles={roles}
           onClose={() => setAdding(false)}
           onDone={() => {
             setAdding(false);
@@ -181,6 +181,7 @@ export function UsersPage(): JSX.Element {
 /** A user's data plus every account action — the row itself stays clean. */
 function UserModal({
   user,
+  roles,
   isSelf,
   error,
   onClose,
@@ -194,6 +195,7 @@ function UserModal({
   isSelf: boolean;
   error: string | null;
   onClose: () => void;
+  roles: readonly RoleRecord[];
   onRename: (displayName: string) => void;
   onChangeRole: (role: Role) => void;
   onToggleDisabled: () => void;
@@ -260,11 +262,13 @@ function UserModal({
             aria-label={`Role for ${user.username}`}
             onChange={(e) => onChangeRole(e.target.value as Role)}
           >
-            <option value="admin">admin</option>
-            <option value="maintainer">maintainer</option>
-            <option value="business">business</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title}
+              </option>
+            ))}
           </select>
-          <p className="dim mt-1">{isSelf ? 'You cannot change your own role.' : ROLE_HELP[user.role]}</p>
+          <p className="dim mt-1">{isSelf ? 'You cannot change your own role.' : describe(roles, user.role)}</p>
         </DetailRow>
       </DetailGrid>
 
@@ -291,12 +295,22 @@ function UserModal({
   );
 }
 
-function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }): JSX.Element {
+function AddUserModal({
+  roles,
+  onClose,
+  onDone,
+}: {
+  roles: readonly RoleRecord[];
+  onClose: () => void;
+  onDone: () => void;
+}): JSX.Element {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<Role>('maintainer');
+  // Default to the first non-admin role so the form never pre-selects the most
+  // privileged option; falls back to whatever exists on a minimal instance.
+  const [role, setRole] = useState<Role>(roles.find((r) => r.id !== 'admin')?.id ?? roles[0]?.id ?? 'maintainer');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -357,9 +371,12 @@ function AddUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
         </Field>
         <Field label="Role">
           <select className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            <option value="admin">admin — {ROLE_HELP.admin}</option>
-            <option value="maintainer">maintainer — {ROLE_HELP.maintainer}</option>
-            <option value="business">business — {ROLE_HELP.business}</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title}
+                {r.description ? ` (${r.description})` : ''}
+              </option>
+            ))}
           </select>
         </Field>
         <ErrorBar error={error} />

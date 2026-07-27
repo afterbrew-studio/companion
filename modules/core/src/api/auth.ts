@@ -2,11 +2,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Authenticator, AuthUser, Permission } from '@companion/contracts';
 import type { Role } from '@companion/types';
 import { StatusError, type RbacReader } from '@companion/core/server';
-import type { AccountInfo, SessionInfo, UserRecord } from '../contract/index.js';
+import type { AccountInfo, AuthProvider, SessionInfo, UserRecord } from '../contract/index.js';
 import type { UsersStore } from './users-store.js';
 import type { SessionsStore } from './sessions-store.js';
 import type { SettingsStore } from './settings-store.js';
+import type { RolesService } from './roles-service.js';
 import { hashPassword, verifyPassword } from './passwords.js';
+
+/** The capability the install must never lose: without it nobody can fix roles. */
+const MANAGE_USERS = 'users:manage' as Permission;
 
 /** Sliding session lifetime. */
 const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
@@ -39,8 +43,68 @@ export class Auth implements Authenticator {
     private readonly sessions: SessionsStore,
     private readonly settings: SettingsStore,
     private readonly rbac: RbacReader,
+    private readonly roles: RolesService,
   ) {
     this.sessions.pruneExpired();
+  }
+
+  // ---------- external identity providers ----------
+
+  /**
+   * Registered by identity modules in `onEnable` and dropped in `onDisable`, so
+   * the set follows the module lifecycle with no kernel involvement.
+   *
+   * Note what is NOT pluggable: `verify()`. Token verification runs on every
+   * request and an SSO module does not want to own it; what it needs to
+   * contribute is how a user PROVES who they are the first time, after which
+   * Companion mints an ordinary session. Keeping the split here is why adding
+   * SSO touches no hot path.
+   */
+  private readonly authProviders = new Map<string, AuthProvider>();
+
+  registerProvider(provider: AuthProvider): () => void {
+    this.authProviders.set(provider.id, provider);
+    return () => void this.authProviders.delete(provider.id);
+  }
+
+  providers(): AuthProvider[] {
+    return [...this.authProviders.values()];
+  }
+
+  /**
+   * Complete an external sign-in. The caller has already verified the assertion:
+   * it is in-process module code, the same trust boundary as everything else the
+   * kernel loads, so this does not re-check a protocol it does not understand.
+   *
+   * Provisioning is off by default and never creates an administrator. An SSO
+   * misconfiguration should lock people out, not silently hand the instance to
+   * whoever authenticates first.
+   */
+  signInExternal(
+    input: { username: string; email?: string; displayName?: string },
+    policy: { provision: boolean; role: Role },
+  ): { token: string; user: AuthUser; expiresAt: number } {
+    const existing = this.users.get(input.username);
+    if (existing) {
+      if (existing.disabled) throw new AuthError('account is disabled', 403);
+      return this.startSession(existing, SESSION_TTL_MS);
+    }
+    if (!policy.provision) {
+      throw new AuthError(`no account for '${input.username}' and just-in-time provisioning is off`, 403);
+    }
+    if (this.rbac.has(policy.role, MANAGE_USERS)) {
+      throw new AuthError(`refusing to provision '${input.username}' into '${policy.role}': it can manage users`, 403);
+    }
+    this.users.insert({
+      username: input.username,
+      displayName: input.displayName?.trim() ?? '',
+      email: input.email ?? '',
+      // No local password: a random one nobody holds, so the account can only be
+      // reached through the provider that created it until an admin resets it.
+      passwordHash: hashPassword(randomBytes(32).toString('hex')),
+      role: policy.role,
+    });
+    return this.startSession(this.users.get(input.username)!, SESSION_TTL_MS);
   }
 
   /** One-time import of legacy accounts into an EMPTY users table. */
@@ -216,18 +280,23 @@ export class Auth implements Authenticator {
     const existing = this.users.get(username);
     if (!existing) throw new AuthError(`user ${username} not found`, 403);
     if (actor.username === username) throw new AuthError('you cannot delete your own account', 403);
-    this.guardLastAdmin(existing, 'business', undefined);
+    this.guardLastAdmin(existing, undefined, true);
     this.users.delete(username);
   }
 
-  /** The install must always keep at least one enabled admin. */
+  /**
+   * The invariant that actually matters, now that roles are open: at least one
+   * enabled account must be able to manage users. "Keep one admin" was a proxy
+   * for it that stops being true once a custom role can hold `users:manage` and
+   * a built-in one can have it revoked.
+   */
   private guardLastAdmin(existing: UserRecord, nextRole?: Role, nextDisabled?: boolean): void {
-    const losesAdmin =
-      existing.role === 'admin' &&
-      !existing.disabled &&
-      ((nextRole !== undefined && nextRole !== 'admin') || nextDisabled === true);
-    if (losesAdmin && this.users.countActiveAdmins() <= 1) {
-      throw new AuthError('cannot remove the last enabled admin', 403);
+    if (!this.rbac.has(existing.role, MANAGE_USERS) || existing.disabled) return;
+    const stillManages =
+      nextDisabled !== true && this.rbac.has(nextRole ?? existing.role, MANAGE_USERS);
+    if (stillManages) return;
+    if (this.roles.usersHolding(MANAGE_USERS) <= 1) {
+      throw new AuthError('cannot remove the last account that can manage users', 403);
     }
   }
 }

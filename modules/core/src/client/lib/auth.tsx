@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AuthUser, Permission } from '@companion/contracts';
 import { connectWs, onAuthChanged, onServerMessage } from '@companion/core/client';
-import type { InstanceBranding, NotificationScope } from '../../contract/index.js';
+import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
 import { authApi } from '../api.js';
 
 interface AuthState {
@@ -14,6 +14,10 @@ interface AuthState {
   readonly notificationScope: NotificationScope;
   /** Instance branding (name/logo); available pre-login. */
   readonly branding: InstanceBranding;
+  /** Host for user-facing GitHub links; `github.com` unless this instance points at GHES. */
+  readonly githubHost: string;
+  /** Alternative sign-in methods contributed by identity modules; empty by default. */
+  readonly providers: readonly AuthProvider[];
   /** Local update after saving branding in Settings — no refetch needed. */
   readonly setBranding: (b: InstanceBranding) => void;
   readonly can: (permission: Permission) => boolean;
@@ -29,6 +33,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [notificationScope, setNotificationScope] = useState<NotificationScope>('workspace');
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
+  const [githubHost, setGithubHost] = useState('github.com');
+  const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
 
   // The uploaded logo becomes the favicon (falling back to the bundled letter
   // tile from index.html). The tab title is route-aware and owned by the
@@ -45,6 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     try {
       const state = await authApi.state();
       setBranding(state.branding);
+      setGithubHost(state.githubHost);
+      setProviders(state.providers);
       setNeedsSetup(state.setup);
       if (state.setup) {
         setUser(null);
@@ -99,7 +107,19 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
   return (
     <AuthContext.Provider
-      value={{ user, needsSetup, permissions, notificationScope, branding, setBranding, can, login, logout }}
+      value={{
+        user,
+        needsSetup,
+        permissions,
+        notificationScope,
+        branding,
+        setBranding,
+        githubHost,
+        providers,
+        can,
+        login,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>
