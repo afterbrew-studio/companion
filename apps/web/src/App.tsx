@@ -1,16 +1,15 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { MoxxyStatus } from '@companion/module-operate/contract';
 import type { WorkspaceVisibility } from '@companion/module-workspace/contract';
 import {
   ModulesProvider,
+  Slot,
   useKernel,
   matchRoute,
   onServerMessage,
-  onWsState,
+  passesFreshFilters,
   runIntent,
   useIntent,
   type NavEntry,
-  type WsState,
 } from '@companion/core/client';
 import {
   AuthProvider,
@@ -22,10 +21,10 @@ import {
   hasUnseenOnboarding,
   type OnboardingMode,
 } from '@companion/module-core/client';
+// module-core and module-workspace are `required: true`: every build contains
+// them, so the shell may name them. Every OTHER module reaches the shell through
+// a `shell.*` slot, which is what lets a build omit it entirely.
 import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
-import { RunnerCapacityBanner, RunQueueIndicator, operateApi } from '@companion/module-operate/client';
-import { useWorkspaceRepos } from '@companion/module-code/client';
-import { AssistantButton, AssistantPanel } from '@companion/module-automations/client';
 import {
   ChevronDown,
   Dropdown,
@@ -36,17 +35,18 @@ import {
   Modal,
   PageLoading,
   SearchIcon,
-  StatusDot as Dot,
 } from '@companion/ui';
 import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
-import { CLIENT_LOADERS } from './modules.js';
+import { CLIENT_LOADERS } from './modules.generated.js';
 
+/** '#/' when the URL is bare; the Shell then redirects to whichever nav entry
+ *  claims the lowest `home`, because the shell owns no page of its own. */
 function useHashRoute(): string {
-  const [hash, setHash] = useState(location.hash || '#/overview');
+  const [hash, setHash] = useState(location.hash || '#/');
   useEffect(() => {
-    const onChange = (): void => setHash(location.hash || '#/overview');
+    const onChange = (): void => setHash(location.hash || '#/');
     window.addEventListener('hashchange', onChange);
     return () => window.removeEventListener('hashchange', onChange);
   }, []);
@@ -166,7 +166,6 @@ function Shell(): JSX.Element {
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   // Onboarding: the full tour on first entry; a "what's new" popup when new
   // steps have shipped since the user last looked; replayable (full) from the
   // shortcuts help. Steps come from the modules, so the decision waits until the
@@ -179,25 +178,11 @@ function Shell(): JSX.Element {
     tourDecided.current = true;
     setTour(!hasOnboarded() ? 'full' : hasUnseenOnboarding(kernel.onboarding, can) ? 'whatsnew' : null);
   }, [kernel.ready, kernel.onboarding, can]);
-  // Mounted on first open and kept alive: the conversation (and the exit
-  // slide animation) survive closing the panel.
-  const [assistantMounted, setAssistantMounted] = useState(false);
-  const toggleAssistant = (): void => {
-    if (!assistantMounted) {
-      // Mount closed, open a frame later — so the FIRST open slides too.
-      setAssistantMounted(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => setAssistantOpen(true)));
-    } else {
-      setAssistantOpen((o) => !o);
-    }
-  };
   // Areas with unseen activity, badged in the nav. Scoped and persisted PER
   // workspace: issues/prs activity in another workspace's repos must not light
   // up the one you're looking at, and the marks survive a reload.
   const { current } = useWorkspace();
   const workspaceId = current?.id ?? null;
-  const wsRepos = useWorkspaceRepos(current?.id);
-  const repoSet = useMemo(() => new Set(wsRepos.map((r) => r.fullName)), [wsRepos]);
   const freshKey = workspaceId ? `companion.fresh:${workspaceId}` : null;
 
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
@@ -227,23 +212,16 @@ function Shell(): JSX.Element {
 
   useEffect(() => {
     return onServerMessage((msg) => {
-      // issues/prs carry a repo, so they're workspace-scoped — ignore events for
-      // repos outside the active workspace. (This is the one shell-specific case;
-      // it needs repoSet, which a module can't know.)
-      if (msg.t === 'issues.changed' || msg.t === 'prs.changed') {
-        if (!repoSet.has(msg.repo)) return;
-        const area = msg.t === 'issues.changed' ? 'issues' : 'prs';
-        if (!location.hash.startsWith(`#/${area}`)) mutateFresh((next) => next.add(area));
-        return;
-      }
-      // Everything else: the OWNING nav entry declares when it's fresh via
-      // NavEntry.freshOn — no hardcoded per-area list in the shell.
+      // A module may veto a message entirely (code drops activity for repos
+      // outside the active workspace); the OWNING nav entry then declares
+      // whether it is fresh. The shell knows no message tags of its own.
+      if (!passesFreshFilters(msg)) return;
       for (const m of kernel.nav) {
         if (m.freshOn?.(msg) && !location.hash.startsWith(m.hash)) mutateFresh((next) => next.add(m.key));
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoSet, freshKey, kernel.nav]);
+  }, [freshKey, kernel.nav]);
 
   // The hash can sit under several entries' prefixes (#/playground is a prefix
   // of #/playground/pipelines) — the LONGEST match is the page the user is on,
@@ -294,14 +272,14 @@ function Shell(): JSX.Element {
     setMobileOpen(false);
   }, [hash]);
 
-  // Land on the first module the role can see (business → Ideas).
+  // Land on the entry that claims the lowest `home`, else the first one the
+  // role can see. Which module owns the front page is the modules' business.
   useEffect(() => {
     const path = hash.replace(/^#/, '');
-    const isBare = path === '/' || path === '/overview';
-    if (isBare && visibleModules.length > 0 && !can('issues:read')) {
-      location.hash = visibleModules[0]!.hash;
-    }
-  }, [hash, visibleModules, can]);
+    if (path !== '/' && path !== '') return;
+    const landing = [...visibleModules].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+    if (landing) location.hash = landing.hash;
+  }, [hash, visibleModules]);
 
   // Group entries into the shared, ordered section namespace the enabled
   // modules declared (module ≠ group); empty groups don't render.
@@ -470,15 +448,13 @@ function Shell(): JSX.Element {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <RunnerCapacityBanner />
+        <Slot name="shell.banner" can={can} />
         <TopBar
           hash={hash}
           chordPending={chordPending}
           collapsed={collapsed}
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
-          assistantOpen={assistantOpen}
-          onToggleAssistant={toggleAssistant}
         />
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
           {/* Keyed by route: navigating away from a crashed page recovers it. */}
@@ -488,11 +464,6 @@ function Shell(): JSX.Element {
         </main>
       </div>
 
-      {assistantMounted ? (
-        <ErrorBoundary area="AI Help" resetKey={String(assistantOpen)}>
-          <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
-        </ErrorBoundary>
-      ) : null}
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       {helpOpen ? (
         <ShortcutHelp
@@ -667,144 +638,6 @@ function NewWorkspaceModal({
   );
 }
 
-/**
- * One dot summarizing moxxy + GitHub + event stream: green when everything is
- * healthy, amber when partially degraded, red when the daemon is unreachable.
- * Hover or focus expands the popover with the individual statuses.
- */
-function AgentsStatus(): JSX.Element | null {
-  // moxxy status + live agents are operate's domain; with operate disabled its
-  // /api/moxxy/status 503s, which must NOT read as "daemon unreachable" (a red
-  // dot). The whole widget belongs to operate — hide it, don't alarm.
-  const operateEnabled = useKernel().descriptors.some((m) => m.id === 'operate' && m.enabled);
-  const { user } = useAuth();
-  const me = user?.username ?? null;
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
-  const [ws, setWs] = useState<WsState>('offline');
-  const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
-
-  // The pill counts the viewer's OWN sessions plus unattributed automation
-  // (board workers, pipelines, scheduled jobs run with userId null) — the
-  // server already scopes both listRuns and run.changed to what the viewer may
-  // see. Colleagues' self-triggered runs carry THEIR username and stay off the
-  // pill, visible on #/runs only.
-  useEffect(() => {
-    setLiveIds(new Set());
-    if (!operateEnabled || !me) return;
-    const mineOrAutomation = (userId: string | null): boolean => userId === null || userId === me;
-    let alive = true;
-    operateApi
-      .listRuns()
-      .then(({ runs }) => {
-        if (alive) setLiveIds(new Set(runs.filter((r) => r.live && mineOrAutomation(r.userId)).map((r) => r.id)));
-      })
-      .catch(() => undefined); // roles without runs:read just see the count stay 0
-    const off = onServerMessage((msg) => {
-      if (msg.t !== 'run.changed' || !mineOrAutomation(msg.run.userId)) return;
-      setLiveIds((prev) => {
-        const next = new Set(prev);
-        if (msg.run.live) next.add(msg.run.id);
-        else next.delete(msg.run.id);
-        return next;
-      });
-    });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [operateEnabled, me]);
-
-  useEffect(() => {
-    if (!operateEnabled) return;
-    let alive = true;
-    const load = (): void => {
-      operateApi
-        .status()
-        .then((s) => alive && setStatus(s))
-        .catch(() => alive && setStatus(null));
-    };
-    load();
-    const timer = window.setInterval(load, 60_000);
-    const offWs = onWsState(setWs);
-    const offMsg = onServerMessage((msg) => {
-      if (msg.t === 'repos.changed') load();
-    });
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      offWs();
-      offMsg();
-    };
-  }, [operateEnabled]);
-
-  if (!operateEnabled) return null;
-
-  const moxxyOk = Boolean(status && status.cliPath && status.compatible && status.homeReady);
-  const moxxyTitle = !status
-    ? 'moxxy: status unknown'
-    : !status.cliPath
-      ? 'moxxy CLI not found'
-      : !status.compatible
-        ? `moxxy ${status.cliVersion ?? '?'} is too old`
-        : !status.providersImported
-          ? 'moxxy ready — providers not imported yet'
-          : `moxxy ${status.cliVersion} ready`;
-
-  // healthy: all green · degraded: soft warnings only · unhealthy: something
-  // is down · offline: the daemon itself is unreachable.
-  const anyDown = !moxxyOk || !status?.githubConfigured || ws === 'offline';
-  const anyWarn = !status?.providersImported || ws === 'connecting';
-  const overall: 'healthy' | 'degraded' | 'unhealthy' | 'offline' = !status
-    ? 'offline'
-    : anyDown
-      ? 'unhealthy'
-      : anyWarn
-        ? 'degraded'
-        : 'healthy';
-  const dotColor =
-    overall === 'healthy' ? 'bg-emerald-500' : overall === 'degraded' ? 'bg-amber-500' : 'bg-red-500';
-
-  const n = liveIds.size;
-  const label = n === 1 ? '1 live agent' : `${n} live agents`;
-
-  return (
-    <div className="group relative">
-      <a
-        href="#/runs"
-        className="dim flex items-center gap-2 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:border-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-        aria-label={`${label} — system ${overall}. Open Agent Runs.`}
-      >
-        <span
-          className={`size-2 rounded-full ${dotColor} ${n > 0 ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-          aria-hidden
-        />
-        <span className="font-medium tabular-nums">{n}</span>
-      </a>
-      <div
-        role="status"
-        aria-label="Connection status details"
-        className="invisible absolute top-full right-0 z-40 mt-1.5 flex w-56 flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 opacity-0 shadow-lg transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900"
-      >
-        <div className="dim text-[10px] font-medium tracking-widest uppercase">{overall}</div>
-        <StatusDot ok={moxxyOk} degraded={moxxyOk && !status?.providersImported} label="moxxy" title={moxxyTitle} />
-        <StatusDot
-          ok={Boolean(status?.githubConfigured)}
-          label="GitHub"
-          title={
-            status?.githubConfigured ? `GitHub connected as ${status.githubUser ?? '…'}` : 'GitHub PAT not configured'
-          }
-        />
-        <StatusDot
-          ok={ws === 'connected'}
-          degraded={ws === 'connecting'}
-          label="live"
-          title={ws === 'connected' ? 'Event stream connected' : ws === 'connecting' ? 'Reconnecting…' : 'Event stream offline'}
-        />
-      </div>
-    </div>
-  );
-}
-
 /** The list hash including the tab the user last had open (survives detail visits). */
 function listBackHref(base: '#/prs' | '#/issues'): string {
   const state = sessionStorage.getItem(`companion.tab:${base}`);
@@ -840,17 +673,14 @@ function TopBar({
   collapsed,
   onToggleSidebar,
   onOpenPalette,
-  assistantOpen,
-  onToggleAssistant,
 }: {
   hash: string;
   chordPending: boolean;
   collapsed: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
-  assistantOpen: boolean;
-  onToggleAssistant: () => void;
 }): JSX.Element {
+  const { can } = useAuth();
   const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
   const crumbs = crumbsFor(path, kernel.nav);
@@ -907,10 +737,8 @@ function TopBar({
           ⌘K
         </kbd>
       </button>
-      <RunQueueIndicator />
       <Inbox />
-      <AgentsStatus />
-      <AssistantButton open={assistantOpen} onClick={onToggleAssistant} />
+      <Slot name="shell.topbar" can={can} />
     </div>
   );
 }
@@ -929,24 +757,6 @@ function SignOutIcon(): JSX.Element {
   );
 }
 
-function StatusDot({
-  ok,
-  degraded,
-  label,
-  title,
-}: {
-  ok: boolean;
-  degraded?: boolean;
-  label: string;
-  title: string;
-}): JSX.Element {
-  return (
-    <span className="dim flex items-center gap-1.5 text-xs" title={title} role="status" aria-label={title}>
-      <Dot tone={ok ? (degraded ? 'amber' : 'green') : 'red'} />
-      {label}
-    </span>
-  );
-}
 
 /**
  * The data-driven router: matches the hash against the enabled modules'

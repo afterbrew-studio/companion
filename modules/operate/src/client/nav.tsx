@@ -1,24 +1,17 @@
 import { defineNav, defineSections, NavIcon } from '@companion/core/client';
 
 /**
- * Operate owns the Operate sidebar group (agent runs) and attaches its
- * machine/provider admin pages to core's Admin group. Icons follow the
- * shared stroke style from the legacy modules.tsx registry.
+ * Operate owns the Operate sidebar group (agent runs, runners, skills) and
+ * attaches its machine/provider admin pages to core's Admin group. Icons follow
+ * the shared stroke style from the legacy modules.tsx registry.
  *
- * Skills sits in the PLAYGROUND group but stays owned by operate: the page,
- * route and API live here so the skill library keeps working when
- * module-playground is disabled. Because the shell drops nav entries whose
- * section id no enabled module declares, operate declares the 'playground'
- * section too — sections dedupe by id (first declaration wins), so the twin
- * declaration in module-playground's nav is harmless as long as the two stay
- * identical. Chosen over relocating the page into playground, which would
- * have killed #/skills whenever playground is off.
+ * Skills lives in operate's OWN group: the page, route and API are operate's,
+ * and module-playground is not installed by default, so hanging the entry off
+ * the Playground group would leave a group containing nothing else on a fresh
+ * instance.
  */
 
-export const sections = defineSections([
-  { id: 'operate', label: 'Operate', order: 40 },
-  { id: 'playground', label: 'Playground', order: 45 },
-]);
+export const sections = defineSections([{ id: 'operate', label: 'Operate', order: 40 }]);
 
 export const nav = defineNav([
   {
@@ -41,7 +34,7 @@ export const nav = defineNav([
     hash: '#/skills',
     shortcut: 'k',
     permission: 'skills:manage',
-    section: 'playground',
+    section: 'operate',
     order: 40,
     icon: (
       <NavIcon>

@@ -21,6 +21,14 @@ export interface ModuleManifest {
   readonly required?: boolean;
   /** Permission ids this module owns (documentation / GET /api/modules). */
   readonly permissions?: readonly string[];
+  /**
+   * Permission ids owned by ANOTHER module that this one deliberately gates on
+   * without a `dependsOn` edge, so the coupling is declared rather than merely
+   * present. Only for uses that tolerate the owner being disabled: the
+   * permission leaves the grid with its module, so `can()` goes false and the
+   * UI must degrade. If absence is not tolerable, use `dependsOn` instead.
+   */
+  readonly consumes?: readonly string[];
   /** WS message tags this module owns (documentation / conflict detection). */
   readonly messages?: readonly string[];
   /**
@@ -29,6 +37,13 @@ export interface ModuleManifest {
    * `required` ones; modules read values via `ctx.moduleConfig`.
    */
   readonly config?: readonly ModuleConfigField[];
+  /**
+   * Entitlement id this module needs. The kernel refuses to install or enable it
+   * without a licence granting the feature, and disables it at boot if the
+   * licence lapses. Absent on every OSS module: an unentitled module is simply
+   * never gated.
+   */
+  readonly entitlement?: string;
   /**
    * `false` ⇒ a newly compiled-in module lands as "Available" (installed=0)
    * instead of auto-installing at boot. Ignored for `required` modules. A module

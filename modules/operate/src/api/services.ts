@@ -68,7 +68,7 @@ export default defineServices(async (ctx) => {
   }
 
   // Per-repo resolution, so the invoking/run-owning profile governs clones too.
-  const checkouts = new Checkouts(githubTokenFor);
+  const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host);
   const store = new OperateStore(ctx.db, settings);
   const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
   const webhookTunnel = new WebhookTunnel(
