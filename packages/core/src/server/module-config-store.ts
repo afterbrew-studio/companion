@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigValue } from '../module-config.js';
 import { HttpError } from './router.js';
+import type { SecretStore } from './capabilities.js';
+import { SqliteSecretStore } from './secret-store.js';
 
 /**
  * Kernel-owned storage + validation for per-module configuration. Values live in
@@ -11,7 +13,37 @@ import { HttpError } from './router.js';
  * readable/writable for modules that are not (yet) loaded.
  */
 export class ModuleConfigStore {
-  constructor(private readonly db: Database.Database) {}
+  /** Swapped by `provideSecrets`; the default keeps secrets in `module_config`. */
+  private secrets: SecretStore;
+
+  constructor(
+    private readonly db: Database.Database,
+    private readonly isSecret: (moduleId: string, key: string) => boolean = () => false,
+  ) {
+    this.secrets = new SqliteSecretStore(db, isSecret);
+  }
+
+  /**
+   * Hand secret storage to a module-provided backend, carrying existing values
+   * across. Without the move, enabling a Vault module would leave every secret
+   * behind in SQLite and every module reading as unconfigured; without the
+   * delete, the plaintext would stay in the file the swap was meant to empty.
+   */
+  useSecretStore(next: SecretStore, moduleIds: readonly string[], onMoved?: (n: number) => void): void {
+    const previous = this.secrets;
+    let moved = 0;
+    for (const moduleId of moduleIds) {
+      for (const key of previous.keys(moduleId)) {
+        const value = previous.get(moduleId, key);
+        if (value === null) continue;
+        next.set(moduleId, key, value);
+        previous.delete(moduleId, key);
+        moved++;
+      }
+    }
+    this.secrets = next;
+    if (moved) onMoved?.(moved);
+  }
 
   /** Stored values for one module (no defaults merged). */
   valuesFor(moduleId: string): Record<string, ModuleConfigValue> {
@@ -20,24 +52,31 @@ export class ModuleConfigStore {
       .all(moduleId) as { key: string; value: string }[];
     const out: Record<string, ModuleConfigValue> = {};
     for (const r of rows) {
+      if (this.isSecret(moduleId, r.key)) continue;
       const v: unknown = JSON.parse(r.value);
       if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[r.key] = v;
+    }
+    for (const key of this.secrets.keys(moduleId)) {
+      const v = this.secrets.get(moduleId, key);
+      if (v !== null) out[key] = v;
     }
     return out;
   }
 
   /** One scan of stored keys per module — for moduleList()'s configured-ness check. */
-  keysByModule(): Map<string, Set<string>> {
+  keysByModule(moduleIds: readonly string[]): Map<string, Set<string>> {
     const rows = this.db.prepare(`SELECT module_id, key FROM module_config`).all() as {
       module_id: string;
       key: string;
     }[];
     const map = new Map<string, Set<string>>();
-    for (const r of rows) {
-      let set = map.get(r.module_id);
-      if (!set) map.set(r.module_id, (set = new Set()));
-      set.add(r.key);
-    }
+    const setFor = (id: string): Set<string> => {
+      let set = map.get(id);
+      if (!set) map.set(id, (set = new Set()));
+      return set;
+    };
+    for (const r of rows) if (!this.isSecret(r.module_id, r.key)) setFor(r.module_id).add(r.key);
+    for (const id of moduleIds) for (const key of this.secrets.keys(id)) setFor(id).add(key);
     return map;
   }
 
@@ -46,18 +85,26 @@ export class ModuleConfigStore {
       `INSERT INTO module_config (module_id, key, value, updated_at) VALUES (?,?,?,?)
        ON CONFLICT(module_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     );
+    const plain = Object.entries(entries).filter(([key]) => !this.isSecret(moduleId, key));
     this.db.transaction(() => {
       const now = Date.now();
-      for (const [key, value] of Object.entries(entries)) upsert.run(moduleId, key, JSON.stringify(value), now);
+      for (const [key, value] of plain) upsert.run(moduleId, key, JSON.stringify(value), now);
     })();
+    // Outside the transaction: an external store is not in it, and a rolled-back
+    // write it never saw would be a lie either way.
+    for (const [key, value] of Object.entries(entries)) {
+      if (this.isSecret(moduleId, key)) this.secrets.set(moduleId, key, String(value));
+    }
   }
 
   deleteKey(moduleId: string, key: string): void {
+    if (this.isSecret(moduleId, key)) return this.secrets.delete(moduleId, key);
     this.db.prepare(`DELETE FROM module_config WHERE module_id = ? AND key = ?`).run(moduleId, key);
   }
 
   /** Uninstall's clean slate — wipe everything the user configured for the module. */
   deleteAll(moduleId: string): void {
+    this.secrets.deleteAll(moduleId);
     this.db.prepare(`DELETE FROM module_config WHERE module_id = ?`).run(moduleId);
   }
 
