@@ -1,0 +1,72 @@
+name: Publish
+
+# Publishes on a landed change, not on a tag: main is the release branch, and a
+# version bump in package.json is the signal. Every other push is a no-op.
+on:
+  push:
+    branches: [main]
+  # Same job, on demand, for a republish after a failed run.
+  workflow_dispatch:
+
+# npm trusted publishing mints a short-lived OIDC token instead of holding a
+# long-lived NPM_TOKEN in repository secrets; `id-token: write` is what allows
+# it, and provenance is attached automatically as a result.
+permissions:
+  contents: read
+  id-token: write
+
+# Two runs publishing the same version would race to the same registry entry.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      # One package failing must not cancel the other: they version independently
+      # and a broken runner release should not hold back the CLI.
+      fail-fast: false
+      matrix:
+        include:
+          - dir: apps/companion-cli
+            package: '@moxxy/companion'
+          - dir: apps/companion-runner
+            package: '@moxxy/companion-runner'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # Trusted publishing needs npm 11.5.1 or newer; the npm bundled with
+      # Node 22 predates it and fails with an authentication error that says
+      # nothing about versions.
+      - run: npm install -g npm@latest
+
+      # Both packages' prepublishOnly scripts drive the pnpm workspace
+      # (typecheck, bundle, tests), so the workspace has to be installed even
+      # though npm does the publishing.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Publish ${{ matrix.package }} if its version is new
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          # `npm view` fails for a package that has never been published, which
+          # is also a reason to publish, so only a successful lookup is a skip.
+          if npm view "${{ matrix.package }}@$version" version >/dev/null 2>&1; then
+            echo "${{ matrix.package }}@$version is already on the registry; nothing to publish."
+            exit 0
+          fi
+          echo "Publishing ${{ matrix.package }}@$version"
+          # prepublishOnly runs the typecheck, the bundle and the tests, so a
+          # package that cannot build never reaches the registry. The CLI bundles
+          # the `slim` profile, which is what the published package documents.
+          npm publish
