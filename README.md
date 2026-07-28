@@ -103,6 +103,22 @@ or add `--no-open`, `--port`, or `--home` as needed. Node.js 20+ is the only
 requirement for the dashboard; install the external moxxy CLI before running AI
 agents.
 
+### The first admin: wizard, or seeded from the environment
+
+With no credentials in the environment, an instance with an empty user store
+sends you through first-run setup in the browser.
+
+`COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` **replace that wizard**: the
+account is seeded on the first boot that finds no users, and the setup screen
+never appears. That is the normal shape for a container deployment, and it is
+worth knowing before you go looking for a setup step that is not coming.
+
+Those variables are seeds, not state. They are read only while the user store is
+empty, after which the database is authoritative and the Users page owns
+accounts. Two consequences: changing the variable later does nothing, and
+recreating the database re-seeds the account with whatever the variable says
+now, discarding a password changed in the UI.
+
 ## Getting started locally
 
 1. Install dependencies:
@@ -211,8 +227,11 @@ The image installs `@moxxy/cli` globally so agent runs can start inside the cont
 
 The image is self-contained (companion-api + built SPA + git + moxxy CLI) and ships a `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can gate deploys on it. Point Coolify at the repository and either build pack works:
 
-- **Dockerfile** — port `8901`; add a persistent storage mount at `/data`.
-- **Docker Compose** — uses `docker-compose.yml` as is (the `.env` file is optional; the named `companion-data` volume persists `/data`).
+- **Dockerfile**: port `8901`; add persistent storage at `/data` **and** at
+  `/root/.moxxy`. The second one holds the AI provider credentials, and without
+  it every redeploy loses them.
+- **Docker Compose**: uses `docker-compose.yml` as is, which already declares
+  both volumes (the `.env` file is optional).
 
 Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`, etc.) in Coolify's UI — they take precedence over any `.env`.
 
@@ -228,29 +247,26 @@ build arg directly:
 - **Docker Compose build pack**: variable `COMPANION_PROFILE=full` marked as a
   build variable, which `docker-compose.yml` forwards to the same build arg.
 
-Confirm what actually shipped rather than assuming, because a missed build
-variable fails silently as a smaller instance:
+Confirm it in the **build log**, not on the running instance: the generator
+prints the profile it used, and that one line separates the three things that
+look identical from outside.
 
-```sh
-curl -s localhost:8901/api/modules -H "authorization: Bearer $(cat /data/cli-token)"   | grep -o '"id":"[a-z]*"'
-```
+| In the build log | What it means |
+|---|---|
+| `profile 'full': 13 module(s)` | The build was right. If the app still shows five, a stale container is running. |
+| `profile 'slim': 5 module(s)` | The build argument never arrived. |
+| no `profile '...'` line at all | Docker reused a cached layer, which also proves the argument never changed: a real change from `slim` to `full` invalidates that layer. |
 
-**A `full` build is not a full instance.** Every optional module declares
-`autoInstall: false`, so it ships as **Available** and an admin adopts it. Right
-after a `full` deploy the running surface is identical to `slim`; the difference
-is what you can turn on without redeploying. From the Modules page, or in one
-pass (the order satisfies `dependsOn`):
+The last two mean the same thing, and rebuilding without cache will not fix
+them: the variable is not reaching the build. Switching the app to the **Docker
+Compose** build pack is the reliable way out, since the compose file maps
+`COMPANION_PROFILE` to the build argument itself.
 
-```sh
-docker exec -it <container> sh -lc '
-  for m in plan board refinement planner automations slop playground; do
-    companion module install "$m"
-  done'
-```
-
-`oidc` is deliberately not in that list: it needs its issuer, client id and
-client secret configured first, and `COMPANION_PUBLIC_URL` set to the address the
-provider redirects back to. See [`ENTERPRISE.md`](ENTERPRISE.md) §6.
+A `full` build still boots with only the slim five enabled: the rest ship as
+**Available** and an admin adopts them. See
+[Turning on everything a `full` build contains](#turning-on-everything-a-full-build-contains)
+for the install order, and set `COMPANION_PUBLIC_URL` to your domain so SSO and
+webhooks have an address to come back to.
 
 **Model providers in a container:** the image ships the moxxy CLI, but a fresh container has no provider credentials (there is no `~/.moxxy` to import from, and `moxxy init` has never run). Two ways to get agent runs working:
 
@@ -308,6 +324,24 @@ export COMPANION_PROFILE=full   # or: pnpm gen:modules --profile full
 pnpm build
 ```
 
+**The profile is chosen when the artifact is built, not when it runs**, so which
+install path you use decides whether you can pick one at all:
+
+| Install path | Profile |
+|---|---|
+| `npx @moxxy-ai/companion` | `slim`, fixed. The registry is baked into the published bundle. |
+| Docker | `--build-arg PROFILE=full`, or `COMPANION_PROFILE=full` via compose |
+| From source | `COMPANION_PROFILE=full pnpm build` |
+
+Setting `COMPANION_PROFILE` as a *runtime* variable does nothing: by the time the
+process starts, the module set is already compiled in. That failure is silent,
+so check the build output rather than the running instance. The generator prints
+exactly what it produced:
+
+```
+profile 'full': 13 module(s) [core, workspace, admin, oidc, operate, code, board, ...]
+```
+
 The registries (`apps/*/src/modules.generated.ts`) are **gitignored** and
 regenerated automatically by `pnpm install`, `dev`, `build` and `typecheck`, so
 you never have to run the generator yourself. A committed registry would drift
@@ -356,9 +390,47 @@ companion module uninstall slop           # rolls back its migrations, wipes its
 companion module config slop --set label=junk
 ```
 
-`disable` is reversible; `uninstall` is not, and asks before running (`--yes` in
-scripts). Installing runs the module's migrations; uninstalling rolls them back
-to zero and clears the migration ledger, so a later re-install starts clean.
+`install` also enables, and is idempotent: running it on a module that is
+already on applies any `--set` config and returns. `disable` is reversible;
+`uninstall` is not, and asks before running (`--yes` in scripts). Installing
+runs the module's migrations; uninstalling rolls them back to zero and clears
+the migration ledger, so a later re-install starts clean.
+
+### Turning on everything a `full` build contains
+
+A `full` build is not a full instance. Every optional module declares
+`autoInstall: false`, so straight after the deploy the running surface is
+identical to `slim`; the difference is what you can turn on without rebuilding.
+
+First confirm the build actually contains them, because a missed build argument
+looks exactly like a module that refuses to install:
+
+```sh
+companion module list        # expect 13 modules, 5 enabled (not "5 of 5")
+```
+
+`Unknown module: plan` means the module is not in this build at all, so no
+amount of installing will help: rebuild with the right profile.
+
+Then adopt them. The order satisfies `dependsOn` (`refinement` and `planner`
+need `plan` and `board`), and the kernel refuses an out-of-order install rather
+than half-enabling anything:
+
+```sh
+for m in plan board refinement planner automations slop playground; do
+  companion module install "$m"
+done
+```
+
+`oidc` is deliberately not in that list. It needs its provider configured first,
+and `COMPANION_PUBLIC_URL` set to the address the provider redirects back to:
+
+```sh
+companion module install oidc   --set issuer=https://example.okta.com   --set clientId=... --set clientSecret=...
+```
+
+In Docker, run these inside the container (`docker exec -it <container> sh`),
+where the CLI finds the daemon and its token in `/data`.
 
 The CLI authenticates with a token the daemon mints at boot into
 `$COMPANION_HOME/cli-token` (mode 0600). It is an admin-equivalent credential;
