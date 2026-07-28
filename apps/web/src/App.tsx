@@ -26,6 +26,7 @@ import {
 // a `shell.*` slot, which is what lets a build omit it entirely.
 import { WorkspaceProvider, useWorkspace, Inbox, workspaceApi, isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import {
+  BrandTile,
   ChevronDown,
   Dropdown,
   ErrorBar,
@@ -82,18 +83,22 @@ function Gate(): JSX.Element {
   );
 }
 
-/** Sidebar brand block: instance logo + name, falling back to the letter tile. */
+/** Sidebar brand block: instance logo + name. A branded instance with no logo
+ *  falls back to its own letter tile; an unbranded one gets the Companion mark. */
 function Brand({ rail }: { rail: boolean }): JSX.Element {
   const { branding } = useAuth();
-  const name = branding.name?.trim() || 'Companion';
+  const custom = branding.name?.trim();
+  const name = custom || 'Companion';
   return (
     <div className={`flex items-center gap-2 pt-4 pb-2 ${rail ? 'justify-center px-2' : 'px-4'}`}>
       {branding.logo ? (
         <img src={branding.logo} alt="" className="size-7 shrink-0 rounded-lg object-cover" />
-      ) : (
+      ) : custom ? (
         <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-sm font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-          {name.slice(0, 1).toUpperCase()}
+          {custom.slice(0, 1).toUpperCase()}
         </div>
+      ) : (
+        <BrandTile />
       )}
       {rail ? null : <span className="truncate text-[15px] font-semibold">{name}</span>}
     </div>

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Avatar } from '@companion/ui';
+import { Avatar, BrandTile } from '@companion/ui';
 import { useAuth } from '../lib/auth.js';
 
 /**
@@ -21,13 +21,18 @@ export function AuthLayout({
   className?: string;
 }): JSX.Element {
   const { branding } = useAuth();
-  const brandName = branding.name?.trim() || 'Companion';
+  const custom = branding.name?.trim();
+  const brandName = custom || 'Companion';
 
   return (
     <main className="flex h-full items-center justify-center bg-zinc-50 px-4 dark:bg-zinc-950">
       <div className={`w-full ${className}`}>
         <div className="mb-6 text-center">
-          <Avatar name={brandName} src={branding.logo ?? undefined} size="xl" brand className="mx-auto mb-3" />
+          {branding.logo || custom ? (
+            <Avatar name={brandName} src={branding.logo ?? undefined} size="xl" brand className="mx-auto mb-3" />
+          ) : (
+            <BrandTile className="mx-auto mb-3 size-11 rounded-xl" />
+          )}
           <h1 className="text-xl font-semibold">{title}</h1>
           {subtitle ? <p className="dim mt-1">{subtitle}</p> : null}
         </div>
