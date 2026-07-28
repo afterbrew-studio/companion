@@ -13,13 +13,17 @@ import type {
   ModelCatalogProvider,
   ProviderCatalog,
   RunnerCatalog,
+  RunnerFallback,
   RunnerHealth,
   RunnerMoxxyUpdateResult,
   RunnerProbeResult,
   RunnerProviderPolicy,
   RunnerRecord,
+  RunnerRepoRef,
+  RunnerTaskPolicy,
   UpdateRunnerRequest,
 } from '../contract/index.js';
+import { taskPolicyAllows } from '../contract/index.js';
 import { log } from '@moxxy/companion-services';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
@@ -46,6 +50,18 @@ const UNKNOWN_HEALTH: RunnerHealth = {
   detail: null,
   providers: null,
 };
+
+/**
+ * Instance-level inputs placement resolves live, rather than at construction:
+ * roles are stored by module-core and edited at runtime, and the fallback is
+ * module config an admin can change without a restart.
+ */
+export interface RunnersPolicySource {
+  /** Effective role of a triggering user; null when unknown. */
+  roleOf?(username: string): string | null;
+  /** What happens to work no eligible machine's policy accepts. */
+  fallback?(): RunnerFallback;
+}
 
 /**
  * Owns one RunnerBackend per registered runner, polls their health, and makes
@@ -88,6 +104,7 @@ export class Runners {
       scratchRetentionMs: 24 * 60 * 60_000,
       sessionRetentionMs: 30 * 24 * 60 * 60_000,
     }),
+    private readonly instancePolicy: RunnersPolicySource = {},
   ) {
     this.local = new LocalRunnerBackend(
       LOCAL_RUNNER_ID,
@@ -184,11 +201,15 @@ export class Runners {
    * eligible AND preferred (their machine, their subscription); other users'
    * runners never are. Automation passes null and rides shared runners only.
    *
-   * Task eligibility: a runner never receives a task on its block-list — a
-   * hard filter that outranks even the repo pin. When no runner at all
-   * accepts `task`, the local runner takes it anyway (the work must land
-   * somewhere; same spirit as the everything-offline fallback below). An
-   * unlabeled run (`task` null) matches every runner.
+   * Task eligibility: a runner never receives work its task policy excludes —
+   * a hard filter that outranks even the repo pin — nor work outside its
+   * repository clearance or its allowed roles. An unlabeled run (`task` null)
+   * passes every task policy.
+   *
+   * Where nothing eligible can take the run, `fallbackTarget` decides whether
+   * the daemon's own machine absorbs it; when it refuses, this THROWS naming
+   * the policy, because a run silently landing on the one machine the policy
+   * meant to protect is the failure this exists to prevent.
    */
   place(
     repo: string | null,
@@ -199,10 +220,12 @@ export class Runners {
     exclude?: ReadonlySet<string>,
   ): string | null {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
-    const eligible = this.store.runners
-      .eligibleFor(workspaceId, userId)
-      .filter((r) => this.allows(r, task))
-      .filter((r) => !exclude?.has(r.id));
+    // Kept as stages, not one chained filter, so a refusal can name the fence
+    // that actually rejected the run rather than blaming the first one.
+    const reachable = this.store.runners.eligibleFor(workspaceId, userId).filter((r) => !exclude?.has(r.id));
+    const byTask = reachable.filter((r) => this.allows(r, task));
+    const byRepo = byTask.filter((r) => this.servesRepo(r, repo));
+    const eligible = byRepo.filter((r) => this.servesRole(r, userId));
     const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
 
     const online = (row: RunnerRow): boolean => {
@@ -243,7 +266,49 @@ export class Runners {
       .sort((a, b) => own(a) - own(b) || load(a) - load(b));
     const servers = this.runnersForModel(wantedModel ?? null);
     const chosen = usable.find((row) => rowServes(row, servers)) ?? usable[0];
-    return this.normalize(chosen?.id ?? LOCAL_RUNNER_ID);
+    if (chosen) return this.normalize(chosen.id);
+    if (this.fallbackTarget(task) === 'local') return this.normalize(LOCAL_RUNNER_ID);
+    const what = task ?? 'this run';
+    const why =
+      reachable.length === 0
+        ? 'no machine is available to this run'
+        : byTask.length === 0
+          ? `no machine's task policy accepts ${what}`
+          : byRepo.length === 0
+            ? repo === null
+              ? 'no machine takes work that belongs to no repository'
+              : `no machine is cleared for ${repo}`
+            : eligible.length === 0
+              ? userId === null
+                ? 'no machine accepts automated work'
+                : `no machine serves ${userId}'s role`
+              : `every machine that accepts ${what} is offline or full`;
+    throw new Error(this.refusalMessage(why));
+  }
+
+  /**
+   * Where a run nobody eligible could take goes. Under an allow-list fleet the
+   * old unconditional last resort was a hole: the one task nobody permitted
+   * landed on the daemon's machine, which is exactly what the policy was
+   * written to keep it off. `policy` (the default) hands the decision to that
+   * machine's own policy, so a deny-list instance behaves exactly as before.
+   */
+  private fallbackTarget(task: string | null): 'local' | 'refuse' {
+    const mode = this.instancePolicy.fallback?.() ?? 'policy';
+    if (mode === 'local') return 'local';
+    if (mode === 'refuse') return 'refuse';
+    const local = this.store.runners.get(LOCAL_RUNNER_ID);
+    return local && local.enabled === 1 && this.allows(local, task) ? 'local' : 'refuse';
+  }
+
+  /** Names what rejected the run, and the two ways an operator can change it. */
+  private refusalMessage(why: string): string {
+    const local = this.store.runners.get(LOCAL_RUNNER_ID);
+    const here =
+      this.instancePolicy.fallback?.() === 'refuse'
+        ? "and this instance does not fall back to the daemon's machine"
+        : `and ${local?.name ?? "the daemon's machine"} does not take it either (${local?.task_policy_mode ?? 'deny'}-list${local?.enabled === 0 ? ', switched off' : ''})`;
+    return `${why}, ${here}. Allow it on a machine under Runners, or change Operate's "work no machine accepts" setting.`;
   }
 
   /**
@@ -252,16 +317,34 @@ export class Runners {
    * Personally-owned runners only count toward their owner's capacity
    * (`userId`); the shared pool (automation, the queue pump) excludes them.
    * The local runner always counts, so this is at least its cap. With `task`,
-   * only runners whose block-list accepts it count (chat-slot gating).
+   * only runners whose policy accepts it count (chat-slot gating).
+   *
+   * Deliberately blind to repository clearance: this is a pool ceiling with no
+   * repo in hand, so a repo-scoped machine is counted rather than guessed away
+   * — an over-approximation that keeps the queue pumping at full width.
    */
   totalCapacity(userId: string | null = null, task: string | null = null): number {
     let sum = 0;
     for (const row of this.store.runners.list()) {
       if (row.owner_id !== null && row.owner_id !== userId) continue;
       if (!this.allows(row, task)) continue;
+      if (!this.servesRole(row, userId)) continue;
       if (row.enabled === 1 && this.isOnline(row)) sum += Math.max(0, row.max_runs);
     }
     return sum;
+  }
+
+  /**
+   * Runner ids whose task policy accepts this task; null for an unlabeled run,
+   * which every machine accepts. The chat-slot gate counts against this rather
+   * than re-implementing the policy in SQL — one definition, one place.
+   */
+  runnersAllowing(task: string | null): string[] | null {
+    if (task === null) return null;
+    return this.store.runners
+      .list()
+      .filter((row) => this.allows(row, task))
+      .map((row) => row.id);
   }
 
   /** Occupancy of the pool this user can schedule against: shared + their own. */
@@ -278,21 +361,29 @@ export class Runners {
     return { active, capacity: Math.max(1, capacity) };
   }
 
-  /** Whether an eligible, healthy runner can accept this task right now. */
+  /**
+   * Whether an eligible, healthy runner could take this task right now.
+   *
+   * A task NO machine may run is not a capacity answer, so it reports true:
+   * the caller then dispatches and fails with the policy refusal from
+   * `place()`, instead of parking the work in a "waiting for a slot" state
+   * that never clears. Only genuine saturation returns false.
+   */
   hasFreeCapacity(repo: string | null, task: string | null, userId: string | null = null): boolean {
     const workspaceId = repo ? (this.store.repos.get(repo)?.workspace_id ?? null) : null;
     const counts = this.store.runs.activeCountsByRunner();
     const eligible = this.store.runners
       .eligibleFor(workspaceId, userId)
       .filter((row) => this.allows(row, task))
+      .filter((row) => this.servesRepo(row, repo))
+      .filter((row) => this.servesRole(row, userId))
       .filter((row) => this.isOnline(row) && this.hasReadyProvider(row));
-    // Task filters never make work impossible: the local runner remains the
-    // last resort when every machine blocks this task, matching place().
-    const candidates =
-      eligible.length > 0 ? eligible : this.store.runners.list().filter((row) => row.id === LOCAL_RUNNER_ID);
-    return candidates.some(
-      (row) => this.activeRuns(row, counts) < Math.max(1, row.max_runs),
-    );
+    if (eligible.length === 0) {
+      if (this.fallbackTarget(task) === 'refuse') return true;
+      const local = this.store.runners.get(LOCAL_RUNNER_ID);
+      return local !== undefined && this.activeRuns(local, counts) < Math.max(1, local.max_runs);
+    }
+    return eligible.some((row) => this.activeRuns(row, counts) < Math.max(1, row.max_runs));
   }
 
   /** Reconcile persisted assignments with backend/reported liveness. */
@@ -311,9 +402,30 @@ export class Runners {
     return health.status === 'online';
   }
 
-  /** True when the task isn't on the runner's block-list (null task = always). */
+  /** True when this machine's task policy accepts the task (null task = always). */
   private allows(row: RunnerRow, task: string | null): boolean {
-    return task === null || !row.blocked_tasks.includes(task);
+    return task === null || taskPolicyAllows(taskPolicyOf(row), task);
+  }
+
+  /**
+   * True when the machine is cleared for this repository. A machine limited to
+   * selected repos takes only their work: repo-less runs (chats, digests) have
+   * no clearance to match, so they are placed elsewhere.
+   */
+  private servesRepo(row: RunnerRow, repo: string | null): boolean {
+    return row.repo_scope !== 'selected' || (repo !== null && row.repo_ids.includes(repo));
+  }
+
+  /**
+   * True when the triggering user's role may use this machine. Automated work
+   * has no triggering role, so a role-restricted machine never receives it —
+   * "only these roles" would otherwise be silently wider than it reads.
+   */
+  private servesRole(row: RunnerRow, userId: string | null): boolean {
+    if (row.allowed_roles.length === 0) return true;
+    if (userId === null) return false;
+    const role = this.instancePolicy.roleOf?.(userId) ?? null;
+    return role !== null && row.allowed_roles.includes(role);
   }
 
   /** Store null for the local runner so existing rows/queries stay simple. */
@@ -416,7 +528,7 @@ export class Runners {
       ownerId,
       maxRuns: req.maxRuns ?? 3,
       workspaceIds: req.workspaceIds ?? [],
-      blockedTasks: req.blockedTasks,
+      taskPolicy: req.taskPolicy,
     });
     this.rebuildRemotes();
     await this.probeOne(id);
@@ -430,26 +542,26 @@ export class Runners {
   async update(id: string, req: UpdateRunnerRequest): Promise<RunnerRecord> {
     const row = this.store.runners.get(id);
     if (!row) throw new Error('runner not found');
+    // Capacity, reach and policy apply to the local runner too — only its
+    // connection fields are meaningless there (it has no endpoint or token).
+    const reach = {
+      name: req.name,
+      maxRuns: req.maxRuns,
+      scope: req.scope,
+      workspaceIds: req.workspaceIds,
+      enabled: req.enabled,
+      taskPolicy: req.taskPolicy,
+      repoScope: req.repoScope,
+      repoIds: req.repoIds,
+      allowedRoles: req.allowedRoles,
+    };
     if (row.kind === 'local') {
-      // Capacity, scope and task filters apply to the local runner too.
-      this.store.runners.update(id, {
-        name: req.name,
-        maxRuns: req.maxRuns,
-        scope: req.scope,
-        workspaceIds: req.workspaceIds,
-        enabled: req.enabled,
-        blockedTasks: req.blockedTasks,
-      });
+      this.store.runners.update(id, reach);
     } else {
       this.store.runners.update(id, {
-        name: req.name,
+        ...reach,
         endpoint: req.endpoint === undefined ? undefined : req.endpoint.replace(/\/+$/, ''),
         token: req.token,
-        scope: req.scope,
-        workspaceIds: req.workspaceIds,
-        maxRuns: req.maxRuns,
-        enabled: req.enabled,
-        blockedTasks: req.blockedTasks,
       });
       this.rebuildRemotes();
       await this.probeOne(id);
@@ -562,7 +674,10 @@ export class Runners {
       workspaceIds: row.workspace_ids,
       maxRuns: row.max_runs,
       enabled: row.enabled === 1,
-      blockedTasks: row.blocked_tasks,
+      taskPolicy: taskPolicyOf(row),
+      repoScope: row.repo_scope,
+      repoIds: row.repo_ids,
+      allowedRoles: row.allowed_roles,
       health: this.healthFor(row.id),
       catalog: row.catalog,
       providerPolicy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
@@ -752,6 +867,18 @@ export class Runners {
     return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  /**
+   * Repositories a machine can be cleared for. Read through the store facade's
+   * guarded repos view, so an instance without module-code simply offers none
+   * rather than failing the settings page.
+   */
+  repoOptions(): RunnerRepoRef[] {
+    return this.store.repos
+      .list()
+      .map((row) => ({ fullName: row.full_name, workspaceId: row.workspace_id }))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
+
   /** Shared machines plus the viewer's own, never another user's private one. */
   private visibleTo(userId: string | null): RunnerRow[] {
     return this.store.runners.list().filter((row) => row.owner_id === null || row.owner_id === userId);
@@ -859,6 +986,11 @@ export interface RunnerPolicy {
 
 function policyOf(row: RunnerRow | undefined): RunnerPolicy {
   return { providers: new Set(row?.disabled_providers ?? []), models: new Set(row?.disabled_models ?? []) };
+}
+
+/** The stored columns as the contract's policy shape (the form both sides read). */
+function taskPolicyOf(row: RunnerRow): RunnerTaskPolicy {
+  return { mode: row.task_policy_mode, modules: row.policy_modules, tasks: row.policy_tasks };
 }
 
 /** Model ids are stored bare (`opus`) or provider-scoped (`anthropic/opus`). */

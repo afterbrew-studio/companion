@@ -9,6 +9,7 @@ import type {
   RunRecord,
   RunnerMoxxyUpdateResult,
   RunnerCapacitySnapshot,
+  RunnerPolicyOptions,
   RunnerProbeResult,
   RunnerProviderPolicy,
   RunnerRecord,
@@ -58,6 +59,7 @@ export const operateApi = {
 
   // runners (execution machines)
   listRunners: () => request<{ runners: RunnerRecord[]; tasks: RunTaskDescriptor[] }>('/api/runners'),
+  runnerOptions: () => request<RunnerPolicyOptions>('/api/runners/options'),
   runnerCapacity: () => request<RunnerCapacitySnapshot>('/api/runners/capacity'),
   createRunner: (body: CreateRunnerRequest) => post<{ runner: RunnerRecord }>('/api/runners', body),
   updateRunner: (id: string, body: UpdateRunnerRequest) =>

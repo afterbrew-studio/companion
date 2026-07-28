@@ -10,6 +10,7 @@ import type {
   ModelCatalogModel,
   ModelCatalogProvider,
   RunKind,
+  RunnerFallback,
   RunQueueSnapshot,
   RunRecord,
 } from '../contract/index.js';
@@ -109,6 +110,8 @@ export class Orchestrator implements RunnerEventSink {
     private readonly broadcast: (msg: SpaServerMessage) => void,
     private readonly githubTokenFor: GitCredentialResolver = () => null,
     private readonly moduleConfig: ModuleConfigAccessor = { values: () => ({}), get: () => null },
+    /** Roles are stored by module-core; the daemon plugs its reader in here. */
+    roleOf?: (username: string) => string | null,
   ) {
     this.runners = new Runners(
       store,
@@ -123,7 +126,14 @@ export class Orchestrator implements RunnerEventSink {
         scratchRetentionMs: this.retentionMs('scratchRetentionHours', 24, HOUR_MS),
         sessionRetentionMs: this.retentionMs('sessionRetentionDays', 30, DAY_MS),
       }),
+      { roleOf, fallback: () => this.unplacedWork() },
     );
+  }
+
+  /** Where work no machine's policy accepts goes (module config, read live). */
+  private unplacedWork(): RunnerFallback {
+    const value = this.moduleConfig.get('unplacedWork');
+    return value === 'local' || value === 'refuse' ? value : 'policy';
   }
 
   /** The backend a run executes on (its runner, or local). */
@@ -260,6 +270,9 @@ export class Orchestrator implements RunnerEventSink {
    * and prefer a runner advertising one of them. Callers that provision a
    * worktree before createRun (fixes, pipelines) use this so the worktree
    * lands on the runner the run will execute on.
+   *
+   * Throws when no machine's policy accepts the task and the instance's
+   * fallback refuses — better here, before a worktree exists, than after.
    */
   placeRun(
     repo: string | null,
@@ -331,7 +344,8 @@ export class Orchestrator implements RunnerEventSink {
       const total = Math.max(1, this.runners.totalCapacity(opts.userId ?? null));
       const capacity = Math.max(1, this.runners.totalCapacity(opts.userId ?? null, opts.task ?? null));
       const reserved = Math.min(capacity - 1, Math.max(0, this.reservedRunnerSlots() - (total - capacity)));
-      if (this.store.runs.activeInteractiveCount(opts.userId ?? null, opts.task ?? null) >= capacity - reserved) {
+      const pool = this.runners.runnersAllowing(opts.task ?? null);
+      if (this.store.runs.activeInteractiveCount(opts.userId ?? null, pool) >= capacity - reserved) {
         throw new Error(
           `All runner slots are busy and ${reserved} ${reserved === 1 ? 'is' : 'are'} reserved for automated work — close a chat or try again shortly.`,
         );
@@ -401,9 +415,17 @@ export class Orchestrator implements RunnerEventSink {
         break;
       } catch (err) {
         this.runners.recheckHealth(placedOn);
-        const next = autoPlaced
-          ? this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
-          : undefined;
+        // A refusal here means the remaining machines' policies won't take the
+        // run: there is nowhere to fail over TO, and the spawn failure that got
+        // us here is the error worth reporting.
+        let next: string | null | undefined;
+        try {
+          next = autoPlaced
+            ? this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
+            : undefined;
+        } catch {
+          next = undefined;
+        }
         if (next === undefined || tried.has(next ?? LOCAL_RUNNER_ID)) {
           this.setStatus(id, 'failed', String(err));
           this.emitRunChanged(id);

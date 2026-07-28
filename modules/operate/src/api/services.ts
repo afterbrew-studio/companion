@@ -70,7 +70,19 @@ export default defineServices(async (ctx) => {
   // Per-repo resolution, so the invoking/run-owning profile governs clones too.
   const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host);
   const store = new OperateStore(ctx.db, settings);
-  const orchestrator = new Orchestrator(store, ctx.config, checkouts, moxxyCli, broadcast, githubTokenFor, ctx.moduleConfig);
+  // Roles are module-core's to store and edit; placement only reads them, live,
+  // so a role change takes effect on the next placement rather than a restart.
+  const auth = ctx.services.get('core');
+  const orchestrator = new Orchestrator(
+    store,
+    ctx.config,
+    checkouts,
+    moxxyCli,
+    broadcast,
+    githubTokenFor,
+    ctx.moduleConfig,
+    (username) => auth.userRole(username) ?? null,
+  );
   const webhookTunnel = new WebhookTunnel(
     () => ctx.moduleConfig.get('webhookTunnel') === true,
     ctx.config.port,

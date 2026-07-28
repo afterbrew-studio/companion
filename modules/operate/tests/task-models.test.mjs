@@ -150,7 +150,9 @@ test('a pin the machine the run landed on cannot serve gives way to its default'
     store.runners.setCatalog('runner-b', catalogOf(provider('anthropic', ['opus', 'sonnet'])));
   });
   orchestrator.setTaskModelPin('code.fix', 'sonnet');
-  await orchestrator.runners.update('runner-b', { blockedTasks: ['code.fix'] });
+  await orchestrator.runners.update('runner-b', {
+    taskPolicy: { mode: 'deny', modules: [], tasks: ['code.fix'] },
+  });
   assert.ok(orchestrator.runners.servableModels().some((m) => m.id === 'sonnet'));
 
   const run = await orchestrator.createRun({ kind: 'fix', task: 'code.fix' });

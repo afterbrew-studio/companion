@@ -17,7 +17,7 @@ import {
   type StatusTone,
 } from '@moxxy/companion-ui';
 import { useAuth } from '@companion/module-core/client';
-import type { RunnerRecord, RunnerStatus, RunTaskDescriptor } from '../../contract/index.js';
+import type { RunnerRecord, RunnerStatus, RunnerTaskPolicy, RunTaskDescriptor } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
 
@@ -204,11 +204,14 @@ function RunnerCard({
     runner.scope === 'shared'
       ? 'all workspaces'
       : `${runner.workspaceIds.length} ${runner.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`;
-  // A blocked id whose module is disabled has no descriptor — show it raw.
-  // (?? [] survives a daemon still on a pre-task dist during the restart gap.)
-  const taskLabel = (id: string): string => (tasks.find((t) => t.id === id)?.label ?? id).toLowerCase();
-  const blockedTasks = runner.blockedTasks ?? [];
-  const taskNote = blockedTasks.length > 0 ? `skips ${blockedTasks.map(taskLabel).join(' · ')}` : null;
+  const repoNote =
+    runner.repoScope === 'selected'
+      ? `${runner.repoIds.length} ${runner.repoIds.length === 1 ? 'repo' : 'repos'}`
+      : null;
+  // A daemon still serving the previous dist during a restart omits the policy
+  // fields; the card must not blank out for the seconds that lasts.
+  const roleNote = runner.allowedRoles?.length ? runner.allowedRoles.join(' · ') : null;
+  const taskNote = runner.taskPolicy ? policySummary(runner.taskPolicy, tasks) : null;
 
   return (
     <article className={`card ${runner.enabled ? '' : 'opacity-70'}`} aria-label={runner.name}>
@@ -271,11 +274,21 @@ function RunnerCard({
 
       <div className="dim mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[18px]">
         <span>{scopeNote}</span>
+        {repoNote ? (
+          <Tooltip content={runner.repoIds.join('\n')}>
+            <span>{repoNote}</span>
+          </Tooltip>
+        ) : null}
+        {roleNote ? (
+          <Tooltip content="only these roles may place work here">
+            <span>{roleNote}</span>
+          </Tooltip>
+        ) : null}
         <span className="tabular-nums">
           {health.liveRuns} / {runner.maxRuns} running
         </span>
         {taskNote ? (
-          <Tooltip content="task filter — edit the machine to change which run kinds it accepts">
+          <Tooltip content="task policy — edit the machine to change what it may be used for">
             <span>{taskNote}</span>
           </Tooltip>
         ) : null}
@@ -569,61 +582,16 @@ function RunnerModal({
 }
 
 /**
- * Per-runner task filter over the registered feature tasks — ticked = the
- * machine takes it, stored as an exclude-list so future modules' tasks stay
- * opted-in by default. Non-placeable tasks render disabled: their runs execute
- * on the daemon's machine regardless (until one-shots learn to place). A
- * blocked id with no descriptor (its module is disabled) stays removable.
+ * The machine's task policy as one line on its card: what it is limited to, or
+ * what it refuses. A module entry has no descriptor to name it, so it reads as
+ * "all <module>" — which is what it means, including work added later.
  */
-export function TasksEditor({
-  tasks,
-  blocked,
-  onChange,
-}: {
-  tasks: readonly RunTaskDescriptor[];
-  blocked: readonly string[];
-  onChange: (next: readonly string[]) => void;
-}): JSX.Element {
-  const placeable = tasks.filter((t) => t.placeable);
-  const daemonBound = tasks.filter((t) => !t.placeable);
-  const unknown = blocked.filter((id) => !tasks.some((t) => t.id === id));
-  const toggle = (id: string, on: boolean): void => {
-    onChange(on ? blocked.filter((b) => b !== id) : [...blocked, id]);
-  };
-  const box = (id: string, label: string, hint?: string, disabled = false): JSX.Element => (
-    <label
-      key={id}
-      title={hint}
-      className={`flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
-        disabled ? 'opacity-50' : 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
-      }`}
-    >
-      <input
-        type="checkbox"
-        checked={!blocked.includes(id)}
-        disabled={disabled}
-        onChange={(e) => toggle(id, e.target.checked)}
-      />
-      <span className="flex-1">{label}</span>
-    </label>
-  );
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
-        {placeable.map((t) => box(t.id, t.label, t.hint))}
-        {unknown.map((id) => box(id, id, 'blocked task of a module that is currently disabled'))}
-      </div>
-      {daemonBound.length > 0 ? (
-        <div className="flex flex-col gap-1 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <span className="dim text-xs">
-            Always run on the daemon&apos;s machine for now — they prepare their files there.
-          </span>
-          <div className="grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
-            {/* A daemon-bound id blocked via the API stays re-allowable here. */}
-            {daemonBound.map((t) => box(t.id, t.label, t.hint, !blocked.includes(t.id)))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
+function policySummary(policy: RunnerTaskPolicy, tasks: readonly RunTaskDescriptor[]): string | null {
+  const named = [
+    ...policy.modules.map((id) => `all ${id}`),
+    // A task id whose module is disabled has no descriptor — show it raw.
+    ...policy.tasks.map((id) => (tasks.find((t) => t.id === id)?.label ?? id).toLowerCase()),
+  ];
+  if (policy.mode === 'deny') return named.length > 0 ? `skips ${named.join(' · ')}` : null;
+  return named.length > 0 ? `only ${named.join(' · ')}` : 'takes nothing';
 }

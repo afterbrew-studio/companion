@@ -23,6 +23,19 @@ export default defineManifest({
       max: 64,
     },
     {
+      key: 'unplacedWork',
+      label: 'Work no machine accepts',
+      kind: 'select',
+      description:
+        "Where a run goes when no eligible machine's task policy accepts it. The default hands the decision to this machine's own policy, so an allow-list instance refuses visibly instead of quietly running the work here.",
+      default: 'policy',
+      options: [
+        { value: 'policy', label: 'Run here only if this machine allows it' },
+        { value: 'local', label: 'Always run here' },
+        { value: 'refuse', label: 'Refuse the run' },
+      ],
+    },
+    {
       key: 'webhookTunnel',
       label: 'Public webhook delivery',
       kind: 'boolean',
