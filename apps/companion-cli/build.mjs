@@ -28,6 +28,7 @@ await build({
     acl: join(here, 'src/acl.ts'),
     client: join(here, 'src/client.ts'),
     repair: join(here, 'src/repair.ts'),
+      profile: join(here, 'src/profile.ts'),
   },
   outdir: dist,
   bundle: true,

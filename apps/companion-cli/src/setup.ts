@@ -64,6 +64,33 @@ export function readAdminSetup(home: string, env: NodeJS.ProcessEnv = process.en
   return { username, email, password, generatedPassword: false };
 }
 
+const PENDING_PROFILE_FILE = 'pending-profile.json';
+
+/**
+ * The chosen module set, held between `init` and the first `start`.
+ *
+ * Separate from the credentials file, which is deleted the moment the daemon
+ * consumes it: the modules are installed after the daemon is up, which is later.
+ */
+export function writePendingProfile(home: string, modules: readonly string[]): void {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, PENDING_PROFILE_FILE), `${JSON.stringify({ modules }, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Read and clear: installing is a first-run act, not something to repeat. */
+export function takePendingProfile(home: string): readonly string[] {
+  const file = join(home, PENDING_PROFILE_FILE);
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { modules?: unknown };
+    rmSync(file, { force: true });
+    return Array.isArray(parsed.modules) ? parsed.modules.filter((m): m is string => typeof m === 'string') : [];
+  } catch {
+    rmSync(file, { force: true });
+    return [];
+  }
+}
+
 /** Store credentials only until the first successful daemon boot. */
 export function writePendingAdminSetup(home: string, setup: AdminSetup): string {
   mkdirSync(home, { recursive: true, mode: 0o700 });

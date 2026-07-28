@@ -13,9 +13,20 @@ import {
   validateEmail,
   validatePassword,
   validateUsername,
+  takePendingProfile,
   writePendingAdminSetup,
+  writePendingProfile,
 } from './setup.js';
 import type { AdminSetup } from './setup.js';
+import {
+  installModules,
+  modulesFor,
+  OPTIONAL_MODULES,
+  PROFILE_CHOICES,
+  profileFromEnv,
+  withDependencies,
+  type ProfileId,
+} from './profile.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
@@ -203,6 +214,9 @@ async function initialize(options: CliOptions): Promise<void> {
     process.stdout.write('Using secure generated defaults because prompting was skipped.\n');
   }
 
+  const modules = await resolveProfile(options);
+  writePendingProfile(options.home, modules);
+
   const file = writePendingAdminSetup(options.home, setup);
   if (connectGh && ghLogin) {
     scheduleGhImport(options.home, ghLogin);
@@ -213,6 +227,37 @@ async function initialize(options: CliOptions): Promise<void> {
   process.stdout.write(`\nSaved one-time bootstrap data in ${file} with owner-only permissions.\n`);
   if (setup.generatedPassword) process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
   if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
+}
+
+/**
+ * Which optional modules to turn on. `COMPANION_PROFILE` answers it without a
+ * prompt, which is what a scripted or containerised install needs; `-y` takes
+ * the recommendation.
+ */
+async function resolveProfile(options: CliOptions): Promise<readonly string[]> {
+  const fromEnv = profileFromEnv();
+  if (fromEnv) {
+    process.stdout.write(`Module set: ${fromEnv} (from COMPANION_PROFILE).\n`);
+    return modulesFor(fromEnv);
+  }
+  if (options.yes || !process.stdin.isTTY) return modulesFor('slim');
+
+  const { checkbox, select } = await import('@inquirer/prompts');
+  const profile = await select<ProfileId>({
+    message: 'Which modules should this instance start with?',
+    choices: PROFILE_CHOICES.map((c) => ({ value: c.value, name: c.name, description: c.description })),
+    default: 'slim',
+  });
+  if (profile !== 'custom') return modulesFor(profile);
+
+  const picked = await checkbox<string>({
+    message: 'Choose the optional modules',
+    choices: OPTIONAL_MODULES.map((m) => ({ value: m.id, name: m.label, description: m.hint })),
+  });
+  const closed = withDependencies(picked);
+  const added = closed.filter((id) => !picked.includes(id));
+  if (added.length) process.stdout.write(`Also enabling ${added.join(', ')}, which the selection depends on.\n`);
+  return closed;
 }
 
 async function promptForAdmin(defaults: AdminSetup): Promise<AdminSetup> {
@@ -257,11 +302,16 @@ async function start(options: CliOptions): Promise<void> {
   process.chdir(options.home);
 
   process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\nPress Ctrl+C to stop.\n\n`);
+  const pendingModules = takePendingProfile(options.home);
   const ready = waitForHealth(url, 30_000);
   await import(pathToFileURL(server).href);
   if (!(await ready)) {
     process.stderr.write(`Companion did not become ready within 30 seconds. Check the logs above.\n`);
     return;
+  }
+  if (pendingModules.length) {
+    process.stdout.write(`Enabling ${pendingModules.length} optional module(s)…\n`);
+    await installModules(url, pendingModules, (line) => process.stdout.write(`${line}\n`));
   }
   process.stdout.write(`\nCompanion is ready: ${url}\n`);
   const admin = pendingAdmin ?? readAdminSetup(options.home);

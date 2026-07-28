@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "bundle": "pnpm --filter 'companion-api...' build && pnpm --filter companion-web build && node build.mjs",
+    "bundle": "pnpm --dir ../.. gen:modules --profile full && pnpm --filter 'companion-api...' build && pnpm --filter companion-web build && node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run bundle && node --test tests/*.test.mjs",
     "prepublishOnly": "pnpm run typecheck && pnpm run test"
