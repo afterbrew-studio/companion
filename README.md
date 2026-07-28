@@ -216,6 +216,42 @@ The image is self-contained (companion-api + built SPA + git + moxxy CLI) and sh
 
 Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`, etc.) in Coolify's UI — they take precedence over any `.env`.
 
+#### Deploying the full module set
+
+**The profile is a build argument, not a runtime variable.** Setting
+`COMPANION_PROFILE=full` as an ordinary environment variable changes nothing: by
+the time the container starts, the module set is already compiled in. In
+Coolify, mark it as a **build variable** (the per-variable toggle), or set the
+build arg directly:
+
+- **Dockerfile build pack**: build arg `PROFILE=full`.
+- **Docker Compose build pack**: variable `COMPANION_PROFILE=full` marked as a
+  build variable, which `docker-compose.yml` forwards to the same build arg.
+
+Confirm what actually shipped rather than assuming, because a missed build
+variable fails silently as a smaller instance:
+
+```sh
+curl -s localhost:8901/api/modules -H "authorization: Bearer $(cat /data/cli-token)"   | grep -o '"id":"[a-z]*"'
+```
+
+**A `full` build is not a full instance.** Every optional module declares
+`autoInstall: false`, so it ships as **Available** and an admin adopts it. Right
+after a `full` deploy the running surface is identical to `slim`; the difference
+is what you can turn on without redeploying. From the Modules page, or in one
+pass (the order satisfies `dependsOn`):
+
+```sh
+docker exec -it <container> sh -lc '
+  for m in plan board refinement planner automations slop playground; do
+    companion module install "$m"
+  done'
+```
+
+`oidc` is deliberately not in that list: it needs its issuer, client id and
+client secret configured first, and `COMPANION_PUBLIC_URL` set to the address the
+provider redirects back to. See [`ENTERPRISE.md`](ENTERPRISE.md) §6.
+
 **Model providers in a container:** the image ships the moxxy CLI, but a fresh container has no provider credentials (there is no `~/.moxxy` to import from, and `moxxy init` has never run). Two ways to get agent runs working:
 
 - **Exec in once** — `docker exec -it <container> sh`, then run moxxy's own login/init with the home pinned into the persistent volume: `MOXXY_HOME=/data/moxxy-home moxxy init`. Credentials survive redeploys because they live in `/data`. An API-key provider is the right choice on a server; OAuth-based credentials rotate their refresh token on every use and should not be shared across machines.
