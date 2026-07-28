@@ -146,27 +146,30 @@ What remains is the seam either side of it: the daemon scans `modules/` once at
 boot, so adding files still needs a restart before `module install <id>` can see
 them, and nothing reads the provenance ledger back out into the UI.
 
-**Runner workforce policy.** In flight. Today `blockedTasks` is deny-only, so a
-machine is open by default and a module update that registers a new task starts
-running on a machine meant for one job. Needs an allow mode, module-level entries
-that also cover tasks a module adds later, repository-level scope, and a decision
-about the local runner: it is currently the last resort when nothing accepts a
-task, which under an allow policy silently lands work on the daemon's own machine
-exactly where the policy meant to keep it out.
+**Runner workforce policy.** `[BUILT]` `blockedTasks` became a policy with an
+`allow` mode, module-level entries that keep covering what a module registers
+later, repository clearance and a role fence. The local machine's last-resort
+role is now a setting (`unplacedWork`), defaulting to "only if its own policy
+accepts it", because under an allow-list the old behaviour quietly landed
+unpermitted work on the daemon's own machine. See [`runners.md`](runners.md).
 
-**Adding a moxxy provider from the UI.** Provisioning a provider means reaching
-the runner's shell. The seam exists on the moxxy side (`provision --spec -`,
-`login --stdin-prompts`), so this is wiring and a credential-handling decision,
-not a mechanism.
+Left undone there: switching modes drops policy entries whose module is not in
+this build (their effective answer is unchanged either way), and `totalCapacity`
+ignores repository clearance, documented as an over-approximation so the queue
+keeps pumping at full width.
 
-**The root README.** Carries content that belongs in separate files, and reads
-as a document for people who already know what Companion is. The repository is
-public, so this is the first thing a stranger sees.
+**Adding a moxxy provider from the UI.** In flight. Provisioning one means
+reaching the runner's shell today. The moxxy side is `moxxy provision --spec=-`,
+taking `{ provider, model?, key?, basics? }` as JSON on stdin. Write the flag
+exactly that way: `--spec -` with a space silently falls through to the flag
+path and prints usage, because moxxy's parser reads the bare `-` as a flag and
+its `stringFlag` then sees a boolean rather than the string it wants.
 
-**A trusted publisher for `@moxxy/companion-sdk`.** Operational, not code. The
-other seven packages publish from CI; this one alone answers `404 Not Found` on
-PUT, which npm also returns for "no permission", and it is the one package a
-module author actually installs.
+The decision that shapes it: the credential passes through to moxxy on the
+target machine and never persists in Companion. Not the database, not a log, not
+a response, and never argv, which is what the stdin form is for. Providers that
+sign in through OAuth (`moxxy login <provider>`) are interactive and are not
+covered by this.
 
 ---
 

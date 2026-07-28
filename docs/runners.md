@@ -5,6 +5,16 @@ built-in **local runner**, the machine the daemon runs on, and can attach any
 number of **remote runners**: other machines running the `companion-runner`
 agent, reached over the network with a bearer token.
 
+A machine's settings answer three different questions, and the page is laid out
+that way because conflating them is how a fleet becomes unpredictable:
+
+- **Capability** is what the machine can do: which providers and models it
+  advertises. Discovered by probing it, not chosen.
+- **Policy** is what it is allowed to do: which work, and which of its providers
+  and models agents may use.
+- **Placement** is where it participates and how much: workspaces, repositories,
+  roles, and its own concurrency ceiling.
+
 ## How work is placed
 
 Each runner is either **shared** (eligible for any workspace) or **delegated**
@@ -12,6 +22,46 @@ Each runner is either **shared** (eligible for any workspace) or **delegated**
 runner. When a run starts, Companion places it on an eligible, online runner and
 prepares its git worktree there, so the whole run (gateway, clone, worktree and
 session history) lives on one machine.
+
+### What a machine will take
+
+Work is registered as a **task**, `<module>.<name>`: `board.worker`, `code.fix`,
+`automations.digest`. Each machine carries a policy over those:
+
+| Mode | Meaning |
+|---|---|
+| `deny` (default) | takes everything except what you list |
+| `allow` | takes only what you list |
+
+An entry is either a **module** (`code`) or a **task** (`code.fix`). The module
+level is not shorthand for today's tasks: it stores the module id, so it keeps
+covering whatever that module registers in future versions. That is the whole
+reason both levels exist, and why a task list alone cannot express "this machine
+does not do the board". Underneath a module you can still be specific, which is
+how "implements but does not review" is configured.
+
+Two more fences sit alongside it. **Repository clearance** (`all`, or only the
+repositories you select) is for a machine cleared for particular code. **Roles**
+limit who may place work there; empty means every role, and automated work is
+not attributed to a person.
+
+A refusal names the fence that rejected it, rather than the first one in the
+chain, so "why did this not run here" has one answer.
+
+### Work no machine accepts
+
+Under an allow-list this stops being hypothetical, so it is a setting on the
+operate module rather than a hidden rule.
+
+| Setting | Behaviour |
+|---|---|
+| `policy` (default) | the daemon's own machine takes it only if its own policy accepts it |
+| `local` | the daemon's machine always takes it |
+| `refuse` | nothing takes it, and the run is refused visibly |
+
+The default matters most on an allow-list instance: without it, work nobody
+explicitly permitted would quietly land on the daemon's machine, which is exactly
+where the policy meant to keep it out.
 
 Placement is **provider-aware**. Runners advertise the model providers configured
 in their moxxy home, Companion prefers one that can serve the run's pinned or
