@@ -91,37 +91,55 @@ and check the key's GitHub permissions.
 
 The image is self-contained (daemon, built SPA, git, moxxy CLI) and ships a
 `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can
-gate deploys on it. Point Coolify at the repository; either build pack works.
+gate deploys on it. Point Coolify at the repository.
 
-- **Dockerfile**: port `8901`, persistent storage at `/data` **and** at
-  `/root/.moxxy`. The second holds the AI provider credentials, and without it
-  every redeploy loses them.
-- **Docker Compose**: uses `docker-compose.yml` as is, which already declares
-  both volumes.
+**Use the Docker Compose build pack.** Both packs can build the image, but the
+compose one avoids three separate problems, one of which has no other per-app
+fix:
 
-Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`) in
-Coolify's UI; they take precedence over any `.env`. Set `COMPANION_PUBLIC_URL`
-to your domain so SSO and webhooks have an address to come back to.
+1. **Rolling updates.** Coolify does not apply them to compose-based
+   deployments, and a rolling update cannot work here: the replacement waits for
+   the data directory, so it never becomes healthy, and the old container is not
+   stopped until it is. Coolify's rolling-update toggle is server-wide, so
+   choosing this build pack is how a single application opts out.
+2. **Both volumes.** `docker-compose.yml` declares `companion-data` and
+   `companion-moxxy` itself. Under the Dockerfile pack you add persistent
+   storage by hand at `/data` **and** `/root/.moxxy`, and forgetting the second
+   loses every AI provider credential on each redeploy.
+3. **The module profile.** The compose file maps `COMPANION_PROFILE` to the
+   image's build argument, which is the reliable way to get a `full` build.
 
-### Redeploys must stop the old container first
+Set up:
 
-If a redeploy fails with:
+- **Build Pack**: Docker Compose. Compose file location `/docker-compose.yml`,
+  which auto-detection finds at the repository root. If Coolify will not let you
+  set it while creating the resource, create it and set it afterwards.
+- **Build variable**: `COMPANION_PROFILE=full`, marked as a build variable (the
+  per-variable toggle). Leave it unset for `slim`.
+- **Environment**: admin credentials, and `COMPANION_PUBLIC_URL` set to your
+  domain so SSO and webhooks have an address to come back to. Coolify's values
+  take precedence over any `.env`. `COMPANION_HOST` and `COMPANION_HOME` are
+  already set correctly by the compose file.
+
+Note the compose file publishes `8901` on the host. If you serve Companion
+through Coolify's proxy on a domain and would rather not occupy that host port,
+drop the `ports:` block for your deployment.
+
+### A redeploy that says the data directory is in use
 
 ```
 another Companion daemon is already using /data (pid 1 on <container>),
 and it kept heartbeating for 75s, so it is still running.
 ```
 
-the deployment is doing a **rolling update**, and that cannot work here. Turn it
-off in the application's settings, so Coolify stops the old container before
-starting the new one.
+The old container was not stopped first, which is a rolling update. See the
+build pack note above: on Docker Compose, Coolify does not apply one.
 
-The reason is a genuine deadlock rather than a race. The new container waits for
-the data directory, so it never becomes healthy. A rolling update will not stop
-the old container until the new one is healthy. The old one is healthy, holds
-`/data`, and keeps writing its heartbeat. Neither side can move, and the same
-old container id shows up in every attempt. Waiting longer does not help; it only
-stretches the deadlock until the healthcheck gives up.
+It is a deadlock rather than a race, which is why waiting longer never helps.
+The replacement waits for the data directory, so it never becomes healthy; the
+rolling update does not stop the original until the replacement is healthy; the
+original is healthy and keeps writing its heartbeat. The same old container id
+turns up in every attempt.
 
 Companion is single-node **because of the filesystem**, not the database. The
 home holds clones, worktrees, scratch space, run configs and the isolated moxxy
@@ -129,16 +147,16 @@ home. Two daemons sharing it would both run every scheduled job and both check
 out the same worktrees, and the damage would be silent. So the second one
 refuses instead.
 
-Once the setting is changed, clear the stuck container by hand, because a
-correct strategy still has to get past the one already running:
+Whatever you change, clear the container that is already stuck, because a
+correct deployment still has to get past it:
 
 ```sh
 docker ps --filter name=<your-app> --format '{{.ID}} {{.Status}}'
 docker stop <old-container-id>
 ```
 
-Then redeploy. If you need zero downtime, that is active/passive with a second
-`COMPANION_HOME`, not two daemons on one volume.
+Zero downtime is active/passive with a second `COMPANION_HOME`, not two daemons
+on one volume.
 
 ### Deploying the full module set
 
