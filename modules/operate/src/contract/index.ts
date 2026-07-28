@@ -268,20 +268,93 @@ export interface RunTaskDescriptor {
   readonly id: string;
   readonly label: string;
   /**
-   * False = this task's runs currently always execute on the daemon's own
-   * machine (their working dir is prepared there) and never go through
-   * placement — its toggle is shown for completeness and takes effect only
-   * once such runs learn to place remotely.
+   * False = this task's runs prepare their working directory on the daemon's
+   * own machine, so they land there without consulting placement. A fact about
+   * how the work is built, not a setting: the settings page states it instead
+   * of rendering a control nobody turned off. The machine's policy still
+   * governs the runs of such a task that DO reach placement (a few prepare a
+   * shared snapshot instead), which is why a module-level entry covers them.
    */
   readonly placeable: boolean;
   readonly hint?: string;
 }
 
 /**
+ * How a machine's task policy is read. `deny` is OPEN by default — everything
+ * except the listed entries — so a module update that registers a new task
+ * starts allowed everywhere. `allow` is CLOSED by default: only the listed
+ * entries, which is how an operator says "this machine does exactly these
+ * things and nothing else" and has it stay true across upgrades.
+ */
+export type RunnerPolicyMode = 'allow' | 'deny';
+
+/**
+ * What a machine may be used for, at two levels. A MODULE entry means
+ * everything that module registers NOW AND IN FUTURE — that is the whole point
+ * of the level, so it is stored as the module id and never expanded into the
+ * task ids that happen to exist today. A TASK entry names one unit of work, so
+ * "implements but does not review" stays expressible underneath a module row.
+ *
+ * Full replacement on write. Both lists tolerate ids whose module is disabled:
+ * the decision must outlive the module being switched off.
+ */
+export interface RunnerTaskPolicy {
+  readonly mode: RunnerPolicyMode;
+  /** Module ids (`code`) — blanket entries over everything they register. */
+  readonly modules: readonly string[];
+  /** Task ids (`code.fix`) — individual entries under a module. */
+  readonly tasks: readonly string[];
+}
+
+/** The deny-nothing policy: what every machine carried before modes existed. */
+export const OPEN_TASK_POLICY: RunnerTaskPolicy = { mode: 'deny', modules: [], tasks: [] };
+
+/** The module that registered a task, read off its `<moduleId>.<name>` id. */
+export function taskModuleId(taskId: string): string {
+  const dot = taskId.indexOf('.');
+  return dot === -1 ? taskId : taskId.slice(0, dot);
+}
+
+/** Does the policy name this task, directly or through its module blanket? */
+export function taskPolicyLists(policy: RunnerTaskPolicy, taskId: string): boolean {
+  return policy.modules.includes(taskModuleId(taskId)) || policy.tasks.includes(taskId);
+}
+
+/**
+ * May a machine carrying this policy run this task? The single definition both
+ * placement and the settings page read, so what the operator sees ticked is
+ * what the server applies.
+ */
+export function taskPolicyAllows(policy: RunnerTaskPolicy, taskId: string): boolean {
+  return policy.mode === 'allow' ? taskPolicyLists(policy, taskId) : !taskPolicyLists(policy, taskId);
+}
+
+/** Repository reach: `all` takes any repo's work; `selected` only the cleared ones. */
+export type RunnerRepoScope = 'all' | 'selected';
+
+/**
+ * What happens to a run no eligible machine's policy accepts.
+ *  - `policy` — the daemon's own machine takes it only if ITS policy does
+ *    (the default: identical to the old last-resort on a deny-list instance,
+ *    and a visible refusal on an allow-list one);
+ *  - `local` — the daemon's machine always takes it (pre-policy behaviour);
+ *  - `refuse` — nothing absorbs it; the run fails naming the policy.
+ */
+export type RunnerFallback = 'policy' | 'local' | 'refuse';
+
+/**
  * An execution host. The built-in `local` runner (id `runner-local`) always
  * exists, is `shared`, and cannot be deleted. `remote` runners are other
  * machines running the companion-runner agent, reached at `endpoint` with a
  * bearer `token` (write-only; never returned).
+ *
+ * Three different things live here and read differently:
+ *  - CAPABILITY (`health`, `catalog`) is discovered by probing the machine —
+ *    never a setting;
+ *  - POLICY (`taskPolicy`, `providerPolicy`) is what it is allowed to do;
+ *  - PLACEMENT (`scope`/`workspaceIds`, `repoScope`/`repoIds`, `allowedRoles`,
+ *    `ownerId`, `enabled`) is where it participates, and `maxRuns` is the
+ *    machine's own capacity.
  */
 export interface RunnerRecord {
   readonly id: string;
@@ -301,13 +374,21 @@ export interface RunnerRecord {
   readonly maxRuns: number;
   readonly enabled: boolean;
   /**
-   * Task ids (RunTaskDescriptor) this machine refuses — placement never sends
-   * them here; empty = takes everything. An exclude-list, so tasks added by
-   * future modules stay opted-in by default. Hard filter (outranks the repo
-   * pin), except the local runner remains the last resort when no machine at
-   * all accepts a task.
+   * What this machine is allowed to be used for. A hard placement filter that
+   * outranks the repo pin; where nothing accepts a run, the instance's
+   * `RunnerFallback` decides whether the daemon's machine absorbs it.
    */
-  readonly blockedTasks: readonly string[];
+  readonly taskPolicy: RunnerTaskPolicy;
+  /** `selected` limits this machine to `repoIds`; work on any other repo (and
+   *  repo-less work, which has nothing to clear) is placed elsewhere. */
+  readonly repoScope: RunnerRepoScope;
+  /** Repositories this machine is cleared for, `owner/name`. */
+  readonly repoIds: ReadonlyArray<string>;
+  /**
+   * Roles whose users may place work here; empty = every role. Automated work
+   * has no triggering role, so a restricted machine never receives it.
+   */
+  readonly allowedRoles: ReadonlyArray<string>;
   readonly health: RunnerHealth;
   readonly catalog: RunnerCatalog | null;
   /** Which of this machine's providers/models agents may use (see the type). */
@@ -330,7 +411,7 @@ export interface CreateRunnerRequest {
   readonly scope?: RunnerScope;
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
-  readonly blockedTasks?: ReadonlyArray<string>;
+  readonly taskPolicy?: RunnerTaskPolicy;
 }
 
 export interface UpdateRunnerRequest {
@@ -342,8 +423,39 @@ export interface UpdateRunnerRequest {
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
   readonly enabled?: boolean;
-  /** Full replacement block-list; empty clears it. Omit to keep the current one. */
-  readonly blockedTasks?: ReadonlyArray<string>;
+  /** Full replacement policy; omit to keep the current one. */
+  readonly taskPolicy?: RunnerTaskPolicy;
+  readonly repoScope?: RunnerRepoScope;
+  readonly repoIds?: ReadonlyArray<string>;
+  /** Full replacement role list; empty opens the machine to every role. */
+  readonly allowedRoles?: ReadonlyArray<string>;
+}
+
+/** One module's registered run tasks — the policy tree's top level. */
+export interface RunTaskGroup {
+  readonly moduleId: string;
+  /** That module's title, or the raw id when it is not in this build. */
+  readonly moduleTitle: string;
+  readonly tasks: ReadonlyArray<RunTaskDescriptor>;
+}
+
+/** A repository a machine can be cleared for. */
+export interface RunnerRepoRef {
+  readonly fullName: string;
+  readonly workspaceId: string | null;
+}
+
+/**
+ * What a machine's policy and placement can be written against: the registered
+ * work grouped by owning module, the repositories the viewer may see, and this
+ * instance's role ids. Its own route because it changes with the module set and
+ * the repo list, not with health — the runners payload is re-read on every
+ * `runners.changed`, which fires on every health flap.
+ */
+export interface RunnerPolicyOptions {
+  readonly groups: ReadonlyArray<RunTaskGroup>;
+  readonly repos: ReadonlyArray<RunnerRepoRef>;
+  readonly roles: ReadonlyArray<string>;
 }
 
 /** Result of probing a runner's endpoint (the "Test connection" action). */

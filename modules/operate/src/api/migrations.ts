@@ -270,4 +270,52 @@ export default defineMigrations([
       // The carried settings rows are additive and unread by older code.
     },
   },
+  {
+    /**
+     * The workforce policy: a machine's task filter gains a MODE and a module
+     * level, and placement gains repository + role reach.
+     *
+     * `blocked_tasks` was deny-only, i.e. open by default. It carries over
+     * verbatim into `mode = 'deny'` with the same ids, which is the same
+     * decision expressed in the new shape — a machine that blocked nothing
+     * still takes everything, and one that blocked `board.worker` still
+     * refuses exactly that. The old column keeps its value and is unread from
+     * here on, so a rollback finds it intact (same discipline as v5/v6).
+     */
+    version: 7,
+    name: 'runners_workforce_policy',
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE runners ADD COLUMN task_policy_mode TEXT`,
+        `ALTER TABLE runners ADD COLUMN policy_modules TEXT`,
+        `ALTER TABLE runners ADD COLUMN policy_tasks TEXT`,
+        `ALTER TABLE runners ADD COLUMN repo_scope TEXT`,
+        `ALTER TABLE runners ADD COLUMN allowed_roles TEXT`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS runner_repos (
+          runner_id TEXT NOT NULL,
+          repo      TEXT NOT NULL,
+          PRIMARY KEY (runner_id, repo)
+        );
+      `);
+      // NULL mode means "never carried", which is what makes this re-runnable:
+      // a machine an operator has since moved to an allow-list is left alone.
+      db.exec(`
+        UPDATE runners SET task_policy_mode = 'deny', policy_tasks = blocked_tasks
+        WHERE task_policy_mode IS NULL
+      `);
+    },
+    down: (db) => {
+      // The columns stay (SQLite can't drop them portably); the side table is
+      // this migration's own, and v6 has no repository reach to preserve.
+      db.exec(`DROP TABLE IF EXISTS runner_repos`);
+    },
+  },
 ]);

@@ -1,7 +1,16 @@
 import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@moxxy/companion-core/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
-import type { MoxxyStatus, RunRecord, TaskModelPin, TaskModelSnapshot } from '../contract/index.js';
+import type {
+  MoxxyStatus,
+  RunnerPolicyOptions,
+  RunRecord,
+  RunTaskDescriptor,
+  RunTaskGroup,
+  TaskModelPin,
+  TaskModelSnapshot,
+} from '../contract/index.js';
+import { taskModuleId } from '../contract/index.js';
 import { paths } from '@moxxy/companion-services';
 import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
@@ -31,9 +40,15 @@ const setModelSchema = z.object({
 // ---------- runners ----------
 
 const workspaceIds = z.array(z.string()).max(200).optional();
-// Task ids a runner refuses (RunTaskDescriptor ids). Unknown ids are allowed —
-// a blocked task's module may be disabled right now; the block must survive.
-const blockedTasks = z.array(z.string().min(1).max(64)).max(100);
+// What a machine may be used for. Unknown module/task ids are accepted — the
+// owning module may be disabled right now, and the decision must survive that.
+const taskPolicySchema = z.object({
+  mode: z.enum(['allow', 'deny']),
+  modules: z.array(z.string().min(1).max(64)).max(100),
+  tasks: z.array(z.string().min(1).max(64)).max(200),
+});
+const repoIds = z.array(z.string().min(1).max(200)).max(500).optional();
+const allowedRoles = z.array(z.string().min(1).max(64)).max(50).optional();
 
 const createRunnerSchema = z.object({
   name: z.string().min(1).max(80),
@@ -43,7 +58,7 @@ const createRunnerSchema = z.object({
   scope: z.enum(['shared', 'delegated']).optional(),
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
-  blockedTasks: blockedTasks.optional(),
+  taskPolicy: taskPolicySchema.optional(),
 });
 
 // One machine's provider policy. Full replacement; unknown names are allowed,
@@ -62,7 +77,10 @@ const updateRunnerSchema = z.object({
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
   enabled: z.boolean().optional(),
-  blockedTasks: blockedTasks.optional(),
+  taskPolicy: taskPolicySchema.optional(),
+  repoScope: z.enum(['all', 'selected']).optional(),
+  repoIds,
+  allowedRoles,
 });
 
 // ---------- system (status, provider/model settings, skills) ----------
@@ -108,8 +126,7 @@ export default defineRoutes((ctx) => {
     const titles = new Map<string, string>(ctx.modules.list().map((m) => [m.id, m.title]));
     return {
       tasks: op.runTaskDescriptors().map((task): TaskModelPin => {
-        const dot = task.id.indexOf('.');
-        const moduleId = dot === -1 ? task.id : task.id.slice(0, dot);
+        const moduleId = taskModuleId(task.id);
         return {
           task,
           moduleId,
@@ -126,6 +143,30 @@ export default defineRoutes((ctx) => {
     if (!user || ids.some((id) => !workspace.canAccessWorkspace(user, id))) {
       throw notFound('workspace not found');
     }
+  };
+
+  const requireAccessibleRepos = (user: AuthUser | null, ids: readonly string[]): void => {
+    if (!user || ids.some((id) => !workspace.canAccessRepo(user, id))) throw notFound('repository not found');
+  };
+
+  /**
+   * The registered work grouped by the module that owns it, read off the task
+   * id prefix and titled from the kernel's catalogue — no second registry to
+   * keep in step. Modules with no registered task never appear, so the policy
+   * tree only offers entries that mean something.
+   */
+  const taskGroups = (): RunTaskGroup[] => {
+    const titles = new Map<string, string>(ctx.modules.list().map((m) => [m.id, m.title]));
+    const groups = new Map<string, RunTaskDescriptor[]>();
+    for (const task of op.runTaskDescriptors()) {
+      const moduleId = taskModuleId(task.id);
+      const bucket = groups.get(moduleId);
+      if (bucket) bucket.push(task);
+      else groups.set(moduleId, [task]);
+    }
+    return [...groups.entries()]
+      .map(([moduleId, tasks]) => ({ moduleId, moduleTitle: titles.get(moduleId) ?? moduleId, tasks }))
+      .sort((a, b) => a.moduleTitle.localeCompare(b.moduleTitle));
   };
 
   // Personal runners stay private to their owner. Admins additionally manage
@@ -328,6 +369,21 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
+      // What a machine's policy and placement can be written against. Its own
+      // route because it turns over with the module set and the repo list, not
+      // with health — /api/runners is re-read on every runners.changed, which
+      // fires whenever a health probe moves. Must precede /api/runners/:id.
+      method: 'GET',
+      path: '/api/runners/options',
+      access: 'runners:connect',
+      handler: ({ user }): RunnerPolicyOptions => ({
+        groups: taskGroups(),
+        repos: op.runners.repoOptions().filter((repo) => !!user && workspace.canAccessRepo(user, repo.fullName)),
+        roles: [...ctx.rbac.roles()],
+      }),
+    }),
+
+    route({
       // Capacity is safe instance health: no run titles, repos, or owner ids.
       // It is viewer-specific because their private runners extend the pool.
       method: 'GET',
@@ -366,6 +422,22 @@ export default defineRoutes((ctx) => {
           throw badRequest('a delegated runner needs at least one workspace');
         }
         if (nextScope === 'delegated') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
+        const nextRepoScope = body.repoScope ?? runner.repoScope;
+        const nextRepoIds = body.repoIds ?? runner.repoIds;
+        if (nextRepoScope === 'selected' && nextRepoIds.length === 0) {
+          throw badRequest('a repository-scoped machine needs at least one repository');
+        }
+        if (nextRepoScope === 'selected') requireAccessibleRepos(user, nextRepoIds);
+        // A role nobody holds would fence the machine off silently, so an
+        // unknown id is refused at the edge rather than stored and ignored.
+        for (const role of body.allowedRoles ?? []) {
+          if (!ctx.rbac.hasRole(role)) throw badRequest(`unknown role ${role}`);
+        }
+        // A private machine has no roles control (ownership already answers the
+        // question), so one set here could lock its owner out with no way back.
+        if ((body.allowedRoles ?? []).length > 0 && runner.ownerId !== null) {
+          throw badRequest('role restrictions apply to shared machines; this one is already limited to its owner');
+        }
         return { runner: await op.runners.update(params.id, body) };
       },
     }),

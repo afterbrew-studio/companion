@@ -111,14 +111,16 @@ export class RunsStore {
    * given user schedules against: shared runners (runner_id null = local) plus
    * the user's own machines. A colleague's chats parked on THEIR personal
    * runner must not eat this user's headroom — the capacities don't overlap.
-   * With `task`, only chats on runners whose block-list accepts it count —
-   * the gate compares against task-filtered capacity, so a chat parked on a
-   * runner outside that pool must not eat the pool's headroom. Local chats
-   * ALWAYS count: the local runner is the last-resort sink (placement and the
-   * assistant's no-public-url pin can park chats there past its block-list),
-   * and a gate blind to them would admit chats without bound.
+   * With `runnerIds`, only chats on those machines count — the gate compares
+   * against task-filtered capacity, so a chat parked on a runner outside that
+   * pool must not eat the pool's headroom. The caller passes the ids whose
+   * task policy accepts the task (null = no task filter), so the policy has
+   * one definition instead of a second one written in SQL. Local chats ALWAYS
+   * count: the local runner is the last-resort sink (placement and the
+   * assistant's no-public-url pin can park chats there past its policy), and a
+   * gate blind to them would admit chats without bound.
    */
-  activeInteractiveCount(userId: string | null = null, task: string | null = null): number {
+  activeInteractiveCount(userId: string | null = null, runnerIds: readonly string[] | null = null): number {
     return (
       this.db
         .prepare(
@@ -127,10 +129,12 @@ export class RunsStore {
            WHERE r.kind IN ('interactive', 'assistant')
              AND r.status IN ('provisioning', 'running', 'idle', 'review')
              AND (k.owner_id IS NULL OR k.owner_id = @userId)
-             AND (@task IS NULL OR r.runner_id IS NULL OR k.blocked_tasks IS NULL OR NOT EXISTS (
-               SELECT 1 FROM json_each(k.blocked_tasks) WHERE value = @task))`,
+             AND (@ids IS NULL OR r.runner_id IS NULL OR EXISTS (
+               SELECT 1 FROM json_each(@ids) WHERE value = k.id))`,
         )
-        .get({ userId, task, local: LOCAL_RUNNER_ID }) as { n: number }
+        .get({ userId, ids: runnerIds === null ? null : JSON.stringify(runnerIds), local: LOCAL_RUNNER_ID }) as {
+        n: number;
+      }
     ).n;
   }
 
