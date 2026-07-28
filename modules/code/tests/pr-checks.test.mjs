@@ -75,3 +75,54 @@ test('a caller that named the PR itself still gets an error', async () => {
     (err) => err instanceof UnknownPrError && /unknown PR moxxy-ai\/companion#30/.test(err.message),
   );
 });
+
+/** storeOf, but setChecks is observable: caching is the thing under test here. */
+function recordingStore(rows) {
+  const cached = [];
+  return {
+    cached,
+    prs: {
+      list: () => [...rows.values()],
+      get: (_repo, number) => rows.get(number),
+      setChecks: (repo, number, snapshot) => cached.push({ repo, number, snapshot }),
+      setMergeable() {},
+      setReviewDecision() {},
+    },
+  };
+}
+
+test('with no GitHub client the answer is unknown, and it is not cached', async () => {
+  const rows = new Map([[26, { ...openPr(26), state: 'merged' }]]);
+  const store = recordingStore(rows);
+  const checks = new PrChecks(store, () => null, () => undefined);
+
+  const summary = await checks.fetchSummary('moxxy-ai/companion', 26, 'maintainer');
+
+  // 'none' reads as "no CI configured", which merge gates treat as green, and
+  // a revoked token must never look like a clean build.
+  assert.equal(summary.state, 'unknown');
+  // Caching it would freeze that verdict past the credential coming back.
+  assert.deepEqual(store.cached, []);
+});
+
+test('a settled PR with no head commit caches its empty snapshot', async () => {
+  const rows = new Map([[26, { ...openPr(26), state: 'merged', headSha: null }]]);
+  const store = recordingStore(rows);
+  const client = {
+    checkRuns: async () => [],
+    combinedStatus: async () => null,
+    pull: async () => ({}),
+    prReviewList: async () => [],
+  };
+  const broadcasts = [];
+  const checks = new PrChecks(store, () => client, (msg) => broadcasts.push(msg));
+
+  const summary = await checks.fetchSummary('moxxy-ai/companion', 26, 'maintainer');
+
+  assert.equal(summary.state, 'none');
+  // The preload queue selects settled PRs with no snapshot, so leaving this
+  // uncached re-queues the same PR on every pass, forever.
+  assert.equal(store.cached.length, 1);
+  assert.equal(store.cached[0].snapshot.state, 'none');
+  assert.deepEqual(broadcasts, [{ t: 'prs.changed', repo: 'moxxy-ai/companion' }]);
+});

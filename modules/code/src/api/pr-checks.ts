@@ -110,8 +110,21 @@ export class PrChecks {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new UnknownPrError(repo, prNumber);
     const client = this.github(repo, username);
-    if (!client || !pr.headSha) {
-      return { ...emptySnapshot(), repo, prNumber, headSha: pr?.headSha ?? null, runs: [] };
+    // Two different answers, collapsed into one until now. No client means we
+    // could not ask, and 'none' would read as "no CI configured", which gates
+    // treat as green. It stays uncached so a credential that comes back can
+    // still produce a real snapshot.
+    if (!client) {
+      return { ...emptySnapshot(), state: 'unknown', repo, prNumber, headSha: pr.headSha ?? null, runs: [] };
+    }
+    // No head commit is a settled fact about the PR, so record it. Uncached, a
+    // merged PR without one rejoins the preload queue on every pass forever,
+    // because that queue selects precisely the settled PRs with no snapshot.
+    if (!pr.headSha) {
+      const summary: ChecksSummary = { ...emptySnapshot(), repo, prNumber, headSha: null, runs: [] };
+      this.store.prs.setChecks(repo, prNumber, toSnapshot(summary));
+      this.broadcast({ t: 'prs.changed', repo });
+      return summary;
     }
 
     // Independent sources; one failing must not blank the others. The single-PR
