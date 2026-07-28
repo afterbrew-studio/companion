@@ -34,19 +34,56 @@ const STALE_MS = 60_000;
 export class InstanceLock {
   private timer: NodeJS.Timeout | null = null;
 
-  /** Throws when another live daemon holds this home. */
-  acquire(): void {
-    const existing = this.read();
-    if (existing && !this.isStale(existing)) {
-      throw new Error(
-        `another Companion daemon is already using ${companionHome()} ` +
-          `(pid ${existing.pid} on ${existing.host}).\n` +
-          `Companion is single-node: one daemon per data directory. If you are scaling ` +
-          `replicas, run active/passive instead, or give each instance its own COMPANION_HOME.`,
-      );
-    }
-    if (existing) {
-      log.warn(`taking over ${FILE()} from a dead daemon (pid ${existing.pid} on ${existing.host})`);
+  /**
+   * How long to wait for a predecessor to stop beating before giving up. The
+   * default covers the staleness window plus one beat; tests shorten it, and a
+   * deployment that wants to fail fast can too.
+   */
+  constructor(private readonly waitMs: number = STALE_MS + BEAT_MS) {}
+
+  /**
+   * Take the lock, waiting out a predecessor that has stopped beating.
+   *
+   * Refusing outright was wrong for the deployment everyone actually does. A
+   * rolling redeploy starts the new container before the old one's heartbeat has
+   * aged out, and across containers neither the pid nor the hostname means
+   * anything: the daemon is pid 1 in every one of them, and the recorded host is
+   * a container id that no longer exists. So an ordinary redeploy hit "another
+   * daemon is already using /data" and the deployment failed.
+   *
+   * Waiting keeps the invariant that matters. Two daemons must never run against
+   * one home, and a genuinely live one keeps writing its heartbeat, so it is
+   * still refused at the end of the window. What changes is that a dead
+   * predecessor costs a pause instead of a failed boot.
+   */
+  async acquire(): Promise<void> {
+    const deadline = Date.now() + this.waitMs;
+    let announced = false;
+    for (;;) {
+      const existing = this.read();
+      if (!existing || this.isStale(existing)) {
+        if (existing) {
+          log.warn(`taking over ${FILE()} from a dead daemon (pid ${existing.pid} on ${existing.host})`);
+        }
+        break;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `another Companion daemon is already using ${companionHome()} ` +
+            `(pid ${existing.pid} on ${existing.host}), still beating after ` +
+            `${Math.round(this.waitMs / 1000)}s.\n` +
+            `Companion is single-node: one daemon per data directory. If you are scaling ` +
+            `replicas, run active/passive instead, or give each instance its own COMPANION_HOME.`,
+        );
+      }
+      if (!announced) {
+        announced = true;
+        log.warn(
+          `waiting for the daemon holding ${companionHome()} (pid ${existing.pid} on ${existing.host}) ` +
+            `to release it or stop beating; normal during a redeploy`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     this.write();
     this.timer = setInterval(() => this.write(), BEAT_MS);

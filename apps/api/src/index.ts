@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   // home, so a second daemon would duplicate every scheduled job and fight over
   // the same checkouts. Refuse rather than corrupt.
   const lock = new InstanceLock();
-  lock.acquire();
+  await lock.acquire();
 
   const dbPath = paths.db();
   const db = new Database(dbPath);
