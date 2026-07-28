@@ -45,6 +45,13 @@ export interface ExternalModuleProblem {
  */
 export const ABI_GENERATION = '0.x';
 
+/**
+ * The packages a module must resolve from the host, never from its own tree.
+ * Named individually rather than by scope: `@moxxy` also holds `@moxxy/cli`,
+ * which has nothing to do with the ABI and is not a problem to vendor.
+ */
+const ABI_PACKAGES = ['@moxxy/companion-sdk', '@moxxy/companion-contracts'] as const;
+
 /** Read `$COMPANION_HOME/modules`, without importing anything. */
 export function scanExternalModules(dir: string): {
   modules: ExternalModule[];
@@ -104,8 +111,10 @@ function validate(
   // its own `Reply` class, so `result instanceof Reply` in the router is false
   // and every redirect, HTML page and byte body comes back as a JSON-wrapped
   // 200. Measured, not theorised. Refuse at scan time, where it is one line.
-  if (existsSync(join(root, dirName, 'node_modules', '@moxxy-ai'))) {
-    return 'ships its own copy of @moxxy-ai/*: mark the SDK external when building and do not publish node_modules';
+  for (const abi of ABI_PACKAGES) {
+    if (existsSync(join(root, dirName, 'node_modules', ...abi.split('/')))) {
+      return `ships its own copy of ${abi}: mark it external when building and do not publish node_modules`;
+    }
   }
   for (const key of ['api', 'manifest', 'client'] as const) {
     const rel = m[key];

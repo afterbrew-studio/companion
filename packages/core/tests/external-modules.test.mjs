@@ -43,7 +43,7 @@ test('the ABI bridge directory is not mistaken for a module', (t) => {
   const h = home();
   t.after(h.cleanup);
   plant(h.dir, 'hello');
-  mkdirSync(join(h.dir, 'node_modules', '@moxxy-ai'), { recursive: true });
+  mkdirSync(join(h.dir, 'node_modules', '@moxxy'), { recursive: true });
 
   const { modules, problems } = scanExternalModules(h.dir);
   assert.deepEqual(problems, []);
@@ -54,7 +54,7 @@ test('a module that vendors the SDK is refused', (t) => {
   const h = home();
   t.after(h.cleanup);
   const dir = plant(h.dir, 'hello');
-  mkdirSync(join(dir, 'node_modules', '@moxxy-ai', 'companion-sdk'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', '@moxxy', 'companion-sdk'), { recursive: true });
 
   const { modules, problems } = scanExternalModules(h.dir);
   assert.deepEqual(modules, [], 'a second SDK copy makes `instanceof Reply` false in the router');
@@ -116,7 +116,7 @@ test('the bridge re-exports exactly the host namespace, and only that', async (t
   const namespaces = { '.': { alpha: 1 }, './server': { Reply: class {}, badRequest: () => {} }, './agents': {} };
   installAbiBridge({ dir: h.dir, version: '9.9.9', namespaces });
 
-  const bridged = await import(join(h.dir, 'node_modules', '@moxxy-ai', 'companion-sdk', 'server.js'));
+  const bridged = await import(join(h.dir, 'node_modules', '@moxxy', 'companion-sdk', 'server.js'));
   assert.deepEqual(Object.keys(bridged).sort(), ['Reply', 'badRequest']);
   // Identity, not a copy: this is the whole reason the bridge exists.
   assert.equal(bridged.Reply, namespaces['./server'].Reply);
@@ -130,7 +130,7 @@ test('importing the bridge outside a daemon fails loudly', async (t) => {
   delete globalThis[Symbol.for('companion.abi')];
 
   await assert.rejects(
-    () => import(`${join(h.dir, 'node_modules', '@moxxy-ai', 'companion-sdk', 'index.js')}?v=2`),
+    () => import(`${join(h.dir, 'node_modules', '@moxxy', 'companion-sdk', 'index.js')}?v=2`),
     /imported outside a Companion daemon/,
   );
 });

@@ -51,7 +51,10 @@ export function installAbiBridge(opts: AbiBridgeOptions): void {
   for (const [entry, ns] of Object.entries(opts.namespaces)) table[specifierFor(entry)] = ns;
   (globalThis as Record<symbol, unknown>)[ABI_GLOBAL] = table;
 
-  const pkgDir = join(opts.dir, 'node_modules', '@moxxy-ai', 'companion-sdk');
+  // Derived from the specifier, never spelled out again: writing the directory
+  // by hand is how a scope rename left the bridge published under a name Node
+  // no longer resolves.
+  const pkgDir = join(opts.dir, 'node_modules', ...PACKAGE.split('/'));
   rmSync(pkgDir, { recursive: true, force: true });
   mkdirSync(pkgDir, { recursive: true });
 
@@ -66,7 +69,7 @@ export function installAbiBridge(opts: AbiBridgeOptions): void {
     join(pkgDir, 'package.json'),
     JSON.stringify(
       {
-        name: '@moxxy/companion-sdk',
+        name: PACKAGE,
         version: opts.version,
         type: 'module',
         main: './index.js',
@@ -80,8 +83,9 @@ export function installAbiBridge(opts: AbiBridgeOptions): void {
   );
 }
 
-const specifierFor = (entry: string): string =>
-  entry === '.' ? '@moxxy/companion-sdk' : `@moxxy/companion-sdk/${entry.slice(2)}`;
+const PACKAGE = '@moxxy/companion-sdk';
+
+const specifierFor = (entry: string): string => (entry === '.' ? PACKAGE : `${PACKAGE}/${entry.slice(2)}`);
 
 /**
  * Named re-exports rather than `export *`: an ESM binding list has to be static.

@@ -807,7 +807,7 @@ build lacks. Cost measured on the slim build: **+9 KB** (836.3 KB from 827.4 KB)
 Two checks, both cheap, both refusing rather than warning:
 
 - The daemon **refuses at scan time** any module directory containing
-  `node_modules/@moxxy-ai`, with the reason in the log, and keeps loading the
+  `node_modules/@moxxy`, with the reason in the log, and keeps loading the
   other modules. Degradation, not a boot failure.
 - `companion module verify [dir]` runs with no daemon at all, so an author can
   check a build on a laptop: `moxxy` block, ABI generation, entry files exist,

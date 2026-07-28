@@ -82,7 +82,7 @@ within the first two calls. This is a core change, not a module.
 
 **Finding 4 (FIXED in P0): naming was inconsistent.** `apps/companion-cli/package.json`
 declares `"name": "@moxxy/companion"`, its own `--help` text says
-`npx @moxxy-ai/companion`, and the `Dockerfile` installs `@moxxy/cli`. Pick one
+`npx @moxxy/companion`, and the `Dockerfile` installs `@moxxy/cli`. Pick one
 scope and fix it before anything is published under it.
 
 ---
@@ -148,8 +148,8 @@ tiers, not eleven.
 
 | Profile | Modules | Artifact |
 |---|---|---|
-| `slim` | core, workspace, operate, code, admin | `@moxxy-ai/companion` (npx), `companion:oss` image |
-| `full` | slim + plan, board, refinement, planner, automations, slop, playground | `@moxxy-ai/companion-full`, `companion:full` image |
+| `slim` | core, workspace, operate, code, admin | `@moxxy/companion` (npx), `companion:oss` image |
+| `full` | slim + plan, board, refinement, planner, automations, slop, playground | `@moxxy/companion-full`, `companion:full` image |
 | `enterprise` | slim + enterprise modules | `companion:enterprise` image only |
 
 The `slim` set is exactly the shell's hard-import closure (Finding 1), which is
@@ -351,7 +351,7 @@ them. Therefore:
 ### Repo layout
 
 **Recommended: separate private repo**, `companion-enterprise`, publishing
-`@moxxy-ai/module-sso`, `@moxxy-ai/module-audit`, etc. to a private registry,
+`@moxxy/module-sso`, `@moxxy/module-audit`, etc. to a private registry,
 consumed by the enterprise build profile.
 
 Rejected `[NO]`: an `ee/` directory inside the OSS repo under a commercial
@@ -434,7 +434,7 @@ init into `$COMPANION_HOME/cli-token` (0600), store it hashed, scope it to
 `settings:manage` + a new `modules:manage`. A CLI that needs an interactive
 password prompt for `module list` will not be used.
 
-**Fix the package name first** (Finding 4) so `npx @moxxy-ai/companion module list`
+**Fix the package name first** (Finding 4) so `npx @moxxy/companion module list`
 is a real command.
 
 ---
@@ -601,8 +601,8 @@ Make the Docker runtime stage consume the CLI bundle:
 ```
 build stage:    pnpm install --frozen-lockfile
                 pnpm gen:modules --profile ${PROFILE}
-                pnpm --filter @moxxy-ai/companion bundle
-runtime stage:  node + git + openssh + @moxxy-ai/moxxy-cli
+                pnpm --filter @moxxy/companion bundle
+runtime stage:  node + git + openssh + @moxxy/moxxy-cli
                 COPY --from=build /app/apps/companion-cli/dist /app
                 ENTRYPOINT ["/app/entrypoint.sh"]
 ```

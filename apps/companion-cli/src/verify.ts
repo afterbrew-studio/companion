@@ -34,6 +34,9 @@ const CLIENT_ABI = new Set([
 
 const ABI_GENERATION = '0.x';
 
+/** Resolved from the host, never from the module's own tree. */
+const ABI_PACKAGES: readonly string[] = ['@moxxy/companion-sdk', '@moxxy/companion-contracts'];
+
 interface Meta {
   id?: string;
   abi?: string;
@@ -72,11 +75,13 @@ export function verifyModuleDir(dir: string): { ok: boolean; problems: string[];
   // author's working tree is normal and flagging it would train people to
   // ignore the check. What DOES ship it is a runtime dependency, below.
   const devTree = existsSync(join(root, 'src'));
-  if (!devTree && existsSync(join(root, 'node_modules', '@moxxy-ai'))) {
-    problems.push('node_modules/@moxxy-ai is present: the SDK must be external at build time and must not be published');
+  for (const abi of ABI_PACKAGES) {
+    if (!devTree && existsSync(join(root, 'node_modules', ...abi.split('/')))) {
+      problems.push(`node_modules/${abi} is present: it must be external at build time and must not be published`);
+    }
   }
   for (const dep of Object.keys(pkg.dependencies ?? {})) {
-    if (dep.startsWith('@moxxy-ai/') || dep === 'react' || dep === 'react-dom') {
+    if (ABI_PACKAGES.includes(dep) || dep === 'react' || dep === 'react-dom') {
       problems.push(`'${dep}' is a runtime dependency; it must be a devDependency + peerDependency, never installed alongside`);
     }
   }
