@@ -128,6 +128,45 @@ the first one does not get an ad-hoc answer.
 
 ---
 
+## Carried work
+
+Not gaps in a mechanism, which is why they sit below the line. Each one is
+started, decided or blocked on something nameable, and each is the kind of thing
+that gets forgotten precisely because none of it stops a release.
+
+**Installing a module by name.** The ABI is published and out-of-tree modules
+load, but getting one onto a host still means placing it in
+`$COMPANION_HOME/modules` by hand. What is missing is a CLI verb that resolves a
+spec against a registry, runs the checks `module verify` already implements, and
+records where the thing came from. Provenance is the part worth designing rather
+than bolting on: an operator asked to trust a third-party module needs to see
+what was installed and from where, and that is a fact you can only capture at
+install time.
+
+**Runner workforce policy.** In flight. Today `blockedTasks` is deny-only, so a
+machine is open by default and a module update that registers a new task starts
+running on a machine meant for one job. Needs an allow mode, module-level entries
+that also cover tasks a module adds later, repository-level scope, and a decision
+about the local runner: it is currently the last resort when nothing accepts a
+task, which under an allow policy silently lands work on the daemon's own machine
+exactly where the policy meant to keep it out.
+
+**Adding a moxxy provider from the UI.** Provisioning a provider means reaching
+the runner's shell. The seam exists on the moxxy side (`provision --spec -`,
+`login --stdin-prompts`), so this is wiring and a credential-handling decision,
+not a mechanism.
+
+**The root README.** Carries content that belongs in separate files, and reads
+as a document for people who already know what Companion is. The repository is
+public, so this is the first thing a stranger sees.
+
+**A trusted publisher for `@moxxy/companion-sdk`.** Operational, not code. The
+other seven packages publish from CI; this one alone answers `404 Not Found` on
+PUT, which npm also returns for "no permission", and it is the one package a
+module author actually installs.
+
+---
+
 ## Not on this list, and why
 
 - **Multi-node / active-active.** Decided against, not deferred.
