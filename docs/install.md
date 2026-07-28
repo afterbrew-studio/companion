@@ -123,9 +123,29 @@ Set up:
   take precedence over any `.env`. `COMPANION_HOST` and `COMPANION_HOME` are
   already set correctly by the compose file.
 
-Note the compose file publishes `8901` on the host. If you serve Companion
-through Coolify's proxy on a domain and would rather not occupy that host port,
-drop the `ports:` block for your deployment.
+- **Domain**: set it on the `companion` service and **include the container
+  port**, `https://companion.example.com:8901`. Coolify only infers the port for
+  services listening on 80, and Companion listens on 8901. The number tells the
+  proxy where to send traffic internally; externally it still serves 443. An
+  empty domain field is the usual reason a running instance answers `503`: the
+  container is healthy and the proxy simply has no backend to route to.
+- **Remove the `ports:` block.** The compose file publishes `8901` for local
+  use, and on a public server that serves Companion over plain HTTP on the
+  host's IP, bypassing the proxy and TLS entirely, which is where the login form
+  and its session cookie would go unencrypted. Coolify's own documentation warns
+  that a published port is "outside the control of any proxy configuration".
+  Removing it does not re-enable rolling updates: a compose deployment never
+  gets one.
+
+To tell the two apart when something is wrong, ask the container directly:
+
+```sh
+curl -s http://<server-ip>:8901/healthz    # only while ports: is still published
+docker exec -it <container> node -e "fetch('http://127.0.0.1:8901/healthz').then(r=>r.text()).then(console.log)"
+```
+
+`{"ok":true}` there plus `503` through the domain is a routing problem, not a
+Companion one.
 
 ### A redeploy that says the data directory is in use
 
