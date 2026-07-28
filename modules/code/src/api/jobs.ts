@@ -30,6 +30,10 @@ export default defineJobs({
             })
           : (code.githubAccounts.tokenFor('runs', username === undefined ? undefined : { username }) ?? null),
       login: () => code.githubAccounts.loginFor('fetch'),
+      // Catalogue, not resolution: a workspace-scoped account is still an
+      // account, and the instance health dot must not turn red because of how
+      // one is scoped.
+      hasAccounts: () => code.githubAccounts.list().length > 0,
     });
 
     // A clean install has no admin while services boot. First-boot onboarding

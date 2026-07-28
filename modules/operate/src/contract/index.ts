@@ -59,6 +59,17 @@ export interface GithubTokenSource {
   tokenFor(repo?: string, username?: string | null, access?: GitAccess): string | null | Promise<string | null>;
   /** Login of the default posting account, when known (feeds /api/status). */
   login?(): string | null;
+  /**
+   * Does the instance have ANY GitHub account at all?
+   *
+   * Separate from `tokenFor` on purpose. Resolution is scoped: an account
+   * restricted to selected workspaces answers nothing without a workspace in
+   * hand, and a health indicator asking "is GitHub set up" must not go red
+   * because the viewer happens to be nowhere in particular. Absent means fall
+   * back to resolution, which is right for a source that has no notion of a
+   * catalogue.
+   */
+  hasAccounts?(): boolean;
 }
 
 /** Reach a git network operation needs from the credential it is given. */

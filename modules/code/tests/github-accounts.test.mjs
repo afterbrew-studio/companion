@@ -81,3 +81,28 @@ test('purpose and selected-workspace boundaries are enforced for every personal 
     null,
   );
 });
+
+test('a workspace-scoped account still counts as GitHub being configured', () => {
+  // The reported bug: setting an account to "selected workspaces" turned the
+  // instance health dot red, and switching back to "all" turned it green.
+  const account = {
+    id: 'gha-scoped', login: 'alice', token: 'tok', purposes: ['fetch', 'runs'],
+    scope: 'selected', workspaceIds: ['ws-elsewhere'], ownerId: 'alice', createdAt: 1,
+    kind: 'pat', appId: null, installationId: null, privateKey: null, tokenExpiresAt: null,
+  };
+  const store = {
+    githubAccounts: { list: () => [account], binding: () => null, bindingsFor: () => ({}) },
+    repos: { workspaceIds: () => [] },
+  };
+  const accounts = new GitHubAccounts(store);
+
+  // Resolution without a workspace finds nothing, which is correct: there is no
+  // context saying this account applies here.
+  assert.equal(accounts.loginFor('fetch'), null);
+  assert.equal(accounts.tokenFor('runs'), null);
+
+  // But the instance plainly has an account, and that is the question the
+  // health indicator asks. Answering it with resolution is what made scoping
+  // look like an outage.
+  assert.equal(accounts.list().length, 1);
+});

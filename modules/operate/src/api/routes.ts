@@ -479,7 +479,9 @@ export default defineRoutes((ctx) => {
           providersImported: home.providersImported,
           // Instance-level health: is GitHub set up at all? Independent of who is
           // viewing (per-user account resolution must not flip the health dot).
-          githubConfigured: (tokens.login?.() ?? null) !== null || (await tokens.tokenFor()) !== null,
+          githubConfigured:
+            tokens.hasAccounts?.() ??
+            ((tokens.login?.() ?? null) !== null || (await tokens.tokenFor()) !== null),
           githubUser: tokens.login?.() ?? null,
         };
       },
