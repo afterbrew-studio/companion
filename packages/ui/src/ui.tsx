@@ -820,18 +820,23 @@ export function Switch({
   onChange,
   disabled,
   label,
+  reason,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   label: string;
+  /** Why it cannot be toggled. Shown on hover and to a screen reader, because a
+   *  control that is off with no explanation reads as a bug. */
+  reason?: string;
 }): JSX.Element {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={reason ? `${label} (${reason})` : label}
+      title={reason}
       disabled={disabled}
       className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-default disabled:opacity-50 ${
         checked ? 'bg-zinc-900 dark:bg-zinc-100' : 'bg-zinc-300 dark:bg-zinc-700'

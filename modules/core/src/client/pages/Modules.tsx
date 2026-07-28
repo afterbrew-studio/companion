@@ -123,7 +123,8 @@ export function ModulesPage(): JSX.Element {
               ) : null}
               <Switch
                 checked={m.enabled}
-                disabled={m.required || busy === m.id || (!m.enabled && (!m.configured || !m.entitled))}
+                disabled={blocked(m, modules) !== null || busy === m.id}
+                reason={blocked(m, modules) ?? undefined}
                 label={`${m.enabled ? 'Disable' : 'Enable'} ${m.title}`}
                 onChange={() => void toggle(m)}
               />
@@ -209,4 +210,30 @@ function TrashIcon(): JSX.Element {
       <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6" />
     </svg>
   );
+}
+
+/**
+ * Why this module's switch cannot be moved, or null when it can.
+ *
+ * The kernel already refuses each of these; saying so on the control means you
+ * find out by hovering rather than by clicking and reading an error. Dependents
+ * are computed here rather than served, because the catalog already carries
+ * every module's `dependsOn` and a derived field would be a second source for
+ * the same fact.
+ */
+function blocked(m: ModuleDescriptor, all: readonly ModuleDescriptor[]): string | null {
+  if (m.required) return 'Required: the instance cannot run without it.';
+  if (m.enabled) {
+    const dependents = all.filter((o) => o.enabled && o.dependsOn.includes(m.id));
+    if (dependents.length) {
+      const names = dependents.map((d) => d.title).join(', ');
+      return `Disable ${names} first: ${dependents.length === 1 ? 'it depends' : 'they depend'} on ${m.title}.`;
+    }
+    return null;
+  }
+  if (!m.entitled) return 'This instance has no licence for it.';
+  if (!m.configured) return 'Configure it first: a required setting has no value.';
+  const missing = m.dependsOn.filter((d) => !all.some((o) => o.id === d && o.enabled));
+  if (missing.length) return `Enable ${missing.join(', ')} first: ${m.title} depends on ${missing.length === 1 ? 'it' : 'them'}.`;
+  return null;
 }
