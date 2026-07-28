@@ -103,6 +103,43 @@ Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`) in
 Coolify's UI; they take precedence over any `.env`. Set `COMPANION_PUBLIC_URL`
 to your domain so SSO and webhooks have an address to come back to.
 
+### Redeploys must stop the old container first
+
+If a redeploy fails with:
+
+```
+another Companion daemon is already using /data (pid 1 on <container>),
+and it kept heartbeating for 75s, so it is still running.
+```
+
+the deployment is doing a **rolling update**, and that cannot work here. Turn it
+off in the application's settings, so Coolify stops the old container before
+starting the new one.
+
+The reason is a genuine deadlock rather than a race. The new container waits for
+the data directory, so it never becomes healthy. A rolling update will not stop
+the old container until the new one is healthy. The old one is healthy, holds
+`/data`, and keeps writing its heartbeat. Neither side can move, and the same
+old container id shows up in every attempt. Waiting longer does not help; it only
+stretches the deadlock until the healthcheck gives up.
+
+Companion is single-node **because of the filesystem**, not the database. The
+home holds clones, worktrees, scratch space, run configs and the isolated moxxy
+home. Two daemons sharing it would both run every scheduled job and both check
+out the same worktrees, and the damage would be silent. So the second one
+refuses instead.
+
+Once the setting is changed, clear the stuck container by hand, because a
+correct strategy still has to get past the one already running:
+
+```sh
+docker ps --filter name=<your-app> --format '{{.ID}} {{.Status}}'
+docker stop <old-container-id>
+```
+
+Then redeploy. If you need zero downtime, that is active/passive with a second
+`COMPANION_HOME`, not two daemons on one volume.
+
 ### Deploying the full module set
 
 **The profile is a build argument, not a runtime variable.** Setting
