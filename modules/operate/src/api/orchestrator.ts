@@ -269,7 +269,7 @@ export class Orchestrator implements RunnerEventSink {
     } = {},
   ): string | null {
     const effective = opts.model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
-    return this.runners.place(repo, opts.task ?? null, this.providersForModel(effective), opts.userId ?? null, opts.exclude);
+    return this.runners.place(repo, opts.task ?? null, effective, opts.userId ?? null, opts.exclude);
   }
 
   async createRun(opts: {
@@ -301,6 +301,14 @@ export class Orchestrator implements RunnerEventSink {
           `your GitHub accounts cannot access ${opts.repo} — ask the repository owner to grant access`,
         );
       }
+    }
+    // Refuse a model no machine may run rather than start the run on something
+    // else: output from a model the caller did not choose is the worse answer.
+    // Only a provable gap refuses (some catalog lists it, no machine allows it).
+    if (opts.model && this.runners.runnersForModel(opts.model)?.size === 0) {
+      throw new Error(
+        `no runner may use ${opts.model}: enable it on a machine under Providers, or choose another model`,
+      );
     }
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
@@ -454,47 +462,34 @@ export class Orchestrator implements RunnerEventSink {
 
   async sendPrompt(runId: string, prompt: string, model?: string, attachments?: readonly PromptAttachment[]): Promise<{ turnId: string }> {
     const backend = this.requireLive(runId);
+    const row = this.store.runs.get(runId);
     // A new turn on an idle attended chat: it's working again.
-    if (this.store.runs.get(runId)?.status === 'idle') {
+    if (row?.status === 'idle') {
       this.setStatus(runId, 'running');
       this.emitRunChanged(runId);
     }
-    // Per-turn pin > the run's persisted override > the daemon default.
-    let chosen = model ?? this.store.runs.get(runId)?.model ?? this.config.defaultModel;
-    // Disabled selections quietly ride the daemon default instead of erroring.
-    if (chosen !== this.config.defaultModel && this.disabledModels().has(chosen)) {
-      chosen = this.config.defaultModel;
+    const runnerId = row?.runner_id ?? null;
+    // Per-turn pin > the run's persisted override. Refuse rather than
+    // substitute: answering with a model the user did not choose is the worst
+    // outcome here, so a machine that provably cannot run the chosen model
+    // fails the turn with something the user can act on. Selection already
+    // hides these (the pickers only offer what the machine serves); this is the
+    // guard for the window where policy changed after they chose.
+    const requested = model ?? row?.model ?? null;
+    if (requested !== null && !this.runners.serves(runnerId, requested)) {
+      throw new Error(
+        `${requested} is not enabled on the machine this run is on. Enable it there under Providers, or switch this run to another model`,
+      );
     }
-    // A model whose provider provably isn't configured on the run's runner
-    // would fail the turn — omit the override and let that runner's own moxxy
-    // default model apply instead.
-    if (!this.runnerServes(runId, chosen)) {
-      log.info('model not served by the run\'s runner — riding the runner\'s default model', {
-        runId,
-        model: chosen,
-      });
-      const result = await backend.runTurn(runId, { prompt, attachments });
-      this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
-      return result;
-    }
-    const result = await backend.runTurn(runId, { prompt, model: chosen, attachments });
+    // Nobody chose a model: the daemon default is itself a fallback, so when
+    // this machine cannot serve it the machine's own default applies. That is
+    // an absent choice, not a substituted one.
+    const chosen =
+      requested ?? (this.runners.serves(runnerId, this.config.defaultModel) ? this.config.defaultModel : null);
+    const result = await backend.runTurn(runId, { prompt, model: chosen ?? undefined, attachments });
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
-  }
-
-  /**
-   * Can the run's runner serve this model? True unless BOTH sides are known
-   * (the model resolves to providers via the catalog AND the runner reports
-   * its provider list) and they don't intersect — unknowns stay permissive so
-   * behavior only changes on a provable mismatch.
-   */
-  private runnerServes(runId: string, model: string): boolean {
-    const wanted = this.providersForModel(model);
-    if (!wanted) return true;
-    const advertised = this.runners.providersFor(this.store.runs.get(runId)?.runner_id ?? null);
-    if (advertised === null) return true;
-    return wanted.some((w) => advertised.includes(w));
   }
 
   async setGoalMode(runId: string): Promise<void> {
@@ -505,53 +500,22 @@ export class Orchestrator implements RunnerEventSink {
 
   /**
    * Admin-pinned model for an action kind (settings `modelPin:<kind>`); new
-   * runs of that kind ride the pin unless the caller overrides explicitly.
-   * A pin pointing at a disabled model falls back to the daemon default.
+   * runs of that kind ride the pin unless the caller overrides explicitly. A
+   * pin no machine may run falls back to the daemon default rather than
+   * failing every run of that kind: a pin is a preference, not a choice a
+   * user just made.
    */
   private pinnedModel(kind: RunKind): string | null {
     const pinned = this.store.settings.get(`modelPin:${kind}`);
     if (!pinned || pinned.trim() === '') return null;
-    return this.disabledModels().has(pinned) ? null : pinned;
-  }
-
-  /** Admin-disabled model ids (settings `disabledModels`, JSON array). */
-  private disabledModels(): Set<string> {
-    try {
-      const raw = this.store.settings.get('disabledModels');
-      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set();
-    }
-  }
-
-  /** Admin-disabled provider names (settings `disabledProviders`, JSON array). */
-  private disabledProviders(): Set<string> {
-    try {
-      const raw = this.store.settings.get('disabledProviders');
-      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set();
-    }
-  }
-
-  /**
-   * Enabled providers that serve `model`, merged across every machine's
-   * catalog. null = no constraint derivable (no model, nothing fetched yet, or
-   * an unknown model id) — placement and the per-turn check then behave as
-   * before.
-   */
-  private providersForModel(model: string | null): string[] | null {
-    const names = this.runners.providersForModel(model);
-    if (!names) return null;
-    const disabled = this.disabledProviders();
-    const allowed = names.filter((name) => !disabled.has(name));
-    return allowed.length > 0 ? allowed : null;
+    return this.runners.runnersForModel(pinned)?.size === 0 ? null : pinned;
   }
 
   /** Connected providers + models, read live from the run's gateway. */
   async modelCatalog(runId: string): Promise<ModelCatalog> {
-    const disabledProviders = this.disabledProviders();
-    const disabledModels = this.disabledModels();
+    // Filtered by THIS run's machine: what its neighbour allows is irrelevant
+    // to a run that can only execute here.
+    const policy = this.runners.policyFor(this.store.runs.get(runId)?.runner_id ?? null);
     const info = (await this.requireLive(runId).sessionInfo(runId)) as {
       activeProvider?: unknown;
       providers?: unknown;
@@ -578,9 +542,9 @@ export class Orchestrator implements RunnerEventSink {
           .filter((m): m is ModelCatalogModel => m !== null);
         return {
           name: p.name,
-          enabled: p.enabled !== false && !disabledProviders.has(p.name),
+          enabled: p.enabled !== false && !policy.providers.has(p.name),
           ready: ready.has(p.name),
-          models: models.filter((m) => !disabledModels.has(m.id) && !disabledModels.has(`${p.name}/${m.id}`)),
+          models: models.filter((m) => !policy.models.has(m.id) && !policy.models.has(`${p.name}/${m.id}`)),
         };
       })
       .filter((p): p is ModelCatalogProvider => p !== null);
@@ -602,7 +566,13 @@ export class Orchestrator implements RunnerEventSink {
    * the slash-command path (/provider, /model) is the supported fallback.
    */
   async setRunModel(runId: string, model: string | null, provider?: string): Promise<RunRecord> {
-    if (!this.store.runs.get(runId)) throw new Error(`unknown run: ${runId}`);
+    const row = this.store.runs.get(runId);
+    if (!row) throw new Error(`unknown run: ${runId}`);
+    // Refuse the selection here rather than let the next turn fail: this run
+    // can only execute on the machine it is placed on.
+    if (model !== null && !this.runners.serves(row.runner_id ?? null, model)) {
+      throw new Error(`${model} is not enabled on the machine this run is on. Pick a model it can serve`);
+    }
     if (this.isLive(runId)) {
       const backend = this.backend(runId);
       if (provider) {

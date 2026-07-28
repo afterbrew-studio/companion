@@ -18,13 +18,14 @@ import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
   RunnerCatalog,
   RunnerModelPins,
+  RunnerProviderPolicy,
   RunnerRecord,
   RunnerScope,
   RunTaskDescriptor,
 } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
-import { DOT_TONE, ModelPinsEditor, normalizeEndpoint, TasksEditor, TokenHelp } from './Runners.js';
+import { DOT_TONE, ModelPinsEditor, normalizeEndpoint, TasksEditor, TokenHelp, usableModels } from './Runners.js';
 
 /**
  * A machine's settings page — the Edit modal outgrew itself once tasks and
@@ -367,14 +368,19 @@ function SettingsForm({
             <SettingRow
               className="px-4 py-3"
               title="Available models"
-              description={pinsNote ?? describeCatalog(catalog)}
+              description={pinsNote ?? describeCatalog(catalog, runner.providerPolicy)}
             >
               <button type="button" className="btn-ghost" disabled={fetching} onClick={() => void fetchModels()}>
                 {fetching ? 'Refreshing…' : 'Refresh'}
               </button>
             </SettingRow>
             <div className="px-4 py-3">
-              <ModelPinsEditor catalog={catalog} pins={modelPins} onChange={setModelPins} />
+              <ModelPinsEditor
+                catalog={catalog}
+                policy={runner.providerPolicy}
+                pins={modelPins}
+                onChange={setModelPins}
+              />
             </div>
           </ListCard>
         </Section>
@@ -387,11 +393,11 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value) => b.includes(value));
 }
 
-function describeCatalog(catalog: RunnerCatalog | null): string {
+function describeCatalog(catalog: RunnerCatalog | null, policy: RunnerProviderPolicy): string {
   if (!catalog) return 'This machine reports its models on its own — usually within a minute of connecting.';
-  const ready = catalog.providers.filter((p) => p.ready);
-  const models = new Set(ready.flatMap((p) => p.models.map((m) => m.id))).size;
-  if (models === 0) return `No provider with credentials on this machine (read ${timeAgo(catalog.fetchedAt)}).`;
+  const ready = catalog.providers.filter((p) => p.ready && !policy.disabledProviders.includes(p.name));
+  const models = usableModels(catalog, policy).length;
+  if (models === 0) return `No usable provider on this machine (read ${timeAgo(catalog.fetchedAt)}).`;
   return `${models} model${models === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'} · read ${timeAgo(catalog.fetchedAt)}.`;
 }
 

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@companion/core/client';
-import type { ProviderCatalog } from '../../contract/index.js';
+import type { CatalogMachine, ProviderCatalog, RunnerProviderPolicy } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 
 /**
- * The merged provider/model catalog plus the instance policy that hides parts
- * of it. Machines fetch their own models on the daemon side, so this hook only
- * reads — and re-reads on `runners.changed`, which is how a background refresh
- * reaches the page without anyone clicking. Toggles apply optimistically and
- * the server's answer replaces local state.
+ * The per-machine provider/model groups plus the merged effective set. Machines
+ * fetch their own models on the daemon side, so this hook only reads, and
+ * re-reads on `runners.changed`, which is how a background refresh reaches the
+ * page without anyone clicking. Every toggle writes one machine's policy and
+ * the server's answer (which recomputes the merged set) replaces local state.
  */
 export function useProviders(): {
   catalog: ProviderCatalog | null;
@@ -17,10 +17,9 @@ export function useProviders(): {
   refresh: () => Promise<void>;
   refetchFromMachines: () => Promise<void>;
   refetching: boolean;
-  isModelDisabled: (provider: string, id: string) => boolean;
-  toggleProvider: (name: string) => void;
-  toggleModel: (provider: string, id: string) => void;
-  removeManualId: (id: string) => void;
+  toggleProvider: (machine: CatalogMachine, name: string) => void;
+  toggleModel: (machine: CatalogMachine, provider: string, id: string) => void;
+  enableStranded: (machine: CatalogMachine, id: string) => void;
 } {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,24 +40,15 @@ export function useProviders(): {
   }, [refresh]);
   useLive(refresh, (msg) => msg.t === 'runners.changed');
 
-  const save = async (next: ProviderCatalog): Promise<void> => {
-    setCatalog(next);
+  const save = async (machineId: string, policy: RunnerProviderPolicy): Promise<void> => {
     setError(null);
     try {
-      setCatalog(
-        await api.setProviderPolicy(
-          next.providers.filter((p) => !p.enabled).map((p) => p.name),
-          [...next.disabledModels],
-        ),
-      );
+      setCatalog(await api.setRunnerProviderPolicy(machineId, policy));
     } catch (err) {
       setError(String(err));
       await refresh();
     }
   };
-
-  const isModelDisabled = (provider: string, id: string): boolean =>
-    (catalog?.disabledModels ?? []).some((m) => m === id || m === `${provider}/${id}`);
 
   return {
     catalog,
@@ -77,24 +67,33 @@ export function useProviders(): {
         setRefetching(false);
       }
     },
-    isModelDisabled,
-    toggleProvider: (name) => {
-      if (!catalog) return;
-      void save({
-        ...catalog,
-        providers: catalog.providers.map((p) => (p.name === name ? { ...p, enabled: !p.enabled } : p)),
+    toggleProvider: (machine, name) => {
+      const off = machine.policy.disabledProviders.includes(name);
+      void save(machine.id, {
+        ...machine.policy,
+        disabledProviders: off
+          ? machine.policy.disabledProviders.filter((p) => p !== name)
+          : [...machine.policy.disabledProviders, name],
       });
     },
-    toggleModel: (provider, id) => {
-      if (!catalog) return;
-      const disabledModels = isModelDisabled(provider, id)
-        ? catalog.disabledModels.filter((m) => m !== id && m !== `${provider}/${id}`)
-        : [...catalog.disabledModels, id];
-      void save({ ...catalog, disabledModels });
+    toggleModel: (machine, provider, id) => {
+      const enabled = machine.providers
+        .find((p) => p.name === provider)
+        ?.models.find((m) => m.id === id)?.enabled;
+      void save(machine.id, {
+        ...machine.policy,
+        // Enabling clears both id forms; disabling adds the bare one, leaving
+        // any provider-scoped entry the user already had untouched.
+        disabledModels: enabled
+          ? [...machine.policy.disabledModels, id]
+          : machine.policy.disabledModels.filter((m) => m !== id && m !== `${provider}/${id}`),
+      });
     },
-    removeManualId: (id) => {
-      if (!catalog) return;
-      void save({ ...catalog, disabledModels: catalog.disabledModels.filter((m) => m !== id) });
+    enableStranded: (machine, id) => {
+      void save(machine.id, {
+        ...machine.policy,
+        disabledModels: machine.policy.disabledModels.filter((m) => m !== id),
+      });
     },
   };
 }
@@ -102,7 +101,6 @@ export function useProviders(): {
 const EMPTY: ProviderCatalog = {
   providers: [],
   machines: [],
-  disabledModels: [],
   defaultModel: '',
   fetchedAt: null,
 };

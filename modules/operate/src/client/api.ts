@@ -10,6 +10,7 @@ import type {
   RunnerMoxxyUpdateResult,
   RunnerCapacitySnapshot,
   RunnerProbeResult,
+  RunnerProviderPolicy,
   RunnerRecord,
   RunTaskDescriptor,
   SkillFile,
@@ -64,11 +65,11 @@ export const operateApi = {
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
   updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
-  // providers + models (one merged catalog; machines fetch their own)
+  // providers + models (grouped per machine; machines fetch their own catalog)
   importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
   providerCatalog: () => request<ProviderCatalog>('/api/providers'),
-  setProviderPolicy: (disabledProviders: string[], disabledModels: string[]) =>
-    put<ProviderCatalog>('/api/providers', { disabledProviders, disabledModels }),
+  setRunnerProviderPolicy: (runnerId: string, policy: RunnerProviderPolicy) =>
+    put<ProviderCatalog>(`/api/runners/${runnerId}/providers`, policy),
   refreshProviderCatalog: () => post<ProviderCatalog>('/api/providers/refresh'),
 
   // model pins (per action kind)

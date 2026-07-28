@@ -3,6 +3,8 @@ import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type { AgentStorageCleanupRequest } from '@companion/types';
 import type {
   CatalogMachine,
+  CatalogMachineModel,
+  CatalogMachineProvider,
   CatalogModel,
   CatalogProvider,
   CreateRunnerRequest,
@@ -15,6 +17,7 @@ import type {
   RunnerPinnableKind,
   RunnerMoxxyUpdateResult,
   RunnerProbeResult,
+  RunnerProviderPolicy,
   RunnerRecord,
   UpdateRunnerRequest,
 } from '../contract/index.js';
@@ -64,11 +67,13 @@ export class Runners {
   /** Last fetch attempt per runner — drives the failure backoff. */
   private readonly catalogAttempt = new Map<string, number>();
   /**
-   * model id (bare AND `provider/id`) → providers serving it, merged across
-   * every machine. Placement resolves a model's providers per run, so it reads
-   * this map instead of re-parsing catalog JSON out of SQLite each time.
+   * model id (bare AND `provider/id`) → the runners that can serve it right
+   * now. A key exists as soon as any machine's catalog lists the model, so a
+   * MISSING key means "no machine has ever mentioned it" while an EMPTY set
+   * means "known, but no machine may run it". Callers depend on that
+   * distinction to refuse only on evidence.
    */
-  private modelProviders = new Map<string, Set<string>>();
+  private modelServers = new Map<string, Set<string>>();
 
   constructor(
     private readonly store: OperateStore,
@@ -169,12 +174,12 @@ export class Runners {
    * then local as the always-available fallback. Returns the runner id (null
    * means the local runner).
    *
-   * Provider capability: runners that advertise ZERO providers can't serve
-   * any model and are never chosen (unknown = null stays optimistic). When
-   * `wantedProviders` names the providers that can serve the run's model,
-   * runners advertising one of them are preferred; if none does, placement
-   * falls back to the capability-agnostic choice and the model is reconciled
-   * per turn instead (see Orchestrator.sendPrompt).
+   * Provider capability: runners whose catalog leaves ZERO usable providers
+   * (none credential-ready, or all switched off here) can't serve any model
+   * and are never chosen; an unfetched catalog stays optimistic. Runners that
+   * may actually run `wantedModel` are preferred; if none can, placement falls
+   * back to the capability-agnostic choice and the turn refuses with a clear
+   * error instead (see Orchestrator.sendPrompt).
    *
    * Ownership: `userId` is the triggering user. Their personal runners become
    * eligible AND preferred (their machine, their subscription); other users'
@@ -189,7 +194,7 @@ export class Runners {
   place(
     repo: string | null,
     task: string | null,
-    wantedProviders?: readonly string[] | null,
+    wantedModel?: string | null,
     userId: string | null = null,
     /** Runner row ids to skip — failover after a spawn just failed there. */
     exclude?: ReadonlySet<string>,
@@ -237,13 +242,8 @@ export class Runners {
       .filter(ready)
       .filter((row) => load(row) < 1)
       .sort((a, b) => own(a) - own(b) || load(a) - load(b));
-    const served = (row: RunnerRow): boolean => {
-      if (!wantedProviders || wantedProviders.length === 0) return true;
-      const cat = row.catalog;
-      if (!cat) return true;
-      return cat.providers.some((p) => p.ready && wantedProviders.includes(p.name));
-    };
-    const chosen = usable.find(served) ?? usable[0];
+    const servers = this.runnersForModel(wantedModel ?? null);
+    const chosen = usable.find((row) => rowServes(row, servers)) ?? usable[0];
     return this.normalize(chosen?.id ?? LOCAL_RUNNER_ID);
   }
 
@@ -315,11 +315,6 @@ export class Runners {
   /** True when the task isn't on the runner's block-list (null task = always). */
   private allows(row: RunnerRow, task: string | null): boolean {
     return task === null || !row.blocked_tasks.includes(task);
-  }
-
-  /** Advertised providers of a runner (null = unknown); null id = local. */
-  providersFor(runnerId: string | null): readonly string[] | null {
-    return this.health.get(runnerId ?? LOCAL_RUNNER_ID)?.providers ?? null;
   }
 
   /** Store null for the local runner so existing rows/queries stay simple. */
@@ -523,16 +518,22 @@ export class Runners {
   /** Resolve the model a run of `kind` should use on `runnerId`: its pin, else its default. */
   modelPinFor(runnerId: string | null, kind: RunnerPinnableKind): string | null {
     const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
-    return row?.model_pins[kind] ?? row?.catalog?.defaultModel ?? null;
+    if (!row) return null;
+    const pinned = row.model_pins[kind];
+    // A pin this machine no longer allows is dropped rather than honoured: a
+    // pin is a standing preference, not the per-run choice a user just made,
+    // so it gives way to the machine's own default instead of failing the run.
+    if (pinned && !rowServes(row, this.runnersForModel(pinned))) return row.catalog?.defaultModel ?? null;
+    return pinned ?? row.catalog?.defaultModel ?? null;
   }
 
-  /** True when the runner has at least one credential-ready provider. */
+  /** True when the runner has a credential-ready provider it is allowed to use. */
   private hasReadyProvider(row: RunnerRow): boolean {
     const cat = row.catalog;
     // Unknown catalog stays optimistic (never probed yet); an empty/all-unready
     // catalog means the runner can't actually serve anything.
     if (!cat) return true;
-    return cat.providers.some((p) => p.ready);
+    return cat.providers.some((p) => p.ready && !row.disabled_providers.includes(p.name));
   }
 
   private async probeOne(id: string): Promise<RunnerHealth> {
@@ -581,6 +582,7 @@ export class Runners {
       health: this.healthFor(row.id),
       catalog: row.catalog,
       modelPins: row.model_pins,
+      providerPolicy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       createdAt: row.created_at,
     };
   }
@@ -607,12 +609,14 @@ export class Runners {
   }
 
   /**
-   * Every online machine at once. `force` is the page's explicit Refresh;
-   * unforced it respects the TTL and the failure backoff, so calling it on a
-   * page load costs nothing when catalogs are current.
+   * Every online machine the viewer can use, at once. `force` is the page's
+   * explicit Refresh; unforced it respects the TTL and the failure backoff, so
+   * calling it on a page load costs nothing when catalogs are current. Each
+   * probe spawns a real gateway on someone's machine, so it stays scoped the
+   * same way the page is: shared machines plus the viewer's own.
    */
-  async refreshAllCatalogs(force = true): Promise<void> {
-    const rows = this.store.runners.list().filter((row) => row.enabled === 1 && this.isOnline(row));
+  async refreshAllCatalogs(force = true, userId: string | null = null): Promise<void> {
+    const rows = this.visibleTo(userId).filter((row) => row.enabled === 1 && this.isOnline(row));
     await Promise.all(rows.map((row) => this.refreshCatalog(row.id, force).catch(() => undefined)));
   }
 
@@ -645,36 +649,53 @@ export class Runners {
   }
 
   /**
-   * Every machine's catalog merged into one instance-wide view: a model shows
-   * up once, carrying the machines that can serve it. Providers configured in
-   * the imported moxxy home but served nowhere are listed with no models, so
-   * the page can say *why* instead of going blank.
+   * One group per machine (its own catalog and its own policy) plus the merged
+   * effective set: a model shows up once, carrying the machines that may serve
+   * it. The merge is what a per-machine page cannot answer ("can agents use
+   * model X at all"), so it lists only what is ready AND enabled somewhere.
+   * Providers configured in the imported moxxy home but served nowhere are
+   * listed with no models, so the page can say *why* instead of going blank.
    */
-  catalogSnapshot(defaultModel: string): ProviderCatalog {
-    const rows = this.store.runners.list().filter((row) => row.enabled === 1);
-    const disabledProviders = this.disabledSet('disabledProviders');
-    const disabledModels = this.disabledSet('disabledModels');
-    const providers = new Map<string, { machines: Set<string>; models: Map<string, CatalogModel> }>();
+  catalogSnapshot(defaultModel: string, userId: string | null = null): ProviderCatalog {
+    const rows = this.visibleTo(userId).filter((row) => row.enabled === 1);
+    const providers = new Map<
+      string,
+      { machines: Set<string>; disabledOn: Set<string>; models: Map<string, CatalogModel> }
+    >();
     const entry = (name: string) => {
       let found = providers.get(name);
-      if (!found) providers.set(name, (found = { machines: new Set(), models: new Map() }));
+      if (!found) providers.set(name, (found = { machines: new Set(), disabledOn: new Set(), models: new Map() }));
       return found;
     };
     for (const name of configuredProviderNames()) entry(name);
-    for (const name of disabledProviders) entry(name);
 
     const machines: CatalogMachine[] = [];
     let fetchedAt: number | null = null;
     for (const row of rows) {
-      const models = new Set<string>();
+      const policy = policyOf(row);
+      const servable = new Set<string>();
+      const groups: CatalogMachineProvider[] = [];
       for (const provider of row.catalog?.providers ?? []) {
         const merged = entry(provider.name);
-        // Only a credential-ready provider contributes models: listing models
-        // no machine can actually serve is what made the old page misleading.
+        const providerEnabled = !policy.providers.has(provider.name);
+        const models = provider.models.map((model): CatalogMachineModel => ({
+          id: model.id,
+          contextWindow: model.contextWindow,
+          enabled: modelAllowed(policy, provider.name, model.id),
+        }));
+        groups.push({ name: provider.name, ready: provider.ready, enabled: providerEnabled, models });
+        // Only a credential-ready provider the machine still allows contributes
+        // to the merged set: listing models no machine can actually serve is
+        // what made the old page misleading.
         if (!provider.ready) continue;
+        if (!providerEnabled) {
+          merged.disabledOn.add(row.id);
+          continue;
+        }
         merged.machines.add(row.id);
-        for (const model of provider.models) {
-          models.add(model.id);
+        for (const model of models) {
+          if (!model.enabled) continue;
+          servable.add(model.id);
           const existing = merged.models.get(model.id);
           merged.models.set(model.id, {
             id: model.id,
@@ -690,7 +711,9 @@ export class Runners {
         name: row.name,
         online: this.isOnline(row),
         fetchedAt: at,
-        modelCount: models.size,
+        modelCount: servable.size,
+        providers: groups,
+        policy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       });
     }
 
@@ -698,32 +721,55 @@ export class Runners {
       providers: [...providers.entries()]
         .map(([name, merged]): CatalogProvider => ({
           name,
-          enabled: !disabledProviders.has(name),
           machines: [...merged.machines],
+          disabledOn: [...merged.disabledOn],
           models: [...merged.models.values()].sort((a, b) => a.id.localeCompare(b.id)),
         }))
         .sort((a, b) => b.models.length - a.models.length || a.name.localeCompare(b.name)),
       machines,
-      disabledModels: [...disabledModels],
       defaultModel,
       fetchedAt,
     };
   }
 
-  /** Providers that can serve `model`, merged across machines (null = unknown). */
-  providersForModel(model: string | null): string[] | null {
-    if (!model) return null;
-    const names = this.modelProviders.get(model);
-    return names && names.size > 0 ? [...names] : null;
+  /** Shared machines plus the viewer's own, never another user's private one. */
+  private visibleTo(userId: string | null): RunnerRow[] {
+    return this.store.runners.list().filter((row) => row.owner_id === null || row.owner_id === userId);
   }
 
-  private disabledSet(key: 'disabledProviders' | 'disabledModels'): Set<string> {
-    try {
-      const raw = this.store.settings.get(key);
-      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set();
-    }
+  /** Replace one machine's provider policy (full replacement; empty allows all). */
+  setProviderPolicy(id: string, policy: RunnerProviderPolicy): void {
+    this.store.runners.setProviderPolicy(id, policy);
+    this.rebuildModelIndex();
+    this.broadcast({ t: 'runners.changed' });
+  }
+
+  /** One machine's policy as lookup sets, for filtering a live model catalog. */
+  policyFor(runnerId: string | null): RunnerPolicy {
+    return policyOf(this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID));
+  }
+
+  /**
+   * Runners that may run `model` right now: enabled runner, credential-ready
+   * provider, and neither the provider nor the model switched off there. Null
+   * means no machine's catalog mentions the model at all, so nothing can be
+   * proven about it; an empty set means it is known and allowed nowhere.
+   */
+  runnersForModel(model: string | null): ReadonlySet<string> | null {
+    return model ? (this.modelServers.get(model) ?? null) : null;
+  }
+
+  /**
+   * May `runnerId` run `model`? False only on evidence: some machine's catalog
+   * lists the model and this machine, which has reported its own catalog, does
+   * not allow it. Unknowns stay permissive, so a machine that has never been
+   * probed is never refused for a model it might well serve.
+   */
+  serves(runnerId: string | null, model: string | null): boolean {
+    const servers = this.runnersForModel(model);
+    if (!servers) return true;
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    return row === undefined || rowServes(row, servers);
   }
 
   /**
@@ -755,23 +801,58 @@ export class Runners {
     this.broadcast({ t: 'runners.changed' });
   }
 
-  /** Rebuild the model → providers map. Small data; rebuilt only on writes. */
+  /**
+   * Rebuild the model → runners map. Every model any catalog lists gets a key
+   * (that is how callers tell "unknown model" from "allowed nowhere"), but only
+   * machines that would actually run it are recorded. O(models across
+   * catalogs); small data, rebuilt only on writes.
+   *
+   * Deliberately blind to `enabled`: that switch governs PLACEMENT (see
+   * `eligibleFor`), not whether a machine may answer. Folding it in here would
+   * make disabling a machine break the turns of runs already live on it.
+   */
   private rebuildModelIndex(): void {
     const index = new Map<string, Set<string>>();
     for (const row of this.store.runners.list()) {
-      if (row.enabled !== 1) continue;
+      const policy = policyOf(row);
       for (const provider of row.catalog?.providers ?? []) {
+        const usable = provider.ready && !policy.providers.has(provider.name);
         for (const model of provider.models) {
+          const allowed = usable && modelAllowed(policy, provider.name, model.id);
           for (const key of [model.id, `${provider.name}/${model.id}`]) {
-            let names = index.get(key);
-            if (!names) index.set(key, (names = new Set()));
-            names.add(provider.name);
+            let servers = index.get(key);
+            if (!servers) index.set(key, (servers = new Set()));
+            if (allowed) servers.add(row.id);
           }
         }
       }
     }
-    this.modelProviders = index;
+    this.modelServers = index;
   }
+}
+
+/** A runner's own provider policy as lookup sets (empty = allows everything). */
+export interface RunnerPolicy {
+  readonly providers: ReadonlySet<string>;
+  readonly models: ReadonlySet<string>;
+}
+
+function policyOf(row: RunnerRow | undefined): RunnerPolicy {
+  return { providers: new Set(row?.disabled_providers ?? []), models: new Set(row?.disabled_models ?? []) };
+}
+
+/** Model ids are stored bare (`opus`) or provider-scoped (`anthropic/opus`). */
+function modelAllowed(policy: RunnerPolicy, provider: string, id: string): boolean {
+  return !policy.models.has(id) && !policy.models.has(`${provider}/${id}`);
+}
+
+/**
+ * Row-level form of `Runners.serves`, for callers that already hold the row
+ * (placement walks every candidate, so it must not re-query per runner). A
+ * machine that has never reported a catalog stays optimistic.
+ */
+function rowServes(row: RunnerRow, servers: ReadonlySet<string> | null): boolean {
+  return !servers || servers.has(row.id) || row.catalog === null;
 }
 
 type SessionInfo = { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null;
