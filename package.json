@@ -2,7 +2,7 @@
   "name": "companion",
   "private": true,
   "version": "0.1.0",
-  "description": "Companion — a maintainer's GUI that manages a GitHub repository with moxxy agents",
+  "description": "Companion \u2014 a maintainer's GUI that manages a GitHub repository with moxxy agents",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -18,7 +18,7 @@
     "version:check": "node scripts/version.mjs --check"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "packageManager": "pnpm@10.30.0",
   "pnpm": {

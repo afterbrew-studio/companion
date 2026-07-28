@@ -5,7 +5,7 @@
 # therefore carries no pnpm workspace and no TypeScript, only the bundle and the
 # four runtime dependencies it declares external.
 
-FROM node:22-bookworm-slim AS base
+FROM node:24-trixie-slim AS base
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
@@ -52,9 +52,11 @@ RUN apt-get update \
 # This prints `npm warn deprecated prebuild-install@7.1.3` (a better-sqlite3 12.x
 # dependency, and how it fetches a prebuilt binary for this toolchain-free stage).
 # Left alone on purpose: muting npm would hide every other deprecation too, and
-# 13.x, which drops prebuild-install, needs Node >=22 while we support 20, and
-# ships prebuilds linked against GLIBC_2.38 while bookworm has 2.36, so npm would
-# fall back to a source build that this stage has no python3/make/g++ for.
+# 13.x, which drops it, ships a binding.gyp, so npm synthesizes `node-gyp rebuild`
+# and the install dies here for want of python3/make/g++. Measured on this exact
+# base. It only succeeds with --ignore-scripts, which would silence every
+# package's lifecycle, and it would still make `npx @moxxy/companion` compile
+# from source on any user machine without a toolchain. A log line is cheaper.
 COPY --from=build /app/runtime-package.json ./package.json
 RUN npm install --omit=dev --omit=peer --no-audit --no-fund && rm -rf /root/.npm
 COPY --from=build /app/apps/companion-cli/dist ./dist

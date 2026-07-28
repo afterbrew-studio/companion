@@ -108,7 +108,7 @@ companion user role alice release-manager
 
 ## Requirements
 
-- **Node.js 20 or newer** for the dashboard.
+- **Node.js 22 or newer** for the dashboard.
 - **git** on `PATH` for repository work.
 - **[moxxy](https://www.npmjs.com/package/@moxxy/cli)** for agent runs.
 

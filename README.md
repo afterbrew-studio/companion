@@ -73,7 +73,7 @@ for roles, audit, deployment shape, and an honest list of what is not built yet.
 
 ## Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 22 or newer.
 - pnpm 10 (Corepack is recommended: `corepack enable`).
 - Git.
 - Optional for local agent runs: moxxy CLI (`npm i -g @moxxy/cli`). The daemon still starts without it, but agent runs fail until it is installed.
@@ -99,7 +99,7 @@ admin. The token is read from `gh` only after confirmation, sent to the local
 Companion API, and never printed or copied into the CLI configuration.
 
 Use `npx @moxxy/companion init` for setup without starting the server,
-or add `--no-open`, `--port`, or `--home` as needed. Node.js 20+ is the only
+or add `--no-open`, `--port`, or `--home` as needed. Node.js 22+ is the only
 requirement for the dashboard; install the external moxxy CLI before running AI
 agents.
 
