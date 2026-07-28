@@ -130,11 +130,35 @@ function bump(version, how) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
+/**
+ * Is this exact version already on the registry?
+ *
+ * A package whose current version has never been published has nothing to bump:
+ * what is in the tree IS the unreleased version. Bumping it would burn 0.1.0 for
+ * no one. This asks the same question the publish workflow asks, so the two
+ * cannot disagree. An unreachable registry proposes a bump, which risks a
+ * needless version rather than a change that never ships.
+ */
+function isPublished(name, version) {
+  try {
+    execFileSync('npm', ['view', `${name}@${version}`, 'version'], { stdio: 'pipe', encoding: 'utf8' });
+    return true;
+  } catch (err) {
+    const output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+    return !/E404|404 Not Found|is not in this registry/i.test(output);
+  }
+}
+
 const packages = workspace();
 const publishable = [...packages.values()].filter((p) => p.pkg.private !== true && p.pkg.name);
 
 const planned = [];
+const unreleased = [];
 for (const target of publishable) {
+  if (!isPublished(target.pkg.name, target.released)) {
+    unreleased.push(`${target.pkg.name}@${target.released}`);
+    continue;
+  }
   const dirs = closure(target.pkg.name, packages);
   const point = releasePoint(target.dir, target.released);
   const commits = changesSince(point, dirs);
@@ -143,6 +167,9 @@ for (const target of publishable) {
   planned.push({ ...target, how, next: bump(target.released, how), commits, dirs });
 }
 
+if (unreleased.length) {
+  console.log(`Already unreleased, publishing as is: ${unreleased.join(', ')}`);
+}
 if (!planned.length) {
   console.log('No publishable package has unreleased changes.');
   process.exit(0);
