@@ -90,3 +90,12 @@ provisions clones/worktrees and drives runs here; all working-directory paths
 are local to this machine and opaque to companiond. Git operations that touch
 the network arrive with companiond's GitHub credential unless this machine
 sets `COMPANION_RUNNER_GITHUB_TOKEN`.
+
+## Model providers
+
+Model credentials belong to this machine, not to companiond. Add one from the
+machine's settings page in Companion ("Add provider"): companiond calls
+`POST /agent/providers` and the agent pipes the spec into `moxxy provision`
+here, so the key is written only into this machine's moxxy home. Companion
+stores no copy of it. Providers that sign in with a subscription have no
+headless path: run `moxxy login <provider>` on this machine for those.

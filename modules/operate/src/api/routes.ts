@@ -69,6 +69,16 @@ const providerPolicySchema = z.object({
   disabledModels: z.array(z.string().min(1).max(200)).max(500),
 });
 
+// Adding a provider to a machine. The slug is NOT checked against a copy of
+// moxxy's list: moxxy owns it and refuses an unknown one naming the valid ones,
+// so a copy here would only rot. `key` is bounded but otherwise opaque: it is
+// forwarded to the machine and never stored.
+const provisionProviderSchema = z.object({
+  provider: z.string().min(1).max(64),
+  key: z.string().min(1).max(4_000).optional(),
+  model: z.string().min(1).max(200).optional(),
+});
+
 const updateRunnerSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   endpoint: z.string().url().max(300).optional(),
@@ -468,6 +478,30 @@ export default defineRoutes((ctx) => {
         requireManageableRunner(user, params.id);
         op.runners.setProviderPolicy(params.id, body);
         return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
+      },
+    }),
+
+    route({
+      // Give THIS machine a model provider, by running `moxxy provision` there.
+      // Sibling of the PUT above and deliberately so: that one decides which of
+      // the providers a machine already has agents may use, this one gives it
+      // another. Same gate (own the machine, or hold runners:manage over the
+      // shared pool) because both change what work can land here.
+      //
+      // The key is forwarded to the machine and never persisted, logged or
+      // returned; the reply is the re-probe, so the caller sees the machine's
+      // own account of what it now has.
+      method: 'POST',
+      path: '/api/runners/:id/providers',
+      access: 'runners:connect',
+      body: provisionProviderSchema,
+      handler: async ({ params, body, user }) => {
+        requireManageableRunner(user, params.id);
+        try {
+          return await op.runners.provisionProvider(params.id, body);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err).slice(0, 500));
+        }
       },
     }),
 
