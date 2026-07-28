@@ -18,7 +18,6 @@ const SERVER_ABI = new Set([
   '@moxxy/companion-sdk',
   '@moxxy/companion-sdk/server',
   '@moxxy/companion-sdk/agents',
-  'better-sqlite3',
   'zod',
   'ws',
 ]);

@@ -208,8 +208,7 @@ resolves to the host's copy at load time:
 
 ```js
 // esbuild
-external: ['@moxxy/companion-sdk', '@moxxy/companion-sdk/*',
-           'better-sqlite3', 'zod', 'ws']            // server
+external: ['@moxxy/companion-sdk', '@moxxy/companion-sdk/*', 'zod', 'ws']  // server
 external: ['@moxxy/companion-sdk/client', '@moxxy/companion-sdk/ui',
            'react', 'react/jsx-runtime', 'react-dom'] // client
 ```

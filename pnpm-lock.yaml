@@ -10,9 +10,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@moxxy/companion-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@companion/module-admin':
         specifier: workspace:*
         version: link:../../modules/admin
@@ -52,15 +49,18 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
-      '@moxxy/companion-services':
-        specifier: workspace:*
-        version: link:../../packages/services
       '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@moxxy/companion-core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
       better-sqlite3:
         specifier: ^12.2.0
         version: 12.11.1
@@ -93,12 +93,12 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
     devDependencies:
-      '@moxxy/companion-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@moxxy/companion-core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
@@ -157,9 +157,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@moxxy/companion-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@companion/module-admin':
         specifier: workspace:*
         version: link:../../modules/admin
@@ -199,15 +196,18 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
-      '@moxxy/companion-ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
       '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@moxxy/companion-core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@moxxy/companion-ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -242,15 +242,18 @@ importers:
 
   modules/admin:
     dependencies:
-      '@moxxy/companion-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
@@ -260,9 +263,6 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -420,6 +420,9 @@ importers:
 
   modules/core:
     dependencies:
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -432,9 +435,6 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -491,15 +491,18 @@ importers:
 
   modules/operate:
     dependencies:
-      '@moxxy/companion-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
@@ -509,9 +512,6 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@moxxy/plugin-tunnel-proxy':
         specifier: ^0.29.0
         version: 0.29.0(zod@3.25.76)
@@ -828,15 +828,18 @@ importers:
 
   packages/core:
     dependencies:
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../services
       '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../types
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../contracts
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -844,9 +847,6 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.12
-        version: 7.6.13
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -868,6 +868,9 @@ importers:
 
   packages/sdk:
     devDependencies:
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../core
@@ -880,9 +883,6 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../ui
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../contracts
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -898,12 +898,12 @@ importers:
 
   packages/services:
     dependencies:
-      '@moxxy/companion-types':
-        specifier: workspace:*
-        version: link:../types
       '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@moxxy/companion-types':
+        specifier: workspace:*
+        version: link:../types
       jsonrepair:
         specifier: ^3.15.0
         version: 3.15.0
