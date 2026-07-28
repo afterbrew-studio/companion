@@ -1,7 +1,7 @@
 {
   "name": "@moxxy/companion",
   "version": "0.3.0",
-  "description": "Run the complete Companion dashboard locally with one command.",
+  "description": "A self-hosted maintainer dashboard that runs your GitHub repositories with AI agents.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -16,12 +16,14 @@
     "node": ">=20"
   },
   "keywords": [
-    "moxxy",
-    "companion",
-    "dashboard",
     "github",
+    "ai",
     "agents",
-    "cli"
+    "dashboard",
+    "self-hosted",
+    "automation",
+    "code-review",
+    "moxxy"
   ],
   "scripts": {
     "build": "node build.mjs",
@@ -49,5 +51,14 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moxxy-ai/companion.git",
+    "directory": "apps/companion-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
   }
 }
