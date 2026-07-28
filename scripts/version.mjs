@@ -90,10 +90,24 @@ function releasePoint(dir, version) {
 
 /** Anything that cannot end up in a tarball must not force a release. */
 const IRRELEVANT = /(^|\/)(tests?|__tests__)\//;
-const isRelevant = (file) =>
-  !IRRELEVANT.test(file) && !file.endsWith('.md') && !file.startsWith('docs/') && !file.startsWith('.github/');
+/**
+ * A README is the exception among markdown files: npm packs it whatever `files`
+ * says, and it IS the package page. Treating it like the rest of the docs would
+ * leave a corrected README unpublishable, because nothing would ever mark the
+ * package as having unreleased changes.
+ *
+ * Only its OWN README, though. The closure is directory-shaped, so a dependency's
+ * README shows up in the diff of everything that bundles it, and a line about
+ * `@moxxy/companion-sdk` never reaches the CLI's tarball.
+ */
+const relevantTo = (ownDir) => (file) =>
+  !IRRELEVANT.test(file) &&
+  !file.startsWith('docs/') &&
+  !file.startsWith('.github/') &&
+  (!file.endsWith('.md') || file === `${ownDir}/README.md`);
 
-function changesSince(point, dirs) {
+function changesSince(point, dirs, ownDir) {
+  const isRelevant = relevantTo(ownDir);
   const range = point ? `${point}..HEAD` : 'HEAD';
   const raw = git('log', range, '--format=%x01%H%x00%s%x00%b', '--name-only', '--', ...dirs);
   if (!raw) return [];
@@ -161,7 +175,7 @@ for (const target of publishable) {
   }
   const dirs = closure(target.pkg.name, packages);
   const point = releasePoint(target.dir, target.released);
-  const commits = changesSince(point, dirs);
+  const commits = changesSince(point, dirs, target.dir);
   if (!commits.length) continue;
   const how = level(commits);
   planned.push({ ...target, how, next: bump(target.released, how), commits, dirs });
@@ -194,4 +208,43 @@ for (const p of planned) {
   // no-op rather than a failure.
   writeFileSync(p.manifest, raw.replace(/("version":\s*)"[^"]+"/, `$1"${p.next}"`));
 }
+
+/**
+ * Carry the release into ranges that name a bumped package explicitly.
+ *
+ * `workspace:*` needs none of this, because pnpm resolves it at pack time. A
+ * caret does: the SDK peers on `@moxxy/companion-contracts`, and `^0.1.0` does
+ * not admit 0.2.0, so a release that moved one without the other would install
+ * as an unmet peer for everyone.
+ */
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const realigned = [];
+for (const { manifest } of packages.values()) {
+  const raw = readFileSync(manifest, 'utf8');
+  let next = raw;
+  for (const p of planned) {
+    next = next.replace(new RegExp(`("${escape(p.pkg.name)}":\\s*")\\^[^"]*(")`, 'g'), `$1^${p.next}$2`);
+  }
+  if (next === raw) continue;
+  writeFileSync(manifest, next);
+  realigned.push(manifest);
+}
+
+/**
+ * The SDK reports its own version from a source literal, because a bundled
+ * package cannot read its package.json at runtime. `pnpm sdk:surface` fails when
+ * the two disagree, so without this every SDK release would open a pull request
+ * that cannot go green.
+ */
+const sdk = planned.find((p) => p.pkg.name === '@moxxy/companion-sdk');
+if (sdk) {
+  const file = join(root, 'packages/sdk/src/index.ts');
+  const raw = readFileSync(file, 'utf8');
+  const pattern = /(export const SDK_VERSION = ')[^']+(')/;
+  if (!pattern.test(raw)) throw new Error(`${file} no longer declares SDK_VERSION`);
+  writeFileSync(file, raw.replace(pattern, `$1${sdk.next}$2`));
+}
+
 console.log(`\nWrote ${planned.length} version(s).`);
+if (realigned.length) console.log(`Realigned dependency ranges in ${realigned.length} manifest(s).`);
+if (sdk) console.log(`Set SDK_VERSION to ${sdk.next}.`);

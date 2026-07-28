@@ -3,6 +3,8 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
+# `pnpm pack` output, left behind by a manual publish
+*.tgz
 .env
 .env.local
 
