@@ -152,3 +152,143 @@ test('a predecessor that keeps beating is still refused', async () => {
     }
   });
 });
+
+/**
+ * Handover. Two containers cannot see each other's processes, so a rolling
+ * deploy deadlocks: the replacement will not be healthy until it holds the
+ * home, and the orchestrator will not stop the original until the replacement
+ * is healthy. The data directory is the one channel they share.
+ */
+
+const handoverFile = (file) => file.replace(/instance\.lock$/, 'instance.handover');
+const liveHolder = (host) => ({ pid: process.ppid, host, startedAt: Date.now(), heartbeatAt: Date.now() });
+
+test('a waiting daemon asks the live holder to stand down', async () => {
+  await withHome(async (file) => {
+    writeFileSync(file, JSON.stringify(liveHolder('old-container')));
+
+    await assert.rejects(() => new InstanceLock(0).acquire(), /already using/);
+
+    const note = JSON.parse(readFileSync(handoverFile(file), 'utf8'));
+    assert.equal(note.requestedBy, hostname());
+    assert.equal(note.yieldedBy, null);
+  });
+});
+
+test('the holder stands down when the note names someone else', async () => {
+  await withHome(async (file) => {
+    const lock = new InstanceLock();
+    await lock.acquire();
+    let stood = 0;
+    lock.handoverTo(() => (stood += 1));
+    writeFileSync(
+      handoverFile(file),
+      JSON.stringify({ requestedBy: 'new-container', requestedAt: Date.now(), yieldedBy: null, yieldedAt: 0 }),
+    );
+
+    lock.beat();
+
+    assert.equal(stood, 1);
+    assert.equal(JSON.parse(readFileSync(handoverFile(file), 'utf8')).yieldedBy, hostname());
+    // Once is enough: a second beat before the process is gone must not re-enter
+    // a shutdown that is already running.
+    lock.beat();
+    assert.equal(stood, 1);
+    lock.release();
+  });
+});
+
+test('a daemon never stands down for its own request', async () => {
+  await withHome(async (file) => {
+    const lock = new InstanceLock();
+    await lock.acquire();
+    let stood = 0;
+    lock.handoverTo(() => (stood += 1));
+    writeFileSync(
+      handoverFile(file),
+      JSON.stringify({ requestedBy: hostname(), requestedAt: Date.now(), yieldedBy: null, yieldedAt: 0 }),
+    );
+
+    lock.beat();
+
+    assert.equal(stood, 0, 'asking yourself to leave would end every single-daemon boot');
+    lock.release();
+  });
+});
+
+test('a stale request is a leftover, not an ask', async () => {
+  await withHome(async (file) => {
+    const lock = new InstanceLock();
+    await lock.acquire();
+    let stood = 0;
+    lock.handoverTo(() => (stood += 1));
+    writeFileSync(
+      handoverFile(file),
+      JSON.stringify({
+        requestedBy: 'long-gone',
+        requestedAt: Date.now() - 10 * 60_000,
+        yieldedBy: null,
+        yieldedAt: 0,
+      }),
+    );
+
+    lock.beat();
+
+    assert.equal(stood, 0);
+    lock.release();
+  });
+});
+
+test('the container that stood down refuses to evict its own replacement', async () => {
+  await withHome(async (file) => {
+    // What `restart: unless-stopped` does to the container that just yielded.
+    writeFileSync(file, JSON.stringify(liveHolder('new-container')));
+    writeFileSync(
+      handoverFile(file),
+      JSON.stringify({
+        requestedBy: 'new-container',
+        requestedAt: Date.now(),
+        yieldedBy: hostname(),
+        yieldedAt: Date.now(),
+      }),
+    );
+
+    await assert.rejects(() => new InstanceLock(0).acquire(), /superseded/);
+    // And it must not have asked, which is the ping-pong.
+    assert.equal(JSON.parse(readFileSync(handoverFile(file), 'utf8')).requestedBy, 'new-container');
+  });
+});
+
+test('a second handover is refused during the cooldown', async () => {
+  await withHome(async (file) => {
+    writeFileSync(file, JSON.stringify(liveHolder('other-container')));
+    writeFileSync(
+      handoverFile(file),
+      JSON.stringify({
+        requestedBy: 'other-container',
+        requestedAt: Date.now(),
+        yieldedBy: 'someone-else',
+        yieldedAt: Date.now(),
+      }),
+    );
+
+    await assert.rejects(() => new InstanceLock(0).acquire(), /already using/);
+
+    // Two daemons that both want the home would otherwise evict each other
+    // forever; the cooldown makes the loser fail with the ordinary error.
+    assert.equal(JSON.parse(readFileSync(handoverFile(file), 'utf8')).requestedBy, 'other-container');
+  });
+});
+
+test('COMPANION_LOCK_HANDOVER=off keeps the old refusal exactly', async () => {
+  await withHome(async (file) => {
+    writeFileSync(file, JSON.stringify(liveHolder('old-container')));
+    process.env.COMPANION_LOCK_HANDOVER = 'off';
+    try {
+      await assert.rejects(() => new InstanceLock(0).acquire(), /already using/);
+      assert.equal(existsSync(handoverFile(file)), false);
+    } finally {
+      delete process.env.COMPANION_LOCK_HANDOVER;
+    }
+  });
+});

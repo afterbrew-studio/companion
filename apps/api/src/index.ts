@@ -126,6 +126,9 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+  // A replacement that cannot see this process can still reach it through the
+  // data directory, and a rolling deploy has no other way out.
+  lock.handoverTo(() => void shutdown());
 }
 
 main().catch((err) => {
