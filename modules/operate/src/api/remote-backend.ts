@@ -13,6 +13,7 @@ import type {
   AgentCloneStatusResponse,
   AskResponse,
   HistorySegment,
+  ProvisionProviderSpec,
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
@@ -124,6 +125,18 @@ export class RemoteRunnerBackend implements RunnerBackend {
    */
   async updateMoxxy(): Promise<AgentUpdateMoxxyResult> {
     return this.call<AgentUpdateMoxxyResult>('POST', '/update-moxxy', undefined, 240_000);
+  }
+
+  /**
+   * Add a model provider to the agent's moxxy home. The credential rides the
+   * agent's authenticated channel (the same one the runner token and GitHub
+   * tokens already use), and the agent pipes it straight into its CLI.
+   *
+   * Outlives the agent's own 120s cap on the CLI, so a slow provisioning fails
+   * with the agent's message rather than an opaque abort here.
+   */
+  async provisionProvider(spec: ProvisionProviderSpec): Promise<void> {
+    await this.call('POST', '/providers', spec, 150_000);
   }
 
   // ---------- gateway lifecycle ----------

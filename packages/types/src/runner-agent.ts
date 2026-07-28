@@ -58,6 +58,32 @@ export interface AgentUpdateMoxxyResult {
   readonly compatible: boolean;
 }
 
+/**
+ * POST /agent/providers: add a model provider to the runner's moxxy home by
+ * running `moxxy provision` there. One shape at every hop: the browser sends it
+ * to companiond, companiond forwards it to the agent, and the agent pipes it to
+ * the CLI on stdin.
+ *
+ * `key` is a live credential. Companion never persists it, never puts it in
+ * argv (which `ps` shows to every user on the machine), never logs it, and
+ * never returns it. Providers that authenticate with a subscription have no
+ * headless path at all: those need `moxxy login <provider>` run on the machine.
+ *
+ * Added WITHOUT a protocol bump, like `/agent/update-moxxy`: it is additive, so
+ * an older agent answers 404 and the daemon turns that into guidance.
+ */
+export interface ProvisionProviderSpec {
+  /**
+   * moxxy's provider slug (`anthropic`, `openai`, …). moxxy owns the list and
+   * refuses an unknown slug with its own message naming the valid ones, so
+   * nothing here validates against a copy of it that would rot.
+   */
+  readonly provider: string;
+  readonly key?: string;
+  /** Default model for the provider; omitted keeps moxxy's own default. */
+  readonly model?: string;
+}
+
 /** POST /agent/runs/:runId/spawn — bring up serve+gateway for a run at `cwd`. */
 export interface AgentSpawnRequest {
   readonly cwd: string;

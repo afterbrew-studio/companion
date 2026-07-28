@@ -5,6 +5,7 @@ import type {
   AskResponse,
   HistorySegment,
   MoxxyEvent,
+  ProvisionProviderSpec,
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
@@ -26,6 +27,14 @@ export interface RunnerBackend {
 
   /** Probe the machine — feeds the health poller and the "Test connection" action. */
   probe(): Promise<RunnerHealth>;
+
+  /**
+   * Add a model provider to this machine's moxxy home. `spec.key` is a live
+   * credential: an implementation hands it to moxxy and nothing else. It is
+   * never stored, never logged, and never comes back out, including through an
+   * error message (see `scrubSecret`).
+   */
+  provisionProvider(spec: ProvisionProviderSpec): Promise<void>;
 
   // ---------- gateway lifecycle ----------
   /** Bring up serve+gateway for a run whose working dir is `cwd`. */

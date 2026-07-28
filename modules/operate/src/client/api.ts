@@ -1,4 +1,4 @@
-import type { AskRequest, HistorySegment } from '@moxxy/companion-types';
+import type { AskRequest, HistorySegment, ProvisionProviderSpec } from '@moxxy/companion-types';
 import { del, patch, post, put, request } from '@moxxy/companion-core/client';
 import type {
   CreateRunnerRequest,
@@ -66,6 +66,10 @@ export const operateApi = {
     patch<{ runner: RunnerRecord }>(`/api/runners/${id}`, body),
   deleteRunner: (id: string) => del<{ ok: true }>(`/api/runners/${id}`),
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
+  // Adding a provider answers with the machine's re-probe: health and catalog
+  // as it reports them now. The key travels one way only.
+  addRunnerProvider: (id: string, spec: ProvisionProviderSpec) =>
+    post<RunnerProbeResult>(`/api/runners/${id}/providers`, spec),
   updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
   // providers + models (grouped per machine; machines fetch their own catalog)

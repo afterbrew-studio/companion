@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentStorageCleanupRequest } from '@moxxy/companion-types';
+import type { AgentStorageCleanupRequest, ProvisionProviderSpec } from '@moxxy/companion-types';
 import type {
   CatalogMachine,
   CatalogMachineModel,
@@ -30,6 +30,7 @@ import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
 import { configuredProviderNames } from '../exec/home.js';
+import { scrubSecret } from '../exec/provision.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import { LocalRunnerBackend } from './local-backend.js';
 import { RemoteRunnerBackend } from './remote-backend.js';
@@ -611,6 +612,33 @@ export class Runners {
     await this.probeOne(id);
     this.broadcast({ t: 'runners.changed' });
     return result;
+  }
+
+  /**
+   * Add a model provider to one machine, then re-read that machine so the new
+   * credential shows up in its health and its catalog: the same probe the
+   * "Test connection" action runs, broadcast included.
+   *
+   * The credential passes through to the backend and stops there: no runner
+   * row, settings key or log line on this side ever holds it. It is scrubbed
+   * back out of whatever the machine reports on failure, because a machine can
+   * quote the spec it was handed back and that text becomes an HTTP response.
+   */
+  async provisionProvider(id: string, spec: ProvisionProviderSpec): Promise<RunnerProbeResult> {
+    const backend = this.backends.get(id);
+    if (!backend) throw new Error(`runner ${id} not found`);
+    try {
+      await backend.provisionProvider(spec);
+    } catch (err) {
+      const detail = scrubSecret(String(err instanceof Error ? err.message : err), spec.key);
+      // A pre-provisioning agent 404s with its own error envelope ("no route: …").
+      throw /no route/.test(detail)
+        ? new Error(
+            'this runner agent predates adding providers from here; update it on the machine once (npm i -g @moxxy/companion-runner, then restart it)',
+          )
+        : new Error(detail);
+    }
+    return this.probeNow(id);
   }
 
   /** The "Test connection" action — probe health + fetch the runner's catalog. */

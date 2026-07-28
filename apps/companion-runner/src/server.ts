@@ -29,6 +29,7 @@ import {
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
   type AgentWriteFileRequest,
+  type ProvisionProviderSpec,
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from '@companion/module-operate/exec';
@@ -36,7 +37,12 @@ import { configuredProviderNames } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
-import { cleanupRunnerStorage, loadHistoryWithFallback, upgradeMoxxyCli } from '@companion/module-operate/exec';
+import {
+  cleanupRunnerStorage,
+  loadHistoryWithFallback,
+  runMoxxyProvision,
+  upgradeMoxxyCli,
+} from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**
@@ -204,6 +210,15 @@ async function route(
     deps.moxxy = fresh;
     log.info(`moxxy CLI updated: ${previous ?? 'none'} → ${fresh.version}`);
     return { previous, version: fresh.version, compatible: fresh.compatible } satisfies AgentUpdateMoxxyResult;
+  }
+
+  if (method === 'POST' && path === '/agent/providers') {
+    const spec = provisionSpec(body);
+    if (!deps.moxxy) throw new HttpError(503, 'moxxy CLI is not installed on this runner');
+    // The provider slug is safe to log; nothing else in the spec ever is.
+    log.info('adding model provider', { provider: spec.provider });
+    await runMoxxyProvision(deps.moxxy.path, paths.moxxyHome(), spec);
+    return { ok: true };
   }
 
   if (method === 'POST' && path === '/agent/scratch') {
@@ -437,6 +452,18 @@ function requireMethod(method: string, expected: string, action: string): void {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0) throw badRequest(`missing ${name}`);
   return value;
+}
+
+/** Narrow the provisioning body; `key` and `model` stay optional as moxxy has them. */
+function provisionSpec(value: unknown): ProvisionProviderSpec {
+  if (!value || typeof value !== 'object') throw badRequest('invalid provision request');
+  const raw = value as Record<string, unknown>;
+  const optional = (name: 'key' | 'model'): Record<string, string> => {
+    const candidate = raw[name];
+    if (candidate === undefined || candidate === null) return {};
+    return { [name]: requireString(candidate, name) };
+  };
+  return { provider: requireString(raw.provider, 'provider'), ...optional('key'), ...optional('model') };
 }
 
 function storageCleanupRequest(value: unknown): AgentStorageCleanupRequest {

@@ -5,6 +5,7 @@ import type {
   AgentStorageCleanupResponse,
   AskResponse,
   HistorySegment,
+  ProvisionProviderSpec,
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
@@ -13,6 +14,7 @@ import type { RunnerHealth } from '../contract/index.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { configuredProviderNames } from '../exec/home.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
+import { runMoxxyProvision } from '../exec/provision.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
@@ -68,6 +70,11 @@ export class LocalRunnerBackend implements RunnerBackend {
       detail: this.moxxyCompatible ? null : `moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
       providers: configuredProviderNames(),
     };
+  }
+
+  /** Companion's own isolated moxxy home: the one every gateway here boots against. */
+  provisionProvider(spec: ProvisionProviderSpec): Promise<void> {
+    return runMoxxyProvision(this.moxxyCliPath, paths.moxxyHome(), spec);
   }
 
   async spawn(runId: string, cwd: string): Promise<void> {
