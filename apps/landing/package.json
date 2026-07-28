@@ -1,7 +1,0 @@
-{
-  "name": "companion-landing",
-  "private": true,
-  "version": "0.1.0",
-  "description": "The companion.moxxy.ai marketing site: static files served by nginx.",
-  "type": "module"
-}

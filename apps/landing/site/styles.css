@@ -92,7 +92,10 @@ a {
 .shell {
   max-width: var(--shell);
   margin: 0 auto;
-  padding: 0 28px;
+  /* Longhands, not `padding: 0 28px`: the shorthand would also set padding-top
+     to 0 and, being a class, would beat the section rhythm rule below. */
+  padding-left: 28px;
+  padding-right: 28px;
 }
 
 /* ---- shared voice ---- */
