@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
-import { request, useLive } from '@moxxy-ai/companion-sdk/client';
+import { request, useLive, useModuleEnabled } from '@moxxy-ai/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
@@ -128,7 +128,11 @@ export function useOverview(): UseOverview {
   const issues = useFeed(id, fetchOpenIssues, (m) => m.t === 'issues.changed' || m.t === 'triage.changed');
   const prs = useFeed(id, fetchPrs, (m) => m.t === 'prs.changed');
   // FLAG: plan's message literal — not in code's visible union (plan depends on us).
-  const proposals = useFeed(id, fetchProposals, (m) => (m.t as string) === 'proposals.changed');
+  // Optional cross-module read: plan owns this route and may not be in the
+  // build, installed, or enabled. Skipping the fetch is the fix; catching the
+  // 404 afterwards would hide a real one.
+  const planEnabled = useModuleEnabled('plan');
+  const proposals = useFeed(planEnabled ? id : null, fetchProposals, (m) => (m.t as string) === 'proposals.changed');
   const runs = useFeed(id, fetchRuns, (m) => m.t === 'runs.changed' || m.t === 'run.changed');
   const pipelineRuns = useFeed(id, fetchPipelineRuns, (m) => m.t === 'pipelineRuns.changed');
   const repos = useFeed(id, fetchRepos, (m) => m.t === 'repos.changed');
@@ -161,7 +165,11 @@ export function useOverview(): UseOverview {
   const failingPrs = openPrs?.filter((p) => p.checks?.state === 'failing') ?? null;
   const liveRuns = scopedRuns?.filter((r) => r.live) ?? null;
   const reviewRuns = scopedRuns?.filter((r) => r.status === 'review') ?? null;
-  const actionableProposals = proposals.data?.filter((p) => p.status === 'analyzed' || p.status === 'review') ?? null;
+  // Without plan there are no proposals to wait for, so an empty list rather
+  // than `null`: a permanently-loading tile would be its own bug.
+  const actionableProposals = planEnabled
+    ? (proposals.data?.filter((p) => p.status === 'analyzed' || p.status === 'review') ?? null)
+    : [];
   const attentionCount =
     reviewRuns && pendingReviews.data && pendingTriage.data && failingPrs && actionableProposals
       ? reviewRuns.length +

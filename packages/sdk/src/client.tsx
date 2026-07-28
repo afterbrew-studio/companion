@@ -46,7 +46,7 @@ export { useLive, isMessage, onServerMessage, onWsState, registerFreshFilter } f
 export type { WsState, FreshFilter } from '@companion/core/client';
 
 // ---- host state a module reads ----
-export { useKernel } from '@companion/core/client';
+export { useKernel, useModuleEnabled } from '@companion/core/client';
 export type { ModuleDescriptor } from '@companion/core/client';
 
 // ---- cross-module affordances ----

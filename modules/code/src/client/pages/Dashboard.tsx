@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { pipelineRunHref, reportHref, runHref, useKernel } from '@moxxy-ai/companion-sdk/client';
+import { pipelineRunHref, reportHref, runHref, useKernel, useModuleEnabled } from '@moxxy-ai/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
@@ -49,6 +49,7 @@ export function DashboardPage(): JSX.Element {
     issueBacklogDelta,
     prBacklogDelta,
   } = o;
+  const planEnabled = useModuleEnabled('plan');
 
   return (
     <Page>
@@ -94,13 +95,16 @@ export function DashboardPage(): JSX.Element {
           tone={liveRuns && liveRuns.length > 0 ? 'ok' : 'default'}
           href="#/runs"
         />
-        <StatTile
-          label="Legacy proposals"
-          loading={actionableProposals === null}
-          value={actionableProposals?.length ?? 0}
-          tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
-          href="#/legacy-proposals"
-        />
+        {/* plan owns proposals; without it there is no page to link to. */}
+        {planEnabled ? (
+          <StatTile
+            label="Legacy proposals"
+            loading={actionableProposals === null}
+            value={actionableProposals?.length ?? 0}
+            tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
+            href="#/legacy-proposals"
+          />
+        ) : null}
       </div>
 
       <MetricsSection metrics={metrics} />

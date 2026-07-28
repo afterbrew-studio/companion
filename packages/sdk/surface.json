@@ -141,7 +141,8 @@
     "useBulkRunner",
     "useIntent",
     "useKernel",
-    "useLive"
+    "useLive",
+    "useModuleEnabled"
   ],
   "./ui": [
     "AccentField",

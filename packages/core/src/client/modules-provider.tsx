@@ -192,6 +192,23 @@ export function ModulesProvider(props: {
   return <KernelContext.Provider value={state}>{props.children}</KernelContext.Provider>;
 }
 
+/**
+ * Is an optional module enabled in THIS instance?
+ *
+ * The client half of the `tryGet` rule. A module may only call another module's
+ * endpoints when that module is actually there, and "there" is per instance, not
+ * per build: an optional module can be absent from the profile, present but not
+ * installed, or installed and later disabled. All three look the same from a
+ * fetch, which 404s with `no route`, and a stray 404 surfaces as an error banner
+ * on a page that is otherwise fine.
+ *
+ * Use it to skip the request, not to hide the error afterwards.
+ */
+export function useModuleEnabled(id: string): boolean {
+  const { descriptors } = useKernel();
+  return descriptors.some((m) => m.id === id && m.enabled);
+}
+
 export function useKernel(): KernelState {
   const ctx = useContext(KernelContext);
   if (!ctx) throw new Error('useKernel outside <ModulesProvider>');

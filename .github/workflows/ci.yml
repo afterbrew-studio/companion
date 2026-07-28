@@ -57,3 +57,43 @@ jobs:
       # regression guard for "the shell depends on no optional module".
       - run: pnpm gen:modules --profile minimal
       - run: pnpm -r typecheck
+
+  # The Docker image is the deployment path, and nothing above exercises it.
+  # A rename of the CLI package once made `pnpm --filter` match nothing, which
+  # exits 0, so the image built empty and failed three steps later on a COPY.
+  # Every workspace check still passed. This job is that gap closed: it builds
+  # the image the way a deploy does, then asks the running container what it
+  # actually contains.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the full image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: PROFILE=full
+          load: true
+          tags: companion:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A build that produces an image which cannot boot is not a passing build.
+      - name: Boot it and check the module set
+        run: |
+          docker run -d --name companion-ci -p 8901:8901 \
+            -e COMPANION_ADMIN_USER=ci -e COMPANION_ADMIN_PASSWORD='CorrectHorse1!' companion:ci
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8901/healthz >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8901/healthz >/dev/null || { docker logs companion-ci; exit 1; }
+          # `companion` must be on PATH: every runbook in the README uses it.
+          docker exec companion-ci companion module list | tee /tmp/modules.txt
+          grep -q '13 enabled' /tmp/modules.txt || {
+            echo "expected a full build (13 modules); the PROFILE build arg did not take effect"
+            exit 1
+          }

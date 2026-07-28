@@ -19,6 +19,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn a failed response body into something a user can act on.
+ *
+ * A body-schema rejection arrives as `{ error: 'invalid request', issues: [...] }`
+ * where the issues carry the message the schema author wrote ("letters, digits,
+ * dots, dashes (2-40 chars)"). Showing only `error` threw that away and put
+ * "invalid request" under every form field in the app, which tells the user
+ * nothing about what to change.
+ */
+function errorMessage(body: { error?: string; issues?: unknown }, res: Response): string {
+  const issues = Array.isArray(body.issues) ? (body.issues as Array<{ path?: unknown[]; message?: string }>) : [];
+  const detail = issues
+    .map((i) => {
+      const field = Array.isArray(i.path) ? i.path.filter((p) => typeof p === 'string').join('.') : '';
+      return field && i.message ? `${field}: ${i.message}` : (i.message ?? '');
+    })
+    .filter(Boolean)
+    .join('; ');
+  if (detail) return detail;
+  return body.error ?? `${res.status} ${res.statusText}`;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -63,8 +85,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError('session expired — sign in again', 401);
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error ?? `${res.status} ${res.statusText}`, res.status);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown };
+    throw new ApiError(errorMessage(body, res), res.status);
   }
   return (await res.json()) as T;
 }
@@ -85,8 +107,8 @@ export async function publicPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(parsed.error ?? `${res.status} ${res.statusText}`, res.status);
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown };
+    throw new ApiError(errorMessage(parsed, res), res.status);
   }
   return (await res.json()) as T;
 }
