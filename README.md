@@ -1,4 +1,4 @@
-# Companion
+<h1><img src="docs/brand/mark-tile.svg" width="28" height="28" align="top" alt=""> Companion</h1>
 
 Companion is a self-hosted engineering dashboard that plugs into GitHub and manages repositories end-to-end with [moxxy](https://github.com/moxxy-ai/moxxy) agents. It can triage issues, review pull requests with CI context, run user-defined PR pipelines, implement proposals into PRs, and automate work through webhooks and schedules.
 
@@ -84,7 +84,7 @@ for roles, audit, deployment shape, and an honest list of what is not built yet.
 The published CLI contains both companion-api and the built SPA:
 
 ```sh
-npx @moxxy-ai/companion
+npx @moxxy/companion
 ```
 
 On first launch, choose an admin username, email, and password, or press Enter
@@ -98,7 +98,7 @@ its active `github.com` identity as a personal GitHub account owned by the new
 admin. The token is read from `gh` only after confirmation, sent to the local
 Companion API, and never printed or copied into the CLI configuration.
 
-Use `npx @moxxy-ai/companion init` for setup without starting the server,
+Use `npx @moxxy/companion init` for setup without starting the server,
 or add `--no-open`, `--port`, or `--home` as needed. Node.js 20+ is the only
 requirement for the dashboard; install the external moxxy CLI before running AI
 agents.
@@ -329,7 +329,7 @@ install path you use decides whether you can pick one at all:
 
 | Install path | Profile |
 |---|---|
-| `npx @moxxy-ai/companion` | `slim`, fixed. The registry is baked into the published bundle. |
+| `npx @moxxy/companion` | `slim`, fixed. The registry is baked into the published bundle. |
 | Docker | `--build-arg PROFILE=full`, or `COMPANION_PROFILE=full` via compose |
 | From source | `COMPANION_PROFILE=full pnpm build` |
 

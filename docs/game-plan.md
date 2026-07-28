@@ -55,6 +55,12 @@ Small, independent, all of them things that get more expensive later.
    `@moxxy-ai/companion`. Aligned to the documented name. (`@moxxy/cli` and
    `@moxxy/companion-runner` are separate products and were left alone: the
    scope mix is not a bug.)
+
+   **Reversed later**: the published name is `@moxxy/companion`, and the help
+   text, both READMEs and the docs follow it. The alignment was the point, not
+   the direction. The Dockerfile no longer refers to the package by name at all,
+   because a rename silently breaking `pnpm --filter` is how the image build
+   broke once already.
 2. **`autoInstall: false`** on `plan`, `planner`, `board`, `refinement`, `slop`,
    `playground`, `automations`. Verified: a fresh database now activates
    `admin, code, core, operate, workspace` and lists the other seven as

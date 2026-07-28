@@ -35,17 +35,23 @@ interface CliOptions {
   readonly verbose: boolean;
 }
 
-const HELP = `@moxxy-ai/companion — run Companion locally
+/** The mark in box drawing: the open arc, and the dot standing in its gap. */
+const BANNER = `
+ ╭─╴
+ │  ●   companion
+ ╰─╴
+`;
+
+const HELP = `@moxxy/companion: run Companion locally
 
 Usage:
-  npx @moxxy-ai/companion             Initialize when needed, start, open browser
-  npx @moxxy-ai/companion init        Create the local admin configuration only
-  npx @moxxy-ai/companion connect-github
-                                       Connect active gh to an existing Companion user
-  npx @moxxy-ai/companion module ...   Inspect and toggle modules (see: module --help)
-  npx @moxxy-ai/companion acl ...      Inspect the live permission grid (see: acl --help)
-  npx @moxxy-ai/companion role ...     Create and edit roles
-  npx @moxxy-ai/companion user role <username> <role>
+  npx @moxxy/companion                  Initialize when needed, start, open browser
+  npx @moxxy/companion init             Create the local admin configuration only
+  npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
+  npx @moxxy/companion module ...       Inspect and toggle modules (see: module --help)
+  npx @moxxy/companion acl ...          Inspect the live permission grid (see: acl --help)
+  npx @moxxy/companion role ...         Create and edit roles
+  npx @moxxy/companion user role <username> <role>
 
 Options:
   --home <path>    Data directory (default: COMPANION_HOME or ~/.companion)
@@ -86,6 +92,8 @@ async function main(): Promise<void> {
     await connectGithub(options);
     return;
   }
+  // Decoration, so only when a person is watching: piped output stays clean.
+  if (process.stdout.isTTY) process.stdout.write(BANNER);
   if (!setupExists(options.home)) await initialize(options);
   else if (options.command === 'init') {
     process.stdout.write(`Companion is already initialized in ${options.home}\n`);
@@ -181,7 +189,7 @@ async function initialize(options: CliOptions): Promise<void> {
   }
   process.stdout.write(`\nSaved one-time bootstrap data in ${file} with owner-only permissions.\n`);
   if (setup.generatedPassword) process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
-  if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy-ai/companion\n');
+  if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
 }
 
 async function promptForAdmin(defaults: AdminSetup): Promise<AdminSetup> {
@@ -210,7 +218,7 @@ async function start(options: CliOptions): Promise<void> {
   const staticDir = join(bundleDir, 'web');
   const server = join(bundleDir, 'server.js');
   if (!existsSync(join(staticDir, 'index.html')) || !existsSync(server)) {
-    throw new Error('Companion bundle is incomplete. Reinstall @moxxy-ai/companion.');
+    throw new Error('Companion bundle is incomplete. Reinstall @moxxy/companion.');
   }
 
   process.env.COMPANION_HOME = options.home;
@@ -240,7 +248,7 @@ async function start(options: CliOptions): Promise<void> {
       if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin} to admin ${admin.username}.\n`);
     } catch (err) {
       process.stderr.write(
-        `${err instanceof Error ? err.message : String(err)}\nSign in with the saved Companion password, then run \`npx @moxxy-ai/companion connect-github\`.\n`,
+        `${err instanceof Error ? err.message : String(err)}\nSign in with the saved Companion password, then run \`npx @moxxy/companion connect-github\`.\n`,
       );
     }
   }

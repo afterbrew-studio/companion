@@ -1,9 +1,9 @@
-# @moxxy-ai/companion
+# @moxxy/companion
 
 Run the complete Companion dashboard locally without cloning the monorepo:
 
 ```sh
-npx @moxxy-ai/companion
+npx @moxxy/companion
 ```
 
 On a fresh machine, the CLI offers a short setup flow for the local admin. You
@@ -23,12 +23,12 @@ it in the default browser. Keep the terminal open; press Ctrl+C to stop.
 ## Commands
 
 ```sh
-npx @moxxy-ai/companion             # setup if needed, start, open browser
-npx @moxxy-ai/companion init        # setup only
-npx @moxxy-ai/companion connect-github # connect active gh to a running Companion
-npx @moxxy-ai/companion --no-open   # start without opening a browser
-npx @moxxy-ai/companion --port 9000
-npx @moxxy-ai/companion --home ./companion-data
+npx @moxxy/companion             # setup if needed, start, open browser
+npx @moxxy/companion init        # setup only
+npx @moxxy/companion connect-github # connect active gh to a running Companion
+npx @moxxy/companion --no-open   # start without opening a browser
+npx @moxxy/companion --port 9000
+npx @moxxy/companion --home ./companion-data
 ```
 
 Use `--yes` for a non-interactive first setup. The generated credential is
