@@ -726,11 +726,19 @@ export class Runners {
   noteLiveSession(runnerId: string | null, runId: string): void {
     const id = runnerId ?? LOCAL_RUNNER_ID;
     if (!this.catalogDue(id)) return;
-    void this.backends
-      .get(id)
-      ?.sessionInfo(runId)
-      .then((info) => this.noteSessionInfo(runnerId, info))
-      .catch(() => undefined);
+    // `.catch` cannot cover a synchronous throw, and the local backend does
+    // throw one: `sessionInfo` is declared to return a promise but reaches the
+    // gateway through a lookup that raises when the run has none. Without this,
+    // a free catalog top-up fails the run it was riding along with.
+    try {
+      void this.backends
+        .get(id)
+        ?.sessionInfo(runId)
+        .then((info) => this.noteSessionInfo(runnerId, info))
+        .catch(() => undefined);
+    } catch {
+      // Best effort by definition: the catalog stays as it was.
+    }
   }
 
   /** Same, for session info a caller already holds — costs one parse. */

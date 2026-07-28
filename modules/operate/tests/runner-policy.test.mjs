@@ -109,8 +109,8 @@ async function fixture({ config = {}, roles = {}, machines = ['runner-b'], db = 
   local.stop = async () => {};
   local.isLive = () => true;
   local.runTurn = async () => ({ turnId: 'turn' });
-  // The free catalog top-up createRun does off a just-spawned gateway; without
-  // a real one, its lookup throws straight through the caller.
+  // The free catalog top-up createRun does off a just-spawned gateway. There is
+  // no real one here, so this answers instead of reaching for it.
   local.sessionInfo = async () => null;
   for (const id of machines) await bringOnline(orchestrator.runners, id);
   return { store, orchestrator, place: (task, opts = {}) => orchestrator.placeRun(opts.repo ?? null, { task, ...opts }) };
@@ -411,4 +411,21 @@ test('a migrated block-list places exactly as it used to', async () => {
 
   assert.equal(place('code.fix'), 'runner-b', 'everything else is still open by default');
   assert.throws(() => place('board.worker'), /board\.worker/, 'still refused on the machine that blocked it');
+});
+
+// ---------- the catalog top-up is best effort, including its failures ----------
+
+test('a catalog top-up cannot fail the run it rides along with', async () => {
+  const { orchestrator } = await fixture();
+  // What the local backend really does. `sessionInfo` is declared to return a
+  // promise, but reaches the gateway through a lookup that raises when the run
+  // has none, so the promise never exists and `.catch` never attaches.
+  orchestrator.runners.backends.set(LOCAL_RUNNER_ID, {
+    ...orchestrator.runners.localBackend,
+    sessionInfo() {
+      throw new Error('run r1 has no live gateway (resume it first)');
+    },
+  });
+
+  assert.doesNotThrow(() => orchestrator.runners.noteLiveSession(null, 'r1'));
 });
