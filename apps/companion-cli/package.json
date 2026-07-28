@@ -1,6 +1,6 @@
 {
   "name": "@moxxy-ai/companion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run the complete Companion dashboard locally with one command.",
   "type": "module",
   "license": "MIT",
