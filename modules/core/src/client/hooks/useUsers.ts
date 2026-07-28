@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
-import type { Role } from '@companion/types';
-import { PAGE_SIZE, useDebounced, useInfiniteList } from '@companion/ui';
+import type { Role } from '@moxxy/companion-types';
+import { PAGE_SIZE, useDebounced, useInfiniteList } from '@moxxy/companion-ui';
 import type { UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 

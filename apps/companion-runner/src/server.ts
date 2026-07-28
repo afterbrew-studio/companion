@@ -29,8 +29,8 @@ import {
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
   type AgentWriteFileRequest,
-} from '@companion/types';
-import { paths } from '@companion/services';
+} from '@moxxy/companion-types';
+import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from '@companion/module-operate/exec';
 import { configuredProviderNames } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';

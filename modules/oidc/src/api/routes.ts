@@ -89,7 +89,7 @@ export default defineRoutes((ctx) => {
         });
 
         // The SPA reads its session from localStorage under this exact key
-        // (`TOKEN_KEY` in @companion/core/client), so hand it over in a page it
+        // (`TOKEN_KEY` in @moxxy/companion-core/client), so hand it over in a page it
         // controls rather than a cookie the app does not use.
         return html(
           `<script>localStorage.setItem('companion.session', ${JSON.stringify(session.token)});` +

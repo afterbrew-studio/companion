@@ -41,10 +41,10 @@
     "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
-    "@companion/core": "workspace:*",
-    "@companion/services": "workspace:*",
-    "@companion/types": "workspace:*",
-    "@companion/ui": "workspace:*",
+    "@moxxy/companion-core": "workspace:*",
+    "@moxxy/companion-services": "workspace:*",
+    "@moxxy/companion-types": "workspace:*",
+    "@moxxy/companion-ui": "workspace:*",
     "@moxxy/companion-contracts": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
@@ -61,5 +61,7 @@
       "optional": true
     }
   },
-  "private": true
+  "publishConfig": {
+    "access": "public"
+  }
 }

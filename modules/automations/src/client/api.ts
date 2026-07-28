@@ -7,7 +7,7 @@ import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/co
  * module-automations' REST surface, carved from the legacy `lib/api.ts`: the
  * per-repo automation switches + webhook receivers, the tunnel status readout,
  * the on-demand digest/stale-sweep/briefing kicks, and AI Help (the per-user
- * conversation run). HTTP + token plumbing lives in `@companion/core/client`;
+ * conversation run). HTTP + token plumbing lives in `@moxxy/companion-core/client`;
  * every DTO is owned by the module it belongs to.
  */
 

@@ -28,16 +28,16 @@ apps/
   web/                  the React/Vite SPA shell: ModulesProvider + net layer (no feature code)
   companion-runner/     the published @moxxy/companion-runner (remote execution agent)
 packages/
-  types/       @companion/types      inert primitives, zero runtime — DAG root
+  types/       @moxxy/companion-types      inert primitives, zero runtime — DAG root
   contracts/   @moxxy/companion-contracts  the OPEN registries (RBAC/WS/services/bus) + grid assembler + envelopes
-  services/    @companion/services   base store/service abstractions + shared utils (paths, log, request-context)
-  core/        @companion/core        THE FRAMEWORK: registrant API + server kernel + client host
-  ui/          @companion/ui          the design-system kit
+  services/    @moxxy/companion-services   base store/service abstractions + shared utils (paths, log, request-context)
+  core/        @moxxy/companion-core        THE FRAMEWORK: registrant API + server kernel + client host
+  ui/          @moxxy/companion-ui          the design-system kit
 modules/
   core workspace operate code plan automations admin   ← one @companion/module-<id> per domain
 ```
 
-`@companion/core` (the framework: kernel + registrants, no business logic) is
+`@moxxy/companion-core` (the framework: kernel + registrants, no business logic) is
 distinct from `@companion/module-core` (the required identity module). `moxxy` is
 an **external runtime, not a dependency** — the daemon shells out to the `moxxy`
 CLI. Never add moxxy as a package dep.
@@ -46,11 +46,11 @@ CLI. Never add moxxy as a package dep.
 
 | Package | What it is | Depends on |
 |---|---|---|
-| `@companion/types` | naked primitives (branded ids, enums, moxxy wire types). No runtime, no boundary meaning. | — |
+| `@moxxy/companion-types` | naked primitives (branded ids, enums, moxxy wire types). No runtime, no boundary meaning. | — |
 | `@moxxy/companion-contracts` | cross-boundary machinery: the declaration-merged open registries `PermissionRegistry` / `ServerMessageRegistry` / `ServiceMap` / bus events, the RBAC grid assembler, `AuthUser`/route-access/error envelopes. | types |
-| `@companion/services` | what a single store/service is made of — `BaseStore` helpers, request-context, `paths`, `log`, config. Kernel-independent. | types, contracts |
-| `@companion/core` | the framework host. `.` = isomorphic `define*` + manifest; `/server` = kernel + lifecycle, `DynamicRouter` + `RawRouter`, `MigrationRunner`, `ServiceRegistry`, `ServerBus`, `WsHub`, capabilities; `/client` = `ModulesProvider`/`useKernel`, route compiler, single-socket net + `useLive`, `NavIcon`/`OnboardingArt`/`lazyView`. | types, contracts, services |
-| `@companion/ui` | presentational React + Tailwind (Markdown, DiffView, icons). Pixels only. | react (+ types) |
+| `@moxxy/companion-services` | what a single store/service is made of — `BaseStore` helpers, request-context, `paths`, `log`, config. Kernel-independent. | types, contracts |
+| `@moxxy/companion-core` | the framework host. `.` = isomorphic `define*` + manifest; `/server` = kernel + lifecycle, `DynamicRouter` + `RawRouter`, `MigrationRunner`, `ServiceRegistry`, `ServerBus`, `WsHub`, capabilities; `/client` = `ModulesProvider`/`useKernel`, route compiler, single-socket net + `useLive`, `NavIcon`/`OnboardingArt`/`lazyView`. | types, contracts, services |
+| `@moxxy/companion-ui` | presentational React + Tailwind (Markdown, DiffView, icons). Pixels only. | react (+ types) |
 
 ## Modules (the domains)
 

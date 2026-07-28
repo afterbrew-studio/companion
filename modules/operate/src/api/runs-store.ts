@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AgentStorageRunLease } from '@companion/types';
+import type { AgentStorageRunLease } from '@moxxy/companion-types';
 import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 

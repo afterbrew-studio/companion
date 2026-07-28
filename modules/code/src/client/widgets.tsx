@@ -5,7 +5,7 @@ import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus }
 /**
  * GitHub/code-domain widgets split out of the web ui kit — PR/issue/triage/
  * checks/pipeline semantics for list rows and detail views. Generic primitives
- * (Tooltip & co.) come from @companion/ui.
+ * (Tooltip & co.) come from @moxxy/companion-ui.
  */
 
 // ---------- status renderers ---------------------------------------------------

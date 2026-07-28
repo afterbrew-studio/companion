@@ -15,7 +15,7 @@ import type {
  * lifecycle (create → analyze → approve → finish / reject), the specification
  * library (CRUD, generation, drift, spec → feature), and the documentation
  * index (CRUD, retrieval search, repo import, generation) plus the per-area
- * storage config. HTTP + token plumbing lives in `@companion/core/client`.
+ * storage config. HTTP + token plumbing lives in `@moxxy/companion-core/client`.
  */
 
 export const planApi = {

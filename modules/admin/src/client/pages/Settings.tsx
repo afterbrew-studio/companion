@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, refreshAuth } from '@companion/core/client';
+import { ApiError, refreshAuth } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useMoxxyStatus } from '@companion/module-operate/client';
 import {
@@ -15,7 +15,7 @@ import {
   SettingRow,
   Switch,
   useConfirm,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import type { NotificationScope } from '../../contract/index.js';
 import { adminApi as api } from '../api.js';
 

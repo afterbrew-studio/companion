@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ErrorBar, Field, Spinner } from '@companion/ui';
+import { ErrorBar, Field, Spinner } from '@moxxy/companion-ui';
 import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 

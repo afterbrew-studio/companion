@@ -1,4 +1,4 @@
-import { defineClientModule } from '@companion/core/client';
+import { defineClientModule } from '@moxxy/companion-core/client';
 // Carries this module's contract augmentations (Permission/ServiceMap/messages)
 // into every compilation that loads the client slice.
 import '../contract/index.js';

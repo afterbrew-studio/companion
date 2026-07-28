@@ -15,9 +15,9 @@ import type {
   HistorySegment,
   RunTurnArgs,
   RunTurnResult,
-} from '@companion/types';
-import { RUNNER_AGENT_PROTOCOL } from '@companion/types';
-import { log } from '@companion/services';
+} from '@moxxy/companion-types';
+import { RUNNER_AGENT_PROTOCOL } from '@moxxy/companion-types';
+import { log } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver, RunnerHealth } from '../contract/index.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';

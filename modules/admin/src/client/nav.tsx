@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@companion/core/client';
+import { defineNav, NavIcon } from '@moxxy/companion-core/client';
 
 /**
  * module-admin contributes the Settings entry to core's Admin sidebar group

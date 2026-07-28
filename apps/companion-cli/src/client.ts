@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 
 /**
  * The CLI's transport to a running daemon. Authentication is the bearer token

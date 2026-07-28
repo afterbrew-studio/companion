@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy/companion-core';
 
 /**
  * module-operate — the execution plane: agent runs + the run queue, runner

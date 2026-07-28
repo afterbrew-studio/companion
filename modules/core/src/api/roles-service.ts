@@ -1,6 +1,6 @@
 import type { Permission } from '@moxxy/companion-contracts';
-import type { Logger } from '@companion/services';
-import type { AuditSink, RbacReader, RoleOverrides } from '@companion/core/server';
+import type { Logger } from '@moxxy/companion-services';
+import type { AuditSink, RbacReader, RoleOverrides } from '@moxxy/companion-core/server';
 import type { RoleDetail, RoleRecord } from '../contract/index.js';
 import { AuthError } from './auth.js';
 import type { RolesStore } from './roles-store.js';

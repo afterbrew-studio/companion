@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onServerMessage } from '@companion/core/client';
+import { onServerMessage } from '@moxxy/companion-core/client';
 import type { RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 

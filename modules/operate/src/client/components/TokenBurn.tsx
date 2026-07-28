@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChartSkeleton, formatTokens } from '@companion/ui';
+import { ChartSkeleton, formatTokens } from '@moxxy/companion-ui';
 import type { TokenUsageDay, TokenUsageModel } from '../../contract/index.js';
 import { useTokenUsage } from '../hooks/useTokenUsage.js';
 import { estimateUsd, formatUsd } from '../model-pricing.js';

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Role } from '@companion/types';
+import type { Role } from '@moxxy/companion-types';
 import { log } from './lib/log.js';
 
 /**

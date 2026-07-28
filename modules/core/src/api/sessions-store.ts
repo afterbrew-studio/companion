@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Role } from '@companion/types';
+import type { Role } from '@moxxy/companion-types';
 
 /** Login sessions, keyed by token hash — raw tokens never touch the disk. */
 export class SessionsStore {

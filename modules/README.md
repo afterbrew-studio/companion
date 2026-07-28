@@ -3,7 +3,7 @@
 Companion is a **modular framework**. Every feature domain — identity, workspaces,
 code, planning, execution, automations, admin — is a self-contained package under
 `modules/*`, loaded, migrated, permissioned, and toggled **at runtime** by the
-kernel in `@companion/core`. This document is the complete system for authoring
+kernel in `@moxxy/companion-core`. This document is the complete system for authoring
 one. Read it before adding or changing a module.
 
 > New here? The fastest way to learn the shape is to read one existing module
@@ -33,7 +33,7 @@ consumer — and why an `api/*` file importing React (or a `client/*` file
 importing `better-sqlite3`) is a **build error**, not a runtime surprise. That
 error IS the server/client boundary being enforced.
 
-Each convention file **default-exports** through a `@companion/core` `define*`
+Each convention file **default-exports** through a `@moxxy/companion-core` `define*`
 helper (Next.js-style). The helpers are identity functions typed to their
 interface — they exist for authoring-site type-checking and discoverability,
 nothing more.
@@ -65,7 +65,7 @@ modules/<id>/
       routes.tsx          # defineClientRoutes([{ match, permission, component }])
       pages/*.tsx         # page components (lazy-loaded → per-page Vite chunks)
       hooks/*.ts          # useLive-based data hooks
-      api.ts              # the api slice: <id>Api = {...} using request/post from @companion/core/client
+      api.ts              # the api slice: <id>Api = {...} using request/post from @moxxy/companion-core/client
       slots.tsx           # defineSlots([...])           (optional — render INTO another module's page)
       onboarding.tsx      # defineOnboarding([...])      (optional — this module's welcome-tour step)
       index.tsx           # defineClientModule({ manifest, sections, nav, routes, slots?, onboarding? })
@@ -102,11 +102,11 @@ surface omits `services.ts`).
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@companion/core": "workspace:*",
+    "@moxxy/companion-core": "workspace:*",
     "@moxxy/companion-contracts": "workspace:*",
-    "@companion/services": "workspace:*",
-    "@companion/types": "workspace:*",
-    "@companion/ui": "workspace:*",
+    "@moxxy/companion-services": "workspace:*",
+    "@moxxy/companion-types": "workspace:*",
+    "@moxxy/companion-ui": "workspace:*",
     "zod": "^3.24.0"
     // + one "@companion/module-<dep>": "workspace:*" per module in your dependsOn
   },
@@ -157,7 +157,7 @@ Cheap, statically imported by both apps. **No heavy imports** here (it must not
 pull in your services or pages).
 
 ```ts
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy/companion-core';
 
 export default defineManifest({
   id: 'widgets',                          // the module id — used everywhere (ServiceMap key, nav section, routes)
@@ -189,7 +189,7 @@ A module declares the settings it needs from the user as a **declarative field
 list** on the manifest — pure data, not zod — so the kernel can serve the spec
 from `GET /api/modules` and the Modules page can render an install/configure
 form **without loading any module code**. The server derives the real zod
-validator from it (`fieldSchema` in `@companion/core/server`).
+validator from it (`fieldSchema` in `@moxxy/companion-core/server`).
 
 ```ts
 config: [
@@ -236,7 +236,7 @@ autoInstall: false,   // optional: land as "Available" instead of auto-installin
 
 Two jobs: (1) declare the DTOs that cross HTTP/WS, and (2) **open the shared
 registries** for your module by augmenting the interfaces in `@moxxy/companion-contracts`
-and `@companion/core`.
+and `@moxxy/companion-core`.
 
 ```ts
 // Import the contract of every module you depend on, so its augmentations are
@@ -305,7 +305,7 @@ the old god-object. The pieces you get:
 ### acl.ts — permissions + role grants
 
 ```ts
-import { defineAcl } from '@companion/core/server';
+import { defineAcl } from '@moxxy/companion-core/server';
 import '../contract/index.js';   // so the permission ids type-check
 
 export default defineAcl({
@@ -353,7 +353,7 @@ for the **enabled** set.
 ### migrations.ts — tables, with rollback
 
 ```ts
-import { defineMigrations } from '@companion/core/server';
+import { defineMigrations } from '@moxxy/companion-core/server';
 
 export default defineMigrations([
   {
@@ -380,7 +380,7 @@ export default defineMigrations([
 ### services.ts — construct + register
 
 ```ts
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy/companion-core/server';
 import { WidgetStore } from './widget-store.js';
 import { WidgetService } from './widget-service.js';
 
@@ -397,7 +397,7 @@ export default defineServices((ctx) => {
 
 ```ts
 import { z } from 'zod';
-import { defineRoutes, route, created, notFound } from '@companion/core/server';
+import { defineRoutes, route, created, notFound } from '@moxxy/companion-core/server';
 
 export default defineRoutes((ctx) => {
   const widgets = ctx.services.get('widgets');
@@ -432,7 +432,7 @@ For endpoints that must read **exact bytes** and authenticate themselves (a
 webhook whose HMAC is computed over the raw body — no bearer, no JSON parse):
 
 ```ts
-import { defineRawRoutes, rawRoute } from '@companion/core/server';
+import { defineRawRoutes, rawRoute } from '@moxxy/companion-core/server';
 
 export default defineRawRoutes((ctx) => {
   const svc = ctx.services.get('widgets');
@@ -479,7 +479,7 @@ proves identity the first time.
 ### jobs.ts — lifecycle hooks + background work (optional)
 
 ```ts
-import { defineJobs } from '@companion/core/server';
+import { defineJobs } from '@moxxy/companion-core/server';
 
 export default defineJobs({
   onEnable: (ctx) => { /* subscribe ctx.bus, register ctx.ws scope resolvers */ },
@@ -495,7 +495,7 @@ resolvers, sockets, timers) — a leak here survives a disable.
 ### index.ts — the `/api` barrel
 
 ```ts
-import { defineApiModule } from '@companion/core/server';
+import { defineApiModule } from '@moxxy/companion-core/server';
 import manifest from '../module.js';
 import acl from './acl.js';
 import migrations from './migrations.js';
@@ -519,7 +519,7 @@ live `can()`. Data hooks use `useLive(refresh, when)` over the single WebSocket.
 ### nav.tsx — sidebar
 
 ```tsx
-import { defineNav, defineSections, NavIcon } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 export const sections = defineSections([{ id: 'widgets', label: 'Widgets', order: 45 }]);
 export const nav = defineNav([
@@ -535,7 +535,7 @@ export const nav = defineNav([
 ### routes.tsx — pages
 
 ```tsx
-import { defineClientRoutes, lazyView } from '@companion/core/client';
+import { defineClientRoutes, lazyView } from '@moxxy/companion-core/client';
 
 export const routes = defineClientRoutes([
   { match: { exact: '/widgets' }, permission: 'widgets:read', component: lazyView(() => import('./pages/Widgets.js')) },
@@ -543,13 +543,13 @@ export const routes = defineClientRoutes([
 ]);
 ```
 
-Use `lazyView`/`page` from `@companion/core/client` so each page is its own Vite
+Use `lazyView`/`page` from `@moxxy/companion-core/client` so each page is its own Vite
 chunk (with stale-chunk reload handling built in).
 
 ### api.ts — the fetch slice
 
 ```ts
-import { request, post } from '@companion/core/client';
+import { request, post } from '@moxxy/companion-core/client';
 import type { WidgetRecord } from '../contract/index.js';
 
 export const widgetsApi = {
@@ -577,13 +577,13 @@ and its panel across two slots pushes their shared state back into the shell.
 only if your module genuinely owns the front page.
 
 To react to a message another module owns, use `isMessage(msg, 'other.changed')`
-from `@companion/core/client`. The tag is absent from your `SpaServerMessage`
+from `@moxxy/companion-core/client`. The tag is absent from your `SpaServerMessage`
 union because you do not import that contract, and with the owner absent the
 reaction never fires. It is the client twin of `ctx.services.tryGet`. `defineOnboarding` contributes one welcome-tour step for your feature,
 gated on **your own** permission and framed by the shared `OnboardingArt`:
 
 ```tsx
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy/companion-core/client';
 export const onboarding = defineOnboarding([{
   key: 'widgets', order: 45, permission: 'widgets:read',
   title: 'Widgets', body: '…', chips: ['Sidebar → Widgets'],
@@ -594,7 +594,7 @@ export const onboarding = defineOnboarding([{
 ### index.tsx — the `/client` barrel
 
 ```tsx
-import { defineClientModule } from '@companion/core/client';
+import { defineClientModule } from '@moxxy/companion-core/client';
 import '../contract/index.js';                    // MUST be first — carries the augmentations
 import manifest from '../module.js';
 import { nav, sections } from './nav.js';
@@ -693,7 +693,7 @@ central route table, no `App.tsx` if-ladder, no `ApiDeps`.
       `ctx.moduleConfig` — not ad-hoc `ctx.settings` keys with hand-rolled
       routes/UI. Secrets use `kind: 'secret'` so redaction is structural.
 - [ ] Don't add an npm dependency without justifying it — reach for the platform
-      and `@companion/ui` first.
+      and `@moxxy/companion-ui` first.
 
 - [ ] The app shell gains **no** import of your module: contribute to a
       `shell.*` slot instead. `pnpm acl check` fails on a shell import of a
@@ -717,11 +717,11 @@ state durable.
 
 | Package | Role |
 |---|---|
-| `@companion/types` | inert primitives, zero runtime — DAG root. |
+| `@moxxy/companion-types` | inert primitives, zero runtime — DAG root. |
 | `@moxxy/companion-contracts` | the open registries (RBAC/WS/services/bus) + RBAC assembler + envelopes. |
-| `@companion/services` | base store/service abstractions + shared utils (paths, log, request-context). |
-| `@companion/core` | **the framework** — `.` (isomorphic `define*` + manifest), `/server` (kernel, routers, migrations, service registry, bus, ws hub, capabilities), `/client` (ModulesProvider, route compiler, net/WS, `useLive`, `NavIcon`, `OnboardingArt`, `lazyView`). |
-| `@companion/ui` | the presentational kit (design system, Markdown, DiffView, icons). |
+| `@moxxy/companion-services` | base store/service abstractions + shared utils (paths, log, request-context). |
+| `@moxxy/companion-core` | **the framework** — `.` (isomorphic `define*` + manifest), `/server` (kernel, routers, migrations, service registry, bus, ws hub, capabilities), `/client` (ModulesProvider, route compiler, net/WS, `useLive`, `NavIcon`, `OnboardingArt`, `lazyView`). |
+| `@moxxy/companion-ui` | the presentational kit (design system, Markdown, DiffView, icons). |
 
 The kernel's lifecycle, the dynamic + raw routers, and the registrant API are the
 public surface you build against; read `packages/core/src/server/kernel.ts` and

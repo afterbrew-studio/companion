@@ -15,7 +15,7 @@ import {
   timeAgo,
   useConfirm,
   type StatusTone,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import { useAuth } from '@companion/module-core/client';
 import type {
   RunnerCatalog,

@@ -1,4 +1,4 @@
-import type { ModuleContext, ScopeResolver } from '@companion/core/server';
+import type { ModuleContext, ScopeResolver } from '@moxxy/companion-core/server';
 
 /**
  * Run-stream visibility (the legacy SpaHub closures, relocated to their owner).

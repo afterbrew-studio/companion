@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy/companion-core/client';
 import type { ProviderCatalog } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 

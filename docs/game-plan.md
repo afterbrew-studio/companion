@@ -407,7 +407,7 @@ else reaches the shell through slots:
 
 Three mechanisms were needed, all small:
 
-- **`Slot`** in `@companion/core/client`, RBAC-filtered by a `can` passed in
+- **`Slot`** in `@moxxy/companion-core/client`, RBAC-filtered by a `can` passed in
   (core/client cannot import module-core's auth context, so the shell supplies it).
 - **`registerFreshFilter`**, a module's veto on nav freshness marking. The shell
   used to hold `useWorkspaceRepos` to drop issue/PR activity for repos outside
@@ -433,7 +433,7 @@ regress one convenient import at a time, and CI typechecks against `minimal`.
 
 One cross-module reaction surfaced during the move and got a name rather than a
 cast: `AgentsStatus` refreshes on `repos.changed`, which `code` owns and operate
-does not depend on. `isMessage(msg, tag)` in `@companion/core/client` is the
+does not depend on. `isMessage(msg, tag)` in `@moxxy/companion-core/client` is the
 client twin of `ctx.services.tryGet`: absent owner, silent no-op.
 
 ### Original plan
@@ -446,7 +446,7 @@ from `module-workspace/client`, `module-operate/client` and `module-code/client`
 and hardcodes `msg.t === 'issues.changed'`, `'prs.changed'`, `'repos.changed'`
 and `can('issues:read')`.
 
-Add shell slots to `@companion/core/client` and move each coupling out.
+Add shell slots to `@moxxy/companion-core/client` and move each coupling out.
 `defineSlots` already exists and is already used for in-page contributions by
 operate, slop and playground; this uses the same mechanism at the shell level.
 Detailed mapping in `docs/modular-distribution.md` §5.
@@ -736,12 +736,12 @@ integration, the db-recreate control), and the exclusion list from the curation
 landed almost exactly on those three, which is the evidence the line is real
 rather than convenient.
 
-**The curation is the product, not the packaging.** `@companion/core/server` also
+**The curation is the product, not the packaging.** `@moxxy/companion-core/server` also
 exports `ModuleKernel`, `DynamicRouter`, `MigrationRunner`, `ServiceRegistry`,
 `RbacGrid`, `WsHub` and `ModuleConfigStore`; a module reaching for any of them
 would be welded to internals that must stay free to change. Seventeen host
 symbols are excluded by name, plus eighteen runner wire-protocol types that are
-plumbing between `operate` and `companion-runner`. `@companion/ui` is the one
+plumbing between `operate` and `companion-runner`. `@moxxy/companion-ui` is the one
 wildcard, because it is a leaf with nothing to curate away.
 
 `packages/sdk/surface.json` pins the whole thing and `pnpm sdk:surface` is a CI
@@ -854,8 +854,8 @@ it rather than by reading the design:
    other.
 
 And one real ABI gap: `/client` and `/ui` had a `source` condition only, so an
-out-of-tree author could not typecheck a client slice at all. `@companion/ui`
-and `@companion/core/client` now emit declarations and the SDK's entries carry a
+out-of-tree author could not typecheck a client slice at all. `@moxxy/companion-ui`
+and `@moxxy/companion-core/client` now emit declarations and the SDK's entries carry a
 `types` condition, with **no** runtime path, because a resolvable runtime path
 there is exactly the second React.
 

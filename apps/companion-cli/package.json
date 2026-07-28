@@ -39,9 +39,9 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@companion/core": "workspace:*",
+    "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
-    "@companion/services": "workspace:*",
+    "@moxxy/companion-services": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "companion-api": "workspace:*",

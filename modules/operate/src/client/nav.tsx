@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 /**
  * Operate owns the Operate sidebar group (agent runs, runners, skills) and

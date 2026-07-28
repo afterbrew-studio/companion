@@ -1,6 +1,5 @@
 {
-  "name": "@companion/types",
-  "private": true,
+  "name": "@moxxy/companion-types",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,5 +17,12 @@
   },
   "devDependencies": {
     "typescript": "^5.8.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead."
 }

@@ -5,8 +5,8 @@ import type {
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
   AgentStorageRunLease,
-} from '@companion/types';
-import { paths } from '@companion/services';
+} from '@moxxy/companion-types';
+import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from './checkouts.js';
 
 /**

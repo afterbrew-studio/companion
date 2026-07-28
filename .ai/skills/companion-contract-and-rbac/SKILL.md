@@ -88,7 +88,7 @@ build; equality predicates keep an open module set type-safe, and every existing
 consumer already uses one.
 
 To react to a message another module owns, use `isMessage(msg, 'other.changed')`
-from `@companion/core/client`: the tag is absent from your union because you do
+from `@moxxy/companion-core/client`: the tag is absent from your union because you do
 not import that module's contract, and the reaction never fires when the owner is
 absent.
 

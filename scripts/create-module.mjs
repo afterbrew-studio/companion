@@ -66,9 +66,9 @@ write(
       },
       dependencies: {
         '@moxxy/companion-contracts': 'workspace:*',
-        '@companion/core': 'workspace:*',
-        '@companion/services': 'workspace:*',
-        '@companion/types': 'workspace:*',
+        '@moxxy/companion-core': 'workspace:*',
+        '@moxxy/companion-services': 'workspace:*',
+        '@moxxy/companion-types': 'workspace:*',
         zod: '^3.24.0',
       },
       devDependencies: {
@@ -129,19 +129,19 @@ const manifestFields = [
 ];
 write(
   'src/module.ts',
-  `import { defineManifest } from '@companion/core';\n\nexport default defineManifest({\n${manifestFields.join('\n')}\n});\n`,
+  `import { defineManifest } from '@moxxy/companion-core';\n\nexport default defineManifest({\n${manifestFields.join('\n')}\n});\n`,
 );
 
 write('src/contract/index.ts', `// module-${id} contract slice: DTOs + \`declare module '@moxxy/companion-contracts'\` augmentations.\nexport {};\n`);
 
 write(
   'src/api/index.ts',
-  `import { defineApiModule } from '@companion/core/server';\nimport manifest from '../module.js';\n\nexport default defineApiModule({\n  manifest,\n});\n`,
+  `import { defineApiModule } from '@moxxy/companion-core/server';\nimport manifest from '../module.js';\n\nexport default defineApiModule({\n  manifest,\n});\n`,
 );
 
 write(
   'src/client/index.tsx',
-  `import { defineClientModule } from '@companion/core/client';\nimport manifest from '../module.js';\n\nexport default defineClientModule({\n  manifest,\n});\n`,
+  `import { defineClientModule } from '@moxxy/companion-core/client';\nimport manifest from '../module.js';\n\nexport default defineClientModule({\n  manifest,\n});\n`,
 );
 
 console.log(`created modules/${id} (@companion/module-${id})`);

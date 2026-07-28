@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskRequest, MoxxyEvent } from '@companion/types';
-import { onServerMessage } from '@companion/core/client';
+import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
+import { onServerMessage } from '@moxxy/companion-core/client';
 import type { RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { emptyFold, foldEvent, foldMany, type FoldState } from '../transcript/fold.js';

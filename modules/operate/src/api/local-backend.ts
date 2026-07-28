@@ -7,8 +7,8 @@ import type {
   HistorySegment,
   RunTurnArgs,
   RunTurnResult,
-} from '@companion/types';
-import { paths } from '@companion/services';
+} from '@moxxy/companion-types';
+import { paths } from '@moxxy/companion-services';
 import type { RunnerHealth } from '../contract/index.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { configuredProviderNames } from '../exec/home.js';

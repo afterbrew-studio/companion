@@ -1,4 +1,4 @@
-import { defineClientRoutes, page, lazyView, type RouteProps } from '@companion/core/client';
+import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/companion-core/client';
 
 export const routes = defineClientRoutes([
   {

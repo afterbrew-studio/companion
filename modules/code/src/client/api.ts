@@ -28,7 +28,7 @@ import type {
  * module-code's REST surface, carved from the legacy `lib/api.ts`: repositories
  * + the GitHub account registry, the workspace-scoped issue/PR/pipeline feeds,
  * issue triage + fixes, PR reviews/checks/lifecycle, and the pipeline + step
- * library CRUD. HTTP + token plumbing lives in `@companion/core/client`.
+ * library CRUD. HTTP + token plumbing lives in `@moxxy/companion-core/client`.
  */
 
 export const codeApi = {

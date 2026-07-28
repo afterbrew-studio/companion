@@ -33,14 +33,21 @@ jobs:
             package: '@moxxy/companion'
           - dir: apps/companion-runner
             package: '@moxxy/companion-runner'
-          # The module ABI (@moxxy/companion-sdk + @moxxy/companion-contracts) is
-          # NOT here yet, and publishing it would be worse than not publishing.
-          # Their .d.ts files re-export from @companion/core, /services, /types
-          # and /ui, all of which are private and will never reach the registry,
-          # so the packages would install and then fail to typecheck. Fixing that
-          # means either publishing the whole framework, which defeats the
-          # curation the facade exists for, or bundling the declarations so the
-          # SDK is self-contained. See docs/open-items.md.
+          # The module ABI. Ordered so a dependency publishes before anything
+          # that declares it: an out-of-tree module resolves types through this
+          # whole chain, not just through the SDK.
+          - dir: packages/types
+            package: '@moxxy/companion-types'
+          - dir: packages/services
+            package: '@moxxy/companion-services'
+          - dir: packages/contracts
+            package: '@moxxy/companion-contracts'
+          - dir: packages/core
+            package: '@moxxy/companion-core'
+          - dir: packages/ui
+            package: '@moxxy/companion-ui'
+          - dir: packages/sdk
+            package: '@moxxy/companion-sdk'
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +87,9 @@ jobs:
             exit 0
           fi
           echo "Publishing ${{ matrix.package }}@$version"
-          # prepublishOnly runs the typecheck, the bundle and the tests, so a
-          # package that cannot build never reaches the registry. The CLI bundles
-          # the `slim` profile, which is what the published package documents.
-          npm publish
+          # Packed by pnpm, published by npm, and both halves are load-bearing.
+          # `npm pack` leaves `workspace:*` literal, so the tarball installs
+          # nowhere; pnpm rewrites it to the resolved version. Trusted publishing
+          # is an npm CLI feature, so npm uploads pnpm's tarball.
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          npm publish "$RUNNER_TEMP"/*.tgz

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { refreshAuth } from '@companion/core/client';
-import { DetailGrid, DetailRow, Dropdown, ErrorBar, Field, Page, PageHeader, Section, SettingRow } from '@companion/ui';
+import { refreshAuth } from '@moxxy/companion-core/client';
+import { DetailGrid, DetailRow, Dropdown, ErrorBar, Field, Page, PageHeader, Section, SettingRow } from '@moxxy/companion-ui';
 import type { AccountInfo, NotificationScope } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';

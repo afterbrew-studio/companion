@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { createProxyTunnel } from '@moxxy/plugin-tunnel-proxy';
 import type { TunnelHandle } from '@moxxy/sdk';
-import { log, paths } from '@companion/services';
+import { log, paths } from '@moxxy/companion-services';
 import type { WebhookTunnelState } from '../contract/index.js';
 
 /** One public path segment for all webhook traffic under Companion's subdomain. */

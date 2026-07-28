@@ -1,4 +1,4 @@
-import type { Role } from '@companion/types';
+import type { Role } from '@moxxy/companion-types';
 import type { AuthUser, Permission } from '@moxxy/companion-contracts';
 import type { Auth } from '../api/auth.js';
 import type { RolesService } from '../api/roles-service.js';

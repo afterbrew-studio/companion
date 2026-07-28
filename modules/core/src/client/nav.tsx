@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@companion/core/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 /**
  * Core owns the Admin sidebar group; users + the Modules toggles live in it.

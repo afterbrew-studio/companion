@@ -1,4 +1,4 @@
-import { defineMigrations } from '@companion/core/server';
+import { defineMigrations } from '@moxxy/companion-core/server';
 
 /**
  * v1 = idempotent adopt of today's live shape (users/sessions/settings). Running

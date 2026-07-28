@@ -84,7 +84,7 @@ Match that voice. A comment that restates the next line is noise; delete it.
 
 - **React 18 function components** returning `JSX.Element`. Data comes from a
   hook; the page is presentation + actions.
-- **Reuse `@companion/ui`** (`packages/ui`). Layout: `Page`, `PageHeader`,
+- **Reuse `@moxxy/companion-ui`** (`packages/ui`). Layout: `Page`, `PageHeader`,
   `Section`, `ListCard`, `CardActions`, `StatTile`, `EmptyState`, `DetailGrid`/
   `DetailRow`, `Breadcrumb`, `Eyebrow`. Overlays/controls: `Modal`, `Dropdown`,
   `Tabs`, `Switch`, `ActionMenu`, `ContextMenu`, `Tooltip`, `useConfirm`.

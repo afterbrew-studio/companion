@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Authenticator, AuthUser, Permission } from '@moxxy/companion-contracts';
-import type { Role } from '@companion/types';
-import { StatusError, type RbacReader } from '@companion/core/server';
+import type { Role } from '@moxxy/companion-types';
+import { StatusError, type RbacReader } from '@moxxy/companion-core/server';
 import type { AccountInfo, AuthProvider, SessionInfo, UserRecord } from '../contract/index.js';
 import type { UsersStore } from './users-store.js';
 import type { SessionsStore } from './sessions-store.js';

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AuditEvent } from '@companion/core/server';
+import type { AuditEvent } from '@moxxy/companion-core/server';
 
 /**
  * Owner of `audit_log`. Append-only by design: an audit trail an application can

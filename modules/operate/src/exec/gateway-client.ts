@@ -11,7 +11,7 @@ import {
   type RpcResponseFrame,
   type RunTurnArgs,
   type RunTurnResult,
-} from '@companion/types';
+} from '@moxxy/companion-types';
 
 /**
  * Minimal JSON-RPC-over-WebSocket client for the moxxy gateway.

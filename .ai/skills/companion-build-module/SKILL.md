@@ -16,7 +16,7 @@ description: >-
 
 Companion is a **modular framework**: every domain is a package under `modules/*`
 named `@companion/module-<id>`, loaded / migrated / permissioned / toggled at
-runtime by the kernel in `@companion/core`. You extend it by adding or growing a
+runtime by the kernel in `@moxxy/companion-core`. You extend it by adding or growing a
 module — never by inventing a parallel structure.
 
 ## Source of truth — read it first
@@ -103,7 +103,7 @@ first entry the role can reach.
 ## Cross-module reactions on the client
 
 Server-side you use `ctx.services.tryGet` / `ctx.bus`. The client twin is
-`isMessage(msg, 'other.changed')` from `@companion/core/client`: the tag is not
+`isMessage(msg, 'other.changed')` from `@moxxy/companion-core/client`: the tag is not
 in your compilation's `SpaServerMessage` union because you do not import that
 module's contract, and with the owner absent the reaction simply never fires.
 Use it for a refresh or a badge, never to gate behaviour.
@@ -127,7 +127,7 @@ warns about any undeclared use.
   `ctx.rbac`/`ctx.services.get`(dep)/`tryGet`(soft), never assume presence.
 - `onDisable` must release everything `onEnable` claimed (bus subs, ws resolvers,
   timers, sockets). Keep `sideEffects: false`.
-- Reuse `@companion/ui` and the existing `define*`/store/service patterns. Do not
+- Reuse `@moxxy/companion-ui` and the existing `define*`/store/service patterns. Do not
   hand-roll a router, modal, ORM, or auth check, and don't add an npm dependency
   without justifying it.
 - Stay in scope. If the task needs a genuinely new framework mechanism (not just

@@ -1,5 +1,5 @@
-import type { AskRequest, HistorySegment } from '@companion/types';
-import { del, patch, post, put, request } from '@companion/core/client';
+import type { AskRequest, HistorySegment } from '@moxxy/companion-types';
+import { del, patch, post, put, request } from '@moxxy/companion-core/client';
 import type {
   CreateRunnerRequest,
   ModelCatalog,
@@ -21,7 +21,7 @@ import type {
  * module-operate's REST surface, carved from the legacy `lib/api.ts`: the agent
  * runs family + the run queue, runner machines, provider/model settings, the
  * moxxy status probe, and skills. HTTP + token plumbing lives in
- * `@companion/core/client`.
+ * `@moxxy/companion-core/client`.
  */
 
 export const operateApi = {

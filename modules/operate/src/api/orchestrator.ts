@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@companion/types';
-import type { ModuleConfigAccessor } from '@companion/core';
+import type { AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@moxxy/companion-types';
+import type { ModuleConfigAccessor } from '@moxxy/companion-core';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
   GitCredentialResolver,
@@ -13,7 +13,7 @@ import type {
   RunQueueSnapshot,
   RunRecord,
 } from '../contract/index.js';
-import { log, paths, type DaemonConfig } from '@companion/services';
+import { log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { rowToRun } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';

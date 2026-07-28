@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { log, paths } from '@companion/services';
+import { log, paths } from '@moxxy/companion-services';
 
 /**
  * Bootstrap of Companion's isolated MOXXY_HOME (`~/.companion/moxxy-home`).

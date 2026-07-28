@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { Role } from '@companion/types';
-import { refreshAuth } from '@companion/core/client';
+import type { Role } from '@moxxy/companion-types';
+import { refreshAuth } from '@moxxy/companion-core/client';
 import {
   Avatar,
   DetailGrid,
@@ -21,7 +21,7 @@ import {
   Spinner,
   timeAgo,
   useConfirm,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import type { UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';

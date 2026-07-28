@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { Role } from '@companion/types';
-import { likeArg } from '@companion/services';
+import type { Role } from '@moxxy/companion-types';
+import { likeArg } from '@moxxy/companion-services';
 import type { UserRecord } from '../contract/index.js';
 import type { SessionsStore } from './sessions-store.js';
 

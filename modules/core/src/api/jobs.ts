@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { defineJobs } from '@companion/core/server';
-import { paths } from '@companion/services';
+import { defineJobs } from '@moxxy/companion-core/server';
+import { paths } from '@moxxy/companion-services';
 
 /**
  * Long enough that an unattended CLI never wakes up logged out. Revocation is

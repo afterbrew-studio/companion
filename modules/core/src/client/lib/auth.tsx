@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AuthUser, Permission } from '@moxxy/companion-contracts';
-import { connectWs, onAuthChanged, onServerMessage } from '@companion/core/client';
+import { connectWs, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
 import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
 import { authApi } from '../api.js';
 

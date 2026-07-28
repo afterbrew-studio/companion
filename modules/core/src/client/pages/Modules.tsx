@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useKernel, type ModuleDescriptor } from '@companion/core/client';
-import type { ModuleConfigState, ModuleConfigValue } from '@companion/core';
-import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@companion/ui';
+import { useKernel, type ModuleDescriptor } from '@moxxy/companion-core/client';
+import type { ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
+import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@moxxy/companion-ui';
 import { modulesApi } from '../api.js';
 import { ModuleConfigForm } from '../components/ModuleConfigForm.js';
 

@@ -10,7 +10,7 @@ importers:
 
   apps/api:
     dependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@companion/module-admin':
@@ -52,7 +52,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
       '@moxxy/companion-contracts':
@@ -93,13 +93,13 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
     devDependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
       '@types/better-sqlite3':
@@ -133,10 +133,10 @@ importers:
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../../modules/operate
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../../packages/types
       '@types/node':
@@ -157,7 +157,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@companion/module-admin':
@@ -199,7 +199,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
-      '@companion/ui':
+      '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@moxxy/companion-contracts':
@@ -242,7 +242,7 @@ importers:
 
   modules/admin:
     dependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@companion/module-core':
@@ -251,13 +251,13 @@ importers:
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@companion/ui':
+      '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@moxxy/companion-contracts':
@@ -420,16 +420,16 @@ importers:
 
   modules/core:
     dependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@companion/ui':
+      '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@moxxy/companion-contracts':
@@ -491,7 +491,7 @@ importers:
 
   modules/operate:
     dependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@companion/module-core':
@@ -500,13 +500,13 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@companion/ui':
+      '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@moxxy/companion-contracts':
@@ -819,7 +819,7 @@ importers:
 
   packages/contracts:
     devDependencies:
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../types
       typescript:
@@ -828,10 +828,10 @@ importers:
 
   packages/core:
     dependencies:
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../types
       '@moxxy/companion-contracts':
@@ -868,16 +868,16 @@ importers:
 
   packages/sdk:
     devDependencies:
-      '@companion/core':
+      '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../core
-      '@companion/services':
+      '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../services
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../types
-      '@companion/ui':
+      '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../ui
       '@moxxy/companion-contracts':
@@ -898,7 +898,7 @@ importers:
 
   packages/services:
     dependencies:
-      '@companion/types':
+      '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../types
       '@moxxy/companion-contracts':

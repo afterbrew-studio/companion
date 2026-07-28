@@ -17,12 +17,14 @@
     "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
-    "@companion/types": "workspace:*",
+    "@moxxy/companion-types": "workspace:*",
     "typescript": "^5.8.0"
   },
   "description": "The open registries Companion modules augment, and the cross-boundary envelopes.",
   "files": [
     "dist"
   ],
-  "private": true
+  "publishConfig": {
+    "access": "public"
+  }
 }

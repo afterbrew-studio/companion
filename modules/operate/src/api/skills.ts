@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 import type { SkillFile } from '../contract/index.js';
 
 /**

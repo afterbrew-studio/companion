@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEnvFile } from '@companion/services';
+import { parseEnvFile } from '@moxxy/companion-services';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const DEFAULT_EMAIL = 'admin@companion.local';

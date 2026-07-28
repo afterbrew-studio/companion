@@ -9,14 +9,14 @@ import {
   loadDaemonConfig,
   log,
   paths,
-} from '@companion/services';
+} from '@moxxy/companion-services';
 import {
   installAbiBridge,
   loadExternalModules,
   ModuleKernel,
   scanExternalModules,
   WsHub,
-} from '@companion/core/server';
+} from '@moxxy/companion-core/server';
 import * as sdk from '@moxxy/companion-sdk';
 import { SDK_VERSION } from '@moxxy/companion-sdk';
 import * as sdkServer from '@moxxy/companion-sdk/server';

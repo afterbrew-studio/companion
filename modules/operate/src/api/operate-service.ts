@@ -1,4 +1,4 @@
-import { notFound } from '@companion/core/server';
+import { notFound } from '@moxxy/companion-core/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type {
   GithubTokenSource,

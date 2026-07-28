@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy/companion-core';
 
 /**
  * module-core (required) — identity/auth/sessions/users + the settings service.

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { defineRoutes, route } from '@companion/core/server';
-import { requestDbRecreate } from '@companion/services';
+import { defineRoutes, route } from '@moxxy/companion-core/server';
+import { requestDbRecreate } from '@moxxy/companion-services';
 import type {
   NotificationScope,
   NotificationSettings,

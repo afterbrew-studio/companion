@@ -2,13 +2,13 @@
  * `@moxxy/companion-sdk/agents` — the types a module needs to compose an
  * agent run through the `operate` service.
  *
- * This is the curated slice of `@companion/types`. The rest of that package is
+ * This is the curated slice of `@moxxy/companion-types`. The rest of that package is
  * the daemon-to-runner wire protocol (`RpcRequestFrame`, `AgentDiffResponse`,
  * `MOXXY_WS_SUBPROTOCOL`, and fifteen more): plumbing between `operate` and
  * `companion-runner` that changes with the runner and that no module should
- * compile against. Publishing `@companion/types` as-is would freeze it.
+ * compile against. Publishing `@moxxy/companion-types` as-is would freeze it.
  */
-export type { AskRequest, AskResponse, MoxxyEvent, HistorySegment, PromptAttachment } from '@companion/types';
+export type { AskRequest, AskResponse, MoxxyEvent, HistorySegment, PromptAttachment } from '@moxxy/companion-types';
 
 /**
  * Pull the JSON object out of a model reply that wrapped it in prose or a fence.
@@ -16,4 +16,4 @@ export type { AskRequest, AskResponse, MoxxyEvent, HistorySegment, PromptAttachm
  * agent for structured output: five in-tree modules import it exactly where they
  * import `AskRequest`.
  */
-export { extractModelJson } from '@companion/services';
+export { extractModelJson } from '@moxxy/companion-services';

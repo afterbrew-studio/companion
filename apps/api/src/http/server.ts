@@ -1,8 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { log } from '@companion/services';
-import type { ModuleKernel, WsHub } from '@companion/core/server';
+import { log } from '@moxxy/companion-services';
+import type { ModuleKernel, WsHub } from '@moxxy/companion-core/server';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

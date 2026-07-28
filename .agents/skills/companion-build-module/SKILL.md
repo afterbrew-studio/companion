@@ -14,7 +14,7 @@ description: >-
 
 Companion is a **modular framework**: every domain is a package under `modules/*`
 named `@companion/module-<id>`, loaded / migrated / permissioned / toggled at
-runtime by the kernel in `@companion/core`. You extend it by adding or growing a
+runtime by the kernel in `@moxxy/companion-core`. You extend it by adding or growing a
 module — never by inventing a parallel structure.
 
 ## Source of truth — read it first
@@ -81,7 +81,7 @@ default-exports through a `define*` helper.
   `ctx.rbac`/`ctx.services.get`(dep)/`tryGet`(soft), never assume presence.
 - `onDisable` must release everything `onEnable` claimed (bus subs, ws resolvers,
   timers, sockets). Keep `sideEffects: false`.
-- Reuse `@companion/ui` and the existing `define*`/store/service patterns. Do not
+- Reuse `@moxxy/companion-ui` and the existing `define*`/store/service patterns. Do not
   hand-roll a router, modal, ORM, or auth check, and don't add an npm dependency
   without justifying it.
 - Stay in scope. If the task needs a genuinely new framework mechanism (not just

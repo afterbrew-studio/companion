@@ -224,7 +224,7 @@ This is the highest-value refactor in this document, it uses only mechanisms
 that already exist, and it is a prerequisite for any profile that is not a
 superset of `slim`.
 
-Add shell slots in `@companion/core/client` and move each coupling out:
+Add shell slots in `@moxxy/companion-core/client` and move each coupling out:
 
 | Today in `App.tsx` | Becomes |
 |---|---|
@@ -266,7 +266,7 @@ The measurement that settled the "do it while there are only 12 modules"
 argument still stands: in-tree modules imported 196 distinct symbols across seven
 entry points, and the migration was a mechanical rewrite of import specifiers.
 The same inventory is why the façade is genuine curation: eighteen of the 26
-`@companion/types` symbols are the runner wire protocol, and seventeen more host
+`@moxxy/companion-types` symbols are the runner wire protocol, and seventeen more host
 symbols (`ModuleKernel`, `DynamicRouter`, `MigrationRunner`, …) are excluded by
 name. `packages/sdk/surface.json` pins the list; `pnpm sdk:surface` is a CI gate.
 
@@ -284,7 +284,7 @@ Third parties and the private enterprise repo cannot compile against five
   /client    -> defineClientModule, defineNav, defineSections, defineClientRoutes,
                 defineSlots, defineOnboarding, lazyView, useLive, request/post,
                 NavIcon, OnboardingArt
-  /ui        -> the @companion/ui kit
+  /ui        -> the @moxxy/companion-ui kit
   /contracts -> the open registries to augment
 ```
 

@@ -1,5 +1,5 @@
-import type { BuiltinRole } from '@companion/types';
-import { BUILTIN_ROLES } from '@companion/types';
+import type { BuiltinRole } from '@moxxy/companion-types';
+import { BUILTIN_ROLES } from '@moxxy/companion-types';
 import type { Permission } from './registries.js';
 
 export interface PermissionSpec {

@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { defineRoutes, route, created, badRequest, notFound } from '@companion/core/server';
+import { defineRoutes, route, created, badRequest, notFound } from '@moxxy/companion-core/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type { MoxxyStatus, RunRecord } from '../contract/index.js';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';

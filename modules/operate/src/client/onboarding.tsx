@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy/companion-core/client';
 
 function RunnersArt({ playing }: { playing: boolean }): JSX.Element {
   return (

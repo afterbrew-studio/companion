@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { OnboardingStep } from '@companion/core/client';
+import type { OnboardingStep } from '@moxxy/companion-core/client';
 import type { Permission } from '@moxxy/companion-contracts';
 import { useAuth } from '../lib/auth.js';
 

@@ -1,7 +1,7 @@
 /**
  * `@companion/module-operate/exec` — the pure execution primitives bundled
  * into the published companion-runner CLI. Everything here depends only on
- * `@companion/types`, `@companion/services`, `node:*` and `ws` — never on the
+ * `@moxxy/companion-types`, `@moxxy/companion-services`, `node:*` and `ws` — never on the
  * module's stores, the kernel, or sqlite.
  */
 export * from './cli.js';

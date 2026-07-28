@@ -2,7 +2,7 @@
  * `@moxxy/companion-sdk` — everything a Companion module is authored against.
  *
  * This package is a **curated façade**, not a re-export of the workspace. The
- * distinction is the point: `@companion/core/server` also exports the kernel,
+ * distinction is the point: `@moxxy/companion-core/server` also exports the kernel,
  * the dynamic router, the migration runner and the service registry, which are
  * the host's own machinery. A module that reached for them would be coupled to
  * an implementation that has to stay free to change. So the surface here is an
@@ -44,15 +44,15 @@
 export const SDK_VERSION = '0.1.0'; // keep in step with package.json (checked by pnpm sdk:surface)
 export const ABI_GENERATION = '0.x';
 
-export { defineManifest, APP_VERSION } from '@companion/core';
-export type { ModuleManifest, ModuleId } from '@companion/core';
+export { defineManifest, APP_VERSION } from '@moxxy/companion-core';
+export type { ModuleManifest, ModuleId } from '@moxxy/companion-core';
 export type {
   ModuleConfigField,
   ModuleConfigFieldKind,
   ModuleConfigValue,
   ModuleConfigAccessor,
   ModuleConfigState,
-} from '@companion/core';
+} from '@moxxy/companion-core';
 
 /**
  * The open registries are NOT re-exported here, deliberately.
@@ -75,5 +75,5 @@ export type {
  * ```
  */
 
-export { BUILTIN_ROLES, isBuiltinRole } from '@companion/types';
-export type { Role, BuiltinRole } from '@companion/types';
+export { BUILTIN_ROLES, isBuiltinRole } from '@moxxy/companion-types';
+export type { Role, BuiltinRole } from '@moxxy/companion-types';

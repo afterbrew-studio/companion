@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@moxxy/companion-contracts": "workspace:*",
-    "@companion/core": "workspace:*",
+    "@moxxy/companion-core": "workspace:*",
     "@companion/module-admin": "workspace:*",
     "@companion/module-automations": "workspace:*",
     "@companion/module-board": "workspace:*",
@@ -25,7 +25,7 @@
     "@companion/module-refinement": "workspace:*",
     "@companion/module-slop": "workspace:*",
     "@companion/module-workspace": "workspace:*",
-    "@companion/ui": "workspace:*",
+    "@moxxy/companion-ui": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",

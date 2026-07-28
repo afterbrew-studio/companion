@@ -1,6 +1,5 @@
 {
-  "name": "@companion/services",
-  "private": true,
+  "name": "@moxxy/companion-services",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,12 +18,19 @@
   },
   "dependencies": {
     "@moxxy/companion-contracts": "workspace:*",
-    "@companion/types": "workspace:*",
+    "@moxxy/companion-types": "workspace:*",
     "jsonrepair": "^3.15.0",
     "undici": "^7.16.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.8.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead."
 }

@@ -18,7 +18,7 @@ authoring guide). Concept mapping:
 
 | Old (central SPA) | New (module client slice) |
 |---|---|
-| method on `lib/api.ts` | `src/client/api.ts` — a per-module slice using `request`/`post` from `@companion/core/client` |
+| method on `lib/api.ts` | `src/client/api.ts` — a per-module slice using `request`/`post` from `@moxxy/companion-core/client` |
 | `hooks/use<X>.ts` | `src/client/hooks/use<X>.ts` — `useLive(refresh, msg.t === '<id>.changed')` (single shared socket) |
 | `pages/<X>.tsx` | `src/client/pages/<X>.tsx` — lazy-loaded via `lazyView`/`page` (own Vite chunk) |
 | entry in `modules.tsx` | `src/client/nav.tsx` — `defineNav`/`defineSections` (+ `NavIcon` for the icon) |
@@ -28,5 +28,5 @@ authoring guide). Concept mapping:
 Extension points: `defineSlots` renders your component INTO another module's page
 (inversion of control); `defineOnboarding` contributes a welcome-tour step gated
 on your own permission. The client barrel must `import '../contract/index.js'`
-**first**. Reuse `@companion/ui` — don't hand-roll a modal or router. RBAC is the
+**first**. Reuse `@moxxy/companion-ui` — don't hand-roll a modal or router. RBAC is the
 same `Permission` on nav + route; the shell filters by the live `can()`.

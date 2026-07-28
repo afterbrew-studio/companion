@@ -13,7 +13,7 @@ import {
   timeAgo,
   useListFilter,
   type FilterSelectField,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { RunKind, RunRecord, RunStatus } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';

@@ -5,7 +5,7 @@ import './bootstrap.js';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 import { Checkouts } from '@companion/module-operate/exec';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '@companion/module-operate/exec';
 import { GatewayPool } from '@companion/module-operate/exec';

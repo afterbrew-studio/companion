@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
-import type { Logger } from '@companion/services';
+import type { Logger } from '@moxxy/companion-services';
 import { readRawBody, type HttpMethod, type PathParams } from './router.js';
 
 /**

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { HistorySegment, MoxxyEvent } from '@companion/types';
-import { paths } from '@companion/services';
+import type { HistorySegment, MoxxyEvent } from '@moxxy/companion-types';
+import { paths } from '@moxxy/companion-services';
 
 /**
  * Transcript history for runs whose gateway has been reaped: read the session's

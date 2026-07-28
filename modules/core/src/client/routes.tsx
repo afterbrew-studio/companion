@@ -1,4 +1,4 @@
-import { defineClientRoutes, page } from '@companion/core/client';
+import { defineClientRoutes, page } from '@moxxy/companion-core/client';
 
 export const routes = defineClientRoutes([
   {

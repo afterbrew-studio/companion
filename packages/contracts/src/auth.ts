@@ -1,4 +1,4 @@
-import type { Role } from '@companion/types';
+import type { Role } from '@moxxy/companion-types';
 import type { Permission } from './registries.js';
 import type { RouteAccess } from './access.js';
 

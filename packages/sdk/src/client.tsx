@@ -1,7 +1,7 @@
 /**
  * `@moxxy/companion-sdk/client` — the `/client` slice of a module.
  *
- * Source-only, like `@companion/core/client` and `@companion/ui`: the web host
+ * Source-only, like `@moxxy/companion-core/client` and `@moxxy/companion-ui`: the web host
  * resolves it through Vite's `source` condition and compiles it with the app, so
  * each module page stays its own lazy chunk. There is no `dist` here to import.
  *
@@ -20,7 +20,7 @@ export {
   defineClientRoutes,
   defineSlots,
   defineOnboarding,
-} from '@companion/core/client';
+} from '@moxxy/companion-core/client';
 
 export type {
   WebModule,
@@ -32,24 +32,24 @@ export type {
   RouteProps,
   SlotContribution,
   OnboardingStep,
-} from '@companion/core/client';
+} from '@moxxy/companion-core/client';
 
 // ---- rendering helpers ----
-export { OnboardingArt, NavIcon, Slot, lazyView, page } from '@companion/core/client';
+export { OnboardingArt, NavIcon, Slot, lazyView, page } from '@moxxy/companion-core/client';
 
 // ---- the HTTP edge: authenticated by the host, so a module never handles tokens ----
-export { request, post, put, patch, del, publicPost, qs, getToken, ApiError } from '@companion/core/client';
-export type { PageQuery } from '@companion/core/client';
+export { request, post, put, patch, del, publicPost, qs, getToken, ApiError } from '@moxxy/companion-core/client';
+export type { PageQuery } from '@moxxy/companion-core/client';
 
 // ---- live state ----
-export { useLive, isMessage, onServerMessage, onWsState, registerFreshFilter } from '@companion/core/client';
-export type { WsState, FreshFilter } from '@companion/core/client';
+export { useLive, isMessage, onServerMessage, onWsState, registerFreshFilter } from '@moxxy/companion-core/client';
+export type { WsState, FreshFilter } from '@moxxy/companion-core/client';
 
 // ---- host state a module reads ----
-export { useKernel, useModuleEnabled } from '@companion/core/client';
-export type { ModuleDescriptor } from '@companion/core/client';
+export { useKernel, useModuleEnabled } from '@moxxy/companion-core/client';
+export type { ModuleDescriptor } from '@moxxy/companion-core/client';
 
 // ---- cross-module affordances ----
-export { useIntent, runIntent, requestIntent, useBulkRunner } from '@companion/core/client';
-export type { Intent, BulkRunner } from '@companion/core/client';
-export { runHref, pipelineRunHref, reportHref } from '@companion/core/client';
+export { useIntent, runIntent, requestIntent, useBulkRunner } from '@moxxy/companion-core/client';
+export type { Intent, BulkRunner } from '@moxxy/companion-core/client';
+export { runHref, pipelineRunHref, reportHref } from '@moxxy/companion-core/client';

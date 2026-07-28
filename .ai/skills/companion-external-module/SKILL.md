@@ -35,7 +35,7 @@ An out-of-tree module is still the expensive option. Prefer:
 ## Why this is expensive (understand before proposing it)
 
 An in-tree module is compiled by the same `tsc` and the same Vite as the host, so
-`react`, `@companion/core`, `zod` and friends are automatically one instance and
+`react`, `@moxxy/companion-core`, `zod` and friends are automatically one instance and
 the declaration-merged registries are automatically complete. An out-of-tree
 module gets neither for free. Everything below exists to buy those two
 properties back.
@@ -54,7 +54,7 @@ properties back.
   /client    defineClientModule, defineNav, defineSections, defineClientRoutes,
              defineSlots, defineOnboarding, lazyView, page, useLive, Slot,
              request / post / put / patch / del, NavIcon, OnboardingArt
-  /ui        the presentational kit (wildcard re-export of @companion/ui)
+  /ui        the presentational kit (wildcard re-export of @moxxy/companion-ui)
   /agents    AskRequest, MoxxyEvent, HistorySegment, PromptAttachment,
              extractModelJson
 

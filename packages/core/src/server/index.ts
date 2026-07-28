@@ -1,5 +1,5 @@
 /**
- * `@companion/core/server` — the runtime host (kernel + lifecycle state machine,
+ * `@moxxy/companion-core/server` — the runtime host (kernel + lifecycle state machine,
  * dynamic router, migration runner, service registry, event bus, RBAC grid) and
  * the server-side registrant API a module's `/api` slice is authored against.
  */

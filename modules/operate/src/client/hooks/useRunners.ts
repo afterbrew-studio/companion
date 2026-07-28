@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@companion/core/client';
+import { useLive } from '@moxxy/companion-core/client';
 import { workspaceApi } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type { RunnerRecord, RunTaskDescriptor } from '../../contract/index.js';

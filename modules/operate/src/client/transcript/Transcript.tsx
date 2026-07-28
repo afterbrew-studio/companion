@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Eyebrow, Markdown, Spinner } from '@companion/ui';
+import { Eyebrow, Markdown, Spinner } from '@moxxy/companion-ui';
 import type { Block } from './fold.js';
 
 export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {

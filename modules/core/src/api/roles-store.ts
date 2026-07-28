@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { RoleOverride, RoleOverrides } from '@companion/core/server';
+import type { RoleOverride, RoleOverrides } from '@moxxy/companion-core/server';
 import type { RoleRecord } from '../contract/index.js';
 
 interface RoleRow {

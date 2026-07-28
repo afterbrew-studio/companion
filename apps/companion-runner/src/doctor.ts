@@ -4,7 +4,7 @@ import { createServer, connect } from 'node:net';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '@companion/module-operate/exec';
 import { homeStatus, importProvidersFromDailyMoxxy } from '@companion/module-operate/exec';
 import { loadRunnerConfig } from './config.js';

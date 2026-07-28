@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { StatusDot as Dot } from '@companion/ui';
-import { isMessage, onServerMessage, onWsState, type WsState } from '@companion/core/client';
+import { StatusDot as Dot } from '@moxxy/companion-ui';
+import { isMessage, onServerMessage, onWsState, type WsState } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import type { MoxxyStatus } from '../../contract/index.js';
 import { operateApi } from '../api.js';

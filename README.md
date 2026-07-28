@@ -43,7 +43,7 @@ No GitHub credential is needed on the box — Companion sends its own configured
 ### Modular framework
 
 Companion is built as a **modular framework**. A small framework core
-(`@companion/core`) hosts feature **modules** — one per domain (`core`,
+(`@moxxy/companion-core`) hosts feature **modules** — one per domain (`core`,
 `workspace`, `operate`, `code`, `plan`, `automations`, `admin`) under `modules/*`
 — that are **loaded, migrated, permissioned, and toggled at runtime**. Each
 module ships its own tables (with per-module migrations + rollback), REST/WS
@@ -65,10 +65,10 @@ for roles, audit, deployment shape, and an honest list of what is not built yet.
 
 ## Repository layout
 
-- `apps/api` — the daemon: boots the **kernel** (`@companion/core`), holds the static module registry, and runs the HTTP/WS server. Feature logic lives in the modules it loads, not here.
+- `apps/api` — the daemon: boots the **kernel** (`@moxxy/companion-core`), holds the static module registry, and runs the HTTP/WS server. Feature logic lives in the modules it loads, not here.
 - `apps/web` — the React/Vite SPA **shell**: `ModulesProvider` + the single-socket net layer. It hosts and presents modules' client slices; it contains no feature pages of its own.
 - `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companion-api` over HTTP+WS.
-- `packages/*` — the framework: `@companion/types` (primitives), `@moxxy/companion-contracts` (the open RBAC/WS/service registries), `@companion/services` (base store/service utils), `@companion/core` (the kernel + registrant API + client host), `@companion/ui` (design-system kit), `@moxxy/companion-sdk` (the curated ABI in-tree feature modules and out-of-tree modules both compile against).
+- `packages/*` — the framework: `@moxxy/companion-types` (primitives), `@moxxy/companion-contracts` (the open RBAC/WS/service registries), `@moxxy/companion-services` (base store/service utils), `@moxxy/companion-core` (the kernel + registrant API + client host), `@moxxy/companion-ui` (design-system kit), `@moxxy/companion-sdk` (the curated ABI in-tree feature modules and out-of-tree modules both compile against).
 - `modules/*` — the feature domains, one `@companion/module-<id>` package each. See [`modules/README.md`](modules/README.md).
 
 ## Prerequisites

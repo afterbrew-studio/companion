@@ -8,7 +8,7 @@ profiles, generated registries, instance-defined roles, the audit trail with
 retention and export, the entitlement gate, the single-node lock, the GitHub
 endpoint and outbound proxy seams, the secret store seam, the OIDC reference
 module, the published SDK, out-of-tree modules on both the server and the
-browser, and GitHub App credentials.
+browser, GitHub App credentials, and the published ABI.
 
 What follows needs content or a decision, not a new mechanism, with two
 exceptions: §1 is built and kept here for its remaining rough edge, and §6 needs
@@ -42,44 +42,41 @@ to an operator beyond a log warning. If an app is uninstalled on GitHub, the
 account keeps its dead token until someone reads the log or a call fails over.
 Worth a health field on the account record when someone hits it.
 
-## 2. The module ABI cannot be published yet `[harder than it looks]`
+## 2. Publishing the module ABI `[BUILT]`
 
-**Today:** `@moxxy/companion-sdk` and `@moxxy/companion-contracts` both build and
-both work in-repo. Neither is on npm, so the out-of-tree path is in-repo only.
+The six packages an out-of-tree module resolves types through are published:
+`@moxxy/companion-sdk`, `-contracts`, `-core`, `-services`, `-types`, `-ui`.
 
-**Why the obvious fix does not work.** The blocker is that their declarations
-re-export from `@companion/core`, `/services`, `/types` and `/ui`, all private.
-Bundling those into self-contained `.d.ts` files is the textbook answer, and it
-was tried with `dts-bundle-generator`: the declarations do come out
-self-contained, and they are **silently wrong**.
+**What made this hard, recorded because it is not obvious.** The first attempt
+bundled the private framework declarations into the SDK with
+`dts-bundle-generator`. The output was self-contained and **silently wrong**:
+`@moxxy/companion-core` depends on the open registries, so inlining core inlined
+`PermissionRegistry` with it, and a module augmenting `@moxxy/companion-contracts`
+augmented one interface while `route({ access: ... })` read another. Measured by
+packing both tarballs into a clean npm project: `Permission` resolved to `never`
+and `access: 'hello:read'` was rejected. Marking contracts external does not
+help, including as a real directory rather than a workspace link, because the
+inlining is transitive.
 
-`@companion/core` depends on the open registries, so inlining core inlines
-`PermissionRegistry` with it. The published SDK then carries its own copy, and a
-module that augments `@moxxy/companion-contracts` augments one interface while
-`route({ access: ... })` reads another. Measured end to end: packed both
-tarballs, installed them into a clean npm project, and typechecked an
-out-of-tree module against them alone. `Permission` came out as `never` and
-`access: 'hello:read'` was rejected as not assignable to `RouteAccess`. Marking
-contracts as an external import does not help, including when it is a real
-directory rather than a workspace link: the inlining is transitive and reaches
-the registries through core either way.
+Splitting the registries into a leaf package fails the same way, for the same
+reason. So the framework is published instead, and the curation P8 exists for is
+enforced where it always actually was:
 
-**So the real question is structural**, not a tooling choice: the registries have
-to stay one interface in one package that every published declaration imports
-rather than embeds. Options worth weighing, none of them free:
+- `companion module verify` allows an exact set of import specifiers, so a module
+  importing `@moxxy/companion-core` is rejected before it is installed.
+- The ABI bridge bridges only the SDK's three server entries, so at runtime
+  anything reaching past them fails to resolve rather than getting a second copy.
 
-- Publish the framework packages too, and accept that `ModuleKernel`,
-  `DynamicRouter` and `RbacGrid` become reachable. Undoes the curation of P8.
-- Split the registries into a leaf package that `@companion/core` imports and
-  that no bundling ever inlines, then bundle only what is above it.
-- Generate the published declarations from the SDK's own source instead of
-  re-exporting, so nothing transitive exists to inline.
+**One packaging trap worth keeping.** `npm pack` leaves `workspace:*` literal, so
+an npm-packed tarball installs nowhere; `pnpm pack` rewrites it to the resolved
+version. Trusted publishing is an npm CLI feature. The workflow therefore packs
+with pnpm and uploads that tarball with npm.
 
-What did land while proving this out: the packages moved to the `@moxxy` scope
-(neither `@moxxy-ai` nor `@companion` exists on npm), and **the SDK no longer
-re-exports the registries at all**. A module imports and augments them from
-`@moxxy/companion-contracts`, which is one package owning one interface end to
-end, and removes the duplication hazard from the in-repo build as well.
+Verified the way the earlier attempt was disproved: all six packed, installed
+into a clean npm project with no workspace links, and an out-of-tree module with
+both a server and a client slice typechecked against them alone. The
+augmentation lands, so `Permission` narrows to the declared id and rejects
+anything else.
 
 ## 3. A commercial module `[business decision, not code]`
 

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 
 /**
  * Background service mode: `companion-runner --background` re-execs the agent

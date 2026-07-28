@@ -17,7 +17,7 @@ and when it does, the mark disappears from the app chrome entirely.
 In the app, import the components instead of the files:
 
 ```tsx
-import { BrandMark, BrandTile } from '@companion/ui';
+import { BrandMark, BrandTile } from '@moxxy/companion-ui';
 ```
 
 The favicon is the same tile inlined as a data URI in `apps/web/index.html`;

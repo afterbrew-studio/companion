@@ -8,7 +8,7 @@
  * `@moxxy/companion-sdk` is a permanent public surface: an external module
  * compiled against it must keep compiling. The risk is not a deliberate change,
  * it is an accidental one. Every entry point but `/ui` is an explicit named
- * re-export list, so adding a symbol to a barrel in `@companion/core` cannot
+ * re-export list, so adding a symbol to a barrel in `@moxxy/companion-core` cannot
  * widen the ABI by itself; `/ui` IS a wildcard, so a component deleted there
  * silently breaks every module that rendered it. This catches both directions.
  *
@@ -48,7 +48,7 @@ function ownExports(src) {
   return out;
 }
 
-/** `@companion/ui` is re-exported wholesale, so expand it: a deletion there is an ABI break. */
+/** `@moxxy/companion-ui` is re-exported wholesale, so expand it: a deletion there is an ABI break. */
 function expandUi() {
   const dir = join(root, 'packages/ui/src');
   const barrel = readFileSync(join(dir, 'index.ts'), 'utf8');

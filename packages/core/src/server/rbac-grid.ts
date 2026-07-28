@@ -1,5 +1,5 @@
-import type { BuiltinRole, Role } from '@companion/types';
-import { BUILTIN_ROLES, isBuiltinRole } from '@companion/types';
+import type { BuiltinRole, Role } from '@moxxy/companion-types';
+import { BUILTIN_ROLES, isBuiltinRole } from '@moxxy/companion-types';
 import type { ModuleAcl, Permission } from '@moxxy/companion-contracts';
 import { buildRolePermissions } from '@moxxy/companion-contracts';
 import type { ModuleId } from '../manifest.js';

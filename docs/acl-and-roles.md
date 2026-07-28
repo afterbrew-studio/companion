@@ -184,7 +184,7 @@ module never needs to know a custom role exists, so no `acl.ts` changes and no
 module churn.
 
 ```ts
-// @companion/types
+// @moxxy/companion-types
 export type BuiltinRole = 'admin' | 'maintainer' | 'business';
 export const BUILTIN_ROLES: readonly BuiltinRole[] = ['admin', 'maintainer', 'business'];
 export type Role = string;          // a role id; built-ins are just seeded rows

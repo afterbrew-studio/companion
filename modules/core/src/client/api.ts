@@ -1,4 +1,4 @@
-import type { Role } from '@companion/types';
+import type { Role } from '@moxxy/companion-types';
 import {
   ApiError,
   del,
@@ -12,9 +12,9 @@ import {
   qs,
   request,
   setToken,
-} from '@companion/core/client';
-import type { ModuleConfigState } from '@companion/core';
-import type { ModuleDescriptor, PageQuery } from '@companion/core/client';
+} from '@moxxy/companion-core/client';
+import type { ModuleConfigState } from '@moxxy/companion-core';
+import type { ModuleDescriptor, PageQuery } from '@moxxy/companion-core/client';
 import type {
   AccountInfo,
   AclMap,
@@ -34,7 +34,7 @@ import type {
 /**
  * module-core's REST surface, carved from the legacy `lib/api.ts`: the auth
  * bootstrap/session flows plus the users/profile/account/modules methods this
- * module's pages call. HTTP + token plumbing lives in `@companion/core/client`.
+ * module's pages call. HTTP + token plumbing lives in `@moxxy/companion-core/client`.
  */
 
 export const authApi = {

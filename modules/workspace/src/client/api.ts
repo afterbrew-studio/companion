@@ -12,7 +12,7 @@ import type {
 /**
  * module-workspace's REST surface, carved from the legacy `lib/api.ts`: the
  * workspaces CRUD + membership + metrics family, the notification inbox, and
- * the generated-reports feed. HTTP plumbing lives in `@companion/core/client`.
+ * the generated-reports feed. HTTP plumbing lives in `@moxxy/companion-core/client`.
  */
 
 export const workspaceApi = {

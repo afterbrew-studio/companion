@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AskRequest } from '@companion/types';
+import type { AskRequest } from '@moxxy/companion-types';
 
 export function AskSheet({
   ask,

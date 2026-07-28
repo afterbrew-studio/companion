@@ -1,4 +1,4 @@
-import type { MoxxyEvent } from '@companion/types';
+import type { MoxxyEvent } from '@moxxy/companion-types';
 
 /**
  * Fold raw MoxxyEvents into renderable blocks. Companion implements its own

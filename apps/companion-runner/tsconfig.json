@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     // Execution primitives come from @companion/module-operate/exec (and
-    // paths/config from @companion/services) as workspace packages, so the
+    // paths/config from @moxxy/companion-services) as workspace packages, so the
     // program is self-rooted again; esbuild bundles everything into one file.
     "outDir": "dist",
     "rootDir": "src",

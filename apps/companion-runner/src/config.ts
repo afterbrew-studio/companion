@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 import { log } from './log.js';
 
 /**

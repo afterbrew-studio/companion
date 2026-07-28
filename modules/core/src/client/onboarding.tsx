@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@companion/core/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy/companion-core/client';
 
 /**
  * module-core's slice of the welcome tour: the framing steps (welcome, the

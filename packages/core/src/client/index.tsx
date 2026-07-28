@@ -3,7 +3,7 @@ import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { ModuleManifest } from '../manifest.js';
 
 /**
- * `@companion/core/client` — the client-side registrant API a module's `/client`
+ * `@moxxy/companion-core/client` — the client-side registrant API a module's `/client`
  * slice is authored against. The web host (ModulesProvider, route compiler, the
  * single-socket net layer, `useLive`) is added here during the web rewire; it is
  * consumed only by `apps/web` and module hooks. Vite reads this as source.

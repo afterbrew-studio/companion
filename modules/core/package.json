@@ -29,10 +29,10 @@
   },
   "dependencies": {
     "@moxxy/companion-contracts": "workspace:*",
-    "@companion/core": "workspace:*",
-    "@companion/services": "workspace:*",
-    "@companion/types": "workspace:*",
-    "@companion/ui": "workspace:*",
+    "@moxxy/companion-core": "workspace:*",
+    "@moxxy/companion-services": "workspace:*",
+    "@moxxy/companion-types": "workspace:*",
+    "@moxxy/companion-ui": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

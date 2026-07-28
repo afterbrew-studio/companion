@@ -7,7 +7,7 @@ import type {
   MoxxyEvent,
   RunTurnArgs,
   RunTurnResult,
-} from '@companion/types';
+} from '@moxxy/companion-types';
 import type { RunnerHealth } from '../contract/index.js';
 
 /**

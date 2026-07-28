@@ -1,7 +1,7 @@
 // Brings module-core's + module-workspace's augmentations (operate dependsOn both).
 import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
-import type { AskRequest, MoxxyEvent } from '@companion/types';
+import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
 import type { OperateService } from '../api/operate-service.js';
 
 /**

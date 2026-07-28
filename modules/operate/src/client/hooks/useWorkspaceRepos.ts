@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { request, useLive } from '@companion/core/client';
+import { request, useLive } from '@moxxy/companion-core/client';
 
 /**
  * The active workspace's repositories, kept live (reloads on repos.changed).

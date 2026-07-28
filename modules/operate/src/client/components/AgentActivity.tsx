@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MoxxyEvent } from '@companion/types';
-import { onServerMessage } from '@companion/core/client';
-import { OutcomeDot, StatusDot, timeAgo } from '@companion/ui';
+import type { MoxxyEvent } from '@moxxy/companion-types';
+import { onServerMessage } from '@moxxy/companion-core/client';
+import { OutcomeDot, StatusDot, timeAgo } from '@moxxy/companion-ui';
 import type { RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 

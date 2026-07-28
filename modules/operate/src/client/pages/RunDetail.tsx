@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, formatTokens } from '@companion/ui';
+import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, formatTokens } from '@moxxy/companion-ui';
 import type { ModelCatalog, RunRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRun } from '../hooks/useRun.js';

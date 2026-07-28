@@ -11,7 +11,7 @@ import {
   Section,
   SettingRow,
   timeAgo,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';

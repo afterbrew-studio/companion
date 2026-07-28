@@ -3,8 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
-import type { AskRequest, MoxxyEvent } from '@companion/types';
-import { log, paths } from '@companion/services';
+import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
+import { log, paths } from '@moxxy/companion-services';
 import { GatewayClient } from './gateway-client.js';
 import { providerDefaultsFromConfigYaml, readHomeFile, type ProviderDefaults } from './home.js';
 

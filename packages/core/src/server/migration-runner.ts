@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Logger } from '@companion/services';
+import type { Logger } from '@moxxy/companion-services';
 
 export interface MigrationEnv {
   readonly moduleId: string;

@@ -1,4 +1,4 @@
-import { defineJobs } from '@companion/core/server';
+import { defineJobs } from '@moxxy/companion-core/server';
 import { createRunScopeResolver } from './ws-scope.js';
 
 /**

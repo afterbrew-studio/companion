@@ -10,7 +10,7 @@ import {
   runIntent,
   useIntent,
   type NavEntry,
-} from '@companion/core/client';
+} from '@moxxy/companion-core/client';
 import {
   AuthProvider,
   useAuth,
@@ -36,7 +36,7 @@ import {
   Modal,
   PageLoading,
   SearchIcon,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';

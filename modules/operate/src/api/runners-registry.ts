@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentStorageCleanupRequest } from '@companion/types';
+import type { AgentStorageCleanupRequest } from '@moxxy/companion-types';
 import type {
   CatalogMachine,
   CatalogModel,
@@ -18,7 +18,7 @@ import type {
   RunnerRecord,
   UpdateRunnerRequest,
 } from '../contract/index.js';
-import { log } from '@companion/services';
+import { log } from '@moxxy/companion-services';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';

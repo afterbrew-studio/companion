@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useKernel } from '@companion/core/client';
+import { useKernel } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import {
   EmptyState,
@@ -16,7 +16,7 @@ import {
   aiAccentClass,
   timeAgo,
   useConfirm,
-} from '@companion/ui';
+} from '@moxxy/companion-ui';
 import type { SkillFile } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useSkills } from '../hooks/useSkills.js';

@@ -1,4 +1,4 @@
-import { defineManifest } from '@companion/core';
+import { defineManifest } from '@moxxy/companion-core';
 
 /**
  * module-admin — the thin instance-administration surface over core-owned

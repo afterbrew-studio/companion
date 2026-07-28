@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { paths } from '@companion/services';
+import { paths } from '@moxxy/companion-services';
 
 /**
  * Which modules a fresh instance turns on.

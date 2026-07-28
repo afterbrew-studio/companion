@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CloseIcon, IconButton, timeAgo } from '@companion/ui';
+import { CloseIcon, IconButton, timeAgo } from '@moxxy/companion-ui';
 import type { QueuedRunEntry, RunKind } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunQueue } from '../hooks/useRunQueue.js';

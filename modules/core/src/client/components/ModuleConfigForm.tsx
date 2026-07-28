@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@companion/core';
-import { Dropdown, ErrorBar, Field, FormActions, SettingRow, Switch } from '@companion/ui';
+import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
+import { Dropdown, ErrorBar, Field, FormActions, SettingRow, Switch } from '@moxxy/companion-ui';
 
 /**
  * Renders a module's declared config fields (the manifest spec) as a form and

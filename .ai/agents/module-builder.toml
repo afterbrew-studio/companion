@@ -61,7 +61,7 @@ via the registry), `modules/automations` (soft `ctx.bus` reactions + a
   service/permission is present from its type; go through `ctx.services.get`(dep)
   / `tryGet`(soft) / `ctx.rbac`.
 - `onDisable` releases everything `onEnable` claimed. Keep `sideEffects: false`.
-- Reuse `@companion/ui` and the existing `define*`/store/service/route patterns —
+- Reuse `@moxxy/companion-ui` and the existing `define*`/store/service/route patterns —
   don't hand-roll a router, modal, ORM, or auth check. Don't add an npm
   dependency without flagging and justifying it.
 - Stay within scope. If the task needs a genuinely new framework mechanism (a new

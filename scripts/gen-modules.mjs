@@ -124,7 +124,7 @@ function apiSource(profile, ids) {
   const entries = ids
     .map((id) => `  { manifest: ${id}Manifest, load: () => import('@companion/module-${id}/api').then((m) => m.default) },`)
     .join('\n');
-  return `${HEADER(profile)}import type { InstalledModule } from '@companion/core/server';
+  return `${HEADER(profile)}import type { InstalledModule } from '@moxxy/companion-core/server';
 ${manifestImports}
 
 // The contract slices open the shared unions (Permission / SpaServerMessage /
@@ -142,7 +142,7 @@ ${entries}
 
 function webSource(profile, ids) {
   const entries = ids.map((id) => `  ${id}: () => import('@companion/module-${id}/client'),`).join('\n');
-  return `${HEADER(profile)}import type { ClientLoader } from '@companion/core/client';
+  return `${HEADER(profile)}import type { ClientLoader } from '@moxxy/companion-core/client';
 
 /**
  * The SPA's client-module set for the '${profile}' profile. ModulesProvider

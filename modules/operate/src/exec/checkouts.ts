@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { log, paths } from '@companion/services';
+import { log, paths } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver } from '../contract/index.js';
 
 const execFileP = promisify(execFile);

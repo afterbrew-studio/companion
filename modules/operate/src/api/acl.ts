@@ -1,4 +1,4 @@
-import { defineAcl } from '@companion/core/server';
+import { defineAcl } from '@moxxy/companion-core/server';
 import '../contract/index.js';
 
 /**

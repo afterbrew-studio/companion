@@ -1,4 +1,4 @@
-import { defineSlots } from '@companion/core/client';
+import { defineSlots } from '@moxxy/companion-core/client';
 import { TokenBurnWidget } from './components/TokenBurn.js';
 import { AgentsStatus } from './components/AgentsStatus.js';
 import { RunnerCapacityBanner, RunQueueIndicator } from './components/RunQueue.js';

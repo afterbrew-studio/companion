@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AuthUser, SpaServerMessage } from '@moxxy/companion-contracts';
-import { log } from '@companion/services';
+import { log } from '@moxxy/companion-services';
 import { APP_VERSION } from '../manifest.js';
 
 /**

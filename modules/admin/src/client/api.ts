@@ -1,4 +1,4 @@
-import { post, put, request } from '@companion/core/client';
+import { post, put, request } from '@moxxy/companion-core/client';
 import type { InstanceBranding, NotificationSettings } from '../contract/index.js';
 
 /**
@@ -6,7 +6,7 @@ import type { InstanceBranding, NotificationSettings } from '../contract/index.j
  * instance-administration methods the Settings page drives — branding, the
  * notification default scope, the GitHub token, and the moxxy provider import.
  * Some URLs are served by other modules; only the strings are shared. HTTP +
- * token plumbing lives in `@companion/core/client`.
+ * token plumbing lives in `@moxxy/companion-core/client`.
  */
 
 export const adminApi = {

@@ -1,6 +1,6 @@
-import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@companion/core';
-import type { ModuleListing } from '@companion/core/server';
-import { paths } from '@companion/services';
+import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
+import type { ModuleListing } from '@moxxy/companion-core/server';
+import { paths } from '@moxxy/companion-services';
 import { apiClient } from './client.js';
 import { installedModuleDirs, verifyModuleDir } from './verify.js';
 

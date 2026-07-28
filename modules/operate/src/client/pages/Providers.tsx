@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EmptyState, ErrorBar, ListCard, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@companion/ui';
+import { EmptyState, ErrorBar, ListCard, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@moxxy/companion-ui';
 import type { CatalogMachine, CatalogProvider } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useProviders } from '../hooks/useProviders.js';

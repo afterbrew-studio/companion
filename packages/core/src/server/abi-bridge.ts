@@ -9,7 +9,7 @@ const SERVER_ENTRIES = ['.', './server', './agents'] as const;
  *
  * The problem this exists to prevent is the server-side twin of "two React
  * instances". The daemon ships as one esbuild bundle, so `@moxxy/companion-sdk`
- * and the `@companion/core` it re-exports are compiled INTO it. An external
+ * and the `@moxxy/companion-core` it re-exports are compiled INTO it. An external
  * module under `$COMPANION_HOME/modules/<id>/` that imports the SDK would resolve
  * a second physical copy, with a second `Reply` class. The router decides what to
  * send with `result instanceof Reply`, so every redirect, HTML page and NDJSON

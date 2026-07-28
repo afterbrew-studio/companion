@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Avatar, BrandTile } from '@companion/ui';
+import { Avatar, BrandTile } from '@moxxy/companion-ui';
 import { useAuth } from '../lib/auth.js';
 
 /**

@@ -1,4 +1,4 @@
-import { defineServices } from '@companion/core/server';
+import { defineServices } from '@moxxy/companion-core/server';
 import { SettingsStore } from './settings-store.js';
 import { SessionsStore } from './sessions-store.js';
 import { UsersStore } from './users-store.js';
