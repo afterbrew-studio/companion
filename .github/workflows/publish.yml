@@ -62,6 +62,12 @@ jobs:
       # though npm does the publishing.
       - run: pnpm install --frozen-lockfile
 
+      # And BUILT. The CLI's typecheck resolves `@companion/module-core/contract`
+      # through that package's dist, which does not exist after a bare install:
+      # the first real run failed with a wall of "Cannot find module" and
+      # implicit-any errors that were all the same missing build.
+      - run: pnpm build
+
       - name: Publish ${{ matrix.package }} if its version is new
         working-directory: ${{ matrix.dir }}
         run: |
