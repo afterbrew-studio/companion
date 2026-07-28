@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { RouteProps } from '@moxxy-ai/companion-sdk/client';
-import { useKernel } from '@moxxy-ai/companion-sdk/client';
+import type { RouteProps } from '@moxxy/companion-sdk/client';
+import { useKernel } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { codeApi } from '@companion/module-code/client';
 import { operateApi } from '@companion/module-operate/client';
@@ -14,7 +14,7 @@ import {
   SparkleIcon,
   Spinner,
   aiAccentClass,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import type { PlaygroundRunResult } from '../../contract/index.js';
 import { playgroundApi } from '../api.js';
 

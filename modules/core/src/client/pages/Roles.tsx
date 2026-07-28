@@ -10,7 +10,7 @@ import {
   Switch,
   useConfirm,
 } from '@companion/ui';
-import type { Permission } from '@companion/contracts';
+import type { Permission } from '@moxxy/companion-contracts';
 import type { AclMap, RoleDetail, RoleRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useRoles } from '../hooks/useRoles.js';

@@ -728,7 +728,7 @@ CLI present, from a cold machine, with no host prerequisites.
 
 ## P8. Publish the SDK `[DONE]`
 
-`@moxxy-ai/companion-sdk`, five entry points, **227 curated symbols**. Ten
+`@moxxy/companion-sdk`, five entry points, **227 curated symbols**. Ten
 in-tree feature modules migrated onto it in the same phase, because an ABI only
 external code uses rots within one release. `core`, `operate` and `admin` stayed
 on the internal packages: they implement the host (auth and RBAC, the runner
@@ -753,7 +753,7 @@ every external module that rendered it.
 
 The original plan had a `/contracts` entry point for the open registries. It
 cannot work. **TypeScript binds declaration merging to the module that DECLARES
-an interface**, so `declare module '@moxxy-ai/companion-sdk/contracts'` creates a
+an interface**, so `declare module '@moxxy/companion-sdk/contracts'` creates a
 second, unrelated `PermissionRegistry` and the module's permissions are silently
 absent from `Permission`. Measured with a two-package probe: augmenting the
 façade gives TS2820 on the augmented key; augmenting the declaring package
@@ -761,7 +761,7 @@ compiles.
 
 Hiding that behind a façade would have shipped an ABI whose permissions quietly
 fail to register, which is far worse than one extra package name. So
-`@companion/contracts` is part of the public ABI, for exactly one line in a
+`@moxxy/companion-contracts` is part of the public ABI, for exactly one line in a
 module's `contract` slice, and the reason is written down where an author will
 hit it.
 
@@ -796,7 +796,7 @@ place: 302, `text/plain`.
 
 So the daemon publishes its live namespace objects on
 `globalThis[Symbol.for('companion.abi')]` and generates a small package at
-`$COMPANION_HOME/modules/node_modules/@moxxy-ai/companion-sdk` that re-exports
+`$COMPANION_HOME/modules/node_modules/@moxxy/companion-sdk` that re-exports
 them. Node's ordinary upward lookup finds it from any module directory. The
 re-export list is the daemon's own namespace keys, not a file on disk, so the
 bridge works inside a published bundle and cannot promise a symbol the running

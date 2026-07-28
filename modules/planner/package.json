@@ -28,7 +28,7 @@
     "test": "pnpm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@companion/contracts": "workspace:*",
+    "@moxxy/companion-contracts": "workspace:*",
     "@companion/module-board": "workspace:*",
     "@companion/module-code": "workspace:*",
     "@companion/module-core": "workspace:*",
@@ -36,7 +36,7 @@
     "@companion/module-plan": "workspace:*",
     "@companion/module-refinement": "workspace:*",
     "@companion/module-workspace": "workspace:*",
-    "@moxxy-ai/companion-sdk": "workspace:*",
+    "@moxxy/companion-sdk": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

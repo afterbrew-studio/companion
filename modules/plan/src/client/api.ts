@@ -1,4 +1,4 @@
-import { del, patch, post, put, qs, request } from '@moxxy-ai/companion-sdk/client';
+import { del, patch, post, put, qs, request } from '@moxxy/companion-sdk/client';
 import type {
   AreaStorage,
   AreaStorageConfig,

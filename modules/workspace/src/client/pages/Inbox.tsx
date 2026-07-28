@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EmptyState, ListCard, Page, PageHeader, Tabs } from '@moxxy-ai/companion-sdk/ui';
+import { EmptyState, ListCard, Page, PageHeader, Tabs } from '@moxxy/companion-sdk/ui';
 import type { NotificationRecord } from '../../contract/index.js';
 import { NotificationRow } from '../components/NotificationRow.js';
 import { useNotifications } from '../hooks/useNotifications.js';

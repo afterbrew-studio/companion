@@ -12,7 +12,7 @@ import type { PlanService } from '../api/plan-service.js';
  * retrieval).
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'proposals:read': true;
     'proposals:create': true;

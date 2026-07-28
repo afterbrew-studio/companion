@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@moxxy-ai/companion-sdk/client';
+import { useLive } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace } from '@companion/module-workspace/client';

@@ -1,4 +1,4 @@
-import { defineManifest } from '@moxxy-ai/companion-sdk';
+import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
  * module-slop — AI Slop Detection: a one-shot agent scores a pull request

@@ -12,7 +12,7 @@ import type { ReportsStore } from '../api/reports-store.js';
  * + the generated-reports store (digests, sweeps, ci-analyses, briefings).
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'workspaces:read': true;
     'workspaces:create': true;

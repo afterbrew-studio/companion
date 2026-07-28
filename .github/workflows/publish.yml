@@ -33,6 +33,14 @@ jobs:
             package: '@moxxy/companion'
           - dir: apps/companion-runner
             package: '@moxxy/companion-runner'
+          # The module ABI (@moxxy/companion-sdk + @moxxy/companion-contracts) is
+          # NOT here yet, and publishing it would be worse than not publishing.
+          # Their .d.ts files re-export from @companion/core, /services, /types
+          # and /ui, all of which are private and will never reach the registry,
+          # so the packages would install and then fail to typecheck. Fixing that
+          # means either publishing the whole framework, which defeats the
+          # curation the facade exists for, or bundling the declarations so the
+          # SDK is self-contained. See docs/open-items.md.
     steps:
       - uses: actions/checkout@v4
 

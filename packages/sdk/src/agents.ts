@@ -1,5 +1,5 @@
 /**
- * `@moxxy-ai/companion-sdk/agents` — the types a module needs to compose an
+ * `@moxxy/companion-sdk/agents` — the types a module needs to compose an
  * agent run through the `operate` service.
  *
  * This is the curated slice of `@companion/types`. The rest of that package is

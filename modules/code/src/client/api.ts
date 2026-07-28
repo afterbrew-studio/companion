@@ -1,4 +1,4 @@
-import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy-ai/companion-sdk/client';
+import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-sdk/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import type {

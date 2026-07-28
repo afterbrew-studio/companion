@@ -1,7 +1,7 @@
-import type { AuthUser } from '@moxxy-ai/companion-sdk';
-import type { AskRequest, HistorySegment } from '@moxxy-ai/companion-sdk/agents';
+import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
-import { log, type DaemonConfig } from '@moxxy-ai/companion-sdk/server';
+import { log, type DaemonConfig } from '@moxxy/companion-sdk/server';
 import type { AutomationsStore } from './automations-store.js';
 import type { Auth, Orchestrator } from './cross-types.js';
 

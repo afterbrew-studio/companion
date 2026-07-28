@@ -1,4 +1,4 @@
-import { defineServices } from '@moxxy-ai/companion-sdk/server';
+import { defineServices } from '@moxxy/companion-sdk/server';
 import { ProposalsStore } from './proposals-store.js';
 import { SpecsStore } from './specs-store.js';
 import { DocsStore } from './docs-store.js';

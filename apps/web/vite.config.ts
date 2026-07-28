@@ -13,9 +13,9 @@ const HOST_MODULES = {
   react: 'react',
   'react/jsx-runtime': 'jsx-runtime',
   'react-dom': 'react-dom',
-  '@moxxy-ai/companion-sdk': 'sdk',
-  '@moxxy-ai/companion-sdk/client': 'sdk-client',
-  '@moxxy-ai/companion-sdk/ui': 'sdk-ui',
+  '@moxxy/companion-sdk': 'sdk',
+  '@moxxy/companion-sdk/client': 'sdk-client',
+  '@moxxy/companion-sdk/ui': 'sdk-ui',
 } as const;
 
 const hostEntries = Object.fromEntries(

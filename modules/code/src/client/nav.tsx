@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
  * module-code's sidebar contributions. It owns the Code group; the repos and

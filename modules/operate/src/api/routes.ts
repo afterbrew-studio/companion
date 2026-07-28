@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@companion/core/server';
-import type { AuthUser } from '@companion/contracts';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import type { MoxxyStatus, RunRecord } from '../contract/index.js';
 import { paths } from '@companion/services';
 import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';

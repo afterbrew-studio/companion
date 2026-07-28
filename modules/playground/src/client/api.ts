@@ -1,4 +1,4 @@
-import { request, post } from '@moxxy-ai/companion-sdk/client';
+import { request, post } from '@moxxy/companion-sdk/client';
 import type { PipelinePreview, PlaygroundRunRequest, PlaygroundRunResult } from '../contract/index.js';
 
 /** module-playground's REST surface: one fenced test run + the pipeline preview. */

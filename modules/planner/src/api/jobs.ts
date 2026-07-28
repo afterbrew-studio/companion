@@ -1,4 +1,4 @@
-import { defineJobs } from '@moxxy-ai/companion-sdk/server';
+import { defineJobs } from '@moxxy/companion-sdk/server';
 
 export default defineJobs({
   onEnable: (ctx) => {

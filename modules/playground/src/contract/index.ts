@@ -14,7 +14,7 @@ import type { PipelineStep, PipelineStepKind, PipelineType, StepFailureMode } fr
  * already stream through operate's run messages.
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'playground:run': true;
   }

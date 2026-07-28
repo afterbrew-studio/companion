@@ -35,11 +35,31 @@ interface CliOptions {
   readonly verbose: boolean;
 }
 
-/** The mark in box drawing: the open arc, and the dot standing in its gap. */
+/**
+ * The mark rasterized from its own geometry by docs/brand/ascii.mjs. The dot is
+ * emerald because green already means AI everywhere else in this product; it is
+ * the only element of the mark allowed to carry colour.
+ */
 const BANNER = `
- ╭─╴
- │  ●   companion
- ╰─╴
+                 .....
+           ..:###########:.
+         .:#################:.
+       .#####:..       .:#####:
+      .####:              .:##:
+     .####.
+     ####.                   \x1b[38;5;42m.:::.\x1b[0m
+     ####                   \x1b[38;5;42m.######\x1b[0m
+     ####                   \x1b[38;5;42m.######\x1b[0m
+     ####.                   \x1b[38;5;42m.:::.\x1b[0m
+     .####.
+      .####:              .:##:
+       .#####:..       .:#####:
+         .:#################:.
+           ..:###########:.
+                 .....
+
+           c o m p a n i o n
+
 `;
 
 const HELP = `@moxxy/companion: run Companion locally
@@ -93,7 +113,10 @@ async function main(): Promise<void> {
     return;
   }
   // Decoration, so only when a person is watching: piped output stays clean.
-  if (process.stdout.isTTY) process.stdout.write(BANNER);
+  // NO_COLOR still gets the mark, just without the emerald on the dot.
+  if (process.stdout.isTTY) {
+    process.stdout.write(process.env.NO_COLOR ? BANNER.replace(/\x1b\[[0-9;]*m/g, '') : BANNER);
+  }
   if (!setupExists(options.home)) await initialize(options);
   else if (options.command === 'init') {
     process.stdout.write(`Companion is already initialized in ${options.home}\n`);

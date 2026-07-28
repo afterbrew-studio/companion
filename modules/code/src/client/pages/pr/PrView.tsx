@@ -20,7 +20,7 @@ import {
   Tooltip,
   useConfirm,
   type MenuAction,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import type { PrRecord } from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
 import { CommentsSection } from '../../components/Comments.js';

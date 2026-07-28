@@ -1,10 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { z } from 'zod';
-import { defineRoutes, route, created, accepted, notFound, badRequest, forbidden, HttpError } from '@moxxy-ai/companion-sdk/server';
-import type { AuthUser } from '@moxxy-ai/companion-sdk';
+import { defineRoutes, route, created, accepted, notFound, badRequest, forbidden, HttpError } from '@moxxy/companion-sdk/server';
+import type { AuthUser } from '@moxxy/companion-sdk';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import { log, paths } from '@moxxy-ai/companion-sdk/server';
+import { log, paths } from '@moxxy/companion-sdk/server';
 import type { CommentRecord, PrFileChange, RepoPermission } from '../contract/index.js';
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';

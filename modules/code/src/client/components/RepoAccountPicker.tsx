@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { Dropdown } from '@moxxy-ai/companion-sdk/ui';
+import { Dropdown } from '@moxxy/companion-sdk/ui';
 import { REPO_PERMISSION_LABEL, type RepoAccountOption } from '../../contract/index.js';
 import { codeApi } from '../api.js';
 

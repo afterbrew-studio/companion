@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
+import { onServerMessage } from '@moxxy/companion-sdk/client';
 import { emptyFold, foldEvent, foldMany, operateApi as api, type Block, type FoldState } from '@companion/module-operate/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 

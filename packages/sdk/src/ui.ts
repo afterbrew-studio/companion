@@ -1,5 +1,5 @@
 /**
- * `@moxxy-ai/companion-sdk/ui` — the component library module pages render with.
+ * `@moxxy/companion-sdk/ui` — the component library module pages render with.
  *
  * Re-exported wholesale, unlike the other entry points. `@companion/ui` is a
  * leaf with no host machinery in it: every export is a component, an icon or a

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { APP_VERSION } from '@companion/core';
 import { defineRoutes, route, created, badRequest, document } from '@companion/core/server';
-import type { Permission } from '@companion/contracts';
+import type { Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
   AccountInfo,

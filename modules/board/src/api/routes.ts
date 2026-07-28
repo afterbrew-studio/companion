@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { badRequest, created, defineRoutes, forbidden, notFound, route } from '@moxxy-ai/companion-sdk/server';
+import { badRequest, created, defineRoutes, forbidden, notFound, route } from '@moxxy/companion-sdk/server';
 
 const attachmentSchema = z.object({
   name: z.string().min(1).max(200),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, DiffView, Spinner } from '@moxxy-ai/companion-sdk/ui';
+import { ChevronDown, DiffView, Spinner } from '@moxxy/companion-sdk/ui';
 import type { PrFileChange } from '../../../contract/index.js';
 
 /**

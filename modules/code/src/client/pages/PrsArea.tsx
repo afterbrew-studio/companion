@@ -19,7 +19,7 @@ import {
   SearchInput,
   Tabs,
   timeAgo,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';

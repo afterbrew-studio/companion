@@ -1,4 +1,4 @@
-import { defineManifest } from '@moxxy-ai/companion-sdk';
+import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
  * module-oidc: sign in through an OpenID Connect provider (Okta, Entra ID,

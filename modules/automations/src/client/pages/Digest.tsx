@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EmptyState, ErrorBar, Markdown, Page, PageHeader, Section, Spinner, timeAgo } from '@moxxy-ai/companion-sdk/ui';
+import { EmptyState, ErrorBar, Markdown, Page, PageHeader, Section, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { automationsApi } from '../api.js';
 import { useDigest } from '../hooks/useDigest.js';

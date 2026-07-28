@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { defineSlots } from '@moxxy-ai/companion-sdk/client';
+import { defineSlots } from '@moxxy/companion-sdk/client';
 import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 
 /**

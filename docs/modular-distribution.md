@@ -211,7 +211,7 @@ result of a resolver.
 The `node_modules/` symlink farm one level above the modules is the trick that
 makes shared singletons work on the server with zero loader hooks: Node's
 resolution walks upward from `<id>/dist/api/index.js`, misses `<id>/node_modules`,
-and hits `modules/node_modules/@moxxy-ai/companion-sdk`, which is a symlink to
+and hits `modules/node_modules/@moxxy/companion-sdk`, which is a symlink to
 the daemon's copy. Because Node resolves symlinks to their realpath by default,
 identity is preserved and `instanceof HttpError` still works. Install external
 module deps with `--omit=peer` so npm does not helpfully install a second SDK.
@@ -246,14 +246,14 @@ depend on their *contract types*. Everything else goes through a slot.
 ## 6. The ABI: one SDK package `[BUILT; browser half still design]`
 
 **Built, and two things about the design below turned out to be wrong.**
-`@moxxy-ai/companion-sdk` ships with 227 curated symbols across `.`, `/server`,
+`@moxxy/companion-sdk` ships with 227 curated symbols across `.`, `/server`,
 `/client`, `/ui` and `/agents`; ten in-tree feature modules import it. See
 `docs/game-plan.md` P8 and P9 for what each part cost.
 
 Correction 1: **there is no `/contracts` entry point.** TypeScript binds
 declaration merging to the module that declares an interface, so augmenting the
 façade silently creates a second `PermissionRegistry` (measured: TS2820).
-`@companion/contracts` stays the augmentation target and is part of the public
+`@moxxy/companion-contracts` stays the augmentation target and is part of the public
 ABI.
 
 Correction 2: **the server symlink farm below cannot work.** The daemon is one
@@ -276,7 +276,7 @@ Third parties and the private enterprise repo cannot compile against five
 `private: true` workspace packages. Publish exactly one facade:
 
 ```
-@moxxy-ai/companion-sdk
+@moxxy/companion-sdk
   .          -> defineManifest, module types            (isomorphic)
   /server    -> defineApiModule, defineAcl, defineMigrations, defineRoutes,
                 defineRawRoutes, defineJobs, route(), rawRoute(), HttpError,
@@ -306,8 +306,8 @@ import map emitted by the host `index.html`:
   "react": "/host/react.js",
   "react/jsx-runtime": "/host/jsx-runtime.js",
   "react-dom": "/host/react-dom.js",
-  "@moxxy-ai/companion-sdk/client": "/host/sdk-client.js",
-  "@moxxy-ai/companion-sdk/ui": "/host/sdk-ui.js"
+  "@moxxy/companion-sdk/client": "/host/sdk-client.js",
+  "@moxxy/companion-sdk/ui": "/host/sdk-ui.js"
 } }
 </script>
 ```
@@ -326,7 +326,7 @@ mechanical, and catches the whole class.
 ### Server side
 
 Same principle, enforced by the symlink farm in §4. Externals:
-`@moxxy-ai/companion-sdk/*`, `better-sqlite3`, `zod`, `ws`. A module never opens
+`@moxxy/companion-sdk/*`, `better-sqlite3`, `zod`, `ws`. A module never opens
 the database; it receives `ctx.db`.
 
 ### Type-system consequence, stated plainly
@@ -642,7 +642,7 @@ Ordered by (value delivered) / (cost), not by architectural elegance:
    that is not a superset of `slim`, and it is the thing that makes "fully
    modular" true rather than aspirational.
 6. Unify the Docker artifact with the CLI bundle plus `entrypoint.sh`. Days.
-7. Publish `@moxxy-ai/companion-sdk` and move in-tree modules onto it. A week.
+7. Publish `@moxxy/companion-sdk` and move in-tree modules onto it. A week.
 8. Custom roles, then pluggable auth, then audit (§10). This is the enterprise
    product, and it is mostly core work, not module work.
 9. Model B (external modules: import map, prebuilt client chunks, symlink farm,

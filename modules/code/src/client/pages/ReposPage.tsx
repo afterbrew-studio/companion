@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIntent } from '@moxxy-ai/companion-sdk/client';
+import { useIntent } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace, useWorkspaceMembers, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
@@ -22,7 +22,7 @@ import {
   timeAgo,
   useConfirm,
   useDebounced,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import type { RepoCandidate, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { RepoAccountPicker } from '../components/RepoAccountPicker.js';

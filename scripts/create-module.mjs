@@ -65,7 +65,7 @@ write(
         typecheck: 'tsc -p tsconfig.json',
       },
       dependencies: {
-        '@companion/contracts': 'workspace:*',
+        '@moxxy/companion-contracts': 'workspace:*',
         '@companion/core': 'workspace:*',
         '@companion/services': 'workspace:*',
         '@companion/types': 'workspace:*',
@@ -132,7 +132,7 @@ write(
   `import { defineManifest } from '@companion/core';\n\nexport default defineManifest({\n${manifestFields.join('\n')}\n});\n`,
 );
 
-write('src/contract/index.ts', `// module-${id} contract slice: DTOs + \`declare module '@companion/contracts'\` augmentations.\nexport {};\n`);
+write('src/contract/index.ts', `// module-${id} contract slice: DTOs + \`declare module '@moxxy/companion-contracts'\` augmentations.\nexport {};\n`);
 
 write(
   'src/api/index.ts',

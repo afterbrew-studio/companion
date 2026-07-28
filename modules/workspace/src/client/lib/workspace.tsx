@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
+import { onServerMessage } from '@moxxy/companion-sdk/client';
 import type { WorkspaceRecord } from '../../contract/index.js';
 import { workspaceApi } from '../api.js';
 

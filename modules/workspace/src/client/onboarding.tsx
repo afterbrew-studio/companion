@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy/companion-sdk/client';
 
 /** A workspace folder gathering three repo tiles that settle in. */
 function WorkspaceArt({ playing }: { playing: boolean }): JSX.Element {

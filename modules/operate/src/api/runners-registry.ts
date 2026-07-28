@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type { AgentStorageCleanupRequest } from '@companion/types';
 import type {
   CatalogMachine,

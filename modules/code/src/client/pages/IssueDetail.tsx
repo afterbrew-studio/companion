@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AgentActivity } from '@companion/module-operate/client';
-import { ActionMenu, AiActionMenu, Breadcrumb, CopyText, ErrorBar, Markdown, MetaItem, Page, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '@moxxy-ai/companion-sdk/ui';
+import { ActionMenu, AiActionMenu, Breadcrumb, CopyText, ErrorBar, Markdown, MetaItem, Page, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '@moxxy/companion-sdk/ui';
 import type { TriageResult } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useIssue } from '../hooks/useIssue.js';

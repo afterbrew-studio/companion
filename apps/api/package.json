@@ -11,7 +11,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@companion/contracts": "workspace:*",
+    "@moxxy/companion-contracts": "workspace:*",
     "@companion/core": "workspace:*",
     "@companion/module-admin": "workspace:*",
     "@companion/module-automations": "workspace:*",
@@ -27,7 +27,7 @@
     "@companion/module-slop": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@companion/services": "workspace:*",
-    "@moxxy-ai/companion-sdk": "workspace:*",
+    "@moxxy/companion-sdk": "workspace:*",
     "better-sqlite3": "^12.2.0"
   },
   "devDependencies": {

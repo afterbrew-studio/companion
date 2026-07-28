@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Authenticator, ModuleAcl, SpaServerMessage } from '@companion/contracts';
+import type { Authenticator, ModuleAcl, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { DaemonConfig, Logger } from '@companion/services';
 import type { ModuleManifest, ModuleId } from '../manifest.js';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigState } from '../module-config.js';

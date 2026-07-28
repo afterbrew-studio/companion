@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
-import type { NotificationEmitter, NotificationInput } from '@moxxy-ai/companion-sdk/server';
+import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { NotificationEmitter, NotificationInput } from '@moxxy/companion-sdk/server';
 import type { NotificationRecord } from '../contract/index.js';
 import type { NotificationsStore } from './notifications-store.js';
 

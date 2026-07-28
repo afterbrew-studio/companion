@@ -1,5 +1,5 @@
 /**
- * `@moxxy-ai/companion-sdk/server` — the `/api` slice of a module.
+ * `@moxxy/companion-sdk/server` — the `/api` slice of a module.
  *
  * What is deliberately absent, and why: `ModuleKernel`, `DynamicRouter`,
  * `RawRouter`, `MigrationRunner`, `ServiceRegistry`, `ServerBus`, `RbacGrid`,

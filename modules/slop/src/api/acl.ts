@@ -1,4 +1,4 @@
-import { defineAcl } from '@moxxy-ai/companion-sdk/server';
+import { defineAcl } from '@moxxy/companion-sdk/server';
 import '../contract/index.js';
 
 export default defineAcl({

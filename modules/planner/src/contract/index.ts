@@ -10,7 +10,7 @@ import type { ProposalAnalysis } from '@companion/module-plan/contract';
 import type { RefineItemRecord } from '@companion/module-refinement/contract';
 import type { PlannerService } from '../api/planner-service.js';
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'planner:read': true;
     'planner:manage': true;

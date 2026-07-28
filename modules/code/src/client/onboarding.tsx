@@ -1,4 +1,4 @@
-import { defineOnboarding, OnboardingArt } from '@moxxy-ai/companion-sdk/client';
+import { defineOnboarding, OnboardingArt } from '@moxxy/companion-sdk/client';
 
 function CodeArt({ playing }: { playing: boolean }): JSX.Element {
   return (

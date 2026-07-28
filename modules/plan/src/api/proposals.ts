@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
-import { log } from '@moxxy-ai/companion-sdk/server';
-import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
+import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import { log } from '@moxxy/companion-sdk/server';
+import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { ProposalAnalysis, ProposalRecord } from '../contract/index.js';
 import type { PlanStore } from './plan-store.js';
 import type { Checkouts, Fixes, Orchestrator } from './cross-types.js';

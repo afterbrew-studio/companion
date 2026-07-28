@@ -1,8 +1,8 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-sdk';
 import type { BriefingCadence, WebhookInfo } from '@companion/module-code/contract';
 import type { NotificationKind } from '@companion/module-workspace/contract';
-import { log } from '@moxxy-ai/companion-sdk/server';
+import { log } from '@moxxy/companion-sdk/server';
 import type { AutomationsStore } from './automations-store.js';
 import type {
   Checkouts,

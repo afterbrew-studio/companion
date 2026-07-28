@@ -1,4 +1,4 @@
-import { defineServices } from '@moxxy-ai/companion-sdk/server';
+import { defineServices } from '@moxxy/companion-sdk/server';
 import { RefinementStore } from './refinement-store.js';
 import { RefinementService } from './refinement-service.js';
 

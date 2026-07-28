@@ -8,7 +8,7 @@ import '@companion/module-code/contract';
 import '@companion/module-refinement/contract';
 import type { SlopService } from '../api/slop-service.js';
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'slop:read': true;
     'slop:act': true;

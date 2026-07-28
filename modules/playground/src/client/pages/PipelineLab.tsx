@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useKernel } from '@moxxy-ai/companion-sdk/client';
+import { useKernel } from '@moxxy/companion-sdk/client';
 import { codeApi } from '@companion/module-code/client';
 import type { PipelineRecord, PipelineStepSpec, PrRecord, RepoRecord } from '@companion/module-code/contract';
-import { Dropdown, EmptyState, ErrorBar, Field, Page, PageHeader, Spinner } from '@moxxy-ai/companion-sdk/ui';
+import { Dropdown, EmptyState, ErrorBar, Field, Page, PageHeader, Spinner } from '@moxxy/companion-sdk/ui';
 import type { PipelinePreview } from '../../contract/index.js';
 import { playgroundApi } from '../api.js';
 

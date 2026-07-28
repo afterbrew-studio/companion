@@ -1,4 +1,4 @@
-import type { ServiceMap } from '@companion/contracts';
+import type { ServiceMap } from '@moxxy/companion-contracts';
 
 /**
  * Typed cross-module service locator (replaces the flat `ApiDeps` god-object).

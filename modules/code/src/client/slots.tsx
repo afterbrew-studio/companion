@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { defineSlots, registerFreshFilter } from '@moxxy-ai/companion-sdk/client';
+import { defineSlots, registerFreshFilter } from '@moxxy/companion-sdk/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
 

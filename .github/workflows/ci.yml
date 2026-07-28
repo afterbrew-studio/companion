@@ -47,7 +47,7 @@ jobs:
       # so it runs after the build.
       - run: pnpm acl check
 
-      # ABI gate: `@moxxy-ai/companion-sdk` is a published surface, so a symbol
+      # ABI gate: `@moxxy/companion-sdk` is a published surface, so a symbol
       # must not leave it by accident. `/ui` is a wildcard re-export, which makes
       # deleting a shared component a silent break for external modules.
       - run: pnpm sdk:surface

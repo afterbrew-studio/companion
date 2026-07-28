@@ -1,5 +1,5 @@
 import type { Role } from '@companion/types';
-import type { AuthUser, Permission } from '@companion/contracts';
+import type { AuthUser, Permission } from '@moxxy/companion-contracts';
 import type { Auth } from '../api/auth.js';
 import type { RolesService } from '../api/roles-service.js';
 import type { AuditStore } from '../api/audit-store.js';
@@ -11,7 +11,7 @@ import type { SettingsStore } from '../api/settings-store.js';
  * capabilities and register its services for typed cross-module access.
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'users:manage': true;
     'settings:manage': true;

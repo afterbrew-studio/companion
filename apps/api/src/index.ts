@@ -17,10 +17,10 @@ import {
   scanExternalModules,
   WsHub,
 } from '@companion/core/server';
-import * as sdk from '@moxxy-ai/companion-sdk';
-import { SDK_VERSION } from '@moxxy-ai/companion-sdk';
-import * as sdkServer from '@moxxy-ai/companion-sdk/server';
-import * as sdkAgents from '@moxxy-ai/companion-sdk/agents';
+import * as sdk from '@moxxy/companion-sdk';
+import { SDK_VERSION } from '@moxxy/companion-sdk';
+import * as sdkServer from '@moxxy/companion-sdk/server';
+import * as sdkAgents from '@moxxy/companion-sdk/agents';
 import { MODULES } from './modules.generated.js';
 import { startHttpServer } from './http/server.js';
 

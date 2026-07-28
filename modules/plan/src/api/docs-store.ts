@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { likeArg } from '@moxxy-ai/companion-sdk/server';
+import { likeArg } from '@moxxy/companion-sdk/server';
 import type { DocRecord, DocSearchHit } from '../contract/index.js';
 
 /** Workspace docs plus their BM25 chunk index for retrieval. */

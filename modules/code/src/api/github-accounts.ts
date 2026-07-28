@@ -9,7 +9,7 @@ import {
   type RepoCandidate,
   type RepoPermission,
 } from '../contract/index.js';
-import { log, currentUser } from '@moxxy-ai/companion-sdk/server';
+import { log, currentUser } from '@moxxy/companion-sdk/server';
 import { DEFAULT_API, GitHubClient, GitHubError } from './github-client.js';
 import { installationLogin, mintInstallationToken } from './github-app.js';
 import type { CodeStore } from './code-store.js';

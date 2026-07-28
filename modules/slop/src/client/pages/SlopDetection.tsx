@@ -14,8 +14,8 @@ import {
   PageHeader,
   PageLoading,
   Spinner,
-} from '@moxxy-ai/companion-sdk/ui';
-import { useLive, type RouteProps } from '@moxxy-ai/companion-sdk/client';
+} from '@moxxy/companion-sdk/ui';
+import { useLive, type RouteProps } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { SlopDetectionResult } from '../../contract/index.js';

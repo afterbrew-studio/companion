@@ -1,4 +1,4 @@
-import { defineManifest } from '@moxxy-ai/companion-sdk';
+import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
  * module-automations — the reactor module: drives the code/plan/operate domains

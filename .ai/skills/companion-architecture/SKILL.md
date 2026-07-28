@@ -29,7 +29,7 @@ apps/
   companion-runner/     the published @moxxy/companion-runner (remote execution agent)
 packages/
   types/       @companion/types      inert primitives, zero runtime — DAG root
-  contracts/   @companion/contracts  the OPEN registries (RBAC/WS/services/bus) + grid assembler + envelopes
+  contracts/   @moxxy/companion-contracts  the OPEN registries (RBAC/WS/services/bus) + grid assembler + envelopes
   services/    @companion/services   base store/service abstractions + shared utils (paths, log, request-context)
   core/        @companion/core        THE FRAMEWORK: registrant API + server kernel + client host
   ui/          @companion/ui          the design-system kit
@@ -47,7 +47,7 @@ CLI. Never add moxxy as a package dep.
 | Package | What it is | Depends on |
 |---|---|---|
 | `@companion/types` | naked primitives (branded ids, enums, moxxy wire types). No runtime, no boundary meaning. | — |
-| `@companion/contracts` | cross-boundary machinery: the declaration-merged open registries `PermissionRegistry` / `ServerMessageRegistry` / `ServiceMap` / bus events, the RBAC grid assembler, `AuthUser`/route-access/error envelopes. | types |
+| `@moxxy/companion-contracts` | cross-boundary machinery: the declaration-merged open registries `PermissionRegistry` / `ServerMessageRegistry` / `ServiceMap` / bus events, the RBAC grid assembler, `AuthUser`/route-access/error envelopes. | types |
 | `@companion/services` | what a single store/service is made of — `BaseStore` helpers, request-context, `paths`, `log`, config. Kernel-independent. | types, contracts |
 | `@companion/core` | the framework host. `.` = isomorphic `define*` + manifest; `/server` = kernel + lifecycle, `DynamicRouter` + `RawRouter`, `MigrationRunner`, `ServiceRegistry`, `ServerBus`, `WsHub`, capabilities; `/client` = `ModulesProvider`/`useKernel`, route compiler, single-socket net + `useLive`, `NavIcon`/`OnboardingArt`/`lazyView`. | types, contracts, services |
 | `@companion/ui` | presentational React + Tailwind (Markdown, DiffView, icons). Pixels only. | react (+ types) |

@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 
 /** The base notification kinds the framework knows; modules may add more meaning client-side. */
 export type BaseNotificationKind = 'action_required' | 'finished' | 'error' | 'info';

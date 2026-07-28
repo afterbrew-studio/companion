@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { onServerMessage } from './net.js';
 
 /**

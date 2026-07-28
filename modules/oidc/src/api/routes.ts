@@ -1,4 +1,4 @@
-import { defineRoutes, route, Reply, badRequest, redirect } from '@moxxy-ai/companion-sdk/server';
+import { defineRoutes, route, Reply, badRequest, redirect } from '@moxxy/companion-sdk/server';
 import { OidcClient } from './oidc-client.js';
 import '../contract/index.js';
 

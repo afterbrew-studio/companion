@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
-import { request, useLive, useModuleEnabled } from '@moxxy-ai/companion-sdk/client';
+import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import { request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';

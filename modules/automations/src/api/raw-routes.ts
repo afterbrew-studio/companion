@@ -1,4 +1,4 @@
-import { defineRawRoutes, rawRoute } from '@moxxy-ai/companion-sdk/server';
+import { defineRawRoutes, rawRoute } from '@moxxy/companion-sdk/server';
 import '../contract/index.js';
 
 /**

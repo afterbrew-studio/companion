@@ -1,5 +1,5 @@
 /**
- * `@moxxy-ai/companion-sdk` — everything a Companion module is authored against.
+ * `@moxxy/companion-sdk` — everything a Companion module is authored against.
  *
  * This package is a **curated façade**, not a re-export of the workspace. The
  * distinction is the point: `@companion/core/server` also exports the kernel,
@@ -22,7 +22,7 @@
  * A module's `contract/` slice augments the open registries:
  *
  * ```ts
- * declare module '@companion/contracts' {
+ * declare module '@moxxy/companion-contracts' {
  *   interface PermissionRegistry { 'widgets:manage': true }
  * }
  * ```
@@ -32,7 +32,7 @@
  * merely re-exports it silently creates a second, unrelated interface (measured:
  * TS2820, the augmented key is rejected as not assignable). Hiding the real
  * target behind a façade would produce an ABI whose permissions quietly fail to
- * register, which is worse than one extra package name. So `@companion/contracts`
+ * register, which is worse than one extra package name. So `@moxxy/companion-contracts`
  * is part of the public ABI and a module depends on both.
  */
 
@@ -41,7 +41,7 @@
  * declares as `moxxy.abi` in its package.json. The daemon refuses a module built
  * against a different generation at boot, which is where a mismatch is cheap.
  */
-export const SDK_VERSION = '0.1.0';
+export const SDK_VERSION = '0.1.0'; // keep in step with package.json (checked by pnpm sdk:surface)
 export const ABI_GENERATION = '0.x';
 
 export { defineManifest, APP_VERSION } from '@companion/core';
@@ -54,7 +54,7 @@ export type {
   ModuleConfigState,
 } from '@companion/core';
 
-/** The cross-boundary spine. Augment the registries via `@companion/contracts`. */
+/** The cross-boundary spine. Augment the registries via `@moxxy/companion-contracts`. */
 export type {
   Permission,
   PermissionRegistry,
@@ -63,7 +63,7 @@ export type {
   BusEvents,
   SpaServerMessage,
   AuthUser,
-} from '@companion/contracts';
+} from '@moxxy/companion-contracts';
 
 export { BUILTIN_ROLES, isBuiltinRole } from '@companion/types';
 export type { Role, BuiltinRole } from '@companion/types';

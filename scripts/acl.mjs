@@ -559,7 +559,7 @@ function writeDerived(mod, ids, { dry }) {
     }
   } else if (ids.length) {
     const anchor = /declare module '@companion\/contracts' \{\n/;
-    if (!anchor.test(contract)) fail(`${mod.id}: contract has no \`declare module '@companion/contracts'\` block`);
+    if (!anchor.test(contract)) fail(`${mod.id}: contract has no \`declare module '@moxxy/companion-contracts'\` block`);
     const block = `  interface PermissionRegistry {\n${ids.map((id) => `    '${id}': true;`).join('\n')}\n  }\n`;
     apply(contractFile, contract.replace(anchor, (m) => `${m}${block}`), contract);
   }

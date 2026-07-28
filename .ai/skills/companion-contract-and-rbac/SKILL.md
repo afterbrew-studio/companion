@@ -19,7 +19,7 @@ list to edit.
 
 ```ts
 // modules/<id>/src/contract/index.ts
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry { 'widgets:read': true; 'widgets:manage': true }
   interface ServerMessageRegistry { 'widgets.changed': Record<never, never> }
   interface ServiceMap { widgets: WidgetService }

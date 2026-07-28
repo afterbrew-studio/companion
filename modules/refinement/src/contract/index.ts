@@ -9,7 +9,7 @@ import '@companion/module-board/contract';
 import type { TaskPriority } from '@companion/module-board/contract';
 import type { RefinementService } from '../api/refinement-service.js';
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'refine:read': true;
     'refine:manage': true;

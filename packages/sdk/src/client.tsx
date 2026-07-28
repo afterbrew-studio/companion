@@ -1,5 +1,5 @@
 /**
- * `@moxxy-ai/companion-sdk/client` — the `/client` slice of a module.
+ * `@moxxy/companion-sdk/client` — the `/client` slice of a module.
  *
  * Source-only, like `@companion/core/client` and `@companion/ui`: the web host
  * resolves it through Vite's `source` condition and compiles it with the app, so

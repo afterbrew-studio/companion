@@ -1,4 +1,4 @@
-import { defineManifest } from '@moxxy-ai/companion-sdk';
+import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
  * module-playground — the agent test bench: try prompts and skills against a

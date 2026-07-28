@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
  * One entry in the Board group, below the Task Board (the board module owns

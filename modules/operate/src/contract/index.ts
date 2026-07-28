@@ -9,7 +9,7 @@ import type { OperateService } from '../api/operate-service.js';
  * queue, runner machines (local/remote), the moxxy gateway surface, and skills.
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'runs:read': true;
     'runs:act': true;

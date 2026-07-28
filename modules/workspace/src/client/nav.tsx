@@ -1,4 +1,4 @@
-import { defineNav, defineSections } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, defineSections } from '@moxxy/companion-sdk/client';
 
 /**
  * module-workspace owns the Workspace sidebar group but contributes no entries

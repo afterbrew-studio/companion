@@ -1,4 +1,4 @@
-import { del, patch, post, put, request } from '@moxxy-ai/companion-sdk/client';
+import { del, patch, post, put, request } from '@moxxy/companion-sdk/client';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import type {
   BoardConfig,

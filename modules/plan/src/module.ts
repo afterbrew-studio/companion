@@ -1,4 +1,4 @@
-import { defineManifest } from '@moxxy-ai/companion-sdk';
+import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
  * module-plan — the planning/grounding domain: proposals (idea → analyzed →

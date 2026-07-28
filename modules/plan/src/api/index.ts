@@ -1,4 +1,4 @@
-import { defineApiModule } from '@moxxy-ai/companion-sdk/server';
+import { defineApiModule } from '@moxxy/companion-sdk/server';
 import manifest from '../module.js';
 import acl from './acl.js';
 import migrations from './migrations.js';

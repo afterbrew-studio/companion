@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { pipelineRunHref, reportHref, runHref, useKernel, useModuleEnabled } from '@moxxy-ai/companion-sdk/client';
+import { pipelineRunHref, reportHref, runHref, useKernel, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
-import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@moxxy-ai/companion-sdk/ui';
+import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@moxxy/companion-sdk/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
 import { ChecksIcon } from '../widgets.js';

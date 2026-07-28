@@ -1,4 +1,4 @@
-import { defineJobs } from '@moxxy-ai/companion-sdk/server';
+import { defineJobs } from '@moxxy/companion-sdk/server';
 
 let offSetupCompleted: (() => void) | null = null;
 

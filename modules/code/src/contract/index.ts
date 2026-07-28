@@ -14,7 +14,7 @@ export * from './pipelines.js';
  * authoritative), triage, AI reviews + CI checks, and pipelines.
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'repos:read': true;
     'repos:manage': true;

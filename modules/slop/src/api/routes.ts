@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { accepted, badRequest, created, defineRoutes, notFound, route } from '@moxxy-ai/companion-sdk/server';
-import type { AuthUser } from '@moxxy-ai/companion-sdk';
+import { accepted, badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import type { AuthUser } from '@moxxy/companion-sdk';
 import '../contract/index.js';
 
 const saveRuleSchema = z.object({

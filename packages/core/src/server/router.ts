@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import type { AuthUser, Authenticator, Permission, RouteAccess } from '@companion/contracts';
+import type { AuthUser, Authenticator, Permission, RouteAccess } from '@moxxy/companion-contracts';
 import { withRequestUser, type Logger } from '@companion/services';
 import type { AuditEvent } from './capabilities.js';
 

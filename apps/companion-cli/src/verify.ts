@@ -15,18 +15,18 @@ import { join, resolve } from 'node:path';
 
 /** What a built chunk is allowed to import. Anything else must be bundled in. */
 const SERVER_ABI = new Set([
-  '@moxxy-ai/companion-sdk',
-  '@moxxy-ai/companion-sdk/server',
-  '@moxxy-ai/companion-sdk/agents',
+  '@moxxy/companion-sdk',
+  '@moxxy/companion-sdk/server',
+  '@moxxy/companion-sdk/agents',
   'better-sqlite3',
   'zod',
   'ws',
 ]);
 
 const CLIENT_ABI = new Set([
-  '@moxxy-ai/companion-sdk',
-  '@moxxy-ai/companion-sdk/client',
-  '@moxxy-ai/companion-sdk/ui',
+  '@moxxy/companion-sdk',
+  '@moxxy/companion-sdk/client',
+  '@moxxy/companion-sdk/ui',
   'react',
   'react/jsx-runtime',
   'react-dom',

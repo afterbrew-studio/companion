@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 export const sections = defineSections([{ id: 'board', label: 'Board', order: 15 }]);
 

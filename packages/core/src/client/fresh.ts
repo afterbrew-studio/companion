@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 
 /**
  * A module's veto on nav "new activity" marking. The shell decides WHICH entry

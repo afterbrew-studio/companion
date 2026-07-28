@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage } from '@moxxy-ai/companion-sdk/client';
+import { onServerMessage } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { NotificationScope } from '@companion/module-core/contract';
 import type { NotificationRecord } from '../../contract/index.js';

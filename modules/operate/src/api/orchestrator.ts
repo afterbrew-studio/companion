@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@companion/types';
 import type { ModuleConfigAccessor } from '@companion/core';
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
   GitCredentialResolver,
   ModelCatalog,

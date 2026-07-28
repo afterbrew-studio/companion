@@ -5,7 +5,7 @@
  *   node scripts/sdk-surface.mjs          # compare against the snapshot
  *   node scripts/sdk-surface.mjs --write  # accept the current surface
  *
- * `@moxxy-ai/companion-sdk` is a permanent public surface: an external module
+ * `@moxxy/companion-sdk` is a permanent public surface: an external module
  * compiled against it must keep compiling. The risk is not a deliberate change,
  * it is an accidental one. Every entry point but `/ui` is an explicit named
  * re-export list, so adding a symbol to a barrel in `@companion/core` cannot
@@ -91,7 +91,7 @@ if (!existsSync(snapshotFile)) {
 }
 
 const snapshot = JSON.parse(readFileSync(snapshotFile, 'utf8'));
-const problems = [...clientAbiDrift()];
+const problems = [...clientAbiDrift(), ...versionDrift()];
 const added = [];
 for (const entry of new Set([...Object.keys(snapshot), ...Object.keys(current)])) {
   const before = new Set(snapshot[entry] ?? []);
@@ -141,4 +141,20 @@ function clientAbiDrift() {
   for (const s of map) if (!allow.has(s)) out.push(`import map serves '${s}' but module verify rejects it`);
   for (const s of allow) if (!map.has(s)) out.push(`module verify allows '${s}' but the import map cannot resolve it`);
   return out;
+}
+
+/**
+ * `SDK_VERSION` is a literal in the SDK's source because the package cannot read
+ * its own package.json from inside a bundle, and the daemon writes that literal
+ * into the generated ABI bridge. Bump the package and forget the constant, and
+ * every out-of-tree module is told a version the host is not running.
+ */
+function versionDrift() {
+  const pkg = JSON.parse(readFileSync(join(root, 'packages/sdk/package.json'), 'utf8'));
+  const src = readFileSync(join(root, 'packages/sdk/src/index.ts'), 'utf8');
+  const declared = /export const SDK_VERSION = '([^']+)'/.exec(src)?.[1];
+  if (!declared) return ["packages/sdk/src/index.ts no longer declares SDK_VERSION"];
+  return declared === pkg.version
+    ? []
+    : [`SDK_VERSION is '${declared}' but packages/sdk/package.json says '${pkg.version}'`];
 }

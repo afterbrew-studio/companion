@@ -39,7 +39,7 @@ Do not write code against a mechanism that is not built. As of now:
   the licence lapses, keeping its data.
 - `[NOW]` The audit trail: the router records every mutating request, refusals
   included, into `audit_log`.
-- `[NOW]` `@moxxy-ai/companion-sdk`: the curated ABI, pinned by
+- `[NOW]` `@moxxy/companion-sdk`: the curated ABI, pinned by
   `packages/sdk/surface.json` and gated by `pnpm sdk:surface`. Every in-tree
   feature module imports it; `core`, `operate` and `admin` do not, because they
   implement the host.

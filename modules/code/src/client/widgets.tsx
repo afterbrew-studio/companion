@@ -1,4 +1,4 @@
-import { CheckIcon, ClockIcon, CloseIcon, QuestionIcon, Tooltip } from '@moxxy-ai/companion-sdk/ui';
+import { CheckIcon, ClockIcon, CloseIcon, QuestionIcon, Tooltip } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus } from '@companion/module-code/contract';
 

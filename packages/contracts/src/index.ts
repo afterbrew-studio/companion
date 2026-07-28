@@ -1,5 +1,5 @@
 /**
- * `@companion/contracts` — the cross-boundary machinery: the open registries
+ * `@moxxy/companion-contracts` — the cross-boundary machinery: the open registries
  * modules augment (RBAC / WS / services / bus), the boot-time RBAC assembler,
  * and the kernel-level envelopes the framework itself needs. Domain DTOs do NOT
  * live here — they belong to each module's `contract/` slice.

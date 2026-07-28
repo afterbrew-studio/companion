@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onServerMessage, useLive } from '@moxxy-ai/companion-sdk/client';
+import { onServerMessage, useLive } from '@moxxy/companion-sdk/client';
 import {
   emptyFold,
   foldEvent,

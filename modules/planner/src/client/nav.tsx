@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 export const nav = defineNav([{
   key: 'ideas',

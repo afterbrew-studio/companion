@@ -11,7 +11,7 @@ module, the published SDK, out-of-tree modules on both the server and the
 browser, and GitHub App credentials.
 
 What follows needs content or a decision, not a new mechanism, with two
-exceptions: §1 is built and kept here for its remaining rough edge, and §5 needs
+exceptions: §1 is built and kept here for its remaining rough edge, and §6 needs
 nothing until a module asks for it.
 
 Verified against the tree rather than remembered: each entry says what exists and
@@ -42,7 +42,37 @@ to an operator beyond a log warning. If an app is uninstalled on GitHub, the
 account keeps its dead token until someone reads the log or a call fails over.
 Worth a health field on the account record when someone hits it.
 
-## 2. A commercial module `[business decision, not code]`
+## 2. The module ABI cannot be published yet `[blocked on one decision]`
+
+**Today:** `@moxxy/companion-sdk` and `@moxxy/companion-contracts` are the two
+packages an out-of-tree module compiles against, and both build. Neither is on
+npm, so the whole out-of-tree path is currently in-repo only.
+
+**Why not just publish them:** their `.d.ts` files re-export from
+`@companion/core`, `@companion/services`, `@companion/types` and
+`@companion/ui`, all `private: true`. Published as they are, `npm i` would
+succeed and then every type would fail to resolve. Shipping that is worse than
+shipping nothing.
+
+**Two ways out, and they are not equivalent:**
+
+- **Publish the whole framework** under `@moxxy/companion-*`. Four more packages
+  and four more version streams, and it puts `ModuleKernel`, `DynamicRouter`,
+  `RbacGrid` and the rest back within reach of a module. That is exactly the
+  curation the facade exists for, so this undoes the point of P8.
+- **Bundle the declarations** so the SDK's `dist` is self-contained (api-extractor,
+  rollup-plugin-dts or dts-bundle-generator). One new dev dependency and one
+  build step, and the published surface stays the reviewed 230 symbols.
+
+The second is right. It needs a dependency added, which is why it is written
+down here rather than done.
+
+The scope was fixed in passing: the packages were named `@moxxy-ai/*` and
+`@companion/*`, and **neither scope exists on npm**. `@moxxy` is the one that
+holds `@moxxy/cli`, `@moxxy/companion` and `@moxxy/companion-runner`, so both
+moved there.
+
+## 3. A commercial module `[business decision, not code]`
 
 **Today:** the entitlement gate works and is verified in six states (no licence
 and no key, valid licence with no key in the build, no licence with a key,
@@ -54,7 +84,7 @@ intact and the instance stays administrable.
 one. See `docs/modular-distribution.md` §7, which is deliberately still
 `[LATER]`: it is a repo and licensing decision, not an implementation.
 
-## 3. A Vault or KMS secret backend `[a module, and now only a module]`
+## 4. A Vault or KMS secret backend `[a module, and now only a module]`
 
 **Today:** `kind: 'secret'` config routes through a `SecretStore`. The default
 keeps it in SQLite, `provideSecrets` swaps the backend, and the kernel moves
@@ -67,7 +97,7 @@ one: the provider's own credentials stay in the default store (a Vault module
 cannot keep its Vault token in Vault), and an external store is not inside the
 config transaction.
 
-## 4. SAML `[declined, with a reason]`
+## 5. SAML `[declined, with a reason]`
 
 Not an omission. SAML needs XML signature verification, which is a dependency
 and a far larger attack surface than OIDC, and every provider Companion targets
@@ -77,7 +107,7 @@ is the reference implementation.
 Revisit only for a customer who genuinely has no OIDC option, and copy the OIDC
 module's shape rather than reinventing the handshake.
 
-## 5. Install lifecycle for modules that are not just JavaScript
+## 6. Install lifecycle for modules that are not just JavaScript
 
 `docs/modular-distribution.md` §14, still `[LATER]` and correctly so.
 

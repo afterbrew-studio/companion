@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ErrorBar, FormActions } from '@moxxy-ai/companion-sdk/ui';
+import { ErrorBar, FormActions } from '@moxxy/companion-sdk/ui';
 import type { AreaStorageState } from '../../contract/index.js';
 
 /**

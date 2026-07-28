@@ -1,4 +1,4 @@
-import type { StatusTone } from '@moxxy-ai/companion-sdk/ui';
+import type { StatusTone } from '@moxxy/companion-sdk/ui';
 import type { SlopAppliedAction, SlopDetectionResult, SlopSignal } from '../contract/index.js';
 
 /** Detection wording/tones shared by the list page and the detection subpage. */

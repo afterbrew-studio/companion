@@ -1,4 +1,4 @@
-import type { Permission } from '@companion/contracts';
+import type { Permission } from '@moxxy/companion-contracts';
 import type { Logger } from '@companion/services';
 import type { AuditSink, RbacReader, RoleOverrides } from '@companion/core/server';
 import type { RoleDetail, RoleRecord } from '../contract/index.js';

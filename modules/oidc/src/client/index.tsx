@@ -1,4 +1,4 @@
-import { defineClientModule } from '@moxxy-ai/companion-sdk/client';
+import { defineClientModule } from '@moxxy/companion-sdk/client';
 import '../contract/index.js';
 import manifest from '../module.js';
 

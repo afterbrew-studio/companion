@@ -43,7 +43,7 @@ properties back.
 ## The ABI: two packages, and why it is not one
 
 ```
-@moxxy-ai/companion-sdk        everything you import
+@moxxy/companion-sdk        everything you import
   .          defineManifest, manifest + config types, Permission / ServiceMap /
              SpaServerMessage / AuthUser, Role, SDK_VERSION, ABI_GENERATION
   /server    defineApiModule, defineAcl, defineMigrations, defineRoutes,
@@ -58,7 +58,7 @@ properties back.
   /agents    AskRequest, MoxxyEvent, HistorySegment, PromptAttachment,
              extractModelJson
 
-@companion/contracts           ONE line: the registry augmentation target
+@moxxy/companion-contracts           ONE line: the registry augmentation target
 ```
 
 The second package is not an oversight. **TypeScript binds declaration merging
@@ -69,7 +69,7 @@ TS2820 on the augmented key, `declare module '<declaring package>'` compiles.
 So a module's `contract` slice writes:
 
 ```ts
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry { 'widgets:manage': true }
 }
 ```
@@ -125,8 +125,8 @@ module's own CI.
 
 A built external module may statically import **only**:
 
-server: `@moxxy-ai/companion-sdk/*`, `better-sqlite3`, `zod`, `ws`, node builtins
-client: `@moxxy-ai/companion-sdk/*`, `react`, `react/jsx-runtime`, `react-dom`
+server: `@moxxy/companion-sdk/*`, `better-sqlite3`, `zod`, `ws`, node builtins
+client: `@moxxy/companion-sdk/*`, `react`, `react/jsx-runtime`, `react-dom`
 
 Everything else must be bundled into the module's own artifact. `companion
 module verify <path>` parses the built ESM's static import list and fails on
@@ -147,7 +147,7 @@ modules:
 
 ```
 $COMPANION_HOME/modules/
-  node_modules/@moxxy-ai/companion-sdk/   generated at every boot
+  node_modules/@moxxy/companion-sdk/   generated at every boot
     index.js  server.js  agents.js        `export const X = abi["X"]`
   <id>/
     package.json                          NO node_modules
@@ -179,7 +179,7 @@ build has no compiled-in loader for.
 
 ```
 react, react/jsx-runtime, react-dom,
-@moxxy-ai/companion-sdk, @moxxy-ai/companion-sdk/client, @moxxy-ai/companion-sdk/ui
+@moxxy/companion-sdk, @moxxy/companion-sdk/client, @moxxy/companion-sdk/ui
 ```
 
 That list is exactly what a client chunk may import; `pnpm sdk:surface` diffs
@@ -204,9 +204,9 @@ resolves to the host's copy at load time:
 
 ```js
 // esbuild
-external: ['@moxxy-ai/companion-sdk', '@moxxy-ai/companion-sdk/*',
+external: ['@moxxy/companion-sdk', '@moxxy/companion-sdk/*',
            'better-sqlite3', 'zod', 'ws']            // server
-external: ['@moxxy-ai/companion-sdk/client', '@moxxy-ai/companion-sdk/ui',
+external: ['@moxxy/companion-sdk/client', '@moxxy/companion-sdk/ui',
            'react', 'react/jsx-runtime', 'react-dom'] // client
 ```
 
@@ -224,7 +224,7 @@ how the code is compiled and delivered, never how it is written.**
 A worked example, verified against a live daemon: an out-of-tree module that
 declares `hello:read`, runs a migration, serves three routes and reads its own
 config, built entirely outside the repo with only the SDK and
-`@companion/contracts` linked in. Its permission entered the live RBAC grid, its
+`@moxxy/companion-contracts` linked in. Its permission entered the live RBAC grid, its
 migration ran, and `redirect()` returned a real 302.
 
 ## What the type system stops guaranteeing## What the type system stops guaranteeing
@@ -263,9 +263,9 @@ so.
 - [ ] The in-tree + build-profile option was considered and explicitly rejected.
 - [ ] The client chunk is built for **production** with react, react/jsx-runtime
       and the SDK subpaths external.
-- [ ] SDK and `@companion/contracts` are dev + peer dependencies, never runtime
+- [ ] SDK and `@moxxy/companion-contracts` are dev + peer dependencies, never runtime
       ones, and the published tarball has no `node_modules`.
-- [ ] Registry augmentation targets `@companion/contracts`, not the SDK.
+- [ ] Registry augmentation targets `@moxxy/companion-contracts`, not the SDK.
 - [ ] `companion module verify` passes: no import outside the allowlist.
 - [ ] Every foreign boundary uses `tryGet` / `ctx.bus`, never `get`.
 - [ ] `moxxy.abi` matches the daemon's generation and `moxxy.id` matches the

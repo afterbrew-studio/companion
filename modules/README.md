@@ -103,7 +103,7 @@ surface omits `services.ts`).
   },
   "dependencies": {
     "@companion/core": "workspace:*",
-    "@companion/contracts": "workspace:*",
+    "@moxxy/companion-contracts": "workspace:*",
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
     "@companion/ui": "workspace:*",
@@ -235,7 +235,7 @@ autoInstall: false,   // optional: land as "Available" instead of auto-installin
 ## 5. The contract slice — `src/contract/index.ts`
 
 Two jobs: (1) declare the DTOs that cross HTTP/WS, and (2) **open the shared
-registries** for your module by augmenting the interfaces in `@companion/contracts`
+registries** for your module by augmenting the interfaces in `@moxxy/companion-contracts`
 and `@companion/core`.
 
 ```ts
@@ -245,7 +245,7 @@ import '@companion/module-workspace/contract';
 import '@companion/module-core/contract';
 import type { WidgetService } from '../api/widget-service.js';
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {          // open the RBAC union
     'widgets:read': true;
     'widgets:manage': true;
@@ -718,7 +718,7 @@ state durable.
 | Package | Role |
 |---|---|
 | `@companion/types` | inert primitives, zero runtime — DAG root. |
-| `@companion/contracts` | the open registries (RBAC/WS/services/bus) + RBAC assembler + envelopes. |
+| `@moxxy/companion-contracts` | the open registries (RBAC/WS/services/bus) + RBAC assembler + envelopes. |
 | `@companion/services` | base store/service abstractions + shared utils (paths, log, request-context). |
 | `@companion/core` | **the framework** — `.` (isomorphic `define*` + manifest), `/server` (kernel, routers, migrations, service registry, bus, ws hub, capabilities), `/client` (ModulesProvider, route compiler, net/WS, `useLive`, `NavIcon`, `OnboardingArt`, `lazyView`). |
 | `@companion/ui` | the presentational kit (design system, Markdown, DiffView, icons). |

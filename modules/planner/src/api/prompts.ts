@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
+import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { RefineItemRecord } from '@companion/module-refinement/contract';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import type {

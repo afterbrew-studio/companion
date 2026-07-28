@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { safeParse } from '@moxxy-ai/companion-sdk/server';
+import { safeParse } from '@moxxy/companion-sdk/server';
 import type { PrReviewResult, PrReviewVerdict } from '../contract/index.js';
 
 /** AI PR review verdicts; the latest row per PR wins. */

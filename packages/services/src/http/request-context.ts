@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AuthUser } from '@companion/contracts';
+import type { AuthUser } from '@moxxy/companion-contracts';
 
 /**
  * Request-scoped context — the invoking user for the duration of one HTTP

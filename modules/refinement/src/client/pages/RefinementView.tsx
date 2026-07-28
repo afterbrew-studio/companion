@@ -13,7 +13,7 @@ import {
   PageLoading,
   timeAgo,
   useConfirm,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { TaskPriority } from '@companion/module-board/contract';
 import { BranchPicker } from '@companion/module-code/client';

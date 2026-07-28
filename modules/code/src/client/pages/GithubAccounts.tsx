@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useIntent } from '@moxxy-ai/companion-sdk/client';
+import { useIntent } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -19,7 +19,7 @@ import {
   Switch,
   timeAgo,
   useConfirm,
-} from '@moxxy-ai/companion-sdk/ui';
+} from '@moxxy/companion-sdk/ui';
 import type {
   GitHubAccountRecord,
   GitHubAccountScope,

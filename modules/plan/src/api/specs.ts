@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy-ai/companion-sdk';
-import { log } from '@moxxy-ai/companion-sdk/server';
-import { extractModelJson } from '@moxxy-ai/companion-sdk/agents';
+import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import { log } from '@moxxy/companion-sdk/server';
+import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type {
   AreaStorage,
   AreaStorageConfig,

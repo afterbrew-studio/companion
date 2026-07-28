@@ -1,4 +1,4 @@
-import { defineServices } from '@moxxy-ai/companion-sdk/server';
+import { defineServices } from '@moxxy/companion-sdk/server';
 import { WorkspacesStore } from './workspaces-store.js';
 import { NotificationsStore } from './notifications-store.js';
 import { NotificationsService } from './notifications-service.js';

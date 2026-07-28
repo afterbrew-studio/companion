@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Permission } from '@companion/contracts';
+import type { Permission } from '@moxxy/companion-contracts';
 import type { IssueRecord, PrRecord, RepoRecord } from '@companion/module-code/contract';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { SearchIcon } from '@companion/ui';

@@ -18,7 +18,7 @@
     "test": "pnpm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@companion/contracts": "workspace:*",
+    "@moxxy/companion-contracts": "workspace:*",
     "@companion/types": "workspace:*",
     "jsonrepair": "^3.15.0",
     "undici": "^7.16.0"

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useLive } from '@moxxy-ai/companion-sdk/client';
+import { useLive } from '@moxxy/companion-sdk/client';
 import type { RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 

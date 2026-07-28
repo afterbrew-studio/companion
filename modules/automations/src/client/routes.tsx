@@ -1,4 +1,4 @@
-import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy-ai/companion-sdk/client';
+import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/companion-sdk/client';
 
 // The digest-in-the-making loader view of a report run (regex outranks the
 // /digest prefix on specificity, so ordering here doesn't matter).

@@ -1,4 +1,4 @@
-import { legacyNotifications, type NotificationEmitter } from '@moxxy-ai/companion-sdk/server';
+import { legacyNotifications, type NotificationEmitter } from '@moxxy/companion-sdk/server';
 import type { ProposalsStore } from './proposals-store.js';
 import type { SpecsStore } from './specs-store.js';
 import type { DocsStore } from './docs-store.js';

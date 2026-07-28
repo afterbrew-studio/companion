@@ -10,7 +10,7 @@ importers:
 
   apps/api:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/core':
@@ -58,7 +58,7 @@ importers:
       '@companion/services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       better-sqlite3:
@@ -157,7 +157,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/core':
@@ -205,7 +205,7 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       highlight.js:
@@ -242,7 +242,7 @@ importers:
 
   modules/admin:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/core':
@@ -288,7 +288,7 @@ importers:
 
   modules/automations:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-code':
@@ -306,7 +306,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -334,7 +334,7 @@ importers:
 
   modules/board:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-code':
@@ -352,7 +352,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -380,7 +380,7 @@ importers:
 
   modules/code:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-core':
@@ -392,7 +392,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -420,7 +420,7 @@ importers:
 
   modules/core:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/core':
@@ -463,7 +463,7 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -491,7 +491,7 @@ importers:
 
   modules/operate:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/core':
@@ -552,7 +552,7 @@ importers:
 
   modules/plan:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-code':
@@ -567,7 +567,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -595,7 +595,7 @@ importers:
 
   modules/planner:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-board':
@@ -619,7 +619,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -647,7 +647,7 @@ importers:
 
   modules/playground:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-code':
@@ -662,7 +662,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -690,7 +690,7 @@ importers:
 
   modules/refinement:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-board':
@@ -711,7 +711,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -739,7 +739,7 @@ importers:
 
   modules/slop:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-code':
@@ -757,7 +757,7 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -785,13 +785,13 @@ importers:
 
   modules/workspace:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
-      '@moxxy-ai/companion-sdk':
+      '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -829,7 +829,7 @@ importers:
 
   packages/core:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@companion/services':
@@ -869,7 +869,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@companion/core':
@@ -900,7 +900,7 @@ importers:
 
   packages/services:
     dependencies:
-      '@companion/contracts':
+      '@moxxy/companion-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@companion/types':

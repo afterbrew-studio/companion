@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { z } from 'zod';
-import { defineRoutes, route, badRequest, notFound } from '@moxxy-ai/companion-sdk/server';
-import { paths } from '@moxxy-ai/companion-sdk/server';
+import { defineRoutes, route, badRequest, notFound } from '@moxxy/companion-sdk/server';
+import { paths } from '@moxxy/companion-sdk/server';
 import type { PipelinePreview, PipelinePreviewStep, PlaygroundRunResult } from '../contract/index.js';
 import { buildPlaygroundPrompt } from './playground.js';
 

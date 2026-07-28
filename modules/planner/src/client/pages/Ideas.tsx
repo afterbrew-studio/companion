@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, Dropdown, EmptyState, ErrorBar, Page, SparkleIcon, Spinner, timeAgo } from '@moxxy-ai/companion-sdk/ui';
+import { ChevronDown, Dropdown, EmptyState, ErrorBar, Page, SparkleIcon, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';

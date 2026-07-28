@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
  * The Playground sidebar group. module-operate declares the SAME section (id

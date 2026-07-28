@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@companion/contracts';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 
 /**
  * The single REST + WebSocket core for the SPA — extracted verbatim from the

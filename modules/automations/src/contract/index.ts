@@ -18,7 +18,7 @@ import type { AutomationsService } from '../api/automations-service.js';
  * WS tags (`repos.changed`, `reports.changed`; notifications go via ctx.notify).
  */
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'automations:manage': true;
   }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Permission } from '@companion/contracts';
+import type { Permission } from '@moxxy/companion-contracts';
 import { useKernel } from './modules-provider.js';
 
 /**

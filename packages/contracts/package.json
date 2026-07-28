@@ -1,6 +1,5 @@
 {
-  "name": "@companion/contracts",
-  "private": true,
+  "name": "@moxxy/companion-contracts",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,12 +13,20 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@companion/types": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
-  }
+  },
+  "description": "The open registries Companion modules augment, and the cross-boundary envelopes.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ]
 }

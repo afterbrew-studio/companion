@@ -1,4 +1,4 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy-ai/companion-sdk/client';
+import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
  * module-plan's sidebar contributions: the Plan group with its proposals /

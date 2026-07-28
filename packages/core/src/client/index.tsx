@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { Permission, SpaServerMessage } from '@companion/contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { ModuleManifest } from '../manifest.js';
 
 /**

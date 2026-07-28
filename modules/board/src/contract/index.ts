@@ -7,7 +7,7 @@ import '@companion/module-operate/contract';
 import '@companion/module-plan/contract';
 import type { BoardService } from '../api/board-service.js';
 
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'board:read': true;
     'board:manage': true;

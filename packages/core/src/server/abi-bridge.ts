@@ -8,7 +8,7 @@ const SERVER_ENTRIES = ['.', './server', './agents'] as const;
  * Make the host's own SDK the only one an external module can resolve.
  *
  * The problem this exists to prevent is the server-side twin of "two React
- * instances". The daemon ships as one esbuild bundle, so `@moxxy-ai/companion-sdk`
+ * instances". The daemon ships as one esbuild bundle, so `@moxxy/companion-sdk`
  * and the `@companion/core` it re-exports are compiled INTO it. An external
  * module under `$COMPANION_HOME/modules/<id>/` that imports the SDK would resolve
  * a second physical copy, with a second `Reply` class. The router decides what to
@@ -41,7 +41,7 @@ export interface AbiBridgeOptions {
 }
 
 /**
- * Write `<dir>/node_modules/@moxxy-ai/companion-sdk`. Rewritten on every boot:
+ * Write `<dir>/node_modules/@moxxy/companion-sdk`. Rewritten on every boot:
  * it is derived state, and a stale bridge after an upgrade would export the
  * previous release's symbol list.
  */
@@ -66,7 +66,7 @@ export function installAbiBridge(opts: AbiBridgeOptions): void {
     join(pkgDir, 'package.json'),
     JSON.stringify(
       {
-        name: '@moxxy-ai/companion-sdk',
+        name: '@moxxy/companion-sdk',
         version: opts.version,
         type: 'module',
         main: './index.js',
@@ -81,7 +81,7 @@ export function installAbiBridge(opts: AbiBridgeOptions): void {
 }
 
 const specifierFor = (entry: string): string =>
-  entry === '.' ? '@moxxy-ai/companion-sdk' : `@moxxy-ai/companion-sdk/${entry.slice(2)}`;
+  entry === '.' ? '@moxxy/companion-sdk' : `@moxxy/companion-sdk/${entry.slice(2)}`;
 
 /**
  * Named re-exports rather than `export *`: an ESM binding list has to be static.

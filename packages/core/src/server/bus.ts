@@ -1,4 +1,4 @@
-import type { BusEvents } from '@companion/contracts';
+import type { BusEvents } from '@moxxy/companion-contracts';
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;
 

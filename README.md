@@ -68,7 +68,7 @@ for roles, audit, deployment shape, and an honest list of what is not built yet.
 - `apps/api` — the daemon: boots the **kernel** (`@companion/core`), holds the static module registry, and runs the HTTP/WS server. Feature logic lives in the modules it loads, not here.
 - `apps/web` — the React/Vite SPA **shell**: `ModulesProvider` + the single-socket net layer. It hosts and presents modules' client slices; it contains no feature pages of its own.
 - `apps/companion-runner` — the machine-holder agent: a slim daemon that lets a remote box execute Companion agent work (spawns moxxy gateways, holds clones/worktrees, streams events) driven by a `companion-api` over HTTP+WS.
-- `packages/*` — the framework: `@companion/types` (primitives), `@companion/contracts` (the open RBAC/WS/service registries), `@companion/services` (base store/service utils), `@companion/core` (the kernel + registrant API + client host), `@companion/ui` (design-system kit), `@moxxy-ai/companion-sdk` (the curated ABI in-tree feature modules and out-of-tree modules both compile against).
+- `packages/*` — the framework: `@companion/types` (primitives), `@moxxy/companion-contracts` (the open RBAC/WS/service registries), `@companion/services` (base store/service utils), `@companion/core` (the kernel + registrant API + client host), `@companion/ui` (design-system kit), `@moxxy/companion-sdk` (the curated ABI in-tree feature modules and out-of-tree modules both compile against).
 - `modules/*` — the feature domains, one `@companion/module-<id>` package each. See [`modules/README.md`](modules/README.md).
 
 ## Prerequisites
@@ -438,7 +438,7 @@ the directory already holds the database, so it does not widen that blast radius
 
 ## Out-of-tree modules
 
-A module does not have to live in this repo. `@moxxy-ai/companion-sdk` is the
+A module does not have to live in this repo. `@moxxy/companion-sdk` is the
 published authoring surface, and a daemon loads anything installed into
 `$COMPANION_HOME/modules/<id>/`.
 
@@ -451,8 +451,8 @@ An out-of-tree module depends on exactly two packages:
 
 ```jsonc
 {
-  "devDependencies": { "@moxxy-ai/companion-sdk": "^0.1.0", "@companion/contracts": "^0.1.0" },
-  "peerDependencies": { "@moxxy-ai/companion-sdk": "^0.1.0" },
+  "devDependencies": { "@moxxy/companion-sdk": "^0.1.0", "@moxxy/companion-contracts": "^0.1.0" },
+  "peerDependencies": { "@moxxy/companion-sdk": "^0.1.0" },
   "moxxy": {
     "id": "hello",           // must equal the install directory name
     "abi": "0.x",            // the ABI generation, checked at boot
@@ -463,12 +463,12 @@ An out-of-tree module depends on exactly two packages:
 ```
 
 Everything is imported from the SDK except one line: registry augmentation must
-target `@companion/contracts`, because TypeScript binds declaration merging to
+target `@moxxy/companion-contracts`, because TypeScript binds declaration merging to
 the package that declares the interface and a façade would silently produce a
 second, empty registry.
 
 ```ts
-declare module '@companion/contracts' {
+declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry { 'hello:read': true }
 }
 ```

@@ -191,7 +191,7 @@ export type Role = string;          // a role id; built-ins are just seeded rows
 ```
 
 ```ts
-// @companion/contracts
+// @moxxy/companion-contracts
 export type RoleGrants = Partial<Record<BuiltinRole, readonly Permission[] | '*'>>;
 ```
 

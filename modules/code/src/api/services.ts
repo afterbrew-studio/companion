@@ -1,4 +1,4 @@
-import { defineServices } from '@moxxy-ai/companion-sdk/server';
+import { defineServices } from '@moxxy/companion-sdk/server';
 import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
