@@ -17,7 +17,20 @@ purpose* at call time.
 
 ## The account registry: purposes, scopes, owners
 
-A connected account is a PAT bound to:
+An account is authenticated **either** by a personal access token **or** by a
+GitHub App installation (App ID, Installation ID, private key), which is what an
+organisation banning PATs or requiring SSO-authorised tokens can actually use.
+Same registry, same purposes, same per-repo resolution: only how the credential
+is obtained differs.
+
+Installation tokens expire hourly, and the refresh is **proactive, not on
+demand**: a job re-mints anything inside the margin and caches it on the row.
+That is deliberate. `tokenFor` and `clientFor` are synchronous factories held by
+a dozen call sites, and `GitHubClient.headers()` is synchronous in every method,
+so making the credential async to chase something that changes once an hour would
+ripple through all of it. Do not "fix" this by awaiting a mint at the call site.
+
+A connected account is bound to:
 
 - **purposes** — `fetch | runs | pipelines | webhooks` (`GITHUB_PURPOSES`). What
   the account is allowed to be used for.

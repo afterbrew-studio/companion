@@ -80,10 +80,17 @@ runs land in `review` when their turn ends and produce a PR via the shared
 
 `createRun` places the run on a runner: an explicit `runnerId` wins; a
 caller-prepared `cwd` pins to local; otherwise `placeRun` picks a ready runner,
-**provider-aware** — it resolves the effective model (explicit > per-runner kind
-pin > global kind pin > daemon default) to the providers that serve it and
-prefers a runner advertising one. A run whose model isn't available on its
-runner quietly rides that runner's default. Don't bypass placement; if you
+**provider-aware**: it resolves the effective model (explicit > the pin on the
+registered task > daemon default) to the providers that serve it and prefers a
+runner advertising one. A run whose model isn't available on its runner quietly
+rides that runner's default.
+
+Pins hang off the **task** (`board.worker`, `code.fix`), not off a machine and
+not off a `RunKind`, and are edited on the Task models page. Placement narrows a
+pin to the machine the run actually landed on: a pin some other machine could
+serve is a preference that does not apply here, not an error, because recording
+it anyway kills the run at its first turn, after the branch and worktree already
+exist. The same narrowing re-runs on failover, since the machine changed. Don't bypass placement; if you
 prepare a worktree first, call `placeRun` and pass the resulting `runnerId`.
 
 ## Reacting to a run: events, turns, asks

@@ -111,11 +111,23 @@ before anything is imported:
 shadow another. `abi` is a **generation**, not a semver range: while the SDK is
 pre-1.0 every minor may break, and a caret range would let a 0.1 module load into
 0.4 and fail somewhere deep instead of at boot. Omit `client` for a server-only
-module, which is the only kind that works today.
+module; a module with a UI declares it and ships a browser chunk, which the
+loader reads and the app serves through its import map.
 
 Install is a directory: `$COMPANION_HOME/modules/<id>/` containing
 `package.json` and `dist/`. **No `node_modules`.** The daemon scans it at boot,
 reports each rejected directory with a reason, and keeps the good ones.
+
+`companion module add <spec>` puts it there for you: npm resolves the spec, so a
+scope, a tag, a version range and a private registry all work, the ABI check runs
+while the files are still staged, and the spec, resolved version, integrity hash
+and registry land in `$COMPANION_HOME/modules/.provenance.json`. It installs no
+dependencies, deliberately: the allowed-import rule below means a publishable
+module has already bundled its libraries, and the only thing an install could add
+is a second copy of the SDK. Replacing an existing module needs `--force`.
+
+The scan runs once, at boot, so files being in place is not the same as the
+daemon knowing about them. Restart, then `companion module install <id>`.
 
 ## Verify before you install
 
@@ -129,8 +141,12 @@ module's own CI.
 
 A built external module may statically import **only**:
 
-server: `@moxxy/companion-sdk/*`, `better-sqlite3`, `zod`, `ws`, node builtins
-client: `@moxxy/companion-sdk/*`, `react`, `react/jsx-runtime`, `react-dom`
+server: `@moxxy/companion-sdk`, `/server`, `/agents`, `zod`, `ws`, node builtins
+client: `@moxxy/companion-sdk`, `/client`, `/ui`, `react`, `react/jsx-runtime`, `react-dom`
+
+A database driver is **not** on that list. A module gets its handle from the SDK,
+which hands it the host's; installing `better-sqlite3` alongside would give it a
+second native binding to the same file.
 
 Everything else must be bundled into the module's own artifact. `companion
 module verify <path>` parses the built ESM's static import list and fails on
@@ -171,7 +187,7 @@ send with `result instanceof Reply`, so `redirect('/board')` comes back as
 back as JSON. No error, no warning, nothing in the log. With the bridge: 302.
 
 So the daemon **refuses at scan time** any module directory containing
-`node_modules/@moxxy-ai`, and `module verify` refuses an ABI package listed as a
+`node_modules/@moxxy`, and `module verify` refuses an ABI package listed as a
 runtime dependency. This is the whole class, killed mechanically.
 
 **Client: an import map in the host `index.html`.** Six specifiers resolve to

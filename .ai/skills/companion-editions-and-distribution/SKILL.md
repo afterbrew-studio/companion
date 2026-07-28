@@ -42,9 +42,17 @@ Do not write code against a mechanism that is not built. As of now:
 - `[NOW]` `@moxxy/companion-sdk`: the curated ABI, pinned by
   `packages/sdk/surface.json` and gated by `pnpm sdk:surface`. Every in-tree
   feature module imports it; `core`, `operate` and `admin` do not, because they
-  implement the host.
+  implement the host. **Published to npm**, along with `-contracts` and the four
+  packages behind it, so a third party can build against it without this
+  checkout. Publishing does not widen the surface: `module verify` and the ABI
+  bridge enforce curation regardless of what npm makes visible.
 - `[NOW]` Out-of-tree modules loaded from `$COMPANION_HOME/modules/<id>/`, server
   and browser both. See `companion-external-module`.
+- `[NOW]` `companion module add <spec>` fetches one from any registry npm can
+  resolve, checks it before it lands, and records the spec, resolved version,
+  integrity hash and registry in `modules/.provenance.json`. No daemon needed;
+  the daemon scans at boot, so adding is followed by a restart and then
+  `module install <id>`.
 - `[LATER]` An `edition` manifest field. Deliberately absent: build profiles plus
   `entitlement` already cover "which modules ship" and "which are licensed", and
   a third axis would be a second way to say the same thing.
@@ -82,7 +90,7 @@ credentials and the org policy on top of it. See
 
 - OSS modules: `modules/<id>` in this repo, MIT.
 - Enterprise modules: the separate private `companion-enterprise` repo,
-  published as `@moxxy-ai/module-<id>`, consumed by the enterprise build profile.
+  published as `@moxxy/module-<id>`, consumed by the enterprise build profile.
 - Rejected: an `ee/` directory in this repo. See §7 of the doc for why.
 
 ## Cross-edition rules (these are review-blocking)
