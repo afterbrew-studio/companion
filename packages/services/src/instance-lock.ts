@@ -11,36 +11,11 @@ interface LockFile {
   heartbeatAt: number;
 }
 
-/**
- * The handover note, beside the lock. Deliberately a second file: the lock's
- * shape and its takeover race are load-bearing and this must not perturb either.
- */
-interface HandoverFile {
-  readonly requestedBy: string;
-  readonly requestedAt: number;
-  readonly yieldedBy: string | null;
-  readonly yieldedAt: number;
-}
-
 const FILE = (): string => join(companionHome(), 'instance.lock');
-const HANDOVER = (): string => join(companionHome(), 'instance.handover');
 const BEAT_MS = 15_000;
 /** Four missed beats. Long enough to survive a stalled process, short enough
  *  that a crashed node on a shared volume does not block failover for minutes. */
 const STALE_MS = 60_000;
-/** A request older than this is a leftover, not an ask. */
-const HANDOVER_FRESH_MS = 45_000;
-/**
- * How long after a handover nobody may ask for another.
- *
- * Without it, two daemons that both want the home take turns evicting each
- * other forever. With it the second eviction is refused, so the loser hits the
- * ordinary "already using" error and the situation stays diagnosable.
- */
-const HANDOVER_COOLDOWN_MS = 5 * 60_000;
-
-const handoverEnabled = (): boolean =>
-  !['off', '0', 'false', 'no'].includes((process.env.COMPANION_LOCK_HANDOVER ?? '').trim().toLowerCase());
 
 /**
  * One daemon per COMPANION_HOME.
@@ -58,18 +33,6 @@ const handoverEnabled = (): boolean =>
  */
 export class InstanceLock {
   private timer: NodeJS.Timeout | null = null;
-  private yielding = false;
-  private onHandover: (() => void) | null = null;
-
-  /**
-   * What to run when a replacement asks for the home. The daemon passes its own
-   * graceful shutdown, which releases the lock on the way out.
-   *
-   * Set after `acquire`, because the shutdown path needs the things boot builds.
-   */
-  handoverTo(shutdown: () => void): void {
-    this.onHandover = shutdown;
-  }
 
   /**
    * How long to wait for a predecessor to stop beating before giving up. The
@@ -94,10 +57,8 @@ export class InstanceLock {
    * predecessor costs a pause instead of a failed boot.
    */
   async acquire(): Promise<void> {
-    this.refuseIfSuperseded();
     const deadline = Date.now() + this.waitMs;
     let announced = false;
-    let asked = false;
     for (;;) {
       const existing = this.read();
       if (!existing || this.isStale(existing)) {
@@ -105,10 +66,6 @@ export class InstanceLock {
           log.warn(`taking over ${FILE()} from a dead daemon (pid ${existing.pid} on ${existing.host})`);
         }
         break;
-      }
-      if (!asked) {
-        asked = true;
-        this.requestHandover(existing);
       }
       if (Date.now() >= deadline) {
         // Reaching here means something refreshed the heartbeat for the whole
@@ -121,12 +78,10 @@ export class InstanceLock {
             `(pid ${existing.pid} on ${existing.host}), and it kept heartbeating for ` +
             `${Math.round(this.waitMs / 1000)}s, so it is still running.\n` +
             `Companion is single-node: one daemon per data directory.\n` +
-            `If this is a redeploy, the old container was not stopped first, and it ` +
-            `did not answer the handover request either: either it predates handover ` +
-            `or COMPANION_LOCK_HANDOVER is off. Use a stop-then-start (recreate) ` +
-            `strategy rather than a rolling one, because the new instance cannot ` +
-            `become healthy while the old one holds the data directory, and a ` +
-            `rolling deploy waits for exactly that.\n` +
+            `If this is a redeploy, the old container was not stopped first. Use a ` +
+            `stop-then-start (recreate) strategy rather than a rolling one, because ` +
+            `the new instance cannot become healthy while the old one holds the data ` +
+            `directory, and a rolling deploy waits for exactly that.\n` +
             `If you are scaling replicas, run active/passive instead, or give each ` +
             `instance its own COMPANION_HOME.`,
         );
@@ -141,91 +96,8 @@ export class InstanceLock {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     this.write();
-    this.clearHandover();
-    this.timer = setInterval(() => this.beat(), BEAT_MS);
+    this.timer = setInterval(() => this.write(), BEAT_MS);
     this.timer.unref();
-  }
-
-  /**
-   * Ask the holder to stand down, over the one channel two containers reliably
-   * share: the data directory itself. Neither can see the other's processes, so
-   * a rolling deploy is otherwise a true deadlock. The replacement cannot become
-   * healthy until it has the home, and the orchestrator will not stop the
-   * original until the replacement is healthy.
-   */
-  private requestHandover(holder: LockFile): void {
-    if (!handoverEnabled()) return;
-    const note = this.readHandover();
-    if (note && Date.now() - note.yieldedAt < HANDOVER_COOLDOWN_MS) {
-      log.warn(`not asking ${holder.host} to stand down: one handover already happened here recently`);
-      return;
-    }
-    try {
-      writeFileSync(
-        HANDOVER(),
-        JSON.stringify({ requestedBy: hostname(), requestedAt: Date.now(), yieldedBy: null, yieldedAt: 0 }),
-        { mode: 0o600 },
-      );
-      log.warn(`asked the daemon on ${holder.host} to hand over ${companionHome()}`);
-    } catch {
-      // A home we cannot write to is about to fail the boot for better reasons.
-    }
-  }
-
-  /**
-   * A restart policy resurrects the container that just stood down, and it would
-   * otherwise turn around and evict its own replacement. It recognises itself by
-   * hostname, which Docker keeps across a restart of the same container.
-   */
-  private refuseIfSuperseded(): void {
-    const note = this.readHandover();
-    if (!note || note.yieldedBy !== hostname()) return;
-    if (Date.now() - note.yieldedAt > HANDOVER_COOLDOWN_MS) return;
-    throw new Error(
-      `this container handed ${companionHome()} over to ${note.requestedBy} and was restarted.\n` +
-        `It is superseded: stopping rather than evicting its own replacement.`,
-    );
-  }
-
-  private beat(): void {
-    this.write();
-    if (this.yielding || !this.onHandover || !handoverEnabled()) return;
-    const note = this.readHandover();
-    if (!note || note.requestedBy === hostname()) return;
-    if (Date.now() - note.requestedAt > HANDOVER_FRESH_MS) return;
-    this.yielding = true;
-    log.warn(`${note.requestedBy} asked for ${companionHome()}; shutting down so it can take over`);
-    try {
-      writeFileSync(
-        HANDOVER(),
-        JSON.stringify({ ...note, yieldedBy: hostname(), yieldedAt: Date.now() }),
-        { mode: 0o600 },
-      );
-    } catch {
-      // Recording it is best effort; standing down is not.
-    }
-    this.onHandover();
-  }
-
-  private readHandover(): HandoverFile | null {
-    if (!existsSync(HANDOVER())) return null;
-    try {
-      const parsed = JSON.parse(readFileSync(HANDOVER(), 'utf8')) as HandoverFile;
-      return typeof parsed.requestedBy === 'string' && typeof parsed.requestedAt === 'number' ? parsed : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /** Keep a yield on record for the cooldown; drop a request we have satisfied. */
-  private clearHandover(): void {
-    const note = this.readHandover();
-    if (!note || note.yieldedBy !== null) return;
-    try {
-      unlinkSync(HANDOVER());
-    } catch {
-      // Only a leftover request; the freshness window retires it anyway.
-    }
   }
 
   release(): void {

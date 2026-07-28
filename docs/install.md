@@ -103,52 +103,41 @@ Set environment variables (admin credentials, `COMPANION_HOST=0.0.0.0`) in
 Coolify's UI; they take precedence over any `.env`. Set `COMPANION_PUBLIC_URL`
 to your domain so SSO and webhooks have an address to come back to.
 
-### Redeploys under a rolling update
+### Redeploys must stop the old container first
 
-A rolling update is a genuine deadlock for a single-node appliance. The new
-container waits for the data directory, so it never becomes healthy. The rolling
-update will not stop the old container until the new one is healthy. The old one
-is healthy, holds `/data`, and keeps writing its heartbeat. Neither side can
-move, and the same old container id turns up in every attempt.
-
-Companion resolves it itself. The two containers cannot see each other's
-processes, but they share `/data`, so the replacement leaves a handover note
-there and the holder stands down at its next heartbeat, within 15 seconds. You
-should see:
+If a redeploy fails with:
 
 ```
-asked the daemon on <old> to hand over /data
-<new> asked for /data; shutting down so it can take over
+another Companion daemon is already using /data (pid 1 on <container>),
+and it kept heartbeating for 75s, so it is still running.
 ```
 
-Two things make that safe rather than a way for daemons to evict each other. A
-container that stood down and was brought back by a restart policy recognises
-itself and refuses to evict its own replacement, and no second handover is
-allowed for five minutes, so two daemons that both want the home cannot take
-turns forever: the loser gets the ordinary refusal instead.
+the deployment is doing a **rolling update**, and that cannot work here. Turn it
+off in the application's settings, so Coolify stops the old container before
+starting the new one.
 
-`COMPANION_LOCK_HANDOVER=off` restores the plain refusal, which is what you want
-if you deliberately run active/passive and would rather a misconfigured second
-instance fail loudly.
+The reason is a genuine deadlock rather than a race. The new container waits for
+the data directory, so it never becomes healthy. A rolling update will not stop
+the old container until the new one is healthy. The old one is healthy, holds
+`/data`, and keeps writing its heartbeat. Neither side can move, and the same
+old container id shows up in every attempt. Waiting longer does not help; it only
+stretches the deadlock until the healthcheck gives up.
 
-If a redeploy still fails with `another Companion daemon is already using /data`,
-the old container never answered, so either it predates handover or the variable
-is off. Stop it by hand and redeploy:
+Companion is single-node **because of the filesystem**, not the database. The
+home holds clones, worktrees, scratch space, run configs and the isolated moxxy
+home. Two daemons sharing it would both run every scheduled job and both check
+out the same worktrees, and the damage would be silent. So the second one
+refuses instead.
+
+Once the setting is changed, clear the stuck container by hand, because a
+correct strategy still has to get past the one already running:
 
 ```sh
 docker ps --filter name=<your-app> --format '{{.ID}} {{.Status}}'
 docker stop <old-container-id>
 ```
 
-Companion is single-node **because of the filesystem**, not the database. The
-home holds clones, worktrees, scratch space, run configs and the isolated moxxy
-home. Two daemons sharing it would both run every scheduled job and both check
-out the same worktrees, and the damage would be silent. That is why the handover
-is an orderly shutdown rather than a takeover, and why there is no way to simply
-ignore the lock.
-
-Handover is not zero downtime. The old daemon stops before the new one serves,
-which is a few seconds. Real zero downtime is active/passive with a second
+Then redeploy. If you need zero downtime, that is active/passive with a second
 `COMPANION_HOME`, not two daemons on one volume.
 
 ### Deploying the full module set
