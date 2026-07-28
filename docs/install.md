@@ -97,11 +97,13 @@ gate deploys on it. Point Coolify at the repository.
 compose one avoids three separate problems, one of which has no other per-app
 fix:
 
-1. **Rolling updates.** Coolify does not apply them to compose-based
-   deployments, and a rolling update cannot work here: the replacement waits for
-   the data directory, so it never becomes healthy, and the old container is not
-   stopped until it is. Coolify's rolling-update toggle is server-wide, so
-   choosing this build pack is how a single application opts out.
+1. **Rolling updates.** One cannot work here: the replacement waits for the data
+   directory, so it never becomes healthy, and the old container is not stopped
+   until it is. Coolify has **no switch to turn them off**, at either level. They
+   happen when four conditions all hold: a healthcheck configured and passing,
+   default container naming, not a compose-based deployment, and no host port
+   mapping. Choosing this build pack fails the third, and this compose file
+   fails the fourth as well, which is the documented way to opt out.
 2. **Both volumes.** `docker-compose.yml` declares `companion-data` and
    `companion-moxxy` itself. Under the Dockerfile pack you add persistent
    storage by hand at `/data` **and** `/root/.moxxy`, and forgetting the second
@@ -132,8 +134,8 @@ another Companion daemon is already using /data (pid 1 on <container>),
 and it kept heartbeating for 75s, so it is still running.
 ```
 
-The old container was not stopped first, which is a rolling update. See the
-build pack note above: on Docker Compose, Coolify does not apply one.
+The old container was not stopped first, which is a rolling update. There is no
+setting to disable those, so the fix is the build pack: see the note above.
 
 It is a deadlock rather than a race, which is why waiting longer never helps.
 The replacement waits for the data directory, so it never becomes healthy; the
