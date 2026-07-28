@@ -68,12 +68,22 @@ export class InstanceLock {
         break;
       }
       if (Date.now() >= deadline) {
+        // Reaching here means something refreshed the heartbeat for the whole
+        // wait, so the holder is genuinely alive. The common cause is not two
+        // replicas, it is a deployment that starts the replacement before
+        // stopping the original and gates the stop on the replacement becoming
+        // healthy, which with a single-node lock cannot resolve on its own.
         throw new Error(
           `another Companion daemon is already using ${companionHome()} ` +
-            `(pid ${existing.pid} on ${existing.host}), still beating after ` +
-            `${Math.round(this.waitMs / 1000)}s.\n` +
-            `Companion is single-node: one daemon per data directory. If you are scaling ` +
-            `replicas, run active/passive instead, or give each instance its own COMPANION_HOME.`,
+            `(pid ${existing.pid} on ${existing.host}), and it kept heartbeating for ` +
+            `${Math.round(this.waitMs / 1000)}s, so it is still running.\n` +
+            `Companion is single-node: one daemon per data directory.\n` +
+            `If this is a redeploy, the old container was not stopped first. Use a ` +
+            `stop-then-start (recreate) strategy rather than a rolling one, because ` +
+            `the new instance cannot become healthy while the old one holds the data ` +
+            `directory, and a rolling deploy waits for exactly that.\n` +
+            `If you are scaling replicas, run active/passive instead, or give each ` +
+            `instance its own COMPANION_HOME.`,
         );
       }
       if (!announced) {

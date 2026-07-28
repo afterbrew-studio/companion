@@ -146,7 +146,7 @@ test('a predecessor that keeps beating is still refused', async () => {
     const beat = setInterval(write, 100);
     try {
       // The invariant the lock exists for: two live daemons never share a home.
-      await assert.rejects(() => new InstanceLock(1_500).acquire(), /still beating after/);
+      await assert.rejects(() => new InstanceLock(1_500).acquire(), /kept heartbeating for/);
     } finally {
       clearInterval(beat);
     }
