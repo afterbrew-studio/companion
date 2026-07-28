@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import { artifactBundleSchema, featureBriefSchema } from './prompts.js';

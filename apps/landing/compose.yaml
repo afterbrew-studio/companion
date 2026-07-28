@@ -1,0 +1,9 @@
+services:
+  landing:
+    build:
+      context: .
+    image: companion-landing:local
+    restart: unless-stopped
+    ports:
+      # Coolify's proxy maps this itself; the mapping here is for local preview.
+      - "8080:8080"

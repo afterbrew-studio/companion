@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
-import type { AuthUser, ServiceMap, SpaServerMessage } from '@moxxy/companion-sdk';
+import type { AuthUser, ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { NotificationEmitter, NotificationInput } from '@moxxy/companion-sdk/server';
 import { log } from '@moxxy/companion-sdk/server';
 import type { RefineItemRecord, RefineItemUpdate } from '@companion/module-refinement/contract';

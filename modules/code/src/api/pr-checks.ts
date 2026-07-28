@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
   ChecksSummary,
   CheckRunInfo,

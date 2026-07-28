@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunRecord } from '@companion/module-operate/contract';

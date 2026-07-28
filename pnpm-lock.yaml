@@ -10,9 +10,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -58,6 +55,9 @@ importers:
       '@companion/services':
         specifier: workspace:*
         version: link:../../packages/services
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -155,11 +155,10 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  apps/landing: {}
+
   apps/web:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -205,6 +204,9 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -242,9 +244,6 @@ importers:
 
   modules/admin:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -263,6 +262,9 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -288,9 +290,6 @@ importers:
 
   modules/automations:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -306,6 +305,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -334,9 +336,6 @@ importers:
 
   modules/board:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -352,6 +351,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -380,9 +382,6 @@ importers:
 
   modules/code:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
@@ -392,6 +391,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -420,9 +422,6 @@ importers:
 
   modules/core:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -435,6 +434,9 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -491,9 +493,6 @@ importers:
 
   modules/operate:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -512,6 +511,9 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/plugin-tunnel-proxy':
         specifier: ^0.29.0
         version: 0.29.0(zod@3.25.76)
@@ -552,9 +554,6 @@ importers:
 
   modules/plan:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -567,6 +566,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -595,9 +597,6 @@ importers:
 
   modules/planner:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-board':
         specifier: workspace:*
         version: link:../board
@@ -619,6 +618,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -647,9 +649,6 @@ importers:
 
   modules/playground:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -662,6 +661,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -690,9 +692,6 @@ importers:
 
   modules/refinement:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-board':
         specifier: workspace:*
         version: link:../board
@@ -711,6 +710,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -739,9 +741,6 @@ importers:
 
   modules/slop:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -757,6 +756,9 @@ importers:
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -785,12 +787,12 @@ importers:
 
   modules/workspace:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -818,26 +820,25 @@ importers:
         version: 5.9.3
 
   packages/contracts:
-    dependencies:
+    devDependencies:
       '@companion/types':
         specifier: workspace:*
         version: link:../types
-    devDependencies:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
 
   packages/core:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../contracts
       '@companion/services':
         specifier: workspace:*
         version: link:../services
       '@companion/types':
         specifier: workspace:*
         version: link:../types
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -868,10 +869,7 @@ importers:
         version: 5.9.3
 
   packages/sdk:
-    dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../contracts
+    devDependencies:
       '@companion/core':
         specifier: workspace:*
         version: link:../core
@@ -884,7 +882,9 @@ importers:
       '@companion/ui':
         specifier: workspace:*
         version: link:../ui
-    devDependencies:
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -900,12 +900,12 @@ importers:
 
   packages/services:
     dependencies:
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../contracts
       '@companion/types':
         specifier: workspace:*
         version: link:../types
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../contracts
       jsonrepair:
         specifier: ^3.15.0
         version: 3.15.0

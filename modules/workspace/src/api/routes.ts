@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { defineRoutes, route, created, notFound, badRequest, forbidden } from '@moxxy/companion-sdk/server';
-import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import type { WorkspaceRecord } from '../contract/index.js';
 
 type CodeReportAccess = {

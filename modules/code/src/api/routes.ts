@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { z } from 'zod';
 import { defineRoutes, route, created, accepted, notFound, badRequest, forbidden, HttpError } from '@moxxy/companion-sdk/server';
-import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log, paths } from '@moxxy/companion-sdk/server';

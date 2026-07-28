@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { legacyNotifications, type NotificationEmitter } from '@moxxy/companion-sdk/server';
-import type { ServiceMap } from '@moxxy/companion-sdk';
+import type { ServiceMap } from '@moxxy/companion-contracts';
 import type { ProposalRecord } from '@companion/module-plan/contract';
 import type { IssuesStore, PrsStore, ReposStore, RunsStore } from './cross-types.js';
 

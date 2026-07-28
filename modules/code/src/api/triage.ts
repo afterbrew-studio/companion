@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type { IssueRecord, TriageResult, TriageVerdict } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';

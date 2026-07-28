@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { ServiceMap, SpaServerMessage } from '@moxxy/companion-sdk';
+import type { ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import { log, paths } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { TaskPriority } from '@companion/module-board/contract';

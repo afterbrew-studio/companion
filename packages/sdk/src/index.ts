@@ -54,16 +54,26 @@ export type {
   ModuleConfigState,
 } from '@companion/core';
 
-/** The cross-boundary spine. Augment the registries via `@moxxy/companion-contracts`. */
-export type {
-  Permission,
-  PermissionRegistry,
-  ServerMessageRegistry,
-  ServiceMap,
-  BusEvents,
-  SpaServerMessage,
-  AuthUser,
-} from '@moxxy/companion-contracts';
+/**
+ * The open registries are NOT re-exported here, deliberately.
+ *
+ * They are what a module augments, and an augmentation binds to the package that
+ * declares the interface. Re-exporting them would put a second copy of
+ * `PermissionRegistry` in this package's published declarations, so a module
+ * that augmented `@moxxy/companion-contracts` and read `Permission` from here
+ * would be augmenting one interface and reading another. Measured: TS2820, the
+ * augmented key rejected as not assignable.
+ *
+ * So one package owns them end to end. Import AND augment them from
+ * `@moxxy/companion-contracts`:
+ *
+ * ```ts
+ * import type { Permission, ServiceMap } from '@moxxy/companion-contracts';
+ * declare module '@moxxy/companion-contracts' {
+ *   interface PermissionRegistry { 'widgets:manage': true }
+ * }
+ * ```
+ */
 
 export { BUILTIN_ROLES, isBuiltinRole } from '@companion/types';
 export type { Role, BuiltinRole } from '@companion/types';

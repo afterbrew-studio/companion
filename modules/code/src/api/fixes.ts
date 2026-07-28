@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { PrRecord } from '../contract/index.js';

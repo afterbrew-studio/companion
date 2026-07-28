@@ -1,4 +1,4 @@
-import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { log, type DaemonConfig } from '@moxxy/companion-sdk/server';

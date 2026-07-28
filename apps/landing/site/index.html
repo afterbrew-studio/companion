@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Companion — a self-hosted engineering dashboard your agents work in</title>
+    <meta
+      name="description"
+      content="Companion plugs into GitHub and runs repositories end to end with AI agents: proposals, issues, pull requests, pipelines and agent runs, all on machines you own."
+    />
+    <link rel="canonical" href="https://companion.moxxy.ai/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://companion.moxxy.ai/" />
+    <meta property="og:site_name" content="Companion" />
+    <meta property="og:title" content="Companion" />
+    <meta
+      property="og:description"
+      content="A self-hosted engineering dashboard, operated by AI agents. Proposals, issues, pull requests, pipelines and agent runs, on machines you own."
+    />
+    <meta property="og:image" content="https://companion.moxxy.ai/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Companion" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafafa" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#09090b" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="top">
+      <div class="shell bar">
+        <a class="brand" href="/" aria-label="Companion">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M23.16 9.57A10 10 0 1 0 23.16 22.43" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" />
+            <circle cx="25.4" cy="16" r="2.6" fill="currentColor" />
+          </svg>
+          <span>Companion</span>
+        </a>
+        <nav aria-label="Primary">
+          <a href="#modules">Modules</a>
+          <a href="#self-hosted">Self-hosted</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/moxxy-ai/companion" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="shell hero">
+        <div class="hero-copy">
+          <p class="lab">Self-hosted · MIT · Node 20+</p>
+          <h1>Your agents need somewhere to work.</h1>
+          <p class="lede">
+            Companion is an engineering dashboard that plugs into GitHub and runs repositories end to
+            end: it captures a request, turns it into a reviewed plan, opens the pull request, gates it
+            on CI, and reviews it. Every AI run happens on machines you own, driven by
+            <a href="https://github.com/moxxy-ai/moxxy" rel="noopener">moxxy</a> agents.
+          </p>
+          <div class="cta">
+            <button class="cmd" type="button" data-copy="npx @moxxy/companion">
+              <code><span class="prompt">$</span> npx @moxxy/companion</code>
+              <span class="copy-state" aria-live="polite">Copy</span>
+            </button>
+            <a class="ghost" href="https://github.com/moxxy-ai/companion" rel="noopener">Read the source</a>
+          </div>
+          <p class="fine">
+            First launch picks an admin, starts on <code>127.0.0.1:8901</code> and opens the browser.
+            Nothing leaves the machine.
+          </p>
+        </div>
+
+        <div class="terminal" role="img" aria-label="Terminal showing the Companion CLI starting up">
+          <div class="terminal-bar"><span></span><span></span><span></span></div>
+          <pre><code>                 .....
+           ..:###########:.
+         .:#################:.
+       .#####:..       .:#####:
+      .####:              .:##:
+     .####.
+     ####.                   <b>.:::.</b>
+     ####                   <b>.######</b>
+     ####                   <b>.######</b>
+     ####.                   <b>.:::.</b>
+     .####.
+      .####:              .:##:
+       .#####:..       .:#####:
+         .:#################:.
+           ..:###########:.
+                 .....
+
+           c o m p a n i o n
+
+<span class="dim">Starting Companion at http://127.0.0.1:8901
+Data directory: ~/.companion
+Press Ctrl+C to stop.</span>
+
+Companion is ready: http://127.0.0.1:8901</code></pre>
+        </div>
+      </section>
+
+      <section class="shell" id="loop">
+        <h2 class="sr-only">How work moves</h2>
+        <ol class="loop">
+          <li><span class="lab">01</span><b>Proposal</b><span>A request lands, and is analyzed before anyone writes code.</span></li>
+          <li><span class="lab">02</span><b>Plan</b><span>It becomes a spec and issues you can argue with.</span></li>
+          <li><span class="lab">03</span><b>Run</b><span>An agent implements it on a runner, in its own worktree.</span></li>
+          <li><span class="lab">04</span><b>Pull request</b><span>CI gates it, an AI review reads it, a human merges it.</span></li>
+        </ol>
+      </section>
+
+      <section class="shell" id="modules">
+        <div class="head">
+          <p class="lab">What you get</p>
+          <h2>One module per thing you actually do.</h2>
+          <p class="lede">
+            Everything is scoped to a workspace: a named group of repositories. Each module ships its
+            own tables, routes, permissions and pages, and can be switched off at runtime.
+          </p>
+        </div>
+        <div class="cards">
+          <article><b>Proposals</b><p>Capture business requests, analyze them, and turn approved ones into implementation runs.</p></article>
+          <article><b>Issues</b><p>Sync GitHub issues, then launch triage and fix agents against them.</p></article>
+          <article><b>Pull requests</b><p>Review PRs with CI context, inspect checks, run pipelines manually or automatically.</p></article>
+          <article><b>Pipelines</b><p>Compose typed steps: CI gates, AI review, custom agent runs, labels, comments.</p></article>
+          <article><b>Agent runs</b><p>Watch every run and its lifecycle, with the full transcript and a token ceiling.</p></article>
+          <article><b>Automations</b><p>React to webhooks and schedules, so the boring half happens without you.</p></article>
+          <article><b>Repositories</b><p>Connect GitHub accounts, pick a preferred runner, set per-repo behaviour.</p></article>
+          <article><b>Runners</b><p>Attach other machines to execute agent work, shared across workspaces or delegated.</p></article>
+        </div>
+      </section>
+
+      <section class="shell split" id="self-hosted">
+        <div>
+          <p class="lab">Self-hosted, and it means it</p>
+          <h2>Your tokens never leave your daemon.</h2>
+          <p class="lede">
+            Companion is one process, one SQLite file and a data directory. GitHub tokens are held by
+            the daemon and never sent to the browser. Every REST route declares the permission it
+            requires, and the interface hides whatever the signed-in role cannot use.
+          </p>
+        </div>
+        <ul class="facts">
+          <li><b>Three roles built in</b><span>admin, maintainer and business, enforced end to end rather than in the UI.</span></li>
+          <li><b>Runs on your machines</b><span>The local box, or any number of remote runners you attach with a token.</span></li>
+          <li><b>Air-gap friendly</b><span>No outbound call is required to serve the dashboard itself.</span></li>
+          <li><b>MIT licensed</b><span>Read it, fork it, run it. The source is the product.</span></li>
+        </ul>
+      </section>
+
+      <section class="shell" id="modular">
+        <div class="head">
+          <p class="lab">Modular framework</p>
+          <h2>Turn a module off and it is gone, without a restart.</h2>
+          <p class="lede">
+            A small kernel hosts feature modules that are loaded, migrated, permissioned and toggled at
+            runtime. Disable one and its API returns 503, its navigation and routes disappear, and its
+            permissions drop out of the grid. Which modules a build contains is a build profile; which
+            of those are running is state you change from the admin page or the CLI.
+          </p>
+        </div>
+      </section>
+
+      <section class="shell" id="install">
+        <div class="head">
+          <p class="lab">Install</p>
+          <h2>Three ways in.</h2>
+        </div>
+        <div class="cards install">
+          <article>
+            <b>npx</b>
+            <p>The published CLI carries the daemon and the built interface.</p>
+            <button class="cmd small" type="button" data-copy="npx @moxxy/companion">
+              <code><span class="prompt">$</span> npx @moxxy/companion</code>
+              <span class="copy-state" aria-live="polite">Copy</span>
+            </button>
+          </article>
+          <article>
+            <b>Docker</b>
+            <p>Persist <code>/data</code> and the moxxy home, then open port 8901.</p>
+            <button class="cmd small" type="button" data-copy="docker compose up -d">
+              <code><span class="prompt">$</span> docker compose up -d</code>
+              <span class="copy-state" aria-live="polite">Copy</span>
+            </button>
+          </article>
+          <article>
+            <b>From source</b>
+            <p>A pnpm workspace: the daemon, the shell, and one package per module.</p>
+            <button class="cmd small" type="button" data-copy="git clone https://github.com/moxxy-ai/companion">
+              <code><span class="prompt">$</span> git clone …/companion</code>
+              <span class="copy-state" aria-live="polite">Copy</span>
+            </button>
+          </article>
+        </div>
+        <p class="fine">
+          Agent runs need the external moxxy CLI installed. The dashboard starts without it; the runs
+          are what fail until it is there.
+        </p>
+      </section>
+    </main>
+
+    <footer class="top">
+      <div class="shell bar">
+        <a class="brand" href="/" aria-label="Companion">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M23.16 9.57A10 10 0 1 0 23.16 22.43" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" />
+            <circle cx="25.4" cy="16" r="2.6" fill="currentColor" />
+          </svg>
+          <span>Companion</span>
+        </a>
+        <nav aria-label="Footer">
+          <a href="https://github.com/moxxy-ai/companion" rel="noopener">GitHub</a>
+          <a href="https://github.com/moxxy-ai/companion/blob/main/ENTERPRISE.md" rel="noopener">For organisations</a>
+          <a href="https://github.com/moxxy-ai/moxxy" rel="noopener">moxxy</a>
+          <span class="lab">MIT</span>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

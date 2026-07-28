@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type { BriefingCadence, WebhookInfo } from '@companion/module-code/contract';
 import type { NotificationKind } from '@companion/module-workspace/contract';
 import { log } from '@moxxy/companion-sdk/server';

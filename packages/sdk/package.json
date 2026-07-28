@@ -40,21 +40,26 @@
     "test": "pnpm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "pnpm run build"
   },
-  "dependencies": {
-    "@moxxy/companion-contracts": "workspace:*",
+  "devDependencies": {
     "@companion/core": "workspace:*",
     "@companion/services": "workspace:*",
     "@companion/types": "workspace:*",
-    "@companion/ui": "workspace:*"
-  },
-  "devDependencies": {
+    "@companion/ui": "workspace:*",
+    "@moxxy/companion-contracts": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "react": "^18.3.1",
     "typescript": "^5.8.0"
   },
   "peerDependencies": {
+    "@moxxy/companion-contracts": "^0.1.0",
     "react": "^18.3.1"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "private": true
 }

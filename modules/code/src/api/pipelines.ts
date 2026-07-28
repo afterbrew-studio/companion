@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
   PipelineRecord,
   PipelineRunRecord,

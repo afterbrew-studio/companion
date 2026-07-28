@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log, paths } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type {

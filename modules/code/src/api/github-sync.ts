@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@moxxy/companion-sdk';
+import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-sdk/server';
 import type { WorkspaceSyncResult } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';

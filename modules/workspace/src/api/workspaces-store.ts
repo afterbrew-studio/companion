@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AuthUser } from '@moxxy/companion-sdk';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import { notFound } from '@moxxy/companion-sdk/server';
 import type {
   WorkspaceMember,

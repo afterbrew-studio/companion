@@ -42,35 +42,44 @@ to an operator beyond a log warning. If an app is uninstalled on GitHub, the
 account keeps its dead token until someone reads the log or a call fails over.
 Worth a health field on the account record when someone hits it.
 
-## 2. The module ABI cannot be published yet `[blocked on one decision]`
+## 2. The module ABI cannot be published yet `[harder than it looks]`
 
-**Today:** `@moxxy/companion-sdk` and `@moxxy/companion-contracts` are the two
-packages an out-of-tree module compiles against, and both build. Neither is on
-npm, so the whole out-of-tree path is currently in-repo only.
+**Today:** `@moxxy/companion-sdk` and `@moxxy/companion-contracts` both build and
+both work in-repo. Neither is on npm, so the out-of-tree path is in-repo only.
 
-**Why not just publish them:** their `.d.ts` files re-export from
-`@companion/core`, `@companion/services`, `@companion/types` and
-`@companion/ui`, all `private: true`. Published as they are, `npm i` would
-succeed and then every type would fail to resolve. Shipping that is worse than
-shipping nothing.
+**Why the obvious fix does not work.** The blocker is that their declarations
+re-export from `@companion/core`, `/services`, `/types` and `/ui`, all private.
+Bundling those into self-contained `.d.ts` files is the textbook answer, and it
+was tried with `dts-bundle-generator`: the declarations do come out
+self-contained, and they are **silently wrong**.
 
-**Two ways out, and they are not equivalent:**
+`@companion/core` depends on the open registries, so inlining core inlines
+`PermissionRegistry` with it. The published SDK then carries its own copy, and a
+module that augments `@moxxy/companion-contracts` augments one interface while
+`route({ access: ... })` reads another. Measured end to end: packed both
+tarballs, installed them into a clean npm project, and typechecked an
+out-of-tree module against them alone. `Permission` came out as `never` and
+`access: 'hello:read'` was rejected as not assignable to `RouteAccess`. Marking
+contracts as an external import does not help, including when it is a real
+directory rather than a workspace link: the inlining is transitive and reaches
+the registries through core either way.
 
-- **Publish the whole framework** under `@moxxy/companion-*`. Four more packages
-  and four more version streams, and it puts `ModuleKernel`, `DynamicRouter`,
-  `RbacGrid` and the rest back within reach of a module. That is exactly the
-  curation the facade exists for, so this undoes the point of P8.
-- **Bundle the declarations** so the SDK's `dist` is self-contained (api-extractor,
-  rollup-plugin-dts or dts-bundle-generator). One new dev dependency and one
-  build step, and the published surface stays the reviewed 230 symbols.
+**So the real question is structural**, not a tooling choice: the registries have
+to stay one interface in one package that every published declaration imports
+rather than embeds. Options worth weighing, none of them free:
 
-The second is right. It needs a dependency added, which is why it is written
-down here rather than done.
+- Publish the framework packages too, and accept that `ModuleKernel`,
+  `DynamicRouter` and `RbacGrid` become reachable. Undoes the curation of P8.
+- Split the registries into a leaf package that `@companion/core` imports and
+  that no bundling ever inlines, then bundle only what is above it.
+- Generate the published declarations from the SDK's own source instead of
+  re-exporting, so nothing transitive exists to inline.
 
-The scope was fixed in passing: the packages were named `@moxxy-ai/*` and
-`@companion/*`, and **neither scope exists on npm**. `@moxxy` is the one that
-holds `@moxxy/cli`, `@moxxy/companion` and `@moxxy/companion-runner`, so both
-moved there.
+What did land while proving this out: the packages moved to the `@moxxy` scope
+(neither `@moxxy-ai` nor `@companion` exists on npm), and **the SDK no longer
+re-exports the registries at all**. A module imports and augments them from
+`@moxxy/companion-contracts`, which is one package owning one interface end to
+end, and removes the duplication hazard from the in-repo build as well.
 
 ## 3. A commercial module `[business decision, not code]`
 

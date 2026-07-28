@@ -69,12 +69,16 @@ TS2820 on the augmented key, `declare module '<declaring package>'` compiles.
 So a module's `contract` slice writes:
 
 ```ts
+import type { Permission, ServiceMap } from '@moxxy/companion-contracts';
 declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry { 'widgets:manage': true }
 }
 ```
 
-and everything else comes from the SDK. Declare both as **devDependencies +
+The registries are **imported and augmented from the same package**, and the SDK
+does not re-export them. One package owning one interface is what keeps an
+augmentation and a read pointing at the same declaration; a facade in between
+gives you two, and the mismatch is silent. Declare both as **devDependencies +
 peerDependencies, never dependencies** (see the singleton section: an installed
 copy is the failure mode, not the fix).
 
