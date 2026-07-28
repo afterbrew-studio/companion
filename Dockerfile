@@ -49,6 +49,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* /root/.npm
 # better-sqlite3 is a native addon and undici/ws/inquirer are left external by
 # the bundle, so install exactly those from the CLI's own manifest.
+# This prints `npm warn deprecated prebuild-install@7.1.3` (a better-sqlite3 12.x
+# dependency, and how it fetches a prebuilt binary for this toolchain-free stage).
+# Left alone on purpose: muting npm would hide every other deprecation too, and
+# 13.x, which drops prebuild-install, needs Node >=22 while we support 20, and
+# ships prebuilds linked against GLIBC_2.38 while bookworm has 2.36, so npm would
+# fall back to a source build that this stage has no python3/make/g++ for.
 COPY --from=build /app/runtime-package.json ./package.json
 RUN npm install --omit=dev --omit=peer --no-audit --no-fund && rm -rf /root/.npm
 COPY --from=build /app/apps/companion-cli/dist ./dist
