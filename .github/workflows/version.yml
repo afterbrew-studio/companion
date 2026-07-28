@@ -1,0 +1,66 @@
+name: Version
+
+# Opens a pull request bumping whatever has unreleased changes. Merging it makes
+# the version new, which is what Publish waits for, so releasing stays a
+# deliberate act: nothing reaches npm because a commit landed.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    # The bump commit is itself a push to main; without this the job would keep
+    # answering its own PR.
+    if: "!startsWith(github.event.head_commit.message, 'release:')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script reads history to find each package's last release point,
+          # and a shallow clone would make everything look unreleased.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Work out what needs releasing
+        id: plan
+        run: |
+          set -euo pipefail
+          node scripts/version.mjs | tee /tmp/plan.txt
+          if grep -q 'No publishable package' /tmp/plan.txt; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the release pull request
+        if: steps.plan.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch=release/versions
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A -- '*/package.json'
+          git commit -m "release: bump versions with unreleased changes" -m "$(cat /tmp/plan.txt)"
+          git push --force-with-lease origin "$branch"
+          if gh pr view "$branch" --json number >/dev/null 2>&1; then
+            echo "Pull request already open; the force push updated it."
+          else
+            gh pr create --base main --head "$branch" \
+              --title "release: bump versions with unreleased changes" \
+              --body "$(printf 'Opened by the Version workflow.\n\nMerging this publishes, because Publish releases a package whose version is not yet on the registry.\n\n```\n%s\n```\n' "$(cat /tmp/plan.txt)")"
+          fi
