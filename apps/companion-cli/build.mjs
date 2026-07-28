@@ -25,6 +25,7 @@ await build({
     setup: join(here, 'src/setup.ts'),
     github: join(here, 'src/github.ts'),
     modules: join(here, 'src/modules.ts'),
+    'module-add': join(here, 'src/module-add.ts'),
     acl: join(here, 'src/acl.ts'),
     client: join(here, 'src/client.ts'),
     repair: join(here, 'src/repair.ts'),

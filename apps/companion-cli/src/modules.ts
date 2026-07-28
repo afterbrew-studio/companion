@@ -2,6 +2,7 @@ import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@m
 import type { ModuleListing } from '@moxxy/companion-core/server';
 import { paths } from '@moxxy/companion-services';
 import { apiClient } from './client.js';
+import { addModule } from './module-add.js';
 import { installedModuleDirs, verifyModuleDir } from './verify.js';
 
 export const MODULE_HELP = `Usage: companion module <command> [options]
@@ -14,30 +15,35 @@ export const MODULE_HELP = `Usage: companion module <command> [options]
   uninstall <id> [--yes]     Roll back its migrations and wipe its configuration
   config <id> [--set k=v] [--unset k]
                              Show or change a module's configuration
+  add <spec> [--force]       Fetch an out-of-tree module from a registry into
+                             <home>/modules and record where it came from
   verify [dir]               Static ABI check on an out-of-tree module. With no
                              argument, checks every module installed in <home>/modules.
 
 Options:
+  --force                    Let add replace a module that is already there
   --yes                      Skip the uninstall confirmation (required when piped)
   --json                     Machine-readable output
   --home <path>              Data directory (default: COMPANION_HOME or ~/.companion)
   --host <host> --port <n>   Address of the running daemon
 
-Companion must be running. Commands authenticate with the token in
-<home>/cli-token, which the daemon mints at boot.
+Companion must be running, except for add and verify, which only touch files.
+Commands authenticate with the token in <home>/cli-token, which the daemon
+mints at boot.
 `;
 
 /** `--set a=b --set c=d` in argv order; a repeated key keeps the last value. */
 export interface ModuleCommand {
-  readonly action: 'list' | 'info' | 'enable' | 'disable' | 'install' | 'uninstall' | 'config' | 'verify';
+  readonly action: 'list' | 'info' | 'enable' | 'disable' | 'install' | 'uninstall' | 'config' | 'add' | 'verify';
   readonly id?: string;
   readonly set: readonly (readonly [string, string])[];
   readonly unset: readonly string[];
   readonly json: boolean;
   readonly yes: boolean;
+  readonly force: boolean;
 }
 
-const ACTIONS = ['list', 'info', 'enable', 'disable', 'install', 'uninstall', 'config', 'verify'] as const;
+const ACTIONS = ['list', 'info', 'enable', 'disable', 'install', 'uninstall', 'config', 'add', 'verify'] as const;
 
 export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
   const action = argv[0] as ModuleCommand['action'];
@@ -49,10 +55,12 @@ export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
   let id: string | undefined;
   let json = false;
   let yes = false;
+  let force = false;
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (arg === '--json') json = true;
     else if (arg === '--yes' || arg === '-y') yes = true;
+    else if (arg === '--force') force = true;
     else if (arg === '--set' || arg === '--unset') {
       const value = argv[++i];
       if (!value) throw new Error(`${arg} requires a value.`);
@@ -68,19 +76,24 @@ export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
   }
   // `verify` takes an optional path, not an id: it runs against files on disk,
   // with no daemon involved.
-  if (action !== 'list' && action !== 'verify' && !id) {
+  if (action === 'add' && !id) {
+    throw new Error('companion module add requires a package spec, for example: companion module add my-module@1.2.0');
+  }
+  if (action !== 'list' && action !== 'verify' && action !== 'add' && !id) {
     throw new Error(`companion module ${action} requires a module id.`);
   }
-  return { action, id, set, unset, json, yes };
+  return { action, id, set, unset, json, yes, force };
 }
 
 export async function runModuleCommand(cmd: ModuleCommand, baseUrl: string): Promise<void> {
   const api = apiClient(baseUrl);
   const out = (value: unknown): void => void process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 
-  // Before the daemon call, because verify deliberately needs no daemon: an
-  // author checks a build on a laptop that has never run Companion.
+  // Before the daemon call, because these two deliberately need no daemon: an
+  // author checks a build on a laptop that has never run Companion, and adding
+  // files is what makes a module visible to a daemon in the first place.
   if (cmd.action === 'verify') return runVerify(cmd);
+  if (cmd.action === 'add') return runAdd(cmd);
 
   if (cmd.action === 'list') {
     const { modules } = await api<{ modules: ModuleListing[] }>('GET', '/api/modules');
@@ -244,6 +257,25 @@ function printTransition(id: string, verb: string, modules: readonly ModuleListi
   const mod = modules.find((m) => m.id === id);
   process.stdout.write(`${id} ${verb}.\n`);
   if (mod) process.stdout.write(`State: ${state(mod)}.\n`);
+}
+
+function runAdd(cmd: ModuleCommand): void {
+  const result = addModule(cmd.id!, paths.externalModules(), cmd.force);
+  if (cmd.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  const { id, provenance: p } = result;
+  process.stdout.write(
+    `${result.replaced ? `Replaced ${id} ${result.replaced} with` : `Added ${id}`} ${p.name}@${p.version}\n`,
+  );
+  process.stdout.write(`  from   ${p.spec}${p.registry ? ` via ${p.registry}` : ''}\n`);
+  if (p.integrity) process.stdout.write(`  sha    ${p.integrity}\n`);
+  process.stdout.write(`  into   ${result.dir}\n`);
+  for (const note of result.notes) process.stdout.write(`  ${note}\n`);
+  // The scan runs once, at boot, so the files being in place is not the same as
+  // the daemon knowing about them.
+  process.stdout.write(`\nRestart Companion, then run: companion module install ${id}\n`);
 }
 
 /**
