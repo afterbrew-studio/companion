@@ -10,6 +10,18 @@ import type { CodeStore } from './code-store.js';
 import type { GitHubClient, GhCheckRun, GhCombinedStatus, GhReview } from './github-client.js';
 
 /**
+ * The PR is not in the cache. Callers that named the PR themselves (a route, a
+ * pipeline target) get a real error; callers that took it from a list they read
+ * earlier get a skip, because a row can legitimately leave the cache while such
+ * a list is being worked through (disconnecting a repo drops all of its rows).
+ */
+export class UnknownPrError extends Error {
+  constructor(repo: string, prNumber: number) {
+    super(`unknown PR ${repo}#${prNumber}`);
+  }
+}
+
+/**
  * PR CI pipeline status. GitHub splits "CI" across two APIs — check runs
  * (Actions, apps) and legacy commit statuses — so this folds both into one
  * ChecksSummary. The compact snapshot is cached on the PR row (invalidated
@@ -43,6 +55,10 @@ export class PrChecks {
     try {
       return await this.fetchSummary(repo, prNumber, username);
     } catch (err) {
+      // The lists these callers iterate are read once and worked through over
+      // many GitHub round trips, so a PR going missing mid-loop is expected and
+      // is nothing an operator can act on. Real fetch failures still surface.
+      if (err instanceof UnknownPrError) return null;
       log.warn('checks fetch failed', { repo, prNumber, err: String(err) });
       return null;
     }
@@ -92,7 +108,7 @@ export class PrChecks {
 
   private async fetchFresh(repo: string, prNumber: number, username: string): Promise<ChecksSummary> {
     const pr = this.store.prs.get(repo, prNumber);
-    if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
+    if (!pr) throw new UnknownPrError(repo, prNumber);
     const client = this.github(repo, username);
     if (!client || !pr.headSha) {
       return { ...emptySnapshot(), repo, prNumber, headSha: pr?.headSha ?? null, runs: [] };
