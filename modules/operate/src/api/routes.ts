@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@moxxy/companion-core/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
-import type { MoxxyStatus, RunRecord } from '../contract/index.js';
+import type { MoxxyStatus, RunRecord, TaskModelPin, TaskModelSnapshot } from '../contract/index.js';
 import { paths } from '@moxxy/companion-services';
 import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
@@ -34,10 +34,6 @@ const workspaceIds = z.array(z.string()).max(200).optional();
 // Task ids a runner refuses (RunTaskDescriptor ids). Unknown ids are allowed —
 // a blocked task's module may be disabled right now; the block must survive.
 const blockedTasks = z.array(z.string().min(1).max(64)).max(100);
-// Per-action model pins: kind → model id. Kinds match RUNNER_PINNABLE_KINDS.
-const modelPins = z
-  .record(z.enum(['triage', 'analysis', 'fix', 'implement', 'report', 'interactive', 'assistant']), z.string().max(200))
-  .optional();
 
 const createRunnerSchema = z.object({
   name: z.string().min(1).max(80),
@@ -47,7 +43,6 @@ const createRunnerSchema = z.object({
   scope: z.enum(['shared', 'delegated']).optional(),
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
-  modelPins,
   blockedTasks: blockedTasks.optional(),
 });
 
@@ -67,7 +62,6 @@ const updateRunnerSchema = z.object({
   workspaceIds,
   maxRuns: z.number().int().min(1).max(64).optional(),
   enabled: z.boolean().optional(),
-  modelPins,
   blockedTasks: blockedTasks.optional(),
 });
 
@@ -76,9 +70,12 @@ const updateRunnerSchema = z.object({
 const importSchema = z.object({ sourceHome: z.string().optional() });
 const skillSchema = z.object({ content: z.string().max(64_000) });
 
-const RUN_KINDS = ['interactive', 'triage', 'fix', 'analysis', 'implement', 'report', 'assistant'] as const;
-const modelPinsSchema = z.object({
-  pins: z.record(z.enum(RUN_KINDS), z.string().max(200).nullable()),
+// A patch over the task pins: task id → model, null clears. Omitted tasks keep
+// their pin, so one row's edit never rewrites the rest of the page.
+const taskModelsSchema = z.object({
+  pins: z
+    .record(z.string().min(1).max(64), z.string().max(200).nullable())
+    .refine((pins) => Object.keys(pins).length <= 100, 'too many tasks in one write'),
 });
 
 /**
@@ -89,7 +86,6 @@ const modelPinsSchema = z.object({
  */
 export default defineRoutes((ctx) => {
   const op = ctx.services.get('operate');
-  const settings = ctx.services.get('settings');
   const workspace = ctx.services.get('workspace');
 
   // Run-stream visibility is a security rule with a single owner: the operate
@@ -101,6 +97,29 @@ export default defineRoutes((ctx) => {
     if (!op.queueSnapshot(user).entries.some((entry) => entry.id === id)) {
       throw notFound(`queued run ${id} not found`);
     }
+  };
+
+  /**
+   * The Task models page payload. Tasks group by the module that registered
+   * them, read off the id prefix (`<moduleId>.<name>`) and titled from the
+   * kernel's catalogue, so there is no second registry to keep in step.
+   */
+  const taskModelSnapshot = (): TaskModelSnapshot => {
+    const titles = new Map<string, string>(ctx.modules.list().map((m) => [m.id, m.title]));
+    return {
+      tasks: op.runTaskDescriptors().map((task): TaskModelPin => {
+        const dot = task.id.indexOf('.');
+        const moduleId = dot === -1 ? task.id : task.id.slice(0, dot);
+        return {
+          task,
+          moduleId,
+          moduleTitle: titles.get(moduleId) ?? moduleId,
+          model: op.orchestrator.taskModelPin(task.id),
+        };
+      }),
+      models: op.runners.servableModels(),
+      defaultModel: ctx.config.defaultModel,
+    };
   };
 
   const requireAccessibleWorkspaceIds = (user: AuthUser | null, ids: readonly string[]): void => {
@@ -445,27 +464,35 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
+      // Which model each unit of agent work rides. Instance-wide and keyed by
+      // the task descriptors modules register, so the catalogue costs nothing
+      // to keep current and a machine never carries model policy.
       method: 'GET',
-      path: '/api/settings/model-pins',
+      path: '/api/settings/task-models',
       access: 'settings:manage',
-      handler: () => ({
-        pins: Object.fromEntries(RUN_KINDS.map((k) => [k, settings.get(`modelPin:${k}`) || null])),
-        defaultModel: ctx.config.defaultModel,
-      }),
+      handler: () => taskModelSnapshot(),
     }),
 
     route({
       method: 'PUT',
-      path: '/api/settings/model-pins',
+      path: '/api/settings/task-models',
       access: 'settings:manage',
-      body: modelPinsSchema,
+      body: taskModelsSchema,
       handler: ({ body }) => {
-        for (const [kind, model] of Object.entries(body.pins)) {
-          settings.set(`modelPin:${kind}`, model?.trim() ?? '');
+        // Registered ids only, so the settings table can't accumulate pins for
+        // work that will never run. A module disabled since boot keeps its
+        // registration (and so stays editable) until the daemon restarts;
+        // after that its stored pin survives but is neither shown nor writable.
+        const known = new Set(op.runTaskDescriptors().map((task) => task.id));
+        for (const task of Object.keys(body.pins)) {
+          if (!known.has(task)) throw badRequest(`unknown task ${task}`);
         }
-        return {
-          pins: Object.fromEntries(RUN_KINDS.map((k) => [k, settings.get(`modelPin:${k}`) || null])),
-        };
+        for (const [task, model] of Object.entries(body.pins)) {
+          op.orchestrator.setTaskModelPin(task, model);
+        }
+        // Instance-wide policy: every other admin's page is now stale.
+        ctx.broadcast({ t: 'task-models.changed' });
+        return taskModelSnapshot();
       },
     }),
 

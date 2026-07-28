@@ -44,4 +44,9 @@ export const routes = defineClientRoutes([
     permission: 'settings:manage',
     component: page(() => import('./pages/Providers.js').then((m) => m.ProvidersPage)),
   },
+  {
+    match: { prefix: '/task-models' },
+    permission: 'settings:manage',
+    component: page(() => import('./pages/TaskModels.js').then((m) => m.TaskModelsPage)),
+  },
 ]);

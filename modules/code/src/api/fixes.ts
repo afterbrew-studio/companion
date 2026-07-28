@@ -83,7 +83,7 @@ export class Fixes {
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
-    const runnerId = this.orchestrator.placeRun(opts.repo, opts.kind, { userId: opts.userId, task });
+    const runnerId = this.orchestrator.placeRun(opts.repo, { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo, opts.userId);
     const cwd = await backend.addWorktree(
@@ -211,7 +211,7 @@ export class Fixes {
     await this.requirePersonalAccess(pr.repo, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
-    const runnerId = this.orchestrator.placeRun(pr.repo, 'fix', { userId: opts.userId, task });
+    const runnerId = this.orchestrator.placeRun(pr.repo, { userId: opts.userId, task });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo, opts.userId);
     // The objective inspects the full PR locally; refresh the base and head refs

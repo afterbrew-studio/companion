@@ -69,5 +69,6 @@ export default defineManifest({
     'runs.changed',
     'queue.changed',
     'runners.changed',
+    'task-models.changed',
   ],
 });

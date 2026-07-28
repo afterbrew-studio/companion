@@ -10,30 +10,26 @@ import {
   PageLoading,
   Section,
   SettingRow,
-  timeAgo,
 } from '@moxxy/companion-ui';
 import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
-import type {
-  RunnerCatalog,
-  RunnerModelPins,
-  RunnerProviderPolicy,
-  RunnerRecord,
-  RunnerScope,
-  RunTaskDescriptor,
-} from '../../contract/index.js';
+import type { RunnerRecord, RunnerScope, RunTaskDescriptor } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
-import { DOT_TONE, ModelPinsEditor, normalizeEndpoint, TasksEditor, TokenHelp, usableModels } from './Runners.js';
+import { DOT_TONE, normalizeEndpoint, TasksEditor, TokenHelp } from './Runners.js';
 
 /**
- * A machine's settings page — the Edit modal outgrew itself once tasks and
- * model pins joined connection + placement, so each concern is its own
- * `Section` + compact settings rows, matching the app's settings pages. One
- * form, one Save (in the header); health stays live via the runners broadcast.
- * Another user's private runner reads as not found; shared runners remain
- * visible but only admins can enter this form.
+ * A machine's settings page. The Edit modal outgrew itself once task filters
+ * joined connection + placement, so each concern is its own `Section` +
+ * compact settings rows, matching the app's settings pages. One form, one Save
+ * (in the header); health stays live via the runners broadcast. Another user's
+ * private runner reads as not found; shared runners remain visible but only
+ * admins can enter this form.
+ *
+ * What a machine may serve is Providers' business, and which model each unit of
+ * work uses is Task models': a machine carries capability and placement, never
+ * model policy.
  */
 export function RunnerSettingsPage({ id }: { id: string }): JSX.Element {
   const { runners, tasks, workspaces, error, setError, refresh } = useRunners();
@@ -99,13 +95,9 @@ function SettingsForm({
   const [scope, setScope] = useState<RunnerScope>(runner.scope);
   const [workspaceIds, setWorkspaceIds] = useState<readonly string[]>(runner.workspaceIds);
   const [maxRuns, setMaxRuns] = useState(String(runner.maxRuns));
-  const [modelPins, setModelPins] = useState<RunnerModelPins>(runner.modelPins);
   const [blockedTasks, setBlockedTasks] = useState<readonly string[]>(runner.blockedTasks ?? []);
-  const [catalog, setCatalog] = useState<RunnerCatalog | null>(runner.catalog);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [pinsNote, setPinsNote] = useState<string | null>(null);
-  const [fetching, setFetching] = useState(false);
 
   const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
   const capacity = Number(maxRuns);
@@ -115,7 +107,6 @@ function SettingsForm({
     scope !== runner.scope ||
     !sameStrings(scope === 'delegated' ? workspaceIds : [], runner.workspaceIds) ||
     capacity !== runner.maxRuns ||
-    JSON.stringify(modelPins) !== JSON.stringify(runner.modelPins) ||
     !sameStrings(blockedTasks, runner.blockedTasks ?? []) ||
     (!local && (normalizeEndpoint(endpoint) !== runner.endpoint || token.trim().length > 0));
 
@@ -134,7 +125,6 @@ function SettingsForm({
         scope,
         workspaceIds: scope === 'delegated' ? workspaceIds : [],
         maxRuns: capacity,
-        modelPins,
         blockedTasks,
         ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
       });
@@ -145,22 +135,6 @@ function SettingsForm({
       setError(String(err));
     } finally {
       setBusy(false);
-    }
-  };
-
-  // Models arrive on their own (bind, live runs, staleness timer) and land here
-  // over the runners broadcast; this only forces an early re-read.
-  const fetchModels = async (): Promise<void> => {
-    setFetching(true);
-    setPinsNote(null);
-    try {
-      const result = await api.probeRunner(runner.id);
-      setCatalog(result.catalog);
-      if (!result.ok) setPinsNote(result.health.detail ?? 'unreachable');
-    } catch (err) {
-      setPinsNote(String(err));
-    } finally {
-      setFetching(false);
     }
   };
 
@@ -359,31 +333,6 @@ function SettingsForm({
             </div>
           </ListCard>
         </Section>
-
-        <Section
-          title="Model pins"
-          description="Bind each action to a model this machine can serve. Unpinned actions ride its own default."
-        >
-          <ListCard subtle>
-            <SettingRow
-              className="px-4 py-3"
-              title="Available models"
-              description={pinsNote ?? describeCatalog(catalog, runner.providerPolicy)}
-            >
-              <button type="button" className="btn-ghost" disabled={fetching} onClick={() => void fetchModels()}>
-                {fetching ? 'Refreshing…' : 'Refresh'}
-              </button>
-            </SettingRow>
-            <div className="px-4 py-3">
-              <ModelPinsEditor
-                catalog={catalog}
-                policy={runner.providerPolicy}
-                pins={modelPins}
-                onChange={setModelPins}
-              />
-            </div>
-          </ListCard>
-        </Section>
       </form>
     </Page>
   );
@@ -391,14 +340,6 @@ function SettingsForm({
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value) => b.includes(value));
-}
-
-function describeCatalog(catalog: RunnerCatalog | null, policy: RunnerProviderPolicy): string {
-  if (!catalog) return 'This machine reports its models on its own — usually within a minute of connecting.';
-  const ready = catalog.providers.filter((p) => p.ready && !policy.disabledProviders.includes(p.name));
-  const models = usableModels(catalog, policy).length;
-  if (models === 0) return `No usable provider on this machine (read ${timeAgo(catalog.fetchedAt)}).`;
-  return `${models} model${models === 1 ? '' : 's'} from ${ready.length} provider${ready.length === 1 ? '' : 's'} · read ${timeAgo(catalog.fetchedAt)}.`;
 }
 
 /** A bordered, selectable option card — the app's two-choice radio idiom. */

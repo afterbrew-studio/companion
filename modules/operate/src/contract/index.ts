@@ -28,6 +28,8 @@ declare module '@moxxy/companion-contracts' {
     'runs.changed': Record<never, never>;
     'queue.changed': Record<never, never>;
     'runners.changed': Record<never, never>;
+    /** Instance model policy moved: which model each registered task rides. */
+    'task-models.changed': Record<never, never>;
   }
   interface ServiceMap {
     /** The execution plane: orchestrator + runners + checkouts + the moxxy CLI. */
@@ -243,22 +245,6 @@ export interface RunnerMoxxyUpdateResult {
   readonly compatible: boolean;
 }
 
-/**
- * Action kinds a runner can pin a model to — resolved against THIS runner's own
- * available models. A kind left unpinned rides the runner's own moxxy default.
- */
-export type RunnerPinnableKind = 'triage' | 'analysis' | 'fix' | 'implement' | 'report' | 'interactive' | 'assistant';
-
-export const RUNNER_PINNABLE_KINDS: readonly RunnerPinnableKind[] = [
-  'triage',
-  'analysis',
-  'fix',
-  'implement',
-  'report',
-  'interactive',
-  'assistant',
-];
-
 /** A runner's own provider/model catalog, fetched live from its moxxy. */
 export interface RunnerCatalog {
   readonly providers: ReadonlyArray<ModelCatalogProvider>;
@@ -266,19 +252,19 @@ export interface RunnerCatalog {
   readonly fetchedAt: number;
 }
 
-/** Per-runner model pins: action kind → model id (only kinds the user set). */
-export type RunnerModelPins = Partial<Record<RunnerPinnableKind, string>>;
-
 /**
- * A feature-level unit of agent work — 'board.worker', 'code.fix',
- * 'automations.digest' — registered by its owning module so runners can be
- * included in / excluded from specific tasks. Finer than RunKind, which only
- * classifies how a run behaves: board workers and user-triggered implement
- * runs share a kind but are different tasks. Registration is in-memory at
- * module enable; a disabled module's entries linger until restart (the same
- * discipline as queue resumers).
+ * A feature-level unit of agent work ('board.worker', 'code.fix',
+ * 'automations.digest'), registered by its owning module. It is the unit both
+ * placement (runners include/exclude tasks) and model policy (instance-wide
+ * task pins) are expressed in. Finer than RunKind, which only classifies how a
+ * run behaves: board workers and user-triggered implement runs share a kind but
+ * are different work. Registration is in-memory at module enable; a disabled
+ * module's entries linger until restart (the same discipline as queue
+ * resumers).
  */
 export interface RunTaskDescriptor {
+  /** `<moduleId>.<name>`: the prefix names the owning module, which is how
+   *  instance settings group tasks without a second registry. */
   readonly id: string;
   readonly label: string;
   /**
@@ -324,7 +310,6 @@ export interface RunnerRecord {
   readonly blockedTasks: readonly string[];
   readonly health: RunnerHealth;
   readonly catalog: RunnerCatalog | null;
-  readonly modelPins: RunnerModelPins;
   /** Which of this machine's providers/models agents may use (see the type). */
   readonly providerPolicy: RunnerProviderPolicy;
   readonly createdAt: number;
@@ -345,7 +330,6 @@ export interface CreateRunnerRequest {
   readonly scope?: RunnerScope;
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
-  readonly modelPins?: RunnerModelPins;
   readonly blockedTasks?: ReadonlyArray<string>;
 }
 
@@ -358,7 +342,6 @@ export interface UpdateRunnerRequest {
   readonly workspaceIds?: ReadonlyArray<string>;
   readonly maxRuns?: number;
   readonly enabled?: boolean;
-  readonly modelPins?: RunnerModelPins;
   /** Full replacement block-list; empty clears it. Omit to keep the current one. */
   readonly blockedTasks?: ReadonlyArray<string>;
 }
@@ -492,6 +475,45 @@ export interface RunnerProviderPolicy {
   readonly disabledProviders: ReadonlyArray<string>;
   /** Model ids, bare (`opus`) or provider-scoped (`anthropic/opus`). */
   readonly disabledModels: ReadonlyArray<string>;
+}
+
+// ---------- task model pins ----------
+
+/**
+ * One registered task and the model bound to it. Pins are instance-wide: a task
+ * is the unit of work people reason about ("issue triage", "board workers"), so
+ * it is the unit model policy is expressed in. Machines carry capability and
+ * placement, never model policy.
+ */
+export interface TaskModelPin {
+  readonly task: RunTaskDescriptor;
+  /** Task id prefix: the module that registered it. */
+  readonly moduleId: string;
+  /** That module's title, or the raw id when it is not in this build. */
+  readonly moduleTitle: string;
+  /**
+   * The pin exactly as stored; null = the task rides the instance default. A
+   * model no machine can serve right now stays visible here rather than reading
+   * as unpinned, so an edit never silently discards it. Dispatch resolves it per
+   * run (see the cascade in Orchestrator) and drops it where it cannot be met.
+   */
+  readonly model: string | null;
+}
+
+/** The Task models settings payload: what can be pinned, to what, and the fallback. */
+export interface TaskModelSnapshot {
+  readonly tasks: ReadonlyArray<TaskModelPin>;
+  /**
+   * The only models offerable as a pin: those some enabled SHARED machine is
+   * capable of serving, deduplicated across providers. Capability, not
+   * availability, so the list does not flicker with health; a pin the machine a
+   * run lands on cannot serve gives way to that machine's default. Personal
+   * machines are left out because unattended work never places there, so such a
+   * pin would never apply to the work it was set for.
+   */
+  readonly models: ReadonlyArray<CatalogModel>;
+  /** Where every unpinned task lands (the daemon's configured model). */
+  readonly defaultModel: string;
 }
 
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */

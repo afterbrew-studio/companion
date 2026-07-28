@@ -61,6 +61,11 @@ const KIND_PRIORITY: Record<RunKind, number> = {
   assistant: 10,
 };
 
+/** Settings key holding a task's instance-wide model pin. */
+function taskPinKey(task: string): string {
+  return `modelPin:task:${task}`;
+}
+
 /** Stable identity for a resume descriptor (key order independent). */
 function resumeKeyOf(resume: { type: string; args: Record<string, unknown> }): string {
   const parts = Object.keys(resume.args)
@@ -251,24 +256,24 @@ export class Orchestrator implements RunnerEventSink {
 
   /**
    * Provider-aware placement: resolve the model the run will actually ride
-   * (explicit > kind pin > daemon default) to the providers that serve it,
+   * (explicit > task pin > daemon default) to the providers that serve it,
    * and prefer a runner advertising one of them. Callers that provision a
    * worktree before createRun (fixes, pipelines) use this so the worktree
    * lands on the runner the run will execute on.
    */
   placeRun(
     repo: string | null,
-    kind: RunKind,
     opts: {
       model?: string | null;
       userId?: string | null;
       /** Runner ids to skip — failover after a spawn just failed there. */
       exclude?: ReadonlySet<string>;
-      /** Feature-level task id ('board.worker') — runners can block it. */
+      /** Feature-level task id ('board.worker'): runners can block it, and it
+       *  carries the instance model pin. */
       task?: string | null;
     } = {},
   ): string | null {
-    const effective = opts.model ?? this.pinnedModel(kind) ?? this.config.defaultModel;
+    const effective = opts.model ?? this.pinnedModel(opts.task ?? null) ?? this.config.defaultModel;
     return this.runners.place(repo, opts.task ?? null, effective, opts.userId ?? null, opts.exclude);
   }
 
@@ -340,11 +345,12 @@ export class Orchestrator implements RunnerEventSink {
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.placeRun(opts.repo ?? null, kind, { model: opts.model, userId: opts.userId, task: opts.task });
-    // Model: explicit override → the CHOSEN runner's pin for this action →
-    // legacy global pin. null lets that runner's own moxxy default apply.
-    const model =
-      opts.model ?? this.runners.modelPinFor(runnerId, kind) ?? this.pinnedModel(kind);
+          : this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, task: opts.task });
+    // Model: explicit override → the task's instance pin, applied only where the
+    // machine can serve it. null falls through to the daemon default at
+    // dispatch, and to the runner's own moxxy default when even that cannot be
+    // served there.
+    const model = opts.model ?? this.servablePin(runnerId, opts.task ?? null);
     const backend = this.runners.backend(runnerId);
     // Reserve the slot atomically: persist the provisioning row (carrying
     // runner_id) BEFORE the first await, so a concurrent createRun's placement
@@ -396,7 +402,7 @@ export class Orchestrator implements RunnerEventSink {
       } catch (err) {
         this.runners.recheckHealth(placedOn);
         const next = autoPlaced
-          ? this.placeRun(opts.repo ?? null, kind, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
+          ? this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
           : undefined;
         if (next === undefined || tried.has(next ?? LOCAL_RUNNER_ID)) {
           this.setStatus(id, 'failed', String(err));
@@ -407,8 +413,8 @@ export class Orchestrator implements RunnerEventSink {
         tried.add(next ?? LOCAL_RUNNER_ID);
         placedOn = next;
         placedBackend = this.runners.backend(placedOn);
-        // The new runner may pin a different model for this action.
-        this.store.runs.setModel(id, opts.model ?? this.runners.modelPinFor(placedOn, kind) ?? this.pinnedModel(kind));
+        // The machine changed, so re-resolve: the new one may not serve the pin.
+        this.store.runs.setModel(id, opts.model ?? this.servablePin(placedOn, opts.task ?? null));
       }
     }
     this.emitRunChanged(id);
@@ -499,16 +505,45 @@ export class Orchestrator implements RunnerEventSink {
   // ---------- model switching -----------------------------------------------------
 
   /**
-   * Admin-pinned model for an action kind (settings `modelPin:<kind>`); new
-   * runs of that kind ride the pin unless the caller overrides explicitly. A
-   * pin no machine may run falls back to the daemon default rather than
-   * failing every run of that kind: a pin is a preference, not a choice a
-   * user just made.
+   * The instance pin for a task, exactly as stored (null = unpinned). The
+   * settings page reads this; dispatch goes through `pinnedModel`, which drops
+   * a pin no machine may serve.
    */
-  private pinnedModel(kind: RunKind): string | null {
-    const pinned = this.store.settings.get(`modelPin:${kind}`);
-    if (!pinned || pinned.trim() === '') return null;
+  taskModelPin(task: string): string | null {
+    const pinned = this.store.settings.get(taskPinKey(task));
+    return pinned && pinned.trim() !== '' ? pinned : null;
+  }
+
+  /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
+  setTaskModelPin(task: string, model: string | null): void {
+    this.store.settings.set(taskPinKey(task), model?.trim() ?? '');
+  }
+
+  /**
+   * Pinned model for a unit of work (settings `modelPin:task:<id>`); new runs of
+   * that task ride the pin unless the caller overrides explicitly. A pin no
+   * machine may run falls back to the daemon default rather than failing every
+   * run of that task: a pin is a standing preference, not a choice a user just
+   * made. An unlabeled run (no task) has nothing to pin against.
+   */
+  private pinnedModel(task: string | null): string | null {
+    if (task === null) return null;
+    const pinned = this.taskModelPin(task);
+    if (pinned === null) return null;
     return this.runners.runnersForModel(pinned)?.size === 0 ? null : pinned;
+  }
+
+  /**
+   * The same pin, narrowed to the machine the run actually landed on. Placement
+   * prefers a machine that serves the pin but is free to choose another (the
+   * pool's own machines block tasks, go offline and fill up), and binding a run
+   * to a model its machine cannot serve would fail the run's every turn. Same
+   * reasoning as `pinnedModel`, one step later: a preference gives way, only a
+   * choice a user just made refuses.
+   */
+  private servablePin(runnerId: string | null, task: string | null): string | null {
+    const pinned = this.pinnedModel(task);
+    return pinned !== null && this.runners.serves(runnerId, pinned) ? pinned : null;
   }
 
   /** Connected providers + models, read live from the run's gateway. */
