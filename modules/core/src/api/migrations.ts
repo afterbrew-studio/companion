@@ -118,4 +118,49 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_audit_actor`);
     },
   },
+  {
+    version: 4,
+    name: 'audit_nullable_actor',
+    /**
+     * `actor` was NOT NULL while the contract has always said `string | null`,
+     * "null only for a public route (setup, a rejected login)". So exactly the
+     * events an auditor cares most about, a refused sign-in above all, hit a
+     * constraint and were dropped. The sink swallows its own failures by design,
+     * which is right for the request and wrong for the trail: the instance kept
+     * serving and quietly recorded nothing.
+     *
+     * SQLite cannot relax NOT NULL in place, so the table is rebuilt. That is
+     * not additive, which is the house rule, and the rule loses here: the
+     * alternative is a sentinel actor, and an audit table that cannot tell "no
+     * actor" from a user literally called that is worse than a rebuild.
+     */
+    up: (db) => {
+      const nullable = (db.prepare(`PRAGMA table_info(audit_log)`).all() as Array<{ name: string; notnull: number }>)
+        .find((c) => c.name === 'actor')?.notnull === 0;
+      if (nullable) return;
+      db.exec(`
+        CREATE TABLE audit_log_v4 (
+          id     INTEGER PRIMARY KEY AUTOINCREMENT,
+          at     INTEGER NOT NULL,
+          actor  TEXT,
+          action TEXT NOT NULL,
+          access TEXT NOT NULL DEFAULT '',
+          status INTEGER NOT NULL DEFAULT 0,
+          module TEXT,
+          detail TEXT
+        );
+        INSERT INTO audit_log_v4 (id, at, actor, action, access, status, module, detail)
+          SELECT id, at, actor, action, access, status, module, detail FROM audit_log;
+        DROP TABLE audit_log;
+        ALTER TABLE audit_log_v4 RENAME TO audit_log;
+        CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at);
+        CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log (actor, at);
+      `);
+    },
+    down: () => {
+      // Deliberately a no-op: going back would have to drop every row whose
+      // actor is null, which is data loss to satisfy a constraint that was the
+      // bug in the first place.
+    },
+  },
 ]);
