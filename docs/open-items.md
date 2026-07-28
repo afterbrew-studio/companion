@@ -134,14 +134,17 @@ Not gaps in a mechanism, which is why they sit below the line. Each one is
 started, decided or blocked on something nameable, and each is the kind of thing
 that gets forgotten precisely because none of it stops a release.
 
-**Installing a module by name.** The ABI is published and out-of-tree modules
-load, but getting one onto a host still means placing it in
-`$COMPANION_HOME/modules` by hand. What is missing is a CLI verb that resolves a
-spec against a registry, runs the checks `module verify` already implements, and
-records where the thing came from. Provenance is the part worth designing rather
-than bolting on: an operator asked to trust a third-party module needs to see
-what was installed and from where, and that is a fact you can only capture at
-install time.
+**Installing a module by name.** `[BUILT]` `companion module add <spec>` fetches
+an out-of-tree module, checks it against the ABI while it is still staged, and
+writes `$COMPANION_HOME/modules/.provenance.json` recording the spec as typed,
+the resolved name and version, the integrity hash and the registry. npm resolves
+the spec, so private registries and their credentials work without Companion
+knowing anything about them. It installs no dependencies, because `verify`
+already requires entry chunks to import the ABI and nothing else.
+
+What remains is the seam either side of it: the daemon scans `modules/` once at
+boot, so adding files still needs a restart before `module install <id>` can see
+them, and nothing reads the provenance ledger back out into the UI.
 
 **Runner workforce policy.** In flight. Today `blockedTasks` is deny-only, so a
 machine is open by default and a module update that registers a new task starts

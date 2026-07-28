@@ -12,7 +12,9 @@ happened, including the places where building it changed the design.
 | §7 entitlement gate | **built**; the OSS/Enterprise repo split is still a plan |
 | §9 invariants | **built** as checks in `pnpm acl check` |
 | §12 build and Docker | **built**: one bundle, three delivery vehicles |
-| §6 the ABI, §14 install lifecycle | **not built**, and deliberately so (see §15) |
+| §6 the ABI | **built**: `@moxxy/companion-sdk` is published, the bridge resolves it to the host |
+| §8 CLI surface | **built**, with `add` split from `install` (see the section for why) |
+| §14 install lifecycle | **not built**, and deliberately so (see §15) |
 
 Tags below mean: `[NOW]` exists, `[NEXT]` additive and unbuilt, `[LATER]` needs a
 new mechanism, `[NO]` deliberately rejected.
@@ -403,15 +405,15 @@ not imply otherwise in docs. Therefore:
 
 ---
 
-## 8. CLI surface `[NEXT for list/enable/disable, LATER for install]`
+## 8. CLI surface `[NOW]`
 
 Two transports, deliberately:
 
 - `list`, `info`, `enable`, `disable`, `remove`, `config` talk **HTTP to a
   running daemon** and take effect live. These work today against existing
   routes.
-- `install` of an external module manipulates `$COMPANION_HOME/modules/` and
-  then asks the daemon to rescan, so it also works while the daemon is down.
+- `add` and `verify` only touch `$COMPANION_HOME/modules/`, so they work while
+  the daemon is down.
 
 ```
 companion module list [--json] [--available]
@@ -419,7 +421,8 @@ companion module info <id>
 companion module enable <id>
 companion module disable <id>
 companion module config <id> [--set k=v] [--unset k]
-companion module install <id | pkg@version | ./bundle.tgz> [--config k=v] [--allow-untrusted]
+companion module install <id> [--set k=v]
+companion module add <spec> [--force]     # fetch into <home>/modules + provenance
 companion module remove <id>              # uninstall (down migrations + wipe config) + delete files
 companion module verify <path>            # ABI conformance, for authors
 companion module scaffold <id>            # generator matching modules/README.md §10
@@ -427,7 +430,15 @@ companion module scaffold <id>            # generator matching modules/README.md
 
 Vocabulary must match the kernel exactly, because users will read both:
 `disable` keeps data, `uninstall` runs `down()` and wipes config, `remove` is
-`uninstall` plus deleting the artifact. Do not invent a fourth verb.
+`uninstall` plus deleting the artifact.
+
+**Why `add` is its own verb**, against this document's earlier plan to overload
+`install <id | pkg@version | ./bundle.tgz>`: the two take the same shape of
+argument and mean different things, so `companion module install reports` cannot
+be read reliably. `reports` is a plausible module id and a plausible package
+name, and guessing from the string decides whether the command hits the network.
+They also differ in precondition, since fetching files needs no daemon and
+adopting one does. `add` obtains, `install` adopts.
 
 **Auth:** do not reuse the admin password from `setup.ts`. Write a CLI token at
 init into `$COMPANION_HOME/cli-token` (0600), store it hashed, scope it to
