@@ -1,6 +1,33 @@
 import { defineMigrations } from '@moxxy/companion-core/server';
 
 /**
+ * The tasks that were riding each run kind when pins moved off kinds, frozen
+ * here on purpose: the v6 migration must keep translating the same way however
+ * the live task registry evolves. A task registered later starts unpinned,
+ * which is what "no pin was ever set for it" means. `board.worker` takes the
+ * `implement` pin, its dominant stage, though its review/CI repairs ran as
+ * `fix`.
+ */
+const KIND_TASKS: Readonly<Record<string, readonly string[]>> = {
+  interactive: ['operate.chat'],
+  assistant: ['automations.assistant'],
+  triage: ['code.triage'],
+  fix: ['code.fix'],
+  implement: ['code.implement', 'board.worker'],
+  report: ['automations.digest'],
+  analysis: [
+    'code.pr-review',
+    'code.ci-analysis',
+    'code.pipeline',
+    'plan.analyses',
+    'planner.analyses',
+    'refinement.analyses',
+    'slop.detect',
+    'playground.run',
+  ],
+};
+
+/**
  * v1 = idempotent adopt of today's live execution-plane shape: runs + the
  * durable run queue + runners (and their workspace delegation side table).
  * Running it against an existing DB is a no-op (`IF NOT EXISTS` + try/catch
@@ -187,6 +214,60 @@ export default defineMigrations([
     },
     down: () => {
       // SQLite can't drop columns portably; harmless to keep on rollback.
+    },
+  },
+  {
+    /**
+     * Model pins move from run KINDS (instance-wide) and from MACHINES
+     * (`runners.model_pins`) onto registered tasks, which is the unit both
+     * placement and the settings page already speak in. Both old layers are
+     * read nowhere from here on; nothing is deleted, so a rollback finds them
+     * intact.
+     *
+     * Carrying, most specific first, and never overwriting a key that exists.
+     * That is what makes a re-run a no-op, and what lets a later edit stand,
+     * including clearing a pin back to '':
+     *  1. the instance-wide kind pin, fanned out to every task that ran as that
+     *     kind (same scope in, same scope out);
+     *  2. on a single-machine install only, that machine's own pins: with one
+     *     machine its policy WAS the instance's. A fleet keeps its per-machine
+     *     pins in the (now unread) column rather than having one machine's
+     *     preference promoted over work that never ran there.
+     */
+    version: 6,
+    name: 'task_model_pins',
+    up: (db) => {
+      const settings = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'`).get();
+      if (!settings) return; // module-core not migrated yet: nothing to carry
+      const carry = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
+      const read = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+      const pinFor = (kind: string): string | null => {
+        const row = read.get(`modelPin:${kind}`) as { value?: string } | undefined;
+        const value = row?.value?.trim();
+        return value ? value : null;
+      };
+      for (const [kind, tasks] of Object.entries(KIND_TASKS)) {
+        const model = pinFor(kind);
+        if (!model) continue;
+        for (const task of tasks) carry.run(`modelPin:task:${task}`, model);
+      }
+
+      const machines = db.prepare(`SELECT model_pins FROM runners`).all() as Array<{ model_pins: string | null }>;
+      if (machines.length !== 1) return;
+      let pins: Record<string, unknown> = {};
+      try {
+        pins = JSON.parse(machines[0]!.model_pins || '{}') as Record<string, unknown>;
+      } catch {
+        return; // unparseable pins: leave the column alone rather than guess
+      }
+      for (const [kind, tasks] of Object.entries(KIND_TASKS)) {
+        const model = pins[kind];
+        if (typeof model !== 'string' || model.trim() === '') continue;
+        for (const task of tasks) carry.run(`modelPin:task:${task}`, model.trim());
+      }
+    },
+    down: () => {
+      // The carried settings rows are additive and unread by older code.
     },
   },
 ]);

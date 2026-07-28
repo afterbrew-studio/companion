@@ -1,11 +1,5 @@
 import type Database from 'better-sqlite3';
-import type {
-  RunnerCatalog,
-  RunnerKind,
-  RunnerModelPins,
-  RunnerProviderPolicy,
-  RunnerScope,
-} from '../contract/index.js';
+import type { RunnerCatalog, RunnerKind, RunnerProviderPolicy, RunnerScope } from '../contract/index.js';
 
 /** The built-in runner: companiond's own machine. Always present, undeletable. */
 export const LOCAL_RUNNER_ID = 'runner-local';
@@ -22,8 +16,6 @@ export interface RunnerRow {
   owner_id: string | null;
   max_runs: number;
   enabled: number;
-  /** Per-action model pins (JSON: kind → model id). */
-  model_pins: RunnerModelPins;
   /** Task ids this runner refuses (JSON array); empty = takes everything. */
   blocked_tasks: string[];
   /** Provider names agents may not use on this machine (JSON array). */
@@ -70,7 +62,6 @@ export class RunnersStore {
   private hydrate(row: RawRunnerRow): RunnerRow {
     return {
       ...row,
-      model_pins: parseJson<RunnerModelPins>(row.model_pins, {}),
       blocked_tasks: parseJson<string[]>(row.blocked_tasks, []),
       disabled_providers: parseJson<string[]>(row.disabled_providers, []),
       disabled_models: parseJson<string[]>(row.disabled_models, []),
@@ -115,17 +106,15 @@ export class RunnersStore {
     ownerId: string | null;
     maxRuns: number;
     workspaceIds: readonly string[];
-    modelPins?: RunnerModelPins;
     blockedTasks?: readonly string[];
   }): void {
     this.db
       .prepare(
-        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled, model_pins, blocked_tasks, created_at)
-         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1, @modelPins, @blockedTasks, @createdAt)`,
+        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled, blocked_tasks, created_at)
+         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1, @blockedTasks, @createdAt)`,
       )
       .run({
         ...r,
-        modelPins: JSON.stringify(r.modelPins ?? {}),
         blockedTasks: r.blockedTasks?.length ? JSON.stringify(r.blockedTasks) : null,
         createdAt: Date.now(),
       });
@@ -142,7 +131,6 @@ export class RunnersStore {
       maxRuns: number;
       enabled: boolean;
       workspaceIds: readonly string[];
-      modelPins: RunnerModelPins;
       /** Full replacement block-list; empty clears it. Undefined = keep. */
       blockedTasks: readonly string[];
     }>,
@@ -153,7 +141,7 @@ export class RunnersStore {
     this.db
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
-         max_runs = @maxRuns, enabled = @enabled, model_pins = @modelPins, blocked_tasks = @blockedTasks WHERE id = @id`,
+         max_runs = @maxRuns, enabled = @enabled, blocked_tasks = @blockedTasks WHERE id = @id`,
       )
       .run({
         id,
@@ -163,7 +151,6 @@ export class RunnersStore {
         scope: fields.scope ?? current.scope,
         maxRuns: fields.maxRuns ?? current.max_runs,
         enabled: fields.enabled === undefined ? current.enabled : fields.enabled ? 1 : 0,
-        modelPins: JSON.stringify(fields.modelPins ?? current.model_pins),
         blockedTasks: blockedTasks.length ? JSON.stringify(blockedTasks) : null,
       });
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
@@ -208,9 +195,8 @@ export class RunnersStore {
 /** Row as SQLite returns it — JSON columns are still strings here. */
 type RawRunnerRow = Omit<
   RunnerRow,
-  'workspace_ids' | 'model_pins' | 'blocked_tasks' | 'disabled_providers' | 'disabled_models' | 'catalog'
+  'workspace_ids' | 'blocked_tasks' | 'disabled_providers' | 'disabled_models' | 'catalog'
 > & {
-  model_pins: string;
   blocked_tasks: string | null;
   disabled_providers: string | null;
   disabled_models: string | null;

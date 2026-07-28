@@ -14,6 +14,7 @@ import type {
   RunnerRecord,
   RunTaskDescriptor,
   SkillFile,
+  TaskModelSnapshot,
   TokenUsage,
   UpdateRunnerRequest,
 } from '../contract/index.js';
@@ -72,11 +73,10 @@ export const operateApi = {
     put<ProviderCatalog>(`/api/runners/${runnerId}/providers`, policy),
   refreshProviderCatalog: () => post<ProviderCatalog>('/api/providers/refresh'),
 
-  // model pins (per action kind)
-  getModelPins: () =>
-    request<{ pins: Record<string, string | null>; defaultModel: string }>('/api/settings/model-pins'),
-  setModelPins: (pins: Record<string, string | null>) =>
-    put<{ pins: Record<string, string | null> }>('/api/settings/model-pins', { pins }),
+  // model pins (per registered task)
+  taskModels: () => request<TaskModelSnapshot>('/api/settings/task-models'),
+  setTaskModel: (taskId: string, model: string | null) =>
+    put<TaskModelSnapshot>('/api/settings/task-models', { pins: { [taskId]: model } }),
 
   // skills
   listSkills: () => request<{ skills: SkillFile[] }>('/api/skills'),

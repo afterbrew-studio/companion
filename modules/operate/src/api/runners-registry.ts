@@ -14,7 +14,6 @@ import type {
   ProviderCatalog,
   RunnerCatalog,
   RunnerHealth,
-  RunnerPinnableKind,
   RunnerMoxxyUpdateResult,
   RunnerProbeResult,
   RunnerProviderPolicy,
@@ -417,7 +416,6 @@ export class Runners {
       ownerId,
       maxRuns: req.maxRuns ?? 3,
       workspaceIds: req.workspaceIds ?? [],
-      modelPins: req.modelPins,
       blockedTasks: req.blockedTasks,
     });
     this.rebuildRemotes();
@@ -433,14 +431,13 @@ export class Runners {
     const row = this.store.runners.get(id);
     if (!row) throw new Error('runner not found');
     if (row.kind === 'local') {
-      // Capacity, scope, and per-action model pins apply to the local runner too.
+      // Capacity, scope and task filters apply to the local runner too.
       this.store.runners.update(id, {
         name: req.name,
         maxRuns: req.maxRuns,
         scope: req.scope,
         workspaceIds: req.workspaceIds,
         enabled: req.enabled,
-        modelPins: req.modelPins,
         blockedTasks: req.blockedTasks,
       });
     } else {
@@ -452,7 +449,6 @@ export class Runners {
         workspaceIds: req.workspaceIds,
         maxRuns: req.maxRuns,
         enabled: req.enabled,
-        modelPins: req.modelPins,
         blockedTasks: req.blockedTasks,
       });
       this.rebuildRemotes();
@@ -515,18 +511,6 @@ export class Runners {
     return { ok, health, catalog };
   }
 
-  /** Resolve the model a run of `kind` should use on `runnerId`: its pin, else its default. */
-  modelPinFor(runnerId: string | null, kind: RunnerPinnableKind): string | null {
-    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
-    if (!row) return null;
-    const pinned = row.model_pins[kind];
-    // A pin this machine no longer allows is dropped rather than honoured: a
-    // pin is a standing preference, not the per-run choice a user just made,
-    // so it gives way to the machine's own default instead of failing the run.
-    if (pinned && !rowServes(row, this.runnersForModel(pinned))) return row.catalog?.defaultModel ?? null;
-    return pinned ?? row.catalog?.defaultModel ?? null;
-  }
-
   /** True when the runner has a credential-ready provider it is allowed to use. */
   private hasReadyProvider(row: RunnerRow): boolean {
     const cat = row.catalog;
@@ -581,7 +565,6 @@ export class Runners {
       blockedTasks: row.blocked_tasks,
       health: this.healthFor(row.id),
       catalog: row.catalog,
-      modelPins: row.model_pins,
       providerPolicy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       createdAt: row.created_at,
     };
@@ -730,6 +713,43 @@ export class Runners {
       defaultModel,
       fetchedAt,
     };
+  }
+
+  /**
+   * Every model some enabled SHARED machine is CAPABLE of serving, deduplicated
+   * across providers and machines. Derived from the merged catalog rather than
+   * re-walking the rows, so the ready/policy rules are not restated here.
+   *
+   * This is what an instance-wide task pin may be set to. Capability only: a
+   * machine that is offline right now, or blocks the task, still counts, because
+   * both are transient placement facts and a pin outlives them. Where a pin
+   * cannot be honoured the run falls back to that machine's default rather than
+   * failing (see Orchestrator.servablePin).
+   *
+   * Personal machines are deliberately excluded: automation and other people's
+   * runs never place there, so a pin only they could serve would never apply to
+   * the work it was set for. Their extra models stay reachable per run, where
+   * the choice belongs to whoever can actually reach the machine.
+   */
+  servableModels(): CatalogModel[] {
+    const merged = new Map<string, CatalogModel>();
+    // Only the merged set is read here; reporting the daemon default is the
+    // caller's job, so the snapshot's copy of it goes unused.
+    for (const provider of this.catalogSnapshot('', null).providers) {
+      for (const model of provider.models) {
+        const seen = merged.get(model.id);
+        if (!seen) {
+          merged.set(model.id, model);
+          continue;
+        }
+        merged.set(model.id, {
+          id: model.id,
+          contextWindow: seen.contextWindow ?? model.contextWindow,
+          machines: [...new Set([...seen.machines, ...model.machines])],
+        });
+      }
+    }
+    return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
   }
 
   /** Shared machines plus the viewer's own, never another user's private one. */

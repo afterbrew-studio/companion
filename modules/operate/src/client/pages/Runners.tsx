@@ -17,17 +17,7 @@ import {
   type StatusTone,
 } from '@moxxy/companion-ui';
 import { useAuth } from '@companion/module-core/client';
-import type {
-  ModelCatalogModel,
-  RunnerCatalog,
-  RunnerModelPins,
-  RunnerPinnableKind,
-  RunnerProviderPolicy,
-  RunnerRecord,
-  RunnerStatus,
-  RunTaskDescriptor,
-} from '../../contract/index.js';
-import { RUNNER_PINNABLE_KINDS } from '../../contract/index.js';
+import type { RunnerRecord, RunnerStatus, RunTaskDescriptor } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunners } from '../hooks/useRunners.js';
 
@@ -456,8 +446,8 @@ export function normalizeEndpoint(raw: string): string {
 
 /**
  * Add-machine flow: just the connection handshake (name, endpoint, token,
- * ownership). Everything else — placement, capacity, tasks, model pins —
- * lives on the machine's own settings page, opened right after it connects.
+ * ownership). Everything else (placement, capacity, tasks) lives on the
+ * machine's own settings page, opened right after it connects.
  */
 function RunnerModal({
   admin,
@@ -558,7 +548,7 @@ function RunnerModal({
           </p>
         )}
         <p className="dim text-xs">
-          Once connected you land on the machine's page to scope it, pick its tasks, and pin models.
+          Once connected you land on the machine's page to scope it and pick the tasks it takes.
         </p>
         <ErrorBar error={error} />
         <FormActions>
@@ -634,90 +624,6 @@ export function TasksEditor({
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-const PIN_LABELS: Record<RunnerPinnableKind, string> = {
-  triage: 'Issue triage',
-  analysis: 'Reviews & analyses',
-  fix: 'Fix runs',
-  implement: 'Implement runs',
-  report: 'Reports',
-  interactive: 'Interactive chats',
-  assistant: 'AI Help',
-};
-
-/**
- * Models this machine would actually run: credential-ready providers, minus
- * what its own provider policy switches off. Deduplicated by id.
- */
-export function usableModels(
-  catalog: RunnerCatalog | null,
-  policy: RunnerProviderPolicy,
-): ModelCatalogModel[] {
-  return Array.from(
-    new Map(
-      (catalog?.providers ?? [])
-        .filter((p) => p.ready && !policy.disabledProviders.includes(p.name))
-        .flatMap((p) =>
-          p.models
-            .filter((m) => !policy.disabledModels.includes(m.id) && !policy.disabledModels.includes(`${p.name}/${m.id}`))
-            .map((m) => [m.id, m] as const),
-        ),
-    ).values(),
-  );
-}
-
-/** Per-action model dropdowns, options drawn from the runner's usable models. */
-export function ModelPinsEditor({
-  catalog,
-  policy,
-  pins,
-  onChange,
-}: {
-  catalog: RunnerCatalog | null;
-  policy: RunnerProviderPolicy;
-  pins: RunnerModelPins;
-  onChange: (next: RunnerModelPins) => void;
-}): JSX.Element {
-  const models = usableModels(catalog, policy);
-
-  if (models.length === 0) {
-    return (
-      <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
-        No ready models on this machine yet — configure a provider there and fetch models to pin them.
-      </p>
-    );
-  }
-
-  const set = (kind: RunnerPinnableKind, model: string): void => {
-    const next = { ...pins };
-    if (model) next[kind] = model;
-    else delete next[kind];
-    onChange(next);
-  };
-
-  return (
-    <div className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800/70 dark:border-zinc-800">
-      {RUNNER_PINNABLE_KINDS.map((kind) => (
-        <label key={kind} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
-          <span className="dim min-w-0 flex-1 truncate">{PIN_LABELS[kind]}</span>
-          <select
-            className="input input-sm w-48 shrink-0"
-            value={pins[kind] ?? ''}
-            onChange={(e) => set(kind, e.target.value)}
-          >
-            <option value="">Runner default</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}
-                {m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
     </div>
   );
 }

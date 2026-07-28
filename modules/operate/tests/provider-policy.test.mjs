@@ -191,19 +191,6 @@ test('a provider without credentials serves nothing even while switched on', () 
   assert.equal(local.providers[0].enabled, true);
 });
 
-test('a model pin the machine no longer allows gives way to its default', () => {
-  const { store } = fixture();
-  store.runners.setCatalog(LOCAL_RUNNER_ID, catalogOf(provider('anthropic', ['opus', 'sonnet'])));
-  store.runners.update(LOCAL_RUNNER_ID, { modelPins: { fix: 'sonnet' } });
-  const runners = registry(store);
-
-  assert.equal(runners.modelPinFor(null, 'fix'), 'sonnet');
-
-  runners.setProviderPolicy(LOCAL_RUNNER_ID, { disabledProviders: [], disabledModels: ['sonnet'] });
-
-  assert.equal(runners.modelPinFor(null, 'fix'), 'opus');
-});
-
 test("the merged view never carries another user's private machine", () => {
   const { store } = fixture();
   addMachine(store, 'runner-ana', 'ana-laptop', 'ana');

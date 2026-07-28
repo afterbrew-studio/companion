@@ -2,7 +2,7 @@ import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client
 
 /**
  * Operate owns the Operate sidebar group (agent runs, runners, skills) and
- * attaches its machine/provider admin pages to core's Admin group. Icons follow
+ * attaches its provider/model admin pages to core's Admin group. Icons follow
  * the shared stroke style from the legacy modules.tsx registry.
  *
  * Skills lives in operate's OWN group: the page, route and API are operate's,
@@ -55,6 +55,21 @@ export const nav = defineNav([
       <NavIcon>
         <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
         <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+      </NavIcon>
+    ),
+  },
+  {
+    key: 'task-models',
+    label: 'Task models',
+    hash: '#/task-models',
+    permission: 'settings:manage',
+    section: 'admin',
+    order: 5,
+    icon: (
+      <NavIcon>
+        <path d="M4 7h10M4 12h16M4 17h7" />
+        <circle cx="17.5" cy="7" r="2.5" />
+        <circle cx="13.5" cy="17" r="2.5" />
       </NavIcon>
     ),
   },
