@@ -1,26 +1,45 @@
+import type { ComponentType } from 'react';
 import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/companion-sdk/client';
+
+/**
+ * Wrap a lazily-loaded page in the prerequisite gate.
+ *
+ * Applied at the route rather than inside each page: the rule is the same for
+ * every GitHub-facing screen, and putting it here means a page added later
+ * cannot forget it. The chunk still loads lazily; the gate renders around it.
+ */
+const gated = (load: () => Promise<{ default: ComponentType<RouteProps> }>, what: string) =>
+  lazyView(async () => {
+    const [{ default: Inner }, { RequiresRepo }] = await Promise.all([load(), import('./components/SetupGate.js')]);
+    const Wrapped = (props: RouteProps): JSX.Element => (
+      <RequiresRepo what={what}>
+        <Inner {...props} />
+      </RequiresRepo>
+    );
+    return { default: Wrapped };
+  });
 
 // Detail pages take typed props; wrap them so RouteProps params feed through
 // with the legacy key-remount semantics (switching targets remounts the page).
-const IssueDetailRoute = lazyView(async () => {
+const IssueDetailRoute = gated(async () => {
   const { IssueDetail } = await import('./pages/IssueDetail.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => (
     <IssueDetail key={`${params.repo}#${params.number}`} repo={params.repo!} number={Number(params.number)} />
   );
   return { default: Wrapped };
-});
-const PrViewRoute = lazyView(async () => {
+}, 'Issues');
+const PrViewRoute = gated(async () => {
   const { PrView } = await import('./pages/pr/PrView.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => (
     <PrView key={`${params.repo}#${params.number}#${params.mode ?? ''}`} repo={params.repo!} number={Number(params.number)} mode={params.mode === 'review' ? 'review' : undefined} />
   );
   return { default: Wrapped };
-});
-const PrBuildRoute = lazyView(async () => {
+}, 'Pull requests');
+const PrBuildRoute = gated(async () => {
   const { PrBuild } = await import('./pages/pr/PrBuild.js');
   const Wrapped = ({ params }: RouteProps): JSX.Element => <PrBuild key={params.runId} runId={params.runId!} />;
   return { default: Wrapped };
-});
+}, 'Pull requests');
 
 export const routes = defineClientRoutes([
   // The PR-in-the-making outcome view of a fix/implement run.
@@ -59,22 +78,35 @@ export const routes = defineClientRoutes([
   {
     match: { prefix: '/issues' },
     permission: 'issues:read',
-    component: page(() => import('./pages/IssuesArea.js').then((m) => m.IssuesAreaPage)),
+    component: gated(() => import('./pages/IssuesArea.js').then((m) => ({ default: m.IssuesAreaPage })), 'Issues'),
   },
   {
     match: { prefix: '/prs' },
     permission: 'prs:read',
-    component: page(() => import('./pages/PrsArea.js').then((m) => m.PrsAreaPage)),
+    component: gated(() => import('./pages/PrsArea.js').then((m) => ({ default: m.PrsAreaPage })), 'Pull requests'),
   },
   {
     match: { prefix: '/pipelines' },
     permission: 'pipelines:read',
-    component: page(() => import('./pages/Pipelines.js').then((m) => m.PipelinesPage)),
+    component: gated(() => import('./pages/Pipelines.js').then((m) => ({ default: m.PipelinesPage })), 'Pipelines'),
   },
   {
     match: { prefix: '/repos' },
     permission: 'repos:manage',
-    component: page(() => import('./pages/ReposPage.js').then((m) => m.ReposPage)),
+    component: lazyView(async () => {
+      const [{ ReposPage }, { RequiresGithubAccount }] = await Promise.all([
+        import('./pages/ReposPage.js'),
+        import('./components/SetupGate.js'),
+      ]);
+      // Only the account half: this page is where a repository gets added, so
+      // gating it on having one would send you here from here.
+      const Wrapped = (): JSX.Element => (
+        <RequiresGithubAccount what="Connecting a repository">
+          <ReposPage />
+        </RequiresGithubAccount>
+      );
+      return { default: Wrapped };
+    }),
   },
   {
     match: { prefix: '/github' },
@@ -85,11 +117,11 @@ export const routes = defineClientRoutes([
   {
     match: { exact: '/' },
     permission: 'issues:read',
-    component: page(() => import('./pages/Dashboard.js').then((m) => m.DashboardPage)),
+    component: gated(() => import('./pages/Dashboard.js').then((m) => ({ default: m.DashboardPage })), 'The overview'),
   },
   {
     match: { prefix: '/overview' },
     permission: 'issues:read',
-    component: page(() => import('./pages/Dashboard.js').then((m) => m.DashboardPage)),
+    component: gated(() => import('./pages/Dashboard.js').then((m) => ({ default: m.DashboardPage })), 'The overview'),
   },
 ]);

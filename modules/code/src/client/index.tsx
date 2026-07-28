@@ -21,6 +21,8 @@ export { AccountPicker } from './components/AccountPicker.js';
 export { RepoAccountPicker } from './components/RepoAccountPicker.js';
 export { BranchPicker } from './components/BranchPicker.js';
 export { RepoUnavailableRow } from './components/RepoUnavailableRow.js';
+/** The GitHub prerequisite gate, for modules that also need a repository. */
+export { RequiresRepo, RequiresGithubAccount } from './components/SetupGate.js';
 export { codeApi } from './api.js';
 
 export default defineClientModule({
