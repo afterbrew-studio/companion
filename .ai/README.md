@@ -13,8 +13,15 @@ content. Edit knowledge in one place: `.ai/`.
 
 .claude/skills -> ../.ai/skills   # symlink; Claude Code discovers them here
 .claude/agents -> ../.ai/agents   # symlink
-.codex/…                          # reference docs pointing at .ai/
+.codex/skills  -> ../.ai/skills   # symlink
+.agents/skills -> ../.ai/skills   # symlink
 ```
+
+Every one of those is a symlink, and that is load-bearing rather than tidy.
+`.agents/skills` was a real copy for a while, and it drifted: it went on
+describing modules installed by a line in each app registry months after build
+profiles replaced that, so an agent reading it would have edited a generated
+file. A duplicate is not a backup, it is a second answer.
 
 ## Skills (`skills/<name>/SKILL.md`)
 
@@ -31,6 +38,20 @@ Repo conventions — how Companion is built:
   migrations, row⇄DTO mappers.
 - **companion-add-backend-area** — recipe to add a daemon area end-to-end.
 - **companion-add-web-area** — recipe to add an SPA module end-to-end.
+
+Modules and distribution — what ships, and how it gets there:
+
+- **companion-build-module** — the operating procedure for a module under
+  `modules/*`: manifest, contract slice, api slice, client slice, and the two
+  registry entries. Start here for "add a new domain".
+- **companion-external-module** — a module that lives outside this repo: the
+  two-package ABI, the `moxxy` block, `module add` / `module verify`, the
+  generated ABI bridge and the browser import map that keep the singletons.
+- **companion-editions-and-distribution** — OSS vs Enterprise, build profiles,
+  the generated registries, `autoInstall`, the entitlement gate, the CLI and
+  Docker delivery paths.
+- **companion-enterprise-readiness** — what an organisation asks for and what is
+  actually built: roles, audit, secret store seam, air-gapped operation.
 
 Product subsystems — the substance, not just the scaffolding:
 
