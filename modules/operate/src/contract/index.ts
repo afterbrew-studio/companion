@@ -325,6 +325,8 @@ export interface RunnerRecord {
   readonly health: RunnerHealth;
   readonly catalog: RunnerCatalog | null;
   readonly modelPins: RunnerModelPins;
+  /** Which of this machine's providers/models agents may use (see the type). */
+  readonly providerPolicy: RunnerProviderPolicy;
   readonly createdAt: number;
 }
 
@@ -411,16 +413,19 @@ export interface SetRunModelRequest {
 }
 
 /**
- * The instance-wide provider/model view: every runner's own catalog merged into
- * one list, so a model appears once with the machines that can serve it. There
+ * The provider/model view behind the Providers page: one group per machine
+ * (what it reported plus its own policy) and the merged effective set, which
+ * answers what a per-machine page cannot: can agents use model X at all. There
  * is no second catalog — runner catalogs are the only source, refreshed by the
  * daemon (bind, health TTL, live runs, provider import).
+ *
+ * Scoped to the viewer: shared machines plus their own, matching who may
+ * actually place runs on them.
  */
 export interface ProviderCatalog {
+  /** The merged effective set: only what some visible machine can serve now. */
   readonly providers: ReadonlyArray<CatalogProvider>;
   readonly machines: ReadonlyArray<CatalogMachine>;
-  /** Instance policy: disabled model ids, bare (`opus`) or scoped (`p/opus`). */
-  readonly disabledModels: ReadonlyArray<string>;
   readonly defaultModel: string;
   /** Newest per-machine fetch across the pool; null = nothing fetched yet. */
   readonly fetchedAt: number | null;
@@ -428,28 +433,65 @@ export interface ProviderCatalog {
 
 export interface CatalogProvider {
   readonly name: string;
-  /** Instance policy — agents may use it (independent of machine readiness). */
-  readonly enabled: boolean;
-  /** Runner ids whose moxxy resolved credentials for this provider. */
+  /** Runner ids where it has credentials AND is enabled. */
   readonly machines: ReadonlyArray<string>;
+  /** Runner ids that have credentials for it but where it is switched off. */
+  readonly disabledOn: ReadonlyArray<string>;
   readonly models: ReadonlyArray<CatalogModel>;
 }
 
 export interface CatalogModel {
   readonly id: string;
   readonly contextWindow: number | null;
-  /** Runner ids that can serve this model. */
+  /** Runner ids that can serve this model right now. */
   readonly machines: ReadonlyArray<string>;
 }
 
-/** A machine's standing in the merged catalog — why it does (not) contribute. */
+/** A machine's own group: what its moxxy reported and what it allows. */
 export interface CatalogMachine {
   readonly id: string;
   readonly name: string;
   readonly online: boolean;
   /** When this machine's catalog was last fetched; null = never. */
   readonly fetchedAt: number | null;
+  /** Models this machine can serve right now (ready provider, enabled here). */
   readonly modelCount: number;
+  readonly providers: ReadonlyArray<CatalogMachineProvider>;
+  /**
+   * This machine's stored policy, verbatim. The page edits and sends back this
+   * list rather than rebuilding it from the switches: a disabled id may be
+   * bare or provider-scoped, and re-deriving it would silently rewrite one
+   * form into the other.
+   */
+  readonly policy: RunnerProviderPolicy;
+}
+
+export interface CatalogMachineProvider {
+  readonly name: string;
+  /** Credentials resolved on this machine. */
+  readonly ready: boolean;
+  /** This machine's policy: agents may use it here. */
+  readonly enabled: boolean;
+  readonly models: ReadonlyArray<CatalogMachineModel>;
+}
+
+export interface CatalogMachineModel {
+  readonly id: string;
+  readonly contextWindow: number | null;
+  /** This machine's policy: agents may use it here. */
+  readonly enabled: boolean;
+}
+
+/**
+ * One machine's provider policy. Scoped per runner because catalogs are: a
+ * provider can be credential-ready on one machine and absent on another, so an
+ * instance-wide list could not express "on here, not there". Full replacement
+ * on write; empty lists allow everything the machine can serve.
+ */
+export interface RunnerProviderPolicy {
+  readonly disabledProviders: ReadonlyArray<string>;
+  /** Model ids, bare (`opus`) or provider-scoped (`anthropic/opus`). */
+  readonly disabledModels: ReadonlyArray<string>;
 }
 
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */

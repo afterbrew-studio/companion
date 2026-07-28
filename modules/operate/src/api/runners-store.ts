@@ -1,5 +1,11 @@
 import type Database from 'better-sqlite3';
-import type { RunnerCatalog, RunnerKind, RunnerModelPins, RunnerScope } from '../contract/index.js';
+import type {
+  RunnerCatalog,
+  RunnerKind,
+  RunnerModelPins,
+  RunnerProviderPolicy,
+  RunnerScope,
+} from '../contract/index.js';
 
 /** The built-in runner: companiond's own machine. Always present, undeletable. */
 export const LOCAL_RUNNER_ID = 'runner-local';
@@ -20,6 +26,10 @@ export interface RunnerRow {
   model_pins: RunnerModelPins;
   /** Task ids this runner refuses (JSON array); empty = takes everything. */
   blocked_tasks: string[];
+  /** Provider names agents may not use on this machine (JSON array). */
+  disabled_providers: string[];
+  /** Model ids agents may not use here, bare or `provider/id` (JSON array). */
+  disabled_models: string[];
   /** Last-fetched provider/model catalog (JSON), or null. */
   catalog: RunnerCatalog | null;
   created_at: number;
@@ -62,6 +72,8 @@ export class RunnersStore {
       ...row,
       model_pins: parseJson<RunnerModelPins>(row.model_pins, {}),
       blocked_tasks: parseJson<string[]>(row.blocked_tasks, []),
+      disabled_providers: parseJson<string[]>(row.disabled_providers, []),
+      disabled_models: parseJson<string[]>(row.disabled_models, []),
       catalog: parseJson<RunnerCatalog | null>(row.catalog, null),
       workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [],
     };
@@ -157,6 +169,17 @@ export class RunnersStore {
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
   }
 
+  /** Replace which providers/models agents may use on this machine. */
+  setProviderPolicy(id: string, policy: RunnerProviderPolicy): void {
+    this.db
+      .prepare(`UPDATE runners SET disabled_providers = ?, disabled_models = ? WHERE id = ?`)
+      .run(
+        policy.disabledProviders.length ? JSON.stringify(policy.disabledProviders) : null,
+        policy.disabledModels.length ? JSON.stringify(policy.disabledModels) : null,
+        id,
+      );
+  }
+
   /** Cache a runner's freshly-probed provider/model catalog. */
   setCatalog(id: string, catalog: RunnerCatalog | null): void {
     this.db
@@ -183,9 +206,14 @@ export class RunnersStore {
 }
 
 /** Row as SQLite returns it — JSON columns are still strings here. */
-type RawRunnerRow = Omit<RunnerRow, 'workspace_ids' | 'model_pins' | 'blocked_tasks' | 'catalog'> & {
+type RawRunnerRow = Omit<
+  RunnerRow,
+  'workspace_ids' | 'model_pins' | 'blocked_tasks' | 'disabled_providers' | 'disabled_models' | 'catalog'
+> & {
   model_pins: string;
   blocked_tasks: string | null;
+  disabled_providers: string | null;
+  disabled_models: string | null;
   catalog: string | null;
 };
 

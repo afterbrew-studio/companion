@@ -150,4 +150,43 @@ export default defineMigrations([
       // SQLite can't drop columns portably; harmless to keep on rollback.
     },
   },
+  {
+    // Per-runner provider policy: JSON arrays of disabled provider names and
+    // model ids, NULL = allows everything that machine can serve. Catalogs are
+    // per machine, so the policy that hides parts of them has to be too.
+    version: 5,
+    name: 'runners_provider_policy',
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE runners ADD COLUMN disabled_providers TEXT`,
+        `ALTER TABLE runners ADD COLUMN disabled_models TEXT`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+      // Carry the superseded instance-wide lists onto every existing machine so
+      // an upgrade never silently widens what agents may use. NULL means "never
+      // scoped", which is what makes this safe to re-run and what leaves
+      // machines added later allowing everything. The settings rows stay put:
+      // unread from here on, and a rollback finds them intact.
+      try {
+        db.exec(`
+          UPDATE runners SET
+            disabled_providers = COALESCE(
+              disabled_providers, (SELECT value FROM settings WHERE key = 'disabledProviders')),
+            disabled_models = COALESCE(
+              disabled_models, (SELECT value FROM settings WHERE key = 'disabledModels'))
+          WHERE disabled_providers IS NULL OR disabled_models IS NULL
+        `);
+      } catch {
+        // settings table absent (module-core not migrated yet): nothing to carry
+      }
+    },
+    down: () => {
+      // SQLite can't drop columns portably; harmless to keep on rollback.
+    },
+  },
 ]);

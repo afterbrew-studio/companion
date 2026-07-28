@@ -51,6 +51,14 @@ const createRunnerSchema = z.object({
   blockedTasks: blockedTasks.optional(),
 });
 
+// One machine's provider policy. Full replacement; unknown names are allowed,
+// because a machine may list them again after a credential or catalog change
+// and the switch-off must survive until then.
+const providerPolicySchema = z.object({
+  disabledProviders: z.array(z.string().min(1).max(100)).max(100),
+  disabledModels: z.array(z.string().min(1).max(200)).max(500),
+});
+
 const updateRunnerSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   endpoint: z.string().url().max(300).optional(),
@@ -355,6 +363,23 @@ export default defineRoutes((ctx) => {
       },
     }),
 
+    route({
+      // Which of THIS machine's providers/models agents may use. Catalogs are
+      // per machine, so the policy over them is too: the same provider can be
+      // credential-ready here and absent next door. Gated like every other edit
+      // to a machine (own it, or hold runners:manage over the shared pool),
+      // which is why it lives under /api/runners rather than /api/providers.
+      method: 'PUT',
+      path: '/api/runners/:id/providers',
+      access: 'runners:connect',
+      body: providerPolicySchema,
+      handler: ({ params, body, user }) => {
+        requireManageableRunner(user, params.id);
+        op.runners.setProviderPolicy(params.id, body);
+        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
+      },
+    }),
+
     /** Probe a runner's endpoint now — the "Test connection" action. */
     route({
       method: 'POST',
@@ -394,33 +419,17 @@ export default defineRoutes((ctx) => {
     // ---------- moxxy status + provider/model settings ---------------------------
 
     route({
-      // Every machine's catalog merged into one list. A pure read that answers
-      // from cache and nudges a background top-up; whatever it finds reaches the
-      // page over `runners.changed`.
+      // One group per machine plus the merged effective set. A pure read that
+      // answers from cache and nudges a background top-up; whatever it finds
+      // reaches the page over `runners.changed`.
       method: 'GET',
       path: '/api/providers',
       access: 'settings:manage',
-      handler: () => {
+      handler: ({ user }) => {
         // Self-limiting: unforced refreshes are no-ops while catalogs are
         // within their TTL, so opening the page costs nothing on the machines.
-        void op.runners.refreshAllCatalogs(false);
-        return op.runners.catalogSnapshot(ctx.config.defaultModel);
-      },
-    }),
-
-    route({
-      // Instance policy: which providers/models agents may use anywhere.
-      method: 'PUT',
-      path: '/api/providers',
-      access: 'settings:manage',
-      body: z.object({
-        disabledProviders: z.array(z.string().min(1).max(100)).max(100),
-        disabledModels: z.array(z.string().min(1).max(200)).max(500),
-      }),
-      handler: ({ body }) => {
-        settings.set('disabledProviders', JSON.stringify(body.disabledProviders));
-        settings.set('disabledModels', JSON.stringify(body.disabledModels));
-        return op.runners.catalogSnapshot(ctx.config.defaultModel);
+        void op.runners.refreshAllCatalogs(false, user?.username ?? null);
+        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
       },
     }),
 
@@ -429,9 +438,9 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/providers/refresh',
       access: 'settings:manage',
-      handler: async () => {
-        await op.runners.refreshAllCatalogs();
-        return op.runners.catalogSnapshot(ctx.config.defaultModel);
+      handler: async ({ user }) => {
+        await op.runners.refreshAllCatalogs(true, user?.username ?? null);
+        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
       },
     }),
 

@@ -18,9 +18,11 @@ import {
 } from '@moxxy/companion-ui';
 import { useAuth } from '@companion/module-core/client';
 import type {
+  ModelCatalogModel,
   RunnerCatalog,
   RunnerModelPins,
   RunnerPinnableKind,
+  RunnerProviderPolicy,
   RunnerRecord,
   RunnerStatus,
   RunTaskDescriptor,
@@ -646,24 +648,40 @@ const PIN_LABELS: Record<RunnerPinnableKind, string> = {
   assistant: 'AI Help',
 };
 
-/** Per-action model dropdowns, options drawn from the runner's ready models. */
+/**
+ * Models this machine would actually run: credential-ready providers, minus
+ * what its own provider policy switches off. Deduplicated by id.
+ */
+export function usableModels(
+  catalog: RunnerCatalog | null,
+  policy: RunnerProviderPolicy,
+): ModelCatalogModel[] {
+  return Array.from(
+    new Map(
+      (catalog?.providers ?? [])
+        .filter((p) => p.ready && !policy.disabledProviders.includes(p.name))
+        .flatMap((p) =>
+          p.models
+            .filter((m) => !policy.disabledModels.includes(m.id) && !policy.disabledModels.includes(`${p.name}/${m.id}`))
+            .map((m) => [m.id, m] as const),
+        ),
+    ).values(),
+  );
+}
+
+/** Per-action model dropdowns, options drawn from the runner's usable models. */
 export function ModelPinsEditor({
   catalog,
+  policy,
   pins,
   onChange,
 }: {
   catalog: RunnerCatalog | null;
+  policy: RunnerProviderPolicy;
   pins: RunnerModelPins;
   onChange: (next: RunnerModelPins) => void;
 }): JSX.Element {
-  // Ready models across the runner's providers, de-duplicated by id.
-  const models = Array.from(
-    new Map(
-      (catalog?.providers ?? [])
-        .filter((p) => p.ready)
-        .flatMap((p) => p.models.map((m) => [m.id, m] as const)),
-    ).values(),
-  );
+  const models = usableModels(catalog, policy);
 
   if (models.length === 0) {
     return (
