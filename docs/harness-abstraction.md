@@ -55,6 +55,28 @@ is for. `result` carries `usage` broken down by cache plus `total_cost_usd`, so
 the spend ceiling keeps working. `--input-format stream-json` accepts further
 turns, so a session is not one prompt.
 
+Six field-level details, all measured, each of which is the difference between a
+harness that works and one that quietly lies:
+
+- **`is_error` is absent on success**, and `true` on failure. It is not `false`.
+  A harness that tests for the key's presence marks every successful tool call
+  as failed.
+- **`system/init` repeats per turn**, not once per session. Two prompts down one
+  `--input-format stream-json` process produce two `init` frames under one
+  `session_id`, so session info is a per-turn refresh rather than a handshake.
+- **`rate_limit_event` fires during a perfectly healthy turn** with
+  `rate_limit_info.status: "allowed"`. Only a non-allowed status is an error.
+  Treating the frame itself as one puts a spurious warning in every transcript.
+- **The stream is genuinely out of lockstep.** `assistant` frames arrive one per
+  content block, and a result for call 1 can land while call 2's arguments are
+  still streaming. Position cannot pair a result with its call; `tool_use_id`
+  can, and does.
+- **`stop_reason` arrives late**, on `message_delta`, after the per-block
+  `assistant` frames it describes. Nothing in Companion reads `stopReason`
+  today, so this costs nothing yet and will need a deferred flush when it does.
+- **The prompt is never echoed.** moxxy emits `user_prompt`; Claude Code does
+  not. That event is Companion's to synthesize from what it sent.
+
 **Codex** was measured only as far as its vocabulary, because the CLI on the
 machine used for this could not complete a turn: its model cache is corrupt
 (`missing field supports_reasoning_summaries`) and a ChatGPT account rejected the
@@ -93,12 +115,38 @@ having one. Claude Code reports cost directly. Codex is unverified.
 
 Each phase is shippable on its own and leaves the tree working.
 
-### 1. Prove the mapping before refactoring anything
+### 1. Prove the mapping before refactoring anything (done, it holds)
 
 Write a throwaway adapter that reads Claude Code's stream-json and emits our
 event shape, run the same prompt through both it and moxxy, and compare the
 transcripts. No production code changes. If the vocabulary does not survive
 this, the rest of the plan is wrong and it costs a day to find out.
+
+**It survived.** One prompt ("read alpha.txt, beta.txt and gamma.txt, then say
+which existed"; gamma does not exist, so the turn contains two tool successes
+and one tool failure) was run through Claude Code and through moxxy, and both
+transcripts were folded by the real `fold.ts`. They fold to the same block
+stream: the same user prompt, the same three tool blocks, the failure on the
+same call, the same final answer. Claude Code additionally produced `reasoning`
+blocks, which moxxy's provider did not emit on that run but which the vocabulary
+and the fold already handle. Every event type the adapter emitted was one
+`fold.ts` already knew, so nothing landed on the `default: break` arm.
+
+The pairing claim was checked against the thing it could be confused with. An
+adapter that pairs the nth result with the nth call agrees with the real one on
+the untouched capture, so the capture alone proves nothing. Permuting the
+`tool_result` frames leaves the id-reading adapter's output identical and moves
+the order-reading one's failure onto the wrong file; swapping two `tool_use_id`
+values moves the id-reading adapter's failure and leaves the order-reading one
+unmoved. Deleting `is_error` from the failing result makes that call succeed
+even though its text still reads "File does not exist", and flipping
+`rate_limit_info.status` from `allowed` to `rejected` is what turns a silent
+frame into a warning. In every case the transcript follows the field, not the
+prose.
+
+What this does not prove: Codex, which is still unmeasured; and the per-call
+approval round trip, which neither candidate offers and which no adapter can
+invent.
 
 ### 2. Split the contract
 
