@@ -12,6 +12,7 @@ import { redactTarget } from './delivery.js';
 interface ChannelRow {
   id: string;
   workspace_id: string | null;
+  user_id: string | null;
   kind: string;
   name: string;
   url: string;
@@ -41,6 +42,7 @@ interface DeliveryRow {
 export interface ChannelTarget {
   readonly id: string;
   readonly workspaceId: string | null;
+  readonly userId: string | null;
   readonly kind: NotifyChannelKind;
   readonly name: string;
   readonly url: string;
@@ -53,6 +55,7 @@ function rowToChannel(row: ChannelRow): NotifyChannelRecord {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    userId: row.user_id,
     kind: row.kind as NotifyChannelKind,
     name: row.name,
     targetHint: redactTarget(row.url),
@@ -71,6 +74,7 @@ function rowToTarget(row: ChannelRow): ChannelTarget {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    userId: row.user_id,
     kind: row.kind as NotifyChannelKind,
     name: row.name,
     url: row.url,
@@ -106,12 +110,13 @@ export class NotifyStore {
   insert(channel: ChannelTarget & { createdAt: number; updatedAt: number }): void {
     this.db
       .prepare(
-        `INSERT INTO notify_channels (id, workspace_id, kind, name, url, secret, kinds, enabled, created_at, updated_at)
-         VALUES (@id, @workspaceId, @kind, @name, @url, @secret, @kinds, @enabled, @createdAt, @updatedAt)`,
+        `INSERT INTO notify_channels (id, workspace_id, user_id, kind, name, url, secret, kinds, enabled, created_at, updated_at)
+         VALUES (@id, @workspaceId, @userId, @kind, @name, @url, @secret, @kinds, @enabled, @createdAt, @updatedAt)`,
       )
       .run({
         id: channel.id,
         workspaceId: channel.workspaceId,
+        userId: channel.userId,
         kind: channel.kind,
         name: channel.name,
         url: channel.url,
@@ -187,14 +192,20 @@ export class NotifyStore {
    * instance-wide notification reaches only the instance-wide channels, because
    * routing it into one team's Slack would be a surprise.
    */
-  targetsFor(workspaceId: string | null): ChannelTarget[] {
-    const rows = (
-      workspaceId === null
-        ? this.db.prepare(`SELECT * FROM notify_channels WHERE enabled = 1 AND workspace_id IS NULL`).all()
-        : this.db
-            .prepare(`SELECT * FROM notify_channels WHERE enabled = 1 AND (workspace_id IS NULL OR workspace_id = ?)`)
-            .all(workspaceId)
-    ) as ChannelRow[];
+  targetsFor(workspaceId: string | null, userId: string | null): ChannelTarget[] {
+    // Recipient matching is 1:1 and deliberately not a superset relation. A
+    // shared channel carries workspace-wide events only; a personal one carries
+    // only what names its owner. Letting either take both would make every
+    // personal destination a firehose of everyone's work, which is the exact
+    // thing per-recipient routing exists to prevent.
+    const owner = userId === null ? 'user_id IS NULL' : 'user_id = ?';
+    const scope = workspaceId === null ? 'workspace_id IS NULL' : '(workspace_id IS NULL OR workspace_id = ?)';
+    const params: string[] = [];
+    if (userId !== null) params.push(userId);
+    if (workspaceId !== null) params.push(workspaceId);
+    const rows = this.db
+      .prepare(`SELECT * FROM notify_channels WHERE enabled = 1 AND ${owner} AND ${scope}`)
+      .all(...params) as ChannelRow[];
     return rows.map(rowToTarget);
   }
 

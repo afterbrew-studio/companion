@@ -12,6 +12,12 @@ export interface NotificationInput {
   readonly title: string;
   readonly body?: string;
   readonly href?: string | null;
+  /**
+   * Whom this concerns. Omit for an event the whole workspace should see, which
+   * is the default and covers every instance-wide alert. Naming someone narrows
+   * the inbox to them and is what an outbound personal channel matches on.
+   */
+  readonly userId?: string | null;
 }
 
 /**

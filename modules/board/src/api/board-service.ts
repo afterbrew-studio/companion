@@ -1306,6 +1306,14 @@ ${acceptance}${previous}${specSection}
     this.clearBlocker(taskId, 'github');
   }
 
+  /**
+   * Tell the person whose card this is.
+   *
+   * The name was aspirational until notifications had a recipient: this emitted to
+   * the whole workspace, so everyone got everyone's card updates and a personal
+   * outbound channel was impossible. Addressed to `createdBy`, which falls back to
+   * the workspace-wide meaning when a card has no owner (imported, or seeded).
+   */
   private notifyUser(task: TaskRecord, kind: 'finished' | 'error' | 'info' | 'action_required', title: string, body: string, href: string): void {
     this.notify.emit({
       kind,
@@ -1314,6 +1322,7 @@ ${acceptance}${previous}${specSection}
       title,
       body,
       href,
+      userId: task.createdBy ?? null,
     });
   }
 }

@@ -21,6 +21,6 @@ export default defineManifest({
   // Delivery targets are credentials pointed at third parties; an instance
   // should acquire them deliberately, never by upgrading.
   autoInstall: false,
-  permissions: ['notify:read', 'notify:manage'],
+  permissions: ['notify:read', 'notify:manage', 'notify:self'],
   messages: ['notify.changed'],
 });

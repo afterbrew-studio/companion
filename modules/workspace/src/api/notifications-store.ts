@@ -13,8 +13,8 @@ export class NotificationsStore {
   insert(n: Omit<NotificationRecord, 'readAt'>): void {
     this.db
       .prepare(
-        `INSERT INTO notifications (id, workspace_id, repo, kind, title, body, href, created_at)
-         VALUES (@id, @workspaceId, @repo, @kind, @title, @body, @href, @createdAt)`,
+        `INSERT INTO notifications (id, workspace_id, repo, kind, title, body, href, user_id, created_at)
+         VALUES (@id, @workspaceId, @repo, @kind, @title, @body, @href, @userId, @createdAt)`,
       )
       .run({ ...n, repo: n.repo ?? NON_REPO_SCOPE });
     // Keep the inbox bounded — anything past 30 days is stale.
@@ -32,6 +32,12 @@ export class NotificationsStore {
     workspaceId: string | null | undefined,
     limit = 100,
     accessibleIds?: readonly string[],
+    /**
+     * The reader. An addressed notification is theirs alone; passing undefined
+     * keeps the unrestricted internal view. Applied on TOP of workspace scoping
+     * rather than instead of it: being named does not grant repo access.
+     */
+    viewer?: string,
   ): NotificationRecord[] {
     let rows: unknown[];
     if (workspaceId) {
@@ -50,7 +56,11 @@ export class NotificationsStore {
         .prepare(`SELECT * FROM notifications WHERE repo IS NOT NULL AND (workspace_id IS NULL ${cond}) ORDER BY created_at DESC LIMIT ?`)
         .all(...accessibleIds, limit);
     }
-    return (rows as NotificationRow[]).map(rowToNotification);
+    const visible =
+      viewer === undefined
+        ? (rows as NotificationRow[])
+        : (rows as NotificationRow[]).filter((row) => row.user_id === null || row.user_id === viewer);
+    return visible.map(rowToNotification);
   }
 
   markRead(id: string): void {
@@ -85,6 +95,7 @@ interface NotificationRow {
   title: string;
   body: string;
   href: string | null;
+  user_id: string | null;
   read_at: number | null;
   created_at: number;
 }
@@ -98,6 +109,7 @@ function rowToNotification(row: NotificationRow): NotificationRecord {
     title: row.title,
     body: row.body,
     href: row.href,
+    userId: row.user_id,
     readAt: row.read_at,
     createdAt: row.created_at,
   };

@@ -149,13 +149,14 @@ someone hits it.
 off a single `notification.raised` bus event that every `ctx.notify.emit`
 raises. No new dependency: all four destinations are one HTTP POST.
 
-Still open, and both small: **delivery is not durable.** A destination that is
-down through both attempts loses that notification (it stays in the inbox, and
-the failure is in the delivery log, but nothing replays it). And there is **no
-per-recipient routing** — channels are scoped to a workspace and a set of
-notification kinds, not to a person, so "tell Ana about her runs" is not
-expressible. Both need a queue or a user-channel table; neither is worth one
-until an instance asks.
+Per-recipient routing is **built**: notifications carry an optional recipient,
+channels carry an optional owner, and delivery matches them 1:1 so a personal
+destination never becomes a firehose. `notify:self` lets anyone wire up their own.
+
+Still open: **delivery is not durable.** A destination down through both attempts
+loses that notification (it stays in the inbox, and the failure is in the delivery
+log, but nothing replays it). That needs a queue, and is not worth one until an
+instance asks.
 
 ## 9. Operator health signals `[BUILT]`
 

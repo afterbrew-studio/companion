@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import { badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import '../contract/index.js';
 
@@ -54,6 +54,9 @@ export default defineRoutes((ctx) => {
     const channel = notify.get(id);
     if (!channel) throw notFound('channel not found');
     requireScope(user, channel.workspaceId);
+    // Somebody else's personal channel reads as absent, the house convention. Its
+    // existence is not the caller's business, and neither is its destination.
+    if (channel.userId !== null && channel.userId !== user?.username) throw notFound('channel not found');
   };
 
   return [
@@ -61,14 +64,49 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/notify/channels',
       access: 'notify:read',
-      handler: () => ({ channels: notify.list() }),
+      handler: () => ({ channels: notify.listShared() }),
+    }),
+
+    /**
+     * Your own channels. A separate route with its own permission rather than a
+     * branch inside the one above: someone who may wire up their own destination
+     * need not be able to see the team's, and the router should say so.
+     */
+    route({
+      method: 'GET',
+      path: '/api/notify/channels/mine',
+      access: 'notify:self',
+      handler: ({ user }) => ({ channels: notify.listOwnedBy(user?.username ?? null) }),
     }),
 
     route({
       method: 'GET',
       path: '/api/notify/deliveries',
       access: 'notify:read',
-      handler: () => ({ deliveries: notify.deliveries() }),
+      // Data scoping, not an auth decision: the log names channels, and another
+      // person's personal one is not this reader's to see.
+      handler: ({ user }) => ({ deliveries: notify.deliveriesFor(user?.username ?? null) }),
+    }),
+
+    /**
+     * A channel of your own. Separate route rather than a branch inside the
+     * shared one, so the authority difference is declared where the router can
+     * see it instead of being re-derived in a handler: wiring up your own
+     * destination is not the same act as configuring the team's.
+     *
+     * The owner is taken from the session, never from the body, so this cannot be
+     * used to create a channel that delivers somebody else's work somewhere.
+     */
+    route({
+      method: 'POST',
+      path: '/api/notify/channels/mine',
+      access: 'notify:self',
+      body: createSchema,
+      handler: ({ body, user }) => {
+        if (!user) throw badRequest('a personal channel needs a signed-in owner');
+        requireScope(user, body.workspaceId);
+        return created({ channel: notify.create({ ...body, userId: user.username }) });
+      },
     }),
 
     route({
@@ -78,7 +116,7 @@ export default defineRoutes((ctx) => {
       body: createSchema,
       handler: ({ body, user }) => {
         requireScope(user, body.workspaceId);
-        return created({ channel: notify.create(body) });
+        return created({ channel: notify.create({ ...body, userId: null }) });
       },
     }),
 

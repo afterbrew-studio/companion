@@ -31,6 +31,7 @@ export class NotificationsService implements NotificationEmitter {
       title: input.title,
       body: input.body ?? '',
       href: input.href ?? null,
+      userId: input.userId ?? null,
       readAt: null,
       createdAt: Date.now(),
     };
@@ -50,8 +51,10 @@ export class NotificationsService implements NotificationEmitter {
     workspaceId: string | null | undefined,
     limit = 100,
     accessibleIds?: readonly string[],
+    /** The reader; an addressed notification is theirs alone. */
+    viewer?: string,
   ): NotificationRecord[] {
-    return this.store.list(workspaceId, limit, accessibleIds);
+    return this.store.list(workspaceId, limit, accessibleIds, viewer);
   }
 
   markRead(id: string): void {

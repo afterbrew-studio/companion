@@ -10,10 +10,13 @@ export default defineAcl({
   permissions: [
     { id: 'notify:read', title: 'View outbound notification channels' },
     { id: 'notify:manage', title: 'Configure outbound notification channels' },
+    { id: 'notify:self', title: 'Send your own notifications to a channel you own' },
   ],
   grants: {
     admin: '*',
-    maintainer: ['notify:read'],
-    business: [],
+    maintainer: ['notify:read', 'notify:self'],
+    // Same shape as runners:connect: anyone may wire up their OWN destination
+    // without being able to touch a shared one.
+    business: ['notify:self'],
   },
 });

@@ -43,4 +43,24 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    /**
+     * Whose channel this is. NULL is a shared channel and keeps today's meaning.
+     * A value makes it personal, and personal means it carries only what is
+     * addressed to that person: a channel that received both would be the
+     * firehose this was built to avoid.
+     */
+    version: 2,
+    name: 'notify_channel_owner',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE notify_channels ADD COLUMN user_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE notify_channels DROP COLUMN user_id`);
+    },
+  },
 ]);

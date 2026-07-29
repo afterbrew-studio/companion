@@ -142,6 +142,12 @@ export interface NotificationRecord {
   readonly workspaceId: string | null;
   /** Repo access required to read this notification; null for workspace/platform events. */
   readonly repo: string | null;
+  /**
+   * Whom this concerns. null means everyone who can see the workspace, which is
+   * every notification the product raised before this existed. A value narrows
+   * the inbox to that person AND is what an outbound personal channel matches on.
+   */
+  readonly userId: string | null;
   readonly kind: NotificationKind;
   readonly title: string;
   readonly body: string;

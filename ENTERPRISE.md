@@ -344,7 +344,24 @@ companion module install notify        # then add channels under Admin → Notif
 
 It subscribes to a single bus event that every `ctx.notify.emit` raises, so a
 module that starts raising notifications later is delivered without a change
-here. Properties that matter operationally:
+here.
+
+**Channels are shared or personal, never both.** A notification carries an
+optional recipient; a channel carries an optional owner; delivery matches them 1:1.
+A team channel therefore receives workspace-wide events only, and a personal one
+receives only what names its owner. Letting either take both would make every
+personal destination a firehose of everybody's work, which is the thing this
+exists to avoid. Board card updates are addressed to the card's owner; instance
+alerts (budget, runner offline, credential health) are unaddressed and go to the
+team.
+
+A person wires up their own destination with `notify:self`, which every role
+holds, on the same reasoning as `runners:connect`: configuring your own is not the
+same authority as configuring the team's. The owner is taken from the session and
+never from the request, so a personal channel cannot be pointed at somebody else's
+work. Somebody else's personal channel reads as absent.
+
+Properties that matter operationally:
 
 - **Delivery cannot fail the thing it reports.** The inbox row is durable before
   any request is made; a dead destination is recorded, never thrown.

@@ -87,4 +87,27 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    /**
+     * Whom a notification concerns. NULL keeps today's meaning: everyone who can
+     * see the workspace. A value narrows it to one person, which is what lets an
+     * outbound channel be personal instead of a firehose of everybody's work.
+     */
+    version: 4,
+    name: 'notifications_recipient',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE notifications ADD COLUMN user_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      try {
+        db.exec(`ALTER TABLE notifications DROP COLUMN user_id`);
+      } catch {
+        // Older SQLite cannot drop a column; it is nullable, so leaving it is inert.
+      }
+    },
+  },
 ]);

@@ -248,7 +248,8 @@ export default defineRoutes((ctx) => {
       access: 'workspaces:read',
       handler: async ({ query, user }) => {
         const s = scope(user, query.get('workspace'));
-        const items = notifications.list(s.workspaceId, 100, s.accessibleIds);
+        // The reader, so a notification addressed to somebody else stays theirs.
+        const items = notifications.list(s.workspaceId, 100, s.accessibleIds, user?.username);
         const code = codeAccess();
         if (!code) return { notifications: items.filter((item) => item.repo === null) };
         const checks = new Map<string, Promise<boolean>>();

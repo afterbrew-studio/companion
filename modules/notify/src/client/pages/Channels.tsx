@@ -29,6 +29,13 @@ const KIND_OPTIONS: ReadonlyArray<{ value: NotifyChannelKind; label: string; hin
   { value: 'webhook', label: 'Webhook', hint: 'Your own endpoint, optionally HMAC-signed' },
 ];
 
+/**
+ * Stands in for "the signed-in user" when creating a personal channel. The server
+ * reads the owner from the session and ignores whatever arrives in the body, so
+ * this only has to be non-null to pick the personal route.
+ */
+const SELF = 'self';
+
 const NOTIFICATION_KINDS: ReadonlyArray<{ value: NotificationKind; label: string }> = [
   { value: 'action_required', label: 'Action required' },
   { value: 'error', label: 'Errors' },
@@ -157,9 +164,13 @@ function ChannelRow({
           <span className="text-sm font-medium">{channel.name}</span>
           <MetaSignal tone="zinc" label={kind?.label ?? channel.kind} />
           {channel.signed ? <MetaSignal tone="green" label="signed" title="Body is HMAC-signed" /> : null}
+          {channel.userId !== null ? (
+            <MetaSignal tone="zinc" label="just you" title="Carries only events addressed to you" />
+          ) : null}
         </div>
         <p className="dim mt-0.5 font-mono text-xs">{channel.targetHint}</p>
         <p className="dim mt-0.5 text-xs">
+          {channel.userId === null ? 'team' : 'personal'} ·{' '}
           {channel.workspaceId === null ? 'every workspace' : 'one workspace'} ·{' '}
           {channel.kinds.length === 0
             ? 'all notification kinds'
@@ -198,6 +209,7 @@ function ChannelForm({
   busy: boolean;
   onSubmit: (draft: {
     workspaceId: null;
+    userId: string | null;
     kind: NotifyChannelKind;
     name: string;
     url: string;
@@ -212,6 +224,7 @@ function ChannelForm({
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
   const [kinds, setKinds] = useState<NotificationKind[]>([]);
+  const [mine, setMine] = useState(false);
 
   const toggleKind = (value: NotificationKind): void =>
     setKinds((current) => (current.includes(value) ? current.filter((k) => k !== value) : [...current, value]));
@@ -223,6 +236,9 @@ function ChannelForm({
         e.preventDefault();
         void onSubmit({
           workspaceId: null,
+          // Marker rather than a username: the server takes the owner from the
+          // session, so a client can never address a channel at someone else.
+          userId: mine ? SELF : null,
           kind,
           name: name.trim(),
           url: url.trim(),
@@ -232,6 +248,25 @@ function ChannelForm({
         });
       }}
     >
+      <Field
+        label="Who is this for"
+        hint={
+          mine
+            ? 'Only events addressed to you, such as your own board cards. Nobody else’s work reaches it.'
+            : 'Workspace-wide events only. Personal card updates go to personal channels instead.'
+        }
+      >
+        <SegmentedControl
+          value={mine ? 'mine' : 'shared'}
+          onChange={(v) => setMine(v === 'mine')}
+          options={[
+            { value: 'shared', label: 'The team' },
+            { value: 'mine', label: 'Just me' },
+          ]}
+          label="Channel audience"
+          name="notify-audience"
+        />
+      </Field>
       <Field label="Destination">
         <SegmentedControl value={kind} onChange={setKind} options={KIND_OPTIONS} label="Channel kind" name="notify-kind" />
       </Field>

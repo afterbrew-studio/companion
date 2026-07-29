@@ -9,6 +9,7 @@ declare module '@moxxy/companion-contracts' {
   interface PermissionRegistry {
     'notify:read': true;
     'notify:manage': true;
+    'notify:self': true;
   }
   interface ServerMessageRegistry {
     'notify.changed': Record<never, never>;
@@ -34,6 +35,12 @@ export type NotifyDeliveryStatus = 'delivered' | 'failed';
  */
 export interface NotifyChannelRecord {
   readonly id: string;
+  /**
+   * Whose channel this is. null is shared and carries only workspace-wide events;
+   * a value makes it personal and carries only what is addressed to that person.
+   * The two never overlap, so nobody's channel is a firehose of everyone's work.
+   */
+  readonly userId: string | null;
   /** Workspace whose notifications this delivers; null = every workspace. */
   readonly workspaceId: string | null;
   readonly kind: NotifyChannelKind;
@@ -55,6 +62,8 @@ export interface NotifyChannelRecord {
 /** Create/update payload. `url` and `secret` are write-only. */
 export interface NotifyChannelDraft {
   readonly workspaceId: string | null;
+  /** Omit for a shared channel; a personal one is always owned by the caller. */
+  readonly userId?: string | null;
   readonly kind: NotifyChannelKind;
   readonly name: string;
   readonly url: string;

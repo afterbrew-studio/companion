@@ -27,14 +27,21 @@ export function useChannels(): ChannelsState {
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const [c, d] = await Promise.all([api.channels(), api.deliveries()]);
-      setChannels(c.channels);
-      setDeliveries(d.deliveries);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    // Two lists, two permissions. Either may be refused, and being refused one is
+    // not an error worth a banner: a person who may only wire up their own
+    // destination should still see it.
+    const [shared, mine, log] = await Promise.all([
+      api.channels().then((r) => r.channels).catch(() => null),
+      api.myChannels().then((r) => r.channels).catch(() => null),
+      api.deliveries().then((r) => r.deliveries).catch(() => null),
+    ]);
+    if (shared === null && mine === null) {
+      setError('you do not have access to any notification channels');
+      return;
     }
+    setChannels([...(shared ?? []), ...(mine ?? [])]);
+    setDeliveries(log ?? []);
+    setError(null);
   }, []);
   useLive(refresh, (msg) => msg.t === 'notify.changed');
 
@@ -59,7 +66,9 @@ export function useChannels(): ChannelsState {
     deliveries,
     error,
     busy,
-    create: (draft) => run('create', () => api.create(draft)),
+    create: (draft) =>
+      // Owning it decides which route, and therefore which permission is checked.
+      run('create', () => (draft.userId === undefined || draft.userId === null ? api.create(draft) : api.createMine(draft))),
     update: (id, fields) => run(id, () => api.update(id, fields)),
     remove: (id) => run(id, () => api.remove(id)),
     test: (id) => run(id, () => api.test(id)),

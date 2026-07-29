@@ -30,8 +30,14 @@ export class NotifyService {
 
   // ---------- channels --------------------------------------------------------------
 
-  list(): NotifyChannelRecord[] {
-    return this.store.list();
+  /** The team's channels. A personal one belongs to its owner, not to this list. */
+  listShared(): NotifyChannelRecord[] {
+    return this.store.list().filter((c) => c.userId === null);
+  }
+
+  listOwnedBy(userId: string | null): NotifyChannelRecord[] {
+    if (userId === null) return [];
+    return this.store.list().filter((c) => c.userId === userId);
   }
 
   get(id: string): NotifyChannelRecord | undefined {
@@ -44,6 +50,7 @@ export class NotifyService {
     this.store.insert({
       id,
       workspaceId: draft.workspaceId,
+      userId: draft.userId ?? null,
       kind: draft.kind,
       name: draft.name,
       url: draft.url,
@@ -81,6 +88,12 @@ export class NotifyService {
     return this.store.deliveries(limit);
   }
 
+  /** The log, minus attempts against somebody else's personal channel. */
+  deliveriesFor(userId: string | null, limit?: number): NotifyDeliveryRecord[] {
+    const mine = new Set(this.store.list().filter((c) => c.userId === null || c.userId === userId).map((c) => c.id));
+    return this.store.deliveries(limit).filter((d) => mine.has(d.channelId));
+  }
+
   // ---------- delivery --------------------------------------------------------------
 
   /** Does this channel carry this notification? An empty filter carries every kind. */
@@ -94,7 +107,9 @@ export class NotifyService {
    * delay or suppress a working one.
    */
   async fanOut(notification: NotificationRecord): Promise<void> {
-    const targets = this.store.targetsFor(notification.workspaceId).filter((t) => this.accepts(t, notification));
+    const targets = this.store
+      .targetsFor(notification.workspaceId, notification.userId)
+      .filter((t) => this.accepts(t, notification));
     if (targets.length === 0) return;
     await Promise.all(targets.map((target) => this.send(target, notification)));
     this.changed();
@@ -142,6 +157,9 @@ export class NotifyService {
     const probe: NotificationRecord = {
       id: `test-${randomUUID().slice(0, 8)}`,
       workspaceId: target.workspaceId,
+      // Addressed as the channel is, or a personal channel would never match its
+      // own test and would report "works" by not being tried.
+      userId: target.userId,
       repo: null,
       kind: 'info',
       title: 'Companion test notification',
