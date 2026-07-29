@@ -1,0 +1,155 @@
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import test from 'node:test';
+import { buildRequest, deliver, redactTarget } from '../dist/api/delivery.js';
+
+const NOTIFICATION = {
+  id: 'n1',
+  workspaceId: 'ws1',
+  repo: 'acme/app',
+  kind: 'action_required',
+  title: 'Pull request needs a decision',
+  body: 'PR #12 scored 82 on slop detection.',
+  href: '#/slop/slop-abc',
+  readAt: null,
+  createdAt: 1_700_000_000_000,
+};
+
+// ---------- redaction ----------
+
+test('a destination URL is reduced to host plus one path segment', () => {
+  const hint = redactTarget('https://hooks.slack.com/services/T000/B111/xxxxSECRETxxxx');
+  assert.equal(hint, 'hooks.slack.com/services/…');
+  assert.doesNotMatch(hint, /SECRET/);
+});
+
+test('a URL with no path redacts to the bare host', () => {
+  assert.equal(redactTarget('https://example.com'), 'example.com');
+});
+
+test('a malformed stored URL is reported, never echoed back', () => {
+  assert.equal(redactTarget('not a url'), 'invalid URL');
+});
+
+// ---------- payload shapes ----------
+
+test('slack gets a text field', () => {
+  const req = buildRequest('slack', 'https://hooks.slack.com/x', NOTIFICATION);
+  const body = JSON.parse(req.body);
+  assert.match(body.text, /Pull request needs a decision/);
+  assert.match(body.text, /slop detection/);
+});
+
+test('discord gets a content field, clipped under the platform limit', () => {
+  const long = { ...NOTIFICATION, body: 'x'.repeat(5000) };
+  const body = JSON.parse(buildRequest('discord', 'https://discord.com/api/webhooks/x', long).body);
+  assert.ok(body.content.length <= 1900);
+});
+
+test('ntfy posts to the origin with the topic taken from the path', () => {
+  const req = buildRequest('ntfy', 'https://ntfy.sh/my-topic', NOTIFICATION);
+  // The topic travels in the body, not a header, so a non-ASCII title needs no
+  // hand-rolled encoding.
+  assert.equal(req.url, 'https://ntfy.sh');
+  const body = JSON.parse(req.body);
+  assert.equal(body.topic, 'my-topic');
+  assert.equal(body.title, NOTIFICATION.title);
+});
+
+test('a webhook carries the whole record', () => {
+  const body = JSON.parse(buildRequest('webhook', 'https://example.com/hook', NOTIFICATION).body);
+  assert.equal(body.id, 'n1');
+  assert.equal(body.kind, 'action_required');
+  assert.equal(body.repo, 'acme/app');
+});
+
+// ---------- links ----------
+
+test('with no public URL configured, no link is invented', () => {
+  const body = JSON.parse(buildRequest('slack', 'https://hooks.slack.com/x', NOTIFICATION).body);
+  assert.doesNotMatch(body.text, /http/);
+});
+
+test('a configured public URL produces an absolute link, with no doubled slash', () => {
+  const req = buildRequest('slack', 'https://hooks.slack.com/x', NOTIFICATION, {
+    publicUrl: 'https://companion.corp/',
+  });
+  assert.match(JSON.parse(req.body).text, /https:\/\/companion\.corp\/#\/slop\/slop-abc/);
+});
+
+// ---------- signing ----------
+
+test('a signed webhook signs the exact bytes it sends', () => {
+  const req = buildRequest('webhook', 'https://example.com/hook', NOTIFICATION, { secret: 's3cret' });
+  const expected = `sha256=${createHmac('sha256', 's3cret').update(req.body).digest('hex')}`;
+  assert.equal(req.headers['x-companion-signature-256'], expected);
+});
+
+test('an unsigned webhook carries no signature header at all', () => {
+  const req = buildRequest('webhook', 'https://example.com/hook', NOTIFICATION);
+  assert.equal(req.headers['x-companion-signature-256'], undefined);
+});
+
+test('a secret set on a non-webhook kind never leaks into its request', () => {
+  const req = buildRequest('slack', 'https://hooks.slack.com/x', NOTIFICATION, { secret: 's3cret' });
+  assert.doesNotMatch(JSON.stringify(req), /s3cret/);
+});
+
+// ---------- delivery ----------
+
+const REQUEST = { url: 'https://example.com/hook', headers: {}, body: '{}' };
+
+test('a 2xx is one attempt and done', async () => {
+  let calls = 0;
+  const outcome = await deliver(REQUEST, async () => {
+    calls++;
+    return { ok: true, status: 204, statusText: 'No Content' };
+  });
+  assert.deepEqual(outcome, { ok: true, httpStatus: 204, error: null, attempts: 1 });
+  assert.equal(calls, 1);
+});
+
+test('a 404 is not retried, because retrying a wrong URL is just noise', async () => {
+  let calls = 0;
+  const outcome = await deliver(REQUEST, async () => {
+    calls++;
+    return { ok: false, status: 404, statusText: 'Not Found' };
+  });
+  assert.equal(calls, 1);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.httpStatus, 404);
+});
+
+test('a 503 is retried once and can succeed on the second attempt', async () => {
+  let calls = 0;
+  const outcome = await deliver(REQUEST, async () => {
+    calls++;
+    return calls === 1
+      ? { ok: false, status: 503, statusText: 'Service Unavailable' }
+      : { ok: true, status: 200, statusText: 'OK' };
+  });
+  assert.equal(calls, 2);
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.attempts, 2);
+});
+
+test('rate limiting is treated as transient', async () => {
+  let calls = 0;
+  await deliver(REQUEST, async () => {
+    calls++;
+    return { ok: false, status: 429, statusText: 'Too Many Requests' };
+  });
+  assert.equal(calls, 2);
+});
+
+test('a network error is retried and then reported, never thrown', async () => {
+  let calls = 0;
+  const outcome = await deliver(REQUEST, async () => {
+    calls++;
+    throw new Error('ECONNREFUSED');
+  });
+  assert.equal(calls, 2);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.httpStatus, null);
+  assert.match(outcome.error, /ECONNREFUSED/);
+});

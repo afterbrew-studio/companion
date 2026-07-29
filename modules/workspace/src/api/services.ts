@@ -17,7 +17,9 @@ export default defineServices((ctx) => {
   ctx.services.register('workspace', workspaces);
 
   const notificationsStore = new NotificationsStore(ctx.db);
-  const notifications = new NotificationsService(notificationsStore, ctx.broadcast);
+  const notifications = new NotificationsService(notificationsStore, ctx.broadcast, (event, payload) =>
+    ctx.bus.emit(event, payload),
+  );
   ctx.services.register('notifications', notifications);
 
   ctx.services.register('reports', new ReportsStore(ctx.db));

@@ -25,6 +25,9 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@companion/module-notify':
+        specifier: workspace:*
+        version: link:../../modules/notify
       '@companion/module-oidc':
         specifier: workspace:*
         version: link:../../modules/oidc
@@ -172,6 +175,9 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@companion/module-notify':
+        specifier: workspace:*
+        version: link:../../modules/notify
       '@companion/module-oidc':
         specifier: workspace:*
         version: link:../../modules/oidc
@@ -435,6 +441,43 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      better-sqlite3:
+        specifier: ^12.2.0
+        version: 12.11.1
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/notify:
+    dependencies:
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       zod:
         specifier: ^3.24.0
         version: 3.25.76

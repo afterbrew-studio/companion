@@ -1,0 +1,121 @@
+import { z } from 'zod';
+import { created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import type { AuthUser } from '@moxxy/companion-contracts';
+import '../contract/index.js';
+
+const notificationKinds = z.enum(['action_required', 'finished', 'error', 'info']);
+
+/**
+ * Only http(s) targets. A `file:` or `gopher:` destination is not a channel
+ * anyone meant to configure, and the daemon fetches this URL server-side.
+ */
+const targetUrl = z
+  .string()
+  .trim()
+  .url()
+  .max(2_000)
+  .refine((value) => /^https?:\/\//i.test(value), 'the destination must be an http(s) URL');
+
+const createSchema = z.object({
+  workspaceId: z.string().min(1).max(100).nullable().default(null),
+  kind: z.enum(['webhook', 'slack', 'discord', 'ntfy']),
+  name: z.string().trim().min(1).max(80),
+  url: targetUrl,
+  kinds: z.array(notificationKinds).max(4).default([]),
+  secret: z.string().max(500).optional(),
+  enabled: z.boolean().default(true),
+});
+
+const patchSchema = z.object({
+  workspaceId: z.string().min(1).max(100).nullable().optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  // Empty means "leave the stored credential alone": the form is never shown it.
+  url: z.union([targetUrl, z.literal('')]).optional(),
+  kinds: z.array(notificationKinds).max(4).optional(),
+  secret: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export default defineRoutes((ctx) => {
+  const notify = ctx.services.get('notify');
+  const workspace = ctx.services.get('workspace');
+
+  /**
+   * A channel scoped to a workspace the caller cannot reach reads as "not
+   * found", the house convention. Instance-wide channels (null) are
+   * administration and ride the route's own permission.
+   */
+  const requireScope = (user: AuthUser | null, workspaceId: string | null | undefined): void => {
+    if (workspaceId === null || workspaceId === undefined) return;
+    workspace.requireAccessible(user, workspaceId);
+  };
+
+  const requireChannel = (user: AuthUser | null, id: string): void => {
+    const channel = notify.get(id);
+    if (!channel) throw notFound('channel not found');
+    requireScope(user, channel.workspaceId);
+  };
+
+  return [
+    route({
+      method: 'GET',
+      path: '/api/notify/channels',
+      access: 'notify:read',
+      handler: () => ({ channels: notify.list() }),
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/notify/deliveries',
+      access: 'notify:read',
+      handler: () => ({ deliveries: notify.deliveries() }),
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/notify/channels',
+      access: 'notify:manage',
+      body: createSchema,
+      handler: ({ body, user }) => {
+        requireScope(user, body.workspaceId);
+        return created({ channel: notify.create(body) });
+      },
+    }),
+
+    route({
+      method: 'PATCH',
+      path: '/api/notify/channels/:id',
+      access: 'notify:manage',
+      body: patchSchema,
+      handler: ({ params, body, user }) => {
+        requireChannel(user, params.id);
+        requireScope(user, body.workspaceId);
+        return { channel: notify.update(params.id, body) };
+      },
+    }),
+
+    route({
+      method: 'DELETE',
+      path: '/api/notify/channels/:id',
+      access: 'notify:manage',
+      handler: ({ params, user }) => {
+        requireChannel(user, params.id);
+        notify.remove(params.id);
+        return { ok: true };
+      },
+    }),
+
+    // Proving a channel works must not require waiting for a real event. A dead
+    // destination answers 200 with a failed status, not an HTTP error: the
+    // caller asked "does this work", and "no, 404 from Slack" is the answer.
+    route({
+      method: 'POST',
+      path: '/api/notify/channels/:id/test',
+      access: 'notify:manage',
+      handler: async ({ params, user }) => {
+        requireChannel(user, params.id);
+        return notify.test(params.id);
+      },
+    }),
+  ];
+});

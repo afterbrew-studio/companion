@@ -32,6 +32,16 @@ declare module '@moxxy/companion-contracts' {
     /** Generated digests/analyses; producer modules (code, automations) write through this. */
     reports: ReportsStore;
   }
+  interface BusEvents {
+    /**
+     * An inbox entry was raised. Every notification in the product is minted by
+     * `ctx.notify.emit`, so this is the one place a module can watch all of
+     * them — outbound delivery subscribes here rather than every producer
+     * learning about every sink. Soft: no dependsOn edge needed, and nothing
+     * downstream may fail the emit.
+     */
+    'notification.raised': NotificationRecord;
+  }
 }
 
 export type WorkspaceVisibility = 'public' | 'private';

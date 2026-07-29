@@ -17,6 +17,7 @@
     "@companion/module-board": "workspace:*",
     "@companion/module-code": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-notify": "workspace:*",
     "@companion/module-oidc": "workspace:*",
     "@companion/module-operate": "workspace:*",
     "@companion/module-plan": "workspace:*",

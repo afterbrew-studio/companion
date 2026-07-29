@@ -11,6 +11,8 @@
       "issues:act",
       "issues:read",
       "modules:manage",
+      "notify:manage",
+      "notify:read",
       "pipelines:manage",
       "pipelines:read",
       "pipelines:run",
@@ -53,6 +55,7 @@
       "github:connect",
       "issues:act",
       "issues:read",
+      "notify:read",
       "pipelines:manage",
       "pipelines:read",
       "pipelines:run",
@@ -180,6 +183,21 @@
       "title": "Install, enable and configure modules",
       "grants": [
         "admin"
+      ]
+    },
+    "notify:manage": {
+      "owner": "notify",
+      "title": "Configure outbound notification channels",
+      "grants": [
+        "admin"
+      ]
+    },
+    "notify:read": {
+      "owner": "notify",
+      "title": "View outbound notification channels",
+      "grants": [
+        "admin",
+        "maintainer"
       ]
     },
     "pipelines:manage": {
