@@ -73,7 +73,16 @@ jobs:
       # through that package's dist, which does not exist after a bare install:
       # the first real run failed with a wall of "Cannot find module" and
       # implicit-any errors that were all the same missing build.
-      - run: pnpm build
+      #
+      # `full` is not a preference here, it is what makes the published CLI
+      # correct. A tarball cannot be re-picked after the fact, so it carries
+      # every module and first-run setup decides which to INSTALL. Built at the
+      # default `slim`, the wizard still offers the optional ones and then the
+      # daemon answers `unknown module: plan`, because they are not in the
+      # bundle at all. prepublishOnly would have got this right, but nothing
+      # runs it: `pnpm pack` does not, and `npm publish <tarball>` uploads
+      # something already built.
+      - run: COMPANION_PROFILE=full pnpm build
 
       - name: Publish ${{ matrix.package }} if its version is new
         working-directory: ${{ matrix.dir }}

@@ -110,10 +110,15 @@ export async function installModules(
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: '{}',
       });
+      // A 404 here is not "install failed", it is "this build does not contain
+      // it", and saying so is the difference between a fixable answer and a
+      // wall. It means the artifact was built at a narrower profile than the
+      // one that offered these choices.
+      if (res.status === 404) throw new Error('this build does not contain it, so it cannot be installed');
       if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 120)}`);
       out(`  enabled ${id}`);
     } catch (err) {
-      out(`  could not enable ${id}: ${String(err)}`);
+      out(`  could not enable ${id}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
