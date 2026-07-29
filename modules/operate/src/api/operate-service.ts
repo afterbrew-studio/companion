@@ -52,6 +52,39 @@ export class OperateService {
   }
 
   /**
+   * Plug in where a repository's verification command comes from. Module-code
+   * owns repositories and depends on operate, so it registers here at enable,
+   * exactly like the git token source. Unset means nothing is verified.
+   */
+  setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
+    this.orchestrator.setVerifyCommandResolver(resolve);
+  }
+
+  /**
+   * Drop a finished run's worktree now, rather than waiting out retention.
+   *
+   * The time-based sweep is the backstop for everything nobody told us about; this
+   * is for the case where we KNOW the work is over, which is worth having because
+   * a worktree with a populated node_modules is large and a busy board would
+   * otherwise hold days of them.
+   *
+   * Refuses on a run that may still be read. The protected set is the same one
+   * storage cleanup uses, so "still in use" has one definition rather than two
+   * that drift.
+   */
+  async releaseWorktree(runId: string): Promise<boolean> {
+    const row = this.runsStore.get(runId);
+    if (!row || !row.repo || !row.cwd) return false;
+    if (row.status === 'provisioning' || row.status === 'running' || row.status === 'idle' || row.status === 'review') {
+      return false;
+    }
+    // removeWorktree already tolerates a worktree that is gone, so a second
+    // release (a retry, or the sweep having got there first) is a no-op.
+    await this.runners.backendForRun(row.runner_id).removeWorktree(row.repo, row.cwd);
+    return true;
+  }
+
+  /**
    * After an in-place CLI upgrade: refresh the boot-time detection so
    * /api/status and the local runner's advertised version reflect the new
    * install. The spawn path is unchanged — npm swaps the bin symlink target.

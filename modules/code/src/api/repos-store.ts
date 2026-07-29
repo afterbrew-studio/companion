@@ -117,6 +117,11 @@ export class ReposStore {
     return row?.automation_owner_id ?? null;
   }
 
+  /** The command that proves a diff builds here; null clears it. */
+  setVerifyCommand(fullName: string, command: string | null): void {
+    this.db.prepare(`UPDATE repos SET verify_command = ? WHERE full_name = ?`).run(command, fullName);
+  }
+
   setAutomationOwner(fullName: string, ownerId: string | null): void {
     this.db.prepare(`UPDATE repos SET automation_owner_id = ? WHERE full_name = ?`).run(ownerId, fullName);
   }
@@ -248,6 +253,7 @@ export interface RepoRow {
   clone_ready: number;
   last_sync_at: number | null;
   auto_triage: number;
+  verify_command: string | null;
   digest_enabled: number;
   stale_enabled: number;
   pr_gate: number;
@@ -277,6 +283,7 @@ export function rowToRepo(row: RepoRow): RepoRecord {
     githubAccessible: false,
     githubPermission: null,
     autoTriage: row.auto_triage === 1,
+    verifyCommand: row.verify_command,
     digestEnabled: row.digest_enabled === 1,
     staleSweepEnabled: row.stale_enabled === 1,
     prGateEnabled: row.pr_gate === 1,

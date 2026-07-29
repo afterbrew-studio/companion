@@ -15,3 +15,4 @@ export * from './home.js';
 export * from './provision.js';
 export * from './checkouts.js';
 export * from './storage-cleanup.js';
+export * from './verify.js';

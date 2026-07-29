@@ -211,6 +211,11 @@ export interface RunRecord {
    * created before the column existed, and on paths that name no task.
    */
   readonly task: string | null;
+  /**
+   * Result of the pre-review verification, when this run had one. null on runs
+   * that never reach review (chats, one-shots) and on runs predating the column.
+   */
+  readonly verification: RunVerification | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** True while a gateway process is attached (live transcript available). */
@@ -291,6 +296,28 @@ export interface TokenUsageModel {
 export interface TokenUsage {
   readonly days: readonly TokenUsageDay[];
   readonly models: readonly TokenUsageModel[];
+}
+
+/**
+ * What running the repository's own verification command in this run's worktree
+ * found, before a human was asked to read the diff.
+ *
+ * 'unavailable' is its own state and not a failure: no command is configured, or
+ * the machine is an older runner agent that cannot run one. "We did not check"
+ * and "it does not build" must never render the same, because the second is
+ * actionable and the first is a configuration gap.
+ */
+export interface RunVerification {
+  readonly status: 'running' | 'passed' | 'failed' | 'unavailable';
+  /** The command as configured; empty when nothing was configured. */
+  readonly command: string;
+  /** null while running, when unavailable, or when the process died on a signal. */
+  readonly exitCode: number | null;
+  /** Tail of the combined output, clipped. Empty while running. */
+  readonly output: string;
+  readonly timedOut: boolean;
+  readonly durationMs: number;
+  readonly at: number;
 }
 
 // ---------- agent action policy ----------

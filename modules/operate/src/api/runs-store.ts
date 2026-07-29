@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentStorageRunLease } from '@moxxy/companion-types';
-import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
+import { safeParse } from '@moxxy/companion-services';
+import type { RunKind, RunRecord, RunStatus, RunVerification } from '../contract/index.js';
 import { describeHarness } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -46,6 +47,12 @@ export class RunsStore {
     this.db
       .prepare(`UPDATE runs SET branch = COALESCE(?, branch), pr_url = COALESCE(?, pr_url), updated_at = ? WHERE id = ?`)
       .run(branch, prUrl, Date.now(), id);
+  }
+
+  setVerification(id: string, verification: RunVerification): void {
+    this.db
+      .prepare(`UPDATE runs SET verification = ?, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify(verification), Date.now(), id);
   }
 
   addUsage(id: string, inputTokens: number, outputTokens: number): void {
@@ -322,6 +329,7 @@ export interface RunRow {
   task: string | null;
   /** Harness id this run executes through; 'moxxy' on rows that predate it. */
   harness: string;
+  verification: string | null;
   created_at: number;
   updated_at: number;
   input_tokens: number;
@@ -346,6 +354,7 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     harness: describeHarness(row.harness),
     userId: row.user_id,
     task: row.task,
+    verification: row.verification ? (safeParse<RunVerification | null>(row.verification, null)) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     live,

@@ -353,6 +353,21 @@ export class Checkouts {
     return next;
   }
 
+  /**
+   * Is this a worktree THIS process manages? The public form of the same check
+   * `managedWorktree` makes, for callers that must refuse rather than throw: the
+   * verify endpoint uses it so a cwd from anywhere else cannot turn "verify this
+   * worktree" into "run this command on my machine".
+   */
+  isManagedPath(worktreePath: string): boolean {
+    try {
+      this.managedWorktree(worktreePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private managedWorktree(worktreePath: string): string {
     const root = resolve(paths.worktrees());
     const candidate = resolve(worktreePath);

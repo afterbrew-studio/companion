@@ -49,6 +49,31 @@ export interface AgentHealth {
 export const RUNNER_AGENT_PROTOCOL = 3;
 
 /**
+ * POST /agent/verify — run a repository's own verification command inside a
+ * prepared worktree on this machine, so a diff that does not build is known
+ * before a human or a CI run is spent on it.
+ *
+ * Added WITHOUT a protocol bump, like `/agent/update-moxxy`: it is additive, so
+ * an older agent answers 404 and the daemon records the verification as
+ * unavailable instead of marking a working machine outdated and refusing to
+ * place work on it.
+ */
+export interface AgentVerifyRequest {
+  readonly cwd: string;
+  readonly command: string;
+  readonly timeoutMs?: number;
+}
+
+export interface AgentVerifyResponse {
+  /** null when the process died on a signal or never started. */
+  readonly exitCode: number | null;
+  /** Combined output, tail-clipped by the runner. */
+  readonly output: string;
+  readonly timedOut: boolean;
+  readonly durationMs: number;
+}
+
+/**
  * POST /agent/update-moxxy — in-place `npm i -g @moxxy/cli@latest` on the
  * runner's machine, then re-detect. 404 on pre-update agents.
  */

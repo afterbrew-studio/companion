@@ -257,6 +257,25 @@ function RepoCard({
         ))}
       </div>
 
+      {/* What proves an agent's diff builds here, before anybody reads it. Blank
+          means nothing is checked, which the review card reports as such rather
+          than as a pass. */}
+      <label className="mt-3 flex flex-col gap-1 text-xs">
+        <span className="dim">Verification command</span>
+        <input
+          className="input font-mono text-[12px]"
+          defaultValue={repo.verifyCommand ?? ''}
+          disabled={busy}
+          placeholder="pnpm -s typecheck"
+          aria-label={`Verification command for ${repo.fullName}`}
+          onBlur={(e) => {
+            const next = e.target.value.trim();
+            if (next === (repo.verifyCommand ?? '')) return;
+            void act(() => api.setVerifyCommand(repo.fullName, next))();
+          }}
+        />
+      </label>
+
       <CardActions>
         <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
           {busy ? 'Working…' : 'Sync now'}

@@ -314,6 +314,23 @@ policy: an agent's isolated worktree, and review-then-apply for everything that
 reaches GitHub (which is additionally gated by `prs:act` / `issues:act` /
 `slop:act`).
 
+### Proving a diff builds before a person reads it **[available]**
+
+Set a **verification command** per repository (Repositories, or
+`PUT /api/repos/:owner/:name/verify-command`, behind `repos:manage`). When an
+agent run enters review, that command runs in its worktree on whichever runner
+holds it, and the result appears above the diff.
+
+It is executed through a shell, deliberately: the value people put here is
+`pnpm -s typecheck && pnpm -s test`. That is not new authority on the machine,
+because the agent that just produced the diff had a shell in the same directory,
+and the command comes from repository configuration rather than from a request.
+The worktree path is checked against the runner's managed root, so a `cwd` from
+anywhere else is refused.
+
+"Not verified" is its own state and never renders as a pass. A repository with no
+command configured, or a runner agent too old to have the endpoint, says so.
+
 ### Being told about it **[available]**
 
 An inbox nobody has open is not an alert. `module-notify` (in the `full` build,

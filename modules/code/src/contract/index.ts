@@ -64,6 +64,12 @@ export interface RepoRecord {
    * (writing needs 'push' or better; webhooks need 'admin').
    */
   readonly githubPermission: RepoPermission | null;
+  /**
+   * Command run in an agent's worktree before a human is asked to review its
+   * diff, e.g. `pnpm -s typecheck`. null means nothing is checked, which is
+   * reported as "not verified" rather than as a pass.
+   */
+  readonly verifyCommand: string | null;
   /** Automation switches. */
   readonly autoTriage: boolean;
   readonly digestEnabled: boolean;

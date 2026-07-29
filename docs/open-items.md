@@ -246,6 +246,37 @@ covered by this.
 
 ---
 
+## 12. Pre-review verification `[BUILT]`
+
+A repository carries a `verifyCommand`; when a fix/implement run enters review, it
+runs in that run's worktree and the result lands above the diff. The point is to
+spend a machine instead of a person: previously the only feedback loop was
+push, open a PR, let CI fail, then let the board retry, and every turn of that
+cost a PR round-trip, a CI run and a reviewer's attention.
+
+Three states, not two. `unavailable` is distinct from `failed`: no command
+configured, or a runner agent predating `/agent/verify`. "We did not check" and
+"it does not build" must never render alike, because only one is about the code.
+Added without a protocol bump, per the convention in `runner-agent.ts`, so an
+older agent answers 404 and degrades rather than being marked outdated and taken
+out of placement.
+
+Still open, and it is the obvious next increment: **the board does not retry on a
+failed verification.** It retries on failed CI (`auto_fix_ci`, `max_attempts`), so
+the cheap signal exists but the loop still waits for the expensive one.
+
+## 13. Worktree release on completion `[BUILT]`
+
+A board task reaching `done` gives its worktree back immediately instead of
+waiting out `worktreeRetentionDays`. Retention remains the backstop for everything
+nobody announced; this is for the case where the work is provably over, which
+matters because a worktree with a populated `node_modules` is large and a busy
+board would otherwise hold days of them.
+
+Both `done` paths clear `runId`, so the link is captured BEFORE the update. Operate
+refuses on a run that is still active or in review, reusing the same protected set
+storage cleanup uses, so "still in use" has one definition rather than two.
+
 ## Parked with a written design
 
 **A forge abstraction (GitLab, Gitea, Forgejo).** Not built and deliberately not

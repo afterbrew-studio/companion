@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, formatTokens } from '@moxxy/companion-ui';
-import type { ModelCatalog, RunRecord } from '../../contract/index.js';
+import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, MetaSignal, formatTokens } from '@moxxy/companion-ui';
+import type { ModelCatalog, RunRecord, RunVerification } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRun } from '../hooks/useRun.js';
 import { Transcript } from '../transcript/Transcript.js';
@@ -290,6 +290,9 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
 
   return (
     <div className="card my-3 border-accent-500/60">
+      {/* Above the diff, deliberately: the point of verifying is that a reviewer
+          learns the thing does not build before spending attention on reading it. */}
+      <VerificationLine verification={run.verification} />
       <div className="flex flex-wrap items-center gap-2.5">
         <strong className="text-sm">
           Review — agent finished on branch <code className="text-[12px]">{run.branch}</code>
@@ -323,6 +326,45 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
         ) : (
           <div className="banner-warn">The agent produced no changes.</div>
         )
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What the repository's own verification command found in this worktree.
+ *
+ * Renders nothing when there is nothing to say, and never renders "not checked"
+ * as anything resembling a pass: a missing command is a configuration gap, and
+ * dressing it up as a green tick would make the whole feature a lie.
+ */
+function VerificationLine({ verification }: { verification: RunVerification | null }): JSX.Element | null {
+  if (verification === null) return null;
+  if (verification.status === 'running') {
+    return <InlineLoading label={`Verifying: ${verification.command}`} className="mb-2.5" />;
+  }
+  if (verification.status === 'unavailable') {
+    return (
+      <p className="dim mb-2.5 text-xs">
+        Not verified.{' '}
+        {verification.output ||
+          'Set a verification command on this repository and a failing build will be caught before you read the diff.'}
+      </p>
+    );
+  }
+  const passed = verification.status === 'passed';
+  return (
+    <div className={passed ? 'banner-info mb-2.5 text-xs' : 'error-bar mb-2.5 text-xs'} role="status">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <MetaSignal tone={passed ? 'green' : 'red'} label={passed ? 'verification passed' : 'verification failed'} />
+        <code className="text-[11px]">{verification.command}</code>
+        <span className="dim">
+          {verification.timedOut ? 'timed out' : `exit ${verification.exitCode ?? 'signal'}`} ·{' '}
+          {Math.round(verification.durationMs / 1000)}s
+        </span>
+      </div>
+      {!passed && verification.output ? (
+        <pre className="mt-1.5 max-h-64 overflow-auto text-[11px] whitespace-pre-wrap">{verification.output}</pre>
       ) : null}
     </div>
   );

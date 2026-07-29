@@ -332,4 +332,28 @@ export default defineMigrations([
       }
     },
   },
+  {
+    /**
+     * The command that proves a diff builds, per repository. Per repo and not
+     * instance-wide because it is a property of the project: `pnpm typecheck` in
+     * one and `cargo test` in the next. NULL means unset, which is reported as
+     * "not checked" rather than as a pass.
+     */
+    version: 8,
+    name: 'repos_verify_command',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos ADD COLUMN verify_command TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos DROP COLUMN verify_command`);
+      } catch {
+        // Older SQLite cannot drop a column; it is nullable, so leaving it is inert.
+      }
+    },
+  },
 ]);

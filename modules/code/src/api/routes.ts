@@ -1166,6 +1166,24 @@ export default defineRoutes((ctx) => {
      * panel through the `quality.panels` slot rather than being aggregated here,
      * because code must not depend on the modules that depend on it.
      */
+    /**
+     * The command that proves a diff builds here. It is executed on a runner, so
+     * it rides `repos:manage`: the same authority that already decides which
+     * repositories this instance clones and runs agents in.
+     */
+    route({
+      method: 'PUT',
+      path: '/api/repos/:owner/:name/verify-command',
+      access: 'repos:manage',
+      body: z.object({ command: z.string().trim().max(500) }),
+      handler: ({ params, body, user }) => {
+        const { fullName } = requireRepo(user, params.owner, params.name);
+        code.repos.setVerifyCommand(fullName, body.command || null);
+        ctx.broadcast({ t: 'repos.changed' });
+        return { repo: code.repos.getRecord(fullName)! };
+      },
+    }),
+
     route({
       method: 'GET',
       path: '/api/workspaces/:id/agent-quality',

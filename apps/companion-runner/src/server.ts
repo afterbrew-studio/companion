@@ -25,6 +25,8 @@ import {
   type AgentStorageCleanupRequest,
   type AgentStorageCleanupResponse,
   type AgentUpdateMoxxyResult,
+  type AgentVerifyRequest,
+  type AgentVerifyResponse,
   type AgentWorktreeAtRequest,
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
@@ -33,7 +35,7 @@ import {
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from '@companion/module-operate/exec';
-import { configuredProviderNames } from '@companion/module-operate/exec';
+import { configuredProviderNames, runVerify } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
@@ -227,6 +229,16 @@ async function route(
     const cwd = join(paths.scratch(), safeId(runId));
     mkdirSync(cwd, { recursive: true });
     return { cwd } satisfies AgentScratchResponse;
+  }
+
+  if (method === 'POST' && path === '/agent/verify') {
+    const { cwd, command, timeoutMs } = body as AgentVerifyRequest;
+    requireString(cwd, 'cwd');
+    requireString(command, 'command');
+    // The worktree must be one this agent manages. A cwd from anywhere else would
+    // turn "verify" into "run this on my machine", which is not what it is.
+    if (!deps.checkouts.isManagedPath(cwd)) throw new HttpError(400, 'cwd is not a managed worktree');
+    return (await runVerify(cwd, command, typeof timeoutMs === 'number' ? timeoutMs : undefined)) satisfies AgentVerifyResponse;
   }
 
   if (method === 'POST' && path === '/agent/storage/cleanup') {

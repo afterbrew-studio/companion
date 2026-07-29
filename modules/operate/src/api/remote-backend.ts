@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import type {
   AgentDiffResponse,
+  AgentVerifyResponse,
   AgentEventMessage,
   AgentHealth,
   AgentUpdateMoxxyResult,
@@ -21,6 +22,7 @@ import { RUNNER_AGENT_PROTOCOL } from '@moxxy/companion-types';
 import { log } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver, RunnerHealth } from '../contract/index.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
+import { DEFAULT_VERIFY_TIMEOUT_MS } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 const HTTP_TIMEOUT_MS = 30_000;
@@ -259,6 +261,26 @@ export class RemoteRunnerBackend implements RunnerBackend {
     // policy: the credential the runner would push with is minted below.
     this.assertPushTarget(repo, branch);
     await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo, username, 'write')) });
+  }
+
+  /**
+   * 404 means this agent predates the endpoint. That degrades to null, not to a
+   * failure and not to marking the machine outdated: refusing to place work on an
+   * otherwise healthy runner because it cannot run an optional check would be a
+   * worse trade than simply not checking.
+   */
+  async verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse | null> {
+    try {
+      return await this.call<AgentVerifyResponse>(
+        'POST',
+        '/verify',
+        { cwd, command, timeoutMs },
+        (timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS) + 30_000,
+      );
+    } catch (err) {
+      if (/\b404\b/.test(String(err))) return null;
+      throw err;
+    }
   }
 
   cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse> {

@@ -373,6 +373,7 @@ export class BoardService {
     } else if (to === 'done') {
       if (from !== 'in_review') throw new Error('only a task in review can be completed by hand');
       this.clearBlockers(id);
+      this.releaseWorktree(task.runId);
       this.store.updateTask(id, { status: 'done', stage: null, runId: null, finishedAt: Date.now(), lastError: null });
       this.store.insertEvent(id, 'done', 'completed by hand');
     } else {
@@ -1187,12 +1188,31 @@ ${acceptance}${specSection}
     this.mergeBackoff.delete(taskId);
     this.reviewBackoff.delete(taskId);
     this.retryBackoff.delete(taskId);
+    // Captured BEFORE the update, which clears runId: the link to the worktree
+    // exists only until the task stops pointing at its run.
+    this.releaseWorktree(task.runId);
     this.store.updateTask(taskId, { status: 'done', stage: null, runId: null, finishedAt: Date.now(), lastError: null });
     this.store.insertEvent(taskId, 'done', how);
     this.notifyUser(task, 'finished', `Board task done: ${task.title.slice(0, 60)}`, how, `#/board?task=${taskId}`);
     this.changed();
     // Tasks waiting on this one may be dispatchable now.
     this.kick();
+  }
+
+  /**
+   * Give back a finished task's worktree instead of waiting out retention.
+   *
+   * Fire-and-forget on purpose: a task is done, and failing to reclaim disk must
+   * not make it look otherwise. The time-based sweep is still the backstop, so the
+   * worst case of a failure here is the old behaviour. Operate refuses on a run
+   * that is still active or in review, so this cannot yank a worktree out from
+   * under something someone is reading.
+   */
+  private releaseWorktree(runId: string | null): void {
+    if (!runId) return;
+    void this.operate
+      .releaseWorktree(runId)
+      .catch((err) => log.warn('board: releasing the worktree failed', { runId, err: String(err) }));
   }
 
   private fail(taskId: string, reason: string, extra?: TaskPatch): void {

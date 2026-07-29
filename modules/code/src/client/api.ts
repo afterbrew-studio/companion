@@ -33,6 +33,8 @@ import type {
  */
 
 export const codeApi = {
+  setVerifyCommand: (fullName: string, command: string) =>
+    put<{ repo: RepoRecord }>(`/api/repos/${fullName}/verify-command`, { command }),
   agentQuality: (workspaceId: string, days: number) =>
     request<AgentQuality>(`/api/workspaces/${workspaceId}/agent-quality?days=${days}`),
   // repos

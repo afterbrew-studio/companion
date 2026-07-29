@@ -152,6 +152,13 @@ export class Orchestrator implements RunnerEventSink {
     /** What agent work may do. Defaults read the built-in values, so an
      *  orchestrator constructed without one behaves exactly as before. */
     private readonly agentPolicy: AgentPolicy = new AgentPolicy({ values: () => ({}), get: () => null }),
+    /**
+     * The repository's verification command. Owned by module-code (which owns
+     * repositories and depends on operate), so it is PLUGGED IN the same way the
+     * git token source is. Returning null means "nothing configured", which is
+     * the default and is reported as unavailable, never as a pass.
+     */
+    private verifyCommandFor: (repo: string) => string | null = () => null,
   ) {
     this.runners = new Runners(
       store,
@@ -172,6 +179,11 @@ export class Orchestrator implements RunnerEventSink {
         assertPushTarget: (repo, branch) => this.agentPolicy.assertPushTarget(repo, branch),
       },
     );
+  }
+
+  /** Registered by module-code at enable; see OperateService.setVerifyCommandResolver. */
+  setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
+    this.verifyCommandFor = resolve;
   }
 
   /** Where work no machine's policy accepts goes (module config, read live). */
@@ -201,6 +213,10 @@ export class Orchestrator implements RunnerEventSink {
     if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
       this.setStatus(runId, 'review');
       this.emitRunChanged(runId);
+      // Verification runs AFTER the transition, not before it. Holding 'running'
+      // for the length of a build would make a finished run look stuck, and the
+      // result is useful the moment it lands rather than only as a gate.
+      void this.verifyForReview(runId).catch((err) => log.warn('verification failed to run', { runId, err: String(err) }));
     } else if (row && (row.kind === 'interactive' || row.kind === 'assistant') && row.status === 'running') {
       this.setStatus(runId, 'idle');
       this.emitRunChanged(runId);
@@ -305,6 +321,54 @@ export class Orchestrator implements RunnerEventSink {
     } else {
       this.health('info', 'The run queue is draining again', 'Queued work has started executing.');
     }
+  }
+
+  /**
+   * Run the repository's own verification command in this run's worktree.
+   *
+   * The point is to spend a machine instead of a person: a diff that does not
+   * build should be known before a reviewer reads it and before a PR burns a CI
+   * run. So the result is recorded on the run and broadcast, and the reviewer sees
+   * it above the diff.
+   *
+   * Every path that cannot answer records 'unavailable' rather than 'failed'. No
+   * command configured, no worktree, an older runner agent: none of those are
+   * evidence about the code, and rendering them as a failure would train people to
+   * ignore the one state that matters.
+   */
+  private async verifyForReview(runId: string): Promise<void> {
+    const row = this.store.runs.get(runId);
+    if (!row || !row.repo || !row.cwd) return;
+    const command = this.verifyCommandFor(row.repo)?.trim();
+    const base = { command: command ?? '', exitCode: null, output: '', timedOut: false, durationMs: 0 };
+    if (!command) {
+      this.store.runs.setVerification(runId, { ...base, status: 'unavailable', at: Date.now() });
+      return;
+    }
+
+    this.store.runs.setVerification(runId, { ...base, status: 'running', at: Date.now() });
+    this.emitRunChanged(runId);
+
+    const outcome = await this.runners.backendForRun(row.runner_id).verify(row.cwd, command);
+    if (outcome === null) {
+      this.store.runs.setVerification(runId, {
+        ...base,
+        status: 'unavailable',
+        output: 'this runner agent is too old to verify; update it to enable pre-review checks',
+        at: Date.now(),
+      });
+    } else {
+      this.store.runs.setVerification(runId, {
+        command,
+        status: outcome.exitCode === 0 && !outcome.timedOut ? 'passed' : 'failed',
+        exitCode: outcome.exitCode,
+        output: outcome.output,
+        timedOut: outcome.timedOut,
+        durationMs: outcome.durationMs,
+        at: Date.now(),
+      });
+    }
+    this.emitRunChanged(runId);
   }
 
   /** Boot-time recovery: daemon died with children; rows are the truth. */
@@ -499,6 +563,7 @@ export class Orchestrator implements RunnerEventSink {
       userId: opts.userId ?? null,
       task: opts.task ?? null,
       harness: this.runners.harnessFor(runnerId).id,
+      verification: null,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,

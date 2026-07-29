@@ -1,6 +1,7 @@
 import type {
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
+  AgentVerifyResponse,
   AskRequest,
   AskResponse,
   HistorySegment,
@@ -75,6 +76,13 @@ export interface RunnerBackend {
 
   /** Enforce daemon-owned retention inside this runner's managed roots. */
   cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse>;
+  /**
+   * Run a repository's verification command in a worktree on this machine.
+   * Resolves to null when the machine cannot do it (an agent predating the
+   * endpoint), which the caller records as 'unavailable' rather than a failure:
+   * "we could not check" and "it does not build" are different answers.
+   */
+  verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse | null>;
 }
 
 /** The event sink a backend feeds — one shared instance drives the orchestrator. */

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   AgentStorageCleanupRequest,
+  AgentVerifyResponse,
   AgentStorageCleanupResponse,
   AskResponse,
   Harness,
@@ -22,6 +23,7 @@ import { runMoxxyProvision } from '../exec/provision.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
+import { runVerify } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 /** What a run executes as on this machine, read off its row when it starts. */
@@ -288,6 +290,11 @@ export class LocalRunnerBackend implements RunnerBackend {
   commitAll(cwd: string, message: string): Promise<void> {
     return this.checkouts.commitAll(cwd, message);
   }
+  /** This machine runs it directly; there is no agent hop to degrade through. */
+  verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse> {
+    return runVerify(cwd, command, timeoutMs);
+  }
+
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
     return this.checkouts.push(repo, cwd, branch, undefined, username);
   }
