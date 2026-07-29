@@ -45,8 +45,7 @@ ENV NODE_ENV=production
 ENV COMPANION_HOME=/data
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
-  && npm install -g @moxxy/cli \
-  && rm -rf /var/lib/apt/lists/* /root/.npm
+  && rm -rf /var/lib/apt/lists/*
 # better-sqlite3 is a native addon and undici/ws/inquirer are left external by
 # the bundle, so install exactly those from the CLI's own manifest.
 # This prints `npm warn deprecated prebuild-install@7.1.3` (a better-sqlite3 12.x
@@ -60,6 +59,16 @@ RUN apt-get update \
 COPY --from=build /app/runtime-package.json ./package.json
 RUN npm install --omit=dev --omit=peer --no-audit --no-fund && rm -rf /root/.npm
 COPY --from=build /app/apps/companion-cli/dist ./dist
+# Deliberately AFTER the dist copy, and this placement is the whole point.
+# `npm install -g @moxxy/cli` resolves `latest` when the layer is BUILT, and up
+# here with apt it sat above everything that ever changes, so Docker replayed it
+# from cache on every redeploy and the image kept whatever moxxy was newest the
+# day that layer was first built. An instance ran 0.35.0 for weeks against a
+# published 0.35.2. Below the dist copy the layer dies whenever the app does,
+# which is what "the image ships current moxxy" has to mean.
+# Pin it by passing MOXXY_VERSION when a specific one is wanted.
+ARG MOXXY_VERSION=latest
+RUN npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm
 # The `companion` command every doc and runbook uses. The runtime manifest is
 # generated from the CLI's dependencies alone, so it carries no `bin` field and
 # npm installs no launcher: without this, `docker exec <c> companion module list`

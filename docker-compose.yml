@@ -5,6 +5,9 @@ services:
       args:
         # Which modules the image contains; see profiles/*.json.
         PROFILE: ${COMPANION_PROFILE:-slim}
+        # Unset means the newest moxxy at build time. Set it to hold an image on
+        # a known one, for instance while a moxxy release is being qualified.
+        MOXXY_VERSION: ${MOXXY_VERSION:-latest}
     image: companion:local
     restart: unless-stopped
     ports:
