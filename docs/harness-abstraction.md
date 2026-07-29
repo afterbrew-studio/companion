@@ -77,13 +77,43 @@ harness that works and one that quietly lies:
 - **The prompt is never echoed.** moxxy emits `user_prompt`; Claude Code does
   not. That event is Companion's to synthesize from what it sent.
 
-**Codex** was measured only as far as its vocabulary, because the CLI on the
-machine used for this could not complete a turn: its model cache is corrupt
-(`missing field supports_reasoning_summaries`) and a ChatGPT account rejected the
-models tried. What it does show is `thread.started`, `turn.started`,
-`turn.failed`, `error`, and `item.completed` carrying `item { id, type }`. The
-shape is analogous, named thread/turn/item instead of session/turn/event. Treat
-Codex fidelity as unproven until someone repeats this on a working install.
+**Codex** is now measured too, from two real turns once its CLI was working. The
+shape is analogous but named thread/turn/item instead of session/turn/event:
+
+| Companion event | Codex |
+|---|---|
+| session | `thread.started`, carrying `thread_id` |
+| turn boundaries | `turn.started`, `turn.completed`, `turn.failed` |
+| `assistant_message` | `item.completed` with `item.type: agent_message` |
+| `tool_call_requested` | `item.started` with `item.type: command_execution` |
+| `tool_result` | `item.completed` for that same item |
+| usage | `turn.completed.usage` |
+
+Items carry a stable `id` and `started`/`completed` pair by it, so the same rule
+that works for Claude Code works here.
+
+Four differences from Claude Code, and they are exactly the class that makes an
+adapter written for one quietly wrong on the other:
+
+- **Failure is inverted and always present.** A command result carries
+  `exit_code` and `status`, `0`/`completed` on success and `1`/`failed` with
+  stderr in `aggregated_output` on failure. Claude Code omits `is_error`
+  entirely on success. An adapter that tests for a key's presence is right for
+  one and wrong for the other.
+- **No cost, only tokens.** `turn.completed.usage` gives `input_tokens`,
+  `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens` and
+  `reasoning_output_tokens`, with no dollar figure. Claude Code reports
+  `total_cost_usd` directly. So the spend ceiling has two paths: take the number
+  from Claude Code, price the tokens from `modules/operate/src/contract/model-pricing.ts`
+  for Codex.
+- **A tool call is a shell command**, not a named tool with structured input, so
+  there is nothing to render as a tool name and argument list.
+- **No chunk-level streaming was observed.** Items arrive completed, so there
+  may be no equivalent of `assistant_chunk` and therefore no live typing. Not
+  proven absent, but not seen in either capture.
+
+Codex also opens with an `agent_message` before its first command, a preamble
+rather than an answer.
 
 **A distinction worth stating once**, because conflating it will waste a day:
 `openai-codex` in moxxy is a **provider**, credentials for an API. The `codex`
@@ -109,7 +139,9 @@ not. MCP is the plausible bridge and is not in this plan.
 
 **Usage reporting decides whether the ceiling is real.** A harness that does not
 report tokens turns the spend ceiling off silently, which is worse than not
-having one. Claude Code reports cost directly. Codex is unverified.
+having one. Both candidates report, but not the same thing: Claude Code gives a
+dollar figure, Codex gives tokens only. So the capability cannot be a boolean
+that means "has usage"; the ceiling either takes a price or computes one.
 
 ## The plan
 
