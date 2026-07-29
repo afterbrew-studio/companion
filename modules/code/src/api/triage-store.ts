@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { safeParse } from '@moxxy/companion-sdk/server';
 import type { TriageResult, TriageVerdict } from '../contract/index.js';
+import { outcomeSql, toCounts, type OutcomeCounts } from './quality.js';
 
 /** AI triage verdicts per issue; the latest row per issue wins. */
 export class TriageStore {
@@ -44,6 +45,13 @@ export class TriageStore {
         : this.db.prepare(`SELECT * FROM triage_results WHERE repo = ? ORDER BY created_at DESC`).all(repo)
     ) as TriageRow[];
     return rows.map(triageRowToResult);
+  }
+
+  /** Outcome counts for one workspace's triage verdicts since a point in time. */
+  outcomes(workspaceId: string, since: number): OutcomeCounts {
+    return toCounts(
+      this.db.prepare(outcomeSql('triage_results')).all(workspaceId, since) as Array<{ status: string; n: number }>,
+    );
   }
 
   latestByIssue(repo: string): Map<number, TriageResult['status']> {

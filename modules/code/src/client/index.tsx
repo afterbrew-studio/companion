@@ -23,6 +23,8 @@ export { BranchPicker } from './components/BranchPicker.js';
 export { RepoUnavailableRow } from './components/RepoUnavailableRow.js';
 /** The GitHub prerequisite gate, for modules that also need a repository. */
 export { RequiresRepo, RequiresGithubAccount } from './components/SetupGate.js';
+/** The quality card, so a `quality.panels` contributor renders identically. */
+export { QualityStat } from './components/QualityStat.js';
 export { codeApi } from './api.js';
 
 export default defineClientModule({

@@ -157,6 +157,44 @@ export class SlopStore {
     return rows.map(rowToDetection);
   }
 
+  /**
+   * Outcome counts for the quality report, plus how often the human applied
+   * something OTHER than what was recommended.
+   *
+   * The override count is the number this surface has and the others do not: a
+   * detection whose finding was right but whose proposed action was too sharp is
+   * neither an acceptance nor a false positive, and folding it into either would
+   * hide the most actionable signal about the rules. `recommendedAction` lives
+   * inside the verdict JSON, so it is read with json_extract rather than by
+   * pulling every row into JS.
+   */
+  outcomes(
+    workspaceId: string,
+    since: number,
+  ): { accepted: number; rejected: number; pending: number; failed: number; overridden: number } {
+    const rows = this.db
+      .prepare(
+        `SELECT d.status AS status, COUNT(*) AS n,
+                SUM(CASE WHEN d.status = 'applied' AND d.applied_action IS NOT NULL
+                          AND d.applied_action <> json_extract(d.verdict, '$.recommendedAction')
+                         THEN 1 ELSE 0 END) AS overridden
+         FROM slop_detections d JOIN v_repos r ON r.full_name = d.repo
+         WHERE r.workspace_id = ? AND d.created_at >= ?
+         GROUP BY d.status`,
+      )
+      .all(workspaceId, since) as Array<{ status: string; n: number; overridden: number }>;
+
+    const counts = { accepted: 0, rejected: 0, pending: 0, failed: 0, overridden: 0 };
+    for (const row of rows) {
+      if (row.status === 'applied') counts.accepted += row.n;
+      else if (row.status === 'dismissed') counts.rejected += row.n;
+      else if (row.status === 'failed') counts.failed += row.n;
+      else counts.pending += row.n;
+      counts.overridden += row.overridden ?? 0;
+    }
+    return counts;
+  }
+
   /** A PR's detection history, newest first. */
   listForPr(repo: string, prNumber: number): SlopDetectionResult[] {
     const rows = this.db

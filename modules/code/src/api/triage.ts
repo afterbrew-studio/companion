@@ -5,6 +5,7 @@ import type { IssueRecord, TriageResult, TriageVerdict } from '../contract/index
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
+import type { OutcomeCounts } from './quality.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
 
@@ -31,6 +32,11 @@ export class Triage {
     private readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
+
+  /** Outcome counts for the quality report; the store owns the aggregate. */
+  outcomes(workspaceId: string, since: number): OutcomeCounts {
+    return this.store.triage.outcomes(workspaceId, since);
+  }
 
   /** Queue a triage run for one issue. Resolves when the verdict is stored. */
   async triageIssue(repo: string, issueNumber: number, userId: string): Promise<TriageResult> {

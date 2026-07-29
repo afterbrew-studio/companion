@@ -72,6 +72,35 @@ export default defineRoutes((ctx) => {
   return [
     route({
       method: 'GET',
+      // Its own aggregate rather than a row in code's quality payload: code must
+      // not depend on the modules that depend on it, so slop reports itself and
+      // the page composes through the `quality.panels` slot.
+      path: '/api/workspaces/:id/slop-stats',
+      access: 'slop:read',
+      handler: ({ params, query, user }) => {
+        requireWorkspace(user, params.id);
+        const days = Math.min(Math.max(Number(query.get('days')) || 30, 1), 365);
+        const since = Date.now() - days * 24 * 60 * 60_000;
+        const counts = slop.outcomes(params.id, since);
+        const decided = counts.accepted + counts.rejected;
+        return {
+          since,
+          stat: {
+            surface: 'slop',
+            label: 'Slop detection',
+            accepted: counts.accepted,
+            rejected: counts.rejected,
+            pending: counts.pending,
+            failed: counts.failed,
+            acceptanceRate: decided === 0 ? null : counts.accepted / decided,
+            overridden: counts.overridden,
+          },
+        };
+      },
+    }),
+
+    route({
+      method: 'GET',
       path: '/api/workspaces/:id/slop',
       access: 'slop:read',
       handler: async ({ params, user }) => {

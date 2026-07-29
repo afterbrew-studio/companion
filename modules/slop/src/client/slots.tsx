@@ -1,7 +1,12 @@
-import { defineSlots } from '@moxxy/companion-sdk/client';
+import { useCallback, useState } from 'react';
+import { defineSlots, useLive } from '@moxxy/companion-sdk/client';
 import { ListCard, Section, timeAgo } from '@moxxy/companion-sdk/ui';
+import { QualityStat } from '@companion/module-code/client';
+import { useWorkspace } from '@companion/module-workspace/client';
+import type { AgentQualityStat } from '@companion/module-code/contract';
 import { SlopMeter } from './components/SlopMeter.js';
 import { useSlopDetections } from './hooks/useSlopDetections.js';
+import { slopApi } from './api.js';
 
 /**
  * Contributions rendered INTO other modules' pages. The dashboard (module-code)
@@ -54,6 +59,36 @@ function SlopRadarWidget(): JSX.Element | null {
   );
 }
 
+/**
+ * Slop's row on code's Agent quality page. It fetches its own aggregate and
+ * listens for its own module's signal, so code needs no reference to this module
+ * and a build without slop simply has one fewer card.
+ *
+ * Rendered with code's exported card so it is visually indistinguishable from
+ * the built-in surfaces: a contributed panel that looks different reads as an
+ * afterthought.
+ */
+function SlopQualityPanel({ days }: { days?: number }): JSX.Element | null {
+  const { current } = useWorkspace();
+  const [stat, setStat] = useState<AgentQualityStat | null>(null);
+  const window = days ?? 30;
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!current) return setStat(null);
+    // A failure hides the card rather than breaking the host page: this is one
+    // panel among several on somebody else's screen.
+    try {
+      setStat((await slopApi.stats(current.id, window)).stat);
+    } catch {
+      setStat(null);
+    }
+  }, [current, window]);
+  useLive(refresh, (msg) => msg.t === 'slop.changed');
+
+  if (!stat) return null;
+  return <QualityStat stat={stat} />;
+}
+
 export const slots = defineSlots([
   {
     slot: 'dashboard.widgets',
@@ -61,5 +96,12 @@ export const slots = defineSlots([
     order: 30,
     permission: 'slop:read',
     component: SlopRadarWidget,
+  },
+  {
+    slot: 'quality.panels',
+    key: 'slop-quality',
+    order: 30,
+    permission: 'slop:read',
+    component: SlopQualityPanel,
   },
 ]);

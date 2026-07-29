@@ -82,6 +82,50 @@ export interface RepoRecord {
   readonly runnerId: string | null;
 }
 
+// ---------- agent quality ----------
+
+/**
+ * How one kind of agent verdict is faring with the humans reviewing it.
+ *
+ * Derived from the outcome columns that already exist (`pending` / `applied` /
+ * `dismissed` / `failed`) rather than from a new recording path. That is the
+ * whole design: a second write would eventually disagree with the rows it was
+ * meant to describe, and there is nothing to disagree with when the number IS
+ * the rows.
+ */
+export interface AgentQualityStat {
+  /** Which agent surface: 'triage', 'ai-review', 'slop'. Free-form so a module can add its own. */
+  readonly surface: string;
+  readonly label: string;
+  /** Verdicts a human has accepted (applied to GitHub). */
+  readonly accepted: number;
+  /** Verdicts a human rejected outright. The false-positive signal. */
+  readonly rejected: number;
+  /** Still awaiting a decision, so excluded from the rate rather than counted as either. */
+  readonly pending: number;
+  /**
+   * Runs that produced no verdict at all. A reliability number, not a quality
+   * one, and kept separate for exactly that reason.
+   */
+  readonly failed: number;
+  /** accepted / (accepted + rejected); null until a human has decided anything. */
+  readonly acceptanceRate: number | null;
+  /**
+   * Decided verdicts where the human applied something other than what was
+   * recommended. Neither acceptance nor rejection: the finding was right and the
+   * proposed response was too strong or too weak. null where a surface has no
+   * recommendation to override.
+   */
+  readonly overridden: number | null;
+}
+
+/** The quality payload for one workspace over a window. */
+export interface AgentQuality {
+  /** Start of the window, ms since epoch. */
+  readonly since: number;
+  readonly surfaces: readonly AgentQualityStat[];
+}
+
 // ---------- repository presets ----------
 
 export { REPO_PRESETS, findPreset, resolveSteps } from './presets.js';

@@ -343,6 +343,14 @@ export class SlopService {
     return this.store.listByWorkspace(workspaceId);
   }
 
+  /** Outcome counts for the quality report; the store owns the aggregate. */
+  outcomes(
+    workspaceId: string,
+    since: number,
+  ): { accepted: number; rejected: number; pending: number; failed: number; overridden: number } {
+    return this.store.outcomes(workspaceId, since);
+  }
+
   listForPr(repo: string, prNumber: number): SlopDetectionResult[] {
     return this.store.listForPr(repo, prNumber);
   }

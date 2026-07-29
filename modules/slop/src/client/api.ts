@@ -1,4 +1,5 @@
 import { del, post, put, request } from '@moxxy/companion-sdk/client';
+import type { AgentQualityStat } from '@companion/module-code/contract';
 import type {
   SlopAction,
   SlopDetectionResult,
@@ -8,6 +9,8 @@ import type {
 } from '../contract/index.js';
 
 export const slopApi = {
+  stats: (workspaceId: string, days: number) =>
+    request<{ since: number; stat: AgentQualityStat }>(`/api/workspaces/${workspaceId}/slop-stats?days=${days}`),
   list: (workspaceId: string) =>
     request<{ detections: SlopDetectionResult[] }>(`/api/workspaces/${workspaceId}/slop`),
   rules: (workspaceId: string) =>

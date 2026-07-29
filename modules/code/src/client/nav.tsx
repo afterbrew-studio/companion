@@ -116,4 +116,18 @@ export const nav = defineNav([
     order: 30,
     icon: icons.github,
   },
+  {
+    key: 'agent-quality',
+    label: 'Agent quality',
+    hash: '#/agent-quality',
+    permission: 'repos:read',
+    section: 'code',
+    order: 60,
+    icon: (
+      <NavIcon>
+        <path d="M4 19V5M4 19h16" />
+        <path d="M8 19v-6M13 19V9M18 19v-4" />
+      </NavIcon>
+    ),
+  },
 ]);

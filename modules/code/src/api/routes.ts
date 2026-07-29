@@ -11,6 +11,7 @@ import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
 import { PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
+import { toStat } from './quality.js';
 import { GitHubError } from './github-client.js';
 import { gradeRepoPermissions } from './github-accounts.js';
 
@@ -1157,6 +1158,31 @@ export default defineRoutes((ctx) => {
     }),
 
     // ---------- workspace area feeds (code-owned cross-domain reads) --------------
+
+    /**
+     * Are the agent's verdicts being accepted? Derived from the outcome columns
+     * the triage and review tables already carry, so the number cannot drift
+     * from the rows it describes. Other surfaces (slop) contribute their own
+     * panel through the `quality.panels` slot rather than being aggregated here,
+     * because code must not depend on the modules that depend on it.
+     */
+    route({
+      method: 'GET',
+      path: '/api/workspaces/:id/agent-quality',
+      access: 'repos:read',
+      handler: ({ params, query, user }) => {
+        requireWorkspace(user, params.id);
+        const days = Math.min(Math.max(Number(query.get('days')) || 30, 1), 365);
+        const since = Date.now() - days * 24 * 60 * 60_000;
+        return {
+          since,
+          surfaces: [
+            toStat('triage', 'Issue triage', code.triage.outcomes(params.id, since)),
+            toStat('ai-review', 'AI code review', code.prReviews.outcomes(params.id, since)),
+          ],
+        };
+      },
+    }),
 
     route({
       method: 'GET',

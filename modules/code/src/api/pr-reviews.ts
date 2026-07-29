@@ -5,6 +5,7 @@ import type { PrReviewResult, PrReviewVerdict } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
+import type { OutcomeCounts } from './quality.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
 import { GitHubError, type GitHubClient } from './github-client.js';
 import { describeChecks, type PrChecks } from './pr-checks.js';
@@ -42,6 +43,11 @@ export class PrReviews {
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
+
+  /** Outcome counts for the quality report; the store owns the aggregate. */
+  outcomes(workspaceId: string, since: number): OutcomeCounts {
+    return this.store.prReviews.outcomes(workspaceId, since);
+  }
 
   async analyzePr(repo: string, prNumber: number, userId: string, opts?: { context?: string }): Promise<PrReviewResult> {
     const pr = this.store.prs.get(repo, prNumber);

@@ -42,6 +42,11 @@ const PrBuildRoute = gated(async () => {
 }, 'Pull requests');
 
 export const routes = defineClientRoutes([
+  {
+    match: { prefix: '/agent-quality' },
+    permission: 'repos:read',
+    component: page(() => import('./pages/AgentQuality.js').then((m) => m.AgentQualityPage)),
+  },
   // The PR-in-the-making outcome view of a fix/implement run.
   {
     match: {

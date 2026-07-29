@@ -2,6 +2,7 @@ import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/compa
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import type {
+  AgentQuality,
   ChecksSummary,
   CommentRecord,
   GitHubAccountRecord,
@@ -32,6 +33,8 @@ import type {
  */
 
 export const codeApi = {
+  agentQuality: (workspaceId: string, days: number) =>
+    request<AgentQuality>(`/api/workspaces/${workspaceId}/agent-quality?days=${days}`),
   // repos
   listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
   repoBranches: (fullName: string, workspaceId: string) =>

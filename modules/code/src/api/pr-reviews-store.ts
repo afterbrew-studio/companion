@@ -1,10 +1,18 @@
 import type Database from 'better-sqlite3';
 import { safeParse } from '@moxxy/companion-sdk/server';
 import type { PrReviewResult, PrReviewVerdict } from '../contract/index.js';
+import { outcomeSql, toCounts, type OutcomeCounts } from './quality.js';
 
 /** AI PR review verdicts; the latest row per PR wins. */
 export class PrReviewsStore {
   constructor(private readonly db: Database.Database) {}
+
+  /** Outcome counts for one workspace's AI reviews since a point in time. */
+  outcomes(workspaceId: string, since: number): OutcomeCounts {
+    return toCounts(
+      this.db.prepare(outcomeSql('pr_reviews')).all(workspaceId, since) as Array<{ status: string; n: number }>,
+    );
+  }
 
   insert(r: PrReviewResult): void {
     this.db
