@@ -5,6 +5,9 @@
  * module's stores, the kernel, or sqlite.
  */
 export * from './cli.js';
+export * from './claude-adapter.js';
+export * from './claude-code.js';
+export * from './harness-detect.js';
 export * from './gateway-client.js';
 export * from './gateway-pool.js';
 export * from './history.js';

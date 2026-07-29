@@ -4,6 +4,8 @@ import type {
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
   AskResponse,
+  Harness,
+  HarnessSessionControls,
   HistorySegment,
   ProvisionProviderSpec,
   RunTurnArgs,
@@ -11,6 +13,8 @@ import type {
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
 import type { RunnerHealth } from '../contract/index.js';
+import { ClaudeCodeHarness, readClaudeRunHistory } from '../exec/claude-code.js';
+import { CLAUDE_CODE_HARNESS, MOXXY_HARNESS } from './harnesses.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { configuredProviderNames } from '../exec/home.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
@@ -20,15 +24,51 @@ import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
+/** What a run executes as on this machine, read off its row when it starts. */
+export interface LocalRunSpec {
+  readonly harness: string;
+  readonly model: string | null;
+}
+
+/**
+ * What this backend has to ask the layer that owns the rows: which runtime a
+ * run executes through, and which ones this machine is set to run at all.
+ * Injected rather than looked up, because both answers are rows the execution
+ * primitives must not know how to read.
+ */
+export interface LocalRunnerHost {
+  runSpec(runId: string): LocalRunSpec;
+  /** Harness ids this machine runs work through, in preference order. */
+  harnesses(): readonly string[];
+  /**
+   * Whether the runtime a run started here would actually take is installed and
+   * able to complete a turn. Answered by the layer that owns detection, and
+   * expected to be cached: health polls this every thirty seconds.
+   */
+  readiness(harnessId: string): Promise<{ readonly ok: boolean; readonly detail: string | null }>;
+}
+
+const MOXXY_ONLY: LocalRunnerHost = {
+  runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null }),
+  harnesses: () => [MOXXY_HARNESS.id],
+  readiness: async () => ({ ok: true, detail: null }),
+};
+
 /**
  * The built-in runner: companiond's own machine. Wraps the existing
  * GatewayPool + Checkouts + on-disk history so the local execution path is
  * byte-for-byte what it was before runners existed.
+ *
+ * It is also the only backend that runs more than one harness. Which one a run
+ * uses is the run's own recorded choice, and both answer the same `Harness`
+ * contract, so everything above this class stays indifferent to it.
  */
 export class LocalRunnerBackend implements RunnerBackend {
   readonly id: string;
   private readonly pool: GatewayPool;
   private readonly maxLive: number;
+  /** Live Claude Code sessions, keyed like the gateway pool: one per run. */
+  private readonly claude = new Map<string, ClaudeCodeHarness>();
 
   constructor(
     id: string,
@@ -37,7 +77,8 @@ export class LocalRunnerBackend implements RunnerBackend {
     private moxxyVersion: string | null,
     private moxxyCompatible: boolean,
     maxLive: number,
-    sink: RunnerEventSink,
+    private readonly sink: RunnerEventSink,
+    private readonly host: LocalRunnerHost = MOXXY_ONLY,
   ) {
     this.id = id;
     this.maxLive = maxLive;
@@ -59,15 +100,33 @@ export class LocalRunnerBackend implements RunnerBackend {
     this.moxxyCompatible = compatible;
   }
 
+  /**
+   * Health is judged against the runtime a run started here would actually
+   * take, which is the machine's FIRST choice and nothing else.
+   *
+   * Two ways to get this wrong, and both make a machine lie. Judging on moxxy
+   * regardless leaves a machine moved to another runtime degraded for missing
+   * something it was told not to use, and reports a machine as online when the
+   * runtime it does use has been uninstalled. Judging on "moxxy is anywhere in
+   * the set" takes the whole machine offline for a fallback no run reaches.
+   */
   async probe(): Promise<RunnerHealth> {
+    const takes = this.host.harnesses()[0] ?? MOXXY_HARNESS.id;
+    const { ok, detail } =
+      takes === MOXXY_HARNESS.id
+        ? {
+            ok: this.moxxyCompatible,
+            detail: this.moxxyCompatible ? null : `moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
+          }
+        : await this.host.readiness(takes);
     return {
-      status: this.moxxyCompatible ? 'online' : 'degraded',
+      status: ok ? 'online' : 'degraded',
       moxxyVersion: this.moxxyVersion,
       moxxyCompatible: this.moxxyCompatible,
-      liveRuns: this.pool.liveCount,
+      liveRuns: this.liveIds().length,
       maxRuns: this.maxLive,
       lastSeenAt: Date.now(),
-      detail: this.moxxyCompatible ? null : `moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
+      detail,
       providers: configuredProviderNames(),
     };
   }
@@ -79,25 +138,71 @@ export class LocalRunnerBackend implements RunnerBackend {
 
   async spawn(runId: string, cwd: string): Promise<void> {
     mkdirSync(cwd, { recursive: true });
-    await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath });
+    const spec = this.host.runSpec(runId);
+    if (spec.harness !== CLAUDE_CODE_HARNESS.id) {
+      await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath });
+      return;
+    }
+    if (this.claude.has(runId)) return;
+    if (this.liveIds().length >= this.maxLive) {
+      throw new Error(`this machine is running ${this.maxLive} agents already; stop one first`);
+    }
+    const harness = new ClaudeCodeHarness(
+      { runId, cwd, cliPath: 'claude', model: spec.model },
+      {
+        onEvent: (event) => this.sink.onEvent(runId, event),
+        onTurnComplete: ({ turnId }) => this.sink.onTurnComplete(runId, turnId),
+        onClose: () => {
+          this.claude.delete(runId);
+          this.sink.onGone(runId);
+        },
+      },
+    );
+    await harness.connect();
+    this.claude.set(runId, harness);
   }
 
   async stop(runId: string): Promise<void> {
+    const session = this.claude.get(runId);
+    if (session) {
+      this.claude.delete(runId);
+      session.close();
+      // A closed session raises no onClose of its own, and the run is no longer
+      // live either way: the gateway pool announces the same thing here.
+      this.sink.onGone(runId);
+      return;
+    }
     const handle = this.pool.get(runId);
     if (handle) await handle.stop();
   }
 
   isLive(runId: string): boolean {
-    return this.pool.get(runId)?.client.isOpen ?? false;
+    return this.claude.get(runId)?.isOpen ?? this.pool.get(runId)?.client.isOpen ?? false;
   }
 
   liveIds(): string[] {
-    return this.pool.liveIds();
+    return [...this.pool.liveIds(), ...this.claude.keys()];
   }
 
-  private live(runId: string) {
+  /** The run's harness, whichever kind it is. Both answer the same contract. */
+  private live(runId: string): Harness {
+    const session = this.claude.get(runId);
+    if (session?.isOpen) return session;
     const handle = this.pool.get(runId);
     if (!handle || !handle.client.isOpen) throw new Error(`run ${runId} has no live gateway (resume it first)`);
+    return handle.client;
+  }
+
+  /**
+   * The moxxy-only surface. A harness whose capabilities say it has no live
+   * session controls is asked for none of this, so reaching one here is a
+   * caller that skipped the check rather than a harness that fell short.
+   */
+  private controls(runId: string): HarnessSessionControls {
+    const handle = this.pool.get(runId);
+    if (!handle || !handle.client.isOpen) {
+      throw new Error(`run ${runId} runs on a harness with no live session controls`);
+    }
     return handle.client;
   }
 
@@ -111,22 +216,29 @@ export class LocalRunnerBackend implements RunnerBackend {
     return this.live(runId).sessionInfo();
   }
   setMode(runId: string, mode: string): Promise<void> {
-    return this.live(runId).setMode(mode);
+    return this.controls(runId).setMode(mode);
   }
   setModel(runId: string, model: string | null): Promise<void> {
-    return this.live(runId).setModel(model);
+    return this.controls(runId).setModel(model);
   }
   setProvider(runId: string, provider: string): Promise<void> {
-    return this.live(runId).setProvider(provider);
+    return this.controls(runId).setProvider(provider);
   }
   runCommand(runId: string, name: string, args?: string): Promise<unknown> {
-    return this.live(runId).runCommand(name, args);
+    return this.controls(runId).runCommand(name, args);
   }
   respondAsk(runId: string, requestId: string, response: AskResponse): Promise<void> {
     return this.live(runId).respondAsk(requestId, response);
   }
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
+    // Claude Code keeps its own transcript, live in memory and on disk after,
+    // so its harness answers both cases and there is no moxxy session to fall
+    // back to.
+    if (this.host.runSpec(runId).harness === CLAUDE_CODE_HARNESS.id) {
+      const session = this.claude.get(runId);
+      return session?.isOpen ? session.loadHistory(runId, before, limit) : readClaudeRunHistory(runId, before, limit);
+    }
     const handle = this.pool.get(runId);
     return loadHistoryWithFallback(
       handle?.client.isOpen ? () => handle.client.loadHistory(runId, before, limit) : null,
@@ -181,11 +293,15 @@ export class LocalRunnerBackend implements RunnerBackend {
   }
 
   cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse> {
-    return cleanupRunnerStorage(request, this.checkouts, this.pool.liveIds());
+    // Every live run, not just the gateway pool's: reaping the working
+    // directory out from under a live Claude Code session is the same bug.
+    return cleanupRunnerStorage(request, this.checkouts, this.liveIds());
   }
 
-  /** Reap all gateways (daemon shutdown). */
+  /** Reap every live session, of either kind (daemon shutdown). */
   async stopAll(): Promise<void> {
+    for (const [, session] of this.claude) session.close();
+    this.claude.clear();
     await this.pool.stopAll();
   }
 }

@@ -15,6 +15,7 @@ import type {
   RunRecord,
 } from '../contract/index.js';
 import { log, paths, type DaemonConfig } from '@moxxy/companion-services';
+import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
 import { rowToRun } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -417,6 +418,7 @@ export class Orchestrator implements RunnerEventSink {
       runnerId,
       userId: opts.userId ?? null,
       task: opts.task ?? null,
+      harness: this.runners.harnessFor(runnerId).id,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,
@@ -438,7 +440,7 @@ export class Orchestrator implements RunnerEventSink {
       try {
         if (opts.cwd === undefined) {
           cwd = await placedBackend.scratchDir(id);
-          this.store.runs.setPlacement(id, placedOn, cwd);
+          this.store.runs.setPlacement(id, placedOn, cwd, this.runners.harnessFor(placedOn).id);
         }
         await placedBackend.spawn(id, cwd!);
         this.setStatus(id, 'running');
@@ -565,7 +567,15 @@ export class Orchestrator implements RunnerEventSink {
     return result;
   }
 
+  /**
+   * Put an autonomous run into goal mode. A harness whose permission and
+   * behaviour are settled when its process starts has no mode to set halfway
+   * through, and asking anyway would fail the run: the check is the capability
+   * it declares, not a try/catch that would also swallow a real failure.
+   */
   async setGoalMode(runId: string): Promise<void> {
+    const run = this.store.runs.get(runId);
+    if (!describeHarness(run?.harness ?? MOXXY_HARNESS.id).capabilities.sessionControls.mode) return;
     await this.requireLive(runId).setMode(runId, 'goal');
   }
 
@@ -687,9 +697,12 @@ export class Orchestrator implements RunnerEventSink {
     if (model !== null && !this.runners.serves(row.runner_id ?? null, model)) {
       throw new Error(`${model} is not enabled on the machine this run is on. Pick a model it can serve`);
     }
-    if (this.isLive(runId)) {
+    // A harness configured entirely by the flags it started with cannot be
+    // re-pointed live; the persisted override still rides its next session.
+    const controls = describeHarness(row.harness).capabilities.sessionControls;
+    if (this.isLive(runId) && controls.model) {
       const backend = this.backend(runId);
-      if (provider) {
+      if (provider && controls.provider) {
         await backend
           .setProvider(runId, provider)
           .catch(() => backend.runCommand(runId, 'provider', provider))

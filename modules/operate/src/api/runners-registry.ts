@@ -9,6 +9,9 @@ import type {
   CatalogProvider,
   CreateRunnerRequest,
   GitCredentialResolver,
+  HarnessDescriptor,
+  HarnessOption,
+  HarnessOptions,
   ModelCatalogModel,
   ModelCatalogProvider,
   ProviderCatalog,
@@ -23,8 +26,10 @@ import type {
   RunnerTaskPolicy,
   UpdateRunnerRequest,
 } from '../contract/index.js';
-import { taskPolicyAllows } from '../contract/index.js';
-import { log } from '@moxxy/companion-services';
+import { servesProviderModels, taskPolicyAllows } from '../contract/index.js';
+import { log, paths } from '@moxxy/companion-services';
+import { detectHarnesses, type HarnessDetection } from '../exec/harness-detect.js';
+import { builtinCatalog, harnessSet, MOXXY_HARNESS, offeredHarnesses } from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -32,8 +37,17 @@ import type { MoxxyCli } from '../exec/cli.js';
 import { configuredProviderNames } from '../exec/home.js';
 import { scrubSecret } from '../exec/provision.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
-import { LocalRunnerBackend } from './local-backend.js';
+import { LocalRunnerBackend, type LocalRunSpec } from './local-backend.js';
 import { RemoteRunnerBackend } from './remote-backend.js';
+
+/** What a remote machine is offered: the protocol it speaks carries moxxy only. */
+const MOXXY_OPTION: HarnessOption = {
+  id: MOXXY_HARNESS.id,
+  label: MOXXY_HARNESS.label,
+  state: 'ready',
+  detail: null,
+  fix: null,
+};
 
 const HEALTH_POLL_MS = 30_000;
 const STORAGE_CLEANUP_MS = 6 * 60 * 60_000;
@@ -41,6 +55,8 @@ const STORAGE_CLEANUP_MS = 6 * 60 * 60_000;
 const CATALOG_TTL_MS = 6 * 60 * 60_000;
 /** Backoff after a failed probe so an unreachable machine isn't retried every tick. */
 const CATALOG_RETRY_MS = 10 * 60_000;
+/** How long "what is installed here" is trusted; installing something is rare. */
+const DETECT_TTL_MS = 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
   moxxyVersion: null,
@@ -90,6 +106,9 @@ export class Runners {
    * distinction to refuse only on evidence.
    */
   private modelServers = new Map<string, Set<string>>();
+  /** Cached `detectHarnesses` answer for this machine (see `detected`). */
+  private detectedHarnesses: readonly HarnessDetection[] | null = null;
+  private detectedAt = 0;
 
   constructor(
     private readonly store: OperateStore,
@@ -115,6 +134,17 @@ export class Runners {
       moxxyCli?.compatible ?? false,
       maxLiveRuns,
       sink,
+      {
+        runSpec: (runId) => this.localRunSpec(runId),
+        harnesses: () => this.harnessesOn(this.store.runners.get(LOCAL_RUNNER_ID)!).map((h) => h.id),
+        readiness: async (id) => {
+          const found = (await this.detected()).find((d) => d.id === id);
+          if (!found) return { ok: false, detail: `${id} is not a runtime this build can run` };
+          return found.state === 'ready'
+            ? { ok: true, detail: null }
+            : { ok: false, detail: found.detail ?? `${id} is not installed on this machine` };
+        },
+      },
     );
     this.backends.set(LOCAL_RUNNER_ID, this.local);
     this.rebuildRemotes();
@@ -557,7 +587,21 @@ export class Runners {
       allowedRoles: req.allowedRoles,
     };
     if (row.kind === 'local') {
-      this.store.runners.update(id, reach);
+      // Only this machine's set is a choice; a remote one runs what its agent
+      // can spawn, so accepting a set there would record a lie.
+      this.store.runners.update(id, { ...reach, harnesses: req.harnesses });
+      if (req.harnesses !== undefined) {
+        // The old catalog described a runtime this machine no longer runs.
+        // Keeping it until a fresh probe SUCCEEDS is how a machine ends up
+        // advertising the previous runtime's models as a credentialed
+        // provider, which is exactly what the switch was meant to end.
+        this.store.runners.setCatalog(id, null);
+        this.rebuildModelIndex();
+        this.forgetDetection();
+        this.catalogAttempt.delete(id);
+        this.catalogInFlight.delete(id);
+        await this.refreshCatalog(id, true).catch(() => undefined);
+      }
     } else {
       this.store.runners.update(id, {
         ...reach,
@@ -707,10 +751,74 @@ export class Runners {
       repoIds: row.repo_ids,
       allowedRoles: row.allowed_roles,
       health: this.healthFor(row.id),
+      harnesses: this.harnessesOn(row),
       catalog: row.catalog,
       providerPolicy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       createdAt: row.created_at,
     };
+  }
+
+  /**
+   * The agent runtimes a machine runs work through, in preference order. Only
+   * the local machine can be set to anything else: the runner agent protocol
+   * carries moxxy-shaped calls, so a remote machine runs moxxy whatever its row
+   * says.
+   */
+  private harnessesOn(row: RunnerRow): readonly HarnessDescriptor[] {
+    return row.kind === 'local' ? harnessSet(row.harnesses) : [MOXXY_HARNESS];
+  }
+
+  /**
+   * What is installed on this machine, cached.
+   *
+   * Detection shells out four times, and both callers are hot in their own way:
+   * the health poller asks every thirty seconds and the settings page asks on
+   * every visit. The answer changes only when software is installed or signed
+   * into, so a short cache costs nothing and a stale minute costs less than
+   * four processes per page view.
+   */
+  private async detected(): Promise<readonly HarnessDetection[]> {
+    const now = Date.now();
+    if (this.detectedAt + DETECT_TTL_MS > now && this.detectedHarnesses) return this.detectedHarnesses;
+    this.detectedAt = now;
+    this.detectedHarnesses = await detectHarnesses(paths.moxxyHome());
+    return this.detectedHarnesses;
+  }
+
+  /** Forget the cache: something that changes what is installed just happened. */
+  private forgetDetection(): void {
+    this.detectedAt = 0;
+  }
+
+  /** The harness a run placed here starts under: the machine's first choice. */
+  harnessFor(runnerId: string | null): HarnessDescriptor {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    return (row ? this.harnessesOn(row)[0] : undefined) ?? MOXXY_HARNESS;
+  }
+
+  /**
+   * What the local backend should start for a run id. Work with no run row is a
+   * catalog probe: it must read the harness this machine actually runs, or the
+   * machine would report another one's models.
+   */
+  private localRunSpec(runId: string): LocalRunSpec {
+    const row = this.store.runs.get(runId);
+    if (!row) return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null };
+    return { harness: row.harness, model: row.model };
+  }
+
+  /**
+   * What this machine could be set to run, and what it is set to run now.
+   * Harnesses that are not installed are left out entirely rather than listed
+   * as unavailable, so the list is exactly as long as the machine's real
+   * options.
+   */
+  async harnessOptions(id: string): Promise<HarnessOptions> {
+    const row = this.store.runners.get(id);
+    if (!row) throw new Error('runner not found');
+    const selected = this.harnessesOn(row).map((h) => h.id);
+    if (row.kind !== 'local') return { options: [MOXXY_OPTION], selected };
+    return { options: offeredHarnesses(await this.detected()), selected };
   }
 
   // ---------- catalogs: the one source of provider/model truth ----------
@@ -809,7 +917,12 @@ export class Runners {
       const policy = policyOf(row);
       const servable = new Set<string>();
       const groups: CatalogMachineProvider[] = [];
-      for (const provider of row.catalog?.providers ?? []) {
+      // A machine whose runtimes bring their own models has a catalog, and it
+      // is not a provider catalog: folding it into the merged set would invent
+      // a provider nobody has credentials for and make an instance that runs
+      // only such machines read as configured.
+      const fromProviders = servesProviderModels(this.harnessesOn(row));
+      for (const provider of fromProviders ? (row.catalog?.providers ?? []) : []) {
         const merged = entry(provider.name);
         const providerEnabled = !policy.providers.has(provider.name);
         const models = provider.models.map((model): CatalogMachineModel => ({
@@ -846,6 +959,7 @@ export class Runners {
         online: this.isOnline(row),
         fetchedAt: at,
         modelCount: servable.size,
+        providerModels: fromProviders,
         providers: groups,
         policy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       });
@@ -963,6 +1077,14 @@ export class Runners {
   private async probeCatalog(id: string): Promise<RunnerCatalog | null> {
     const backend = this.backends.get(id);
     if (!backend) return null;
+    // A machine whose runtime ships its own models already told us what they
+    // are; starting a process to be told again would be the probe's whole cost
+    // for none of its information.
+    const fixed = builtinCatalog(this.harnessFor(id));
+    if (fixed) {
+      this.storeCatalog(id, fixed);
+      return fixed;
+    }
     const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
     try {
       const cwd = await backend.scratchDir(probeId);

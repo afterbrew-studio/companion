@@ -346,4 +346,46 @@ export default defineMigrations([
       db.exec(`ALTER TABLE runs DROP COLUMN task`);
     },
   },
+  {
+    /**
+     * Which agent runtime a run executes through. Every run that exists when
+     * this lands went through moxxy, so the default is not a guess, and it
+     * keeps the column non-null for rows created by a daemon still serving the
+     * previous dist.
+     */
+    version: 9,
+    name: 'runs_harness',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runs ADD COLUMN harness TEXT NOT NULL DEFAULT 'moxxy'`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE runs DROP COLUMN harness`);
+    },
+  },
+  {
+    /**
+     * Which agent runtimes a machine runs work through, chosen per machine
+     * because a harness is installed software and machines differ.
+     *
+     * NULL means "never chosen", which reads as moxxy alone: that is what every
+     * existing machine ran, so an upgrade changes nothing until someone picks
+     * something. Distinct from an empty list, which the write path refuses.
+     */
+    version: 10,
+    name: 'runners_harnesses',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runners ADD COLUMN harnesses TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE runners DROP COLUMN harnesses`);
+    },
+  },
 ]);

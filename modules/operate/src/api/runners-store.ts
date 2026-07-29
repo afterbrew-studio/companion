@@ -40,6 +40,9 @@ export interface RunnerRow {
   disabled_providers: string[];
   /** Model ids agents may not use here, bare or `provider/id` (JSON array). */
   disabled_models: string[];
+  /** Harness ids this machine runs work through, in preference order (JSON
+   *  array). Empty = never chosen, which reads as moxxy alone. */
+  harnesses: string[];
   /** Last-fetched provider/model catalog (JSON), or null. */
   catalog: RunnerCatalog | null;
   created_at: number;
@@ -97,6 +100,7 @@ export class RunnersStore {
       allowed_roles: parseJson<string[]>(row.allowed_roles, []),
       disabled_providers: parseJson<string[]>(row.disabled_providers, []),
       disabled_models: parseJson<string[]>(row.disabled_models, []),
+      harnesses: parseJson<string[]>(row.harnesses, []),
       catalog: parseJson<RunnerCatalog | null>(row.catalog, null),
       workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [],
       repo_ids: repoScope === 'selected' ? this.repoIds(row.id) : [],
@@ -174,6 +178,8 @@ export class RunnersStore {
       repoIds: readonly string[];
       /** Full replacement role list; empty opens it to every role. */
       allowedRoles: readonly string[];
+      /** Full replacement harness set, in preference order. */
+      harnesses: readonly string[];
     }>,
   ): void {
     const current = this.get(id);
@@ -184,7 +190,8 @@ export class RunnersStore {
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
          max_runs = @maxRuns, enabled = @enabled, task_policy_mode = @mode, policy_modules = @modules,
-         policy_tasks = @tasks, repo_scope = @repoScope, allowed_roles = @roles WHERE id = @id`,
+         policy_tasks = @tasks, repo_scope = @repoScope, allowed_roles = @roles,
+         harnesses = @harnesses WHERE id = @id`,
       )
       .run({
         id,
@@ -199,6 +206,7 @@ export class RunnersStore {
         tasks: jsonList(policy ? policy.tasks : current.policy_tasks),
         repoScope: fields.repoScope ?? current.repo_scope,
         roles: jsonList(roles),
+        harnesses: jsonList(fields.harnesses ?? current.harnesses),
       });
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
     if (fields.repoIds !== undefined) this.setRepos(id, fields.repoIds);
@@ -260,6 +268,7 @@ type RawRunnerRow = Omit<
   | 'allowed_roles'
   | 'disabled_providers'
   | 'disabled_models'
+  | 'harnesses'
   | 'catalog'
 > & {
   blocked_tasks: string | null;
@@ -270,6 +279,7 @@ type RawRunnerRow = Omit<
   allowed_roles: string | null;
   disabled_providers: string | null;
   disabled_models: string | null;
+  harnesses: string | null;
   catalog: string | null;
 };
 

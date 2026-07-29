@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useKernel, type ModuleDescriptor } from '@moxxy/companion-core/client';
+import { Slot, useKernel, type ModuleDescriptor } from '@moxxy/companion-core/client';
 import type { ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
 import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@moxxy/companion-ui';
 import { modulesApi } from '../api.js';
+import { useAuth } from '../lib/auth.js';
 import { ModuleConfigForm } from '../components/ModuleConfigForm.js';
 import { OutOfTree } from '../components/OutOfTree.js';
 
@@ -16,6 +17,7 @@ import { OutOfTree } from '../components/OutOfTree.js';
  */
 export function ModulesPage(): JSX.Element {
   const modules = useKernel().descriptors;
+  const { can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
@@ -159,6 +161,10 @@ export function ModulesPage(): JSX.Element {
           title={`${target.mode === 'install' ? 'Install' : 'Configure'} ${target.mod.title}`}
           onClose={() => setTarget(null)}
         >
+          {/* A module's own warning about what its settings can and cannot
+              reach on this instance. It sits above the fields because it
+              changes what they mean, not what they are. */}
+          <Slot name={`modules.config.${target.mod.id}`} can={can} />
           {target.mode === 'configure' && targetState === undefined && modalError === null ? (
             <p className="dim py-4 text-center text-sm">Loading…</p>
           ) : (

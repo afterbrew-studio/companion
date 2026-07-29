@@ -281,6 +281,7 @@ function addRunningChat(store, id, runnerId) {
     runnerId,
     userId: null,
     task: null,
+    harness: 'moxxy',
     createdAt: now,
     updatedAt: now,
     inputTokens: 0,

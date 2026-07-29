@@ -570,6 +570,7 @@ modules, so a slot is the only way your module reaches it:
 | `shell.banner` | full-width notice above the page |
 | `shell.topbar` | the status cluster right of the search box |
 | `shell.effects` | a component that returns `null` and exists to run a shell-level effect |
+| `modules.config.<moduleId>` | above that module's settings form, for what its own settings cannot reach here |
 
 State shared by two contributions must live in ONE component: splitting a button
 and its panel across two slots pushes their shared state back into the shell.

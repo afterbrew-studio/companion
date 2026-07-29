@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Breadcrumb,
   EmptyState,
@@ -19,6 +19,7 @@ import { isAmbiguousWorkspaceName } from '@companion/module-workspace/client';
 import { useAuth } from '@companion/module-core/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type {
+  HarnessOption,
   RunnerPolicyOptions,
   RunnerRecord,
   RunnerRepoScope,
@@ -138,6 +139,7 @@ function SettingsForm({
   const [allowedRoles, setAllowedRoles] = useState<readonly string[]>(saved.allowedRoles);
   const [roleScoped, setRoleScoped] = useState(saved.allowedRoles.length > 0);
   const [policy, setPolicy] = useState<RunnerTaskPolicy>(saved.taskPolicy);
+  const [harnesses, setHarnesses] = useState<readonly string[]>(runner.harnesses.map((h) => h.id));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [addingProvider, setAddingProvider] = useState(false);
@@ -146,6 +148,7 @@ function SettingsForm({
   const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
   const reposEmpty = repoScope === 'selected' && repoIds.length === 0;
   const rolesEmpty = roleScoped && allowedRoles.length === 0;
+  const harnessesEmpty = harnesses.length === 0;
   const nextRoles = shared && roleScoped ? allowedRoles : [];
   const capacity = Number(maxRuns);
   const { health, catalog } = runner;
@@ -158,6 +161,7 @@ function SettingsForm({
     !sameStrings(repoScope === 'selected' ? repoIds : [], saved.repoIds) ||
     !sameStrings(nextRoles, saved.allowedRoles) ||
     !samePolicy(policy, saved.taskPolicy) ||
+    !sameStrings(harnesses, runner.harnesses.map((h) => h.id)) ||
     (!local && (normalizeEndpoint(endpoint) !== runner.endpoint || token.trim().length > 0));
 
   const save = async (e: FormEvent): Promise<void> => {
@@ -165,6 +169,7 @@ function SettingsForm({
     if (delegatedEmpty) return setError('A delegated runner needs at least one workspace.');
     if (reposEmpty) return setError('Pick at least one repository, or clear the machine for all of them.');
     if (rolesEmpty) return setError('Pick at least one role, or open the machine to every role.');
+    if (harnessesEmpty) return setError('Pick at least one agent runtime; a machine that runs none still takes work.');
     setBusy(true);
     setError(null);
     setNote(null);
@@ -178,6 +183,7 @@ function SettingsForm({
         repoIds: repoScope === 'selected' ? repoIds : [],
         allowedRoles: nextRoles,
         taskPolicy: policy,
+        harnesses,
         ...(local ? {} : { endpoint: normalizeEndpoint(endpoint), ...(token.trim() ? { token: token.trim() } : {}) }),
       });
       setToken('');
@@ -226,6 +232,7 @@ function SettingsForm({
                 delegatedEmpty ||
                 reposEmpty ||
                 rolesEmpty ||
+                harnessesEmpty ||
                 !(capacity >= 1) ||
                 (!local && !endpoint.trim())
               }
@@ -366,6 +373,18 @@ function SettingsForm({
               <span className="dim text-sm tabular-nums">{catalog ? modelCount : '—'}</span>
             </SettingRow>
           </ListCard>
+        </Section>
+
+        <Section
+          title="Agent runtimes"
+          description="What agent work here actually runs on. Only runtimes installed on this machine are listed; a run takes the one marked below, and the rest are kept for when it cannot."
+        >
+          <HarnessPicker
+            runnerId={runner.id}
+            local={local}
+            selected={harnesses}
+            onChange={setHarnesses}
+          />
         </Section>
 
         <Section title="Policy" description="What this machine may be used for.">
@@ -652,6 +671,122 @@ function ReachRow({
       </SettingRow>
       {scoped ? <div className="mt-3">{children}</div> : null}
     </div>
+  );
+}
+
+/**
+ * The machine's agent runtimes, offered from what is actually installed on it.
+ *
+ * Three states settle what a row looks like, and the third one is why detection
+ * beats a catalogue: a runtime that is not installed is not here at all, one
+ * that is installed but cannot complete a turn is here unticked with the single
+ * command that repairs it, and a ready one is just a choice. An empty list is
+ * the only case that needs sentences, because a question with no options is not
+ * a question.
+ */
+function HarnessPicker({
+  runnerId,
+  local,
+  selected,
+  onChange,
+}: {
+  runnerId: string;
+  local: boolean;
+  selected: readonly string[];
+  onChange: (next: readonly string[]) => void;
+}): JSX.Element {
+  const [options, setOptions] = useState<readonly HarnessOption[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .runnerHarnesses(runnerId)
+      .then((r) => alive && setOptions(r.options))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [runnerId]);
+
+  if (!local) {
+    return (
+      <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
+        A machine reached over the network runs moxxy. The runner agent speaks one runtime, so this is not a choice
+        there.
+      </p>
+    );
+  }
+  if (failed) return <p className="dim text-xs">Could not read what is installed on this machine.</p>;
+  if (options === null) return <p className="dim text-xs">Looking at what is installed…</p>;
+  if (options.length === 0) {
+    return (
+      <div className="banner-warn">
+        No agent runtime is installed on this machine, so nothing can run here yet. Install one and reload:{' '}
+        <code>npm i -g @moxxy/cli</code> or <code>npm i -g @anthropic-ai/claude-code</code>.
+      </div>
+    );
+  }
+
+  // Chosen once, and no longer on the machine. It cannot be a row (there is
+  // nothing to tick) and it cannot be silent either: runs placed here would
+  // fail at spawn with nothing on this page saying why.
+  const gone = selected.filter((id) => !options.some((o) => o.id === id));
+
+  return (
+    <ListCard subtle ariaLabel="Agent runtimes on this machine">
+      {gone.length > 0 ? (
+        <div className="px-4 py-3">
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            Set to {gone.join(', ')}, which is no longer installed here. Reinstall it, or tick another runtime and
+            save.
+          </span>
+        </div>
+      ) : null}
+      {options.map((option) => (
+        <SettingRow
+          key={option.id}
+          className="px-4 py-3"
+          title={
+            <span className="flex items-center gap-2">
+              {option.label}
+              {/* Ticking a second runtime beside the first changes nothing, and
+                  two ticked boxes would otherwise look the same whichever one
+                  work actually runs through. */}
+              {option.id === selected[0] ? <span className="chip">runs work here</span> : null}
+            </span>
+          }
+          description={
+            option.detail === null ? (
+              'Installed and ready.'
+            ) : (
+              <>
+                {option.detail}
+                {option.fix ? (
+                  <>
+                    {' '}
+                    Fix it with <code>{option.fix}</code>.
+                  </>
+                ) : null}
+              </>
+            )
+          }
+        >
+          <input
+            type="checkbox"
+            aria-label={`Run agents through ${option.label}`}
+            checked={selected.includes(option.id)}
+            onChange={(e) =>
+              onChange(
+                e.target.checked
+                  ? [...selected, option.id]
+                  : selected.filter((id) => id !== option.id),
+              )
+            }
+          />
+        </SettingRow>
+      ))}
+    </ListCard>
   );
 }
 

@@ -84,6 +84,14 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
         <AskSheet key={ask.requestId} ask={ask} onRespond={(r) => void respondAsk(ask.requestId, r)} />
       ))}
 
+      {/* An approval sheet on a policy harness would wait for a prompt that is
+          never coming, so this says what settled the permission instead. */}
+      {run?.live && run.harness.capabilities.approvals === 'policy' ? (
+        <p className="dim my-2 text-[11px]" role="status">
+          {run.harness.label} settles tool permission before a turn starts, so nothing is held for approval here.
+        </p>
+      ) : null}
+
       <ErrorBar error={error} />
 
       <footer className="pt-3 pb-4">
@@ -136,17 +144,22 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
 }
 
 /**
- * On-the-fly model switch. The list comes from the run's live moxxy gateway
+ * On-the-fly model switch. The list comes from the run's live gateway
  * (connected providers + their models); switching persists on the run and is
  * pushed to the session so even goal-mode turns use it.
+ *
+ * A harness that brings its own models has no provider catalog to read, so the
+ * picker degrades to the read-only badge rather than offering a list nothing
+ * would fill.
  */
 function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunRecord) => void }): JSX.Element {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const fromProviders = run.harness.capabilities.models === 'providers';
 
   useEffect(() => {
-    if (!run.live) {
+    if (!run.live || !fromProviders) {
       setCatalog(null);
       return;
     }
@@ -158,7 +171,7 @@ function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunR
     return () => {
       alive = false;
     };
-  }, [run.id, run.live]);
+  }, [run.id, run.live, fromProviders]);
 
   const current = run.model ?? '';
 
