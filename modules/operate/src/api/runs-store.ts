@@ -19,9 +19,15 @@ export class RunsStore {
       .run(run);
   }
 
-  /** Set the run's cwd + runner after placement (before the gateway spawns). */
-  setPlacement(id: string, runnerId: string | null, cwd: string): void {
-    this.db.prepare(`UPDATE runs SET runner_id = ?, cwd = ?, updated_at = ? WHERE id = ?`).run(runnerId, cwd, Date.now(), id);
+  /**
+   * Set the run's cwd + runner after placement (before the gateway spawns).
+   * The harness moves with the machine: which runtime a run executes through is
+   * the machine's choice, so failing over to another one changes it.
+   */
+  setPlacement(id: string, runnerId: string | null, cwd: string, harness: string): void {
+    this.db
+      .prepare(`UPDATE runs SET runner_id = ?, cwd = ?, harness = ?, updated_at = ? WHERE id = ?`)
+      .run(runnerId, cwd, harness, Date.now(), id);
   }
 
   setModel(id: string, model: string | null): void {

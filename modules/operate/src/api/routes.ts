@@ -14,6 +14,7 @@ import { taskModuleId } from '../contract/index.js';
 import { paths } from '@moxxy/companion-services';
 import { adoptDailyMoxxyHome, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
+import { HARNESSES } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 // ---------- runs ----------
@@ -91,6 +92,7 @@ const updateRunnerSchema = z.object({
   repoScope: z.enum(['all', 'selected']).optional(),
   repoIds,
   allowedRoles,
+  harnesses: z.array(z.string().min(1).max(60)).min(1).max(8).optional(),
 });
 
 // ---------- system (status, provider/model settings, skills) ----------
@@ -412,6 +414,21 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
+      // What this machine could be set to run, detected on it rather than
+      // listed from a catalogue: harnesses it has not installed are absent from
+      // the answer, not marked unavailable. Its own route because detection
+      // shells out, so it must not ride the runners payload that every
+      // `runners.changed` re-reads. Must precede /api/runners/:id.
+      method: 'GET',
+      path: '/api/runners/harnesses/:id',
+      access: 'runners:connect',
+      handler: ({ params, user }) => {
+        requireManageableRunner(user, params.id);
+        return op.runners.harnessOptions(params.id);
+      },
+    }),
+
+    route({
       // Capacity is safe instance health: no run titles, repos, or owner ids.
       // It is viewer-specific because their private runners extend the pool.
       method: 'GET',
@@ -465,6 +482,12 @@ export default defineRoutes((ctx) => {
         // question), so one set here could lock its owner out with no way back.
         if ((body.allowedRoles ?? []).length > 0 && runner.ownerId !== null) {
           throw badRequest('role restrictions apply to shared machines; this one is already limited to its owner');
+        }
+        // A machine set to a runtime this build cannot run would accept
+        // placements nothing could execute, so an unknown id is refused here
+        // rather than silently dropped when the set is read back.
+        for (const id of body.harnesses ?? []) {
+          if (!HARNESSES.some((h) => h.id === id)) throw badRequest(`unknown agent runtime ${id}`);
         }
         return { runner: await op.runners.update(params.id, body) };
       },

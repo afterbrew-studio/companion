@@ -29,6 +29,7 @@ await build({
     client: join(here, 'src/client.ts'),
     repair: join(here, 'src/repair.ts'),
       profile: join(here, 'src/profile.ts'),
+    harnesses: join(here, 'src/harnesses.ts'),
   },
   outdir: dist,
   bundle: true,

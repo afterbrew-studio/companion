@@ -366,4 +366,26 @@ export default defineMigrations([
       db.exec(`ALTER TABLE runs DROP COLUMN harness`);
     },
   },
+  {
+    /**
+     * Which agent runtimes a machine runs work through, chosen per machine
+     * because a harness is installed software and machines differ.
+     *
+     * NULL means "never chosen", which reads as moxxy alone: that is what every
+     * existing machine ran, so an upgrade changes nothing until someone picks
+     * something. Distinct from an empty list, which the write path refuses.
+     */
+    version: 10,
+    name: 'runners_harnesses',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runners ADD COLUMN harnesses TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE runners DROP COLUMN harnesses`);
+    },
+  },
 ]);

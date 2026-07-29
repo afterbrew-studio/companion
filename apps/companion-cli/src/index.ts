@@ -25,9 +25,16 @@ import {
   PROFILE_CHOICES,
   profileFromEnv,
   requires,
+  waitForToken,
   withDependencies,
   type ProfileId,
 } from './profile.js';
+import {
+  harnessChoices,
+  NOTHING_INSTALLED,
+  readHarnessOptions,
+  saveHarnesses,
+} from './harnesses.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
@@ -95,7 +102,8 @@ Options:
   --verbose        Show daemon startup and diagnostic logs
   -h, --help       Show this help
 
-The moxxy CLI is optional at startup, but required before running AI agents.
+Agent work runs through a harness installed on this machine (the moxxy CLI, or
+Claude Code). First run detects what is there and asks which of them to use.
 `;
 
 class SetupCancelled extends Error {}
@@ -325,6 +333,9 @@ async function start(options: CliOptions): Promise<void> {
     process.stdout.write(`Enabling ${pendingModules.length} optional module(s)…\n`);
     await installModules(url, pendingModules, (line) => process.stdout.write(`${line}\n`));
   }
+  // Only on a first run: the machine's runtimes are settled once, and every
+  // later start would otherwise re-ask a question that already has an answer.
+  if (pendingAdmin) await settleHarnesses(url, options);
   process.stdout.write(`\nCompanion is ready: ${url}\n`);
   const admin = pendingAdmin ?? readAdminSetup(options.home);
   if (admin) {
@@ -339,6 +350,44 @@ async function start(options: CliOptions): Promise<void> {
   }
   if (pendingAdmin) consumePendingAdminSetup(options.home);
   if (options.open) openBrowser(url);
+}
+
+/**
+ * Which agent runtimes this machine will use, asked once, from what is actually
+ * installed on it.
+ *
+ * Silent when the daemon does not answer: an instance without the execution
+ * module has no such question, and saying nothing is better than explaining an
+ * absence. Non-interactive runs keep the default, which is moxxy, because a
+ * scripted install must not have its execution plane changed by whatever
+ * happens to be on the box.
+ */
+async function settleHarnesses(url: string, options: CliOptions): Promise<void> {
+  const token = await waitForToken();
+  if (!token) return;
+  const answer = await readHarnessOptions(url, token);
+  if (!answer) return;
+  if (answer.options.length === 0) {
+    process.stdout.write(`\n${NOTHING_INSTALLED}\n`);
+    return;
+  }
+  if (options.yes || !process.stdin.isTTY) return;
+
+  const { checkbox } = await import('@inquirer/prompts');
+  const picked = await checkbox<string>({
+    message: 'Which agent runtimes should this machine use?',
+    choices: harnessChoices(answer.options).map((c) => ({ ...c })),
+  });
+  if (picked.length === 0) {
+    process.stdout.write('Nothing ticked, so this machine keeps its current runtime.\n');
+    return;
+  }
+  try {
+    await saveHarnesses(url, token, picked);
+    process.stdout.write(`Agent work here runs through ${picked.join(', ')}.\n`);
+  } catch (err) {
+    process.stderr.write(`Could not save the runtime choice: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
 }
 
 function parseArgs(argv: readonly string[]): CliOptions {

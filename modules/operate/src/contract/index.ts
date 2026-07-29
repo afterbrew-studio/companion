@@ -100,6 +100,39 @@ export interface HarnessDescriptor {
   /** How the harness names itself in the UI ('moxxy', 'Claude Code'). */
   readonly label: string;
   readonly capabilities: HarnessCapabilities;
+  /**
+   * The models it ships, when `capabilities.models` is `builtin`. A fixed list
+   * is a fact about the harness, so a machine running one needs no probe to
+   * answer what it can run: the answer cannot change without a new release.
+   */
+  readonly models?: ReadonlyArray<string>;
+}
+
+/**
+ * One harness a machine could be set to run, as first-run setup and the
+ * machine's own settings page offer it.
+ *
+ * A harness that is not installed on that machine is NOT in this list. That is
+ * the point of detecting rather than asking: the list is exactly as long as the
+ * machine's real options, and an empty one is the only case that needs words.
+ */
+export interface HarnessOption {
+  readonly id: string;
+  readonly label: string;
+  /**
+   * `ready` is on PATH with its own check passing. `installed` is on PATH and
+   * will fail: it is offered unticked, with `detail` saying what is wrong and
+   * `fix` naming the one command that repairs it.
+   */
+  readonly state: 'ready' | 'installed';
+  readonly detail: string | null;
+  readonly fix: string | null;
+}
+
+/** What a machine could run work through, and what it is set to run. */
+export interface HarnessOptions {
+  readonly options: ReadonlyArray<HarnessOption>;
+  readonly selected: ReadonlyArray<string>;
 }
 
 /**
@@ -640,6 +673,13 @@ export interface UpdateRunnerRequest {
   readonly repoIds?: ReadonlyArray<string>;
   /** Full replacement role list; empty opens the machine to every role. */
   readonly allowedRoles?: ReadonlyArray<string>;
+  /**
+   * Which agent runtimes this machine runs work through, in preference order:
+   * a run takes the first one. Full replacement; omit to keep the current set.
+   * An empty list is refused, because a machine that can run nothing would
+   * still accept placements.
+   */
+  readonly harnesses?: ReadonlyArray<string>;
 }
 
 /** One module's registered run tasks — the policy tree's top level. */

@@ -3,6 +3,7 @@ import { del, patch, post, put, request } from '@moxxy/companion-core/client';
 import type {
   BudgetStatus,
   CreateRunnerRequest,
+  HarnessOptions,
   ModelCatalog,
   MoxxyStatus,
   ProviderCatalog,
@@ -64,6 +65,7 @@ export const operateApi = {
   // runners (execution machines)
   listRunners: () => request<{ runners: RunnerRecord[]; tasks: RunTaskDescriptor[] }>('/api/runners'),
   runnerOptions: () => request<RunnerPolicyOptions>('/api/runners/options'),
+  runnerHarnesses: (id: string) => request<HarnessOptions>(`/api/runners/harnesses/${id}`),
   runnerCapacity: () => request<RunnerCapacitySnapshot>('/api/runners/capacity'),
   createRunner: (body: CreateRunnerRequest) => post<{ runner: RunnerRecord }>('/api/runners', body),
   updateRunner: (id: string, body: UpdateRunnerRequest) =>

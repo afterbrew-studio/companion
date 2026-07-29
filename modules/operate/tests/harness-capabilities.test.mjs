@@ -145,16 +145,16 @@ test('runs that existed before the column answer moxxy, which is what they ran o
   // surface.
   const db = new Database(':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-  const [older, harnessMigration] = [migrations.slice(0, -1), migrations[migrations.length - 1]];
-  assert.equal(harnessMigration.name, 'runs_harness');
-  for (const m of older) m.up(db);
+  const at = migrations.findIndex((m) => m.name === 'runs_harness');
+  assert.ok(at > 0, 'the runs_harness migration is missing');
+  for (const m of migrations.slice(0, at)) m.up(db);
 
   const now = Date.now();
   db.prepare(
     `INSERT INTO runs (id, kind, status, title, cwd, created_at, updated_at, input_tokens, output_tokens)
      VALUES ('old-run', 'interactive', 'stopped', 'chat', '/tmp', ?, ?, 0, 0)`,
   ).run(now, now);
-  harnessMigration.up(db);
+  migrations[at].up(db);
 
   assert.equal(rowToRun(db.prepare(`SELECT * FROM runs WHERE id = 'old-run'`).get(), false).harness.id, 'moxxy');
 });

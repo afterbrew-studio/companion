@@ -168,18 +168,54 @@ declaration. At minimum: whether approvals are `interactive` or `policy`,
 whether usage is reported, and where models come from. No behaviour changes in
 this phase; it is the load-bearing refactor and should be provably a no-op.
 
-### 4. Make the UI capability-aware
+### 4. Make the UI capability-aware (done)
 
 Before a second harness exists, not after. Companion asks what the harness can
 do and stops offering what it cannot: the approval affordance, provider policy,
 slash commands, modes. Doing this after would mean shipping a harness whose UI
 lies, which is the same defect we just fixed in the transcript.
 
-### 5. The Claude Code harness, unattended first
+A run and a machine each carry a `HarnessDescriptor`, so the three axes are
+answered where they are asked: per run for approvals, per machine for the model
+source, and across the fleet for usage. Provider detection gained a fourth
+answer, `builtin`, for a fleet where no machine takes its models from a
+provider: distinct from "none" because nothing is missing, so sending the
+operator to add credentials would send them after a problem they do not have.
+Nothing changed on screen, which is the point.
+
+There was no place to say what the spend ceiling cannot see, so module-core
+opened `modules.config.<moduleId>` beside a module's own settings form, using
+the same slot mechanism the shell already had.
+
+### 5. The Claude Code harness, unattended first (done)
 
 Board workers, fix runs and pipeline steps, which is where the fidelity is
 complete and the value is highest. Attended chat comes later or runs under a
 fixed policy, stated in the UI.
+
+**Local runner only.** The runner agent protocol still carries moxxy-shaped
+calls, so a remote machine runs moxxy whatever its row says. `RunnerBackend`
+is untouched: `LocalRunnerBackend` is the only one that runs two harnesses, and
+it dispatches on the run's own recorded choice.
+
+Two things the measurement changed. `system/init` does not arrive until the
+first turn is written, so there is no handshake to wait for and readiness is
+"the process did not die", a signal that still catches a missing binary or a
+rejected flag, while a refused sign-in surfaces on the turn it belongs to. And
+`claude auth status --json` answers the readiness half of detection without
+spending anything, which is what makes the three-state question cheap enough to
+ask on every first run.
+
+The session file Claude Code writes to disk turned out to carry `user` and
+`assistant` frames in the same shape as the stream, so a reaped run replays
+through the same adapter, and the replay is *more* complete than the live
+stream: the file carries the prompts the stream never echoes.
+
+What is deliberately left: attended chat runs under the fixed policy the run
+detail page now states, rather than gaining a per-call approval it cannot have;
+a machine running only Claude Code contributes no models to instance-wide task
+pins, because a pin is expressed against the provider catalog and that is the
+catalog move this plan names as its own piece of work.
 
 ### 6. Harness as a module
 
@@ -229,7 +265,8 @@ general and becomes true only of an instance that chose moxxy.
 **Where the choice lives.** Per instance is simplest. Per runner mirrors
 providers, which are already per machine, and matches reality: a harness is
 installed software. Per task is the most flexible and probably premature.
-Per runner is the decision.
+Per runner is the decision, and it is what shipped: an ordered multi-select on
+the machine, settled at first run by detection, and a run takes the first entry.
 
 **The runner agent.** Remote machines run `companion-runner`, whose protocol
 carries moxxy-shaped calls. A second harness means the agent has to know which

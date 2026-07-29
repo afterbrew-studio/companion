@@ -138,7 +138,7 @@ export async function installModules(
 }
 
 /** The daemon mints the token during boot, a moment after it answers /healthz. */
-async function waitForToken(timeoutMs = 15_000): Promise<string | null> {
+export async function waitForToken(timeoutMs = 15_000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const file = paths.cliToken();
