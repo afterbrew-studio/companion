@@ -159,28 +159,33 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
       <ErrorBar error={error} className="mb-3" />
 
       <div className="flex max-w-3xl flex-col gap-5">
-        <DetailGrid>
-          {verdict ? (
-            <>
-              <DetailRow label="AI likelihood">
-                <SlopMeter value={verdict.aiLikelihood} />
-              </DetailRow>
-              <DetailRow label="Confidence">{verdict.confidence}</DetailRow>
-              <DetailRow label="Recommends">{ACTION_LABEL[verdict.recommendedAction]}</DetailRow>
-            </>
-          ) : null}
-          {d.appliedAction ? <DetailRow label="Applied">{ACTION_LABEL[d.appliedAction]}</DetailRow> : null}
-          {d.runId ? (
-            <DetailRow label="Agent run">
-              <a className="linkish font-mono text-xs" href={`#/runs/${d.runId}`}>
-                {d.runId}
-              </a>
-            </DetailRow>
-          ) : null}
-          <DetailRow label="Detected">{new Date(d.createdAt).toLocaleString()}</DetailRow>
-        </DetailGrid>
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-start">
+          <div>
+            <Eyebrow>Detection</Eyebrow>
+            <DetailGrid className="mt-1.5">
+              {verdict ? (
+                <>
+                  <DetailRow label="AI likelihood">
+                    <SlopMeter value={verdict.aiLikelihood} />
+                  </DetailRow>
+                  <DetailRow label="Confidence">{verdict.confidence}</DetailRow>
+                  <DetailRow label="Recommends">{ACTION_LABEL[verdict.recommendedAction]}</DetailRow>
+                </>
+              ) : null}
+              {d.appliedAction ? <DetailRow label="Applied">{ACTION_LABEL[d.appliedAction]}</DetailRow> : null}
+              {d.runId ? (
+                <DetailRow label="Agent run">
+                  <a className="linkish font-mono text-xs" href={`#/runs/${d.runId}`}>
+                    {d.runId}
+                  </a>
+                </DetailRow>
+              ) : null}
+              <DetailRow label="Detected">{new Date(d.createdAt).toLocaleString()}</DetailRow>
+            </DetailGrid>
+          </div>
 
-        <ContributorProvenance provenance={d.provenance} />
+          <ContributorProvenance provenance={d.provenance} />
+        </div>
 
         {d.status === 'running' ? (
           <InlineLoading label="The agent is scoring this pull request — the verdict lands here when it finishes." />
