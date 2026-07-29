@@ -38,8 +38,10 @@ Everything is scoped to a **workspace**, a named group of repositories.
   labels, comments.
 - **Proposals** capture a business request, analyse it, and turn an approved one
   into an implementation run.
-- **Agent runs** show every moxxy-backed run and its lifecycle, live.
-- **Automations** react to webhooks and schedules.
+- **Agent runs** show every moxxy-backed run and its lifecycle, live, under a
+  monthly spend ceiling that refuses work rather than surprising you.
+- **Automations** react to webhooks and schedules, and the inbox can be
+  forwarded to Slack, Discord, ntfy or a signed webhook of your own.
 
 Auth and RBAC are built in. Every REST route declares the permission it requires,
 the SPA hides what your role cannot use, and roles are instance data rather than

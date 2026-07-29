@@ -1,6 +1,6 @@
 # Open items
 
-What is genuinely not built, as of 2026-07-28, after P0 to P9 of
+What is genuinely not built, as of 2026-07-29, after P0 to P9 of
 [`game-plan.md`](game-plan.md) landed.
 
 The list is short on purpose. **Every mechanism from the plan exists**: build
@@ -10,9 +10,9 @@ endpoint and outbound proxy seams, the secret store seam, the OIDC reference
 module, the published SDK, out-of-tree modules on both the server and the
 browser, GitHub App credentials, and the published ABI.
 
-What follows needs content or a decision, not a new mechanism, with two
-exceptions: §1 is built and kept here for its remaining rough edge, and §6 needs
-nothing until a module asks for it.
+What follows needs content or a decision, not a new mechanism, with these
+exceptions: §1, §7 and §8 are built and kept here for their remaining rough
+edges, and §6 needs nothing until a module asks for it.
 
 Verified against the tree rather than remembered: each entry says what exists and
 what does not, so nobody has to re-derive it.
@@ -127,6 +127,36 @@ Nothing needs doing until such a module exists. The design is written down so
 the first one does not get an ad-hoc answer.
 
 ---
+
+## 7. Spend control `[BUILT]`
+
+Monthly ceilings (instance-wide and per profile) refuse run creation before any
+side effect, alert at a configurable threshold, and attribute the period's cost
+to a person, a task and a repository. See `ENTERPRISE.md` §4.
+
+Two limits are deliberate and documented rather than fixed: the check is
+"already at the ceiling" rather than "would this run cross it", because a run's
+cost is unknowable before it executes; and a model with no list price
+contributes zero, with its tokens reported separately instead of guessed at.
+
+Still open: **no ceiling below a calendar month.** A single runaway night inside
+a healthy monthly budget is caught only by the per-run output-token cap. A daily
+ceiling is the same mechanism with a different `since`, worth adding when
+someone hits it.
+
+## 8. Outbound notifications `[BUILT]`
+
+`module-notify` forwards the inbox to Slack, Discord, ntfy or a signed webhook,
+off a single `notification.raised` bus event that every `ctx.notify.emit`
+raises. No new dependency: all four destinations are one HTTP POST.
+
+Still open, and both small: **delivery is not durable.** A destination that is
+down through both attempts loses that notification (it stays in the inbox, and
+the failure is in the delivery log, but nothing replays it). And there is **no
+per-recipient routing** — channels are scoped to a workspace and a set of
+notification kinds, not to a person, so "tell Ana about her runs" is not
+expressible. Both need a queue or a user-channel table; neither is worth one
+until an instance asks.
 
 ## Carried work
 
