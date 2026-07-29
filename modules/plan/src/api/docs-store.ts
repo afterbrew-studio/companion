@@ -1,11 +1,10 @@
-import type Database from 'better-sqlite3';
-import { likeArg } from '@moxxy/companion-sdk/server';
+import { likeArg, type Database } from '@moxxy/companion-sdk/server';
 import type { DocRecord, DocSearchHit } from '../contract/index.js';
 
 /** Workspace docs plus their BM25 chunk index for retrieval. */
 export class DocsStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     /** FTS5 available in this SQLite build (set during migrate). */
     private readonly ftsReady: boolean,
   ) {}

@@ -29,7 +29,6 @@
     "@moxxy/companion-contracts": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
-    "@types/better-sqlite3": "^7.6.12",
     "ws": "^8.18.0",
     "zod": "^3.24.0"
   },
@@ -37,7 +36,6 @@
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/ws": "^8.5.13",
-    "better-sqlite3": "^12.2.0",
     "react": "^18.3.1",
     "typescript": "^5.8.0"
   },
@@ -49,13 +47,5 @@
     "dist",
     "src/client"
   ],
-  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",
-  "peerDependencies": {
-    "better-sqlite3": "^12.2.0"
-  },
-  "peerDependenciesMeta": {
-    "better-sqlite3": {
-      "optional": true
-    }
-  }
+  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead."
 }

@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   ClarificationState,
   FeatureBrief,
@@ -31,7 +30,7 @@ export class PlannerQuestionSetConflict extends Error {
 export type PlannerSessionPatch = Partial<Omit<FeaturePlanningSession, 'id' | 'workspaceId' | 'repo' | 'branch' | 'author' | 'createdAt' | 'updatedAt' | 'revision' | 'progress'>>;
 
 export class PlannerStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(session: FeaturePlanningSession): void {
     this.db.prepare(`
@@ -48,7 +47,14 @@ export class PlannerStore {
         @analysis, @analysisRunId, @refinementId, @taskIds, @activeQueueId, @activeRunId,
         @createdAt, @updatedAt
       )
-    `).run(toParams(session));
+    `).run({
+      ...toParams(session),
+      workspaceId: session.workspaceId,
+      repo: session.repo,
+      branch: session.branch,
+      author: session.author,
+      createdAt: session.createdAt,
+    });
     this.insertEvent(session.id, 'created', { repo: session.repo });
   }
 
@@ -211,9 +217,24 @@ interface PlannerEventRow {
   created_at: number;
 }
 
+/**
+ * The parameters both statements that write a session bind. Identity and
+ * provenance are INSERT-only and `progress` is derived from the rest on read, so
+ * neither belongs to the shared set, and a parameter the statement does not
+ * declare is an error, not something the driver drops.
+ */
 function toParams(session: FeaturePlanningSession): Record<string, unknown> {
+  const {
+    progress: _progress,
+    workspaceId: _workspaceId,
+    repo: _repo,
+    branch: _branch,
+    author: _author,
+    createdAt: _createdAt,
+    ...stored
+  } = session;
   return {
-    ...session,
+    ...stored,
     repositoryContext: session.repositoryContext ? JSON.stringify(session.repositoryContext) : null,
     clarification: JSON.stringify(session.clarification),
     brief: JSON.stringify(session.brief),

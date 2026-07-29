@@ -13,7 +13,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
+  target: 'node24',
   // `ws` has an optional native/CJS surface — leave it as a real dependency.
   external: ['ws'],
   // A CLI: executable shebang + ESM shims for any require/__dirname interop.

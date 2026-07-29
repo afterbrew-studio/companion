@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { RunKind } from '../contract/index.js';
 
 /** A persisted queue entry: enough to re-dispatch the work after a restart. */
@@ -22,7 +22,7 @@ export interface PersistedQueueEntry {
  * Only entries that carry a resumer are stored (others can't be replayed).
  */
 export class RunQueueStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** Rewrite the whole queue in order — cheap (the waiting list is small). */
   replaceAll(entries: readonly PersistedQueueEntry[]): void {

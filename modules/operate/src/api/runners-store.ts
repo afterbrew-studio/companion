@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type {
   RunnerCatalog,
   RunnerKind,
@@ -58,7 +58,7 @@ export interface RunnerRow {
  * live in side tables so a runner can serve many of each (and vice versa).
  */
 export class RunnersStore {
-  constructor(private readonly db: Database.Database) {
+  constructor(private readonly db: Database) {
     this.ensureLocal();
   }
 
@@ -153,7 +153,14 @@ export class RunnersStore {
                  @mode, @modules, @tasks, 'all', @createdAt)`,
       )
       .run({
-        ...r,
+        id: r.id,
+        name: r.name,
+        kind: r.kind,
+        endpoint: r.endpoint,
+        token: r.token,
+        scope: r.scope,
+        ownerId: r.ownerId,
+        maxRuns: r.maxRuns,
         mode: r.taskPolicy?.mode ?? 'deny',
         modules: jsonList(r.taskPolicy?.modules),
         tasks: jsonList(r.taskPolicy?.tasks),

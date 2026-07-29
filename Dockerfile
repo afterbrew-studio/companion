@@ -15,9 +15,8 @@ FROM base AS build
 # Which modules the image contains. `slim` is the default; `full` adds the
 # planning cluster and the reactors. See profiles/*.json.
 ARG PROFILE=slim
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
+# No python3/make/g++ here: nothing in the tree compiles at install time any
+# more. `onlyBuiltDependencies` is down to esbuild, which ships a prebuilt binary.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY profiles ./profiles
 COPY scripts ./scripts
@@ -46,16 +45,13 @@ ENV COMPANION_HOME=/data
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
-# better-sqlite3 is a native addon and undici/ws/inquirer are left external by
-# the bundle, so install exactly those from the CLI's own manifest.
-# This prints `npm warn deprecated prebuild-install@7.1.3` (a better-sqlite3 12.x
-# dependency, and how it fetches a prebuilt binary for this toolchain-free stage).
-# Left alone on purpose: muting npm would hide every other deprecation too, and
-# 13.x, which drops it, ships a binding.gyp, so npm synthesizes `node-gyp rebuild`
-# and the install dies here for want of python3/make/g++. Measured on this exact
-# base. It only succeeds with --ignore-scripts, which would silence every
-# package's lifecycle, and it would still make `npx @moxxy/companion` compile
-# from source on any user machine without a toolchain. A log line is cheaper.
+# undici/ws/inquirer are left external by the bundle, so install exactly those
+# from the CLI's own manifest. All three are plain JavaScript: this stage has no
+# toolchain and needs none, and the install prints no warnings. It used to carry
+# better-sqlite3, whose install script (`prebuild-install || node-gyp rebuild`)
+# both warned here and made a machine without python3/make/g++ compile from
+# source; the database is Node's built-in `node:sqlite` now, which is why the
+# base image is pinned to 24.
 COPY --from=build /app/runtime-package.json ./package.json
 RUN npm install --omit=dev --omit=peer --no-audit --no-fund && rm -rf /root/.npm
 COPY --from=build /app/apps/companion-cli/dist ./dist

@@ -53,7 +53,7 @@ Never issue one query (or one network call) per element of a list.
   do `LIMIT/OFFSET` and `COUNT`.
 - **WAL is on**; keep write transactions short. Wrap a multi-row write in a
   single statement or transaction rather than a JS loop of individual `.run()`s.
-- `better-sqlite3` is synchronous — a heavy query blocks the event loop for the
+- SQLite here is synchronous: a heavy query blocks the event loop for the
   whole daemon. Keep per-request queries indexed and bounded.
 
 ## Memory & space

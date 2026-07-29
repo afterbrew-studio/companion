@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigValue } from '../module-config.js';
 import { HttpError } from './router.js';
 import type { SecretStore } from './capabilities.js';
@@ -17,7 +17,7 @@ export class ModuleConfigStore {
   private secrets: SecretStore;
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly isSecret: (moduleId: string, key: string) => boolean = () => false,
   ) {
     this.secrets = new SqliteSecretStore(db, isSecret);

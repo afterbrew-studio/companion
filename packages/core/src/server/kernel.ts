@@ -1,6 +1,12 @@
-import type Database from 'better-sqlite3';
 import type { Authenticator, SpaServerMessage } from '@moxxy/companion-contracts';
-import { Entitlements, describeLicense, type DaemonConfig, type Logger } from '@moxxy/companion-services';
+import {
+  Entitlements,
+  describeLicense,
+  type DaemonConfig,
+  type Database,
+  type Logger,
+  type Statement,
+} from '@moxxy/companion-services';
 import type { ModuleId, ModuleManifest } from '../manifest.js';
 import type { ModuleConfigState } from '../module-config.js';
 import { DynamicRouter } from './router.js';
@@ -27,7 +33,7 @@ export interface InstalledModule {
 }
 
 export interface KernelOptions {
-  readonly db: Database.Database;
+  readonly db: Database;
   readonly log: Logger;
   readonly config: DaemonConfig;
   readonly modules: readonly InstalledModule[];
@@ -54,7 +60,7 @@ interface ModuleRow {
  * live operation (routes mount/unmount, the RBAC grid recomputes).
  */
 export class ModuleKernel {
-  private readonly db: Database.Database;
+  private readonly db: Database;
   private readonly log: Logger;
   private readonly installed = new Map<ModuleId, InstalledModule>();
   private readonly loaded = new Map<ModuleId, ServerModule>();
@@ -207,7 +213,7 @@ export class ModuleKernel {
     return !!row && row.enabled === 1;
   }
 
-  private rowStmt?: import('better-sqlite3').Statement;
+  private rowStmt?: Statement;
   private row(id: ModuleId): ModuleRow | undefined {
     this.rowStmt ??= this.db.prepare(`SELECT * FROM modules WHERE id = ?`);
     return this.rowStmt.get(id) as ModuleRow | undefined;

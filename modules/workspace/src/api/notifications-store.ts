@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type { NotificationRecord } from '../contract/index.js';
 
 // Fresh workspace/platform notifications use an explicit non-repo sentinel.
@@ -8,7 +8,7 @@ const NON_REPO_SCOPE = '@workspace';
 
 /** The notification inbox — bounded to 30 days, workspace-scoped or instance-wide. */
 export class NotificationsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(n: Omit<NotificationRecord, 'readAt'>): void {
     this.db

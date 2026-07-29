@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import { parseAnalysis, Proposals } from '../dist/api/proposals.js';
 import { normalizeProposalAnalysis, ProposalsStore } from '../dist/api/proposals-store.js';
 

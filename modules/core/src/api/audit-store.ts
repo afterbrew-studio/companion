@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database, Statement } from '@moxxy/companion-services';
 import type { AuditEvent } from '@moxxy/companion-core/server';
 
 /**
@@ -28,9 +28,9 @@ export interface AuditQuery {
 }
 
 export class AuditStore {
-  private readonly insert: Database.Statement;
+  private readonly insert: Statement;
 
-  constructor(private readonly db: Database.Database) {
+  constructor(private readonly db: Database) {
     this.insert = db.prepare(
       `INSERT INTO audit_log (at, actor, action, access, status, module, detail)
        VALUES (@at, @actor, @action, @access, @status, @module, @detail)`,

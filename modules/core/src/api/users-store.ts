@@ -1,13 +1,12 @@
-import type Database from 'better-sqlite3';
 import type { Role } from '@moxxy/companion-types';
-import { likeArg } from '@moxxy/companion-services';
+import { likeArg, type Database } from '@moxxy/companion-services';
 import type { UserRecord } from '../contract/index.js';
 import type { SessionsStore } from './sessions-store.js';
 
 /** Local user accounts; deleting a user also revokes their sessions. */
 export class UsersStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly sessions: SessionsStore,
   ) {}
 

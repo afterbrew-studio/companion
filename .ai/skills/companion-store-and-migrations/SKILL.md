@@ -8,9 +8,10 @@ description: >-
   query, or a new store class.
 ---
 
-# Store & migrations (better-sqlite3)
+# Store & migrations (SQLite)
 
-Persistence is synchronous `better-sqlite3`, WAL mode, one small class per
+Persistence is synchronous SQLite (`node:sqlite`, through the `Database`
+handle in `@moxxy/companion-services`), WAL mode, one small class per
 domain, all composed by the `Store` facade in `store/db.ts`. There is no ORM and
 no query builder — hand-written prepared SQL, mapped to and from the contract's
 camelCase DTOs.
@@ -18,12 +19,12 @@ camelCase DTOs.
 ## The store-class shape
 
 ```ts
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type { WidgetRecord } from '@companion/contract';
 
 /** One-line statement of what this store owns. */
 export class WidgetsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(w: WidgetRecord): void {
     this.db
@@ -69,7 +70,7 @@ function rowToWidget(row: WidgetRow): WidgetRecord {
 Conventions shown above, all load-bearing:
 
 - **Named params** (`@field`) bound from an object; positional `?` for simple
-  reads. `better-sqlite3` is sync — no `await`.
+  reads. The handle is sync: no `await`.
 - **`SELECT *` + a `Row` interface + a `rowToX` mapper.** SQL columns are
   `snake_case`; DTOs are `camelCase`. The mapper is the single translation point
   and where JSON columns are parsed. Cast the raw row `as XRow | undefined`.

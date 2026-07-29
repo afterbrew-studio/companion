@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import type { Logger } from '@moxxy/companion-services';
+import type { Database, Logger } from '@moxxy/companion-services';
 
 export interface MigrationEnv {
   readonly moduleId: string;
@@ -11,9 +10,9 @@ export interface MigrationEnv {
 export interface Migration {
   readonly version: number;
   readonly name: string;
-  up(db: Database.Database, env: MigrationEnv): void;
+  up(db: Database, env: MigrationEnv): void;
   /** Absent ⇒ irreversible; uninstall must use the module's `purge()`. */
-  down?(db: Database.Database, env: MigrationEnv): void;
+  down?(db: Database, env: MigrationEnv): void;
 }
 
 const BOOTSTRAP = `
@@ -60,7 +59,7 @@ const MODULE_COLUMNS: readonly string[] = [
   `ALTER TABLE modules ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`,
 ];
 
-function reconcileBootstrap(db: Database.Database): void {
+function reconcileBootstrap(db: Database): void {
   for (const ddl of MODULE_COLUMNS) {
     try {
       db.exec(ddl);
@@ -80,7 +79,7 @@ export class MigrationRunner {
   readonly fts: { available: boolean };
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly log: Logger,
   ) {
     db.exec(BOOTSTRAP);
@@ -147,7 +146,7 @@ export class MigrationRunner {
   }
 }
 
-function probeFts(db: Database.Database): boolean {
+function probeFts(db: Database): boolean {
   try {
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS __fts_probe USING fts5(x)`);
     db.exec(`DROP TABLE IF EXISTS __fts_probe`);

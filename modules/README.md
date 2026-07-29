@@ -30,7 +30,7 @@ NodeNext `tsc` to `dist/` with no DOM, while `./client` is read by Vite straight
 from `.tsx` **source** (via the `"source"` export condition). This is why the
 files live under `src/api` / `src/client` / `src/contract` — subfolder by
 consumer — and why an `api/*` file importing React (or a `client/*` file
-importing `better-sqlite3`) is a **build error**, not a runtime surprise. That
+importing `node:sqlite`) is a **build error**, not a runtime surprise. That
 error IS the server/client boundary being enforced.
 
 Each convention file **default-exports** through a `@moxxy/companion-core` `define*`
@@ -111,8 +111,8 @@ surface omits `services.ts`).
     // + one "@companion/module-<dep>": "workspace:*" per module in your dependsOn
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12", "@types/node": "^22.10.0", "@types/react": "^18.3.12",
-    "better-sqlite3": "^12.2.0", "react": "^18.3.1", "typescript": "^5.8.0"
+    "@types/node": "^22.10.0", "@types/react": "^18.3.12",
+    "react": "^18.3.1", "typescript": "^5.8.0"
   },
   "sideEffects": false
 }
@@ -289,7 +289,7 @@ the old god-object. The pieces you get:
 
 | `ctx.` | What |
 |---|---|
-| `db` | the shared better-sqlite3 handle (WAL). Your store owns its tables; read others' via `services`, not raw SQL. |
+| `db` | the shared SQLite handle (WAL), typed `Database` from `@moxxy/companion-sdk/server`. Your store owns its tables; read others' via `services`, not raw SQL. |
 | `services` | the typed `ServiceRegistry`: `register(id, impl)`, `get('code')`, `tryGet('operate')`. Keys are `ServiceMap`. |
 | `bus` | typed server-side pub/sub for cross-module **reactions** (`bus.emit('run.changed', run)` / `bus.on(...)`). |
 | `broadcast(msg)` / `pushToUser(name, msg)` | browser push over the WebSocket hub. |
@@ -681,9 +681,9 @@ central route table, no `App.tsx` if-ladder, no `ApiDeps`.
       consume it in exactly one client hook via `useLive`.
 - [ ] Relative imports end in **`.js`** (NodeNext), even from `.ts`/`.tsx`.
 - [ ] `client/index.tsx` imports `'../contract/index.js'` **first**.
-- [ ] No React/DOM in `src/api/*`; no `better-sqlite3`/node built-ins in
-      `src/client/*`. The `tsconfig.build.json` exclude + `tsconfig.json` DOM libs
-      are what catch this.
+- [ ] No React/DOM in `src/api/*`; no `@moxxy/companion-sdk/server`/node built-ins
+      in `src/client/*`. The `tsconfig.build.json` exclude + `tsconfig.json` DOM
+      libs are what catch this.
 - [ ] Migrations are **additive & idempotent** (v1) and carry a `down()` (v2+) or
       the module defines `purge(db)`.
 - [ ] Cross-module access goes through `ctx.services.get(dep)` (hard dep) or

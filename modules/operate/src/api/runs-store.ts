@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { AgentStorageRunLease } from '@moxxy/companion-types';
 import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
 import { describeHarness } from './harnesses.js';
@@ -6,7 +6,7 @@ import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 /** Agent runs — rows are the source of truth; gateway processes are cattle. */
 export class RunsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** `harness` is the id, not the descriptor: the row stores the choice, and
    *  what that harness can do is read back from the build that implements it. */
@@ -195,8 +195,8 @@ export class RunsStore {
   /**
    * Token totals per day bucket (`(created_at - since) / 86400000`), summed in
    * SQL — the burn chart never pulls run rows into JS. The CAST is load-bearing:
-   * better-sqlite3 binds the ms timestamp as a REAL, which turns the division
-   * real too — fractional buckets group per-run and the day lookup drops them.
+   * node:sqlite binds the ms timestamp as a REAL, which turns the division real
+   * too, so fractional buckets group per-run and the day lookup drops them.
    */
   usageByDay(since: number, scope: UsageScope): UsageDayRow[] {
     const w = this.usageWhere(scope);

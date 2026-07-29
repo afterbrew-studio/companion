@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import { likeArg, safeParse } from '@moxxy/companion-sdk/server';
+import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type { ChecksSnapshot, PrRecord } from '../contract/index.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import { reviewSignal, type LatestReviewSignal, type PrReviewsStore } from './pr-reviews-store.js';
@@ -10,7 +9,7 @@ import { reviewSignal, type LatestReviewSignal, type PrReviewsStore } from './pr
  */
 export class PrsStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly prReviews: PrReviewsStore,
     private readonly githubAccounts: GithubAccountsStore,
   ) {}

@@ -1,9 +1,9 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type { SpecRecord } from '../contract/index.js';
 
 /** Specs — drafted or AI-generated design documents per repo. */
 export class SpecsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(s: SpecRecord): void {
     this.db

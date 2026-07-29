@@ -1,9 +1,9 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type { ReportRecord } from '../contract/index.js';
 
 /** Generated reports: digests, stale sweeps, ci-analysis and friends. */
 export class ReportsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(r: ReportRecord): void {
     this.db

@@ -5,7 +5,7 @@ Configuration for all of them is in [`configuration.md`](configuration.md).
 
 ## Prerequisites
 
-- Node.js 22 or newer.
+- Node.js 24 or newer (Companion stores its data in Node's built-in SQLite).
 - Git.
 - Optional for agent runs: the moxxy CLI (`npm i -g @moxxy/cli`). The daemon
   starts without it, but agent runs fail until it is installed.

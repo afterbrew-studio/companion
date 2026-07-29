@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@moxxy/companion"><img alt="npm" src="https://img.shields.io/npm/v/%40moxxy%2Fcompanion?color=0b7285&label=npm"></a>
   <a href="https://www.npmjs.com/package/@moxxy/companion-sdk"><img alt="module SDK" src="https://img.shields.io/npm/v/%40moxxy%2Fcompanion-sdk?color=5f3dc4&label=module%20sdk"></a>
-  <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A522-3c9a5f">
+  <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A524-3c9a5f">
   <a href="LICENSE"><img alt="licence" src="https://img.shields.io/badge/licence-MIT-495057"></a>
 </p>
 

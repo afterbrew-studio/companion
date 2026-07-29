@@ -66,7 +66,7 @@ via the registry), `modules/automations` (soft `ctx.bus` reactions + a
 
 - Relative imports end in `.js`; DTOs are `readonly`; migrations are additive and
   idempotent (v1) with a `down()` for v2+ (or a module `purge`).
-- `src/api/*` has no React/DOM; `src/client/*` has no `better-sqlite3`/node
+- `src/api/*` has no React/DOM; `src/client/*` has no `@moxxy/companion-sdk/server`/node
   built-ins (the `tsconfig.build.json` exclude of `src/client` enforces the api
   side). `client/index.tsx` imports `'../contract/index.js'` first.
 - **Compile-checked shape, runtime-checked presence** — never assume a

@@ -1,9 +1,9 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { Role } from '@moxxy/companion-types';
 
 /** Login sessions, keyed by token hash — raw tokens never touch the disk. */
 export class SessionsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(s: { tokenHash: string; username: string; role: Role; createdAt: number; expiresAt: number }): void {
     this.db

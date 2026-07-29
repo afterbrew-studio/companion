@@ -107,7 +107,7 @@ Match that voice. A comment that restates the next line is noise; delete it.
 
 ## Dependencies
 
-Dependencies are deliberate and few (backend: `better-sqlite3`, `ws`, `zod`,
+Dependencies are deliberate and few (backend: `ws`, `zod`,
 `jsonrepair`, moxxy SDK; web: `react`, `highlight.js`). **Do not add a package
 without a real reason** — reach for the platform (`node:crypto`, `fetch`,
 `URLSearchParams`) and the existing kit first. Native deps must be listed under
