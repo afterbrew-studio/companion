@@ -297,12 +297,7 @@ function Shell(): JSX.Element {
   }, [kernel.sections, visibleModules]);
 
   return (
-    // Pinned to the viewport rather than inherited through html/body/#root:
-    // when that chain gives out the shell falls back to content height, the
-    // sidebar stops short of the bottom, and the whole document scrolls instead
-    // of the nav and main scrolling inside it. A long nav (every module
-    // installed) is what makes it visible.
-    <div className="flex h-dvh">
+    <div className="flex h-full">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-zinc-900 focus:px-3 focus:py-1.5 focus:text-white dark:focus:bg-zinc-100 dark:focus:text-zinc-900"
@@ -466,7 +461,13 @@ function Shell(): JSX.Element {
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
         />
-        <main id="main" className="min-h-0 flex-1 overflow-y-auto">
+        {/* `relative` is load-bearing. Tailwind's `sr-only` is position:absolute,
+            so on a static main every screen-reader legend and hidden radio
+            resolves against the document instead, escapes this scroller, and
+            stretches the page to wherever the deepest one sits. It only shows on
+            a page taller than the viewport, and no amount of overflow on this
+            element helps, because those boxes were never inside it. */}
+        <main id="main" className="relative min-h-0 flex-1 overflow-y-auto">
           {/* Keyed by route: navigating away from a crashed page recovers it. */}
           <ErrorBoundary area="this page" resetKey={hash}>
             <RouterView hash={hash} />
