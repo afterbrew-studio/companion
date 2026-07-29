@@ -297,7 +297,12 @@ function Shell(): JSX.Element {
   }, [kernel.sections, visibleModules]);
 
   return (
-    <div className="flex h-full">
+    // Pinned to the viewport rather than inherited through html/body/#root:
+    // when that chain gives out the shell falls back to content height, the
+    // sidebar stops short of the bottom, and the whole document scrolls instead
+    // of the nav and main scrolling inside it. A long nav (every module
+    // installed) is what makes it visible.
+    <div className="flex h-dvh">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-zinc-900 focus:px-3 focus:py-1.5 focus:text-white dark:focus:bg-zinc-100 dark:focus:text-zinc-900"
