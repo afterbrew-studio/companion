@@ -4,6 +4,9 @@ import {
   MOXXY_WS_SUBPROTOCOL,
   type AskRequest,
   type AskResponse,
+  type Harness,
+  type HarnessCapabilities,
+  type HarnessSessionControls,
   type HistorySegment,
   type MoxxyEvent,
   type RpcNotificationFrame,
@@ -36,7 +39,21 @@ export interface GatewayEvents {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export class GatewayClient {
+/**
+ * moxxy has the full set, which is why nothing has needed to ask until now: a
+ * person can approve a call mid-turn, usage arrives as tokens Companion prices
+ * itself, and the model catalog is whatever providers the operator configured
+ * on that machine.
+ */
+export const MOXXY_CAPABILITIES: HarnessCapabilities = {
+  approvals: 'interactive',
+  usage: 'tokens',
+  models: 'providers',
+  sessionControls: { model: true, provider: true, mode: true, autoApprove: true, commands: true },
+};
+
+export class GatewayClient implements Harness, HarnessSessionControls {
+  readonly capabilities = MOXXY_CAPABILITIES;
   private ws: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<

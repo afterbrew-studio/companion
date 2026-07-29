@@ -224,3 +224,100 @@ export interface HistorySegment {
   readonly events: ReadonlyArray<HarnessEvent>;
   readonly prevCursor: number | null;
 }
+
+// ---------- The harness itself -----------------------------------------------
+
+/**
+ * What a harness can do, asked rather than assumed. Companion has one
+ * implementation today, and every axis below is a place a second one is
+ * expected to differ, so a consumer that skips the check offers an affordance
+ * the harness cannot serve.
+ */
+export interface HarnessCapabilities {
+  /**
+   * Whether a person can approve one tool call while the turn is running.
+   * `interactive` means `respondAsk` answers a prompt the harness raised;
+   * `policy` means permission was settled before the turn started and no
+   * prompt will ever arrive, so an approval sheet would wait forever.
+   */
+  readonly approvals: 'interactive' | 'policy';
+
+  /**
+   * What the harness reports about what a turn consumed, which is what decides
+   * whether a spend ceiling is real. `tokens` means Companion prices them from
+   * its own list prices; `cost` means the harness reports money, so the
+   * estimate can be replaced by the real figure; `none` means a ceiling would
+   * silently never trigger, which is worse than not offering one.
+   */
+  readonly usage: 'tokens' | 'cost' | 'none';
+
+  /**
+   * Where the list of models this harness can run comes from. `providers`
+   * means the operator supplies credentials per provider and the harness
+   * reports which of them work, so provider policy and the Providers page
+   * apply to it. `builtin` means it signs in on its own and ships a fixed
+   * list, so they do not. `none` means it reports no catalog at all and
+   * placement cannot match a run's model to a machine.
+   */
+  readonly models: 'providers' | 'builtin' | 'none';
+
+  /**
+   * Which live-session settings this harness accepts, one flag per method of
+   * `HarnessSessionControls`. A harness with its own sign-in has no notion of
+   * a provider, and one configured by a command-line flag cannot change its
+   * mode halfway through a turn, so these do not move together.
+   */
+  readonly sessionControls: {
+    readonly model: boolean;
+    readonly provider: boolean;
+    readonly mode: boolean;
+    readonly autoApprove: boolean;
+    readonly commands: boolean;
+  };
+}
+
+/**
+ * Running an agent turn, and nothing else: hold a connection, run and abort a
+ * turn, say what session this is, replay what has happened, and answer a prompt
+ * the harness raised. Everything a harness must do to be usable at all.
+ */
+export interface Harness {
+  readonly capabilities: HarnessCapabilities;
+
+  connect(timeoutMs?: number): Promise<void>;
+  close(): void;
+  readonly isOpen: boolean;
+
+  runTurn(args: RunTurnArgs): Promise<RunTurnResult>;
+  abortTurn(turnId?: string): Promise<void>;
+
+  sessionInfo(): Promise<unknown>;
+  loadHistory(workspaceId: string, before: number | null, limit: number): Promise<HistorySegment>;
+
+  /** Answers an `AskRequest`; only ever raised when `approvals` is `interactive`. */
+  respondAsk(requestId: string, response: AskResponse): Promise<void>;
+}
+
+/**
+ * Reconfiguring a live session. Kept out of `Harness` because it is moxxy's
+ * surface rather than every harness's: check the matching
+ * `capabilities.sessionControls` flag before calling any of it.
+ */
+export interface HarnessSessionControls {
+  setMode(mode: string): Promise<void>;
+  /** Session-side model override (null resets to the provider default). */
+  setModel(model: string | null): Promise<void>;
+  setProvider(provider: string): Promise<void>;
+  setAutoApprove(enabled: boolean): Promise<void>;
+  runCommand(name: string, args?: string): Promise<unknown>;
+}
+
+/**
+ * The two surfaces are disjoint on purpose: what every harness must implement,
+ * and what one is asked for only after its capabilities say so. Moving a method
+ * from `HarnessSessionControls` into `Harness` stops this compiling.
+ */
+type NoOverlap<T extends never> = T;
+type ControlsStayOutOfTheContract = NoOverlap<
+  Extract<keyof Harness, keyof HarnessSessionControls>
+>;
