@@ -37,10 +37,9 @@ against a 10-minute interval (so one failed run still leaves a valid token and
 another attempt), and `postActivate` refreshes at boot for the daemon that was
 down longer than an hour.
 
-Still open, and small: nothing surfaces "this installation stopped refreshing"
-to an operator beyond a log warning. If an app is uninstalled on GitHub, the
-account keeps its dead token until someone reads the log or a call fails over.
-Worth a health field on the account record when someone hits it.
+The rough edge this section used to carry is **closed**: an installation that
+stops refreshing now records health on the account row, shows a red chip with the
+reason on the accounts page, and raises an inbox entry on the transition. See §9.
 
 ## 2. Publishing the module ABI `[BUILT]`
 
@@ -258,5 +257,16 @@ covered by this.
 - **An `edition` manifest field.** Build profiles say which modules ship and
   `entitlement` says which are licensed. A third axis would be a second way to
   say the same thing.
-- **Backup and restore tooling.** One SQLite file plus its `-wal`, and the
-  procedure is in `ENTERPRISE.md` §2. Worth a script only if the procedure grows.
+- **Backup and restore tooling.** `[BUILT]` `companion backup` / `companion
+  restore`. Previously dismissed here as "worth a script only if the procedure
+  grows", which was wrong for a reason worth recording: the documented procedure
+  was a `cp` of the database plus its `-wal`, and that is not a consistent
+  snapshot of a WAL database. `VACUUM INTO` is, and it works while the daemon
+  serves. The two are now verified (`integrity_check` on the artifact, before a
+  restore touches anything) and a restore keeps the replaced database aside.
+
+  Still open: the backup covers the DATABASE only. Git clones are re-clonable and
+  excluded on purpose, but the moxxy home holding provider credentials is a
+  separate volume with no tooling, and losing it means reconfiguring every
+  provider. The command says so on every run rather than leaving it to be
+  discovered after a restore.

@@ -63,9 +63,12 @@ volume details. Three things matter more here than in a single-user install:
 - **Persist both volumes.** `/data` holds the database, clones and the isolated
   moxxy home; `/root/.moxxy` holds the provider credentials. Losing the second
   means losing every AI provider on the next redeploy.
-- **Back up `/data/companion.db`.** It is one SQLite file, so a backup is a file
-  copy of the database plus its `-wal`. Write down the restore procedure and
-  test it before you need it.
+- **Back up the database with `companion backup`.** Do NOT `cp` it: in WAL mode
+  the most recent commits live in `companion.db-wal`, so copying the main file
+  alone yields a database missing them, and copying both without coordination can
+  yield a pair that disagree. `backup` uses `VACUUM INTO`, which writes one
+  internally consistent file **while the daemon keeps serving**, then verifies the
+  result with `integrity_check` before reporting success.
 - **Stop it gracefully.** The entrypoint execs the daemon as PID 1, so `docker
   stop` delivers SIGTERM straight to it and every module's `onDisable` runs in
   reverse dependency order. Give it a real timeout (`stop_grace_period`), do not
@@ -96,7 +99,7 @@ agent execution capacity, and both of those live somewhere else.
 |---|---|
 | Failover | Active/passive over a shared volume. Recovery time is one daemon boot, measured at about six seconds to healthy. |
 | Scale out execution | Add runners. That is what they are for. |
-| Backup | Copy `companion.db` and its `-wal`, plus the moxxy home volume. |
+| Backup | `companion backup [file]`, plus the moxxy home volume. |
 | Active/active, multi-region | **No.** Not supported, not planned. If you need it, Companion is not the right fit today. |
 
 A second daemon pointed at the same `COMPANION_HOME` **refuses to start** rather

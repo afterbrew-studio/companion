@@ -35,6 +35,7 @@ import {
   readHarnessOptions,
   saveHarnesses,
 } from './harnesses.js';
+import { backupDatabase, restoreDatabase } from './backup.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
@@ -44,7 +45,7 @@ const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
-  readonly command: 'start' | 'init' | 'connect-github' | ClientCommand;
+  readonly command: 'start' | 'init' | 'connect-github' | 'backup' | 'restore' | ClientCommand;
   readonly home: string;
   readonly host?: string;
   readonly port?: number;
@@ -52,6 +53,8 @@ interface CliOptions {
   readonly yes: boolean;
   readonly githubFromGh: boolean;
   readonly verbose: boolean;
+  /** Positional path for `backup` / `restore`. */
+  readonly file?: string;
 }
 
 /**
@@ -87,6 +90,8 @@ Usage:
   npx @moxxy/companion                  Initialize when needed, start, open browser
   npx @moxxy/companion init             Create the local admin configuration only
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
+  npx @moxxy/companion backup [file]    Snapshot the database (safe while running)
+  npx @moxxy/companion restore <file>   Replace the database from a snapshot (stop first)
   npx @moxxy/companion module ...       Inspect and toggle modules (see: module --help)
   npx @moxxy/companion acl ...          Inspect the live permission grid (see: acl --help)
   npx @moxxy/companion role ...         Create and edit roles
@@ -128,6 +133,20 @@ async function main(): Promise<void> {
   }
 
   const options = parseArgs(argv);
+  if (options.command === 'backup' || options.command === 'restore') {
+    process.env.COMPANION_HOME = options.home;
+    const { host, port } = resolveAddress(options);
+    const url = localUrl(host, port);
+    if (options.command === 'backup') {
+      const target =
+        options.file ?? join(options.home, `companion-backup-${new Date().toISOString().slice(0, 10)}.db`);
+      await backupDatabase(options.home, target, url);
+    } else {
+      if (!options.file) throw new Error('Which snapshot? Usage: companion restore <file>');
+      await restoreDatabase(options.home, options.file, url);
+    }
+    return;
+  }
   if (options.command === 'connect-github') {
     await connectGithub(options);
     return;
@@ -399,11 +418,15 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let yes = false;
   let githubFromGh = false;
   let verbose = false;
+  let file: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (CLIENT_COMMANDS.some((c) => c === arg) && command === 'start') command = arg as ClientCommand;
     else if ((arg === 'init' || arg === 'connect-github') && command === 'start') command = arg;
+    else if ((arg === 'backup' || arg === 'restore') && command === 'start') command = arg;
+    // The one positional: the snapshot path these two commands operate on.
+    else if ((command === 'backup' || command === 'restore') && !arg.startsWith('-') && file === undefined) file = arg;
     else if (arg === '--home') home = requiredValue(argv, ++i, arg);
     else if (arg === '--host') host = requiredValue(argv, ++i, arg);
     else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
@@ -417,7 +440,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
   }
   home = isAbsolute(home) ? home : resolve(home);
-  return { command, home, host, port, open, yes, githubFromGh, verbose };
+  return { command, home, host, port, open, yes, githubFromGh, verbose, file };
 }
 
 /**
