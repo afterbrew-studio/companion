@@ -28,6 +28,23 @@ export default defineManifest({
       max: 40,
     },
     {
+      key: 'auditForwardUrl',
+      label: 'Forward the audit trail to',
+      kind: 'text',
+      description:
+        'An https endpoint that receives audit entries as NDJSON batches (a SIEM, a log pipeline). Left empty, nothing leaves the instance. The local table stays authoritative either way.',
+      default: '',
+      max: 2000,
+      placeholder: 'https://collector.corp/companion-audit',
+    },
+    {
+      key: 'auditForwardSecret',
+      label: 'Signing secret for the forwarded batches',
+      kind: 'secret',
+      description:
+        'Signs each batch as x-companion-signature-256: sha256=<hex> over the exact bytes sent, the same recipe GitHub uses.',
+    },
+    {
       key: 'auditRetentionDays',
       label: 'Audit retention (days)',
       description: 'Entries older than this are swept daily. Export before shortening it.',

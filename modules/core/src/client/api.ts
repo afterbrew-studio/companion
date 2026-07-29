@@ -1,4 +1,5 @@
 import type { Role } from '@moxxy/companion-types';
+import type { AuditRecord, ForwarderState } from '../contract/index.js';
 import {
   ApiError,
   del,
@@ -76,6 +77,11 @@ export const authApi = {
 };
 
 export const coreApi = {
+  audit: (opts: { actor?: string; since?: number; before?: number; limit?: number }) =>
+    request<{ entries: AuditRecord[]; nextBefore: number | null }>(
+      `/api/audit${qs({ actor: opts.actor, since: opts.since, before: opts.before, limit: opts.limit })}`,
+    ),
+  auditForwarding: () => request<ForwarderState>('/api/audit/forwarding'),
   // users (admin)
   listUsers: (opts?: PageQuery & { role?: Role }) =>
     request<{ users: UserRecord[]; total: number }>(`/api/users${qs({ ...opts })}`),

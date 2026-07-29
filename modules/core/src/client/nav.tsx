@@ -55,4 +55,18 @@ export const nav = defineNav([
       </NavIcon>
     ),
   },
+  {
+    key: 'audit',
+    label: 'Audit trail',
+    hash: '#/audit',
+    permission: 'audit:read',
+    section: 'admin',
+    order: 30,
+    icon: (
+      <NavIcon>
+        <path d="M5 4h11l3 3v13H5z" />
+        <path d="M8.5 11.5l2 2 4-4.5" />
+      </NavIcon>
+    ),
+  },
 ]);

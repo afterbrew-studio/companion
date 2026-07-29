@@ -211,9 +211,33 @@ In the repo, `pnpm acl check` runs in CI and fails when the effective permission
 grid changes without `docs/acl-grid.json` being updated, so "this PR changes who
 may do what" is visible in review rather than discovered in production.
 
-**Not built:** a UI over the trail, and shipping entries to an external SIEM.
-`provideAudit` lets a dedicated audit module take over the sink from module-core
-without a core change. See `docs/game-plan.md` P6.
+**Reading it** is the Audit trail page under Admin, behind `audit:read`: filter by
+actor and window, page with keyset (following the API rather than fighting it, so
+a deep page does not scan the table before it), tick "refusals only", and export
+the window as NDJSON. The export is fetched with the session in a header and
+handed to the browser as a blob, never as a URL carrying a token.
+
+**Shipping it out** is `auditForwardUrl` on module-core: an https endpoint that
+receives entries as NDJSON batches, optionally signed as
+`x-companion-signature-256: sha256=<hex>` over the exact bytes, the same recipe
+GitHub uses. This is a stream ALONGSIDE the table, not a replacement:
+`provideAudit` exists for a module that wants to own audit storage, and almost
+nobody does, because the local table is what answers "who tried and was stopped".
+
+Three properties worth checking before you rely on it:
+
+- **It can never fail the request it describes.** Recording appends to an array;
+  every network concern happens on a ten-second timer.
+- **It is bounded.** A collector that is down keeps at most 5,000 entries in
+  memory, then drops the OLDEST and counts them. The page shows that count,
+  because a silent gap is the failure mode that matters, and `/api/audit/export`
+  can always backfill.
+- **Order survives a retry.** A failed batch goes back to the front of the buffer,
+  not the back: a trail that silently reorders is worse than one with a visible
+  gap.
+
+**Still not built:** a dedicated audit module taking over storage via
+`provideAudit`. The seam is there and untouched by the above.
 
 ### Spend control **[available]**
 

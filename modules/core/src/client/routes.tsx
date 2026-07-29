@@ -2,6 +2,11 @@ import { defineClientRoutes, page } from '@moxxy/companion-core/client';
 
 export const routes = defineClientRoutes([
   {
+    match: { prefix: '/audit' },
+    permission: 'audit:read',
+    component: page(() => import('./pages/Audit.js').then((m) => m.AuditPage)),
+  },
+  {
     match: { prefix: '/users' },
     permission: 'users:manage',
     component: page(() => import('./pages/Users.js').then((m) => m.UsersPage)),

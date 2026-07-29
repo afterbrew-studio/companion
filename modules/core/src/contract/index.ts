@@ -5,6 +5,10 @@ import type { Supervisor } from '@moxxy/companion-services';
 import type { Auth } from '../api/auth.js';
 import type { RolesService } from '../api/roles-service.js';
 import type { AuditStore } from '../api/audit-store.js';
+import type { AuditForwarder } from '../api/audit-forwarder.js';
+
+export type { AuditRecord } from '../api/audit-store.js';
+export type { ForwarderState } from '../api/audit-forwarder.js';
 import type { SettingsStore } from '../api/settings-store.js';
 
 /**
@@ -25,6 +29,8 @@ declare module '@moxxy/companion-contracts' {
     core: Auth;
     roles: RolesService;
     audit: AuditStore;
+    /** The outbound audit stream; its state feeds the trail page's health line. */
+    auditForwarder: AuditForwarder;
     settings: SettingsStore;
   }
   interface BusEvents {

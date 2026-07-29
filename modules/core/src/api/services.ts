@@ -4,6 +4,7 @@ import { SessionsStore } from './sessions-store.js';
 import { UsersStore } from './users-store.js';
 import { RolesStore } from './roles-store.js';
 import { AuditStore } from './audit-store.js';
+import { AuditForwarder } from './audit-forwarder.js';
 import { RolesService } from './roles-service.js';
 import { Auth } from './auth.js';
 
@@ -31,7 +32,23 @@ export default defineServices((ctx) => {
   ctx.services.register('roles', roles);
   // Same instance the kernel writes through via provideAudit; registering it
   // lets the routes read the trail without a second handle on the table.
-  ctx.services.register('audit', new AuditStore(ctx.db));
+  // Outbound stream alongside the table, not instead of it. Reads its target
+  // live from module config, so turning a collector on or off needs no restart
+  // and an unconfigured instance sends nothing.
+  const forwarder = new AuditForwarder(
+    () => {
+      const url = ctx.moduleConfig.get('auditForwardUrl');
+      const secret = ctx.moduleConfig.get('auditForwardSecret');
+      return {
+        url: typeof url === 'string' && /^https?:\/\//i.test(url.trim()) ? url.trim() : null,
+        secret: typeof secret === 'string' && secret ? secret : null,
+      };
+    },
+    (message, meta) => ctx.log.warn(message, meta),
+  );
+  forwarder.start();
+  ctx.services.register('audit', new AuditStore(ctx.db, (event) => forwarder.enqueue(event)));
+  ctx.services.register('auditForwarder', forwarder);
   ctx.services.register('settings', settings);
   ctx.services.register('core', auth);
 });

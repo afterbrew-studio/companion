@@ -30,7 +30,14 @@ export interface AuditQuery {
 export class AuditStore {
   private readonly insert: Database.Statement;
 
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    /**
+     * Optional outbound stream. Injected rather than owned: the table is the
+     * source of truth and must be written whether or not a collector exists.
+     */
+    private readonly forward: (event: AuditEvent) => void = () => {},
+  ) {
     this.insert = db.prepare(
       `INSERT INTO audit_log (at, actor, action, access, status, module, detail)
        VALUES (@at, @actor, @action, @access, @status, @module, @detail)`,
@@ -78,5 +85,12 @@ export class AuditStore {
       module: event.module,
       detail: event.detail ?? null,
     });
+    // After the row, and swallowing: a collector must never be able to fail the
+    // write that is the actual record, nor the request being recorded.
+    try {
+      this.forward(event);
+    } catch {
+      // The forwarder logs its own failures; it has no business raising here.
+    }
   }
 }

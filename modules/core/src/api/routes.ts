@@ -239,6 +239,14 @@ export default defineRoutes((ctx) => {
       },
     }),
     route({
+      // The stream's own health, so a collector that quietly stopped accepting
+      // batches is visible next to the trail rather than only in the log.
+      method: 'GET',
+      path: '/api/audit/forwarding',
+      access: 'audit:read',
+      handler: () => ctx.services.get('auditForwarder').state(),
+    }),
+    route({
       // "Get our data out" as one NDJSON stream: one JSON object per line, so a
       // year of entries neither builds a giant array in memory nor needs paging
       // logic in whatever ingests it.
