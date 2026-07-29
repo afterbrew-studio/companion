@@ -76,6 +76,15 @@ function renderBlocks(text: string): ReactNode[] {
       continue;
     }
 
+    // Link reference definition. GitHub hides these, and bots abuse them as a
+    // payload channel (vercel's `[vc]: #<base64>`), so rendering one is both
+    // wrong and ugly. Only at block start, like CommonMark — a definition
+    // cannot interrupt a paragraph.
+    if (LINK_DEFINITION_RE.test(line)) {
+      i++;
+      continue;
+    }
+
     // GFM table: a header row followed by the `---|---` separator row
     if (line.includes('|') && i + 1 < lines.length && TABLE_SEPARATOR_RE.test(lines[i + 1]!)) {
       const header = splitRow(line);
@@ -181,6 +190,9 @@ function renderBlocks(text: string): ReactNode[] {
 }
 
 const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+
+/** `[label]: destination "optional title"` — up to 3 leading spaces, per CommonMark. */
+const LINK_DEFINITION_RE = /^ {0,3}\[[^\]]+\]:\s*\S+(\s+(".*"|'.*'|\(.*\)))?\s*$/;
 
 /** `| a | b |` → ['a', 'b'] (leading/trailing pipes optional). */
 function splitRow(line: string): string[] {
