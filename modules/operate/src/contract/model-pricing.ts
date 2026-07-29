@@ -4,6 +4,11 @@
  * model table (cached 2026-06-24). Update HERE when prices change; nothing
  * else in the codebase may carry a price.
  *
+ * It lives in the contract slice because both sides price: the dashboard card
+ * renders an estimate and the budget gate refuses a run against one. Two tables
+ * would let the number the operator was shown disagree with the number that
+ * blocked them, which is the one disagreement a spend control cannot have.
+ *
  * Deliberate simplifications, surfaced on the dashboard card as footnotes:
  *  - Estimates ignore prompt caching — cache read/write tokens aren't
  *    tracked in the runs table, and cached reads bill at ~0.1× input.

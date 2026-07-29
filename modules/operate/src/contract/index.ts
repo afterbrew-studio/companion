@@ -4,6 +4,8 @@ import '@companion/module-workspace/contract';
 import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
 import type { OperateService } from '../api/operate-service.js';
 
+export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pricing.js';
+
 /**
  * module-operate contract slice — the execution plane: agent runs + the run
  * queue, runner machines (local/remote), the moxxy gateway surface, and skills.
@@ -124,6 +126,12 @@ export interface RunRecord {
    * to their owner; null for automated/system runs (triage, digests, webhooks).
    */
   readonly userId: string | null;
+  /**
+   * The registered task this run serves (`RunTaskDescriptor.id`), which is the
+   * unit cost attribution and model pins are both expressed in. null on runs
+   * created before the column existed, and on paths that name no task.
+   */
+  readonly task: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** True while a gateway process is attached (live transcript available). */
@@ -204,6 +212,61 @@ export interface TokenUsageModel {
 export interface TokenUsage {
   readonly days: readonly TokenUsageDay[];
   readonly models: readonly TokenUsageModel[];
+}
+
+// ---------- spend budgets ----------
+
+/** One budget ceiling and how far into it this period has got. */
+export interface BudgetScopeStatus {
+  /** The configured ceiling in USD; 0 means no ceiling is set for this scope. */
+  readonly limitUsd: number;
+  readonly spentUsd: number;
+  /** Spend as a percentage of the ceiling; null when no ceiling is set. */
+  readonly percent: number | null;
+  /** The ceiling is set and reached: further runs in this scope are refused. */
+  readonly exceeded: boolean;
+}
+
+/**
+ * The instance's spend position for the current calendar month. `user` is the
+ * requesting profile's own slice, so everyone can see how close they are to
+ * their own ceiling without being able to read anyone else's.
+ */
+export interface BudgetStatus {
+  /** First instant of the current calendar month, local time, ms since epoch. */
+  readonly periodStart: number;
+  readonly instance: BudgetScopeStatus;
+  readonly user: BudgetScopeStatus;
+  /** Percentage of a ceiling at which the operator is notified. */
+  readonly alertPercent: number;
+  /**
+   * Tokens burned this period by models carrying no list price. This is real
+   * money the ceiling cannot see, so it is reported rather than hidden: a
+   * budget that silently ignores half the fleet is worse than no budget.
+   */
+  readonly unpricedTokens: number;
+}
+
+/** One row of "where did this period's spend go". */
+export interface SpendEntry {
+  /** Bucket key: a username, a task id, or `owner/name`. */
+  readonly key: string;
+  /** Display label; unattributed buckets say so rather than showing an empty cell. */
+  readonly label: string;
+  readonly runs: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly costUsd: number;
+  /** Some of this bucket's tokens rode a model with no list price, so cost is a floor. */
+  readonly partial: boolean;
+}
+
+/** Cost attribution for the current period, priced from the one pricing table. */
+export interface SpendBreakdown {
+  readonly periodStart: number;
+  readonly byUser: readonly SpendEntry[];
+  readonly byTask: readonly SpendEntry[];
+  readonly byRepo: readonly SpendEntry[];
 }
 
 // ---------- runners (execution machines) ----------

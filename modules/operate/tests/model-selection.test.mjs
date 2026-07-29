@@ -66,6 +66,7 @@ function addRun(store, id, runnerId) {
     model: null,
     runnerId,
     userId: null,
+    task: null,
     createdAt: now,
     updatedAt: now,
     inputTokens: 0,

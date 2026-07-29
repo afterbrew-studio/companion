@@ -71,6 +71,35 @@ export default defineManifest({
       min: 1,
       max: 365,
     },
+    {
+      key: 'monthlyBudgetUsd',
+      label: 'Monthly agent budget (USD)',
+      kind: 'number',
+      description:
+        'Estimated spend this instance may reach in a calendar month before new runs are refused. 0 disables the ceiling. Estimated from provider list prices, so models with no known price do not count towards it.',
+      default: 0,
+      min: 0,
+      max: 1_000_000,
+    },
+    {
+      key: 'userMonthlyBudgetUsd',
+      label: 'Monthly budget per person (USD)',
+      kind: 'number',
+      description:
+        "The same ceiling applied to one profile's own runs. 0 disables it. Both ceilings apply: whichever is reached first refuses the run.",
+      default: 0,
+      min: 0,
+      max: 1_000_000,
+    },
+    {
+      key: 'budgetAlertPercent',
+      label: 'Budget alert threshold (%)',
+      kind: 'number',
+      description: 'Raise an inbox notification once a ceiling is this far consumed. Announced once per month per scope.',
+      default: 80,
+      min: 1,
+      max: 100,
+    },
   ],
   permissions: ['runs:read', 'runs:act', 'runners:manage', 'runners:connect', 'skills:manage'],
   messages: [

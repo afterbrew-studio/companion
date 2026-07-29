@@ -1,5 +1,6 @@
 import { defineSlots } from '@moxxy/companion-core/client';
 import { TokenBurnWidget } from './components/TokenBurn.js';
+import { BudgetBar } from './components/BudgetBar.js';
 import { AgentsStatus } from './components/AgentsStatus.js';
 import { RunnerCapacityBanner, RunQueueIndicator } from './components/RunQueue.js';
 
@@ -30,6 +31,13 @@ export const slots = defineSlots([
     order: 30,
     permission: 'runs:read',
     component: AgentsStatus,
+  },
+  {
+    slot: 'dashboard.widgets',
+    key: 'operate-budget',
+    order: 5,
+    permission: 'runs:read',
+    component: BudgetBar,
   },
   {
     slot: 'dashboard.widgets',

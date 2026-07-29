@@ -8,6 +8,7 @@ import type {
   RunTaskDescriptor,
   TokenUsage,
 } from '../contract/index.js';
+import type { Budgets } from './budgets.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
 import type { RunsStore } from './runs-store.js';
@@ -41,6 +42,8 @@ export class OperateService {
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
     readonly runsStore: RunsStore,
     private readonly tokenSource: { current: GithubTokenSource },
+    /** Monthly spend ceilings and cost attribution. */
+    readonly budgets: Budgets,
   ) {
     this.defaultTokenSource = tokenSource.current;
   }

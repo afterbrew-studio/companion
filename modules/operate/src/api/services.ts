@@ -6,6 +6,7 @@ import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { adoptDailyMoxxyHome, healCredentialLinks, seedPermissionDenyRules } from '../exec/home.js';
 import { Checkouts } from '../exec/checkouts.js';
 import { OperateStore } from './operate-store.js';
+import { Budgets } from './budgets.js';
 import { Orchestrator } from './orchestrator.js';
 import { WebhookTunnel } from './webhook-tunnel.js';
 import { Skills } from './skills.js';
@@ -74,6 +75,12 @@ export default defineServices(async (ctx) => {
   // Roles are module-core's to store and edit; placement only reads them, live,
   // so a role change takes effect on the next placement rather than a restart.
   const auth = ctx.services.get('core');
+  // The ceiling reads the runs table directly rather than accumulating, so it
+  // cannot drift from what was actually spent. Its alert is an inbox entry with
+  // no workspace: a spend ceiling is instance-wide, not a workspace's concern.
+  const budgets = new Budgets(store.runs, ctx.moduleConfig, (title, body) =>
+    ctx.notify.emit({ workspaceId: null, kind: 'action_required', title, body, href: '#/settings/modules' }),
+  );
   const orchestrator = new Orchestrator(
     store,
     ctx.config,
@@ -83,6 +90,7 @@ export default defineServices(async (ctx) => {
     githubTokenFor,
     ctx.moduleConfig,
     (username) => auth.userRole(username) ?? null,
+    (userId) => budgets.check(userId),
   );
   const webhookTunnel = new WebhookTunnel(
     () => ctx.moduleConfig.get('webhookTunnel') === true,
@@ -100,6 +108,7 @@ export default defineServices(async (ctx) => {
     skills,
     store.runs,
     tokenSource,
+    budgets,
   );
   service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
   ctx.services.register('operate', service);

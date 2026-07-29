@@ -74,6 +74,20 @@ export const nav = defineNav([
     ),
   },
   {
+    key: 'spend',
+    label: 'Spend',
+    hash: '#/spend',
+    permission: 'settings:manage',
+    section: 'admin',
+    order: 7,
+    icon: (
+      <NavIcon>
+        <path d="M12 3v18" />
+        <path d="M16 7.5c0-1.4-1.8-2.5-4-2.5S8 6.1 8 7.5s1.8 2.2 4 2.5 4 1.1 4 2.5-1.8 2.5-4 2.5-4-1.1-4-2.5" />
+      </NavIcon>
+    ),
+  },
+  {
     key: 'runners',
     label: 'Runners',
     hash: '#/runners',

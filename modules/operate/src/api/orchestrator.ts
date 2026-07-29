@@ -112,6 +112,12 @@ export class Orchestrator implements RunnerEventSink {
     private readonly moduleConfig: ModuleConfigAccessor = { values: () => ({}), get: () => null },
     /** Roles are stored by module-core; the daemon plugs its reader in here. */
     roleOf?: (username: string) => string | null,
+    /**
+     * Spend ceiling. Throws to refuse a run; a no-op when no budget is
+     * configured, which is the default. Structural so the orchestrator does not
+     * own the pricing question, and so tests can drive the gate directly.
+     */
+    private readonly budgetGate: (userId: string | null) => void = () => {},
   ) {
     this.runners = new Runners(
       store,
@@ -325,6 +331,9 @@ export class Orchestrator implements RunnerEventSink {
      *  the owning feature, never client input, so filters can't be dodged. */
     task?: string | null;
   }): Promise<RunRecord> {
+    // Before every other check and before any side effect: a run refused for
+    // budget must leave no row, no worktree and no queue entry behind.
+    this.budgetGate(opts.userId ?? null);
     if (opts.repo) {
       if (!opts.userId) {
         throw new Error(`a personal GitHub account owner is required to run agents for ${opts.repo}`);
@@ -407,6 +416,7 @@ export class Orchestrator implements RunnerEventSink {
       model,
       runnerId,
       userId: opts.userId ?? null,
+      task: opts.task ?? null,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,

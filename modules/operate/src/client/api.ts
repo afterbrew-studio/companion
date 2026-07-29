@@ -1,6 +1,7 @@
 import type { AskRequest, HistorySegment, ProvisionProviderSpec } from '@moxxy/companion-types';
 import { del, patch, post, put, request } from '@moxxy/companion-core/client';
 import type {
+  BudgetStatus,
   CreateRunnerRequest,
   ModelCatalog,
   MoxxyStatus,
@@ -15,6 +16,7 @@ import type {
   RunnerRecord,
   RunTaskDescriptor,
   SkillFile,
+  SpendBreakdown,
   TaskModelSnapshot,
   TokenUsage,
   UpdateRunnerRequest,
@@ -50,6 +52,8 @@ export const operateApi = {
   resumeRun: (id: string) => post<{ run: RunRecord }>(`/api/runs/${id}/resume`),
   stopRun: (id: string) => post<{ ok: true }>(`/api/runs/${id}/stop`),
   tokenUsage: () => request<TokenUsage>('/api/runs/usage'),
+  budget: () => request<BudgetStatus>('/api/budget'),
+  spendBreakdown: () => request<SpendBreakdown>('/api/budget/spend'),
 
   // the run scheduler's waiting line
   runQueue: () => request<{ queue: RunQueueSnapshot }>('/api/runs/queue'),

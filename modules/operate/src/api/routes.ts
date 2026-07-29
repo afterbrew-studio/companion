@@ -233,6 +233,24 @@ export default defineRoutes((ctx) => {
       handler: ({ user }) => op.tokenUsage(user),
     }),
 
+    // The spend position anyone launching runs needs, including their own slice:
+    // a refusal has to be explainable to the person who hit it.
+    route({
+      method: 'GET',
+      path: '/api/budget',
+      access: 'runs:read',
+      handler: ({ user }) => op.budgets.status(user?.username ?? null),
+    }),
+
+    // Attribution names who and what spent the money, so it sits behind
+    // instance administration rather than runs:read.
+    route({
+      method: 'GET',
+      path: '/api/budget/spend',
+      access: 'settings:manage',
+      handler: () => op.budgets.breakdown(),
+    }),
+
     route({
       method: 'POST',
       path: '/api/runs/queue/:id/move',

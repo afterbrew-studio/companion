@@ -318,4 +318,32 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS runner_repos`);
     },
   },
+  {
+    /**
+     * Cost attribution. `kind` is too coarse to answer "what did we spend it
+     * on": triage, slop detection, digests and refinement are all 'analysis'.
+     * The task descriptor is the unit people already reason about (it is what
+     * model pins and runner policy are expressed in), so it becomes a column
+     * rather than being derived. NULL on historical rows, reported as
+     * unattributed rather than bucketed into something it might not be.
+     *
+     * The index serves the budget gate, which sums a calendar month's spend on
+     * every run creation; without it that is a full scan of a table that only
+     * grows.
+     */
+    version: 8,
+    name: 'runs_task_attribution',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runs ADD COLUMN task TEXT`);
+      } catch {
+        // column already exists
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)`);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_runs_created_at`);
+      db.exec(`ALTER TABLE runs DROP COLUMN task`);
+    },
+  },
 ]);

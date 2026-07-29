@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChartSkeleton, formatTokens } from '@moxxy/companion-ui';
 import type { TokenUsageDay, TokenUsageModel } from '../../contract/index.js';
 import { useTokenUsage } from '../hooks/useTokenUsage.js';
-import { estimateUsd, formatUsd } from '../model-pricing.js';
+import { estimateUsd, formatUsd } from '../../contract/model-pricing.js';
 
 // Two-series categorical palette (dataviz slots 1+2), validated per mode on the
 // app surfaces — the same pair the dashboard's velocity charts wear. The light

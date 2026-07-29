@@ -10,8 +10,8 @@ export class RunsStore {
   insert(run: Omit<RunRecord, 'live'>): void {
     this.db
       .prepare(
-        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, created_at, updated_at, input_tokens, output_tokens, outcome)
-         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
+        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, task, created_at, updated_at, input_tokens, output_tokens, outcome)
+         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @task, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
       .run(run);
   }
@@ -217,6 +217,41 @@ export class RunsStore {
       .all(since, ...w.params) as UsageModelRow[];
   }
 
+  /**
+   * Spend inputs for the budget gate: the WHOLE instance's totals per model,
+   * or one profile's. Deliberately NOT viewer-scoped like `usageByModel` — a
+   * ceiling that only counted the runs you happen to be allowed to look at
+   * would not be a ceiling. Never reaches a route directly; only the priced
+   * aggregate does.
+   */
+  spendByModel(since: number, userId?: string): UsageModelRow[] {
+    const clause = userId === undefined ? '' : ' AND user_id = ?';
+    const params = userId === undefined ? [since] : [since, userId];
+    return this.db
+      .prepare(
+        `SELECT model, COUNT(*) AS runs, SUM(input_tokens) AS input, SUM(output_tokens) AS output
+         FROM runs WHERE created_at >= ?${clause} GROUP BY model`,
+      )
+      .all(...params) as UsageModelRow[];
+  }
+
+  /**
+   * Spend grouped by an attribution dimension AND model, because price is a
+   * property of the model: bucketing first and pricing after would average a
+   * Haiku run and an Opus run into a number that is neither. The column is
+   * chosen from a fixed map, never interpolated from caller input.
+   */
+  spendByDimension(dimension: SpendDimension, since: number): SpendGroupRow[] {
+    const column = SPEND_COLUMNS[dimension];
+    return this.db
+      .prepare(
+        `SELECT ${column} AS key, model, COUNT(*) AS runs,
+                SUM(input_tokens) AS input, SUM(output_tokens) AS output
+         FROM runs WHERE created_at >= ? GROUP BY ${column}, model`,
+      )
+      .all(since) as SpendGroupRow[];
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db
@@ -230,6 +265,23 @@ export class RunsStore {
 
 /** Pre-resolved visibility for usage aggregates. */
 export type UsageScope = { username: string };
+
+/** The dimensions spend can be attributed along. */
+export type SpendDimension = 'user' | 'task' | 'repo';
+
+const SPEND_COLUMNS: Record<SpendDimension, string> = {
+  user: 'user_id',
+  task: 'task',
+  repo: 'repo',
+};
+
+export interface SpendGroupRow {
+  key: string | null;
+  model: string | null;
+  runs: number;
+  input: number;
+  output: number;
+}
 
 export interface UsageDayRow {
   bucket: number;
@@ -258,6 +310,7 @@ export interface RunRow {
   model: string | null;
   runner_id: string | null;
   user_id: string | null;
+  task: string | null;
   created_at: number;
   updated_at: number;
   input_tokens: number;
@@ -280,6 +333,7 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     model: row.model,
     runnerId: row.runner_id,
     userId: row.user_id,
+    task: row.task,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     live,
