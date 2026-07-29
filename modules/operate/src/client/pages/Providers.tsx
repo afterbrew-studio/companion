@@ -55,6 +55,12 @@ export function ProvidersPage(): JSX.Element {
       {detection === null ? null : (
         <>
           {detection.state === 'none' ? <NothingConfigured machines={machines} /> : null}
+          {detection.state === 'builtin' ? (
+            <EmptyState
+              title="No machine takes its models from a provider"
+              hint="Every machine here runs an agent runtime that signs in on its own and brings its own models, so there are no credentials to add and nothing to allow."
+            />
+          ) : null}
           {detection.state === 'unknown' ? (
             <p className="dim mb-2 text-xs" role="status">
               {detection.reading > 0
@@ -106,8 +112,11 @@ export function ProvidersPage(): JSX.Element {
  */
 function NothingConfigured({ machines }: { machines: readonly CatalogMachine[] }): JSX.Element {
   const { can } = useAuth();
-  // Provisioning runs against the machine, so offer a reachable one.
-  const target = can('runners:connect') ? (machines.find((m) => m.online) ?? machines[0]) : undefined;
+  // Provisioning runs against the machine, so offer a reachable one that a
+  // credential would actually reach: a built-in-model machine has nowhere to
+  // put one.
+  const usable = machines.filter((m) => m.providerModels);
+  const target = can('runners:connect') ? (usable.find((m) => m.online) ?? usable[0]) : undefined;
   return (
     <EmptyState
       title="No machine has provider credentials yet"
@@ -180,6 +189,18 @@ function MachineSection({
   onToggleModel: (machine: CatalogMachine, provider: string, id: string) => void;
   onEnableStranded: (machine: CatalogMachine, id: string) => void;
 }): JSX.Element {
+  // Nothing on this machine asks a provider which models exist, so every
+  // control below would govern nothing. Say that instead of showing them.
+  if (!machine.providerModels) {
+    return (
+      <Section title={machine.name}>
+        <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
+          Its agent runtime brings its own models, so provider credentials do not apply here.
+        </p>
+      </Section>
+    );
+  }
+
   // Before a machine has reported, its whole catalog is unknown, so every
   // disabled id would look stranded. Only judge once something was listed.
   const listed = new Set(machine.providers.flatMap((p) => p.models.flatMap((m) => [m.id, `${p.name}/${m.id}`])));

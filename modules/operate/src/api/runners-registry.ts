@@ -9,6 +9,7 @@ import type {
   CatalogProvider,
   CreateRunnerRequest,
   GitCredentialResolver,
+  HarnessDescriptor,
   ModelCatalogModel,
   ModelCatalogProvider,
   ProviderCatalog,
@@ -23,8 +24,9 @@ import type {
   RunnerTaskPolicy,
   UpdateRunnerRequest,
 } from '../contract/index.js';
-import { taskPolicyAllows } from '../contract/index.js';
+import { servesProviderModels, taskPolicyAllows } from '../contract/index.js';
 import { log } from '@moxxy/companion-services';
+import { MOXXY_HARNESS } from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -707,10 +709,16 @@ export class Runners {
       repoIds: row.repo_ids,
       allowedRoles: row.allowed_roles,
       health: this.healthFor(row.id),
+      harnesses: this.harnessesOn(row),
       catalog: row.catalog,
       providerPolicy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       createdAt: row.created_at,
     };
+  }
+
+  /** The agent runtimes a machine runs work through. */
+  private harnessesOn(_row: RunnerRow): readonly HarnessDescriptor[] {
+    return [MOXXY_HARNESS];
   }
 
   // ---------- catalogs: the one source of provider/model truth ----------
@@ -846,6 +854,7 @@ export class Runners {
         online: this.isOnline(row),
         fetchedAt: at,
         modelCount: servable.size,
+        providerModels: servesProviderModels(this.harnessesOn(row)),
         providers: groups,
         policy: { disabledProviders: row.disabled_providers, disabledModels: row.disabled_models },
       });

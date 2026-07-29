@@ -8,15 +8,19 @@ import { detectProviders } from '../dist/contract/index.js';
  * having nothing, because the page turns that answer into "go fix this".
  */
 
-const machine = (id, fetchedAt, online = true) => ({
+const machine = (id, fetchedAt, online = true, providerModels = true) => ({
   id,
   name: id,
   online,
   fetchedAt,
   modelCount: 0,
+  providerModels,
   providers: [],
   policy: { disabledProviders: [], disabledModels: [] },
 });
+
+/** A machine whose agent runtime signs in on its own and brings its own models. */
+const builtin = (id, online = true) => machine(id, null, online, false);
 
 const merged = (name, machines = [], disabledOn = []) => ({ name, machines, disabledOn, models: [] });
 
@@ -87,6 +91,37 @@ test('every machine read and none credentialed is none', () => {
 });
 
 test('no machines at all is none, not unknown', () => {
+  assert.equal(detectProviders(catalog([], [])).state, 'none');
+});
+
+/**
+ * A machine whose runtime brings its own models is never going to report a
+ * provider. Reading it as "none" tells the operator to add credentials that
+ * would land nowhere; reading it as "unknown" promises a report that is never
+ * coming. Both are the same defect this page was built to avoid, so it gets its
+ * own answer.
+ */
+test('a machine that takes no models from providers is builtin, not none', () => {
+  assert.equal(detectProviders(catalog([], [builtin('m1')])).state, 'builtin');
+});
+
+test('a builtin machine never sits in unknown waiting for a report', () => {
+  // Online and unread: the only reason it would be counted as "reading".
+  const answer = detectProviders(catalog([], [builtin('m1'), machine('m2', null)]));
+  assert.equal(answer.state, 'unknown');
+  assert.equal(answer.reading, 1);
+  assert.equal(answer.unreachable, 0);
+});
+
+test('one provider machine among builtin ones still decides the answer', () => {
+  assert.equal(detectProviders(catalog([], [builtin('m1'), machine('m2', 1000)])).state, 'none');
+  assert.equal(
+    detectProviders(catalog([merged('anthropic', ['m2'])], [builtin('m1'), machine('m2', 1000)])).state,
+    'found',
+  );
+});
+
+test('builtin needs a machine: an empty fleet is still none', () => {
   assert.equal(detectProviders(catalog([], [])).state, 'none');
 });
 

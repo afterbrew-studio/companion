@@ -44,6 +44,7 @@ function addRun(store, id) {
     runnerId: null,
     userId: 'ana',
     task: null,
+    harness: 'moxxy',
     createdAt: now,
     updatedAt: now,
     inputTokens: 0,

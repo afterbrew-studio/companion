@@ -1,17 +1,20 @@
 import type Database from 'better-sqlite3';
 import type { AgentStorageRunLease } from '@moxxy/companion-types';
 import type { RunKind, RunRecord, RunStatus } from '../contract/index.js';
+import { describeHarness } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 /** Agent runs — rows are the source of truth; gateway processes are cattle. */
 export class RunsStore {
   constructor(private readonly db: Database.Database) {}
 
-  insert(run: Omit<RunRecord, 'live'>): void {
+  /** `harness` is the id, not the descriptor: the row stores the choice, and
+   *  what that harness can do is read back from the build that implements it. */
+  insert(run: Omit<RunRecord, 'live' | 'harness'> & { readonly harness: string }): void {
     this.db
       .prepare(
-        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, task, created_at, updated_at, input_tokens, output_tokens, outcome)
-         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @task, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
+        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens, outcome)
+         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @task, @harness, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
       .run(run);
   }
@@ -311,6 +314,8 @@ export interface RunRow {
   runner_id: string | null;
   user_id: string | null;
   task: string | null;
+  /** Harness id this run executes through; 'moxxy' on rows that predate it. */
+  harness: string;
   created_at: number;
   updated_at: number;
   input_tokens: number;
@@ -332,6 +337,7 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     prUrl: row.pr_url,
     model: row.model,
     runnerId: row.runner_id,
+    harness: describeHarness(row.harness),
     userId: row.user_id,
     task: row.task,
     createdAt: row.created_at,

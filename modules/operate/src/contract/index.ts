@@ -1,7 +1,7 @@
 // Brings module-core's + module-workspace's augmentations (operate dependsOn both).
 import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
-import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
+import type { AskRequest, HarnessCapabilities, MoxxyEvent } from '@moxxy/companion-types';
 import type { OperateService } from '../api/operate-service.js';
 
 export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pricing.js';
@@ -86,6 +86,46 @@ export type GitCredentialResolver = (
   access?: GitAccess,
 ) => Promise<string | null> | string | null;
 
+// ---------- harnesses (the agent runtime work executes through) ----------
+
+/**
+ * One agent runtime a machine can run work through, carrying its own answer to
+ * what it can do. The capabilities travel with the id rather than being looked
+ * up client-side, because they belong to the implementation: a build that drops
+ * a harness, or a module that adds one, must not need a second table updated in
+ * step. The id is open for the same reason.
+ */
+export interface HarnessDescriptor {
+  readonly id: string;
+  /** How the harness names itself in the UI ('moxxy', 'Claude Code'). */
+  readonly label: string;
+  readonly capabilities: HarnessCapabilities;
+}
+
+/**
+ * The harnesses in a set that report nothing a spend ceiling can count.
+ *
+ * A ceiling that quietly misses part of the bill is worse than no ceiling, so
+ * every surface offering one names these rather than under-counting in silence.
+ */
+export function unmeteredHarnesses(
+  harnesses: readonly HarnessDescriptor[],
+): readonly HarnessDescriptor[] {
+  return harnesses.filter((h) => h.capabilities.usage === 'none');
+}
+
+/**
+ * Whether provider credentials decide which models this set can run.
+ *
+ * False for a harness that signs in on its own and ships a fixed list: provider
+ * switches would control nothing there, and a model pin has no provider to
+ * name. One provider-sourced harness is enough, since its models are still the
+ * operator's to allow.
+ */
+export function servesProviderModels(harnesses: readonly HarnessDescriptor[]): boolean {
+  return harnesses.some((h) => h.capabilities.models === 'providers');
+}
+
 // ---------- runs ----------
 
 export type RunKind = 'interactive' | 'triage' | 'fix' | 'analysis' | 'implement' | 'report' | 'assistant';
@@ -121,6 +161,12 @@ export interface RunRecord {
   readonly model: string | null;
   /** Runner (machine) this run executes on; null = the built-in local runner. */
   readonly runnerId: string | null;
+  /**
+   * The agent runtime this run executes through, and what it can do. Carried on
+   * the run rather than derived from its machine, because a machine may run
+   * several and only the run knows which one it started under.
+   */
+  readonly harness: HarnessDescriptor;
   /**
    * User who owns this run. Attended chats (interactive / AI Help) are private
    * to their owner; null for automated/system runs (triage, digests, webhooks).
@@ -550,6 +596,11 @@ export interface RunnerRecord {
    */
   readonly allowedRoles: ReadonlyArray<string>;
   readonly health: RunnerHealth;
+  /**
+   * The agent runtimes this machine runs work through. Never empty: a machine
+   * that can run nothing would silently accept placements it cannot serve.
+   */
+  readonly harnesses: ReadonlyArray<HarnessDescriptor>;
   readonly catalog: RunnerCatalog | null;
   /** Which of this machine's providers/models agents may use (see the type). */
   readonly providerPolicy: RunnerProviderPolicy;
@@ -711,6 +762,12 @@ export interface CatalogMachine {
   readonly fetchedAt: number | null;
   /** Models this machine can serve right now (ready provider, enabled here). */
   readonly modelCount: number;
+  /**
+   * Whether provider credentials decide what this machine can run at all. False
+   * where every harness on it brings its own models, which makes every control
+   * below dead: there is no provider to switch off and no credential to add.
+   */
+  readonly providerModels: boolean;
   readonly providers: ReadonlyArray<CatalogMachineProvider>;
   /**
    * This machine's stored policy, verbatim. The page edits and sends back this
@@ -761,6 +818,13 @@ export type ProviderDetection =
   /** Every visible machine was read, and none holds any credentials. */
   | { readonly state: 'none' }
   /**
+   * There are machines, and not one of them takes its models from a provider.
+   * Distinct from `none`: nothing is missing and there is nothing to configure,
+   * so telling the operator to add credentials would send them after a problem
+   * they do not have.
+   */
+  | { readonly state: 'builtin' }
+  /**
    * Nothing found, and something is still unread. `reading` machines are online
    * and will report on their own; `unreachable` ones will not until they come
    * back, so the two cannot be described to the operator with one sentence.
@@ -779,6 +843,10 @@ export type ProviderDetection =
  * Only ONLINE machines are ever catalog-probed, so an offline machine that has
  * never reported stays unread indefinitely; counting it as "reading" would
  * promise an answer the daemon is not going to fetch.
+ *
+ * A machine whose harnesses bring their own models is never going to report a
+ * provider, so it is left out of the count entirely rather than sitting in
+ * "reading" forever.
  */
 export function detectProviders(catalog: ProviderCatalog): ProviderDetection {
   const credentialed = catalog.providers.filter((p) => p.machines.length > 0 || p.disabledOn.length > 0);
@@ -786,7 +854,9 @@ export function detectProviders(catalog: ProviderCatalog): ProviderDetection {
     const machines = new Set(credentialed.flatMap((p) => [...p.machines, ...p.disabledOn]));
     return { state: 'found', providers: credentialed.map((p) => p.name), machines: machines.size };
   }
-  const unread = catalog.machines.filter((m) => m.fetchedAt === null);
+  const asked = catalog.machines.filter((m) => m.providerModels);
+  if (asked.length === 0) return catalog.machines.length > 0 ? { state: 'builtin' } : { state: 'none' };
+  const unread = asked.filter((m) => m.fetchedAt === null);
   if (unread.length === 0) return { state: 'none' };
   const reading = unread.filter((m) => m.online).length;
   return { state: 'unknown', reading, unreachable: unread.length - reading };

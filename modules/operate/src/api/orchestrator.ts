@@ -15,6 +15,7 @@ import type {
   RunRecord,
 } from '../contract/index.js';
 import { log, paths, type DaemonConfig } from '@moxxy/companion-services';
+import { MOXXY_HARNESS } from './harnesses.js';
 import { rowToRun } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -417,6 +418,7 @@ export class Orchestrator implements RunnerEventSink {
       runnerId,
       userId: opts.userId ?? null,
       task: opts.task ?? null,
+      harness: MOXXY_HARNESS.id,
       createdAt: now,
       updatedAt: now,
       inputTokens: 0,
