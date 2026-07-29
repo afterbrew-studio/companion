@@ -16,7 +16,7 @@ interface TimelineEntry {
   readonly id: string;
   readonly icon: string;
   readonly label: string;
-  readonly tone: 'ok' | 'err' | 'info';
+  readonly tone: 'ok' | 'err' | 'warn' | 'info';
   readonly ts: number;
 }
 
@@ -137,6 +137,8 @@ export function AgentActivity({
                     <OutcomeDot ok={false} />
                   ) : e.tone === 'ok' ? (
                     <OutcomeDot ok />
+                  ) : e.tone === 'warn' ? (
+                    <StatusDot tone="amber" size="lg" />
                   ) : (
                     <span
                       className={`size-2 rounded-full ${
@@ -174,6 +176,7 @@ function toEntry(event: MoxxyEvent, toolNames: Map<string, string>): TimelineEnt
     name?: string;
     callId?: string;
     ok?: boolean;
+    kind?: string;
     model?: string;
     reason?: string;
     message?: string;
@@ -201,8 +204,17 @@ function toEntry(event: MoxxyEvent, toolNames: Map<string, string>): TimelineEnt
         label: e.content ? `Responded: ${e.content.slice(0, 80)}` : 'Responded',
         tone: 'ok',
       };
-    case 'error':
-      return { ...base, icon: '✕', label: e.message?.slice(0, 100) ?? 'Error', tone: 'err' };
+    case 'error': {
+      // Same rule as the transcript fold: only 'fatal' ended the run. moxxy's
+      // own retries surface here as 'retryable' while it is still working.
+      const fatal = e.kind === 'fatal';
+      return {
+        ...base,
+        icon: fatal ? '✕' : '⚠',
+        label: e.message?.slice(0, 100) ?? 'Error',
+        tone: fatal ? 'err' : 'warn',
+      };
+    }
     case 'abort':
       return { ...base, icon: '⏹', label: `Aborted — ${e.reason ?? 'unknown reason'}`, tone: 'err' };
     default:

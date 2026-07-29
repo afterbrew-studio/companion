@@ -79,20 +79,8 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
     case 'tool':
       return <ToolBlock block={block} />;
     case 'notice':
-      if (block.level === 'error') {
-        return (
-          <div className="flex shrink-0 items-start gap-2.5 self-stretch rounded-lg border border-red-500/40 bg-red-500/5 px-3.5 py-2.5">
-            <span className="shrink-0 text-red-600 dark:text-red-400" aria-hidden>
-              ✕
-            </span>
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium text-red-600 dark:text-red-400">Run error</div>
-              <pre className="mt-1 font-mono text-xs break-all whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">{block.text}</pre>
-            </div>
-          </div>
-        );
-      }
-      return <div className="chip shrink-0 self-center">{block.text}</div>;
+      if (block.level === 'info') return <div className="chip shrink-0 self-center">{block.text}</div>;
+      return <NoticeBlock block={block} />;
     default:
       return null;
   }
@@ -100,6 +88,40 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
 
 function firstLine(text: string): string {
   return text.split('\n').find((l) => l.trim()) ?? '';
+}
+
+const NOTICE_TONE = {
+  error: { box: 'border-red-500/40 bg-red-500/5', head: 'text-red-600 dark:text-red-400', icon: '✕', title: 'Run error' },
+  warn: {
+    box: 'border-amber-500/40 bg-amber-500/5',
+    head: 'text-amber-700 dark:text-amber-400',
+    icon: '⚠',
+    title: 'Warning',
+  },
+} as const;
+
+/**
+ * A problem the agent hit. Amber is the common case: moxxy rides out provider
+ * overload and rate limits on its own, so those arrive here while the run is
+ * still working and must not be dressed as a corpse. Red is reserved for the
+ * fatal kind, which is the one that actually ends the run.
+ */
+function NoticeBlock({ block }: { block: Extract<Block, { kind: 'notice' }> }): JSX.Element {
+  const tone = NOTICE_TONE[block.level === 'error' ? 'error' : 'warn'];
+  return (
+    <div className={`flex shrink-0 items-start gap-2.5 self-stretch rounded-lg border px-3.5 py-2.5 ${tone.box}`}>
+      <span className={`shrink-0 ${tone.head}`} aria-hidden>
+        {tone.icon}
+      </span>
+      <div className="min-w-0">
+        <div className={`text-[13px] font-medium ${tone.head}`}>
+          {block.title ?? tone.title}
+          {block.attempt ? <span className="dim ml-1.5 font-normal">attempt {block.attempt}</span> : null}
+        </div>
+        <pre className="mt-1 font-mono text-xs break-all whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">{block.text}</pre>
+      </div>
+    </div>
+  );
 }
 
 const TOOL_STATUS: Record<Extract<Block, { kind: 'tool' }>['status'], { label: string; cls: string }> = {

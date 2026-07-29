@@ -19,6 +19,10 @@ export function fixture({
   startReviewFix,
   servableModels = () => [],
   taskModelPin = () => null,
+  /** Run rows the board can read back, keyed by run id (id → row). */
+  runRows = {},
+  /** What the finished run left in its worktree; empty diff by default. */
+  diff = async () => ({ diff: '' }),
 } = {}) {
   const db = new Database(':memory:');
   db.exec(`
@@ -74,6 +78,7 @@ export function fixture({
     prReviews: { listForPr: () => [] },
     fixes: {
       discard: async () => undefined,
+      diff,
       createGoalRun:
         createGoalRun ??
         record('build', ([opts]) => ({ repo: opts.repo, userId: opts.userId, task: opts.task, preferredModel: opts.preferredModel })),
@@ -89,7 +94,7 @@ export function fixture({
     store,
     code,
     {
-      runsStore: { get: () => undefined },
+      runsStore: { get: (id) => runRows[id] },
       runners: { hasFreeCapacity, servableModels },
       orchestrator: { taskModelPin },
     },
