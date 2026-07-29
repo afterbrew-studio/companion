@@ -29,7 +29,7 @@ type ChatItem =
   | { kind: 'assistant'; text: string; streaming: boolean }
   /** Consecutive tool calls fold into one entry. */
   | { kind: 'tool'; names: string[] }
-  | { kind: 'error'; text: string };
+  | { kind: 'error'; text: string; level: 'error' | 'warn' };
 
 /** Append a tool call, folding into the previous entry when it is also tools. */
 function pushToolCall(items: ChatItem[], name: string): ChatItem[] {
@@ -206,8 +206,13 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
           const name = (event as { name?: string }).name ?? 'tool';
           setItems((prev) => pushToolCall(prev, name));
         } else if (event.type === 'error') {
-          const message = (event as { message?: string }).message;
-          if (message) setItems((prev) => [...prev, { kind: 'error', text: message }]);
+          // Only 'fatal' ended the turn; moxxy rides out provider overload and
+          // rate limits itself and reports those attempts as 'retryable' while
+          // the agent is still working (same rule as the run transcript).
+          const { message, kind } = event as { message?: string; kind?: string };
+          if (message) {
+            setItems((prev) => [...prev, { kind: 'error', text: message, level: kind === 'fatal' ? 'error' : 'warn' }]);
+          }
         }
       } else if (msg.t === 'turn' && msg.runId === runId) {
         setBusy(msg.phase === 'started');
@@ -379,7 +384,12 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
                       </span>
                     </div>
                   ) : (
-                    <div key={i} className="error-bar">{item.text}</div>
+                    <div
+                      key={i}
+                      className={item.level === 'warn' ? 'py-1.5 text-[13px] text-amber-700 dark:text-amber-400' : 'error-bar'}
+                    >
+                      {item.text}
+                    </div>
                   ),
                 )}
               </div>

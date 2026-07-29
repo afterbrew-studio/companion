@@ -24,7 +24,16 @@ export type Block =
       status: 'pending' | 'running' | 'denied' | 'ok' | 'error';
       detail?: string;
     }
-  | { kind: 'notice'; key: string; level: 'error' | 'info'; text: string };
+  | {
+      kind: 'notice';
+      key: string;
+      level: 'error' | 'warn' | 'info';
+      /** Heading naming what failed; absent for plain info chips. */
+      title?: string;
+      text: string;
+      /** Provider attempt the error belongs to, when moxxy reports one. */
+      attempt?: number;
+    };
 
 export interface FoldState {
   blocks: Block[];
@@ -36,6 +45,19 @@ export interface FoldState {
 export function emptyFold(): FoldState {
   return { blocks: [], seen: new Set(), inputTokens: 0, outputTokens: 0 };
 }
+
+/**
+ * What each moxxy error kind is called on screen. Naming only: severity is
+ * decided separately (fatal alone is a failure), so an unlisted kind gets the
+ * neutral heading instead of being promoted to a dead run.
+ */
+const ERROR_TITLES: Record<string, string> = {
+  fatal: 'Run error',
+  retryable: 'Recoverable error',
+  tool_threw: 'Tool error',
+  hook_failed: 'Hook failed',
+  provider_failed: 'Provider error',
+};
 
 /** Fold one event. Mutates and returns state (callers re-set React state with a new ref). */
 export function foldEvent(state: FoldState, event: MoxxyEvent): FoldState {
@@ -137,11 +159,22 @@ export function foldEvent(state: FoldState, event: MoxxyEvent): FoldState {
       break;
     }
     case 'error': {
+      // Severity comes from `kind`, never from the text. moxxy retries provider
+      // failures itself (react-loop backs off up to six times) and reports each
+      // attempt as a 'retryable' error while the turn is still very much alive;
+      // only 'fatal' means it gave up. That is also the exact rule the
+      // orchestrator applies before recording a run outcome, so a kind this
+      // fold does not know must fall on the same side the server puts it on.
+      // Otherwise the transcript and the run's status contradict each other.
+      const errorKind = str(event, 'kind');
+      const attempt = num(event, 'attempt');
       state.blocks.push({
         kind: 'notice',
         key: id,
-        level: 'error',
+        level: errorKind === 'fatal' ? 'error' : 'warn',
+        title: ERROR_TITLES[errorKind] ?? 'Warning',
         text: str(event, 'message') || 'error',
+        attempt: attempt > 0 ? attempt : undefined,
       });
       break;
     }
