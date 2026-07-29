@@ -140,12 +140,48 @@ registers a run task through them. A third party shipping opencode, hermes or pi
 should be a module registering a harness, with no core change. This is what
 makes the contract genuinely open rather than a two-way switch.
 
+## Choosing at setup, by detecting rather than asking
+
+First-run setup already asks which modules to start with. It should also settle
+which harnesses this machine will use, and it should do it the way the Providers
+page now does it: **detect first, and only ask about what is really there.**
+
+A harness is installed software, so the answer is on disk. `moxxy`, `claude` and
+`codex` are either on PATH or they are not, and the check costs nothing.
+
+Three states, not two, and this is not hypothetical. On the machine these
+measurements were taken, `codex` is installed **and unusable**: its model cache
+is corrupt and its account rejects the models it is configured for. Offering it
+as a choice there would produce an instance that looks configured and fails on
+its first run.
+
+- **Ready**: on PATH and its own auth check passes. Offer it, ticked.
+- **Installed but not ready**: on PATH, sign-in or self-check fails. Offer it
+  unticked, saying what is wrong and the one command that fixes it.
+- **Absent**: not offered and **not mentioned**. Advertising software someone
+  has not installed turns a setup step into a catalogue, and the list is exactly
+  as long as the machine's real options.
+
+The question is a **multi-select**: harnesses are not exclusive, and an instance
+that has both moxxy and Claude Code should be able to place work on either.
+Per-runner selection means the local runner gets the set picked here, and a
+remote machine answers the same question from its own disk when it is attached.
+
+The one case that still needs words is an empty list, because a question with no
+options is not a question. If nothing is detected, say so once and name the
+choices, since at that point the operator genuinely has none rather than being
+sold one they skipped.
+
+One consequence for existing copy: the CLI says today that moxxy is "optional at
+startup, but required before running AI agents". That stops being true in
+general and becomes true only of an instance that chose moxxy.
+
 ## Decisions still open
 
 **Where the choice lives.** Per instance is simplest. Per runner mirrors
 providers, which are already per machine, and matches reality: a harness is
 installed software. Per task is the most flexible and probably premature.
-Per runner is the recommendation.
+Per runner is the decision.
 
 **The runner agent.** Remote machines run `companion-runner`, whose protocol
 carries moxxy-shaped calls. A second harness means the agent has to know which
