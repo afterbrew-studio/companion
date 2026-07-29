@@ -89,6 +89,26 @@ export function importProvidersFromDailyMoxxy(sourceHome?: string): {
 }
 
 /**
+ * Adopt the operator's daily moxxy home when this one has nothing yet, the same
+ * rule a runner agent applies on its first boot (apps/companion-runner). A
+ * machine that already holds provider credentials should not have to be told to
+ * use them, and the import is idempotent, so this is safe to call whenever a
+ * caller wants detection re-run.
+ *
+ * Returns whether it adopted anything, so a caller can decide to re-read. An
+ * existing but empty `~/.moxxy` adopts NOTHING and must say so: it leaves
+ * `providersImported` false, so a caller that treated "we tried" as "we
+ * adopted" would re-announce it on every single refresh.
+ */
+export function adoptDailyMoxxyHome(): boolean {
+  if (homeStatus().providersImported) return false;
+  if (!existsSync(join(homedir(), '.moxxy'))) return false;
+  if (importProvidersFromDailyMoxxy().imported.length === 0) return false;
+  log.info('adopted provider config from ~/.moxxy (the companion home had none)');
+  return true;
+}
+
+/**
  * Boot-time heal for installs that imported before credentials were shared:
  * a regular-file providers.json copy means burned-refresh-token 401s, so
  * re-run the import (which now links) when the daily home is available.

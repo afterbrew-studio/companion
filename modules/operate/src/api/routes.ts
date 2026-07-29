@@ -12,7 +12,7 @@ import type {
 } from '../contract/index.js';
 import { taskModuleId } from '../contract/index.js';
 import { paths } from '@moxxy/companion-services';
-import { homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
+import { adoptDailyMoxxyHome, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
 import { upgradeMoxxyCli } from '../exec/cli.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -559,11 +559,14 @@ export default defineRoutes((ctx) => {
     }),
 
     route({
-      // Force a re-read from every online machine (the page's only button).
+      // Re-run detection, then force a re-read from every online machine (the
+      // page's only button). Adoption comes first so a moxxy home configured
+      // after this daemon booted is picked up without a restart.
       method: 'POST',
       path: '/api/providers/refresh',
       access: 'settings:manage',
       handler: async ({ user }) => {
+        if (adoptDailyMoxxyHome()) ctx.broadcast({ t: 'runners.changed' });
         await op.runners.refreshAllCatalogs(true, user?.username ?? null);
         return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
       },

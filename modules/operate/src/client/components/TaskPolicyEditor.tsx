@@ -1,15 +1,28 @@
 import { useState } from 'react';
+import { ChevronDown } from '@moxxy/companion-ui';
 import type { RunnerTaskPolicy, RunTaskDescriptor, RunTaskGroup } from '../../contract/index.js';
-import { taskModuleId, taskPolicyAllows } from '../../contract/index.js';
+import {
+  moduleTaskPolicyReach,
+  taskPolicyAllows,
+  withModuleAllowed,
+  withoutTaskPolicyEntry,
+  withTaskAllowed,
+} from '../../contract/index.js';
 
 /**
  * The two-level workforce policy: a module row over everything that module
  * registers (now and in future), expanding to its individual tasks.
  *
- * A tick always reads the same way — "this machine may run this" — whichever
- * mode the policy is in, so an operator never has to invert the list in their
- * head. The stored shape is what differs: under `allow` a tick is an entry,
- * under `deny` it is the absence of one.
+ * A tick always reads the same way ("this machine may run this") whichever mode
+ * the policy is in, so an operator never has to invert the list in their head.
+ * The stored shape is what differs: under `allow` a tick is an entry, under
+ * `deny` it is the absence of one.
+ *
+ * Reach is the only thing a row must convey beyond its tick, so it rides in the
+ * count: "all tasks" and "no tasks" also answer what the module registers later,
+ * "3 of 7" answers only what exists today. The rule behind that reading is
+ * stated once above the list rather than repeated on every row, and it depends
+ * on the mode, so it is written from the mode.
  */
 export function TaskPolicyEditor({
   groups,
@@ -25,40 +38,50 @@ export function TaskPolicyEditor({
   const orphans = [...policy.modules, ...policy.tasks].filter((id) => !known.has(id));
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {groups.length === 0 ? (
         <p className="dim text-[13px]">No module has registered agent work yet.</p>
-      ) : null}
+      ) : (
+        <p className="dim text-xs">
+          {policy.mode === 'deny'
+            ? 'Tasks a module registers later are allowed, unless you untick the whole module.'
+            : 'Tasks a module registers later are refused, unless you tick the whole module.'}
+        </p>
+      )}
       {groups.map((group) => {
         const state = moduleState(policy, group);
         const open = opened[group.moduleId] ?? state === 'some';
-        const blanket = policy.modules.includes(group.moduleId);
         const placeable = group.tasks.filter((t) => t.placeable);
         const daemonBound = group.tasks.filter((t) => !t.placeable);
+        const panelId = `task-policy-${group.moduleId}`;
+        const summary = moduleSummary(policy, group);
         return (
           <div key={group.moduleId} className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <div className="flex items-center gap-2.5 px-3 py-2.5">
+            <div className="flex items-center gap-2.5 px-3 py-2">
               <TriCheckbox
                 label={`All ${group.moduleTitle} work`}
                 state={state}
                 onChange={(next) => onChange(withModuleAllowed(policy, group.moduleId, next))}
               />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium">{group.moduleTitle}</span>
-                <span className="dim block text-xs">{moduleNote(state, blanket, group.tasks.length)}</span>
-              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{group.moduleTitle}</span>
               <button
                 type="button"
-                className="btn-ghost shrink-0 text-xs"
+                className="btn-ghost shrink-0 gap-1.5 text-xs"
                 aria-expanded={open}
+                aria-controls={open ? panelId : undefined}
+                aria-label={`${group.moduleTitle}: ${summary}`}
                 onClick={() => setOpened((prev) => ({ ...prev, [group.moduleId]: !open }))}
               >
-                {open ? 'Hide tasks' : `${group.tasks.length} task${group.tasks.length === 1 ? '' : 's'}`}
+                <span className="tabular-nums">{summary}</span>
+                <ChevronDown open={open} className="size-3.5" />
               </button>
             </div>
 
             {open ? (
-              <div className="flex flex-col gap-0.5 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
+              <div
+                id={panelId}
+                className="flex flex-col gap-0.5 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800"
+              >
                 {placeable.map((task) => (
                   <label
                     key={task.id}
@@ -70,7 +93,7 @@ export function TaskPolicyEditor({
                       checked={taskPolicyAllows(policy, task.id)}
                       onChange={(e) => onChange(withTaskAllowed(policy, groups, task.id, e.target.checked))}
                     />
-                    <span className="flex-1">{task.label}</span>
+                    <span className="min-w-0 flex-1">{task.label}</span>
                   </label>
                 ))}
                 {daemonBound.map((task) => (
@@ -93,7 +116,7 @@ export function TaskPolicyEditor({
               type="button"
               className="chip cursor-pointer font-mono hover:border-red-500/50 hover:text-red-600 dark:hover:text-red-400"
               title={`Drop ${id} from this machine's policy`}
-              onClick={() => onChange(withoutEntry(policy, id))}
+              onClick={() => onChange(withoutTaskPolicyEntry(policy, id))}
             >
               {id} ✕
             </button>
@@ -115,8 +138,8 @@ function DaemonBoundRow({ task, allowed }: { task: RunTaskDescriptor; allowed: b
   return (
     <div className="flex items-center gap-2.5 px-2 py-1.5 text-sm" title={task.hint}>
       <span className="size-3.5 shrink-0" aria-hidden />
-      <span className="flex-1">{task.label}</span>
-      <span className="dim text-xs">runs on the daemon&apos;s machine</span>
+      <span className="min-w-0 flex-1">{task.label}</span>
+      <span className="dim shrink-0 text-xs">runs on the daemon&apos;s machine</span>
       {allowed ? null : <span className="chip shrink-0">refused here</span>}
     </div>
   );
@@ -154,86 +177,14 @@ function moduleState(policy: RunnerTaskPolicy, group: RunTaskGroup): ModuleState
   return allowed === 0 ? 'none' : 'some';
 }
 
-function moduleNote(state: ModuleState, blanket: boolean, count: number): string {
-  if (state === 'some') return 'Some of its tasks — new tasks it registers are not covered.';
-  if (state === 'all') {
-    return blanket
-      ? 'Everything it registers, including tasks added by future updates.'
-      : `All ${count} of its tasks today; new ones are not covered.`;
-  }
-  return blanket ? 'Nothing it registers, now or in future.' : 'None of its tasks today.';
-}
-
-/** Set every task of a module, present and future, to one answer. */
-function withModuleAllowed(policy: RunnerTaskPolicy, moduleId: string, allowed: boolean): RunnerTaskPolicy {
-  // The blanket subsumes any individual entries underneath it, so they go.
-  const tasks = policy.tasks.filter((id) => taskModuleId(id) !== moduleId);
-  const listed = allowed === (policy.mode === 'allow');
-  const modules = listed
-    ? [...policy.modules.filter((m) => m !== moduleId), moduleId]
-    : policy.modules.filter((m) => m !== moduleId);
-  return { ...policy, modules, tasks };
-}
-
 /**
- * Set one task's answer. Doing so under a module blanket expands that blanket
- * over the tasks that exist today and drops it, because "everything this module
- * registers" and "everything but this one" cannot both be true. Tasks the
- * module adds later stop being covered — which is what per-task control means.
+ * The row's whole reading. A module answered uniformly is uncountable, because
+ * the answer also covers tasks it has not registered yet, so it reads as a word;
+ * one pinned to today's tasks reads as a number.
  */
-function withTaskAllowed(
-  policy: RunnerTaskPolicy,
-  groups: readonly RunTaskGroup[],
-  taskId: string,
-  allowed: boolean,
-): RunnerTaskPolicy {
-  const moduleId = taskModuleId(taskId);
-  let modules = policy.modules;
-  let tasks = policy.tasks;
-  if (modules.includes(moduleId)) {
-    const siblings = groups.find((g) => g.moduleId === moduleId)?.tasks ?? [];
-    modules = modules.filter((m) => m !== moduleId);
-    tasks = [...new Set([...tasks, ...siblings.map((t) => t.id)])];
-  }
-  const listed = allowed === (policy.mode === 'allow');
-  return {
-    ...policy,
-    modules,
-    tasks: listed ? [...new Set([...tasks, taskId])] : tasks.filter((id) => id !== taskId),
-  };
-}
-
-function withoutEntry(policy: RunnerTaskPolicy, id: string): RunnerTaskPolicy {
-  return {
-    ...policy,
-    modules: policy.modules.filter((m) => m !== id),
-    tasks: policy.tasks.filter((t) => t !== id),
-  };
-}
-
-/**
- * Rewrite a policy into the other mode, preserving what the machine may do
- * TODAY: a fully-allowed module becomes a blanket entry, a partly-allowed one
- * becomes its individual tasks. What changes is the future, which is the whole
- * reason to switch — an allow-list stops covering tasks a module adds later,
- * and a deny-list starts covering them.
- *
- * Entries for modules not in this build are dropped: their effective answer
- * survives either way, because an unlisted id is allowed under `deny` and
- * refused under `allow`, which is exactly what they were.
- */
-export function convertPolicyMode(
-  policy: RunnerTaskPolicy,
-  groups: readonly RunTaskGroup[],
-  mode: RunnerTaskPolicy['mode'],
-): RunnerTaskPolicy {
-  if (mode === policy.mode) return policy;
-  const modules: string[] = [];
-  const tasks: string[] = [];
-  for (const group of groups) {
-    const listed = group.tasks.filter((task) => taskPolicyAllows(policy, task.id) === (mode === 'allow'));
-    if (listed.length === group.tasks.length) modules.push(group.moduleId);
-    else tasks.push(...listed.map((task) => task.id));
-  }
-  return { mode, modules, tasks };
+function moduleSummary(policy: RunnerTaskPolicy, group: RunTaskGroup): string {
+  const reach = moduleTaskPolicyReach(policy, group.moduleId);
+  if (reach !== 'partial') return reach === 'all' ? 'all tasks' : 'no tasks';
+  const allowed = group.tasks.filter((task) => taskPolicyAllows(policy, task.id)).length;
+  return `${allowed} of ${group.tasks.length}`;
 }

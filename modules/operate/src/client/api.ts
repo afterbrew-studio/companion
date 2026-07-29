@@ -73,7 +73,6 @@ export const operateApi = {
   updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
   // providers + models (grouped per machine; machines fetch their own catalog)
-  importProviders: () => post<{ imported: string[]; missing: string[] }>('/api/moxxy/import-providers'),
   providerCatalog: () => request<ProviderCatalog>('/api/providers'),
   setRunnerProviderPolicy: (runnerId: string, policy: RunnerProviderPolicy) =>
     put<ProviderCatalog>(`/api/runners/${runnerId}/providers`, policy),

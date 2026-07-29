@@ -13,8 +13,6 @@ import { operateApi as api } from '../api.js';
 export function useProviders(): {
   catalog: ProviderCatalog | null;
   error: string | null;
-  setError: (e: string | null) => void;
-  refresh: () => Promise<void>;
   refetchFromMachines: () => Promise<void>;
   refetching: boolean;
   toggleProvider: (machine: CatalogMachine, name: string) => void;
@@ -53,8 +51,6 @@ export function useProviders(): {
   return {
     catalog,
     error,
-    setError,
-    refresh,
     refetching,
     refetchFromMachines: async () => {
       setRefetching(true);

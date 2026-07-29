@@ -140,6 +140,74 @@ export function SearchInput({
 }
 
 /**
+ * A small closed choice as ONE control, in the Tabs shape: use it where a
+ * binary setting would otherwise become two competing option cards.
+ *
+ * Backed by a native radio group rather than a roving-tabindex widget, so the
+ * browser supplies arrow-key movement and the "n of m" announcement; the
+ * visible segment is a label wrapping its own (screen-reader-only) radio.
+ * Shrinks to fit; pass `w-full sm:w-auto` to stack it under a settings row's
+ * text on narrow viewports.
+ */
+export function SegmentedControl<T extends string>({
+  value,
+  onChange,
+  options,
+  label,
+  name,
+  disabled,
+  className = '',
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: ReadonlyArray<{ value: T; label: string; hint?: string }>;
+  /** Names the group for assistive tech (rendered as a hidden legend). */
+  label: string;
+  /** Radio group name; must be unique within the page. */
+  name: string;
+  disabled?: boolean;
+  className?: string;
+}): JSX.Element {
+  return (
+    <fieldset
+      className={`flex h-9 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
+        disabled ? 'opacity-60' : ''
+      } ${className}`}
+    >
+      <legend className="sr-only">{label}</legend>
+      {options.map((o) => {
+        const on = o.value === value;
+        // min-w-max, not min-w-0: flex-1 gives a zero basis, so without it an
+        // auto-width control sizes below its own labels and truncates them.
+        return (
+          <label
+            key={o.value}
+            title={o.hint}
+            className={`flex min-w-max flex-1 items-center justify-center rounded-md px-3 text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-500 ${
+              disabled ? 'cursor-default' : 'cursor-pointer'
+            } ${
+              on
+                ? 'bg-white font-medium shadow-sm dark:bg-zinc-700'
+                : `text-zinc-500 ${disabled ? '' : 'hover:text-zinc-800 dark:hover:text-zinc-200'}`
+            }`}
+          >
+            <input
+              type="radio"
+              name={name}
+              className="sr-only"
+              checked={on}
+              disabled={disabled}
+              onChange={() => onChange(o.value)}
+            />
+            <span>{o.label}</span>
+          </label>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+/**
  * Settings row: title + dim description on the left, the control on the right.
  * Container-agnostic — wrap in `card` or a ListCard row for padding.
  */
