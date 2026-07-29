@@ -23,9 +23,8 @@ import type { MoxxyCli } from '../exec/cli.js';
 import { Runners } from './runners-registry.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import type { OperateStore } from './operate-store.js';
+import { AgentPolicy } from './agent-policy.js';
 
-/** Hard per-run output-token ceiling (goal mode upstream is uncapped). */
-const MAX_RUN_OUTPUT_TOKENS = 400_000;
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -150,6 +149,9 @@ export class Orchestrator implements RunnerEventSink {
       title: string,
       body: string,
     ) => void = () => {},
+    /** What agent work may do. Defaults read the built-in values, so an
+     *  orchestrator constructed without one behaves exactly as before. */
+    private readonly agentPolicy: AgentPolicy = new AgentPolicy({ values: () => ({}), get: () => null }),
   ) {
     this.runners = new Runners(
       store,
@@ -164,7 +166,11 @@ export class Orchestrator implements RunnerEventSink {
         scratchRetentionMs: this.retentionMs('scratchRetentionHours', 24, HOUR_MS),
         sessionRetentionMs: this.retentionMs('sessionRetentionDays', 30, DAY_MS),
       }),
-      { roleOf, fallback: () => this.unplacedWork() },
+      {
+        roleOf,
+        fallback: () => this.unplacedWork(),
+        assertPushTarget: (repo, branch) => this.agentPolicy.assertPushTarget(repo, branch),
+      },
     );
   }
 
@@ -1154,7 +1160,7 @@ export class Orchestrator implements RunnerEventSink {
       // moxxy's goal mode is uncapped (its built-in budgets were removed in
       // #439) — companiond's ceiling is the PRIMARY runaway-cost guard.
       const row = this.store.runs.get(runId);
-      if (row && row.output_tokens > MAX_RUN_OUTPUT_TOKENS && row.status === 'running') {
+      if (row && row.output_tokens > this.agentPolicy.maxOutputTokens() && row.status === 'running') {
         log.warn('run exceeded token ceiling — aborting', { runId, outputTokens: row.output_tokens });
         this.setStatus(runId, row.status, 'aborted: output token ceiling exceeded');
         void this.abortTurn(runId).catch(() => undefined);

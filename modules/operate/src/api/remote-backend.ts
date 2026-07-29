@@ -51,6 +51,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly githubTokenFor: GitCredentialResolver,
     /** Event-stream up/down transitions — the registry probes on both edges. */
     private readonly onStreamState?: (up: boolean) => void,
+    /** Instance policy gate; the daemon decides, the runner only executes. */
+    private readonly assertPushTarget: (repo: string, branch: string) => void = () => {},
   ) {
     this.connectEvents();
   }
@@ -253,6 +255,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
     await this.call('POST', '/git/commit-all', { cwd, message });
   }
   async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
+    // Refuse here, on the daemon, rather than trusting a runner to re-derive the
+    // policy: the credential the runner would push with is minted below.
+    this.assertPushTarget(repo, branch);
     await this.call('POST', '/git/push', { repo, cwd, branch, ...(await this.ghToken(repo, username, 'write')) });
   }
 

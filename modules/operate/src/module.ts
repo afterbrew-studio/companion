@@ -72,6 +72,37 @@ export default defineManifest({
       max: 365,
     },
     {
+      key: 'agentGitWrite',
+      label: 'Agent repository access',
+      kind: 'select',
+      description:
+        'Whether agent work may write to repositories at all. Refusing makes every agent read-only on every runner: it can still analyse, review and propose, but no clone, worktree or push receives a write credential.',
+      default: 'allowed',
+      options: [
+        { value: 'allowed', label: 'Agents may push to branches' },
+        { value: 'refused', label: 'Read-only: agents may never write' },
+      ],
+    },
+    {
+      key: 'protectedBranches',
+      label: 'Branches agents may never push to',
+      kind: 'text',
+      description:
+        'Comma or newline separated; `*` is the only wildcard. Agent work opens pull requests from its own branches, so this is the backstop for anything that tries to push directly. Clear the field to protect nothing.',
+      default: 'main, master, release/*, prod',
+      max: 500,
+    },
+    {
+      key: 'maxRunOutputTokens',
+      label: 'Output token ceiling per run',
+      kind: 'number',
+      description:
+        'A single run is aborted past this many output tokens. This is the primary runaway guard for goal-mode runs, which are otherwise uncapped upstream.',
+      default: 400_000,
+      min: 10_000,
+      max: 10_000_000,
+    },
+    {
       key: 'monthlyBudgetUsd',
       label: 'Monthly agent budget (USD)',
       kind: 'number',

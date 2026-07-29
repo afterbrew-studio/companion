@@ -253,6 +253,15 @@ export default defineRoutes((ctx) => {
       handler: () => op.budgets.breakdown(),
     }),
 
+    // The effective agent policy. Readable by anyone who launches runs: being
+    // refused a push is much easier to act on when you can see the rule.
+    route({
+      method: 'GET',
+      path: '/api/agent-policy',
+      access: 'runs:read',
+      handler: () => op.agentPolicy.snapshot(),
+    }),
+
     route({
       method: 'POST',
       path: '/api/runs/queue/:id/move',

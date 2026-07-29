@@ -73,6 +73,13 @@ export class Checkouts {
     private readonly token: GitCredentialResolver,
     /** Host clones go to; a GitHub Enterprise Server serves the same paths. */
     private readonly gitHost: string = 'github.com',
+    /**
+     * Instance policy gate for a push target, injected because `exec/` is also
+     * bundled into the published runner CLI and must not reach for kernel
+     * config. A no-op default is correct there: a runner pushes only what the
+     * daemon already authorised and credentialed.
+     */
+    private readonly assertPushTarget: (repo: string, branch: string) => void = () => {},
   ) {}
 
   /** The explicit per-operation personal credential wins; the resolver is for local calls. */
@@ -278,6 +285,9 @@ export class Checkouts {
     token?: string,
     username?: string | null,
   ): Promise<void> {
+    // Before the lock and before any credential is resolved: a refused push must
+    // not queue behind a fetch or reach GitHub's rate limit to be told no.
+    this.assertPushTarget(fullName, branch);
     await this.locked(fullName, async () =>
       this.git(
         ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`],

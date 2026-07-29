@@ -8,6 +8,7 @@ import type {
   RunTaskDescriptor,
   TokenUsage,
 } from '../contract/index.js';
+import type { AgentPolicy } from './agent-policy.js';
 import type { Budgets } from './budgets.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
@@ -44,6 +45,8 @@ export class OperateService {
     private readonly tokenSource: { current: GithubTokenSource },
     /** Monthly spend ceilings and cost attribution. */
     readonly budgets: Budgets,
+    /** What agent work is permitted to do, as instance configuration. */
+    readonly agentPolicy: AgentPolicy,
   ) {
     this.defaultTokenSource = tokenSource.current;
   }

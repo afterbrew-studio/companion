@@ -293,6 +293,23 @@ export interface TokenUsage {
   readonly models: readonly TokenUsageModel[];
 }
 
+// ---------- agent action policy ----------
+
+/**
+ * The effective limits on what agent work may do, as an instance states them.
+ * Read-only: the values are module configuration, edited under Modules, so this
+ * exists for the surface that displays them and for an auditor reading the
+ * trail next to a refusal.
+ */
+export interface AgentPolicySnapshot {
+  /** 'refused' makes agents read-only on every repository, on every runner. */
+  readonly gitWrite: 'allowed' | 'refused';
+  /** Branch patterns agent work may never push to; `*` is the only wildcard. */
+  readonly protectedBranches: readonly string[];
+  /** Output tokens one run may burn before it is aborted. */
+  readonly maxOutputTokens: number;
+}
+
 // ---------- spend budgets ----------
 
 /** One budget ceiling and how far into it this period has got. */

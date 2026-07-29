@@ -5,6 +5,7 @@ import type { GitCredentialResolver, GithubTokenSource } from '../contract/index
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { adoptDailyMoxxyHome, healCredentialLinks, seedPermissionDenyRules } from '../exec/home.js';
 import { Checkouts } from '../exec/checkouts.js';
+import { AgentPolicy } from './agent-policy.js';
 import { OperateStore } from './operate-store.js';
 import { Budgets } from './budgets.js';
 import { Orchestrator } from './orchestrator.js';
@@ -46,8 +47,17 @@ export default defineServices(async (ctx) => {
   const tokenSource: { current: GithubTokenSource } = {
     current: { tokenFor: () => null },
   };
-  const githubTokenFor: GitCredentialResolver = async (repo, username, access) =>
-    (await tokenSource.current.tokenFor(repo, username, access)) ?? null;
+  // What agent work may do, as instance configuration. Enforced at the
+  // credential seam below rather than per feature: every network git operation
+  // on every runner resolves its credential through this one function, so a
+  // refusal cannot be routed around by a caller added later.
+  const agentPolicy = new AgentPolicy(ctx.moduleConfig, (action, detail) =>
+    ctx.audit.record({ at: Date.now(), actor: null, action, access: 'runs:act', status: 403, module: 'operate', detail }),
+  );
+  const githubTokenFor: GitCredentialResolver = async (repo, username, access) => {
+    if (access === 'write') agentPolicy.assertGitWrite(repo);
+    return (await tokenSource.current.tokenFor(repo, username, access)) ?? null;
+  };
 
   // run.changed fans out to browsers AND to the server bus, replacing the
   // legacy composition root's hard-coded proposals forward-ref: reacting
@@ -70,7 +80,9 @@ export default defineServices(async (ctx) => {
   }
 
   // Per-repo resolution, so the invoking/run-owning profile governs clones too.
-  const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host);
+  const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host, (repo, branch) =>
+    agentPolicy.assertPushTarget(repo, branch),
+  );
   const store = new OperateStore(ctx.db, settings);
   // Roles are module-core's to store and edit; placement only reads them, live,
   // so a role change takes effect on the next placement rather than a restart.
@@ -94,6 +106,7 @@ export default defineServices(async (ctx) => {
     // Instance-wide, like the budget alert: a machine going offline is not one
     // workspace's problem, and scoping it to one would hide it from the rest.
     (kind, title, body) => ctx.notify.emit({ workspaceId: null, kind, title, body, href: '#/runners' }),
+    agentPolicy,
   );
   const webhookTunnel = new WebhookTunnel(
     () => ctx.moduleConfig.get('webhookTunnel') === true,
@@ -112,6 +125,7 @@ export default defineServices(async (ctx) => {
     store.runs,
     tokenSource,
     budgets,
+    agentPolicy,
   );
   service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
   ctx.services.register('operate', service);

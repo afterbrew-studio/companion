@@ -78,6 +78,8 @@ export interface RunnersPolicySource {
   roleOf?(username: string): string | null;
   /** What happens to work no eligible machine's policy accepts. */
   fallback?(): RunnerFallback;
+  /** Instance agent policy: refuses a push whose target branch is protected. */
+  assertPushTarget?(repo: string, branch: string): void;
 }
 
 /**
@@ -191,13 +193,21 @@ export class Runners {
       if (existing) (existing as RemoteRunnerBackend).dispose();
       this.backends.set(
         row.id,
-        new RemoteRunnerBackend(row.id, row.endpoint, row.token, this.sink, this.githubTokenFor, (up) => {
-          // Event-stream state is the fastest liveness signal: a drop (or a
-          // reconnect) triggers an immediate probe instead of waiting out the
-          // poll interval. Once health already says offline, the retry loop's
-          // repeated drops stop re-probing.
-          if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
-        }),
+        new RemoteRunnerBackend(
+          row.id,
+          row.endpoint,
+          row.token,
+          this.sink,
+          this.githubTokenFor,
+          (up) => {
+            // Event-stream state is the fastest liveness signal: a drop (or a
+            // reconnect) triggers an immediate probe instead of waiting out the
+            // poll interval. Once health already says offline, the retry loop's
+            // repeated drops stop re-probing.
+            if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
+          },
+          (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
+        ),
       );
     }
   }
