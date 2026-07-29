@@ -1,4 +1,5 @@
 import type { ModuleConfigAccessor } from '@moxxy/companion-core';
+import { StatusError } from '@moxxy/companion-core/server';
 import { log } from '@moxxy/companion-services';
 import type { BudgetScopeStatus, BudgetStatus, SpendBreakdown, SpendEntry } from '../contract/index.js';
 import { estimateUsd, formatUsd } from '../contract/model-pricing.js';
@@ -9,10 +10,12 @@ import type { RunsStore, SpendDimension, UsageModelRow } from './runs-store.js';
  * answers "payment required" rather than a generic failure: the caller did
  * nothing wrong and re-trying will not help until someone acts.
  */
-export class BudgetExceededError extends Error {
-  readonly status = 402;
+export class BudgetExceededError extends StatusError {
   constructor(message: string) {
-    super(message);
+    // Extending StatusError is what makes the 402 real: the router reads the
+    // code off `err instanceof StatusError`, so carrying a `status` field on a
+    // plain Error looked right and answered 500.
+    super(402, message);
     this.name = 'BudgetExceededError';
   }
 }

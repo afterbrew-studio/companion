@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { StatusError } from '@moxxy/companion-core/server';
 import { Budgets, BudgetExceededError, monthStart } from '../dist/api/budgets.js';
 
 /**
@@ -160,4 +161,14 @@ test('null attribution keys are labelled, never rendered as an empty row', () =>
   assert.equal(b.breakdown().byUser[0].label, 'automation');
   assert.equal(b.breakdown().byTask[0].label, 'unattributed');
   assert.equal(b.breakdown().byRepo[0].label, 'no repository');
+});
+
+test('a refused run answers 402, not a generic failure', () => {
+  // The router reads the code off `err instanceof StatusError`. A plain Error
+  // carrying a `status` field satisfies neither the check nor the reader, so
+  // the ceiling used to surface as 500: indistinguishable from a broken daemon,
+  // when the caller did nothing wrong and retrying cannot help.
+  const err = new BudgetExceededError('ceiling reached');
+  assert.ok(err instanceof StatusError, 'the router only reads a status off a StatusError');
+  assert.equal(err.status, 402);
 });
