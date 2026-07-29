@@ -68,6 +68,63 @@ export interface SlopVerdict {
   readonly draftComment: string;
 }
 
+/**
+ * The author's standing in the repository, straight from GitHub. 'unknown' is
+ * its own state: a payload shape that omits the field must not be reported as
+ * NONE, which would read as "outsider" and skew every provenance judgement.
+ */
+export type SlopAuthorStanding =
+  | 'owner'
+  | 'member'
+  | 'collaborator'
+  | 'contributor'
+  | 'first_time_contributor'
+  | 'bot'
+  | 'none'
+  | 'unknown';
+
+/** One commit on the pull request, reduced to what a provenance judgement needs. */
+export interface SlopCommitFact {
+  /** Short sha, enough to cite in an observation. */
+  readonly sha: string;
+  /** First line of the message. */
+  readonly subject: string;
+  /** Linked GitHub login, or null when the commit email matches no account. */
+  readonly authorLogin: string | null;
+  readonly authoredAt: number;
+  /** Trailer keys found in the message's trailer block, lowercased. */
+  readonly trailers: ReadonlyArray<string>;
+}
+
+/**
+ * Facts about where a pull request came from, fetched from GitHub at detection
+ * time. Every field is evidence the agent may cite; nothing here is a verdict.
+ * The whole record is null when GitHub could not be reached, which the prompt
+ * states explicitly so the agent withholds provenance claims instead of
+ * inventing them.
+ */
+export interface SlopProvenance {
+  readonly authorLogin: string;
+  readonly standing: SlopAuthorStanding;
+  /** Days since the account was created; null when the profile was unreadable. */
+  readonly accountAgeDays: number | null;
+  readonly publicRepos: number | null;
+  readonly followers: number | null;
+  readonly commits: ReadonlyArray<SlopCommitFact>;
+  /** True when the commit list hit the page cap, so counts are a lower bound. */
+  readonly commitsTruncated: boolean;
+  /** Distinct AI attribution trailers seen (e.g. 'co-authored-by: claude'). */
+  readonly aiTrailers: ReadonlyArray<string>;
+  /** Every commit carries a Signed-off-by line (DCO satisfied). */
+  readonly signedOff: boolean;
+  /** Distinct commit author identities across the PR. */
+  readonly distinctAuthors: number;
+  /** Minutes between the first and last commit; null for a single commit. */
+  readonly spanMinutes: number | null;
+  /** Agent-tool prefix on the head branch (codex/, cursor/, devin/…), if any. */
+  readonly branchAgentPrefix: string | null;
+}
+
 export interface SlopDetectionResult {
   readonly id: string; // `slop-<uuid12>`
   readonly repo: string; // owner/name
@@ -84,6 +141,12 @@ export interface SlopDetectionResult {
   readonly appliedAction: SlopAppliedAction | null;
   /** Snapshot of the rule set the detection ran with. */
   readonly ruleIds: ReadonlyArray<string>;
+  /**
+   * Contributor facts the detection ran with, snapshotted so the evidence stays
+   * legible after the PR is force-pushed or the author's profile changes. null
+   * when GitHub was unreachable, and on rows written before this existed.
+   */
+  readonly provenance: SlopProvenance | null;
   readonly createdAt: number;
 }
 

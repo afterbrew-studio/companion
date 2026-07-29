@@ -9,6 +9,7 @@ import type {
   SlopAction,
   SlopMoveToRefinementResult,
   SlopDetectionResult,
+  SlopProvenance,
   SlopRuleDraft,
   SlopRuleRecord,
   SlopSignal,
@@ -16,6 +17,7 @@ import type {
 } from '../contract/index.js';
 import type { SlopStore } from './slop-store.js';
 import { BUILTIN_RULES } from './builtin-rules.js';
+import { gatherProvenance, provenanceSection } from './provenance.js';
 
 // Structural aliases, operate-types style: another module's /api entry must
 // never be imported, so the collaborator types derive from the service bundles
@@ -178,16 +180,17 @@ export class SlopService {
     repo: string,
     prNumber: number,
     userId: string,
-  ): { pr: PrRecord; ruleSet: SlopRuleRecord[] } {
+  ): { pr: PrRecord; ruleSet: SlopRuleRecord[]; client: GitHubClient } {
     const pr = this.code.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const workspaceId = this.workspaceOf(repo);
     if (!workspaceId) throw new Error(`repo ${repo} is not connected`);
     const ruleSet = this.rules(workspaceId).filter((rule) => rule.enabled);
     if (ruleSet.length === 0) throw new Error('no detection rules are enabled for this workspace');
-    if (!this.github({ repo, username: userId })) throw new Error('your GitHub accounts cannot access this repository');
+    const client = this.github({ repo, username: userId });
+    if (!client) throw new Error('your GitHub accounts cannot access this repository');
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
-    return { pr, ruleSet };
+    return { pr, ruleSet, client };
   }
 
   /** Throws when a detection cannot start (unknown PR, empty rule set, no clone…). */
@@ -213,10 +216,13 @@ export class SlopService {
    * status 'failed', never a fabricated verdict and never a silent vanish.
    */
   async detect(repo: string, prNumber: number, userId: string): Promise<SlopDetectionResult> {
-    const { pr, ruleSet } = this.prepare(repo, prNumber, userId);
+    const { pr, ruleSet, client } = this.prepare(repo, prNumber, userId);
 
     // The row exists (and broadcasts) BEFORE the minutes-long agent phase, so
     // the page shows a live 'running' card the moment a detection is queued.
+    // Provenance is fetched after, and written back, rather than being awaited
+    // here: three GitHub round-trips ahead of the insert would delay that card
+    // for no gain, since nothing reads the facts until the agent starts.
     const placeholder: SlopDetectionResult = {
       id: `slop-${randomUUID().slice(0, 12)}`,
       repo,
@@ -228,10 +234,24 @@ export class SlopService {
       error: null,
       appliedAction: null,
       ruleIds: ruleSet.map((rule) => rule.id),
+      provenance: null,
       createdAt: Date.now(),
     };
     this.store.insertDetection(placeholder);
     this.changed();
+
+    // Stored before the run so the snapshot and the agent's context are the
+    // same facts. A GitHub outage yields null, which the prompt reports as
+    // "no provenance data" rather than as absence of evidence.
+    const provenance: SlopProvenance | null = await gatherProvenance(client, repo, {
+      number: prNumber,
+      author: pr.author,
+      headRef: pr.headRef,
+    });
+    if (provenance) {
+      this.store.setProvenance(placeholder.id, provenance);
+      this.changed();
+    }
 
     let runId = '';
     let verdict: SlopVerdict | null = null;
@@ -251,7 +271,7 @@ export class SlopService {
             repo,
             userId,
             issueNumber: prNumber,
-            prompt: detectionPrompt(pr, ruleSet),
+            prompt: detectionPrompt(pr, ruleSet, provenance),
             timeoutMs: DETECT_TIMEOUT_MS,
             resume: { type: 'slop-detect', args: { repo, number: prNumber, userId } },
           }),
@@ -276,6 +296,7 @@ export class SlopService {
     if (!settled) return this.store.getDetection(placeholder.id) ?? placeholder;
     const result: SlopDetectionResult = {
       ...placeholder,
+      provenance,
       runId,
       status: verdict ? 'pending' : 'failed',
       verdict,
@@ -439,7 +460,11 @@ export class SlopService {
   }
 }
 
-function detectionPrompt(pr: PrRecord, rules: readonly SlopRuleRecord[]): string {
+function detectionPrompt(
+  pr: PrRecord,
+  rules: readonly SlopRuleRecord[],
+  provenance: SlopProvenance | null,
+): string {
   const ruleSections = rules
     .map((rule) => `### ${rule.id}: ${rule.name}\n${rule.instructions}`)
     .join('\n\n');
@@ -456,6 +481,8 @@ ${ruleSections}
 Author: ${pr.author} | Branch: ${pr.headRef} → ${pr.baseRef} | Draft: ${pr.draft ? 'yes' : 'no'} | Labels: ${pr.labels.join(', ') || '(none)'}
 
 ${pr.body || '(no description)'}
+
+${provenanceSection(provenance)}
 
 ## Inspecting the complete PR
 \`origin/${pr.baseRef}\` is the refreshed base. Inspect the complete change locally; no prompt-sized diff was provided.

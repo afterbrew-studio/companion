@@ -21,6 +21,7 @@ import { useWorkspace } from '@companion/module-workspace/client';
 import type { SlopDetectionResult } from '../../contract/index.js';
 import { slopApi } from '../api.js';
 import { SlopMeter } from '../components/SlopMeter.js';
+import { ContributorProvenance } from '../components/ContributorProvenance.js';
 import { ACTION_LABEL, STATUS_META, STRENGTH_TONE } from '../detection-meta.js';
 
 /**
@@ -178,6 +179,8 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
           ) : null}
           <DetailRow label="Detected">{new Date(d.createdAt).toLocaleString()}</DetailRow>
         </DetailGrid>
+
+        <ContributorProvenance provenance={d.provenance} />
 
         {d.status === 'running' ? (
           <InlineLoading label="The agent is scoring this pull request — the verdict lands here when it finishes." />

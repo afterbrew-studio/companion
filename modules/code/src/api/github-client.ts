@@ -54,6 +54,11 @@ export class GitHubClient {
     return this.get<{ login: string }>('/user');
   }
 
+  /** A public account profile. Used for contributor provenance (account age, footprint). */
+  async user(login: string): Promise<GhUser> {
+    return this.get<GhUser>(`/users/${encodeURIComponent(login)}`);
+  }
+
   /** Repositories the token can see (owner/collaborator/org), newest push first, paged. */
   async viewerRepos(maxPages = 3): Promise<GhRepoSummary[]> {
     const collected: GhRepoSummary[] = [];
@@ -210,6 +215,24 @@ export class GitHubClient {
     return { files, truncated: full };
   }
 
+  /**
+   * A PR's commits, oldest first, bounded like prFiles. Commit messages and
+   * authorship are the only place attribution trailers and authoring cadence
+   * are visible, so provenance judgements read from here rather than guessing
+   * from the description.
+   */
+  async prCommits(fullName: string, number: number, maxPages = 3): Promise<{ commits: GhPrCommit[]; truncated: boolean }> {
+    const commits: GhPrCommit[] = [];
+    let full = false;
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.get<GhPrCommit[]>(`/repos/${fullName}/pulls/${number}/commits?per_page=100&page=${page}`);
+      commits.push(...batch);
+      full = batch.length === 100;
+      if (!full) break;
+    }
+    return { commits, truncated: full };
+  }
+
   /** Post a PR review (COMMENT / APPROVE / REQUEST_CHANGES). */
   async createPrReview(
     fullName: string,
@@ -336,9 +359,39 @@ export interface GhPull {
   /** Only on the single-PR GET and webhook payloads (never the list); null = still computing. */
   mergeable?: boolean | null;
   user: { login: string } | null;
+  /**
+   * The author's standing in THIS repository, as GitHub computes it:
+   * OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR / FIRST_TIME_CONTRIBUTOR /
+   * FIRST_TIMER / MANNEQUIN / NONE. Absent on some webhook payload shapes.
+   */
+  author_association?: string;
   html_url: string;
   created_at: string;
   updated_at: string;
+}
+
+/** A public account profile (`GET /users/:login`). */
+export interface GhUser {
+  login: string;
+  /** 'User' | 'Organization' | 'Bot'. */
+  type: string;
+  name: string | null;
+  created_at: string;
+  public_repos: number;
+  followers: number;
+}
+
+/** One commit on a pull request (`GET /pulls/:n/commits`). */
+export interface GhPrCommit {
+  sha: string;
+  commit: {
+    message: string;
+    author: { name?: string; email?: string; date?: string } | null;
+    committer: { name?: string; email?: string; date?: string } | null;
+  };
+  /** The linked GitHub account; null when the commit email matches no account. */
+  author: { login: string } | null;
+  committer: { login: string } | null;
 }
 
 export interface GhReview {

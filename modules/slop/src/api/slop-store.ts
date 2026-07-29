@@ -1,6 +1,12 @@
 import type { Database } from 'better-sqlite3';
 import { safeParse } from '@moxxy/companion-sdk/server';
-import type { SlopAppliedAction, SlopDetectionResult, SlopRuleRecord, SlopVerdict } from '../contract/index.js';
+import type {
+  SlopAppliedAction,
+  SlopDetectionResult,
+  SlopProvenance,
+  SlopRuleRecord,
+  SlopVerdict,
+} from '../contract/index.js';
 
 interface DetectionRow {
   id: string;
@@ -13,6 +19,7 @@ interface DetectionRow {
   error: string | null;
   applied_action: string | null;
   rule_ids: string;
+  provenance: string | null;
   created_at: number;
 }
 
@@ -41,6 +48,7 @@ function rowToDetection(row: DetectionRow): SlopDetectionResult {
     error: row.error,
     appliedAction: row.applied_action as SlopAppliedAction | null,
     ruleIds: safeParse<string[]>(row.rule_ids, []),
+    provenance: row.provenance ? safeParse<SlopProvenance | null>(row.provenance, null) : null,
     createdAt: row.created_at,
   };
 }
@@ -72,20 +80,26 @@ export class SlopStore {
     this.db
       .prepare(
         `INSERT INTO slop_detections (
-           id, repo, pr_number, pr_title, run_id, status, verdict, error, applied_action, rule_ids, created_at
+           id, repo, pr_number, pr_title, run_id, status, verdict, error, applied_action, rule_ids, provenance, created_at
          ) VALUES (
-           @id, @repo, @prNumber, @prTitle, @runId, @status, @verdict, @error, @appliedAction, @ruleIds, @createdAt
+           @id, @repo, @prNumber, @prTitle, @runId, @status, @verdict, @error, @appliedAction, @ruleIds, @provenance, @createdAt
          )`,
       )
       .run({
         ...d,
         verdict: d.verdict ? JSON.stringify(d.verdict) : null,
         ruleIds: JSON.stringify(d.ruleIds),
+        provenance: d.provenance ? JSON.stringify(d.provenance) : null,
       });
     // Bounded retention: re-detections accumulate per PR; old settled rows go.
     this.db
       .prepare(`DELETE FROM slop_detections WHERE created_at < ? AND status NOT IN ('pending', 'running')`)
       .run(Date.now() - DETECTION_RETENTION_MS);
+  }
+
+  /** Attach the contributor facts to a 'running' detection, before its run starts. */
+  setProvenance(id: string, provenance: SlopProvenance): void {
+    this.db.prepare(`UPDATE slop_detections SET provenance = ? WHERE id = ?`).run(JSON.stringify(provenance), id);
   }
 
   /**

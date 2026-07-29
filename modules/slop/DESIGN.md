@@ -126,14 +126,39 @@ JOIN).
    durable run queue + a `'slop-detect'` resumer registered in `jobs.ts`
    (same mechanism as triage/pr-review).
 
-## Proposed github-client extensions (not done — kept the client untouched)
+## Contributor provenance (`api/provenance.ts`)
 
-- `prCommits(fullName, number)` — commit messages/authors/timestamps would make
-  the provenance rule materially stronger (attribution trailers, cadence,
-  single-giant-commit tells). The rule currently instructs the agent to judge
-  from available context and never invent provenance.
-- Author-history endpoints (`/users/:login/events`, account age) for the
-  "brand-new author, sweeping first PR" tell.
+The provenance rule used to judge from prose. It now judges from facts fetched
+at detection time, before the row is written, so the stored snapshot and the
+agent's context are the same evidence:
+
+| Fact | Source |
+|---|---|
+| Author standing in this repo (`FIRST_TIME_CONTRIBUTOR`, `OWNER`, …) | `pull().author_association` |
+| Account age, public repos, followers, bot-ness | `user(login)` |
+| Commit subjects, linked logins, timestamps, trailer keys | `prCommits()` |
+| AI attribution lines, DCO sign-off, distinct authors, authoring span | derived from the above |
+| Agent branch prefix (`codex/`, `cursor/`, …) | the PR's head ref |
+
+Three properties the code is built around, each covered by a test:
+
+- **Absence is not evidence.** A missing `author_association` reads as
+  `unknown`, never `none`; an unreadable commit list is not DCO-compliant; a
+  total GitHub outage yields `null` and the prompt then tells the agent to
+  report no provenance signal at all.
+- **Bounded and tolerant.** At most three ETag-cached requests, run
+  concurrently, each failure degrading only its own fields. Provenance is
+  context for a judgement, never a precondition for making one.
+- **Clean provenance pulls the score down.** The rule is told to say so when a
+  long-standing owner or collaborator authored the change, rather than only ever
+  reporting incriminating facts.
+
+Snapshotted into `slop_detections.provenance` (migration v2, additive) for the
+same reason `rule_ids` is: evidence that cannot be re-read after a force-push is
+not evidence. The detection page renders it above the verdict.
+
+Still not fetched: `/users/:login/events` for cross-repo activity. The four
+facts above answer the "brand-new author, sweeping first PR" tell without it.
 
 ## Deliberately deferred
 
@@ -148,4 +173,3 @@ JOIN).
   next increment, same one-shot + draft-for-review shape.
 - **Per-repo rule scoping** — rules are per-workspace; a repo override layer is
   YAGNI until a real workspace needs it.
-- **Commit metadata in the detection context** — blocked on `prCommits` above.

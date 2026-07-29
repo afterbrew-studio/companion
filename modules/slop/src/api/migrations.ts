@@ -35,4 +35,17 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    version: 2,
+    name: 'slop_contributor_provenance',
+    up: (db) => {
+      // Snapshotted with the detection, like rule_ids: the author's standing and
+      // the commit list both drift, and evidence that cannot be re-read is not
+      // evidence. NULL on rows written before this, which reads as "unknown".
+      db.exec(`ALTER TABLE slop_detections ADD COLUMN provenance TEXT`);
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE slop_detections DROP COLUMN provenance`);
+    },
+  },
 ]);
