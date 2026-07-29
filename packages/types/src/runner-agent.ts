@@ -18,7 +18,7 @@
  * them on the run row and hands them back to the agent verbatim.
  */
 
-import type { AskRequest, AskResponse, HistorySegment, MoxxyEvent, PromptAttachment } from './moxxy.js';
+import type { AskRequest, AskResponse, HarnessEvent, HistorySegment, PromptAttachment } from './harness.js';
 
 /** GET /agent/health */
 export interface AgentHealth {
@@ -250,7 +250,7 @@ export interface AgentStorageCleanupResponse {
 // ---------- WS event envelope (agent → companiond) -----------------------------
 
 export type AgentEventMessage =
-  | { readonly t: 'event'; readonly runId: string; readonly event: MoxxyEvent }
+  | { readonly t: 'event'; readonly runId: string; readonly event: HarnessEvent }
   | { readonly t: 'turn.complete'; readonly runId: string; readonly turnId?: string }
   | { readonly t: 'ask'; readonly runId: string; readonly ask: AskRequest }
   | { readonly t: 'ask.resolved'; readonly runId: string; readonly requestId: string }

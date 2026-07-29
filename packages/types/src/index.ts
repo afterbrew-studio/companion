@@ -5,5 +5,6 @@
  * a single domain (that lives in a module's `contract/` slice).
  */
 export * from './roles.js';
+export * from './harness.js';
 export * from './moxxy.js';
 export * from './runner-agent.js';

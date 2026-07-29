@@ -125,3 +125,54 @@ test('unrelated notices are untouched', () => {
   });
   assert.deepEqual(state.blocks, [{ kind: 'notice', key: 'ab', level: 'info', text: 'Turn aborted' }]);
 });
+
+/**
+ * The event union is open (`(string & {})`) and this switch ends in
+ * `default: break` so that a harness other than moxxy can put its own types on
+ * a transcript. Both halves of that have to hold: an unfamiliar type must not
+ * throw, and it must not be quietly mistaken for a familiar one.
+ */
+const event = (overrides) => ({
+  id: `x-${Math.random().toString(36).slice(2)}`,
+  seq: 1,
+  ts: Date.now(),
+  sessionId: 's1',
+  turnId: 't1',
+  source: 'model',
+  ...overrides,
+});
+
+test('an event type the fold has never seen renders nothing and does not throw', () => {
+  const state = foldMany(emptyFold(), [
+    event({ type: 'thread.started' }),
+    event({ type: 'item.completed', item: { id: 'i1', type: 'command_execution' } }),
+    event({ type: 'turn.failed', error: { message: 'nope' } }),
+  ]);
+  assert.deepEqual(state.blocks, []);
+});
+
+test('an unfamiliar type near-missing a familiar one is still unfamiliar', () => {
+  // Each of these carries the exact payload its familiar neighbour would, so a
+  // fold that matched on a prefix, a substring, or on which fields are present
+  // would render them. Only an equality test on `type` leaves them out.
+  const state = foldMany(emptyFold(), [
+    event({ type: 'assistant_message_v2', content: 'rendered by mistake', stopReason: 'end_turn' }),
+    event({ type: 'assistant', content: 'also by mistake' }),
+    event({ type: 'tool_call_requested_v2', callId: 'c1', name: 'Read', input: {} }),
+    event({ type: 'ASSISTANT_CHUNK', delta: 'shouting' }),
+  ]);
+  assert.deepEqual(state.blocks, []);
+});
+
+test('unfamiliar types do not interrupt the familiar ones around them', () => {
+  const state = foldMany(emptyFold(), [
+    event({ type: 'assistant_chunk', delta: 'he' }),
+    event({ type: 'mode_iteration', strategy: 'default', iteration: 1 }),
+    event({ type: 'some_future_type', payload: { anything: true } }),
+    event({ type: 'assistant_chunk', delta: 'llo' }),
+    event({ type: 'assistant_message', content: 'hello', stopReason: 'end_turn' }),
+  ]);
+  assert.deepEqual(state.blocks, [
+    { kind: 'assistant', key: state.blocks[0].key, text: 'hello', streaming: false },
+  ]);
+});
