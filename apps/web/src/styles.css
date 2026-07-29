@@ -353,6 +353,26 @@
   .markdown th {
     @apply bg-zinc-50 font-semibold dark:bg-zinc-900;
   }
+  /* Raw HTML from a bot comment: an image declares whatever size it likes, so
+     cap it at the comment width rather than letting it push the card wider. */
+  .markdown img {
+    @apply inline-block h-auto max-w-full;
+  }
+  .markdown details {
+    @apply my-2;
+  }
+  .markdown summary {
+    @apply cursor-pointer font-medium;
+  }
+  .markdown kbd {
+    @apply rounded border border-zinc-300 px-1 font-mono text-[11px] dark:border-zinc-600;
+  }
+  .markdown sub {
+    @apply align-sub text-[0.75em];
+  }
+  .markdown sup {
+    @apply align-super text-[0.75em];
+  }
 
   /* highlight.js tokens (fenced code) — GitHub-ish hues on the zinc palette. */
   .hljs-comment,

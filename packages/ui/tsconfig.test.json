@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "outDir": "tests/dist",
+    "rootDir": "src"
+  },
+  "include": ["src/markdown.tsx"]
+}

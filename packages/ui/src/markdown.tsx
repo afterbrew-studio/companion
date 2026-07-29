@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { highlightCode } from './highlight.js';
+import { decodeEntities, renderHtml, renderHtmlBlock, safeUrl, startsHtmlBlock } from './markdown-html.js';
 
 /**
  * Small, safe GitHub-flavored-ish markdown renderer. Emits React nodes (never
@@ -8,7 +9,11 @@ import { highlightCode } from './highlight.js';
  * source text; only its own span markup is injected). Supports: headings,
  * paragraphs, fenced code (highlighted), inline code, bold/italic/strike,
  * links, images (rendered as links), blockquotes, hr, ordered/unordered/task
- * lists.
+ * lists, and the allowlisted raw HTML in `markdown-html.ts`.
+ *
+ * HTML is extracted before markdown, so a markdown span that straddles a tag
+ * (`**bold <code>x</code>**`) is not emphasised. The reverse, markdown inside
+ * a tag, works.
  */
 
 function CodeBlock({ lang, code }: { lang: string; code: string }): JSX.Element {
@@ -32,7 +37,15 @@ export function Markdown({ text }: { text: string }): JSX.Element {
 }
 
 function renderBlocks(text: string): ReactNode[] {
-  const lines = text.replaceAll('\r\n', '\n').split('\n');
+  const source = text.replaceAll('\r\n', '\n');
+  const lines = source.split('\n');
+  // An HTML block is delimited by the parser, which works on offsets; keeping
+  // the offset of every line means no block has to re-join the remaining lines.
+  const lineAt: number[] = new Array<number>(lines.length);
+  for (let n = 0, at = 0; n < lines.length; n++) {
+    lineAt[n] = at;
+    at += lines[n]!.length + 1;
+  }
   const out: ReactNode[] = [];
   let i = 0;
   let key = 0;
@@ -173,13 +186,23 @@ function renderBlocks(text: string): ReactNode[] {
       continue;
     }
 
+    // HTML block: rendered at block level so a <details> or <div> is never
+    // nested inside a paragraph, which the browser would close early.
+    if (startsHtmlBlock(line)) {
+      const html = renderHtmlBlock(source, lineAt[i]!, renderText);
+      out.push(<Fragment key={key++}>{html.nodes}</Fragment>);
+      while (i < lines.length && lineAt[i]! < html.end) i++;
+      continue;
+    }
+
     // paragraph: gather until blank/blocky line (tables end a paragraph too)
     const buf: string[] = [line];
     i++;
     while (
       i < lines.length &&
       lines[i]!.trim() !== '' &&
-      !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\s*(-{3,}|\*{3,})\s*$|\s*\|)/.test(lines[i]!)
+      !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\s*(-{3,}|\*{3,})\s*$|\s*\|)/.test(lines[i]!) &&
+      !startsHtmlBlock(lines[i]!)
     ) {
       buf.push(lines[i]!);
       i++;
@@ -209,54 +232,61 @@ function splitRow(line: string): string[] {
 const INLINE_RE =
   /(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\s][^*]*\*)|(_[^_\s][^_]*_)|(~~[^~]+~~)|(!?\[[^\]]*\]\([^)\s]+\))|(https?:\/\/[^\s<>)]+)/g;
 
+/** The entry point for any run of body text: raw HTML first, then markdown. */
 function renderInline(text: string): ReactNode {
+  return text.includes('<') ? renderHtml(text, renderText) : renderMarkdownInline(text);
+}
+
+/** What `markdown-html.ts` calls back with the text between the tags it parsed. */
+function renderText(text: string, asBlocks: boolean): ReactNode {
+  return asBlocks ? renderBlocks(text) : renderMarkdownInline(text);
+}
+
+function renderMarkdownInline(text: string): ReactNode {
   const parts: ReactNode[] = [];
   let last = 0;
   let key = 0;
   for (const match of text.matchAll(INLINE_RE)) {
     const idx = match.index ?? 0;
-    if (idx > last) parts.push(<Fragment key={key++}>{text.slice(last, idx)}</Fragment>);
+    if (idx > last) parts.push(<Fragment key={key++}>{decodeEntities(text.slice(last, idx))}</Fragment>);
     parts.push(<Fragment key={key++}>{renderToken(match[0])}</Fragment>);
     last = idx + match[0].length;
   }
-  if (last < text.length) parts.push(<Fragment key={key++}>{text.slice(last)}</Fragment>);
+  if (last < text.length) parts.push(<Fragment key={key++}>{decodeEntities(text.slice(last))}</Fragment>);
   return parts;
 }
 
 function renderToken(token: string): ReactNode {
+  // CommonMark does not expand entities inside a code span, so this one leaf
+  // keeps its source text.
   if (token.startsWith('`')) return <code>{token.slice(1, -1)}</code>;
   if (token.startsWith('**') || token.startsWith('__')) {
-    return <strong>{renderInline(token.slice(2, -2))}</strong>;
+    return <strong>{renderMarkdownInline(token.slice(2, -2))}</strong>;
   }
-  if (token.startsWith('~~')) return <del>{renderInline(token.slice(2, -2))}</del>;
+  if (token.startsWith('~~')) return <del>{renderMarkdownInline(token.slice(2, -2))}</del>;
   if (token.startsWith('*') || token.startsWith('_')) {
-    return <em>{renderInline(token.slice(1, -1))}</em>;
+    return <em>{renderMarkdownInline(token.slice(1, -1))}</em>;
   }
   const link = token.match(/^(!?)\[([^\]]*)\]\(([^)\s]+)\)$/);
   if (link) {
-    const href = safeHref(link[3]!);
+    const href = safeUrl(decodeEntities(link[3]!));
     const label = link[2] || link[3]!;
     if (!href) return label;
     // In-app hash links (#/runs/x) navigate the SPA; external ones open a tab.
     const external = !href.startsWith('#/');
     return (
       <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>
-        {link[1] === '!' ? `🖼 ${label}` : renderInline(label)}
+        {link[1] === '!' ? `🖼 ${label}` : renderMarkdownInline(label)}
       </a>
     );
   }
-  const href = safeHref(token);
+  const href = safeUrl(decodeEntities(token));
   if (href) {
     return (
       <a href={href} target="_blank" rel="noreferrer">
-        {token}
+        {href}
       </a>
     );
   }
-  return token;
-}
-
-/** http(s) and in-app `#/` routes only — javascript:/data: render as plain text. */
-function safeHref(raw: string): string | null {
-  return /^https?:\/\//i.test(raw) || /^#\//.test(raw) ? raw : null;
+  return decodeEntities(token);
 }
