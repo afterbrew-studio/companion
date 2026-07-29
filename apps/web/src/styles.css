@@ -290,8 +290,17 @@
     @apply block rounded-md bg-zinc-200 dark:bg-zinc-800;
   }
   /* Rendered markdown bodies (issues, PRs, comments, reports). */
+  /* `anywhere`, not Tailwind's `break-words`. Both wrap a long token once the
+     box is narrow, but only `anywhere` shrinks the element's min-content width,
+     and that is what a container sized by its content asks for. With
+     `break-word` the bot payload token (vercel's `[vc]: #…`) still reported its
+     full length as a minimum, so the card grew instead of the text wrapping.
+     min-width: 0 is the same argument one level out, for flex and grid parents
+     that would otherwise refuse to shrink below their content. */
   .markdown {
     @apply text-[13.5px] leading-relaxed;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
   .markdown p {
     @apply my-2;
@@ -333,8 +342,9 @@
   .markdown a {
     @apply font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-current dark:text-zinc-100 dark:decoration-zinc-500;
   }
+  /* A wide table scrolls in its own box rather than widening the comment. */
   .markdown table {
-    @apply my-2 w-full border-collapse text-[13px];
+    @apply my-2 block w-full max-w-full overflow-x-auto border-collapse text-[13px];
   }
   .markdown th,
   .markdown td {
