@@ -2,8 +2,6 @@ import { useCallback, useState } from 'react';
 import {
   ActionMenu,
   Breadcrumb,
-  DetailGrid,
-  DetailRow,
   EmptyState,
   ErrorBar,
   Eyebrow,
@@ -13,20 +11,26 @@ import {
   Page,
   PageHeader,
   PageLoading,
+  Skeleton,
   Spinner,
+  timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import { useLive, type RouteProps } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { SlopDetectionResult } from '../../contract/index.js';
 import { slopApi } from '../api.js';
-import { SlopMeter } from '../components/SlopMeter.js';
 import { ContributorProvenance } from '../components/ContributorProvenance.js';
-import { ACTION_LABEL, STATUS_META, STRENGTH_TONE } from '../detection-meta.js';
+import { SlopScore, SlopScoreSkeleton } from '../components/SlopScore.js';
+import { SlopSignals, SlopSignalsSkeleton } from '../components/SlopSignals.js';
+import { ACTION_LABEL, STATUS_META } from '../detection-meta.js';
 
 /**
- * One detection in full: the verdict, every signal, the reviewer hints and the
- * draft comment, plus the apply/dismiss actions. Deep-linkable as #/slop/:id.
+ * One detection in full, ordered by what a maintainer decides with: the score
+ * and the action at the top, then what to ask the author, then the evidence
+ * behind it. Detail that only matters once you go looking (each observation,
+ * the draft comment, the scale, the run that produced all this) waits behind a
+ * click or in the footer. Deep-linkable as #/slop/:id.
  */
 export default function SlopDetection({ params }: RouteProps): JSX.Element {
   const id = params.id!;
@@ -159,90 +163,101 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
       <ErrorBar error={error} className="mb-3" />
 
       <div className="flex max-w-3xl flex-col gap-5">
-        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-start">
-          <div>
-            <Eyebrow>Detection</Eyebrow>
-            <DetailGrid className="mt-1.5">
-              {verdict ? (
-                <>
-                  <DetailRow label="AI likelihood">
-                    <SlopMeter value={verdict.aiLikelihood} />
-                  </DetailRow>
-                  <DetailRow label="Confidence">{verdict.confidence}</DetailRow>
-                  <DetailRow label="Recommends">{ACTION_LABEL[verdict.recommendedAction]}</DetailRow>
-                </>
-              ) : null}
-              {d.appliedAction ? <DetailRow label="Applied">{ACTION_LABEL[d.appliedAction]}</DetailRow> : null}
-              {d.runId ? (
-                <DetailRow label="Agent run">
-                  <a className="linkish font-mono text-xs" href={`#/runs/${d.runId}`}>
-                    {d.runId}
-                  </a>
-                </DetailRow>
-              ) : null}
-              <DetailRow label="Detected">{new Date(d.createdAt).toLocaleString()}</DetailRow>
-            </DetailGrid>
-          </div>
-
+        <div className="grid gap-5 md:grid-cols-2 md:items-start">
+          {verdict ? (
+            <SlopScore verdict={verdict} appliedAction={d.appliedAction} />
+          ) : d.status === 'running' ? (
+            <SlopScoreSkeleton />
+          ) : (
+            <div>
+              <Eyebrow>AI likelihood</Eyebrow>
+              <p className="mt-1.5 text-sm">not scored</p>
+            </div>
+          )}
           <ContributorProvenance provenance={d.provenance} />
         </div>
 
-        {d.status === 'running' ? (
-          <InlineLoading label="The agent is scoring this pull request — the verdict lands here when it finishes." />
+        {d.status === 'failed' ? (
+          <p className="error-bar text-xs wrap-anywhere">{d.error ?? 'detection failed'}</p>
         ) : null}
-        {d.status === 'failed' ? <p className="error-bar text-xs">{d.error ?? 'detection failed'}</p> : null}
 
         {verdict ? (
           <>
             <div>
               <Eyebrow>Verdict</Eyebrow>
-              <p className="mt-1.5 text-sm">{verdict.summary}</p>
+              <p className="mt-1.5 text-sm wrap-anywhere">{verdict.summary}</p>
             </div>
 
-            {verdict.signals.length > 0 ? (
-              <div>
-                <Eyebrow>Signals ({verdict.signals.length})</Eyebrow>
-                <ul className="mt-1.5 flex flex-col gap-1.5">
-                  {verdict.signals.map((signal, i) => (
-                    <li key={i} className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
-                      <MetaSignal
-                        tone={STRENGTH_TONE[signal.strength]}
-                        label={signal.ruleName}
-                        title={`${signal.strength} signal`}
-                      />
-                      <p className="mt-1 text-[13px]">{signal.observation}</p>
+            {verdict.reviewerHints.length > 0 ? (
+              <div className="well">
+                <Eyebrow>Suggestions for the author</Eyebrow>
+                <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-5 text-[13px]">
+                  {verdict.reviewerHints.map((hint, i) => (
+                    <li key={i} className="wrap-anywhere">
+                      {hint}
                     </li>
                   ))}
                 </ul>
               </div>
             ) : null}
 
-            {verdict.reviewerHints.length > 0 ? (
-              <div>
-                <Eyebrow>Suggestions for the author</Eyebrow>
-                <p className="dim mt-1 text-xs">
-                  Relay these to the PR author — concrete asks that would clear the flagged signals.
-                </p>
-                <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-5 text-[13px]">
-                  {verdict.reviewerHints.map((hint, i) => (
-                    <li key={i}>{hint}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+            {verdict.signals.length > 0 ? <SlopSignals signals={verdict.signals} /> : null}
 
             {verdict.draftComment.trim() ? (
-              <div>
-                <Eyebrow>Draft comment</Eyebrow>
-                <p className="dim mt-1 text-xs">Posted by the comment / request-changes / close actions.</p>
+              <details>
+                <summary className="dim cursor-pointer select-none">Draft comment</summary>
+                <p className="dim mt-1.5">Posted by the comment / request-changes / close actions.</p>
                 <div className="mt-1.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
                   <Markdown text={verdict.draftComment} />
                 </div>
-              </div>
+              </details>
             ) : null}
           </>
+        ) : d.status === 'running' ? (
+          <PendingVerdict />
         ) : null}
+
+        <footer className="dim flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-3 wrap-anywhere dark:border-zinc-800">
+          <span title={new Date(d.createdAt).toLocaleString()}>Detected {timeAgo(d.createdAt)}</span>
+          {d.runId ? (
+            <span>
+              Agent run{' '}
+              <a className="linkish font-mono" href={`#/runs/${d.runId}`}>
+                {d.runId}
+              </a>
+            </span>
+          ) : null}
+        </footer>
       </div>
     </Page>
+  );
+}
+
+/**
+ * Scoring in flight: the blocks the verdict will fill, drawn at the size they
+ * will take. The PR, the contributor facts and the timings are already known
+ * and stay real; only the agent's own output is a placeholder.
+ */
+function PendingVerdict(): JSX.Element {
+  return (
+    <>
+      <InlineLoading label="Scoring this pull request against your rules. The verdict lands here when the run finishes." />
+      <div>
+        <Eyebrow>Verdict</Eyebrow>
+        <div className="mt-2 flex flex-col gap-2">
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-11/12" />
+          <Skeleton className="h-3.5 w-2/3" />
+        </div>
+      </div>
+      <div className="well">
+        <Eyebrow>Suggestions for the author</Eyebrow>
+        <div className="mt-2 flex flex-col gap-2">
+          <Skeleton className="h-3.5 w-3/4" />
+          <Skeleton className="h-3.5 w-2/3" />
+        </div>
+      </div>
+      <SlopSignalsSkeleton />
+    </>
   );
 }
