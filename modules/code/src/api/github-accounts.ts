@@ -145,6 +145,8 @@ export class GitHubAccounts {
       appId: null,
       installationId: null,
       tokenExpiresAt: null,
+      tokenHealth: null,
+      tokenError: null,
     };
   }
 
@@ -216,6 +218,9 @@ export class GitHubAccounts {
       appId: app.appId,
       installationId: app.installationId,
       tokenExpiresAt: minted.expiresAt,
+      // Connecting just minted a token, so the credential is provably good.
+      tokenHealth: 'ok',
+      tokenError: null,
     };
   }
 
@@ -232,26 +237,41 @@ export class GitHubAccounts {
    * The margin has to exceed the job interval so a single failed run still
    * leaves a valid token and a second attempt.
    */
-  async refreshInstallationTokens(marginMs: number, log?: (msg: string) => void): Promise<number> {
+  async refreshInstallationTokens(marginMs: number, log?: (msg: string) => void): Promise<TokenRefreshResult> {
     const due = this.store.githubAccounts
       .list()
       .filter((r) => r.kind === 'app' && r.appId && r.installationId && r.privateKey)
       .filter((r) => (r.tokenExpiresAt ?? 0) - Date.now() < marginMs);
     let refreshed = 0;
+    const started: CredentialFault[] = [];
+    const recovered: CredentialFault[] = [];
     for (const row of due) {
+      // Read BEFORE either store write. The transition is the difference between
+      // the health this row arrived with and the one it leaves with, and a store
+      // that hands out live row objects would otherwise have already overwritten
+      // the answer by the time it is asked.
+      const wasFailing = row.tokenHealth === 'failing';
       try {
         const minted = await mintInstallationToken(this.api, row.appId!, row.installationId!, row.privateKey!);
         this.store.githubAccounts.setInstallationToken(row.id, minted.token, minted.expiresAt);
         // The cached client closed over the old token string.
         this.clients.delete(row.id);
         refreshed++;
+        // Only a row that was actually failing counts as recovered, so a healthy
+        // fleet never announces anything.
+        if (wasFailing) recovered.push({ id: row.id, login: row.login, error: null });
       } catch (err) {
         // One unreachable installation must not stop the others; the margin
         // means this run can fail and the next still beats expiry.
-        log?.(`could not refresh the installation token for '${row.login}': ${String(err)}`);
+        const error = String(err instanceof Error ? err.message : err);
+        log?.(`could not refresh the installation token for '${row.login}': ${error}`);
+        this.store.githubAccounts.setTokenFailure(row.id, error);
+        // Transition only. A persistently broken installation is announced once,
+        // not every ten minutes until someone notices.
+        if (!wasFailing) started.push({ id: row.id, login: row.login, error });
       }
     }
-    return refreshed;
+    return { refreshed, started, recovered };
   }
 
   update(
@@ -620,5 +640,26 @@ function toRecord(r: GithubAccountRow & { ownerId: string }): GitHubAccountRecor
     appId: r.appId,
     installationId: r.installationId,
     tokenExpiresAt: r.tokenExpiresAt,
+    tokenHealth: r.tokenHealth,
+    tokenError: r.tokenError,
   };
+}
+
+/** One installation whose refresh outcome changed. */
+export interface CredentialFault {
+  readonly id: string;
+  readonly login: string;
+  /** Why it failed; null on the recovery side. */
+  readonly error: string | null;
+}
+
+/**
+ * What one refresh sweep did. `started` and `recovered` are TRANSITIONS, not
+ * states, so the caller can raise one notification per outage instead of one per
+ * ten-minute tick.
+ */
+export interface TokenRefreshResult {
+  readonly refreshed: number;
+  readonly started: readonly CredentialFault[];
+  readonly recovered: readonly CredentialFault[];
 }

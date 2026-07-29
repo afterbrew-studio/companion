@@ -86,4 +86,6 @@ export interface RunnerEventSink {
   onGone(runId: string): void;
   /** A runner's health transitioned to offline — its stranded runs must not stay "live". */
   onRunnerUnreachable(runnerId: string, detail: string): void;
+  /** The same transition the other way, so an outage that ended can be reported. */
+  onRunnerReachable(runnerId: string): void;
 }

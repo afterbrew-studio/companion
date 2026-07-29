@@ -71,8 +71,19 @@ export class GithubAccountsStore {
    */
   setInstallationToken(id: string, token: string, expiresAt: number): void {
     this.db
-      .prepare(`UPDATE github_accounts SET token = ?, token_expires_at = ? WHERE id = ?`)
+      .prepare(`UPDATE github_accounts SET token = ?, token_expires_at = ?, token_health = 'ok', token_error = NULL WHERE id = ?`)
       .run(token, expiresAt, id);
+  }
+
+  /**
+   * Record that a refresh failed. Separate from the success path so a run that
+   * throws leaves the previous token untouched: it is still valid for the rest
+   * of the margin, and the next attempt may well succeed.
+   */
+  setTokenFailure(id: string, error: string): void {
+    this.db
+      .prepare(`UPDATE github_accounts SET token_health = 'failing', token_error = ? WHERE id = ?`)
+      .run(error.slice(0, 300), id);
   }
 
   /** Internal rows including tokens — never returned by the API layer. */
@@ -90,6 +101,8 @@ export class GithubAccountsStore {
       installation_id: string | null;
       private_key: string | null;
       token_expires_at: number | null;
+      token_health: string | null;
+      token_error: string | null;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -107,6 +120,10 @@ export class GithubAccountsStore {
       installationId: r.installation_id,
       privateKey: r.private_key,
       tokenExpiresAt: r.token_expires_at,
+      // Null on a row no refresh has touched yet, which reads as "nothing known"
+      // rather than as healthy: a PAT never refreshes at all.
+      tokenHealth: r.token_health === 'ok' || r.token_health === 'failing' ? r.token_health : null,
+      tokenError: r.token_error,
     }));
   }
 
@@ -215,4 +232,7 @@ export interface GithubAccountRow {
   privateKey: string | null;
   /** Epoch ms; null for a PAT, which does not expire on a schedule we know. */
   tokenExpiresAt: number | null;
+  /** Last refresh outcome; null when no refresh has ever run (every PAT). */
+  tokenHealth: 'ok' | 'failing' | null;
+  tokenError: string | null;
 }

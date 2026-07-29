@@ -302,4 +302,34 @@ export default defineMigrations([
       }
     },
   },
+  {
+    /**
+     * Credential health, so a GitHub App installation that stopped refreshing
+     * is visible instead of living on as a dead token until someone reads a log.
+     * Persisted rather than held in memory for two reasons: the accounts page
+     * can render it, and the "started failing" transition survives a restart, so
+     * a daemon that bounces hourly does not re-announce the same outage.
+     */
+    version: 7,
+    name: 'github_credential_health',
+    up: (db) => {
+      for (const column of ['token_health TEXT', 'token_error TEXT']) {
+        try {
+          db.exec(`ALTER TABLE github_accounts ADD COLUMN ${column}`);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+    },
+    down: (db) => {
+      for (const name of ['token_health', 'token_error']) {
+        try {
+          db.exec(`ALTER TABLE github_accounts DROP COLUMN ${name}`);
+        } catch {
+          // Older SQLite cannot drop columns; both are nullable, so a row that
+          // keeps them reads exactly as it did before this migration.
+        }
+      }
+    },
+  },
 ]);

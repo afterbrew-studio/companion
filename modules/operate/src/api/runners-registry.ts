@@ -725,6 +725,10 @@ export class Runners {
       !health.agentOutdated;
     if (newlyReachable) {
       void this.cleanupOne(id);
+      // Only when it had actually been reported gone: a machine registered and
+      // probed for the first time is not a recovery, and announcing it as one
+      // would post about every new runner.
+      if (prev?.status === 'offline') this.sink.onRunnerReachable(id);
     }
     return health;
   }

@@ -293,6 +293,15 @@ export interface GitHubAccountRecord {
   readonly installationId: string | null;
   /** When the cached installation token dies. Null for a PAT. */
   readonly tokenExpiresAt: number | null;
+  /**
+   * Outcome of the last background token refresh. 'failing' means the app can no
+   * longer mint a token (uninstalled on GitHub, rotated key, revoked access) and
+   * this credential is living on borrowed time. Null when no refresh has ever
+   * run, which is every PAT: they do not refresh on a schedule we know.
+   */
+  readonly tokenHealth: 'ok' | 'failing' | null;
+  /** Why the last refresh failed. Never contains the credential itself. */
+  readonly tokenError: string | null;
 }
 
 // ---------- comments / webhooks / briefings -------------------------------------

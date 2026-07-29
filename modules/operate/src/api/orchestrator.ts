@@ -68,6 +68,25 @@ function taskPinKey(task: string): string {
   return `modelPin:task:${task}`;
 }
 
+/**
+ * Is the queue stuck rather than merely busy?
+ *
+ * The distinction is the whole point. Work waiting while other work runs is the
+ * scheduler doing its job and must never alert. Work waiting while NOTHING runs
+ * means no eligible machine is taking it, and it will keep waiting until an
+ * operator changes something.
+ */
+export function isQueueStalled(state: {
+  oldestEnqueuedAt: number | null;
+  activeRuns: number;
+  stallMs: number;
+  now: number;
+}): boolean {
+  if (state.oldestEnqueuedAt === null) return false;
+  if (state.activeRuns > 0) return false;
+  return state.now - state.oldestEnqueuedAt >= state.stallMs;
+}
+
 /** Stable identity for a resume descriptor (key order independent). */
 function resumeKeyOf(resume: { type: string; args: Record<string, unknown> }): string {
   const parts = Object.keys(resume.args)
@@ -102,6 +121,8 @@ export class Orchestrator implements RunnerEventSink {
    * order — including manual reordering — is reproduced exactly after a restart.
    */
   private pendingResume = new Map<string, { priority: number; enqueuedAt: number }>();
+  /** Whether the queue-stall alert is currently raised, so it fires on transition. */
+  private queueStalled = false;
 
   constructor(
     private readonly store: OperateStore,
@@ -119,6 +140,16 @@ export class Orchestrator implements RunnerEventSink {
      * own the pricing question, and so tests can drive the gate directly.
      */
     private readonly budgetGate: (userId: string | null) => void = () => {},
+    /**
+     * Operator-facing health alerts (runner offline, queue not draining). A
+     * no-op by default so the orchestrator stays constructible in tests without
+     * a notification sink; services.ts wires it to ctx.notify.
+     */
+    private readonly health: (
+      kind: 'error' | 'info' | 'action_required',
+      title: string,
+      body: string,
+    ) => void = () => {},
   ) {
     this.runners = new Runners(
       store,
@@ -224,6 +255,49 @@ export class Orchestrator implements RunnerEventSink {
       }
       this.setStatus(row.id, 'interrupted', `runner unreachable: ${detail}`);
       this.emitRunChanged(row.id);
+    }
+    const name = this.store.runners.get(runnerId)?.name ?? runnerId;
+    this.health(
+      'error',
+      `Runner '${name}' went offline`,
+      `${detail}. Runs placed there were marked interrupted; new work is placed on the remaining machines, ` +
+        'or queued if none is eligible.',
+    );
+  }
+
+  onRunnerReachable(runnerId: string): void {
+    const name = this.store.runners.get(runnerId)?.name ?? runnerId;
+    this.health('info', `Runner '${name}' is back online`, 'It is eligible for placement again.');
+  }
+
+  /**
+   * The queue is not draining. Distinct from "the queue is busy", which is the
+   * system working: work waiting with NOTHING running means no eligible machine
+   * is taking it, and it will keep waiting until someone acts. Announced once
+   * per stall so a long outage does not post on every tick.
+   */
+  checkQueueStall(stallMs: number): void {
+    const oldest = this.oneShotQueue.reduce<number | null>(
+      (acc, q) => (acc === null || q.enqueuedAt < acc ? q.enqueuedAt : acc),
+      null,
+    );
+    const stalled = isQueueStalled({
+      oldestEnqueuedAt: oldest,
+      activeRuns: this.oneShotActive + this.store.runs.activeNonQueueCount(),
+      stallMs,
+      now: Date.now(),
+    });
+    if (stalled === this.queueStalled) return;
+    this.queueStalled = stalled;
+    if (stalled) {
+      this.health(
+        'action_required',
+        `${this.oneShotQueue.length} queued run(s) are not starting`,
+        `Nothing has been running for ${Math.round((Date.now() - oldest!) / 60_000)} minutes while work waits. ` +
+          'Check that a runner is online and that its task policy accepts this work.',
+      );
+    } else {
+      this.health('info', 'The run queue is draining again', 'Queued work has started executing.');
     }
   }
 

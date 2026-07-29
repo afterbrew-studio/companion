@@ -60,6 +60,8 @@ function fixture(rows) {
     installationId: r.installationId ?? '777',
     privateKey: r.privateKey ?? PEM,
     tokenExpiresAt: r.tokenExpiresAt ?? null,
+    tokenHealth: r.tokenHealth ?? null,
+    tokenError: r.tokenError ?? null,
   }));
   const store = {
     githubAccounts: {
@@ -70,6 +72,13 @@ function fixture(rows) {
         const row = accounts.find((a) => a.id === id);
         row.token = token;
         row.tokenExpiresAt = expiresAt;
+        row.tokenHealth = 'ok';
+        row.tokenError = null;
+      },
+      setTokenFailure: (id, error) => {
+        const row = accounts.find((a) => a.id === id);
+        row.tokenHealth = 'failing';
+        row.tokenError = error;
       },
     },
     repos: { workspaceIds: () => [] },
@@ -87,7 +96,7 @@ test('a token near expiry is re-minted and the new one is what resolves', async 
   ]);
   const registry = new GitHubAccounts(store, gh.api);
 
-  assert.equal(await registry.refreshInstallationTokens(MARGIN), 1);
+  assert.equal((await registry.refreshInstallationTokens(MARGIN)).refreshed, 1);
   assert.equal(accounts[0].token, 'ghs_1');
   assert.equal(
     registry.tokenFor('fetch', { username: 'alice' }),
@@ -103,7 +112,7 @@ test('a token with plenty of life left is left alone', async (t) => {
     { id: 'gha-app', login: 'acme', token: 'ghs_old', tokenExpiresAt: Date.now() + 50 * 60_000 },
   ]);
 
-  assert.equal(await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN), 0);
+  assert.equal((await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN)).refreshed, 0);
   assert.equal(gh.calls, 0, 'a needless mint every ten minutes is a rate-limit problem, not a no-op');
 });
 
@@ -114,7 +123,7 @@ test('an already expired token is refreshed, which is the cold-start case', asyn
     { id: 'gha-app', login: 'acme', token: 'ghs_dead', tokenExpiresAt: Date.now() - 60_000 },
   ]);
 
-  assert.equal(await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN), 1);
+  assert.equal((await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN)).refreshed, 1);
   assert.equal(accounts[0].token, 'ghs_1');
 });
 
@@ -125,7 +134,7 @@ test('personal access tokens are never touched by the refresh', async (t) => {
     { id: 'gha-pat', login: 'alice', token: 'github_pat_x', kind: 'pat', tokenExpiresAt: null },
   ]);
 
-  assert.equal(await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN), 0);
+  assert.equal((await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN)).refreshed, 0);
   assert.equal(accounts[0].token, 'github_pat_x');
   assert.equal(gh.calls, 0);
 });
@@ -139,8 +148,8 @@ test('one unreachable installation does not stop the others', async (t) => {
   ]);
   const warnings = [];
 
-  const refreshed = await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN, (m) => warnings.push(m));
-  assert.equal(refreshed, 1);
+  const result = await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN, (m) => warnings.push(m));
+  assert.equal(result.refreshed, 1);
   assert.equal(accounts[0].token, 'ghs_a', 'the failed one keeps its old token, which is still valid');
   assert.equal(accounts[1].token, 'ghs_2');
   assert.match(warnings[0], /first/, 'the warning must name the account an operator has to fix');
@@ -155,10 +164,10 @@ test('the margin exceeds the job interval, so one failed run still beats expiry'
   ]);
   const registry = new GitHubAccounts(store, gh.api);
 
-  assert.equal(await registry.refreshInstallationTokens(MARGIN), 0, 'the first run fails');
+  assert.equal((await registry.refreshInstallationTokens(MARGIN)).refreshed, 0, 'the first run fails');
   assert.equal(accounts[0].token, 'ghs_old', 'still valid for another 24 minutes');
   // Ten minutes later, the next scheduled run succeeds, well before expiry.
-  assert.equal(await registry.refreshInstallationTokens(MARGIN), 1);
+  assert.equal((await registry.refreshInstallationTokens(MARGIN)).refreshed, 1);
   assert.equal(accounts[0].token, 'ghs_2');
 });
 
@@ -196,4 +205,72 @@ test('reconnecting replaces the app credentials, not just the token', async (t) 
   await registry.addApp({ appId: '222', installationId: '777', privateKey: PEM }, ['fetch'], 'alice');
 
   assert.equal(accounts[0].appId, '222', 'a rotated app id must take effect, not be reported and dropped');
+});
+
+// ---------- credential health (the transition, not the state) ----------
+
+test('an installation that starts failing is reported once, not on every tick', async (t) => {
+  // The refresh runs every ten minutes. Reporting the STATE would post 144
+  // times a day for one broken app, which is how an alert gets muted.
+  const gh = await githubApp({ failMints: 99 });
+  t.after(gh.close);
+  const { accounts, store } = fixture([
+    { id: 'gha-app', login: 'acme', token: 'ghs_old', tokenExpiresAt: Date.now() + 60_000 },
+  ]);
+  const registry = new GitHubAccounts(store, gh.api);
+
+  const first = await registry.refreshInstallationTokens(MARGIN);
+  assert.deepEqual(
+    first.started.map((f) => f.login),
+    ['acme'],
+  );
+  assert.equal(accounts[0].tokenHealth, 'failing');
+  assert.match(accounts[0].tokenError, /try later/);
+
+  const second = await registry.refreshInstallationTokens(MARGIN);
+  assert.deepEqual(second.started, [], 'the same outage must not be announced twice');
+});
+
+test('a failing installation that comes back is reported as recovered', async (t) => {
+  const gh = await githubApp({ failMints: 1 });
+  t.after(gh.close);
+  const { accounts, store } = fixture([
+    { id: 'gha-app', login: 'acme', token: 'ghs_old', tokenExpiresAt: Date.now() + 60_000 },
+  ]);
+  const registry = new GitHubAccounts(store, gh.api);
+
+  await registry.refreshInstallationTokens(MARGIN);
+  const back = await registry.refreshInstallationTokens(MARGIN);
+
+  assert.deepEqual(
+    back.recovered.map((f) => f.login),
+    ['acme'],
+  );
+  assert.equal(accounts[0].tokenHealth, 'ok');
+  assert.equal(accounts[0].tokenError, null, 'a stale error next to a working token is a false alarm');
+});
+
+test('a healthy fleet announces nothing at all', async (t) => {
+  const gh = await githubApp();
+  t.after(gh.close);
+  const { store } = fixture([
+    { id: 'gha-app', login: 'acme', token: 'ghs_old', tokenExpiresAt: Date.now() + 60_000 },
+  ]);
+
+  const result = await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN);
+  assert.deepEqual(result.started, []);
+  assert.deepEqual(result.recovered, [], 'a first successful refresh is not a recovery');
+});
+
+test('the recorded error never carries the private key or the token', async (t) => {
+  const gh = await githubApp({ failMints: 99 });
+  t.after(gh.close);
+  const { accounts, store } = fixture([
+    { id: 'gha-app', login: 'acme', token: 'ghs_secret_value', tokenExpiresAt: Date.now() + 60_000 },
+  ]);
+
+  await new GitHubAccounts(store, gh.api).refreshInstallationTokens(MARGIN);
+
+  assert.doesNotMatch(accounts[0].tokenError, /ghs_secret_value/);
+  assert.doesNotMatch(accounts[0].tokenError, /PRIVATE KEY/);
 });

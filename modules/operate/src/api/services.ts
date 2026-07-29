@@ -91,6 +91,9 @@ export default defineServices(async (ctx) => {
     ctx.moduleConfig,
     (username) => auth.userRole(username) ?? null,
     (userId) => budgets.check(userId),
+    // Instance-wide, like the budget alert: a machine going offline is not one
+    // workspace's problem, and scoping it to one would hide it from the rest.
+    (kind, title, body) => ctx.notify.emit({ workspaceId: null, kind, title, body, href: '#/runners' }),
   );
   const webhookTunnel = new WebhookTunnel(
     () => ctx.moduleConfig.get('webhookTunnel') === true,

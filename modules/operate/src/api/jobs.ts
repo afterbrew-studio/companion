@@ -30,6 +30,20 @@ export default defineJobs({
     op.orchestrator.recover();
     op.orchestrator.start();
   },
+  /**
+   * Watch for a queue that is not draining. Deliberately not a fast tick: the
+   * condition is defined over 30 minutes of nothing happening, so checking it
+   * every five is already ten times more often than it can change.
+   */
+  jobs: [
+    {
+      id: 'operate.queue-stall',
+      everyMs: 5 * 60_000,
+      run: (ctx) => {
+        ctx.services.get('operate').orchestrator.checkQueueStall(30 * 60_000);
+      },
+    },
+  ],
   postActivate: (ctx) => {
     const op = ctx.services.get('operate');
     op.orchestrator.resumePersistedQueue();

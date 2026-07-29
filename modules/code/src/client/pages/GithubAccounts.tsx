@@ -11,6 +11,7 @@ import {
   Field,
   FormActions,
   ListCard,
+  MetaSignal,
   Modal,
   Page,
   PageHeader,
@@ -128,7 +129,15 @@ export function GithubAccountsPage(): JSX.Element {
                     <GitHubIcon />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{a.login || 'validating…'}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{a.login || 'validating…'}</span>
+                      {/* A dead installation used to be visible only in the log.
+                          The refresh job records it here, so the page answers
+                          "why did sync stop" without anyone opening a terminal. */}
+                      {a.tokenHealth === 'failing' ? (
+                        <MetaSignal tone="red" label="token refresh failing" title={a.tokenError ?? undefined} />
+                      ) : null}
+                    </div>
                     <div className="dim text-xs">
                       {a.kind === 'app' ? `GitHub App installation ${a.installationId ?? ''}` : 'your personal account'}{' '}
                       · connected {timeAgo(a.createdAt)} ·{' '}
@@ -136,6 +145,9 @@ export function GithubAccountsPage(): JSX.Element {
                         ? 'available in all your workspaces'
                         : `available in ${a.workspaceIds.length} ${a.workspaceIds.length === 1 ? 'workspace' : 'workspaces'}`}
                     </div>
+                    {a.tokenHealth === 'failing' && a.tokenError ? (
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{a.tokenError}</p>
+                    ) : null}
                   </div>
                   {manageable ? (
                     <button className="btn-danger-ghost" onClick={() => void remove(a)}>

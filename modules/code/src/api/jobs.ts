@@ -1,6 +1,42 @@
-import { defineJobs } from '@moxxy/companion-sdk/server';
+import { defineJobs, type ModuleContext } from '@moxxy/companion-sdk/server';
+import type { TokenRefreshResult } from './github-accounts.js';
 
 let offSetupCompleted: (() => void) | null = null;
+
+/**
+ * Surface a credential going bad, and coming back.
+ *
+ * This is the gap `docs/open-items.md` §1 named: an app uninstalled on GitHub
+ * left the account holding a dead token until a human read a log line or a call
+ * failed over. Refresh runs every ten minutes, so the emit has to be driven by
+ * the TRANSITION the refresh reports, never by the current state, or an outage
+ * would post 144 times a day.
+ *
+ * Instance-wide (no workspace): a credential is not a workspace's property, and
+ * scoping it to one would hide it from everybody else.
+ */
+function announceCredentialHealth(ctx: ModuleContext, result: TokenRefreshResult): void {
+  for (const fault of result.started) {
+    ctx.notify.emit({
+      workspaceId: null,
+      kind: 'error',
+      title: `GitHub App '${fault.login}' can no longer refresh its token`,
+      body:
+        `${fault.error ?? 'the refresh failed'}. Agent runs and sync using this account will start failing when the ` +
+        'current token expires. Check the app is still installed on the organisation and that its private key is current.',
+      href: '#/github-accounts',
+    });
+  }
+  for (const fault of result.recovered) {
+    ctx.notify.emit({
+      workspaceId: null,
+      kind: 'info',
+      title: `GitHub App '${fault.login}' is refreshing again`,
+      body: 'Its installation token was re-minted successfully.',
+      href: '#/github-accounts',
+    });
+  }
+}
 
 /**
  * The cross-module seams, wired at enable time: the account-aware
@@ -76,16 +112,20 @@ export default defineJobs({
       id: 'code.github-app-tokens',
       everyMs: 10 * 60_000,
       run: async (ctx) => {
-        const n = await ctx.services
+        const result = await ctx.services
           .get('code')
           .githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
-        if (n) ctx.log.info(`refreshed ${n} GitHub App installation token(s)`);
+        if (result.refreshed) ctx.log.info(`refreshed ${result.refreshed} GitHub App installation token(s)`);
+        announceCredentialHealth(ctx, result);
       },
     },
   ],
   /** A daemon down longer than an hour wakes with every app token expired. */
   postActivate: async (ctx) => {
-    await ctx.services.get('code').githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
+    const result = await ctx.services
+      .get('code')
+      .githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
+    announceCredentialHealth(ctx, result);
   },
   onDisable: (ctx) => {
     offSetupCompleted?.();
