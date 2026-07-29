@@ -38,7 +38,7 @@ const only = (...events) => {
 test('a retryable provider error does not render as a failure', () => {
   const block = only(errorEvent({ kind: 'retryable' }));
 
-  assert.notEqual(block.level, 'error', 'moxxy is still retrying — this run is not dead');
+  assert.notEqual(block.level, 'error', 'moxxy is still retrying, so this run is not dead');
   assert.equal(block.level, 'warn');
   assert.equal(block.title, 'Recoverable error');
   // The provider's own wording still reaches the operator; only the framing changed.

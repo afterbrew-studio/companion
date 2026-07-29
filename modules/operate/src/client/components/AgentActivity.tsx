@@ -216,7 +216,7 @@ function toEntry(event: MoxxyEvent, toolNames: Map<string, string>): TimelineEnt
       };
     }
     case 'abort':
-      return { ...base, icon: '⏹', label: `Aborted — ${e.reason ?? 'unknown reason'}`, tone: 'err' };
+      return { ...base, icon: '⏹', label: `Aborted: ${e.reason ?? 'unknown reason'}`, tone: 'err' };
     default:
       return null;
   }
