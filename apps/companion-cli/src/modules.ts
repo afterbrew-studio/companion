@@ -1,9 +1,9 @@
 import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
 import type { ModuleListing } from '@moxxy/companion-core/server';
+import { addModule, installedModuleDirs, verifyModuleDir } from '@moxxy/companion-core/server';
+import type { RemoveModuleResponse } from '@companion/module-core/contract';
 import { paths } from '@moxxy/companion-services';
 import { apiClient } from './client.js';
-import { addModule } from './module-add.js';
-import { installedModuleDirs, verifyModuleDir } from './verify.js';
 
 export const MODULE_HELP = `Usage: companion module <command> [options]
 
@@ -17,12 +17,13 @@ export const MODULE_HELP = `Usage: companion module <command> [options]
                              Show or change a module's configuration
   add <spec> [--force]       Fetch an out-of-tree module from a registry into
                              <home>/modules and record where it came from
+  remove <id> [--yes]        Uninstall an out-of-tree module and delete its files
   verify [dir]               Static ABI check on an out-of-tree module. With no
                              argument, checks every module installed in <home>/modules.
 
 Options:
   --force                    Let add replace a module that is already there
-  --yes                      Skip the uninstall confirmation (required when piped)
+  --yes                      Skip the uninstall/remove confirmation (required when piped)
   --json                     Machine-readable output
   --home <path>              Data directory (default: COMPANION_HOME or ~/.companion)
   --host <host> --port <n>   Address of the running daemon
@@ -34,7 +35,17 @@ mints at boot.
 
 /** `--set a=b --set c=d` in argv order; a repeated key keeps the last value. */
 export interface ModuleCommand {
-  readonly action: 'list' | 'info' | 'enable' | 'disable' | 'install' | 'uninstall' | 'config' | 'add' | 'verify';
+  readonly action:
+    | 'list'
+    | 'info'
+    | 'enable'
+    | 'disable'
+    | 'install'
+    | 'uninstall'
+    | 'config'
+    | 'add'
+    | 'remove'
+    | 'verify';
   readonly id?: string;
   readonly set: readonly (readonly [string, string])[];
   readonly unset: readonly string[];
@@ -43,7 +54,18 @@ export interface ModuleCommand {
   readonly force: boolean;
 }
 
-const ACTIONS = ['list', 'info', 'enable', 'disable', 'install', 'uninstall', 'config', 'add', 'verify'] as const;
+const ACTIONS = [
+  'list',
+  'info',
+  'enable',
+  'disable',
+  'install',
+  'uninstall',
+  'config',
+  'add',
+  'remove',
+  'verify',
+] as const;
 
 export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
   const action = argv[0] as ModuleCommand['action'];
@@ -136,6 +158,17 @@ export async function runModuleCommand(cmd: ModuleCommand, baseUrl: string): Pro
     return cmd.json ? out(result.modules) : printTransition(id, 'installed', result.modules);
   }
 
+  if (cmd.action === 'remove') {
+    if (!(await confirmRemove(id, cmd))) return void process.stdout.write('Cancelled.\n');
+    const result = await api<RemoveModuleResponse>('POST', `/api/modules/${id}/remove`);
+    if (cmd.json) return out(result);
+    process.stdout.write(
+      `${result.uninstalled ? `Uninstalled and removed ${id}` : `Removed ${id}`}` +
+        `${result.deleted ? '' : ' (there were no files to delete)'}.\n`,
+    );
+    return;
+  }
+
   if (cmd.action === 'uninstall' && !(await confirmUninstall(id, cmd))) {
     process.stdout.write('Cancelled.\n');
     return;
@@ -165,6 +198,26 @@ async function confirmUninstall(id: string, cmd: ModuleCommand): Promise<boolean
   }
   const { confirm } = await import('@inquirer/prompts');
   return confirm({ message: `Uninstall ${id} and delete its data?`, default: false });
+}
+
+/**
+ * `remove` is `uninstall` plus deleting the artifact, so it takes everything
+ * uninstall takes and the files as well. The daemon does both: the migrations
+ * must come down before the code they belong to leaves the disk, and the CLI
+ * may be pointed at a host it cannot reach the filesystem of.
+ */
+async function confirmRemove(id: string, cmd: ModuleCommand): Promise<boolean> {
+  if (cmd.yes) return true;
+  process.stdout.write(
+    `Removing ${id} rolls back its migrations (dropping its tables), wipes its configuration,\n` +
+      `and deletes its files from <home>/modules. Getting it back means adding it again.\n` +
+      `To stop it and keep everything, run instead: companion module disable ${id}\n\n`,
+  );
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error('Refusing to remove without a terminal to confirm on. Pass --yes if you are sure.');
+  }
+  const { confirm } = await import('@inquirer/prompts');
+  return confirm({ message: `Remove ${id} and delete its files?`, default: false });
 }
 
 // ---------------------------------------------------------------- values
@@ -259,8 +312,8 @@ function printTransition(id: string, verb: string, modules: readonly ModuleListi
   if (mod) process.stdout.write(`State: ${state(mod)}.\n`);
 }
 
-function runAdd(cmd: ModuleCommand): void {
-  const result = addModule(cmd.id!, paths.externalModules(), cmd.force);
+async function runAdd(cmd: ModuleCommand): Promise<void> {
+  const result = await addModule(cmd.id!, paths.externalModules(), cmd.force);
   if (cmd.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;

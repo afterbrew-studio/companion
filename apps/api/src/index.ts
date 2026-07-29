@@ -115,13 +115,18 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down…');
-    lock.release();
     const force = setTimeout(() => process.exit(0), 6_000);
     force.unref();
     await kernel.shutdown();
     hub.close();
     server.close();
     db.close();
+    // Last, so the lock means "this home is in use" for as long as it is: a
+    // successor started by an admin restart waits on exactly this, and releasing
+    // before the port closes would hand it a home it cannot bind. A hung
+    // shutdown that hits the force-exit above leaves the file behind, which the
+    // next daemon sees as a dead pid and takes over.
+    lock.release();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());

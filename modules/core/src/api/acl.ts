@@ -11,6 +11,10 @@ export default defineAcl({
     { id: 'users:manage', title: 'Create and manage user accounts' },
     { id: 'settings:manage', title: 'Manage instance settings' },
     { id: 'modules:manage', title: 'Install, enable and configure modules' },
+    // Separate from modules:manage on purpose: that one moves switches on code
+    // this instance already has, this one puts new code on the host and takes it
+    // away again, and restarts the daemon to load it.
+    { id: 'modules:deploy', title: 'Add and remove out-of-tree module code on this host' },
     { id: 'audit:read', title: 'Read and export the audit trail' },
   ],
   grants: {

@@ -31,6 +31,9 @@ export interface ModuleDescriptor {
   readonly entitlement: string | null;
   /** false ⇒ declared an entitlement this instance's licence does not grant. */
   readonly entitled: boolean;
+  /** Out-of-tree module: its files live in the daemon's modules directory, so an
+   *  admin can add and remove them without a new build. */
+  readonly external: boolean;
   /** Out-of-tree module: its client chunk is fetched from the daemon, not bundled. */
   readonly externalClient: boolean;
 }

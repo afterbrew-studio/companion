@@ -12,3 +12,4 @@ export * from './store/util.js';
 export * from './config.js';
 export * from './license.js';
 export * from './instance-lock.js';
+export * from './restart.js';

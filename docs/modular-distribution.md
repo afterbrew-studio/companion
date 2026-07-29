@@ -432,6 +432,21 @@ Vocabulary must match the kernel exactly, because users will read both:
 `disable` keeps data, `uninstall` runs `down()` and wipes config, `remove` is
 `uninstall` plus deleting the artifact.
 
+`remove` is a daemon call, not a local one, even though it ends in deleting
+files: the migrations have to come down while the code that defines them is
+still on disk, and the CLI may be pointed at a host whose filesystem it cannot
+reach. It refuses a module compiled into the build, which has no artifact to
+delete.
+
+**The same three verbs are on the Modules page**, gated by `modules:deploy`
+rather than `modules:manage`: adding a module downloads and later executes code
+on the host, which is a materially bigger capability than moving a switch on
+code the instance already has. A spec typed into the browser must name a
+registry package, while the CLI keeps everything `npm pack` accepts, because a
+path spec would copy any directory the daemon can read into the directory it
+imports from, and npm BUILDS a git spec, running its `prepare` script as the
+daemon user before the ABI check has seen anything.
+
 **Why `add` is its own verb**, against this document's earlier plan to overload
 `install <id | pkg@version | ./bundle.tgz>`: the two take the same shape of
 argument and mean different things, so `companion module install reports` cannot

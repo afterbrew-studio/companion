@@ -10,6 +10,7 @@
       "github:connect",
       "issues:act",
       "issues:read",
+      "modules:deploy",
       "modules:manage",
       "pipelines:manage",
       "pipelines:read",
@@ -173,6 +174,13 @@
       "grants": [
         "admin",
         "maintainer"
+      ]
+    },
+    "modules:deploy": {
+      "owner": "core",
+      "title": "Add and remove out-of-tree module code on this host",
+      "grants": [
+        "admin"
       ]
     },
     "modules:manage": {

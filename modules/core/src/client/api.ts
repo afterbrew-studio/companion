@@ -18,8 +18,12 @@ import type { ModuleDescriptor, PageQuery } from '@moxxy/companion-core/client';
 import type {
   AccountInfo,
   AclMap,
+  AddModuleResponse,
   AuthState,
   CreateUserRequest,
+  ExternalModulesResponse,
+  RemoveModuleResponse,
+  RestartResponse,
   RoleDetail,
   RoleRecord,
   LoginResponse,
@@ -109,4 +113,10 @@ export const modulesApi = {
   getConfig: (id: string) => request<ModuleConfigState>(`/api/modules/${id}/config`),
   setConfig: (id: string, config: Record<string, unknown>) =>
     put<ModuleConfigState>(`/api/modules/${id}/config`, { config }),
+
+  // out-of-tree artifacts: module code on the host, not switches on code it has
+  listExternal: () => request<ExternalModulesResponse>('/api/modules/external'),
+  add: (spec: string, force = false) => post<AddModuleResponse>('/api/modules/add', { spec, force }),
+  remove: (id: string) => post<RemoveModuleResponse>(`/api/modules/${id}/remove`),
+  restart: () => post<RestartResponse>('/api/modules/restart'),
 };
