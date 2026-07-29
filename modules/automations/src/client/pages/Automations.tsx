@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@moxxy/companion-sdk/client';
-import type { BriefingCadence, GitHubAccountRecord, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
+import type {
+  BriefingCadence,
+  GitHubAccountRecord,
+  RepoPreset,
+  RepoPresetId,
+  RepoPresetResult,
+  RepoRecord,
+  WebhookInfo,
+} from '@companion/module-code/contract';
 import { codeApi, RepoUnavailableRow } from '@companion/module-code/client';
 import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { CopyText, EmptyState, ErrorBar, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
+import { CopyText, EmptyState, ErrorBar, Eyebrow, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';
@@ -404,6 +412,16 @@ function RepoAutomation({
         ) : null}
       </div>
 
+      {automationsManagedByYou ? (
+        <PresetPicker
+          repo={repo.fullName}
+          busy={busy}
+          onApplied={onChange}
+          onError={onError}
+          setBusy={setBusy}
+        />
+      ) : null}
+
       <ListCard subtle className="mt-3">
         {!repo.webhookConfigured || webhook?.managedByYou ? (
           <SettingRow
@@ -525,5 +543,100 @@ function RepoAutomation({
         </div>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * One click from "repo connected" to a working configuration.
+ *
+ * The switches below and the pipeline editor were both already here, so this adds
+ * no capability. What it adds is a starting point: every automation was off by
+ * default and a slop screen needed a pipeline assembled by hand, which put the
+ * most valuable part of the product behind knowing the model first.
+ *
+ * The catalogue is fetched rather than hardcoded, so what a card promises is what
+ * the server writes, and the outcome is reported rather than assumed: a preset
+ * that could not create its pipeline must say so.
+ */
+function PresetPicker({
+  repo,
+  busy,
+  onApplied,
+  onError,
+  setBusy,
+}: {
+  repo: string;
+  busy: boolean;
+  onApplied: () => Promise<void> | void;
+  onError: (message: string) => void;
+  setBusy: (busy: boolean) => void;
+}): JSX.Element | null {
+  const [presets, setPresets] = useState<RepoPreset[] | null>(null);
+  const [applied, setApplied] = useState<RepoPresetResult | null>(null);
+
+  useEffect(() => {
+    void api
+      .repoPresets()
+      .then(({ presets: rows }) => setPresets(rows))
+      // A missing catalogue hides the picker; the switches below still work, so
+      // this is not worth a banner.
+      .catch(() => setPresets([]));
+  }, []);
+
+  if (presets === null || presets.length === 0) return null;
+
+  const apply = async (id: RepoPresetId): Promise<void> => {
+    setBusy(true);
+    setApplied(null);
+    try {
+      const { result } = await api.applyPreset(repo, id);
+      setApplied(result);
+      await onApplied();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3">
+      <Eyebrow>Start from a preset</Eyebrow>
+      <p className="dim mt-1 text-xs">Sets the switches below and creates a pipeline. Everything stays editable.</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        {presets.map((preset) => (
+          <button
+            key={preset.id}
+            className="rounded-lg border border-zinc-200 px-3 py-2 text-left transition-colors hover:border-zinc-400 disabled:opacity-60 dark:border-zinc-800 dark:hover:border-zinc-600"
+            disabled={busy}
+            onClick={() => void apply(preset.id)}
+          >
+            <span className="text-[13px] font-medium">{preset.label}</span>
+            <span className="dim mt-0.5 block text-xs">{preset.description}</span>
+          </button>
+        ))}
+      </div>
+      {applied ? <PresetOutcome result={applied} /> : null}
+    </div>
+  );
+}
+
+/** What actually happened, in the words of the server rather than the button. */
+function PresetOutcome({ result }: { result: RepoPresetResult }): JSX.Element {
+  const notes: string[] = [];
+  if (result.skippedSteps.includes('slop-check')) {
+    notes.push('The slop screen was left out because Slop Detection is not enabled on this instance.');
+  }
+  if (result.pipelineSkipped === 'not-permitted') {
+    notes.push('The switches were applied, but your role may not create pipelines, so none was created.');
+  }
+  if (result.pipelineSkipped === 'no-steps-left') {
+    notes.push('No pipeline was created: every step this preset defines needs a module that is not enabled here.');
+  }
+  return (
+    <div className="banner-info mt-2 text-xs" role="status">
+      Applied. {result.pipelineId ? 'A pull-request pipeline was created. ' : ''}
+      {notes.join(' ')}
+    </div>
   );
 }

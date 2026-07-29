@@ -255,6 +255,38 @@ to a person, a kind of work and a repository, priced per model rather than per
 bucket average. Attribution is only as old as the `task` column, so runs from
 before it show as unattributed rather than being bucketed into a guess.
 
+### What agent work may do **[available]**
+
+The fences that keep an unattended run safe used to be constants. Two of them are
+now instance configuration on module-operate, so a security review has something
+to read and an auditor something to check:
+
+| Setting | Effect |
+|---|---|
+| `agentGitWrite` | `refused` makes every agent read-only on every runner |
+| `protectedBranches` | Branch patterns agent work may never push to (default `main, master, release/*, prod`) |
+| `maxRunOutputTokens` | Per-run ceiling, previously a 400k constant |
+
+Enforced at the credential seam, not per feature: every network git operation on
+every runner resolves its write credential through one function on the daemon, so
+a caller added next year cannot route around it. The branch gate sits at the two
+places that know the branch, both **before** a credential is minted.
+
+Worth knowing precisely what read-only means, because it is narrower than it
+sounds: only pushes request write access. Clones, fetches and worktrees ask for
+read, so a read-only instance still triages, reviews, screens for slop and
+proposes changes exactly as before. It simply cannot land them.
+
+Refusals go to the audit trail (`policy.git-write.refused`,
+`policy.push.refused`), and `GET /api/agent-policy` returns the effective policy
+to anyone who may launch runs, so being refused is explainable rather than
+mysterious.
+
+The other two fences stay in code because they are structural rather than
+policy: an agent's isolated worktree, and review-then-apply for everything that
+reaches GitHub (which is additionally gated by `prs:act` / `issues:act` /
+`slop:act`).
+
 ### Being told about it **[available]**
 
 An inbox nobody has open is not an alert. `module-notify` (in the `full` build,

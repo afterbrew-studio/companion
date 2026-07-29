@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { badRequest, defineRoutes, route, notFound } from '@moxxy/companion-sdk/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
+import { REPO_PRESETS, findPreset, resolveSteps } from '@companion/module-code/contract';
 import '../contract/index.js';
 
 const automationSchema = z.object({
@@ -11,6 +12,8 @@ const automationSchema = z.object({
   prGate: z.boolean().optional(),
   autoMerge: z.boolean().optional(),
 });
+
+const presetSchema = z.object({ preset: z.enum(['oss', 'internal', 'watch']) });
 
 const webhookSchema = z.object({ accountId: z.string().min(1).max(60) });
 
@@ -109,6 +112,85 @@ export default defineRoutes((ctx) => {
         code.repos.setAutomationOwner(fullName, anyEnabled ? user!.username : null);
         ctx.broadcast({ t: 'repos.changed' });
         return { repo: code.repos.getRecord(fullName)! };
+      },
+    }),
+
+    // ---------- presets -----------------------------------------------------------
+
+    route({
+      method: 'GET',
+      path: '/api/repo-presets',
+      access: 'automations:manage',
+      // Served rather than hardcoded in the SPA so the choices and what they
+      // actually write cannot drift apart.
+      handler: () => ({ presets: REPO_PRESETS }),
+    }),
+
+    /**
+     * Apply a starting configuration to a connected repository: the automation
+     * switches plus, where the preset defines one, a pipeline.
+     *
+     * Lives here rather than in module-code because these switches are only
+     * meaningful while automations is enabled (it owns the ticker and the webhook
+     * receiver), and because claiming the automation owner is part of turning
+     * them on: switches with no owner read as paused and would silently do
+     * nothing.
+     */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/preset',
+      access: 'automations:manage',
+      body: presetSchema,
+      handler: async ({ params, body, user }) => {
+        const { fullName, row } = requireRepo(user, params.owner, params.name);
+        await requirePersonalRepoAccess(user, fullName);
+        const owner = code.repos.automationOwner(fullName);
+        if (owner && owner !== user!.username) {
+          throw badRequest('these automations are managed by another Companion profile');
+        }
+        const preset = findPreset(body.preset);
+        if (!preset) throw badRequest(`unknown preset '${body.preset}'`);
+
+        const a = preset.automation;
+        code.repos.setAutomation(fullName, 'auto_triage', a.autoTriage);
+        code.repos.setAutomation(fullName, 'digest_enabled', a.digest);
+        code.repos.setAutomation(fullName, 'stale_enabled', a.staleSweep);
+        code.repos.setAutomation(fullName, 'pr_gate', a.prGate);
+        code.repos.setAutomation(fullName, 'auto_merge', a.autoMerge);
+        const anyEnabled = Object.values(a).some(Boolean);
+        code.repos.setAutomationOwner(fullName, anyEnabled ? user!.username : null);
+
+        // The pipeline is module-code's to write, and a custom role may hold
+        // automations:manage while an override revoked pipelines:manage. Reading
+        // the grid here is not re-checking this route's own permission; it is
+        // asking whether to take a second, different action.
+        let pipelineId: string | null = null;
+        let pipelineSkipped: 'not-permitted' | 'no-steps-left' | null = null;
+        const { steps, skipped } = resolveSteps(preset, ctx.isEnabled);
+        if (preset.pipeline !== null) {
+          if (user === null || !ctx.rbac.has(user.role, 'pipelines:manage')) {
+            pipelineSkipped = 'not-permitted';
+          } else if (steps.length === 0) {
+            pipelineSkipped = 'no-steps-left';
+          } else {
+            pipelineId = code.pipelines.create(row.workspace_id, {
+              type: 'pr',
+              name: preset.pipeline.name,
+              description: preset.pipeline.description,
+              // The contract's step DTOs are readonly; the engine's zod-inferred
+              // input is not. Same cast the engine itself uses in the other
+              // direction, and no preset step carries an array to begin with.
+              steps: steps as Parameters<typeof code.pipelines.create>[1]['steps'],
+              autoRunOnPrOpen: preset.pipeline.autoRunOnPrOpen,
+            }).id;
+          }
+        }
+
+        ctx.broadcast({ t: 'repos.changed' });
+        return {
+          repo: code.repos.getRecord(fullName)!,
+          result: { preset: preset.id, pipelineId, skippedSteps: skipped, pipelineSkipped },
+        };
       },
     }),
 

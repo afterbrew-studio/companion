@@ -1,6 +1,6 @@
 import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import { del, post, put, request } from '@moxxy/companion-sdk/client';
-import type { BriefingCadence, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
+import type { BriefingCadence, RepoPreset, RepoPresetId, RepoPresetResult, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/contract';
 
 /**
@@ -17,6 +17,10 @@ export const automationsApi = {
     fullName: string,
     fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean; autoMerge?: boolean },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
+  /** The preset catalogue, served so the choices and what they write cannot drift. */
+  repoPresets: () => request<{ presets: RepoPreset[] }>('/api/repo-presets'),
+  applyPreset: (fullName: string, preset: RepoPresetId) =>
+    post<{ repo: RepoRecord; result: RepoPresetResult }>(`/api/repos/${fullName}/preset`, { preset }),
   enableWebhook: (fullName: string, accountId: string) =>
     post<WebhookInfo>(`/api/repos/${fullName}/webhook`, { accountId }),
   disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),

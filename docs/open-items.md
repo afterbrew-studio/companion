@@ -158,6 +158,50 @@ notification kinds, not to a person, so "tell Ana about her runs" is not
 expressible. Both need a queue or a user-channel table; neither is worth one
 until an instance asks.
 
+## 9. Operator health signals `[BUILT]`
+
+The failures that only ever reached a log line now raise inbox entries, which the
+outbound channels then deliver: a GitHub App installation that stopped refreshing
+(the rough edge §1 has carried since it landed), a runner going offline and coming
+back, and a queue that has stopped draining. Each fires on the state TRANSITION,
+and credential health is persisted on the account row so a restart does not
+re-announce the same outage.
+
+**Deliberately not built: a licence-expiry sensor.** `ModuleContext` exposes no
+licence state, an OSS build carries no issuer key so it can never hold a licence,
+and expiry already degrades loudly at boot. It would be kernel surface for a
+signal that cannot fire in this build.
+
+Still open: nothing watches **disk** on the daemon's own volume. Clones,
+worktrees and scratch have retention sweeps, so the failure is slow, but a full
+`/data` is a real outage with no warning today.
+
+## 10. Agent action policy `[BUILT]`
+
+`agentGitWrite`, `protectedBranches` and `maxRunOutputTokens` are module config
+rather than constants, enforced at the credential seam and audited on refusal.
+See `ENTERPRISE.md` §4.
+
+Still open, and it is the axis an organisation asks about second: **GitHub-side
+writes are not part of this policy.** "Agents may analyse but must never post a
+comment" is not expressible as a setting. It is covered today by review-then-apply
+plus `prs:act` / `issues:act` / `slop:act`, which is a real control but a
+per-person one, not a per-instance statement. There is no single choke point for
+GitHub writes the way there is for git credentials, so this needs a seam first.
+
+## 11. Repository presets `[BUILT]`
+
+Connecting a repo now offers a starting configuration (open-source project,
+internal service, watch only) that sets the automation switches and creates a
+pull-request pipeline. Presets are data, and a step whose module is disabled is
+dropped and reported rather than left to error on every run.
+
+Still open: presets are offered **only from the Automations page**, because the
+switches are meaningless without that module and claiming the automation owner is
+part of turning them on. Someone who adds a repo and never opens Automations
+still sees nothing suggested. Offering it in the add-repo flow is the obvious next
+increment.
+
 ## Carried work
 
 Not gaps in a mechanism, which is why they sit below the line. Each one is

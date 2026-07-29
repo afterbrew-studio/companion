@@ -82,6 +82,61 @@ export interface RepoRecord {
   readonly runnerId: string | null;
 }
 
+// ---------- repository presets ----------
+
+export { REPO_PRESETS, findPreset, resolveSteps } from './presets.js';
+
+export type RepoPresetId = 'oss' | 'internal' | 'watch';
+
+/**
+ * A starting configuration for a newly connected repository: the automation
+ * switches plus, optionally, one pipeline to create. Everything a preset writes
+ * stays editable afterwards; it is a shortcut, never a mode.
+ */
+export interface RepoPreset {
+  readonly id: RepoPresetId;
+  readonly label: string;
+  readonly description: string;
+  readonly automation: {
+    readonly autoTriage: boolean;
+    readonly digest: boolean;
+    readonly staleSweep: boolean;
+    readonly prGate: boolean;
+    readonly autoMerge: boolean;
+  };
+  /** null for a preset that turns everything off and creates nothing. */
+  readonly pipeline: {
+    readonly name: string;
+    readonly description: string;
+    readonly autoRunOnPrOpen: boolean;
+    readonly steps: ReadonlyArray<PresetStepShorthand>;
+  } | null;
+}
+
+/** How a preset names its steps. Expanded to full step specs on apply. */
+export type PresetStepShorthand =
+  | { readonly kind: 'slop-check'; readonly threshold: number }
+  | { readonly kind: 'ai-review'; readonly post: boolean; readonly failOn: 'request_changes' | 'high_risk' | 'never' }
+  | { readonly kind: 'checks-gate'; readonly allowPending: boolean };
+
+/** What applying a preset actually did, so the UI can report it rather than imply it. */
+export interface RepoPresetResult {
+  readonly preset: RepoPresetId;
+  /** Id of the pipeline created, or null when the preset creates none. */
+  readonly pipelineId: string | null;
+  /**
+   * Step kinds left out because the module that owns them is not enabled here.
+   * Reported rather than dropped quietly: a slop screen that is not running is
+   * exactly the thing someone would otherwise assume was.
+   */
+  readonly skippedSteps: readonly string[];
+  /**
+   * Why the preset's pipeline was not created, when it defines one. null means
+   * it was created (or the preset defines none).
+   */
+  readonly pipelineSkipped: 'not-permitted' | 'no-steps-left' | null;
+}
+
 /** A repository a reachable GitHub account can see — the add-repo picker feed. */
 export interface RepoCandidate {
   readonly fullName: string;
