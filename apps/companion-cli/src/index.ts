@@ -24,6 +24,7 @@ import {
   OPTIONAL_MODULES,
   PROFILE_CHOICES,
   profileFromEnv,
+  requires,
   withDependencies,
   type ProfileId,
 } from './profile.js';
@@ -252,7 +253,18 @@ async function resolveProfile(options: CliOptions): Promise<readonly string[]> {
 
   const picked = await checkbox<string>({
     message: 'Choose the optional modules',
-    choices: OPTIONAL_MODULES.map((m) => ({ value: m.id, name: m.label, description: m.hint })),
+    // What a tick costs goes in the NAME, not the description: inquirer only
+    // shows a description while its row is highlighted, and someone ticking
+    // "Ideas" would otherwise learn it brought three others along after
+    // confirming, which is the wrong moment to find out.
+    choices: OPTIONAL_MODULES.map((m) => {
+      const needs = requires(m.id);
+      return {
+        value: m.id,
+        name: needs.length ? `${m.label}  (also enables ${needs.join(', ')})` : m.label,
+        description: m.hint,
+      };
+    }),
   });
   const closed = withDependencies(picked);
   const added = closed.filter((id) => !picked.includes(id));

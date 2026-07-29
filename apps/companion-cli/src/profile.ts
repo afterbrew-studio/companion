@@ -80,6 +80,20 @@ export function withDependencies(ids: readonly string[]): readonly string[] {
   return OPTIONAL_MODULES.filter((m) => wanted.has(m.id)).map((m) => m.id);
 }
 
+/**
+ * The labels ticking one module would drag in with it, transitively.
+ *
+ * Derived from `withDependencies` rather than read off `NEEDS`, so the list the
+ * chooser shows and the set the installer builds cannot disagree: a dependency
+ * added to one is a dependency shown by the other.
+ */
+export function requires(id: string): readonly string[] {
+  const labels = new Map(OPTIONAL_MODULES.map((m) => [m.id, m.label]));
+  return withDependencies([id])
+    .filter((dep) => dep !== id)
+    .map((dep) => labels.get(dep) ?? dep);
+}
+
 export const modulesFor = (profile: ProfileId): readonly string[] =>
   profile === 'full' ? OPTIONAL_MODULES.map((m) => m.id) : [];
 
