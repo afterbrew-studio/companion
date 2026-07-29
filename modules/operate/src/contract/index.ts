@@ -331,9 +331,9 @@ export function taskPolicyAllows(policy: RunnerTaskPolicy, taskId: string): bool
 
 /**
  * How a policy answers a whole module, tasks it registers LATER included.
- *  - `all`/`none` — the module is governed uniformly and keeps being governed
+ *  - `all`/`none`: the module is governed uniformly and keeps being governed
  *    that way as it grows;
- *  - `partial` — individual task entries pin it to the tasks that exist today.
+ *  - `partial`: individual task entries pin it to the tasks that exist today.
  */
 export type ModulePolicyReach = 'all' | 'none' | 'partial';
 
