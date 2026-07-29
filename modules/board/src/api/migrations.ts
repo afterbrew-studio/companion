@@ -196,4 +196,19 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 9,
+    name: 'board_task_model',
+    up: (db) => {
+      // Nullable with no default: every existing card keeps inheriting the
+      // board.worker pin, rather than freezing today's pin into its row.
+      const columns = db.prepare(`PRAGMA table_info(board_tasks)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'model')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN model TEXT`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE board_tasks DROP COLUMN model`);
+    },
+  },
 ]);

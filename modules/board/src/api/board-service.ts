@@ -11,6 +11,7 @@ import type {
   TaskAttachmentInput,
   TaskDependencyView,
   TaskEventRecord,
+  TaskModelOptions,
   TaskPriority,
   TaskPrView,
   TaskRecord,
@@ -145,6 +146,19 @@ export class BoardService {
     };
   }
 
+  /**
+   * What a card's model picker offers. Both halves come from operate: the
+   * shared pool's catalog and the `board.worker` pin, so this page and the
+   * Task models settings page can never drift apart.
+   */
+  modelOptions(defaultModel: string): TaskModelOptions {
+    return {
+      models: this.operate.runners.servableModels(),
+      workerModel: this.operate.orchestrator.taskModelPin('board.worker'),
+      defaultModel,
+    };
+  }
+
   /** Spec picker options for a repo — empty when the plan module is disabled. */
   specOptions(repo: string, workspaceId: string): SpecOption[] {
     const plan = this.plan();
@@ -167,6 +181,8 @@ export class BoardService {
     specId: string | null;
     attachments: readonly TaskAttachmentInput[];
     dependsOn?: readonly string[];
+    /** Omitted or blank = inherit the board.worker pin; never snapshot it. */
+    model?: string | null;
     priority: TaskPriority;
     queue: boolean;
     createdBy: string | null;
@@ -186,6 +202,7 @@ export class BoardService {
       specId: input.specId,
       attachments: makeAttachments(input.attachments),
       dependsOn: this.sanitizeDependsOn(input.workspaceId, null, input.dependsOn ?? []),
+      model: normalizeModel(input.model),
       priority: input.priority,
       status: input.queue ? 'ready' : 'backlog',
       stage: input.queue ? 'build' : null,
@@ -221,12 +238,14 @@ export class BoardService {
       specId?: string | null;
       attachments?: readonly TaskAttachmentInput[];
       dependsOn?: readonly string[];
+      /** null or blank clears the choice back to inheriting the board.worker pin. */
+      model?: string | null;
       priority?: TaskPriority;
     },
   ): TaskRecord {
     const task = this.store.getTask(id);
     if (!task) throw new Error('task not found');
-    const { attachments, dependsOn, ...patch } = fields;
+    const { attachments, dependsOn, model, ...patch } = fields;
     let sanitizedDeps: string[] | undefined;
     if (dependsOn !== undefined) {
       sanitizedDeps = this.sanitizeDependsOn(task.workspaceId, id, dependsOn);
@@ -236,6 +255,7 @@ export class BoardService {
       ...patch,
       ...(attachments ? { attachments: makeAttachments(attachments) } : {}),
       ...(sanitizedDeps ? { dependsOn: sanitizedDeps } : {}),
+      ...(model !== undefined ? { model: normalizeModel(model) } : {}),
     });
     this.changed();
     // A removed prerequisite may make a ready task dispatchable right now.
@@ -664,17 +684,21 @@ export class BoardService {
     try {
       let run: RunRecord;
       // All board-dispatched agent work carries 'board.worker' so runners can
-      // opt out of it wholesale — it is the heaviest automation in the system.
+      // opt out of it wholesale, it being the heaviest automation in the system,
+      // and the card's own model, which outranks that task's pin. Every stage
+      // carries both: a card must not change model when it moves from building
+      // to repairing CI or addressing review.
+      const dispatch = { task: 'board.worker', preferredModel: task.model };
       if (stage === 'address_review') {
-        run = await this.code.fixes.startReviewFix(task.repo, task.prNumber!, task.createdBy, 'board.worker');
+        run = await this.code.fixes.startReviewFix(task.repo, task.prNumber!, task.createdBy, dispatch);
       } else if (stage === 'fix_ci') {
-        run = await this.code.fixes.startCheckFix(task.repo, task.prNumber!, task.createdBy, 'board.worker');
+        run = await this.code.fixes.startCheckFix(task.repo, task.prNumber!, task.createdBy, dispatch);
       } else {
         const repoRow = this.code.repos.get(task.repo);
         if (!repoRow) throw new Error(`repo ${task.repo} is not connected`);
         run = await this.code.fixes.createGoalRun({
           kind: 'implement',
-          task: 'board.worker',
+          ...dispatch,
           title: `Task: ${task.title.slice(0, 60)}`,
           repo: task.repo,
           branchPrefix: `companion/task-${task.id.replace(/^tsk-/, '')}`,
@@ -1244,4 +1268,10 @@ function stageLabel(stage: TaskStage): string {
 
 function makeAttachments(inputs: readonly TaskAttachmentInput[]): TaskAttachment[] {
   return inputs.map((input) => ({ ...input, id: `att-${randomUUID().slice(0, 12)}` }));
+}
+
+/** Blank is not a model id; it means the card never chose one. */
+function normalizeModel(model: string | null | undefined): string | null {
+  const trimmed = model?.trim();
+  return trimmed ? trimmed : null;
 }

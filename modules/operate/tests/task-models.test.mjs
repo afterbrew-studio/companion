@@ -91,6 +91,62 @@ function fixture(seed = oneMachineServingEverything) {
 
 const modelOf = (dispatched, runId) => dispatched.find((d) => d.runId === runId)?.model ?? null;
 
+/**
+ * Make a seeded remote machine genuinely placeable: an unprobed remote is never
+ * online, so without this a two-machine fixture cannot tell "placement chose
+ * this machine" from "there was nowhere else to go". `probeNow` is asserted so
+ * a rename cannot quietly turn every such test single-machine again.
+ *
+ * Its catalog stays whatever the seed stored (sessionInfo answers null rather
+ * than reporting a second, competing provider set).
+ */
+async function bringOnline(orchestrator, id, dispatched, providers = []) {
+  const live = new Set();
+  orchestrator.runners.backends.set(id, {
+    id,
+    probe: async () => ({
+      status: 'online',
+      moxxyVersion: '9.9.9',
+      moxxyCompatible: true,
+      liveRuns: live.size,
+      maxRuns: 3,
+      lastSeenAt: Date.now(),
+      detail: null,
+      providers: ['anthropic'],
+    }),
+    spawn: async (runId) => void live.add(runId),
+    stop: async (runId) => void live.delete(runId),
+    isLive: (runId) => live.has(runId),
+    liveIds: () => [...live],
+    scratchDir: async (runId) => join(process.env.COMPANION_HOME, id, runId),
+    // probeNow force-refreshes the catalog from this, so answering null would
+    // wipe the providers the fixture just seeded and drop the machine out of
+    // placement entirely, which reads as "the model did not steer placement".
+    sessionInfo: async () => ({
+      activeProvider: providers[0]?.name ?? null,
+      providers,
+      readyProviders: providers.filter((p) => p.ready).map((p) => p.name),
+    }),
+    runTurn: async (runId, args) => {
+      dispatched.push({ runId, model: args.model ?? null });
+      return { turnId: `turn-${runId}` };
+    },
+    cleanupStorage: async () => ({
+      removedWorktrees: 0,
+      removedScratchDirs: 0,
+      removedSessionFiles: 0,
+      removedRunConfigs: 0,
+      errors: [],
+    }),
+  });
+  await orchestrator.runners.probeNow(id);
+  assert.equal(
+    orchestrator.runners.healthFor(id).status,
+    'online',
+    `${id} did not come online, so the fixture cannot place remotely`,
+  );
+}
+
 test('the model cascade is explicit choice, then the task pin, then the instance default', async () => {
   const { orchestrator, dispatched } = fixture();
   orchestrator.setTaskModelPin('code.fix', 'sonnet');
@@ -169,6 +225,110 @@ test('a pin the machine the run landed on cannot serve gives way to its default'
   const onGpuBox = await orchestrator.createRun({ kind: 'fix', task: 'code.fix', runnerId: 'runner-b' });
   assert.equal(onGpuBox.model, 'sonnet');
   assert.equal(store.runs.get(onGpuBox.id).model, 'sonnet');
+});
+
+// ---------- a model chosen for one unit of work (a board card) ----------
+
+/**
+ * Two shared machines, both really placeable, with disjoint extras, so
+ * "some machine serves it" and "this machine serves it" are distinguishable.
+ * Only gpu-box serves sonnet.
+ */
+async function twoMachines() {
+  const built = fixture((store) => {
+    addMachine(store, 'runner-b', 'gpu-box');
+    store.runners.setCatalog(LOCAL_RUNNER_ID, catalogOf(provider('anthropic', ['opus'])));
+    store.runners.setCatalog('runner-b', catalogOf(provider('anthropic', ['opus', 'sonnet'])));
+  });
+  await bringOnline(built.orchestrator, 'runner-b', built.dispatched, [provider('anthropic', ['opus', 'sonnet'])]);
+  return built;
+}
+
+test("a card's model outranks the task pin, and steers placement to a machine that serves it", async () => {
+  const { orchestrator, dispatched } = await twoMachines();
+  orchestrator.setTaskModelPin('board.worker', 'opus');
+
+  // Callers that provision a worktree first (fixes) ask placement separately,
+  // it must already know the card's choice, or the worktree lands on a machine
+  // that cannot honour it.
+  assert.equal(orchestrator.placeRun(null, { task: 'board.worker', preferredModel: 'sonnet' }), 'runner-b');
+
+  const run = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: 'sonnet' });
+  assert.equal(run.runnerId, 'runner-b');
+  assert.equal(run.model, 'sonnet');
+  await orchestrator.sendPrompt(run.id, 'go');
+  assert.equal(modelOf(dispatched, run.id), 'sonnet');
+});
+
+test("a card's model gives way on a machine that cannot serve it, instead of failing the run", async () => {
+  // gpu-box is the only machine serving sonnet and it refuses board work, so
+  // placement can only pick the local one. A card set to sonnet is a choice made
+  // once and reused for days: it must not kill the run after the branch and
+  // worktree exist, the way a per-turn choice deliberately does.
+  const { store, orchestrator, dispatched } = await twoMachines();
+  orchestrator.setTaskModelPin('board.worker', 'opus');
+  await orchestrator.runners.update('runner-b', {
+    taskPolicy: { mode: 'deny', modules: [], tasks: ['board.worker'] },
+  });
+  assert.ok(orchestrator.runners.servableModels().some((m) => m.id === 'sonnet'));
+
+  const run = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: 'sonnet' });
+  assert.equal(run.runnerId, null);
+  // The cascade continues rather than skipping to the daemon default: the pin
+  // is the next-most-specific standing preference, and this machine serves it.
+  assert.equal(run.model, 'opus');
+  await orchestrator.sendPrompt(run.id, 'go');
+  assert.equal(modelOf(dispatched, run.id), 'opus');
+
+  // Nothing was rewritten, and the same card still gets sonnet where it fits.
+  const onGpuBox = await orchestrator.createRun({
+    kind: 'implement',
+    task: 'board.worker',
+    preferredModel: 'sonnet',
+    runnerId: 'runner-b',
+  });
+  assert.equal(onGpuBox.model, 'sonnet');
+  assert.equal(store.runs.get(onGpuBox.id).model, 'sonnet');
+});
+
+test("a card's model no machine may run falls through to the pin, while the same model chosen per run refuses", async () => {
+  const { orchestrator, dispatched } = await twoMachines();
+  orchestrator.setTaskModelPin('board.worker', 'opus');
+  for (const id of [LOCAL_RUNNER_ID, 'runner-b']) {
+    orchestrator.runners.setProviderPolicy(id, { disabledProviders: [], disabledModels: ['sonnet'] });
+  }
+
+  const run = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: 'sonnet' });
+  assert.equal(run.model, 'opus');
+  await orchestrator.sendPrompt(run.id, 'go');
+  assert.equal(modelOf(dispatched, run.id), 'opus');
+
+  // The refusal belongs to a choice a user just made, and only to that.
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'implement', task: 'board.worker', model: 'sonnet' }),
+    /no runner may use sonnet/,
+  );
+});
+
+test('a card that chose nothing keeps inheriting the pin, including after the pin changes', async () => {
+  const { orchestrator, dispatched } = await twoMachines();
+  orchestrator.setTaskModelPin('board.worker', 'opus');
+
+  // null is "inherit", resolved per run, not a snapshot taken when the card
+  // was created, which would leave repinning board.worker with no effect.
+  const first = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: null });
+  assert.equal(first.model, 'opus');
+
+  orchestrator.setTaskModelPin('board.worker', 'sonnet');
+  const second = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: null });
+  assert.equal(second.runnerId, 'runner-b');
+  assert.equal(second.model, 'sonnet');
+
+  orchestrator.setTaskModelPin('board.worker', null);
+  const third = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: null });
+  assert.equal(third.model, null);
+  await orchestrator.sendPrompt(third.id, 'go');
+  assert.equal(modelOf(dispatched, third.id), 'opus');
 });
 
 test('only models an enabled machine can serve are offered as a pin', async () => {

@@ -266,10 +266,10 @@ export class Orchestrator implements RunnerEventSink {
 
   /**
    * Provider-aware placement: resolve the model the run will actually ride
-   * (explicit > task pin > daemon default) to the providers that serve it,
-   * and prefer a runner advertising one of them. Callers that provision a
-   * worktree before createRun (fixes, pipelines) use this so the worktree
-   * lands on the runner the run will execute on.
+   * (explicit > standing preference > task pin > daemon default) to the
+   * providers that serve it, and prefer a runner advertising one of them.
+   * Callers that provision a worktree before createRun (fixes, pipelines) use
+   * this so the worktree lands on the runner the run will execute on.
    *
    * Throws when no machine's policy accepts the task and the instance's
    * fallback refuses — better here, before a worktree exists, than after.
@@ -278,6 +278,8 @@ export class Orchestrator implements RunnerEventSink {
     repo: string | null,
     opts: {
       model?: string | null;
+      /** A standing preference (see createRun); steers placement, never fails it. */
+      preferredModel?: string | null;
       userId?: string | null;
       /** Runner ids to skip — failover after a spawn just failed there. */
       exclude?: ReadonlySet<string>;
@@ -286,7 +288,11 @@ export class Orchestrator implements RunnerEventSink {
       task?: string | null;
     } = {},
   ): string | null {
-    const effective = opts.model ?? this.pinnedModel(opts.task ?? null) ?? this.config.defaultModel;
+    const effective =
+      opts.model ??
+      this.servableAnywhere(opts.preferredModel ?? null) ??
+      this.pinnedModel(opts.task ?? null) ??
+      this.config.defaultModel;
     return this.runners.place(repo, opts.task ?? null, effective, opts.userId ?? null, opts.exclude);
   }
 
@@ -303,6 +309,15 @@ export class Orchestrator implements RunnerEventSink {
     proposalId?: string | null;
     branch?: string | null;
     model?: string | null;
+    /**
+     * A model chosen ahead of time for the unit of work this run serves (a
+     * board card), sitting between an explicit choice and the task pin. Soft
+     * like a pin, and for the same reason: it is chosen once and reused by
+     * every run that unit spawns, days later, on whichever machine is free,
+     * so a machine that cannot serve it falls through the cascade rather than
+     * failing the run after its branch and worktree exist.
+     */
+    preferredModel?: string | null;
     /** Triggering user: owns attended runs and unlocks their personal runners
      *  for placement; null for automation (shared runners only). */
     userId?: string | null;
@@ -359,12 +374,20 @@ export class Orchestrator implements RunnerEventSink {
         ? opts.runnerId
         : opts.cwd !== undefined
           ? null
-          : this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, task: opts.task });
-    // Model: explicit override → the task's instance pin, applied only where the
-    // machine can serve it. null falls through to the daemon default at
-    // dispatch, and to the runner's own moxxy default when even that cannot be
-    // served there.
-    const model = opts.model ?? this.servablePin(runnerId, opts.task ?? null);
+          : this.placeRun(opts.repo ?? null, {
+              model: opts.model,
+              preferredModel: opts.preferredModel,
+              userId: opts.userId,
+              task: opts.task,
+            });
+    // Model: explicit override → the unit of work's standing preference → the
+    // task's instance pin, the last two applied only where the machine can
+    // serve them. null falls through to the daemon default at dispatch, and to
+    // the runner's own moxxy default when even that cannot be served there.
+    const model =
+      opts.model ??
+      this.servableHere(runnerId, opts.preferredModel ?? null) ??
+      this.servablePin(runnerId, opts.task ?? null);
     const backend = this.runners.backend(runnerId);
     // Reserve the slot atomically: persist the provisioning row (carrying
     // runner_id) BEFORE the first await, so a concurrent createRun's placement
@@ -421,7 +444,13 @@ export class Orchestrator implements RunnerEventSink {
         let next: string | null | undefined;
         try {
           next = autoPlaced
-            ? this.placeRun(opts.repo ?? null, { model: opts.model, userId: opts.userId, exclude: tried, task: opts.task })
+            ? this.placeRun(opts.repo ?? null, {
+                model: opts.model,
+                preferredModel: opts.preferredModel,
+                userId: opts.userId,
+                exclude: tried,
+                task: opts.task,
+              })
             : undefined;
         } catch {
           next = undefined;
@@ -435,8 +464,14 @@ export class Orchestrator implements RunnerEventSink {
         tried.add(next ?? LOCAL_RUNNER_ID);
         placedOn = next;
         placedBackend = this.runners.backend(placedOn);
-        // The machine changed, so re-resolve: the new one may not serve the pin.
-        this.store.runs.setModel(id, opts.model ?? this.servablePin(placedOn, opts.task ?? null));
+        // The machine changed, so re-resolve: the new one may not serve the
+        // preference or the pin.
+        this.store.runs.setModel(
+          id,
+          opts.model ??
+            this.servableHere(placedOn, opts.preferredModel ?? null) ??
+            this.servablePin(placedOn, opts.task ?? null),
+        );
       }
     }
     this.emitRunChanged(id);
@@ -542,30 +577,42 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   /**
-   * Pinned model for a unit of work (settings `modelPin:task:<id>`); new runs of
-   * that task ride the pin unless the caller overrides explicitly. A pin no
-   * machine may run falls back to the daemon default rather than failing every
-   * run of that task: a pin is a standing preference, not a choice a user just
-   * made. An unlabeled run (no task) has nothing to pin against.
+   * A standing model preference (a task pin, a board card's model), dropped
+   * where no machine may run it: such a preference falls back to the rest of
+   * the cascade rather than failing every run it covers, because it is a
+   * preference and not a choice a user just made.
    */
-  private pinnedModel(task: string | null): string | null {
-    if (task === null) return null;
-    const pinned = this.taskModelPin(task);
-    if (pinned === null) return null;
-    return this.runners.runnersForModel(pinned)?.size === 0 ? null : pinned;
+  private servableAnywhere(model: string | null): string | null {
+    if (model === null) return null;
+    // `runnersForModel` answers null for a model nobody serves, not an empty
+    // set, so testing the size alone lets exactly that case through.
+    const servers = this.runners.runnersForModel(model);
+    return servers && servers.size > 0 ? model : null;
   }
 
   /**
-   * The same pin, narrowed to the machine the run actually landed on. Placement
-   * prefers a machine that serves the pin but is free to choose another (the
-   * pool's own machines block tasks, go offline and fill up), and binding a run
-   * to a model its machine cannot serve would fail the run's every turn. Same
-   * reasoning as `pinnedModel`, one step later: a preference gives way, only a
-   * choice a user just made refuses.
+   * The same preference, narrowed to the machine the run actually landed on.
+   * Placement prefers a machine that serves it but is free to choose another
+   * (the pool's own machines block tasks, go offline and fill up), and binding
+   * a run to a model its machine cannot serve would fail the run's every turn.
+   * Same reasoning as `servableAnywhere`, one step later.
    */
+  private servableHere(runnerId: string | null, model: string | null): string | null {
+    const preference = this.servableAnywhere(model);
+    return preference !== null && this.runners.serves(runnerId, preference) ? preference : null;
+  }
+
+  /**
+   * Pinned model for a unit of work (settings `modelPin:task:<id>`); new runs of
+   * that task ride the pin unless the caller overrides explicitly. An unlabeled
+   * run (no task) has nothing to pin against.
+   */
+  private pinnedModel(task: string | null): string | null {
+    return task === null ? null : this.servableAnywhere(this.taskModelPin(task));
+  }
+
   private servablePin(runnerId: string | null, task: string | null): string | null {
-    const pinned = this.pinnedModel(task);
-    return pinned !== null && this.runners.serves(runnerId, pinned) ? pinned : null;
+    return this.servableHere(runnerId, this.pinnedModel(task));
   }
 
   /** Connected providers + models, read live from the run's gateway. */

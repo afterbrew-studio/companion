@@ -14,6 +14,11 @@ const attachmentsSchema = z
 
 const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 
+// Not checked against the catalog on purpose: the catalog is capability and
+// moves with the machines, while a card's choice must survive a provider being
+// switched off for a week. Dispatch resolves it per run and falls back there.
+const modelSchema = z.string().max(200).nullable();
+
 const createTaskSchema = z.object({
   workspaceId: z.string().min(1).max(100),
   repo: z.string().min(3).max(200),
@@ -24,6 +29,7 @@ const createTaskSchema = z.object({
   specId: z.string().max(100).nullable().default(null),
   attachments: attachmentsSchema,
   dependsOn: z.array(z.string().max(40)).max(20).default([]),
+  model: modelSchema.default(null),
   priority: prioritySchema.default(2),
   queue: z.boolean().default(false),
 });
@@ -35,6 +41,7 @@ const updateTaskSchema = z.object({
   specId: z.string().max(100).nullable().optional(),
   attachments: attachmentsSchema.optional(),
   dependsOn: z.array(z.string().max(40)).max(20).optional(),
+  model: modelSchema.optional(),
   priority: prioritySchema.optional(),
 });
 
@@ -187,6 +194,18 @@ export default defineRoutes((ctx) => {
         }
         return { specs: board.specOptions(repo, workspaceId) };
       },
+    }),
+
+    /**
+     * The card model picker's options. Gated on board:manage because only a
+     * manager chooses one; a read-only viewer sees the card's stored id and
+     * needs no catalog to do it.
+     */
+    route({
+      method: 'GET',
+      path: '/api/board/models',
+      access: 'board:manage',
+      handler: () => board.modelOptions(ctx.config.defaultModel),
     }),
 
     route({
