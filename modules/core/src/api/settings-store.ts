@@ -1,9 +1,9 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { NotificationScope } from '../contract/index.js';
 
 /** Instance-wide key/value settings (the core-owned `settings` table). */
 export class SettingsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   get(key: string): string | null {
     const row = this.db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value: string } | undefined;

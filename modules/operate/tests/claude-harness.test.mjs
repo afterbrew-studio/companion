@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
 import { OperateStore } from '../dist/api/operate-store.js';
 import { Orchestrator } from '../dist/api/orchestrator.js';

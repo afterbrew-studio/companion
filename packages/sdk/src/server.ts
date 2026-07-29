@@ -43,6 +43,12 @@ export type { RawRouteContext, RawRouteDef, RawReply } from '@moxxy/companion-co
 // ---- persistence ----
 export type { Migration, MigrationEnv } from '@moxxy/companion-core/server';
 
+/**
+ * The handle `ctx.db` is, and the statements it prepares. Types only: a module's
+ * store is handed the daemon's connection and must never open a second one.
+ */
+export type { Database, Statement, RunResult } from '@moxxy/companion-services';
+
 // ---- capabilities a module consumes, or provides ----
 export type {
   AuditEvent,

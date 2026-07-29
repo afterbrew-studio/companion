@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
+import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
-
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
 
 const appMigration = migrations.find((m) => m.name === 'code_github_app_accounts');
 

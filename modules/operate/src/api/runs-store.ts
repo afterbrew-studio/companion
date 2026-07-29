@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { AgentStorageRunLease } from '@moxxy/companion-types';
 import { safeParse } from '@moxxy/companion-services';
 import type { RunKind, RunRecord, RunStatus, RunVerification } from '../contract/index.js';
@@ -7,7 +7,7 @@ import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 /** Agent runs — rows are the source of truth; gateway processes are cattle. */
 export class RunsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** `harness` is the id, not the descriptor: the row stores the choice, and
    *  what that harness can do is read back from the build that implements it. */
@@ -17,7 +17,31 @@ export class RunsStore {
         `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens, outcome)
          VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @task, @harness, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
-      .run(run);
+      // Named one by one rather than handed the whole record: a key the SQL does
+      // not declare is an error now, not a silent drop, and `verification` is set
+      // by its own statement after the row exists.
+      .run({
+        id: run.id,
+        kind: run.kind,
+        status: run.status,
+        title: run.title,
+        cwd: run.cwd,
+        repo: run.repo,
+        issueNumber: run.issueNumber,
+        proposalId: run.proposalId,
+        branch: run.branch,
+        prUrl: run.prUrl,
+        model: run.model,
+        runnerId: run.runnerId,
+        userId: run.userId,
+        task: run.task,
+        harness: run.harness,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+        inputTokens: run.inputTokens,
+        outputTokens: run.outputTokens,
+        outcome: run.outcome,
+      });
   }
 
   /**
@@ -202,8 +226,8 @@ export class RunsStore {
   /**
    * Token totals per day bucket (`(created_at - since) / 86400000`), summed in
    * SQL — the burn chart never pulls run rows into JS. The CAST is load-bearing:
-   * better-sqlite3 binds the ms timestamp as a REAL, which turns the division
-   * real too — fractional buckets group per-run and the day lookup drops them.
+   * node:sqlite binds the ms timestamp as a REAL, which turns the division real
+   * too, so fractional buckets group per-run and the day lookup drops them.
    */
   usageByDay(since: number, scope: UsageScope): UsageDayRow[] {
     const w = this.usageWhere(scope);

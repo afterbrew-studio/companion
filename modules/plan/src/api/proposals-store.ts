@@ -1,10 +1,9 @@
-import type Database from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type { ProposalAnalysis, ProposalRecord } from '../contract/index.js';
 
 /** Change proposals and their analyze/implement lifecycle. */
 export class ProposalsStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(p: ProposalRecord): void {
     this.db

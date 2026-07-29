@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 
 /**
  * Lockout recovery, and the reason it exists: revoking `users:manage` from the
@@ -86,12 +86,12 @@ async function isRunning(baseUrl: string): Promise<boolean> {
   }
 }
 
-function hasTable(db: Database.Database, name: string): boolean {
+function hasTable(db: Database, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`).get(name);
 }
 
 /** Second line of defence for a daemon on a different address than we probed. */
-function isLocked(db: Database.Database): boolean {
+function isLocked(db: Database): boolean {
   try {
     db.prepare('BEGIN IMMEDIATE').run();
     db.prepare('ROLLBACK').run();

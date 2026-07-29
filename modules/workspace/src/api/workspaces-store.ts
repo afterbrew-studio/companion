@@ -1,6 +1,5 @@
-import type Database from 'better-sqlite3';
 import type { AuthUser } from '@moxxy/companion-contracts';
-import { notFound } from '@moxxy/companion-sdk/server';
+import { notFound, type Database } from '@moxxy/companion-sdk/server';
 import type {
   WorkspaceMember,
   WorkspaceMemberRole,
@@ -17,7 +16,7 @@ import type {
  * design; those tables persist regardless of module-code's enabled state.
  */
 export class WorkspacesStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /**
    * Every install has at least one workspace. (Orphan-repo adoption — the

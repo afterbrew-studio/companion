@@ -1,4 +1,4 @@
-import type { Database } from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type {
   BoardConfig,
   TaskAttachment,

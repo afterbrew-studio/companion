@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
 import { NotifyStore } from '../dist/api/notify-store.js';
 

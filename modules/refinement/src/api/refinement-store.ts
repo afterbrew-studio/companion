@@ -1,5 +1,4 @@
-import type { Database } from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   RefineItemRecord,
   RefineMethodRecord,
@@ -266,7 +265,16 @@ export class RefinementStore {
         WHERE id = @id AND refinement_id = @refinementId AND status = 'proposed'
       `);
       for (const item of items) {
-        const result = update.run({ ...item, dependsOn: JSON.stringify(item.dependsOn) });
+        const result = update.run({
+          id: item.id,
+          refinementId: item.refinementId,
+          ord: item.ord,
+          title: item.title,
+          description: item.description,
+          acceptance: item.acceptance,
+          priority: item.priority,
+          dependsOn: JSON.stringify(item.dependsOn),
+        });
         if (result.changes !== 1) throw new Error(`item ${item.id} is no longer editable`);
       }
       const updateDependencies = this.db.prepare(

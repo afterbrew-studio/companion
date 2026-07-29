@@ -1,6 +1,5 @@
-import type Database from 'better-sqlite3';
 import type { Authenticator, ModuleAcl, SpaServerMessage } from '@moxxy/companion-contracts';
-import type { DaemonConfig, Logger } from '@moxxy/companion-services';
+import type { Database, DaemonConfig, Logger } from '@moxxy/companion-services';
 import type { ModuleManifest, ModuleId } from '../manifest.js';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigState } from '../module-config.js';
 import type { CompiledRoute } from './router.js';
@@ -18,7 +17,7 @@ import type { WsScopeRegistry } from './ws-hub.js';
  * cross-module reactions through `bus`; browser push through `broadcast`.
  */
 export interface ModuleContext {
-  readonly db: Database.Database;
+  readonly db: Database;
   readonly log: Logger;
   readonly config: DaemonConfig;
   /** SQLite FTS5 availability (probed once at bootstrap) — search features degrade without it. */
@@ -131,7 +130,7 @@ export interface ServerModule {
    *  last enabled provider wins and inherits the values already stored. */
   readonly provideSecrets?: (ctx: ModuleContext) => SecretStore;
   /** Destructive uninstall for modules whose migrations are not all reversible. */
-  purge?(db: Database.Database): void;
+  purge?(db: Database): void;
 }
 
 // ---- registrants: identity fns typed to their interface (authoring-site DX) ----

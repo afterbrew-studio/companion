@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import { BoardService } from '../dist/api/board-service.js';
 import { BoardStore } from '../dist/api/board-store.js';
 

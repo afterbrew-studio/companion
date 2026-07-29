@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import { RunsStore } from './runs-store.js';
 import { RunQueueStore } from './run-queue-store.js';
 import { RunnersStore } from './runners-store.js';
@@ -21,7 +21,7 @@ export class OperateStore {
   readonly runners: RunnersStore;
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     readonly settings: { get(key: string): string | null; set(key: string, value: string): void },
   ) {
     this.runs = new RunsStore(db);

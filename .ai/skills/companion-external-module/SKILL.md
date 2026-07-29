@@ -145,8 +145,8 @@ server: `@moxxy/companion-sdk`, `/server`, `/agents`, `zod`, `ws`, node builtins
 client: `@moxxy/companion-sdk`, `/client`, `/ui`, `react`, `react/jsx-runtime`, `react-dom`
 
 A database driver is **not** on that list. A module gets its handle from the SDK,
-which hands it the host's; installing `better-sqlite3` alongside would give it a
-second native binding to the same file.
+which hands it the host's; opening `node:sqlite` itself would give it a second
+connection to the same file, outside the daemon's WAL and transaction discipline.
 
 Everything else must be bundled into the module's own artifact. `companion
 module verify <path>` parses the built ESM's static import list and fails on

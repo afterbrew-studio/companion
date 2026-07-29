@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 
 /** Tables a Companion database always has; the shape check before a restore. */
 const SENTINEL_TABLES = ['users', 'module_migrations'];
@@ -51,7 +51,7 @@ export async function backupDatabase(home: string, destination: string, baseUrl:
   mkdirSync(dirname(target), { recursive: true });
 
   const live = await isRunning(baseUrl);
-  const db = new Database(source, { readonly: true });
+  const db = new Database(source, { readOnly: true });
   try {
     // Bound parameters are not allowed in VACUUM INTO, so the path is inlined.
     // SQLite string quoting: double any single quote.
@@ -62,10 +62,13 @@ export async function backupDatabase(home: string, destination: string, baseUrl:
 
   // Verify the artifact rather than trusting that the command returned. An
   // unverified backup is a belief, not a backup.
-  const check = new Database(target, { readonly: true });
+  const check = new Database(target, { readOnly: true });
   try {
-    const result = check.pragma('integrity_check', { simple: true });
-    if (result !== 'ok') throw new Error(`the snapshot failed its integrity check: ${String(result)}`);
+    // `PRAGMA integrity_check` answers one row, `{ integrity_check: 'ok' }`.
+    const [row] = check.pragma('integrity_check') as ReadonlyArray<{ integrity_check?: unknown }>;
+    if (row?.integrity_check !== 'ok') {
+      throw new Error(`the snapshot failed its integrity check: ${String(row?.integrity_check)}`);
+    }
     for (const table of SENTINEL_TABLES) {
       check.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get();
     }
@@ -113,10 +116,12 @@ export async function restoreDatabase(home: string, sourcePath: string, baseUrl:
   }
 
   // Verify first, in place second.
-  const check = new Database(source, { readonly: true });
+  const check = new Database(source, { readOnly: true });
   try {
-    const result = check.pragma('integrity_check', { simple: true });
-    if (result !== 'ok') throw new Error(`${source} failed its integrity check: ${String(result)}`);
+    const [row] = check.pragma('integrity_check') as ReadonlyArray<{ integrity_check?: unknown }>;
+    if (row?.integrity_check !== 'ok') {
+      throw new Error(`${source} failed its integrity check: ${String(row?.integrity_check)}`);
+    }
     for (const table of SENTINEL_TABLES) {
       try {
         check.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get();

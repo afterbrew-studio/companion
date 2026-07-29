@@ -132,7 +132,7 @@ otherwise.
 
 ## Multi-node: the answer is decided
 
-**Companion is a single-node appliance.** Keep `better-sqlite3`, keep stores
+**Companion is a single-node appliance.** Keep SQLite, keep stores
 synchronous, and write whatever SQLite SQL is clearest: there is no portability
 constraint to respect and pretending otherwise costs clarity for nothing.
 

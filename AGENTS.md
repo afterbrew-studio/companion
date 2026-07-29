@@ -77,7 +77,7 @@ platform and the existing `ui.tsx` kit. See `companion-verification`.
 ## Commands
 
 ```sh
-pnpm install      # corepack enable first; pnpm 10, Node >= 20
+pnpm install      # corepack enable first; pnpm 10, Node >= 24
 pnpm dev          # companion-api :8901 + Vite :5173 (proxies /api, /ws)
 pnpm build        # tsc across the workspace (+ vite build for web)
 pnpm typecheck    # the quality gate

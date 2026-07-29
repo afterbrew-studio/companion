@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   PipelineRecord,
   PipelineRunRecord,
@@ -13,7 +12,7 @@ import type {
 
 /** Pipeline definitions, the custom step library, and pipeline run history. */
 export class PipelinesStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(p: PipelineRecord): void {
     this.db

@@ -37,10 +37,10 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
-  // better-sqlite3 is a native CJS addon: bundling it produces a `require` that
-  // does not exist in the ESM output. It is a runtime dependency of the package.
-  external: ['@inquirer/prompts', 'better-sqlite3', 'undici'],
+  target: 'node24',
+  // The package's declared runtime dependencies, and nothing else: everything
+  // that is not one is inlined. SQLite is `node:sqlite`, so none of them is native.
+  external: ['@inquirer/prompts', 'undici'],
   banner: { js: '#!/usr/bin/env node' },
   logLevel: 'info',
 });
@@ -51,8 +51,8 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
-  external: ['better-sqlite3', 'ws', 'undici'],
+  target: 'node24',
+  external: ['ws', 'undici'],
   banner: { js: nodeBanner },
   // Contract-only imports register TypeScript interfaces and intentionally
   // have no runtime side effects; keep the publish build output readable.

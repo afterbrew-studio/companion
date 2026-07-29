@@ -108,7 +108,8 @@ companion user role alice release-manager
 
 ## Requirements
 
-- **Node.js 22 or newer** for the dashboard.
+- **Node.js 24 or newer** for the dashboard. Nothing is compiled at install time:
+  the database is Node's built-in SQLite.
 - **git** on `PATH` for repository work.
 - **[moxxy](https://www.npmjs.com/package/@moxxy/cli)** for agent runs.
 

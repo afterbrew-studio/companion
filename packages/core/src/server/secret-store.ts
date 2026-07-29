@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { SecretStore } from './capabilities.js';
 
 /**
@@ -11,7 +11,7 @@ import type { SecretStore } from './capabilities.js';
  */
 export class SqliteSecretStore implements SecretStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly isSecret: (moduleId: string, key: string) => boolean,
   ) {}
 

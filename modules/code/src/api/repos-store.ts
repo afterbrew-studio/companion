@@ -1,11 +1,11 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-sdk/server';
 import type { ServiceMap } from '@moxxy/companion-contracts';
 import type { RepoRecord } from '../contract/index.js';
 
 /** Connected repos and their per-repo automation switches. */
 export class ReposStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly workspaces: ServiceMap['workspace'],
   ) {}
 
@@ -27,7 +27,14 @@ export class ReposStore {
              default_branch = excluded.default_branch, private = excluded.private,
              workspace_id = COALESCE(repos.workspace_id, excluded.workspace_id)`,
         )
-        .run({ ...repo, isPrivate: repo.private ? 1 : 0, workspaceId: repo.workspaceId ?? null });
+        .run({
+          fullName: repo.fullName,
+          owner: repo.owner,
+          name: repo.name,
+          defaultBranch: repo.defaultBranch,
+          isPrivate: repo.private ? 1 : 0,
+          workspaceId: repo.workspaceId ?? null,
+        });
       if (repo.workspaceId) this.addToWorkspace(repo.fullName, repo.workspaceId);
     });
     write();

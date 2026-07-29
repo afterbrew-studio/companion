@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database, Statement } from '@moxxy/companion-services';
 import type { AuditEvent } from '@moxxy/companion-core/server';
 
 /**
@@ -28,10 +28,10 @@ export interface AuditQuery {
 }
 
 export class AuditStore {
-  private readonly insert: Database.Statement;
+  private readonly insert: Statement;
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     /**
      * Optional outbound stream. Injected rather than owned: the table is the
      * source of truth and must be written whether or not a collector exists.

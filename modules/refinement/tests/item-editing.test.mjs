@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import { RefinementService } from '../dist/api/refinement-service.js';
 import { RefinementStore } from '../dist/api/refinement-store.js';
 

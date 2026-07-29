@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import { assertPlannerTransition } from '../dist/api/planner-machine.js';
 import {
   clarificationPrompt,

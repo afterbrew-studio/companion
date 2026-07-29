@@ -28,11 +28,9 @@
     "@companion/module-slop": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
-    "@moxxy/companion-sdk": "workspace:*",
-    "better-sqlite3": "^12.2.0"
+    "@moxxy/companion-sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"

@@ -13,7 +13,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "keywords": [
     "github",
@@ -34,7 +34,6 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.10.1",
-    "better-sqlite3": "^12.2.0",
     "undici": "^7.16.0",
     "ws": "^8.18.0"
   },
@@ -42,7 +41,6 @@
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "companion-api": "workspace:*",
     "companion-web": "workspace:*",

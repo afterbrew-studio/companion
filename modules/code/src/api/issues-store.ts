@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import { likeArg, safeParse } from '@moxxy/companion-sdk/server';
+import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type { IssueRecord, TriageResult } from '../contract/index.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import type { TriageStore } from './triage-store.js';
@@ -10,7 +9,7 @@ import type { TriageStore } from './triage-store.js';
  */
 export class IssuesStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly triage: TriageStore,
     private readonly githubAccounts: GithubAccountsStore,
   ) {}

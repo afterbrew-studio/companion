@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
+import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
 import { AuditStore } from '../dist/api/audit-store.js';
-
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
 
 const upTo = (version) => {
   const db = new Database(':memory:');

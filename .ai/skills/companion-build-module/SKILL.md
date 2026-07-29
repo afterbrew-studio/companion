@@ -117,7 +117,7 @@ warns about any undeclared use.
 
 - Relative imports end in **`.js`** (NodeNext), even from `.ts`/`.tsx`.
 - `src/api/*` never imports React/DOM; `src/client/*` never imports
-  `better-sqlite3`/node built-ins. `client/index.tsx` imports `'../contract/index.js'`
+  `@moxxy/companion-sdk/server`/node built-ins. `client/index.tsx` imports `'../contract/index.js'`
   **first** (augmentation visibility).
 - Migrations are **additive & idempotent** (v1: `CREATE TABLE IF NOT EXISTS` +
   try/catch `ALTER`); v2+ are numbered, once-only, and carry `down()` (or the

@@ -1,5 +1,4 @@
-import type { Database } from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   SlopAppliedAction,
   SlopDetectionResult,

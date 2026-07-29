@@ -1,11 +1,10 @@
-import type Database from 'better-sqlite3';
-import { safeParse } from '@moxxy/companion-sdk/server';
+import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type { TriageResult, TriageVerdict } from '../contract/index.js';
 import { outcomeSql, toCounts, type OutcomeCounts } from './quality.js';
 
 /** AI triage verdicts per issue; the latest row per issue wins. */
 export class TriageStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   insert(t: TriageResult): void {
     this.db

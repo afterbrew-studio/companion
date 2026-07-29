@@ -1,5 +1,4 @@
-import type Database from 'better-sqlite3';
-import { legacyNotifications, type NotificationEmitter } from '@moxxy/companion-sdk/server';
+import { legacyNotifications, type NotificationEmitter, type Database } from '@moxxy/companion-sdk/server';
 import type { ServiceMap } from '@moxxy/companion-contracts';
 import type { ProposalRecord } from '@companion/module-plan/contract';
 import type { IssuesStore, PrsStore, ReposStore, RunsStore } from './cross-types.js';
@@ -35,11 +34,11 @@ export class AutomationsStore {
   readonly workspaces: ServiceMap['workspace'];
   readonly reports: ServiceMap['reports'];
   readonly settings: { get(key: string): string | null; set(key: string, value: string): void };
-  private readonly db: Database.Database;
+  private readonly db: Database;
   private readonly notify: NotificationEmitter;
 
   constructor(opts: {
-    db: Database.Database;
+    db: Database;
     repos: ReposStore;
     issues: IssuesStore;
     prs: PrsStore;

@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from '@moxxy/companion-services';
 import type { RoleOverride, RoleOverrides } from '@moxxy/companion-core/server';
 import type { RoleRecord } from '../contract/index.js';
 
@@ -25,7 +25,7 @@ const rowToRole = (r: RoleRow): RoleRecord => ({
  * admin's configuration.
  */
 export class RolesStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   list(): RoleRecord[] {
     return (this.db.prepare(`SELECT * FROM roles ORDER BY builtin DESC, id`).all() as RoleRow[]).map(rowToRole);

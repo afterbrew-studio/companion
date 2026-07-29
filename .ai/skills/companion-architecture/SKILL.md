@@ -142,7 +142,7 @@ Break one and the change is wrong even if it typechecks.
 ## Build, run, verify
 
 ```sh
-pnpm install            # corepack enable first; pnpm 10, Node >= 20
+pnpm install            # corepack enable first; pnpm 10, Node >= 24
 pnpm dev                # companion-api + Vite (proxies /api,/ws)
 pnpm -r build           # tsc across packages/modules (+ vite build for web, esbuild for the runner)
 pnpm -r typecheck       # THE quality gate — no linter, no test suite yet

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import Database from 'better-sqlite3';
+import { Database } from '@moxxy/companion-services';
 import { backupDatabase, restoreDatabase } from '../dist/backup.js';
 
 /** An unreachable address, so isRunning() answers "stopped" without a server. */
@@ -27,7 +27,7 @@ function seed(dir, users = ['alice']) {
 }
 
 function usersIn(file) {
-  const db = new Database(file, { readonly: true });
+  const db = new Database(file, { readOnly: true });
   try {
     return db.prepare(`SELECT username FROM users ORDER BY username`).all().map((r) => r.username);
   } finally {
