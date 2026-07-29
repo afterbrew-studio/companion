@@ -36,12 +36,13 @@ import {
   saveHarnesses,
 } from './harnesses.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
+import { RUN_HELP, parseRunCommand, runRunCommand } from './runs.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
-const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user'] as const;
+const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
@@ -90,6 +91,7 @@ Usage:
   npx @moxxy/companion                  Initialize when needed, start, open browser
   npx @moxxy/companion init             Create the local admin configuration only
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
+  npx @moxxy/companion run list         Runs awaiting you; also show/diff/approve/discard
   npx @moxxy/companion backup [file]    Snapshot the database (safe while running)
   npx @moxxy/companion restore <file>   Replace the database from a snapshot (stop first)
   npx @moxxy/companion module ...       Inspect and toggle modules (see: module --help)
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
   if (group) {
     const { cli, rest } = splitClientArgs(argv);
     if (!rest.length || rest.includes('--help') || rest.includes('-h')) {
-      process.stdout.write(group === 'module' ? MODULE_HELP : ACL_HELP);
+      process.stdout.write(group === 'module' ? MODULE_HELP : group === 'run' ? RUN_HELP : ACL_HELP);
       return;
     }
     const options = parseArgs([group, ...cli]);
@@ -128,6 +130,7 @@ async function main(): Promise<void> {
     const { host, port } = resolveAddress(options);
     const url = localUrl(host, port);
     if (group === 'module') await runModuleCommand(parseModuleCommand(rest), url);
+    else if (group === 'run') await runRunCommand(parseRunCommand(rest), url);
     else await runAclCommand(parseAclCommand(group, rest, options.home), url);
     return;
   }
