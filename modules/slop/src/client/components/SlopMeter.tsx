@@ -12,7 +12,7 @@ const BAND_FILL: Record<SlopBandId, string> = {
  *  the lazy page chunk). `lg` is the detection page's headline reading: the
  *  score leads, and the bar takes whatever width it is given. */
 export function SlopMeter({ value, size = 'sm' }: { value: number; size?: 'sm' | 'lg' }): JSX.Element {
-  const title = `AI likelihood ${value}/100 — the agent's estimate of how likely this PR is AI-generated slop`;
+  const title = `AI likelihood ${value}/100: the agent's estimate of how likely this PR is AI-generated slop`;
   const fill = (
     <span className={`block h-full rounded-full ${BAND_FILL[slopBand(value).id]}`} style={{ width: `${value}%` }} />
   );
