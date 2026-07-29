@@ -1,15 +1,35 @@
 import { z } from 'zod';
 import { APP_VERSION } from '@moxxy/companion-core';
-import { defineRoutes, route, created, badRequest, document } from '@moxxy/companion-core/server';
+import {
+  addModule,
+  defineRoutes,
+  route,
+  created,
+  badRequest,
+  document,
+  forbidden,
+  HttpError,
+  isModuleId,
+  isRegistrySpec,
+  listModuleArtifacts,
+  ModuleAlreadyAddedError,
+  notFound,
+  removeModule,
+} from '@moxxy/companion-core/server';
+import { paths, planRestart, restartDaemon } from '@moxxy/companion-services';
 import type { Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
   AccountInfo,
   AclExplained,
   AclMap,
+  AddModuleResponse,
   AuthState,
+  ExternalModulesResponse,
   LoginResponse,
   ProfileResponse,
+  RemoveModuleResponse,
+  RestartResponse,
   SessionInfo,
 } from '../contract/index.js';
 
@@ -49,6 +69,24 @@ const adjustRoleSchema = z.object({
   mode: z.enum(['grant', 'revoke', 'reset']),
   permissions: z.array(z.string().trim().min(3).max(80)).min(1).max(200),
 });
+/**
+ * A spec from the UI is deliberately narrower than what `npm pack` accepts.
+ * The CLI keeps the full range because whoever runs it already has a shell on
+ * the host; a browser does not, and the two extra powers are not small. A path
+ * spec would make "add a module" mean "copy any directory the daemon can read
+ * into the directory the daemon imports from", and a git spec is worse, because
+ * npm builds those, running the repository's `prepare` script as the daemon
+ * user before anything has been verified.
+ */
+const addModuleSchema = z.object({
+  spec: z
+    .string()
+    .trim()
+    .min(1)
+    .max(214)
+    .refine(isRegistrySpec, 'expected a registry package: name or @scope/name, optionally @version or @tag'),
+  force: z.boolean().optional(),
+});
 const scopeEnum = z.enum(['workspace', 'global']);
 const updateProfileSchema = z.object({ notificationScope: scopeEnum.nullable().optional() });
 const updateAccountSchema = z
@@ -68,6 +106,9 @@ export default defineRoutes((ctx) => {
   const roles = ctx.services.get('roles');
   const audit = ctx.services.get('audit');
   const settings = ctx.services.get('settings');
+  /** Serialises `add`: two of them would interleave a delete and a copy in one
+   *  directory, and the loser would leave half a module on disk. */
+  let adding = false;
   /** A user may only be given a role that exists; the schema cannot know the set. */
   const requireRole = (role: string | undefined): void => {
     if (role !== undefined && !ctx.rbac.hasRole(role)) throw badRequest(`unknown role: ${role}`);
@@ -358,6 +399,116 @@ export default defineRoutes((ctx) => {
       path: '/api/modules/:id/config',
       access: 'modules:manage',
       handler: ({ params }) => ctx.modules.getConfig(params.id),
+    }),
+
+    // ---------- out-of-tree module artifacts (files on the host, not switches) ----------
+    route({
+      // What is in the modules directory, which is not what the kernel has
+      // loaded: the scan runs once at boot, so `loaded: false` is a module
+      // whose files are here and whose code is not running.
+      method: 'GET',
+      path: '/api/modules/external',
+      access: 'modules:manage',
+      handler: (): ExternalModulesResponse => {
+        const root = paths.externalModules();
+        const loaded = new Set(ctx.modules.list().filter((m) => m.external).map((m) => m.id));
+        return {
+          root,
+          modules: listModuleArtifacts(root).map((a) => ({ ...a, loaded: loaded.has(a.id) })),
+          supervisor: planRestart().supervisor,
+        };
+      },
+    }),
+    route({
+      // Downloads code and puts it on the host, so it is its own permission and
+      // it writes its own audit line: the router records the route pattern, and
+      // for this one the operand is the whole point.
+      method: 'POST',
+      path: '/api/modules/add',
+      access: 'modules:deploy',
+      body: addModuleSchema,
+      handler: async ({ body, user }): Promise<AddModuleResponse> => {
+        if (adding) throw new HttpError(429, 'another module is being added; wait for that to finish');
+        adding = true;
+        try {
+          const result = await addModule(body.spec, paths.externalModules(), body.force === true).catch(
+            (err: unknown) => {
+              // 409 so the caller can offer to replace without reading prose.
+              if (err instanceof ModuleAlreadyAddedError) throw new HttpError(409, err.message);
+              throw err;
+            },
+          );
+          const p = result.provenance;
+          ctx.audit.record({
+            at: Date.now(),
+            actor: user?.username ?? null,
+            action: 'POST /api/modules/add',
+            access: 'modules:deploy',
+            status: 200,
+            module: 'core',
+            detail:
+              `${result.id}: ${p.name}@${p.version} from '${p.spec}'` +
+              `${p.registry ? ` via ${p.registry}` : ''} (${p.integrity ?? 'no integrity'})`,
+          });
+          // Nothing in the kernel changed, but the artifact list did.
+          ctx.broadcast({ t: 'modules.changed' });
+          return { id: result.id, replaced: result.replaced, notes: result.notes, provenance: p };
+        } finally {
+          adding = false;
+        }
+      },
+    }),
+    route({
+      // `uninstall` plus deleting the files, which is the only version of the
+      // verb that makes a module actually go away: uninstall alone leaves the
+      // directory, so the next boot scans it back in as Available.
+      method: 'POST',
+      path: '/api/modules/:id/remove',
+      access: 'modules:deploy',
+      handler: async ({ params, user }): Promise<RemoveModuleResponse> => {
+        const id = params.id;
+        if (!isModuleId(id)) throw badRequest(`'${id}' is not a module id`);
+        const known = ctx.modules.list().find((m) => m.id === id);
+        if (known && !known.external) {
+          throw forbidden(`'${id}' is compiled into this build, so its files are not Companion's to delete`);
+        }
+        // Migrations down and configuration wiped BEFORE the files go: deleting
+        // first would leave tables whose down() can no longer be imported.
+        if (known) await ctx.modules.uninstall(id);
+        const removed = removeModule(id, paths.externalModules());
+        // Nothing loaded, no files, no ledger row: there was no such module.
+        // Files that arrived after boot ARE removable, which is the whole
+        // reason this does not simply ask the kernel.
+        if (!known && !removed.removed && !removed.provenance) throw notFound(`unknown module: ${id}`);
+        // The catalog entry outlives the files otherwise, and installing it
+        // would import a path that no longer exists.
+        if (known) ctx.modules.forget(id);
+        ctx.audit.record({
+          at: Date.now(),
+          actor: user?.username ?? null,
+          action: 'POST /api/modules/:id/remove',
+          access: 'modules:deploy',
+          status: 200,
+          module: 'core',
+          detail: `${id}: deleted ${removed.dir}${removed.provenance ? ` (${removed.provenance.name}@${removed.provenance.version})` : ''}`,
+        });
+        ctx.broadcast({ t: 'modules.changed' });
+        return { id, uninstalled: known !== undefined, deleted: removed.removed };
+      },
+    }),
+    route({
+      // The scan runs once at boot, so files on disk are not a loaded module.
+      // Exits through the normal SIGTERM path (every onDisable runs, the
+      // database closes); whether Companion comes back is `supervisor`'s
+      // business, and an unsupervised daemon starts its own successor first.
+      method: 'POST',
+      path: '/api/modules/restart',
+      access: 'modules:deploy',
+      handler: ({ user }): RestartResponse => {
+        ctx.log.warn(`restart requested by ${user?.username ?? 'unknown'}`);
+        const plan = restartDaemon();
+        return { supervisor: plan.supervisor, reexec: plan.reexec };
+      },
     }),
     route({
       method: 'PUT',

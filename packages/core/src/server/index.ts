@@ -12,6 +12,8 @@ export * from './module-config-store.js';
 export * from './secret-store.js';
 export * from './abi-bridge.js';
 export * from './external-modules.js';
+export * from './module-verify.js';
+export * from './module-artifacts.js';
 export * from './rbac-grid.js';
 export * from './capabilities.js';
 export * from './context.js';

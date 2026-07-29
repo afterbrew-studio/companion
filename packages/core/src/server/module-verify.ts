@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { ABI_GENERATION, ABI_PACKAGES } from './external-modules.js';
 
 /**
- * `companion module verify <dir>` — static checks on an out-of-tree module,
- * before it is anywhere near a daemon.
+ * Static checks on an out-of-tree module, before it is anywhere near a daemon.
+ * Behind `companion module verify <dir>`, and behind every add: the daemon runs
+ * this against the staged files, so a module that fails is never placed.
  *
  * Everything here is mechanical and reads only files. That is the point: the
  * failures this catches are the ones a human review misses because they are
@@ -30,11 +32,6 @@ const CLIENT_ABI = new Set([
   'react/jsx-runtime',
   'react-dom',
 ]);
-
-const ABI_GENERATION = '0.x';
-
-/** Resolved from the host, never from the module's own tree. */
-const ABI_PACKAGES: readonly string[] = ['@moxxy/companion-sdk', '@moxxy/companion-contracts'];
 
 interface Meta {
   id?: string;

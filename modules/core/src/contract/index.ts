@@ -1,5 +1,7 @@
 import type { Role } from '@moxxy/companion-types';
 import type { AuthUser, Permission } from '@moxxy/companion-contracts';
+import type { ModuleArtifact, ModuleProvenance } from '@moxxy/companion-core/server';
+import type { Supervisor } from '@moxxy/companion-services';
 import type { Auth } from '../api/auth.js';
 import type { RolesService } from '../api/roles-service.js';
 import type { AuditStore } from '../api/audit-store.js';
@@ -16,6 +18,7 @@ declare module '@moxxy/companion-contracts' {
     'users:manage': true;
     'settings:manage': true;
     'modules:manage': true;
+    'modules:deploy': true;
     'audit:read': true;
   }
   interface ServiceMap {
@@ -84,6 +87,53 @@ export interface AclExplained {
   readonly impliedBy: readonly Permission[];
   /** An instance override on this pair beats every module grant. */
   readonly override: 'grant' | 'revoke' | null;
+}
+
+// ---- out-of-tree module artifacts (the files in <home>/modules) ----
+
+export type { ModuleArtifact, ModuleProvenance, Supervisor };
+
+/**
+ * One out-of-tree module as it is on disk right now, which is not the same
+ * question as what the kernel has loaded: the external scan runs once at boot,
+ * so files added since are real but dormant, and `loaded` is what says so.
+ */
+export interface ExternalModuleRecord extends ModuleArtifact {
+  /** false = this daemon has not scanned these files, so a restart is still owed. */
+  readonly loaded: boolean;
+}
+
+export interface ExternalModulesResponse {
+  /** The directory the daemon scans, so "where is this" has an answer in the UI. */
+  readonly root: string;
+  readonly modules: readonly ExternalModuleRecord[];
+  /** What is watching the daemon, which decides what restarting it does. */
+  readonly supervisor: Supervisor;
+}
+
+/** What `POST /api/modules/add` obtained, with the ledger entry it wrote. */
+export interface AddModuleResponse {
+  readonly id: string;
+  /** The version already there that this replaced, or null on a first add. */
+  readonly replaced: string | null;
+  /** ABI-check observations worth showing (external imports, server-only, …). */
+  readonly notes: readonly string[];
+  readonly provenance: ModuleProvenance;
+}
+
+export interface RemoveModuleResponse {
+  readonly id: string;
+  /** true = the kernel knew it, so migrations were rolled back and config wiped. */
+  readonly uninstalled: boolean;
+  /** false = there were no files under this id (already removed by hand). */
+  readonly deleted: boolean;
+}
+
+/** What restarting did, so the UI can say whether Companion is coming back. */
+export interface RestartResponse {
+  readonly supervisor: Supervisor;
+  /** true = nothing supervises this daemon, so it started its own successor. */
+  readonly reexec: boolean;
 }
 
 /** A managed account (admin-editable; passwords are scrypt hashes at rest). */

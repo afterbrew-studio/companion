@@ -10,7 +10,7 @@ export default defineManifest({
   title: 'Core',
   version: '0.1.0',
   required: true,
-  permissions: ['users:manage', 'settings:manage', 'modules:manage', 'audit:read'],
+  permissions: ['users:manage', 'settings:manage', 'modules:manage', 'modules:deploy', 'audit:read'],
   config: [
     {
       key: 'externalSignup',

@@ -17,6 +17,9 @@ import { HttpError } from './router.js';
 
 /** A compiled-in module: its cheap static manifest + a lazy loader for the heavy /api barrel. */
 export interface InstalledModule {
+  /** Set by external discovery: the directory this module was loaded from.
+   *  Absent = compiled into the build, so its files are not the daemon's to delete. */
+  readonly dir?: string;
   /** Set by external discovery: the module ships a prebuilt browser chunk. */
   readonly externalClient?: boolean;
   readonly manifest: ModuleManifest;
@@ -136,6 +139,7 @@ export class ModuleKernel {
         enable: (id) => this.enable(id),
         disable: (id) => this.disable(id),
         uninstall: (id) => this.uninstall(id),
+        forget: (id) => this.forget(id),
         getConfig: (id) => this.getConfig(id),
         setConfig: (id, patch) => this.setConfig(id, patch),
       },
@@ -254,6 +258,7 @@ export class ModuleKernel {
         configured: this.isConfigured(id, cfgKeys.get(id) ?? new Set()),
         permissions: m.manifest.permissions ?? [],
         config: m.manifest.config ?? [],
+        external: m.dir !== undefined,
         externalClient: m.externalClient === true,
         entitlement: m.manifest.entitlement ?? null,
         entitled: !m.manifest.entitlement || this.entitlements.has(m.manifest.entitlement),
@@ -568,6 +573,28 @@ export class ModuleKernel {
     } finally {
       this.inFlight.delete(id);
     }
+  }
+
+  /**
+   * Drop an uninstalled external module from the catalog, because its files
+   * are gone.
+   *
+   * Only the artifact's owner calls this (the `remove` route, after the files
+   * are deleted). Without it the module would keep listing as "Available" until
+   * the next boot, and installing it would dynamic-import a path that no longer
+   * exists. Refuses a compiled-in module: nothing deleted its code, so pretending
+   * it left the build would only make the next `modules.changed` disagree with
+   * the registry.
+   */
+  forget(id: ModuleId): void {
+    const inst = this.installed.get(id);
+    if (!inst) return;
+    if (inst.dir === undefined) throw new HttpError(403, `module '${id}' is compiled into this build`);
+    if (this.isEnabled(id)) throw new HttpError(409, `disable '${id}' first`);
+    this.installed.delete(id);
+    this.loaded.delete(id);
+    this.perModuleCtx.delete(id);
+    this.secretFields.delete(id);
   }
 
   /**

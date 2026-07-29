@@ -118,7 +118,7 @@ console.log(`SDK surface: ${total} symbols across ${Object.keys(current).length}
 /**
  * The browser ABI is written down twice, and it has to stay one list: the import
  * map in `apps/web/vite.config.ts` decides what a module chunk CAN resolve, and
- * the allowlist in the CLI decides what `module verify` LETS it import. Drift in
+ * the allowlist the verifier uses decides what `module verify` LETS it import. Drift in
  * either direction is a bad day: a specifier the verifier permits but the map
  * omits fails at load, and one the map serves but the verifier rejects makes a
  * legitimate module unpublishable.
@@ -129,8 +129,8 @@ function clientAbiDrift() {
     return m ? m[1] : null;
   };
   const mapBody = block('apps/web/vite.config.ts', /const HOST_MODULES = \{([\s\S]*?)\} as const;/);
-  const allowBody = block('apps/companion-cli/src/verify.ts', /const CLIENT_ABI = new Set\(\[([\s\S]*?)\]\);/);
-  if (!mapBody || !allowBody) return ['could not read the client ABI from vite.config.ts or verify.ts'];
+  const allowBody = block('packages/core/src/server/module-verify.ts', /const CLIENT_ABI = new Set\(\[([\s\S]*?)\]\);/);
+  if (!mapBody || !allowBody) return ['could not read the client ABI from vite.config.ts or module-verify.ts'];
 
   // HOST_MODULES is `specifier: filename`, so read KEYS: taking every quoted
   // string would also pick up the file names and quietly compare the wrong set.

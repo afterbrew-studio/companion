@@ -4,6 +4,7 @@ import type { ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core
 import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@moxxy/companion-ui';
 import { modulesApi } from '../api.js';
 import { ModuleConfigForm } from '../components/ModuleConfigForm.js';
+import { OutOfTree } from '../components/OutOfTree.js';
 
 /**
  * Runtime module lifecycle (admin). The catalog comes from the kernel host
@@ -151,6 +152,8 @@ export function ModulesPage(): JSX.Element {
         </Section>
       ) : null}
 
+      <OutOfTree modules={modules} />
+
       {target ? (
         <Modal
           title={`${target.mode === 'install' ? 'Install' : 'Configure'} ${target.mod.title}`}
@@ -183,6 +186,7 @@ function ModuleInfo({ mod }: { mod: ModuleDescriptor }): JSX.Element {
         <span className="truncate font-medium">{mod.title}</span>
         <span className="dim text-xs">v{mod.version}</span>
         {mod.required ? <span className="badge shrink-0">required</span> : null}
+        {mod.external ? <span className="badge shrink-0">out of tree</span> : null}
         {mod.installed && !mod.configured ? <span className="badge shrink-0">needs configuration</span> : null}
       </span>
       <span className="dim mt-0.5 block truncate text-xs">

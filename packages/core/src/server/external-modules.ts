@@ -50,7 +50,7 @@ export const ABI_GENERATION = '0.x';
  * Named individually rather than by scope: `@moxxy` also holds `@moxxy/cli`,
  * which has nothing to do with the ABI and is not a problem to vendor.
  */
-const ABI_PACKAGES = ['@moxxy/companion-sdk', '@moxxy/companion-contracts'] as const;
+export const ABI_PACKAGES: readonly string[] = ['@moxxy/companion-sdk', '@moxxy/companion-contracts'];
 
 /** Read `$COMPANION_HOME/modules`, without importing anything. */
 export function scanExternalModules(dir: string): {
@@ -150,6 +150,7 @@ export async function loadExternalModules(
       }
       out.push({
         manifest,
+        dir: mod.dir,
         externalClient: typeof mod.meta.client === 'string' && mod.meta.client.length > 0,
         load: async (): Promise<ServerModule> => {
           const api = pathToFileURL(join(mod.dir, mod.meta.api)).href;

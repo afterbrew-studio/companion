@@ -58,6 +58,8 @@ export interface KernelControl {
   enable(id: ModuleId): Promise<void>;
   disable(id: ModuleId): Promise<void>;
   uninstall(id: ModuleId): Promise<void>;
+  /** Drop an uninstalled out-of-tree module from the catalog once its files are gone. */
+  forget(id: ModuleId): void;
   /** Stored config, redacted — secret values never leave the kernel. */
   getConfig(id: ModuleId): ModuleConfigState;
   /** Validated partial update: omitted key = unchanged, `null` = clear, secrets reject `''`. */
@@ -83,6 +85,9 @@ export interface ModuleListing {
   readonly entitlement: string | null;
   /** false ⇒ declared an entitlement this instance's licence does not grant. */
   readonly entitled: boolean;
+  /** Loaded from `$COMPANION_HOME/modules`, so its files can be added and removed
+   *  at runtime. false = compiled into this build. */
+  readonly external: boolean;
   /** Out-of-tree module whose client chunk the shell must fetch from
    *  `/modules/<id>/client.js` instead of a compiled-in loader. */
   readonly externalClient: boolean;
