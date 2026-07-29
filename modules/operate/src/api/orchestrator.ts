@@ -375,6 +375,10 @@ export class Orchestrator implements RunnerEventSink {
   recover(): void {
     const swept = this.store.runs.markInterrupted();
     if (swept > 0) log.info(`marked ${swept} run(s) interrupted from previous daemon life`);
+    // A run in 'review' survives a restart, so a verification left mid-flight
+    // would keep anything waiting on it waiting forever.
+    const stranded = this.store.runs.failInterruptedVerifications();
+    if (stranded > 0) log.info(`marked ${stranded} interrupted verification(s) unavailable`);
     // Children die with the daemon, so every socket file left behind is stale.
     try {
       for (const name of readdirSync(paths.sockets())) {

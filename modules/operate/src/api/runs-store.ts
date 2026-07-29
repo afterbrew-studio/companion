@@ -268,6 +268,26 @@ export class RunsStore {
       .all(since) as SpendGroupRow[];
   }
 
+  /**
+   * Boot-time sweep: a verification that was in flight when the daemon stopped.
+   *
+   * It cannot be resumed (the child is gone) and it must not stay 'running',
+   * because a consumer waiting for it to settle would wait forever. 'unavailable'
+   * is the honest answer and the one that unblocks: we did not check.
+   */
+  failInterruptedVerifications(): number {
+    return this.db
+      .prepare(
+        `UPDATE runs
+         SET verification = json_set(
+               json_set(verification, '$.status', 'unavailable'),
+               '$.output', 'the daemon restarted before verification finished'
+             )
+         WHERE verification IS NOT NULL AND json_extract(verification, '$.status') = 'running'`,
+      )
+      .run().changes;
+  }
+
   /** Boot-time sweep: any run left live-ish died with the daemon. */
   markInterrupted(): number {
     const result = this.db

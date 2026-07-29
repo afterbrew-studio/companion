@@ -6,13 +6,14 @@ import type {
   RunQueueSnapshot,
   RunRecord,
   RunTaskDescriptor,
+  RunVerification,
   TokenUsage,
 } from '../contract/index.js';
 import type { AgentPolicy } from './agent-policy.js';
 import type { Budgets } from './budgets.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { Runners } from './runners-registry.js';
-import type { RunsStore } from './runs-store.js';
+import { rowToRun, type RunsStore } from './runs-store.js';
 import type { WebhookTunnel } from './webhook-tunnel.js';
 import type { Skills } from './skills.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -58,6 +59,11 @@ export class OperateService {
    */
   setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
     this.orchestrator.setVerifyCommandResolver(resolve);
+  }
+
+  /** The parsed pre-review verification for a run; operate owns the encoding. */
+  verificationFor(runId: string): RunVerification | null {
+    return this.runsStore.get(runId) ? rowToRun(this.runsStore.get(runId)!, false).verification : null;
   }
 
   /**

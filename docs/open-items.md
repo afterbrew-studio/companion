@@ -261,9 +261,22 @@ Added without a protocol bump, per the convention in `runner-agent.ts`, so an
 older agent answers 404 and degrades rather than being marked outdated and taken
 out of placement.
 
-Still open, and it is the obvious next increment: **the board does not retry on a
-failed verification.** It retries on failed CI (`auto_fix_ci`, `max_attempts`), so
-the cheap signal exists but the loop still waits for the expensive one.
+The board now retries on it, closing the loop: a failed verification goes through
+the same `attemptFail` path as failed CI, so the cheap signal is what drives the
+retry and the expensive one is only reached by work that passed. The gate returns
+'wait' while verification is running, because it starts after the run enters review
+and acting on the first event would open the PR before the answer arrived; a
+verification stranded by a restart is demoted to unavailable at boot so nothing can
+wait forever.
+
+The previous failure is also fed into the next attempt's prompt. Without that a
+retry was a re-roll: the agent repeated the attempt knowing nothing about what it
+had broken.
+
+Still open, and small: **a failed verification does not block a human approving
+anyway.** That is deliberate for now (the reviewer can see the failure and may have
+a reason), but there is no per-repository "refuse to open a PR on a failed
+verification" switch for a team that wants one.
 
 ## 13. Worktree release on completion `[BUILT]`
 

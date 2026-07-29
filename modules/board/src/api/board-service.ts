@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AuthUser, ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { NotificationEmitter } from '@moxxy/companion-sdk/server';
-import type { RunRecord, RunStatus } from '@companion/module-operate/contract';
+import type { RunRecord, RunStatus, RunVerification } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@moxxy/companion-sdk/server';
 import type {
@@ -496,6 +496,34 @@ export class BoardService {
   }
 
   /** React to operate's run lifecycle (wired to the server bus in jobs.ts). */
+  /**
+   * Should this finished run become a pull request, or go back for another attempt?
+   *
+   * Verification starts AFTER the run enters review, so the first run.changed for
+   * that transition still says 'running'. Returning 'wait' there is what makes the
+   * cheap signal usable: verifyForReview emits again when it settles, and acting
+   * on the first event would open the PR before the answer arrived.
+   *
+   * 'unavailable' proceeds. No command configured, or a runner too old to check,
+   * is not evidence against the diff, and refusing to ship on it would break every
+   * repository that has not opted in.
+   */
+  private verificationGate(verification: RunVerification | null | undefined): 'proceed' | 'wait' | 'retry' {
+    // Falsy, not `=== null`: onRunChanged is fed by a bus event, and a record
+    // built before this field existed carries undefined. A throw here would take
+    // down the board's reaction to every run, not just this one.
+    if (!verification) return 'proceed';
+    if (verification.status === 'running') return 'wait';
+    return verification.status === 'failed' ? 'retry' : 'proceed';
+  }
+
+  /** Why the retry is happening, in words the next attempt's prompt can use. */
+  private verificationReason(v: RunVerification | null): string {
+    if (!v) return 'verification failed';
+    const how = v.timedOut ? 'timed out' : `exited ${v.exitCode ?? 'on a signal'}`;
+    return `verification failed: \`${v.command}\` ${how}\n${v.output}`.slice(0, 2_000);
+  }
+
   onRunChanged(run: RunRecord): void {
     if (this.disposed) return;
     // Any terminal run may free the first slot a Ready card is waiting for,
@@ -505,6 +533,14 @@ export class BoardService {
     const task = this.store.taskByRunId(run.id);
     if (!task || task.runId !== run.id) return;
     if (run.status === 'review') {
+      const gate = this.verificationGate(run.verification);
+      if (gate === 'wait') return;
+      if (gate === 'retry') {
+        // The whole point of verifying: retry off the cheap signal instead of
+        // spending a PR and a CI run to learn the same thing.
+        this.attemptFail(task.id, this.verificationReason(run.verification));
+        return;
+      }
       void this.approveFlow(task.id, run.id).catch((err) => {
         log.warn('board: approve flow crashed', { taskId: task.id, err: String(err) });
         this.attemptFail(task.id, `opening the PR failed: ${String(err)}`);
@@ -528,9 +564,17 @@ export class BoardService {
       if (!run) {
         this.attemptFail(task.id, 'run record disappeared — requeued');
       } else if (run.status === 'review') {
-        await this.approveFlow(task.id, task.runId).catch((err) =>
-          this.attemptFail(task.id, `opening the PR failed: ${String(err)}`),
-        );
+        const verification = this.operate.verificationFor(task.runId);
+        const gate = this.verificationGate(verification);
+        // 'wait' cannot persist here: boot recovery demotes a stranded
+        // verification to unavailable before this sweep runs.
+        if (gate === 'retry') {
+          this.attemptFail(task.id, this.verificationReason(verification));
+        } else if (gate === 'proceed') {
+          await this.approveFlow(task.id, task.runId).catch((err) =>
+            this.attemptFail(task.id, `opening the PR failed: ${String(err)}`),
+          );
+        }
       } else if (run.status === 'completed' && run.pr_url) {
         // The daemon died between approve() and our bookkeeping — adopt the PR.
         this.store.updateTask(task.id, {
@@ -755,12 +799,18 @@ export class BoardService {
     const acceptance = task.acceptance.trim()
       ? `\n## Acceptance criteria (definition of done)\n${task.acceptance.trim()}\n`
       : '';
+    // Without this a retry is a re-roll: the agent repeats the attempt with no
+    // knowledge of what the last one broke.
+    const previous =
+      task.attempts > 0 && task.lastError
+        ? `\n## The previous attempt failed\nFix this before anything else; do not repeat it.\n\n${task.lastError}\n`
+        : '';
     return `You are an autonomous software engineer working in a dedicated git worktree (branch off origin/${baseBranch}). Implement the following task from the development board.
 
 ## Task: ${task.title}
 
 ${task.description || '(no further description)'}
-${acceptance}${specSection}
+${acceptance}${previous}${specSection}
 ## Rules
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
