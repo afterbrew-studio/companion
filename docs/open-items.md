@@ -246,6 +246,19 @@ covered by this.
 
 ---
 
+## Parked with a written design
+
+**A forge abstraction (GitLab, Gitea, Forgejo).** Not built and deliberately not
+started, but surveyed: [`specs/forge-abstraction.md`](../specs/forge-abstraction.md)
+records what is actually coupled (136 files mention GitHub, and the expensive part
+is not the client but the six GitHub concepts that leaked into DTOs, stores and
+route paths), the order to unpick it in, and two cheaper alternatives.
+
+The single line worth carrying: `owner/name` is the primary key in seven tables and
+two route segments, and GitLab's nested groups make it invalid. That is what turns
+a port into a migration, and it is why this is parked until there is a real
+second-forge user to verify against.
+
 ## Not on this list, and why
 
 - **Multi-node / active-active.** Decided against, not deferred.
