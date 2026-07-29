@@ -4,6 +4,7 @@ import '@companion/module-workspace/contract';
 import '@companion/module-code/contract';
 import type { ChecksSnapshot } from '@companion/module-code/contract';
 import '@companion/module-operate/contract';
+import type { CatalogModel } from '@companion/module-operate/contract';
 import '@companion/module-plan/contract';
 import type { BoardService } from '../api/board-service.js';
 
@@ -91,6 +92,14 @@ export interface TaskRecord {
   readonly attachments: readonly TaskAttachment[];
   /** Prerequisite tasks: dispatch holds this task until every one is done. */
   readonly dependsOn: readonly string[];
+  /**
+   * Model every run this card spawns rides. null = inherit, which is the
+   * `board.worker` pin (and the daemon default under it) resolved per run, so
+   * changing that pin still moves every card that never chose for itself.
+   * Editable mid-flight: the change reaches the card's NEXT run, since a run
+   * already dispatched is bound to the machine and model it started on.
+   */
+  readonly model: string | null;
   readonly priority: TaskPriority;
   readonly status: TaskStatus;
   readonly stage: TaskStage | null;
@@ -160,4 +169,22 @@ export interface BoardConfig {
 export interface SpecOption {
   readonly id: string;
   readonly title: string;
+}
+
+/**
+ * What a card's model picker may offer, and what leaving it unset means. Read
+ * straight off operate's runner catalog and the `board.worker` pin, so there is
+ * no second list to keep in step with the Task models settings page.
+ */
+export interface TaskModelOptions {
+  /**
+   * Models some enabled SHARED machine is capable of serving. Capability, not
+   * availability: board work never places on personal machines, and a card
+   * outlives any one machine being offline or busy.
+   */
+  readonly models: ReadonlyArray<CatalogModel>;
+  /** The `board.worker` pin an unset card inherits; null = no pin, so the daemon default applies. */
+  readonly workerModel: string | null;
+  /** The daemon default, under everything else. */
+  readonly defaultModel: string;
 }

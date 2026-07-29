@@ -31,6 +31,7 @@ interface TaskRow {
   spec_id: string | null;
   attachments: string;
   depends_on: string;
+  model: string | null;
   priority: number;
   status: string;
   stage: string | null;
@@ -82,6 +83,7 @@ function rowToTask(row: TaskRow): TaskRecord {
     specId: row.spec_id,
     attachments: JSON.parse(row.attachments) as TaskAttachment[],
     dependsOn: JSON.parse(row.depends_on) as string[],
+    model: row.model,
     priority: row.priority as TaskPriority,
     status: row.status as TaskStatus,
     stage: row.stage as TaskStage | null,
@@ -115,6 +117,7 @@ export interface TaskPatch {
   specId?: string | null;
   attachments?: readonly TaskAttachment[];
   dependsOn?: readonly string[];
+  model?: string | null;
   priority?: TaskPriority;
   status?: TaskStatus;
   stage?: TaskStage | null;
@@ -139,6 +142,7 @@ const TASK_PATCH_COLUMNS: ReadonlyArray<[keyof TaskPatch, string]> = [
   ['specId', 'spec_id'],
   ['attachments', 'attachments'],
   ['dependsOn', 'depends_on'],
+  ['model', 'model'],
   ['priority', 'priority'],
   ['status', 'status'],
   ['stage', 'stage'],
@@ -218,12 +222,12 @@ export class BoardStore {
     this.db
       .prepare(
         `INSERT INTO board_tasks (
-           id, workspace_id, repo, target_branch, title, description, acceptance, spec_id, attachments, depends_on, priority, status, stage,
+           id, workspace_id, repo, target_branch, title, description, acceptance, spec_id, attachments, depends_on, model, priority, status, stage,
            created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
            review_risk, review_recommendation, attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
-           @id, @workspaceId, @repo, @targetBranch, @title, @description, @acceptance, @specId, @attachments, @dependsOn, @priority, @status, @stage,
+           @id, @workspaceId, @repo, @targetBranch, @title, @description, @acceptance, @specId, @attachments, @dependsOn, @model, @priority, @status, @stage,
            @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
            @reviewRisk, @reviewRecommendation, @attempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt

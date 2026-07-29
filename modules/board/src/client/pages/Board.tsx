@@ -44,6 +44,7 @@ import type {
   SpecOption,
   TaskAttachmentInput,
   TaskEventRecord,
+  TaskModelOptions,
   TaskPriority,
   TaskRecord,
   TaskStatus,
@@ -52,6 +53,7 @@ import type {
 } from '../../contract/index.js';
 import { boardApi, type TaskDetail } from '../api.js';
 import { useBoard } from '../hooks/useBoard.js';
+import { useTaskModels } from '../hooks/useTaskModels.js';
 
 /**
  * Board columns. All but "needs_decision" mirror a TaskStatus; needs_decision
@@ -796,11 +798,14 @@ function NewTaskModal({
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [priority, setPriority] = useState<TaskPriority>(2);
+  const [model, setModel] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<TaskAttachmentInput[]>([]);
   const [specs, setSpecs] = useState<SpecOption[]>([]);
   const [specId, setSpecId] = useState<string | null>(null);
   const [queue, setQueue] = useState(true);
   const [busy, setBusy] = useState(false);
+  const { can } = useAuth();
+  const modelOptions = useTaskModels(can('board:manage'));
 
   // The board itself pushes the branch and opens the PR, so a repo the profile
   // can only read cannot host a task — offering one would queue work that dies
@@ -841,6 +846,7 @@ function NewTaskModal({
         acceptance,
         specId,
         attachments,
+        model,
         priority,
         queue,
       });
@@ -923,6 +929,7 @@ function NewTaskModal({
                 options={PRIORITY_OPTIONS}
               />
             </Field>
+            <ModelField options={modelOptions} value={model} onChange={setModel} />
             {specs.length > 0 ? (
               <Field label="Spec" hint="Handed to the worker as context.">
                 <Dropdown
@@ -951,6 +958,53 @@ function NewTaskModal({
         </FormActions>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * The card's model, shared by the create modal and the task editor. Empty means
+ * inherit, and the option says what it inherits so nobody has to open the Task
+ * models settings page to find out.
+ */
+function ModelField({
+  options,
+  value,
+  onChange,
+}: {
+  options: TaskModelOptions | null;
+  value: string | null;
+  onChange: (model: string | null) => void;
+}): JSX.Element {
+  const inherited = options ? (options.workerModel ?? options.defaultModel) : '';
+  const offered = options?.models ?? [];
+  // A card holding a model the pool cannot serve right now keeps it and stays
+  // visible: the catalog is capability, and it moves. Dropping the option would
+  // make the next edit silently discard a choice the card still holds.
+  const stale =
+    value !== null && !offered.some((m) => m.id === value)
+      ? [{ value, label: value, hint: 'not offered right now' }]
+      : [];
+  return (
+    <Field label="Model" hint="Every run this task spawns rides it: building, repairing CI and addressing review alike.">
+      <Dropdown
+        ariaLabel="Model"
+        value={value ?? ''}
+        onChange={(v) => onChange(v || null)}
+        options={[
+          {
+            value: '',
+            label: inherited ? `Inherit (${inherited})` : 'Inherit',
+            hint: options?.workerModel ? 'board workers pin' : 'instance default',
+          },
+          ...stale,
+          ...offered.map((m) => ({
+            value: m.id,
+            label: m.id,
+            hint: m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k` : undefined,
+          })),
+        ]}
+      />
+    </Field>
   );
 }
 
@@ -1032,6 +1086,7 @@ function TaskDetailDrawer({
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [priority, setPriority] = useState<TaskPriority>(2);
+  const [model, setModel] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<TaskAttachmentInput[]>([]);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   // dependsOn is also machine-written (refinement late-linking) — an untouched
@@ -1041,6 +1096,7 @@ function TaskDetailDrawer({
   const [depFocused, setDepFocused] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const { can } = useAuth();
+  const modelOptions = useTaskModels(can('board:manage'));
 
   // Tasks that (transitively) depend on this one — offering them as a
   // prerequisite would close a cycle. The server enforces this too.
@@ -1102,6 +1158,7 @@ function TaskDetailDrawer({
       description,
       acceptance,
       priority,
+      model,
       attachments,
       ...(depsTouched ? { dependsOn } : {}),
     });
@@ -1157,6 +1214,7 @@ function TaskDetailDrawer({
                 setDescription(task.description);
                 setAcceptance(task.acceptance);
                 setPriority(task.priority);
+                setModel(task.model);
                 setAttachments(
                   task.attachments.flatMap(({ name, mediaType, content }) =>
                     content ? [{ name, mediaType, content }] : [],
@@ -1237,6 +1295,15 @@ function TaskDetailDrawer({
               <ChecksLine checks={pr?.checks ?? null} />
             </DetailRow>
           ) : null}
+          <DetailRow label="Model">
+            {task.model ? (
+              <span className="font-mono">{task.model}</span>
+            ) : (
+              <span className="dim">
+                inherited{modelOptions ? ` · ${modelOptions.workerModel ?? modelOptions.defaultModel}` : ''}
+              </span>
+            )}
+          </DetailRow>
           {dependencies.length > 0 ? (
             <DetailRow label="Depends on">
               <span className="flex min-w-0 flex-col gap-0.5">
@@ -1295,6 +1362,7 @@ function TaskDetailDrawer({
                 options={PRIORITY_OPTIONS}
               />
             </Field>
+            <ModelField options={modelOptions} value={model} onChange={setModel} />
             {depCandidates.length > 0 || dependsOn.length > 0 ? (
               <Field
                 label={`Depends on${dependsOn.length > 0 ? ` (${dependsOn.length})` : ''}`}

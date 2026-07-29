@@ -8,6 +8,20 @@ import type { GitHubClient } from './github-client.js';
 import type { PrChecks } from './pr-checks.js';
 
 /**
+ * Dispatch context a caller attaches to a fix run: which registered unit of
+ * work it counts as, and the model chosen for that unit. Both outlive the
+ * individual run: a board card spawns build, CI-repair and review-fix runs
+ * over days, which is why the model is a preference and not a hard choice.
+ */
+export interface FixRunOptions {
+  /** Feature task id for runner filtering (e.g. 'board.worker'). */
+  task?: string;
+  /** Outranks the task's instance pin; gives way like one where the machine the
+   *  run lands on cannot serve it. */
+  preferredModel?: string | null;
+}
+
+/**
  * Fix-to-PR flows: a goal-mode agent works in a dedicated worktree; the human
  * reviews the diff; companiond (never the agent) pushes. Two shapes:
  * fresh-branch runs (fix an issue, implement a proposal) open a NEW PR on
@@ -76,14 +90,19 @@ export class Fixes {
     attachments?: readonly PromptAttachment[];
     /** Triggering user — unlocks their personal runners for placement. */
     userId?: string | null;
-    /** Feature task id for runner filtering (e.g. 'board.worker'); defaults by kind. */
+    /** See FixRunOptions; `task` defaults by kind when omitted. */
     task?: string;
+    preferredModel?: string | null;
   }): Promise<RunRecord> {
     await this.requirePersonalAccess(opts.repo, opts.userId);
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
-    const runnerId = this.orchestrator.placeRun(opts.repo, { userId: opts.userId, task });
+    const runnerId = this.orchestrator.placeRun(opts.repo, {
+      userId: opts.userId,
+      task,
+      preferredModel: opts.preferredModel,
+    });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo, opts.userId);
     const cwd = await backend.addWorktree(
@@ -105,6 +124,7 @@ export class Fixes {
       branch,
       userId: opts.userId ?? null,
       task,
+      preferredModel: opts.preferredModel,
     });
 
     await this.orchestrator.setGoalMode(run.id);
@@ -115,7 +135,12 @@ export class Fixes {
   // ---------- PR-branch repair runs -----------------------------------------------
 
   /** Agent repairs the failing CI on a PR, working directly on its branch. */
-  async startCheckFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
+  async startCheckFix(
+    repo: string,
+    prNumber: number,
+    userId: string | null = null,
+    opts: FixRunOptions = {},
+  ): Promise<RunRecord> {
     await this.requirePersonalAccess(repo, userId);
     const { pr } = this.requireOpenPr(repo, prNumber, userId);
     const summary = await this.checks.fetchSummary(repo, prNumber, userId!);
@@ -127,12 +152,17 @@ export class Fixes {
       pr,
       `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
       checkFixObjective(pr, failing),
-      { userId, task },
+      { ...opts, userId },
     );
   }
 
   /** Agent implements the changes human reviewers asked for on a PR. */
-  async startReviewFix(repo: string, prNumber: number, userId: string | null = null, task?: string): Promise<RunRecord> {
+  async startReviewFix(
+    repo: string,
+    prNumber: number,
+    userId: string | null = null,
+    opts: FixRunOptions = {},
+  ): Promise<RunRecord> {
     await this.requirePersonalAccess(repo, userId);
     const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     const [reviews, inline] = await Promise.all([
@@ -152,7 +182,7 @@ export class Fixes {
       pr,
       `Address reviews on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
       reviewFixObjective(pr, feedback, comments),
-      { userId, task },
+      { ...opts, userId },
     );
   }
 
@@ -206,12 +236,16 @@ export class Fixes {
     pr: PrRecord,
     title: string,
     objective: string,
-    opts: { userId?: string | null; task?: string } = {},
+    opts: FixRunOptions & { userId?: string | null } = {},
   ): Promise<RunRecord> {
     await this.requirePersonalAccess(pr.repo, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
-    const runnerId = this.orchestrator.placeRun(pr.repo, { userId: opts.userId, task });
+    const runnerId = this.orchestrator.placeRun(pr.repo, {
+      userId: opts.userId,
+      task,
+      preferredModel: opts.preferredModel,
+    });
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo, opts.userId);
     // The objective inspects the full PR locally; refresh the base and head refs
@@ -237,6 +271,7 @@ export class Fixes {
       branch: pr.headRef,
       userId: opts.userId ?? null,
       task,
+      preferredModel: opts.preferredModel,
     });
     // The existing PR is this run's destination; approve() pushes to its
     // branch instead of opening a new one.

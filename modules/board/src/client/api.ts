@@ -6,6 +6,7 @@ import type {
   TaskAttachmentInput,
   TaskDependencyView,
   TaskEventRecord,
+  TaskModelOptions,
   TaskPriority,
   TaskPrView,
   TaskRecord,
@@ -42,6 +43,7 @@ export const boardApi = {
     specId: string | null;
     attachments: readonly TaskAttachmentInput[];
     dependsOn?: readonly string[];
+    model: string | null;
     priority: TaskPriority;
     queue: boolean;
   }) => post<{ task: TaskRecord }>('/api/board/tasks', input),
@@ -54,6 +56,7 @@ export const boardApi = {
       specId?: string | null;
       attachments?: readonly TaskAttachmentInput[];
       dependsOn?: readonly string[];
+      model?: string | null;
       priority?: TaskPriority;
     },
   ) => patch<{ task: TaskRecord }>(`/api/board/tasks/${id}`, fields),
@@ -62,6 +65,7 @@ export const boardApi = {
   deleteTask: (id: string) => del<{ ok: true }>(`/api/board/tasks/${id}`),
   specs: (repo: string, workspaceId: string) =>
     request<{ specs: SpecOption[] }>(`/api/board/specs/${repo}?workspace=${encodeURIComponent(workspaceId)}`),
+  models: () => request<TaskModelOptions>('/api/board/models'),
   createWorker: (workspaceId: string, name: string, role: WorkerRole) =>
     post<{ worker: WorkerRecord }>('/api/board/workers', { workspaceId, name, role }),
   updateWorker: (id: string, fields: { name?: string; role?: WorkerRole; enabled?: boolean }) =>
