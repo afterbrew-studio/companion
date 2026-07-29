@@ -329,6 +329,103 @@ export function taskPolicyAllows(policy: RunnerTaskPolicy, taskId: string): bool
   return policy.mode === 'allow' ? taskPolicyLists(policy, taskId) : !taskPolicyLists(policy, taskId);
 }
 
+/**
+ * How a policy answers a whole module, tasks it registers LATER included.
+ *  - `all`/`none` — the module is governed uniformly and keeps being governed
+ *    that way as it grows;
+ *  - `partial` — individual task entries pin it to the tasks that exist today.
+ */
+export type ModulePolicyReach = 'all' | 'none' | 'partial';
+
+/**
+ * A module's answer for work that does not exist yet.
+ *
+ * Uniform is NOT the same as "carries a blanket entry": under `deny`, covering
+ * everything now and later is expressed by the ABSENCE of any entry, which is
+ * exactly the state every machine starts in. What breaks uniformity is an
+ * individual task entry, because only those fail to reach a task added later.
+ */
+export function moduleTaskPolicyReach(policy: RunnerTaskPolicy, moduleId: string): ModulePolicyReach {
+  const blanket = policy.modules.includes(moduleId);
+  if (!blanket && policy.tasks.some((id) => taskModuleId(id) === moduleId)) return 'partial';
+  return blanket === (policy.mode === 'allow') ? 'all' : 'none';
+}
+
+/** Set every task of a module, present and future, to one answer. */
+export function withModuleAllowed(policy: RunnerTaskPolicy, moduleId: string, allowed: boolean): RunnerTaskPolicy {
+  // The blanket subsumes any individual entries underneath it, so they go.
+  const tasks = policy.tasks.filter((id) => taskModuleId(id) !== moduleId);
+  const listed = allowed === (policy.mode === 'allow');
+  const modules = listed
+    ? [...policy.modules.filter((m) => m !== moduleId), moduleId]
+    : policy.modules.filter((m) => m !== moduleId);
+  return { ...policy, modules, tasks };
+}
+
+/**
+ * Set one task's answer. Doing so under a module blanket expands that blanket
+ * over the tasks that exist today and drops it, because "everything this module
+ * registers" and "everything but this one" cannot both be true. Tasks the
+ * module adds later stop being covered, which is what per-task control means.
+ */
+export function withTaskAllowed(
+  policy: RunnerTaskPolicy,
+  groups: readonly RunTaskGroup[],
+  taskId: string,
+  allowed: boolean,
+): RunnerTaskPolicy {
+  const moduleId = taskModuleId(taskId);
+  let modules = policy.modules;
+  let tasks = policy.tasks;
+  if (modules.includes(moduleId)) {
+    const siblings = groups.find((g) => g.moduleId === moduleId)?.tasks ?? [];
+    modules = modules.filter((m) => m !== moduleId);
+    tasks = [...new Set([...tasks, ...siblings.map((t) => t.id)])];
+  }
+  const listed = allowed === (policy.mode === 'allow');
+  return {
+    ...policy,
+    modules,
+    tasks: listed ? [...new Set([...tasks, taskId])] : tasks.filter((id) => id !== taskId),
+  };
+}
+
+/** Drop one module or task entry, whichever it is. */
+export function withoutTaskPolicyEntry(policy: RunnerTaskPolicy, id: string): RunnerTaskPolicy {
+  return {
+    ...policy,
+    modules: policy.modules.filter((m) => m !== id),
+    tasks: policy.tasks.filter((t) => t !== id),
+  };
+}
+
+/**
+ * Rewrite a policy into the other mode, preserving what the machine may do
+ * TODAY: a fully-allowed module becomes a blanket entry, a partly-allowed one
+ * becomes its individual tasks. What changes is the future, which is the whole
+ * reason to switch: an allow-list stops covering tasks a module adds later,
+ * and a deny-list starts covering them.
+ *
+ * Entries for modules not in this build are dropped: their effective answer
+ * survives either way, because an unlisted id is allowed under `deny` and
+ * refused under `allow`, which is exactly what they were.
+ */
+export function convertPolicyMode(
+  policy: RunnerTaskPolicy,
+  groups: readonly RunTaskGroup[],
+  mode: RunnerPolicyMode,
+): RunnerTaskPolicy {
+  if (mode === policy.mode) return policy;
+  const modules: string[] = [];
+  const tasks: string[] = [];
+  for (const group of groups) {
+    const listed = group.tasks.filter((task) => taskPolicyAllows(policy, task.id) === (mode === 'allow'));
+    if (listed.length === group.tasks.length) modules.push(group.moduleId);
+    else tasks.push(...listed.map((task) => task.id));
+  }
+  return { mode, modules, tasks };
+}
+
 /** Repository reach: `all` takes any repo's work; `selected` only the cleared ones. */
 export type RunnerRepoScope = 'all' | 'selected';
 
@@ -587,6 +684,49 @@ export interface RunnerProviderPolicy {
   readonly disabledProviders: ReadonlyArray<string>;
   /** Model ids, bare (`opus`) or provider-scoped (`anthropic/opus`). */
   readonly disabledModels: ReadonlyArray<string>;
+}
+
+/**
+ * What the fleet has been able to establish about provider credentials. The
+ * third state is the point: a machine nobody has read yet must not be reported
+ * as having nothing, or the page tells the operator to fix a problem that may
+ * not exist.
+ */
+export type ProviderDetection =
+  /** At least one machine holds credentials for these providers. */
+  | { readonly state: 'found'; readonly providers: readonly string[]; readonly machines: number }
+  /** Every visible machine was read, and none holds any credentials. */
+  | { readonly state: 'none' }
+  /**
+   * Nothing found, and something is still unread. `reading` machines are online
+   * and will report on their own; `unreachable` ones will not until they come
+   * back, so the two cannot be described to the operator with one sentence.
+   */
+  | { readonly state: 'unknown'; readonly reading: number; readonly unreachable: number };
+
+/**
+ * Read the catalog for whether anything is actually configured anywhere.
+ *
+ * A provider NAME alone proves nothing: the merged list also carries providers
+ * named by the daemon's own moxxy config that no machine can serve, which is
+ * exactly the case the page must not call "found". `found` therefore needs a
+ * machine that reported the provider ready, including one where the operator
+ * switched it off, since that is a setting to flip, not a dead end.
+ *
+ * Only ONLINE machines are ever catalog-probed, so an offline machine that has
+ * never reported stays unread indefinitely; counting it as "reading" would
+ * promise an answer the daemon is not going to fetch.
+ */
+export function detectProviders(catalog: ProviderCatalog): ProviderDetection {
+  const credentialed = catalog.providers.filter((p) => p.machines.length > 0 || p.disabledOn.length > 0);
+  if (credentialed.length > 0) {
+    const machines = new Set(credentialed.flatMap((p) => [...p.machines, ...p.disabledOn]));
+    return { state: 'found', providers: credentialed.map((p) => p.name), machines: machines.size };
+  }
+  const unread = catalog.machines.filter((m) => m.fetchedAt === null);
+  if (unread.length === 0) return { state: 'none' };
+  const reading = unread.filter((m) => m.online).length;
+  return { state: 'unknown', reading, unreachable: unread.length - reading };
 }
 
 // ---------- task model pins ----------

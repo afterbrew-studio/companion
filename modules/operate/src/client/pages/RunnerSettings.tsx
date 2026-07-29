@@ -11,6 +11,7 @@ import {
   PageHeader,
   PageLoading,
   Section,
+  SegmentedControl,
   SettingRow,
   timeAgo,
 } from '@moxxy/companion-ui';
@@ -24,11 +25,11 @@ import type {
   RunnerScope,
   RunnerTaskPolicy,
 } from '../../contract/index.js';
-import { OPEN_TASK_POLICY } from '../../contract/index.js';
+import { convertPolicyMode, OPEN_TASK_POLICY } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRunnerOptions } from '../hooks/useRunnerOptions.js';
 import { useRunners } from '../hooks/useRunners.js';
-import { convertPolicyMode, TaskPolicyEditor } from '../components/TaskPolicyEditor.js';
+import { TaskPolicyEditor } from '../components/TaskPolicyEditor.js';
 import { DOT_TONE, normalizeEndpoint, TokenHelp } from './Runners.js';
 
 /**
@@ -367,59 +368,51 @@ function SettingsForm({
           </ListCard>
         </Section>
 
-        <Section
-          title="Policy"
-          description="What this machine may be used for. A module covers everything it registers now and in future; open it to decide task by task."
-        >
+        <Section title="Policy" description="What this machine may be used for.">
           <ListCard subtle>
             <SettingRow
-              className="items-start px-4 py-3"
+              className="px-4 py-3"
               title="Default answer"
-              description="What happens to a unit of work the list below does not mention — including work a future module update introduces."
+              description={
+                policy.mode === 'deny'
+                  ? 'Work the list below does not mention is allowed, including tasks later updates add.'
+                  : 'Work the list below does not mention is refused, including tasks later updates add.'
+              }
             >
-              <fieldset className="grid w-full gap-2 sm:w-[30rem] sm:grid-cols-2">
-                <legend className="sr-only">Policy mode</legend>
-                {/* Switching rewrites the list against the registered work, so
-                    it must not run before that work has loaded. */}
-                <RadioCard
-                  name="policy-mode"
-                  checked={policy.mode === 'deny'}
-                  disabled={options.groups.length === 0}
-                  onSelect={() => setPolicy((prev) => convertPolicyMode(prev, options.groups, 'deny'))}
-                  title="Everything except"
-                  description="Takes any work, minus what you untick. New tasks arrive allowed."
-                />
-                <RadioCard
-                  name="policy-mode"
-                  checked={policy.mode === 'allow'}
-                  disabled={options.groups.length === 0}
-                  onSelect={() => setPolicy((prev) => convertPolicyMode(prev, options.groups, 'allow'))}
-                  title="Only these"
-                  description="Takes nothing but what you tick. New tasks arrive refused."
-                />
-              </fieldset>
+              {/* Switching rewrites the list against the registered work, so it
+                  must not run before that work has loaded. */}
+              <SegmentedControl
+                className="w-full sm:w-auto"
+                label="Policy mode"
+                name="policy-mode"
+                value={policy.mode}
+                disabled={options.groups.length === 0}
+                onChange={(mode) => setPolicy((prev) => convertPolicyMode(prev, options.groups, mode))}
+                options={[
+                  { value: 'deny', label: 'Everything except', hint: 'New tasks arrive allowed' },
+                  { value: 'allow', label: 'Only these', hint: 'New tasks arrive refused' },
+                ]}
+              />
             </SettingRow>
             <div className="px-4 py-3">
               <TaskPolicyEditor groups={options.groups} policy={policy} onChange={setPolicy} />
             </div>
           </ListCard>
           <p className="dim mt-2 text-xs">
-            Switching the default rewrites the list to keep what this machine may do today; what changes is how tasks
-            added later are answered.
+            Switching keeps what this machine may do today; only tasks added later are answered differently.
           </p>
         </Section>
 
         <Section title="Placement" description="Where this machine participates. Visibility is set by ownership; these only limit what may be placed here.">
           <ListCard subtle>
             <ReachRow
-              title="Workspace reach"
-              description="Which workspaces may place runs here."
+              title="Workspaces"
               legend="Workspace reach"
               name="scope"
               scoped={scope === 'delegated'}
               onScope={(on) => setScope(on ? 'delegated' : 'shared')}
-              all={{ title: 'All workspaces', description: 'Any accessible workspace can place work here.' }}
-              some={{ title: 'Selected workspaces', description: 'Only the workspaces picked below.' }}
+              allLabel="All workspaces"
+              someLabel="Selected"
             >
               <CheckList
                 label="Workspaces"
@@ -437,16 +430,12 @@ function SettingsForm({
 
             <ReachRow
               title="Repositories"
-              description="Which repositories' work this machine is cleared for."
               legend="Repository reach"
               name="repo-scope"
               scoped={repoScope === 'selected'}
               onScope={(on) => setRepoScope(on ? 'selected' : 'all')}
-              all={{ title: 'All repositories', description: 'Any repository in reach can be worked on here.' }}
-              some={{
-                title: 'Selected repositories',
-                description: 'Only these. Work with no repository is placed elsewhere.',
-              }}
+              allLabel="All repositories"
+              someLabel="Selected"
             >
               <CheckList
                 label="Repositories"
@@ -455,19 +444,20 @@ function SettingsForm({
                 onChange={setRepoIds}
                 empty="No repositories connected yet."
                 warn={reposEmpty ? 'Pick at least one repository.' : null}
+                hint="Work with no repository is placed elsewhere."
               />
             </ReachRow>
 
             {shared ? (
               <ReachRow
                 title="Who may use it"
-                description="Whose runs may land here. Automated work has no triggering role, so a restricted machine never receives it."
+                description="Automated work has no triggering role, so a restricted machine never receives it."
                 legend="Roles"
                 name="role-scope"
                 scoped={roleScoped}
                 onScope={setRoleScoped}
-                all={{ title: 'Everyone', description: 'Any role that can reach this machine may place work.' }}
-                some={{ title: 'Selected roles', description: 'Only users holding one of these roles.' }}
+                allLabel="Everyone"
+                someLabel="Selected roles"
               >
                 <CheckList
                   label="Roles"
@@ -623,7 +613,7 @@ function AddProviderModal({
   );
 }
 
-/** The app's all-or-selected reach control: two option cards, then the picker. */
+/** The app's all-or-selected reach control: one segmented choice, then the picker. */
 function ReachRow({
   title,
   description,
@@ -631,30 +621,36 @@ function ReachRow({
   name,
   scoped,
   onScope,
-  all,
-  some,
+  allLabel,
+  someLabel,
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   legend: string;
   name: string;
   scoped: boolean;
   onScope: (scoped: boolean) => void;
-  all: { title: string; description: string };
-  some: { title: string; description: string };
+  allLabel: string;
+  someLabel: string;
   children: ReactNode;
 }): JSX.Element {
   return (
     <div className="px-4 py-3">
-      <SettingRow className="items-start" title={title} description={description}>
-        <fieldset className="grid w-full gap-2 sm:w-[30rem] sm:grid-cols-2">
-          <legend className="sr-only">{legend}</legend>
-          <RadioCard name={name} checked={!scoped} onSelect={() => onScope(false)} {...all} />
-          <RadioCard name={name} checked={scoped} onSelect={() => onScope(true)} {...some} />
-        </fieldset>
+      <SettingRow title={title} description={description}>
+        <SegmentedControl
+          className="w-full sm:w-auto"
+          label={legend}
+          name={name}
+          value={scoped ? 'some' : 'all'}
+          onChange={(v) => onScope(v === 'some')}
+          options={[
+            { value: 'all', label: allLabel },
+            { value: 'some', label: someLabel },
+          ]}
+        />
       </SettingRow>
-      {scoped ? <div className="mt-3 flex sm:justify-end">{children}</div> : null}
+      {scoped ? <div className="mt-3">{children}</div> : null}
     </div>
   );
 }
@@ -667,6 +663,7 @@ function CheckList({
   onChange,
   empty,
   warn,
+  hint,
 }: {
   label: string;
   items: readonly { id: string; label: string; note?: string }[];
@@ -674,33 +671,40 @@ function CheckList({
   onChange: (next: readonly string[]) => void;
   empty: string;
   warn: string | null;
+  /** What narrowing this list costs; the warning supersedes it. */
+  hint?: string;
 }): JSX.Element {
   return (
-    <div className="flex w-full flex-col gap-1 text-sm sm:w-[30rem]">
+    <div className="flex w-full flex-col gap-1 text-sm">
       <div
         role="group"
         aria-label={label}
-        className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800"
+        className="grid max-h-48 gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 sm:grid-cols-2 dark:border-zinc-800"
       >
-        {items.length === 0 ? <span className="dim px-2 py-1.5">{empty}</span> : null}
+        {items.length === 0 ? <span className="dim px-2 py-1.5 sm:col-span-2">{empty}</span> : null}
         {items.map((item) => (
           <label
             key={item.id}
-            className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+            className="flex min-w-0 cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
           >
             <input
               type="checkbox"
+              className="shrink-0"
               checked={selected.includes(item.id)}
               onChange={(e) =>
                 onChange(e.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))
               }
             />
-            <span className="flex-1 truncate">{item.label}</span>
-            {item.note ? <span className="dim text-xs">{item.note}</span> : null}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {item.note ? <span className="dim shrink-0 text-xs">{item.note}</span> : null}
           </label>
         ))}
       </div>
-      {warn ? <span className="text-xs text-amber-600 dark:text-amber-400">{warn}</span> : null}
+      {warn ? (
+        <span className="text-xs text-amber-600 dark:text-amber-400">{warn}</span>
+      ) : hint ? (
+        <span className="dim text-xs">{hint}</span>
+      ) : null}
     </div>
   );
 }
@@ -711,39 +715,4 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 
 function samePolicy(a: RunnerTaskPolicy, b: RunnerTaskPolicy): boolean {
   return a.mode === b.mode && sameStrings(a.modules, b.modules) && sameStrings(a.tasks, b.tasks);
-}
-
-/** A bordered, selectable option card — the app's two-choice radio idiom. */
-function RadioCard({
-  name,
-  checked,
-  onSelect,
-  title,
-  description,
-  disabled,
-}: {
-  name: string;
-  checked: boolean;
-  onSelect: () => void;
-  title: string;
-  description: string;
-  disabled?: boolean;
-}): JSX.Element {
-  return (
-    <label
-      className={`flex items-start gap-2.5 rounded-lg border p-3 transition-colors ${
-        disabled ? 'opacity-60' : 'cursor-pointer'
-      } ${
-        checked
-          ? 'border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-zinc-800/60'
-          : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
-      }`}
-    >
-      <input type="radio" name={name} className="mt-0.5" checked={checked} disabled={disabled} onChange={onSelect} />
-      <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium">{title}</span>
-        <span className="dim block text-xs">{description}</span>
-      </span>
-    </label>
-  );
 }

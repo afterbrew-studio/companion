@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   EmptyState,
   ErrorBar,
@@ -11,8 +10,9 @@ import {
   Switch,
   timeAgo,
 } from '@moxxy/companion-ui';
+import { useAuth } from '@companion/module-core/client';
 import type { CatalogMachine, CatalogProvider } from '../../contract/index.js';
-import { operateApi as api } from '../api.js';
+import { detectProviders } from '../../contract/index.js';
 import { useProviders } from '../hooks/useProviders.js';
 
 /**
@@ -23,47 +23,20 @@ import { useProviders } from '../hooks/useProviders.js';
  * question it answers is a fleet question ("can agents use model X at all"),
  * and because providers get retuned far more often than machines get set up.
  *
- * Fetching is the daemon's job (on bind, after an import, off live runs, and on
- * a staleness timer). The Refresh button is a nudge, not a requirement.
+ * Fetching is the daemon's job (on bind, off live runs, and on a staleness
+ * timer), and the daemon adopts the operator's own moxxy home on its way up, so
+ * a configured machine needs no import step. Refresh re-reads on demand; the
+ * page never asks a person to run a detection the system can run itself.
  */
 
 export function ProvidersPage(): JSX.Element {
-  const {
-    catalog,
-    error,
-    setError,
-    refresh,
-    refetchFromMachines,
-    refetching,
-    toggleProvider,
-    toggleModel,
-    enableStranded,
-  } = useProviders();
-  const [note, setNote] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-
-  const reimport = async (): Promise<void> => {
-    setImporting(true);
-    setError(null);
-    setNote(null);
-    try {
-      const { imported, missing } = await api.importProviders();
-      setNote(
-        imported.length > 0
-          ? `Re-imported ${imported.join(', ')}${missing.length > 0 ? ` (missing: ${missing.join(', ')})` : ''}. Models refresh in the background.`
-          : `Nothing found to import${missing.length > 0 ? ` — missing in ~/.moxxy: ${missing.join(', ')}` : ''}.`,
-      );
-      await refresh();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setImporting(false);
-    }
-  };
+  const { catalog, error, refetchFromMachines, refetching, toggleProvider, toggleModel, enableStranded } =
+    useProviders();
 
   const machines = catalog?.machines ?? [];
   const providers = catalog?.providers ?? [];
-  const served = providers.filter((p) => p.machines.length > 0);
+  const fetchedAt = catalog?.fetchedAt ?? null;
+  const detection = catalog === null ? null : detectProviders(catalog);
   const modelCount = new Set(providers.flatMap((p) => p.models.map((m) => m.id))).size;
 
   return (
@@ -72,51 +45,39 @@ export function ProvidersPage(): JSX.Element {
         title="Providers"
         subtitle="Which providers and models agents may use, per machine. The top list is what that adds up to"
         actions={
-          <>
-            <button className="btn-ghost" disabled={refetching} onClick={() => void refetchFromMachines()}>
-              {refetching ? 'Refreshing…' : 'Refresh'}
-            </button>
-            <button className="btn-ghost" disabled={importing} onClick={() => void reimport()}>
-              {importing ? 'Importing…' : 'Re-import from ~/.moxxy'}
-            </button>
-          </>
+          <button className="btn-ghost" disabled={refetching} onClick={() => void refetchFromMachines()}>
+            {refetching ? 'Refreshing…' : 'Refresh'}
+          </button>
         }
       />
       <ErrorBar error={error} />
-      {note ? (
-        <div className="banner-info" role="status">
-          {note}
-        </div>
-      ) : null}
 
-      {catalog === null ? null : (
+      {detection === null ? null : (
         <>
-          {providers.length === 0 ? (
-            <EmptyState
-              title="No providers yet"
-              hint="Import providers from your daily ~/.moxxy. Credential files are linked so token rotation stays shared."
-              action={
-                <button className="btn" disabled={importing} onClick={() => void reimport()}>
-                  {importing ? 'Importing…' : 'Import from ~/.moxxy'}
-                </button>
-              }
-            />
-          ) : (
-            <>
-              <p className="dim mb-2 text-xs" role="status">
-                {modelCount > 0
-                  ? `${modelCount} model${modelCount === 1 ? '' : 's'} from ${served.length} provider${served.length === 1 ? '' : 's'} across ${machines.length} machine${machines.length === 1 ? '' : 's'} · read ${timeAgo(catalog.fetchedAt ?? Date.now())}`
-                  : catalog.fetchedAt === null
-                    ? 'Machines report their models on their own, so this fills in shortly after one connects.'
-                    : 'No machine has credentials for any provider yet.'}
-              </p>
-              <ListCard subtle ariaLabel="Available to agents">
-                {providers.map((p) => (
-                  <EffectiveRow key={p.name} provider={p} machines={machines} read={catalog.fetchedAt !== null} />
-                ))}
-              </ListCard>
-            </>
-          )}
+          {detection.state === 'none' ? <NothingConfigured machines={machines} /> : null}
+          {detection.state === 'unknown' ? (
+            <p className="dim mb-2 text-xs" role="status">
+              {detection.reading > 0
+                ? `Waiting on ${detection.reading} machine${detection.reading === 1 ? '' : 's'}. Machines report their providers on their own, usually within a minute of connecting.`
+                : `Nothing read yet: ${detection.unreachable} machine${detection.unreachable === 1 ? '' : 's'} unreachable.`}
+            </p>
+          ) : null}
+          {detection.state === 'found' ? (
+            <p className="dim mb-2 text-xs" role="status">
+              {`${modelCount} model${modelCount === 1 ? '' : 's'} from ${detection.providers.length} provider${
+                detection.providers.length === 1 ? '' : 's'
+              } across ${detection.machines} machine${detection.machines === 1 ? '' : 's'}`}
+              {fetchedAt === null ? '' : ` · read ${timeAgo(fetchedAt)}`}
+            </p>
+          ) : null}
+
+          {providers.length > 0 ? (
+            <ListCard subtle ariaLabel="Available to agents">
+              {providers.map((p) => (
+                <EffectiveRow key={p.name} provider={p} machines={machines} read={fetchedAt !== null} />
+              ))}
+            </ListCard>
+          ) : null}
 
           {machines.map((machine) => (
             <MachineSection
@@ -130,6 +91,42 @@ export function ProvidersPage(): JSX.Element {
         </>
       )}
     </Page>
+  );
+}
+
+/**
+ * The only honest thing to show when detection came back empty: not "import
+ * something", but the two moves that actually put credentials on a machine.
+ * Provisioning lives on a machine's own settings page, because the key is sent
+ * to that machine's moxxy and stored nowhere else.
+ *
+ * Both routes are gated on `runners:connect` while this page is gated on
+ * `settings:manage`; a custom role may hold one without the other, and a CTA
+ * that lands on "no access" is the dead end this replaced.
+ */
+function NothingConfigured({ machines }: { machines: readonly CatalogMachine[] }): JSX.Element {
+  const { can } = useAuth();
+  // Provisioning runs against the machine, so offer a reachable one.
+  const target = can('runners:connect') ? (machines.find((m) => m.online) ?? machines[0]) : undefined;
+  return (
+    <EmptyState
+      title="No machine has provider credentials yet"
+      hint="Agents run on a machine, and the model key lives there. Configure one on a machine you already have, or attach a machine that is already set up."
+      action={
+        can('runners:connect') ? (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {target ? (
+              <a className="btn" href={`#/runners/${target.id}`}>
+                Configure a provider
+              </a>
+            ) : null}
+            <a className={target ? 'btn-ghost' : 'btn'} href="#/runners">
+              Attach a machine
+            </a>
+          </div>
+        ) : null
+      }
+    />
   );
 }
 

@@ -3,7 +3,7 @@ import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { paths } from '@moxxy/companion-services';
 import type { GitCredentialResolver, GithubTokenSource } from '../contract/index.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
-import { healCredentialLinks, seedPermissionDenyRules } from '../exec/home.js';
+import { adoptDailyMoxxyHome, healCredentialLinks, seedPermissionDenyRules } from '../exec/home.js';
 import { Checkouts } from '../exec/checkouts.js';
 import { OperateStore } from './operate-store.js';
 import { Orchestrator } from './orchestrator.js';
@@ -19,6 +19,7 @@ import { OperateService } from './operate-service.js';
 export default defineServices(async (ctx) => {
   // moxxy-home hygiene the legacy main() ran at boot.
   seedPermissionDenyRules();
+  adoptDailyMoxxyHome();
   healCredentialLinks();
 
   const settings = ctx.services.get('settings');
