@@ -8,11 +8,18 @@ import { harnessChoices, NOTHING_INSTALLED, readHarnessOptions } from '../dist/h
  * answer the question is never asked it.
  */
 
+const MOXXY = { id: 'moxxy', label: 'Moxxy', homepage: 'https://moxxy.ai', state: 'ready', detail: null, fix: null };
+const CLAUDE = {
+  id: 'claude-code',
+  label: 'Claude Code',
+  homepage: 'https://claude.com/claude-code',
+  state: 'installed',
+  detail: 'not signed in',
+  fix: 'claude auth login',
+};
+
 test('a ready runtime arrives ticked, one that would fail arrives unticked', () => {
-  const [ready, broken] = harnessChoices([
-    { id: 'moxxy', label: 'moxxy', state: 'ready', detail: null, fix: null },
-    { id: 'claude-code', label: 'Claude Code', state: 'installed', detail: 'not signed in', fix: 'claude auth login' },
-  ]);
+  const [ready, broken] = harnessChoices([MOXXY, CLAUDE]);
   assert.equal(ready.checked, true);
   assert.equal(broken.checked, false);
 });
@@ -20,26 +27,37 @@ test('a ready runtime arrives ticked, one that would fail arrives unticked', () 
 test('what is wrong is in the row itself, not only in the description', () => {
   // The description is only shown while a row is highlighted, so someone
   // ticking a broken runtime would learn why after confirming.
-  const [choice] = harnessChoices([
-    { id: 'claude-code', label: 'Claude Code', state: 'installed', detail: 'not signed in', fix: 'claude auth login' },
-  ]);
+  const [choice] = harnessChoices([CLAUDE]);
   assert.match(choice.name, /Claude Code/);
   assert.match(choice.name, /not signed in/);
   assert.match(choice.description, /claude auth login/);
 });
 
-test('a ready row says nothing beyond its name', () => {
-  const [choice] = harnessChoices([{ id: 'moxxy', label: 'moxxy', state: 'ready', detail: null, fix: null }]);
-  assert.equal(choice.name, 'moxxy');
+test("a ready row carries the runtime's own site, because this is where the name is met", () => {
+  const [choice] = harnessChoices([MOXXY]);
+  assert.equal(choice.name, 'Moxxy  (https://moxxy.ai)');
+  // Nothing is wrong with it, so there is no fix to offer.
   assert.equal(choice.description, undefined);
 });
 
-test('the empty-list copy names both installs and what each still needs', () => {
+test('a broken row spends that space on the fault instead, which is the more urgent of the two', () => {
+  const [choice] = harnessChoices([CLAUDE]);
+  assert.equal(choice.name.includes(CLAUDE.homepage), false);
+});
+
+test('the empty-list copy names every install and what each still needs', () => {
   // The one case that needs words: a question with no options is not a question.
-  assert.match(NOTHING_INSTALLED, /@moxxy\/cli/);
-  assert.match(NOTHING_INSTALLED, /@anthropic-ai\/claude-code/);
-  assert.match(NOTHING_INSTALLED, /moxxy provision/);
-  assert.match(NOTHING_INSTALLED, /claude auth login/);
+  for (const expected of [
+    /@moxxy\/cli/,
+    /@anthropic-ai\/claude-code/,
+    /@openai\/codex/,
+    /moxxy provision/,
+    /claude auth login/,
+    /codex login/,
+    /https:\/\/moxxy\.ai/,
+  ]) {
+    assert.match(NOTHING_INSTALLED, expected);
+  }
 });
 
 test('a daemon that does not answer is not an error to report', async () => {
