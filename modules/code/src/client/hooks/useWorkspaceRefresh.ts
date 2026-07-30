@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { RepoSyncFailure } from '../../contract/index.js';
+import type { RepoRecord, RepoSyncFailure } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 
 /**
@@ -12,10 +12,21 @@ export interface WorkspaceRefreshState {
   readonly error: string | null;
 }
 
-export function useWorkspaceRefresh(workspaceId: string | undefined): WorkspaceRefreshState {
+export function useWorkspaceRefresh(
+  workspaceId: string | undefined,
+  repos: readonly RepoRecord[],
+): WorkspaceRefreshState {
   const [error, setError] = useState<string | null>(null);
   const [unavailableRepos, setUnavailableRepos] = useState<readonly string[]>([]);
   const [failedRepos, setFailedRepos] = useState<readonly RepoSyncFailure[]>([]);
+  // Membership, not list identity: a repository added while this feed is open
+  // has never been refreshed, and a verdict from before it existed outlives it
+  // otherwise. Every successful sync broadcasts repos.changed and reloads the
+  // list, so refreshing on that instead would drive a loop.
+  const members = repos
+    .map((repo) => repo.fullName)
+    .sort()
+    .join(',');
 
   useEffect(() => {
     setError(null);
@@ -37,7 +48,7 @@ export function useWorkspaceRefresh(workspaceId: string | undefined): WorkspaceR
     return () => {
       active = false;
     };
-  }, [workspaceId]);
+  }, [workspaceId, members]);
 
   return { unavailableRepos, failedRepos, error };
 }

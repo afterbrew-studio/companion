@@ -128,7 +128,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
       if (msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') reload();
     });
   }, [reload]);
-  const refresh = useWorkspaceRefresh(workspaceId);
+  const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
   const visiblePrs = prs.filter((pr) => !unavailable.has(pr.repo));
 
