@@ -54,7 +54,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
-          git add -A -- '*/package.json'
+          # Everything the script wrote, not just the manifests: it also sets
+          # SDK_VERSION in the SDK's source, and a release that leaves that
+          # behind fails `pnpm sdk:surface`. The checkout is fresh and nothing
+          # here installs, so its writes are the only dirty files.
+          git add -A
           git commit -m "release: bump versions with unreleased changes" -m "$(cat /tmp/plan.txt)"
           git push --force-with-lease origin "$branch"
           # Listing open pull requests, not `gh pr view "$branch"`: that resolves
