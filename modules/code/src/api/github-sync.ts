@@ -1,8 +1,15 @@
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-sdk/server';
-import type { WorkspaceSyncResult } from '../contract/index.js';
+import type { RepoSyncFailure, WorkspaceSyncResult } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
-import { GitHubClient, type GhIssue, type GhPull } from './github-client.js';
+import { GitHubClient, GitHubError, type GhIssue, type GhPull } from './github-client.js';
+
+/** No connected account may read the repository at all. */
+export class RepoAccessDenied extends Error {
+  constructor(readonly repo: string) {
+    super(`none of this profile's GitHub accounts can access ${repo}`);
+  }
+}
 
 /**
  * Incremental GitHub → SQLite sync. GitHub stays authoritative; the cache
@@ -29,16 +36,18 @@ export class GitHubSync {
 
   /** On-demand refresh for the workspace currently visible in the SPA. */
   async syncWorkspace(workspaceId: string, username: string): Promise<WorkspaceSyncResult> {
-    const failures: string[] = [];
+    const unavailableRepos: string[] = [];
+    const failedRepos: RepoSyncFailure[] = [];
     for (const repo of this.store.repos.listByWorkspace(workspaceId)) {
       try {
         await this.syncRepo(repo.full_name, workspaceId, username);
       } catch (err) {
-        failures.push(repo.full_name);
+        if (deniesAccess(err)) unavailableRepos.push(repo.full_name);
+        else failedRepos.push({ repo: repo.full_name, reason: err instanceof Error ? err.message : String(err) });
         log.warn(`workspace sync failed for ${repo.full_name}`, { workspaceId, err: String(err) });
       }
     }
-    return { unavailableRepos: failures };
+    return { unavailableRepos, failedRepos };
   }
 
   /** Webhook fast path: the delivery carries the full issue — apply it now. */
@@ -89,7 +98,7 @@ export class GitHubSync {
 
   async syncRepo(fullName: string, workspaceId: string | undefined, username: string): Promise<{ issues: number; prs: number }> {
     const client = await this.client(fullName, workspaceId, username);
-    if (!client) throw new Error(`none of this profile's GitHub accounts can access ${fullName}`);
+    if (!client) throw new RepoAccessDenied(fullName);
     // Concurrent callers join the in-flight sync — returning a fake empty
     // result here would let automation run before the data actually landed.
     const inFlightKey = `${username}:${fullName}:${workspaceId ?? ''}`;
@@ -146,6 +155,17 @@ export class GitHubSync {
     }
     return { issues: issues.length, prs: pulls.length };
   }
+}
+
+/**
+ * Only a real access verdict may hide a repository's cached rows. Everything
+ * else (a spent rate budget, a local failure) leaves the cache visible and is
+ * reported as a sync that failed, not as a permission the user lacks. GitHub
+ * answers "private and invisible to this token" with 404, not 403.
+ */
+function deniesAccess(err: unknown): boolean {
+  if (err instanceof RepoAccessDenied) return true;
+  return err instanceof GitHubError && !err.rateLimited && (err.status === 403 || err.status === 404);
 }
 
 function mapIssue(repo: string, issue: GhIssue) {

@@ -203,10 +203,19 @@ export interface RepoBranchRecord {
   readonly protected: boolean;
 }
 
+/** A repository whose refresh failed for a reason other than access. */
+export interface RepoSyncFailure {
+  readonly repo: string;
+  /** One line: GitHub's own message, or the local failure. */
+  readonly reason: string;
+}
+
 /** Result of refreshing every repository in one workspace for the current user. */
 export interface WorkspaceSyncResult {
-  /** Repositories for which no usable GitHub account could return data. */
+  /** Repositories no connected GitHub account may read; their cached rows stay hidden. */
   readonly unavailableRepos: readonly string[];
+  /** Repositories the refresh could not reach; the last synced rows stay visible. */
+  readonly failedRepos: readonly RepoSyncFailure[];
 }
 
 export interface IssueRecord {

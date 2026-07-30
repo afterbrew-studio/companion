@@ -22,6 +22,7 @@ import {
 } from '@moxxy/companion-sdk/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
+import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
 import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
 
 /**
@@ -50,6 +51,7 @@ export function PrsAreaPage(): JSX.Element {
     loadMore,
     error,
     unavailableRepos,
+    failedRepos,
     canActPrs,
     canRunPipelines,
     pipelines,
@@ -79,6 +81,7 @@ export function PrsAreaPage(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
+  const failed = failedRepos.filter((failure) => repoFilter === 'all' || repoFilter === failure.repo);
 
   return (
     <Page>
@@ -222,6 +225,7 @@ export function PrsAreaPage(): JSX.Element {
       ) : null}
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
+      <SyncFailureBanner failures={failed} />
 
       {prs.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
