@@ -131,7 +131,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
       if (msg.t === 'issues.changed' || msg.t === 'triage.changed') reload();
     });
   }, [reload]);
-  const refresh = useWorkspaceRefresh(workspaceId);
+  const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
   const visibleIssues = issues.filter((issue) => !unavailable.has(issue.repo));
 
