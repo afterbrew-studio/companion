@@ -35,5 +35,10 @@
     "dist",
     "src"
   ],
-  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead."
+  "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moxxy-ai/companion.git",
+    "directory": "packages/ui"
+  }
 }

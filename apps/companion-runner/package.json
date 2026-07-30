@@ -53,5 +53,10 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moxxy-ai/companion.git",
+    "directory": "apps/companion-runner"
   }
 }
