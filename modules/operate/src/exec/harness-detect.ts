@@ -1,4 +1,5 @@
 import { detectClaudeCode, type ClaudeCodeCli } from './claude-code.js';
+import { detectCodexCli, type CodexCli } from './codex.js';
 import { detectMoxxyCli, MIN_MOXXY_VERSION, type MoxxyCli } from './cli.js';
 import { configuredProviderNames } from './home.js';
 
@@ -38,8 +39,12 @@ export interface HarnessDetection {
  * the default.
  */
 export async function detectHarnesses(moxxyHome: string): Promise<readonly HarnessDetection[]> {
-  const [moxxy, claude] = await Promise.all([detectMoxxyCli(moxxyHome), detectClaudeCode()]);
-  return [moxxyState(moxxy, configuredProviderNames()), claudeState(claude)];
+  const [moxxy, claude, codex] = await Promise.all([
+    detectMoxxyCli(moxxyHome),
+    detectClaudeCode(),
+    detectCodexCli(),
+  ]);
+  return [moxxyState(moxxy, configuredProviderNames()), claudeState(claude), codexState(codex)];
 }
 
 /**
@@ -66,6 +71,20 @@ export function moxxyState(cli: MoxxyCli | null, providers: readonly string[]): 
     };
   }
   return { id: 'moxxy', state: 'ready', detail: null, fix: null };
+}
+
+/** Codex brings its own sign-in too, so the same one check settles it. */
+export function codexState(cli: CodexCli | null): HarnessDetection {
+  if (!cli) return { id: 'codex', state: 'absent', detail: null, fix: null };
+  if (!cli.loggedIn) {
+    return {
+      id: 'codex',
+      state: 'installed',
+      detail: 'It is installed but not signed in, so every turn would be refused.',
+      fix: 'codex login',
+    };
+  }
+  return { id: 'codex', state: 'ready', detail: null, fix: null };
 }
 
 /** Claude Code brings its own sign-in, so being signed out is its whole check. */

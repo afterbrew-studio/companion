@@ -383,7 +383,7 @@ test('installed but not ready is offered, saying what is wrong and the one comma
 });
 
 test('a detected runtime this build cannot run is not offered either', () => {
-  assert.deepEqual(offeredHarnesses([{ id: 'codex', state: 'ready', detail: null, fix: null }]), []);
+  assert.deepEqual(offeredHarnesses([{ id: 'opencode', state: 'ready', detail: null, fix: null }]), []);
 });
 
 test('nothing installed is an empty list, which is the case that needs words', () => {

@@ -44,6 +44,7 @@ import { RemoteRunnerBackend } from './remote-backend.js';
 const MOXXY_OPTION: HarnessOption = {
   id: MOXXY_HARNESS.id,
   label: MOXXY_HARNESS.label,
+  homepage: MOXXY_HARNESS.homepage,
   state: 'ready',
   detail: null,
   fix: null,
@@ -785,11 +786,11 @@ export class Runners {
   /**
    * What is installed on this machine, cached.
    *
-   * Detection shells out four times, and both callers are hot in their own way:
-   * the health poller asks every thirty seconds and the settings page asks on
-   * every visit. The answer changes only when software is installed or signed
-   * into, so a short cache costs nothing and a stale minute costs less than
-   * four processes per page view.
+   * Detection shells out twice per runtime (is it there, and is it usable), and
+   * both callers are hot in their own way: the health poller asks every thirty
+   * seconds and the settings page asks on every visit. The answer changes only
+   * when software is installed or signed into, so a short cache costs nothing
+   * and a stale minute costs less than a fistful of processes per page view.
    */
   private async detected(): Promise<readonly HarnessDetection[]> {
     const now = Date.now();

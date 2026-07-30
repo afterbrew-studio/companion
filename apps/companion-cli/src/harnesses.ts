@@ -15,6 +15,7 @@
 export interface HarnessOption {
   readonly id: string;
   readonly label: string;
+  readonly homepage: string;
   readonly state: 'ready' | 'installed';
   readonly detail: string | null;
   readonly fix: string | null;
@@ -51,13 +52,21 @@ export async function readHarnessOptions(
  * What a row costs goes in its NAME rather than its description, because
  * inquirer only shows a description while its row is highlighted, and "this one
  * is not signed in" is exactly what someone needs before ticking it, not after.
+ *
+ * A ready row carries the runtime's own site instead, because this is where a
+ * name like Moxxy is met for the first time and a product nobody can look up is
+ * not a choice anyone can make. The broken row spends that space on the fault,
+ * which is the more urgent of the two.
  */
 export function harnessChoices(
   options: readonly HarnessOption[],
 ): ReadonlyArray<{ value: string; name: string; description?: string; checked: boolean }> {
   return options.map((option) => ({
     value: option.id,
-    name: option.state === 'ready' ? option.label : `${option.label}  (${option.detail ?? 'not ready'})`,
+    name:
+      option.state === 'ready'
+        ? `${option.label}  (${option.homepage})`
+        : `${option.label}  (${option.detail ?? 'not ready'})`,
     description: option.fix ? `Fix it with: ${option.fix}` : undefined,
     checked: option.state === 'ready',
   }));
@@ -67,8 +76,13 @@ export function harnessChoices(
 export const NOTHING_INSTALLED = [
   'No agent runtime is installed on this machine, so agent work cannot run yet.',
   'Install one and Companion will pick it up:',
-  '  npm i -g @moxxy/cli                 then: moxxy provision',
-  '  npm i -g @anthropic-ai/claude-code  then: claude auth login',
+  '',
+  '  Moxxy (https://moxxy.ai)',
+  '    npm i -g @moxxy/cli                then: moxxy provision',
+  '  Claude Code (https://claude.com/claude-code)',
+  '    npm i -g @anthropic-ai/claude-code then: claude auth login',
+  '  Codex (https://developers.openai.com/codex)',
+  '    npm i -g @openai/codex             then: codex login',
 ].join('\n');
 
 export async function saveHarnesses(

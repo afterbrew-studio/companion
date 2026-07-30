@@ -97,8 +97,14 @@ export type GitCredentialResolver = (
  */
 export interface HarnessDescriptor {
   readonly id: string;
-  /** How the harness names itself in the UI ('moxxy', 'Claude Code'). */
+  /** How the harness names itself in the UI ('Moxxy', 'Claude Code'). */
   readonly label: string;
+  /**
+   * Where the harness itself lives. Setup asks about installed software by
+   * name, and a name is not enough to decide with: an operator meeting 'Moxxy'
+   * on their first run needs to be told what it is, not left to search.
+   */
+  readonly homepage: string;
   readonly capabilities: HarnessCapabilities;
   /**
    * The models it ships, when `capabilities.models` is `builtin`. A fixed list
@@ -119,6 +125,8 @@ export interface HarnessDescriptor {
 export interface HarnessOption {
   readonly id: string;
   readonly label: string;
+  /** The harness's own site, so a first run can say what it is offering. */
+  readonly homepage: string;
   /**
    * `ready` is on PATH with its own check passing. `installed` is on PATH and
    * will fail: it is offered unticked, with `detail` saying what is wrong and

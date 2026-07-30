@@ -6,6 +6,7 @@ import type {
   AgentStorageCleanupResponse,
   AskResponse,
   Harness,
+  HarnessEvent,
   HarnessSessionControls,
   HistorySegment,
   ProvisionProviderSpec,
@@ -15,7 +16,8 @@ import type {
 import { paths } from '@moxxy/companion-services';
 import type { RunnerHealth } from '../contract/index.js';
 import { ClaudeCodeHarness, readClaudeRunHistory } from '../exec/claude-code.js';
-import { CLAUDE_CODE_HARNESS, MOXXY_HARNESS } from './harnesses.js';
+import { CodexHarness, readCodexRunHistory } from '../exec/codex.js';
+import { CLAUDE_CODE_HARNESS, CODEX_HARNESS, MOXXY_HARNESS } from './harnesses.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { configuredProviderNames } from '../exec/home.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
@@ -69,8 +71,13 @@ export class LocalRunnerBackend implements RunnerBackend {
   readonly id: string;
   private readonly pool: GatewayPool;
   private readonly maxLive: number;
-  /** Live Claude Code sessions, keyed like the gateway pool: one per run. */
-  private readonly claude = new Map<string, ClaudeCodeHarness>();
+  /**
+   * Live sessions of every harness that is not moxxy, keyed like the gateway
+   * pool: one per run. They differ in what they spawn and agree on `Harness`,
+   * which is the whole point of the contract, so nothing below this line asks
+   * which kind a run is except where the answer is genuinely different.
+   */
+  private readonly sessions = new Map<string, ClaudeCodeHarness | CodexHarness>();
 
   constructor(
     id: string,
@@ -141,33 +148,38 @@ export class LocalRunnerBackend implements RunnerBackend {
   async spawn(runId: string, cwd: string): Promise<void> {
     mkdirSync(cwd, { recursive: true });
     const spec = this.host.runSpec(runId);
-    if (spec.harness !== CLAUDE_CODE_HARNESS.id) {
+    // Named rather than "everything that is not moxxy": a run recorded under a
+    // harness this build no longer has must land on moxxy, which is what every
+    // machine ran before the choice existed, not on whichever branch happens to
+    // be last.
+    if (spec.harness !== CLAUDE_CODE_HARNESS.id && spec.harness !== CODEX_HARNESS.id) {
       await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath });
       return;
     }
-    if (this.claude.has(runId)) return;
+    if (this.sessions.has(runId)) return;
     if (this.liveIds().length >= this.maxLive) {
       throw new Error(`this machine is running ${this.maxLive} agents already; stop one first`);
     }
-    const harness = new ClaudeCodeHarness(
-      { runId, cwd, cliPath: 'claude', model: spec.model },
-      {
-        onEvent: (event) => this.sink.onEvent(runId, event),
-        onTurnComplete: ({ turnId }) => this.sink.onTurnComplete(runId, turnId),
-        onClose: () => {
-          this.claude.delete(runId);
-          this.sink.onGone(runId);
-        },
+    const handlers = {
+      onEvent: (event: HarnessEvent) => this.sink.onEvent(runId, event),
+      onTurnComplete: ({ turnId }: { turnId?: string }) => this.sink.onTurnComplete(runId, turnId),
+      onClose: () => {
+        this.sessions.delete(runId);
+        this.sink.onGone(runId);
       },
-    );
+    };
+    const harness =
+      spec.harness === CODEX_HARNESS.id
+        ? new CodexHarness({ runId, cwd, cliPath: 'codex', model: spec.model }, handlers)
+        : new ClaudeCodeHarness({ runId, cwd, cliPath: 'claude', model: spec.model }, handlers);
     await harness.connect();
-    this.claude.set(runId, harness);
+    this.sessions.set(runId, harness);
   }
 
   async stop(runId: string): Promise<void> {
-    const session = this.claude.get(runId);
+    const session = this.sessions.get(runId);
     if (session) {
-      this.claude.delete(runId);
+      this.sessions.delete(runId);
       session.close();
       // A closed session raises no onClose of its own, and the run is no longer
       // live either way: the gateway pool announces the same thing here.
@@ -179,16 +191,16 @@ export class LocalRunnerBackend implements RunnerBackend {
   }
 
   isLive(runId: string): boolean {
-    return this.claude.get(runId)?.isOpen ?? this.pool.get(runId)?.client.isOpen ?? false;
+    return this.sessions.get(runId)?.isOpen ?? this.pool.get(runId)?.client.isOpen ?? false;
   }
 
   liveIds(): string[] {
-    return [...this.pool.liveIds(), ...this.claude.keys()];
+    return [...this.pool.liveIds(), ...this.sessions.keys()];
   }
 
-  /** The run's harness, whichever kind it is. Both answer the same contract. */
+  /** The run's harness, whichever kind it is. All of them answer one contract. */
   private live(runId: string): Harness {
-    const session = this.claude.get(runId);
+    const session = this.sessions.get(runId);
     if (session?.isOpen) return session;
     const handle = this.pool.get(runId);
     if (!handle || !handle.client.isOpen) throw new Error(`run ${runId} has no live gateway (resume it first)`);
@@ -234,12 +246,17 @@ export class LocalRunnerBackend implements RunnerBackend {
   }
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
-    // Claude Code keeps its own transcript, live in memory and on disk after,
-    // so its harness answers both cases and there is no moxxy session to fall
-    // back to.
-    if (this.host.runSpec(runId).harness === CLAUDE_CODE_HARNESS.id) {
-      const session = this.claude.get(runId);
-      return session?.isOpen ? session.loadHistory(runId, before, limit) : readClaudeRunHistory(runId, before, limit);
+    // Claude Code and Codex each keep their own transcript, live in memory and
+    // on disk after, so their harness answers both cases and there is no moxxy
+    // session to fall back to. The reaped reader is the one thing that cannot
+    // be shared: the two write different files.
+    const harness = this.host.runSpec(runId).harness;
+    if (harness === CLAUDE_CODE_HARNESS.id || harness === CODEX_HARNESS.id) {
+      const session = this.sessions.get(runId);
+      if (session?.isOpen) return session.loadHistory(runId, before, limit);
+      return harness === CODEX_HARNESS.id
+        ? readCodexRunHistory(runId, before, limit)
+        : readClaudeRunHistory(runId, before, limit);
     }
     const handle = this.pool.get(runId);
     return loadHistoryWithFallback(
@@ -305,10 +322,10 @@ export class LocalRunnerBackend implements RunnerBackend {
     return cleanupRunnerStorage(request, this.checkouts, this.liveIds());
   }
 
-  /** Reap every live session, of either kind (daemon shutdown). */
+  /** Reap every live session, of any kind (daemon shutdown). */
   async stopAll(): Promise<void> {
-    for (const [, session] of this.claude) session.close();
-    this.claude.clear();
+    for (const [, session] of this.sessions) session.close();
+    this.sessions.clear();
     await this.pool.stopAll();
   }
 }

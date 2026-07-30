@@ -35,6 +35,8 @@ import {
   readHarnessOptions,
   saveHarnesses,
 } from './harnesses.js';
+import { withTerminal } from './terminal.js';
+import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
 import { RUN_HELP, parseRunCommand, runRunCommand } from './runs.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
@@ -109,11 +111,18 @@ Options:
   --verbose        Show daemon startup and diagnostic logs
   -h, --help       Show this help
 
-Agent work runs through a harness installed on this machine (the moxxy CLI, or
-Claude Code). First run detects what is there and asks which of them to use.
+Agent work runs through a harness installed on this machine (Moxxy, Claude Code
+or Codex). First run detects what is there and asks which of them to use.
 `;
 
 class SetupCancelled extends Error {}
+
+/**
+ * Where the operator ran this, captured before anything moves. `start` chdirs
+ * into the data directory to boot the daemon, and by then the one directory
+ * that says which repository this is about is gone.
+ */
+const INVOKED_FROM = process.cwd();
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -371,7 +380,61 @@ async function start(options: CliOptions): Promise<void> {
     }
   }
   if (pendingAdmin) consumePendingAdminSetup(options.home);
+  await settleRepo(url, options);
   if (options.open) openBrowser(url);
+}
+
+/**
+ * Offer to add the repository this was started in.
+ *
+ * Runs on every start rather than only the first, because the answer changes:
+ * a second repository is a second `npx` in a second directory, and that is
+ * exactly when Companion should ask instead of sending someone to a picker.
+ * Nothing is asked twice, since a tracked repository is skipped and a declined
+ * one is remembered.
+ *
+ * After the GitHub import on purpose: adding a repository reads it through a
+ * connected account, so asking before one exists would offer something that
+ * could only fail.
+ */
+async function settleRepo(url: string, options: CliOptions): Promise<void> {
+  // A scripted install must not reach out to GitHub and add rows nobody asked
+  // for, so this is an interactive question or nothing at all.
+  if (options.yes || !process.stdin.isTTY) return;
+  const fullName = detectRepo(INVOKED_FROM);
+  if (!fullName || declinedRepos(options.home).includes(fullName)) return;
+  const token = await waitForToken();
+  if (!token) return;
+  const tracked = await trackedRepos(url, token);
+  if (tracked === null || tracked.includes(fullName)) return;
+
+  const { confirm } = await import('@inquirer/prompts');
+  // Ctrl+C here is "not now", and it must not take a Companion that already
+  // said it was ready down with it. It is also not an answer, so unlike a
+  // declined question it is not remembered.
+  const accepted = await withTerminal(() =>
+    confirm({ message: `Add ${fullName} to Companion?`, default: true }),
+  ).catch((err: unknown) => {
+    if (err instanceof Error && err.name === 'ExitPromptError') return null;
+    throw err;
+  });
+  if (accepted === null) return;
+  if (!accepted) {
+    declineRepo(options.home, fullName);
+    process.stdout.write(`Leaving ${fullName} out. Add it later from the Repositories page.\n`);
+    return;
+  }
+  const workspaceId = await firstWorkspaceId(url, token);
+  if (!workspaceId) {
+    process.stderr.write(`Could not read this instance's workspaces, so ${fullName} was not added.\n`);
+    return;
+  }
+  try {
+    await addRepo(url, token, fullName, workspaceId);
+    process.stdout.write(`Added ${fullName}.\n`);
+  } catch (err) {
+    process.stderr.write(`Could not add ${fullName}: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
 }
 
 /**
@@ -396,10 +459,12 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
   if (options.yes || !process.stdin.isTTY) return;
 
   const { checkbox } = await import('@inquirer/prompts');
-  const picked = await checkbox<string>({
-    message: 'Which agent runtimes should this machine use?',
-    choices: harnessChoices(answer.options).map((c) => ({ ...c })),
-  });
+  const picked = await withTerminal(() =>
+    checkbox<string>({
+      message: 'Which agent runtimes should this machine use?',
+      choices: harnessChoices(answer.options).map((c) => ({ ...c })),
+    }),
+  );
   if (picked.length === 0) {
     process.stdout.write('Nothing ticked, so this machine keeps its current runtime.\n');
     return;
