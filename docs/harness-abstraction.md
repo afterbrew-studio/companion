@@ -176,9 +176,8 @@ even though its text still reads "File does not exist", and flipping
 frame into a warning. In every case the transcript follows the field, not the
 prose.
 
-What this does not prove: Codex, which is still unmeasured; and the per-call
-approval round trip, which neither candidate offers and which no adapter can
-invent.
+What this does not prove: the per-call approval round trip, which neither
+candidate offers and which no adapter can invent.
 
 ### 2. Split the contract
 
@@ -249,7 +248,45 @@ a machine running only Claude Code contributes no models to instance-wide task
 pins, because a pin is expressed against the provider catalog and that is the
 catalog move this plan names as its own piece of work.
 
-### 6. Harness as a module
+### 6. The Codex harness (done)
+
+Re-measured against CLI 0.146 before anything was written, and the event shape
+above still holds: `thread.started`, `turn.started`, `item.started` /
+`item.completed` pairing by `item.id`, and `turn.completed.usage` in tokens.
+
+One structural difference from Claude Code decided the design, and it is not in
+the event table. `codex exec` answers ONE prompt and exits; continuity is
+`codex exec resume <thread>`, which reads the thread back off disk. So a Codex
+session is a thread id plus a working directory, one process per TURN rather
+than per run, and "open" means the run may still take another turn rather than
+that anything is currently running. Two things follow:
+
+- **Aborting does not end the session.** The process dies, the thread survives,
+  and the next prompt resumes it. This is the one axis where Codex degrades
+  better than Claude Code, whose abort has to end the run.
+- **The thread id has to be persisted.** Claude Code takes a `--session-id` and
+  so derives one from the run id with no storage at all; Codex mints its own and
+  only says it once the first turn has started. It is parked in the per-run file
+  directory, which already has the retention such a file wants.
+
+Two smaller consequences, both declared rather than worked around. Nothing
+streams, so a Codex run does not type live: items arrive already completed and
+there is no `assistant_chunk` to synthesize honestly. And there is no per-command
+deny to mirror the `Bash(git push:*)` rule, because Codex expresses that as an
+execpolicy `.rules` file read from the operator's own CODEX_HOME or from the
+repository being worked on, and Companion will not edit the first or commit into
+the second. The worktree without a push credential is the fence, as it is for
+every harness; Claude Code simply gets a second layer that Codex cannot have.
+
+Its model list is the other departure. Codex model ids are versioned
+(`gpt-5.6-sol`, `gpt-5.5`) with no stable aliases, so unlike Claude Code it
+carries no `models` array: a fixed list would describe the release this build
+was written against. It answers from the machine instead, through the cache
+Codex itself maintains. Pricing follows the existing rule and is not bent for
+it: the table is Anthropic list prices, so OpenAI ids price as null and a
+ceiling reads as partial rather than being fed a guessed number.
+
+### 7. Harness as a module
 
 The registry, the SDK and the published ABI already exist, and `board` already
 registers a run task through them. A third party shipping opencode, hermes or pi
@@ -265,11 +302,11 @@ page now does it: **detect first, and only ask about what is really there.**
 A harness is installed software, so the answer is on disk. `moxxy`, `claude` and
 `codex` are either on PATH or they are not, and the check costs nothing.
 
-Three states, not two, and this is not hypothetical. On the machine these
-measurements were taken, `codex` is installed **and unusable**: its model cache
-is corrupt and its account rejects the models it is configured for. Offering it
-as a choice there would produce an instance that looks configured and fails on
-its first run.
+Three states, not two, and this is not hypothetical. When the first
+measurements were taken, `codex` on that machine was installed **and unusable**:
+its model cache was corrupt and its account rejected the models it was
+configured for. Offering it as a choice there would have produced an instance
+that looked configured and failed on its first run.
 
 - **Ready**: on PATH and its own auth check passes. Offer it, ticked.
 - **Installed but not ready**: on PATH, sign-in or self-check fails. Offer it

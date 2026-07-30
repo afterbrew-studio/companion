@@ -1,5 +1,6 @@
 import type { HarnessDescriptor, HarnessOption, RunnerCatalog } from '../contract/index.js';
 import { CLAUDE_CODE_CAPABILITIES, CLAUDE_MODEL_ALIASES } from '../exec/claude-code.js';
+import { CODEX_CAPABILITIES } from '../exec/codex.js';
 import type { HarnessDetection } from '../exec/harness-detect.js';
 import { MOXXY_CAPABILITIES } from '../exec/gateway-client.js';
 
@@ -11,15 +12,31 @@ import { MOXXY_CAPABILITIES } from '../exec/gateway-client.js';
  */
 export const MOXXY_HARNESS: HarnessDescriptor = {
   id: 'moxxy',
-  label: 'moxxy',
+  label: 'Moxxy',
+  homepage: 'https://moxxy.ai',
   capabilities: MOXXY_CAPABILITIES,
 };
 
 export const CLAUDE_CODE_HARNESS: HarnessDescriptor = {
   id: 'claude-code',
   label: 'Claude Code',
+  homepage: 'https://claude.com/claude-code',
   capabilities: CLAUDE_CODE_CAPABILITIES,
   models: CLAUDE_MODEL_ALIASES,
+};
+
+/**
+ * Codex carries no `models` list, which is the one place it differs from Claude
+ * Code here. Its model ids are versioned with no stable aliases to pin to, so
+ * the fixed list this field exists for would be a snapshot of whatever was
+ * current when this build shipped. It answers the question from the machine
+ * instead, through `sessionInfo`, which reads the cache Codex keeps.
+ */
+export const CODEX_HARNESS: HarnessDescriptor = {
+  id: 'codex',
+  label: 'Codex',
+  homepage: 'https://developers.openai.com/codex',
+  capabilities: CODEX_CAPABILITIES,
 };
 
 /**
@@ -44,7 +61,7 @@ export function builtinCatalog(harness: HarnessDescriptor): RunnerCatalog | null
 }
 
 /** In preference order: moxxy leads because it is the only full capability set. */
-export const HARNESSES: readonly HarnessDescriptor[] = [MOXXY_HARNESS, CLAUDE_CODE_HARNESS];
+export const HARNESSES: readonly HarnessDescriptor[] = [MOXXY_HARNESS, CLAUDE_CODE_HARNESS, CODEX_HARNESS];
 
 /**
  * A machine's chosen set, as descriptors.
@@ -75,7 +92,9 @@ export function offeredHarnesses(detected: readonly HarnessDetection[]): Harness
     if (d.state === 'absent') return [];
     const known = HARNESSES.find((h) => h.id === d.id);
     if (!known) return [];
-    return [{ id: d.id, label: known.label, state: d.state, detail: d.detail, fix: d.fix }];
+    return [
+      { id: d.id, label: known.label, homepage: known.homepage, state: d.state, detail: d.detail, fix: d.fix },
+    ];
   });
 }
 
@@ -96,6 +115,8 @@ function claimsNothing(id: string): HarnessDescriptor {
   return {
     id,
     label: id,
+    // Nothing is known about it, and a link that guesses would be worse.
+    homepage: '',
     capabilities: {
       approvals: 'policy',
       usage: 'none',

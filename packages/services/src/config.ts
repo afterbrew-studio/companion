@@ -20,7 +20,10 @@ export const paths = {
   repos: (): string => join(companionHome(), 'repos'),
   worktrees: (): string => join(companionHome(), 'worktrees'),
   scratch: (): string => join(companionHome(), 'scratch'),
-  /** Per-run explicit moxxy config files (passed via `moxxy --config`). */
+  /**
+   * Per-run files a harness needs in order to start that run again: moxxy's
+   * explicit config (passed via `moxxy --config`) and Codex's thread pointer.
+   */
   runConfigs: (): string => join(companionHome(), 'run-configs'),
   db: (): string => join(companionHome(), 'companion.db'),
   daemonConfig: (): string => join(companionHome(), 'companiond.json'),

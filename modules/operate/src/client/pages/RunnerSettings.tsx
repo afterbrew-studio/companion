@@ -723,7 +723,8 @@ function HarnessPicker({
     return (
       <div className="banner-warn">
         No agent runtime is installed on this machine, so nothing can run here yet. Install one and reload:{' '}
-        <code>npm i -g @moxxy/cli</code> or <code>npm i -g @anthropic-ai/claude-code</code>.
+        <code>npm i -g @moxxy/cli</code>, <code>npm i -g @anthropic-ai/claude-code</code> or{' '}
+        <code>npm i -g @openai/codex</code>.
       </div>
     );
   }
@@ -749,7 +750,16 @@ function HarnessPicker({
           className="px-4 py-3"
           title={
             <span className="flex items-center gap-2">
-              {option.label}
+              {/* Linked for the same reason the CLI's setup list carries the
+                  address: this is where a name like Moxxy or Codex is met, and
+                  a product nobody can look up is not a choice anyone can make. */}
+              {option.homepage ? (
+                <a className="linkish" href={option.homepage} target="_blank" rel="noreferrer">
+                  {option.label}
+                </a>
+              ) : (
+                option.label
+              )}
               {/* Ticking a second runtime beside the first changes nothing, and
                   two ticked boxes would otherwise look the same whichever one
                   work actually runs through. */}

@@ -56,7 +56,7 @@ export async function cleanupRunnerStorage(
   const configs = await sweepRunFiles({
     root: paths.runConfigs(),
     cutoff: now - boundedRetention(request.sessionRetentionMs),
-    extensions: ['.yaml'],
+    extensions: ['.yaml', '.json'],
     leasesByRunId,
     live,
     errors,
