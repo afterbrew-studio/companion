@@ -5,9 +5,9 @@ import { SlopMeter } from './SlopMeter.js';
 
 /**
  * The decision, in the order a maintainer needs it: the score and the band it
- * lands in, the confidence behind it, then the action to take. Unboxed on
- * purpose; the bordered card beside it carries facts read off GitHub, this
- * carries the agent's own reading.
+ * lands in, the confidence behind it, then the action to take. A panel of equal
+ * weight to the contributor facts beside it, with the rule separating the score
+ * from what follows from it; the eyebrows say which side is the agent's reading.
  */
 export function SlopScore({
   verdict,
@@ -18,23 +18,23 @@ export function SlopScore({
 }): JSX.Element {
   const band = slopBand(verdict.aiLikelihood);
   return (
-    <div>
+    <div className="card">
       <Eyebrow>AI likelihood</Eyebrow>
-      <div className="mt-1.5">
+      <div className="mt-2.5">
         <SlopMeter value={verdict.aiLikelihood} size="lg" />
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-2">
+      <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <MetaSignal tone={band.tone} label={`${band.label} band`} />
         <span className="dim">
           {slopBandRange(band)} · {verdict.confidence} confidence
         </span>
       </div>
       <SlopBandLegend />
-      <div className="mt-3">
+      <div className="mt-4 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <Eyebrow>{appliedAction ? 'Applied' : 'Recommended'}</Eyebrow>
-        <p className="mt-1 text-sm font-medium">{ACTION_LABEL[appliedAction ?? verdict.recommendedAction]}</p>
+        <p className="mt-1.5 text-sm font-medium">{ACTION_LABEL[appliedAction ?? verdict.recommendedAction]}</p>
         {appliedAction && appliedAction !== verdict.recommendedAction ? (
-          <p className="dim mt-0.5">recommended {ACTION_LABEL[verdict.recommendedAction]}</p>
+          <p className="dim mt-1">recommended {ACTION_LABEL[verdict.recommendedAction]}</p>
         ) : null}
       </div>
     </div>
@@ -48,17 +48,17 @@ export function SlopScore({
  */
 export function SlopScoreSkeleton(): JSX.Element {
   return (
-    <div>
+    <div className="card">
       <Eyebrow>AI likelihood</Eyebrow>
-      <div className="mt-1.5 flex items-center gap-3">
+      <div className="mt-2.5 flex items-center gap-3">
         <Skeleton className="h-9 w-14" />
         <Skeleton className="h-2 min-w-0 flex-1 rounded-full" />
       </div>
-      <Skeleton className="mt-2 h-4 w-44" />
+      <Skeleton className="mt-3 h-4 w-44" />
       <SlopBandLegend />
-      <div className="mt-3">
+      <div className="mt-4 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <Eyebrow>Recommended</Eyebrow>
-        <Skeleton className="mt-1 h-5 w-28" />
+        <Skeleton className="mt-1.5 h-5 w-28" />
       </div>
     </div>
   );
@@ -67,7 +67,7 @@ export function SlopScoreSkeleton(): JSX.Element {
 /** The scale, one click away: where each band starts and what it means. */
 function SlopBandLegend(): JSX.Element {
   return (
-    <details className="mt-1.5">
+    <details className="mt-2.5">
       <summary className="dim cursor-pointer select-none">What the bands mean</summary>
       <ul className="mt-1.5 flex flex-col gap-1">
         {SLOP_BANDS.map((band) => (

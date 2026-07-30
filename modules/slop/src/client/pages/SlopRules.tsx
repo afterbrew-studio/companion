@@ -180,13 +180,13 @@ function RuleEditor({
   };
 
   return (
-    <Modal title={rule ? `Edit rule — ${rule.name}` : 'New detection rule'} onClose={onClose} wide>
+    <Modal title={rule ? `Edit rule: ${rule.name}` : 'New detection rule'} onClose={onClose} wide>
       <div className="flex flex-col gap-4">
         {!rule ? (
           <div className="border-b border-zinc-200 pb-4 dark:border-zinc-800">
             <Field
               label="Generate with AI"
-              hint="Describe a tell your team keeps seeing (e.g. “PRs whose tests assert nothing”) — the draft fills the fields below for review."
+              hint="Describe a tell your team keeps seeing (e.g. “PRs whose tests assert nothing”): the draft fills the fields below for review."
             >
               <div className="flex items-center gap-2">
                 <input

@@ -11,7 +11,7 @@ import { slopApi } from './api.js';
 /**
  * Contributions rendered INTO other modules' pages. The dashboard (module-code)
  * exposes `dashboard.widgets`; slop drops its radar there so high-scoring PRs
- * awaiting review are visible at a glance — without code importing this module.
+ * awaiting review are visible at a glance, without code importing this module.
  */
 
 const RADAR_MIN_LIKELIHOOD = 50;
@@ -25,7 +25,7 @@ function SlopRadarWidget(): JSX.Element | null {
         (b.verdict?.aiLikelihood ?? 0) - (a.verdict?.aiLikelihood ?? 0) || b.createdAt - a.createdAt,
     )
     .slice(0, 5);
-  // No blip, no widget — the dashboard stays quiet when the radar is clear.
+  // No blip, no widget: the dashboard stays quiet when the radar is clear.
   if (hot.length === 0) return null;
   return (
     <Section

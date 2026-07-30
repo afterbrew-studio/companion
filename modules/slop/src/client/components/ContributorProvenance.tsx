@@ -25,9 +25,9 @@ function isFreshAccount(p: SlopProvenance): boolean {
 export function ContributorProvenance({ provenance }: { provenance: SlopProvenance | null }): JSX.Element {
   if (!provenance) {
     return (
-      <div className="card p-4">
+      <div className="card">
         <Eyebrow>Contributor</Eyebrow>
-        <p className="dim mt-1.5 text-xs">
+        <p className="dim mt-2.5 text-xs leading-relaxed">
           This detection carried no contributor facts, because GitHub was unreachable or the detection predates
           provenance capture. Where facts were missing the agent was told to report no provenance signal rather than
           infer one.
@@ -60,11 +60,9 @@ export function ContributorProvenance({ provenance }: { provenance: SlopProvenan
   );
 
   return (
-    // Boxed, unlike Detection beside it: these are facts read off GitHub rather
-    // than the agent's own verdict, and the border is what says so.
-    <div className="card p-4">
+    <div className="card">
       <Eyebrow>Contributor</Eyebrow>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <a
           className="linkish font-mono text-[13px]"
           href={`https://github.com/${provenance.authorLogin}`}
@@ -77,7 +75,7 @@ export function ContributorProvenance({ provenance }: { provenance: SlopProvenan
           <MetaSignal key={i} tone={chip.tone} label={chip.label} title={chip.title} />
         ))}
       </div>
-      <DetailGrid className="mt-3">
+      <DetailGrid className="mt-4 gap-y-2.5">
         <DetailRow label="Account">{describeAccount(provenance)}</DetailRow>
         {provenance.distinctAuthors > 1 ? (
           <DetailRow label="Authors">{provenance.distinctAuthors}</DetailRow>

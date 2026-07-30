@@ -32,7 +32,7 @@ import { useSlopDetections } from '../hooks/useSlopDetections.js';
 /**
  * The workspace's slop detections: a filterable list (RunsPage-style rows);
  * each row links to the detection's own page (#/slop/:id) with the full
- * verdict + apply/dismiss actions. Detection is review-then-apply — a verdict
+ * verdict + apply/dismiss actions. Detection is review-then-apply: a verdict
  * never touches GitHub until someone applies it there (or a pipeline gates on
  * the score).
  */
@@ -84,7 +84,7 @@ export default function Slop(): JSX.Element {
     <Page>
       <PageHeader
         title="Slop Detection"
-        subtitle={`${current.name} — an agent scores pull requests against your rules; nothing touches GitHub until you apply a verdict`}
+        subtitle={`${current.name}: an agent scores pull requests against your rules; nothing touches GitHub until you apply a verdict`}
         actions={
           <div className="flex items-center gap-1.5">
             {can('slop:manage') ? (
@@ -111,7 +111,7 @@ export default function Slop(): JSX.Element {
       ) : all.length === 0 ? (
         <EmptyState
           title="No detections yet"
-          hint="Point the detector at a pull request and an agent scores it against your workspace's rules — style tells, hallucinated APIs, diff-vs-description drift. Verdicts land here for review."
+          hint="Point the detector at a pull request and an agent scores it against your workspace's rules: style tells, hallucinated APIs, diff-vs-description drift. Verdicts land here for review."
           action={canAct ? detectButton : undefined}
         />
       ) : (
@@ -193,7 +193,7 @@ function DetectModal({
 
   const effectiveRepo = repo ?? repos[0]?.fullName ?? null;
 
-  // Picking a repo loads its open PRs (cache reads — cheap).
+  // Picking a repo loads its open PRs (cache reads, cheap).
   useEffect(() => {
     if (!effectiveRepo) return;
     let cancelled = false;
@@ -248,7 +248,7 @@ function DetectModal({
               ariaLabel="Pull request"
               value={effectivePr}
               onChange={(v) => setPrNumber(v)}
-              options={prs.map((pr) => ({ value: String(pr.number), label: `#${pr.number} — ${pr.title}` }))}
+              options={prs.map((pr) => ({ value: String(pr.number), label: `#${pr.number} · ${pr.title}` }))}
               searchable
             />
           )}

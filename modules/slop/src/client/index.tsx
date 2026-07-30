@@ -8,7 +8,7 @@ import { routes } from './routes.js';
 import { slots } from './slots.js';
 
 /**
- * The `/client` barrel — module-slop's web surface: one Slop Detection entry
+ * The `/client` barrel, module-slop's web surface: one Slop Detection entry
  * in the Code sidebar group, the detections + rules pages, and the radar
  * widget rendered into code's dashboard slot.
  */

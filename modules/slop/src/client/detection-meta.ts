@@ -1,5 +1,5 @@
 import type { StatusTone } from '@moxxy/companion-sdk/ui';
-import type { SlopAppliedAction, SlopDetectionResult, SlopSignal } from '../contract/index.js';
+import type { SlopAction, SlopAppliedAction, SlopDetectionResult, SlopSignal } from '../contract/index.js';
 
 /** Detection wording/tones shared by the list page and the detection subpage. */
 
@@ -10,6 +10,20 @@ export const ACTION_LABEL: Record<SlopAppliedAction, string> = {
   request_changes: 'request changes',
   close: 'close PR',
   refinement: 'moved to refinement',
+};
+
+/**
+ * The same actions worded as a control the user presses, so a button can name
+ * its own outcome instead of deferring to "apply the recommendation". Separate
+ * from ACTION_LABEL, which reads as prose mid-sentence ("recommends comment").
+ * Closing carries the ellipsis because it confirms before it touches GitHub.
+ */
+export const ACTION_BUTTON: Record<SlopAction, string> = {
+  none: 'Mark reviewed',
+  label: 'Add label',
+  comment: 'Post comment',
+  request_changes: 'Request changes',
+  close: 'Close PR…',
 };
 
 export const STATUS_META: Record<SlopDetectionResult['status'], { label: string; tone: StatusTone }> = {
