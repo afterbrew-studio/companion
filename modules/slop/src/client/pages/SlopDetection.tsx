@@ -168,26 +168,28 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
 
   return (
     <Page>
-      {crumbs(`${d.repo}#${d.prNumber}`)}
-      <PageHeader
-        title={d.prTitle}
-        subtitle={
-          <span className="flex items-center gap-2 text-xs">
-            <a className="linkish font-mono" href={`#/repos/${d.repo}/prs/${d.prNumber}`}>
-              {d.repo}#{d.prNumber}
-            </a>
-            <MetaSignal tone={meta.tone} label={meta.label} pulse={d.status === 'running'} />
-          </span>
-        }
-        actions={actions}
-      />
-      <ErrorBar error={error} className="mb-3" />
-      {confirmElement}
-
-      {/* Wider than a reading column so the two panels below have room; the
-          prose inside each section still wraps well short of the edge. */}
+      {/* One measure for the whole page, header included: the actions line up
+          with the panels' right edge instead of the page's, and the prose still
+          wraps well short of it. The panels stretch to the taller of the two (no
+          items-start): side by side, two card heights read as a slip. */}
       <div className="max-w-4xl">
-        <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+        {crumbs(`${d.repo}#${d.prNumber}`)}
+        <PageHeader
+          title={d.prTitle}
+          subtitle={
+            <span className="flex items-center gap-2 text-xs">
+              <a className="linkish font-mono" href={`#/repos/${d.repo}/prs/${d.prNumber}`}>
+                {d.repo}#{d.prNumber}
+              </a>
+              <MetaSignal tone={meta.tone} label={meta.label} pulse={d.status === 'running'} />
+            </span>
+          }
+          actions={actions}
+        />
+        <ErrorBar error={error} className="mb-3" />
+        {confirmElement}
+
+        <div className="grid gap-5 lg:grid-cols-2">
           {verdict ? (
             <SlopScore verdict={verdict} appliedAction={d.appliedAction} />
           ) : d.status === 'running' ? (
