@@ -388,4 +388,27 @@ export default defineMigrations([
       db.exec(`ALTER TABLE runners DROP COLUMN harnesses`);
     },
   },
+  {
+    /**
+     * The verification a run's diff was put through, as JSON on the run row.
+     *
+     * Missing until now: the column was read by `setVerification` and by the
+     * boot-time sweep for verifications interrupted by a restart, but nothing
+     * created it, so `recover()` failed every boot with "no such column" and the
+     * daemon never got past the kernel. NULL is "never verified", which is what
+     * every run that predates the feature is.
+     */
+    version: 11,
+    name: 'runs_verification',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE runs ADD COLUMN verification TEXT`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE runs DROP COLUMN verification`);
+    },
+  },
 ]);
