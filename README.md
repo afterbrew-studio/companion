@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/brand/mark.svg" width="72" height="72" alt="">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-readme-dark.svg">
+    <img src="docs/brand/mark-readme.svg" width="72" height="72" alt="">
+  </picture>
 </p>
 
 <h1 align="center">Companion</h1>

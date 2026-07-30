@@ -10,7 +10,8 @@ and when it does, the mark disappears from the app chrome entirely.
 | File | Use |
 | --- | --- |
 | `mark.svg` | The mark alone, `currentColor`. Inline use, docs, slides. |
-| `mark-tile.svg` | Knocked out of a zinc-950 tile. README, app icon, anything on an unknown background. |
+| `mark-readme.svg`, `mark-readme-dark.svg` | The same mark with a literal colour, one per theme. An SVG loaded through `<img>` inherits no colour, so `currentColor` renders black there and disappears on a dark page; pair these in a `<picture>` with `prefers-color-scheme`, which GitHub honours. |
+| `mark-tile.svg` | Knocked out of a zinc-950 tile. npm, app icon, anything on an unknown background or a renderer that drops `<picture>`. |
 | `og.html` | Source of the 1200×630 link-preview card. It renders to `apps/web/public/og.png`; the header comment holds the command. |
 | `ascii.mjs` | Rasterizes the mark to ASCII from the same geometry, for the CLI banner: `node docs/brand/ascii.mjs [cols]`. Paste the output into `apps/companion-cli/src/index.ts`; nothing rasterizes at runtime. |
 

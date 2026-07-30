@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/moxxy-ai/companion/main/docs/brand/mark-readme.svg" width="72" height="72" alt="Companion" />
+<img src="https://raw.githubusercontent.com/moxxy-ai/companion/main/docs/brand/mark-tile.svg" width="72" height="72" alt="Companion" />
 
 # Companion
 
