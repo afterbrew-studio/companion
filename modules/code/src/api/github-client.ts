@@ -23,6 +23,14 @@ export class GitHubClient {
   constructor(
     private readonly token: string,
     private readonly api: string = DEFAULT_API,
+    /**
+     * Instance policy gate for anything that MUTATES on the forge. Injected
+     * rather than read here so this file stays a thin transport with no idea
+     * what a policy is; a no-op default keeps it usable in tests and scripts.
+     *
+     * `what` names the operation for the audit trail.
+     */
+    private readonly assertWrite: (what: string) => void = () => {},
   ) {}
 
   /** GET with ETag cache. Returns the cached body on 304. */
@@ -266,6 +274,9 @@ export class GitHubClient {
    * not be collateral. Returns false when skipped (fork / unknown head repo).
    */
   async deleteMergedPrBranch(fullName: string, number: number): Promise<boolean> {
+    // Before the lookup, not after: a refused delete should not spend a GitHub
+    // request to find out it was going to be refused.
+    this.assertWrite(`DELETE /repos/${fullName}/git/refs/heads`);
     const pr = await this.pull(fullName, number);
     if (pr.head.repo?.full_name !== fullName) return false;
     const res = await fetch(`${this.api}/repos/${fullName}/git/refs/heads/${encodeURIComponent(pr.head.ref)}`, {
@@ -287,6 +298,9 @@ export class GitHubClient {
   }
 
   private async send<T>(method: string, path: string, payload: unknown): Promise<T> {
+    // Every POST and PATCH funnels through here, which is what makes this the
+    // choke point: a method added later is gated without touching the gate.
+    this.assertWrite(`${method} ${path}`);
     const res = await fetch(`${this.api}${path}`, {
       method,
       headers: { ...this.headers(), 'content-type': 'application/json' },

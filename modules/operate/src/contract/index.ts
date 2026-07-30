@@ -331,6 +331,13 @@ export interface RunVerification {
 export interface AgentPolicySnapshot {
   /** 'refused' makes agents read-only on every repository, on every runner. */
   readonly gitWrite: 'allowed' | 'refused';
+  /**
+   * Writes to the forge's API (comments, labels, reviews, merges). 'attended'
+   * allows them only while a person is asking, so automation can analyse
+   * continuously without anything appearing under the instance's identity
+   * unprompted.
+   */
+  readonly gitHubWrite: 'allowed' | 'attended' | 'refused';
   /** Branch patterns agent work may never push to; `*` is the only wildcard. */
   readonly protectedBranches: readonly string[];
   /** Output tokens one run may burn before it is aborted. */

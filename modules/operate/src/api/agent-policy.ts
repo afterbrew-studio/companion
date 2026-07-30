@@ -16,6 +16,18 @@ export class AgentPolicyError extends Error {
 /** Default ceiling, kept as the value the constant had before it was configurable. */
 export const DEFAULT_MAX_OUTPUT_TOKENS = 400_000;
 
+/**
+ * What this instance may write back to the forge.
+ *
+ * `attended` is the setting most people actually want and the reason this is not
+ * a boolean: let the agents analyse, triage and screen continuously, but never let
+ * anything appear under the instance's GitHub identity without a person having
+ * asked for it in that moment. A public repository is the sharp case, where an
+ * unprompted machine comment on a stranger's first contribution is a
+ * reputational act.
+ */
+export type GitHubWritePolicy = 'allowed' | 'attended' | 'refused';
+
 /** Branch names agents may not push to unless an operator says otherwise. */
 export const DEFAULT_PROTECTED_BRANCHES = 'main, master, release/*, prod';
 
@@ -77,6 +89,36 @@ export class AgentPolicy {
     return parsePatterns(raw === null || raw === undefined ? DEFAULT_PROTECTED_BRANCHES : raw);
   }
 
+  gitHubWrite(): GitHubWritePolicy {
+    const value = this.moduleConfig.get('agentGitHubWrite');
+    return value === 'attended' || value === 'refused' ? value : 'allowed';
+  }
+
+  /**
+   * Gate a write to the forge's API: a comment, a label, a review, a merge.
+   *
+   * `attended` means a human is on the other end of the request making it happen
+   * right now. That is read from the request-scoped invoker the account resolver
+   * already uses to decide which credential to act as, so attendance has ONE
+   * definition in this codebase rather than two that drift. Work outside a
+   * request (a webhook, a schedule, a queued run) sees no user and is unattended
+   * by construction.
+   */
+  assertGitHubWrite(attended: boolean, what: string): void {
+    const policy = this.gitHubWrite();
+    if (policy === 'allowed') return;
+    if (policy === 'attended' && attended) return;
+    const detail = `GitHub write refused (${what}): policy is '${policy}'${attended ? '' : ', and nobody is asking for it'}`;
+    this.audit('policy.github-write.refused', detail);
+    throw new AgentPolicyError(
+      policy === 'refused'
+        ? 'this instance does not write to GitHub. Verdicts are still produced and stored; an administrator can ' +
+          'change "Writing to GitHub" under Modules.'
+        : 'this instance only writes to GitHub when a person asks for it, and this write came from automation. ' +
+          'Apply the verdict yourself, or change "Writing to GitHub" under Modules.',
+    );
+  }
+
   maxOutputTokens(): number {
     const value = this.moduleConfig.get('maxRunOutputTokens');
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_OUTPUT_TOKENS;
@@ -113,6 +155,7 @@ export class AgentPolicy {
   snapshot(): AgentPolicySnapshot {
     return {
       gitWrite: this.gitWriteAllowed() ? 'allowed' : 'refused',
+      gitHubWrite: this.gitHubWrite(),
       protectedBranches: this.protectedBranches(),
       maxOutputTokens: this.maxOutputTokens(),
     };

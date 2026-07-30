@@ -182,12 +182,16 @@ worktrees and scratch have retention sweeps, so the failure is slow, but a full
 rather than constants, enforced at the credential seam and audited on refusal.
 See `ENTERPRISE.md` §4.
 
-Still open, and it is the axis an organisation asks about second: **GitHub-side
-writes are not part of this policy.** "Agents may analyse but must never post a
-comment" is not expressible as a setting. It is covered today by review-then-apply
-plus `prs:act` / `issues:act` / `slop:act`, which is a real control but a
-per-person one, not a per-instance statement. There is no single choke point for
-GitHub writes the way there is for git credentials, so this needs a seam first.
+`agentGitHubWrite` closes the axis that was open here: comments, labels, reviews
+and merges are gated at `GitHubClient`'s single write path, with `attended`
+allowing them only while a person is asking. Attendance reuses the request-scoped
+invoker rather than inventing a second notion of it.
+
+Still open, and small: **a refusal under `attended` is retried on every sweep.**
+The auto-merge sweep will find the same eligible PR each tick and be refused each
+time, logging a warning. That is the same shape as any persistent failure the
+sweep already tolerates (a merge conflict does likewise), so it is noise rather
+than a fault, but an instance running `attended` permanently will see it.
 
 ## 11. Repository presets `[BUILT]`
 

@@ -1,4 +1,4 @@
-import { defineServices } from '@moxxy/companion-sdk/server';
+import { currentUser, defineServices } from '@moxxy/companion-sdk/server';
 import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
@@ -84,7 +84,14 @@ export default defineServices((ctx) => {
   // GitHub accounts registry: each PAT is bound to purposes (fetch, runs,
   // pipelines, webhooks); consumers resolve a client per purpose and owner.
   // An unowned legacy token is intentionally never adopted.
-  const ghAccounts = new GitHubAccounts(store, ctx.config.github.apiUrl);
+  // Instance policy for forge mutations. operate owns the policy; code owns the
+  // client that would make the write, and code depends on operate, so it is read
+  // here rather than pushed in. Attendance comes from the request-scoped invoker,
+  // the same signal account resolution already uses to decide who is acting.
+  const agentPolicy = ctx.services.get('operate').agentPolicy;
+  const ghAccounts = new GitHubAccounts(store, ctx.config.github.apiUrl, (what) =>
+    agentPolicy.assertGitHubWrite(currentUser() !== null, what),
+  );
   ghAccounts.migrateLegacyToken();
   const importActiveLocalGh = async (): Promise<boolean> => {
     const primaryAdmin = ctx.services.get('core').primaryAdminUsername();

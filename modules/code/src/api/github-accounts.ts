@@ -73,6 +73,12 @@ export class GitHubAccounts {
     private readonly store: CodeStore,
     /** Which GitHub every client for this instance talks to (github.com or GHES). */
     private readonly api: string = DEFAULT_API,
+    /**
+     * Instance policy gate for forge mutations, handed to every client this
+     * registry builds. module-code depends on operate, so the policy is passed
+     * in at construction rather than reached for here.
+     */
+    private readonly assertWrite: (what: string) => void = () => {},
   ) {}
 
   /** Legacy instance-wide PATs are deliberately not adopted: there is no safe
@@ -97,7 +103,7 @@ export class GitHubAccounts {
     scope: GitHubAccountScope = 'all',
     workspaceIds: readonly string[] = [],
   ): Promise<GitHubAccountRecord> {
-    const client = new GitHubClient(token, this.api);
+    const client = new GitHubClient(token, this.api, this.assertWrite);
     const viewer = await client.viewer();
     // The same GitHub login may be connected independently by different
     // Companion users. One user's connect flow must never replace another's.
@@ -553,7 +559,7 @@ export class GitHubAccounts {
   clientOf(row: GithubAccountRow): GitHubClient {
     let client = this.clients.get(row.id);
     if (!client) {
-      client = new GitHubClient(row.token, this.api);
+      client = new GitHubClient(row.token, this.api, this.assertWrite);
       this.clients.set(row.id, client);
     }
     return client;

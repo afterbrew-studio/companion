@@ -291,6 +291,7 @@ to read and an auditor something to check:
 | Setting | Effect |
 |---|---|
 | `agentGitWrite` | `refused` makes every agent read-only on every runner |
+| `agentGitHubWrite` | `attended` posts only while a person is asking; `refused` never posts |
 | `protectedBranches` | Branch patterns agent work may never push to (default `main, master, release/*, prod`) |
 | `maxRunOutputTokens` | Per-run ceiling, previously a 400k constant |
 
@@ -303,6 +304,22 @@ Worth knowing precisely what read-only means, because it is narrower than it
 sounds: only pushes request write access. Clones, fetches and worktrees ask for
 read, so a read-only instance still triages, reviews, screens for slop and
 proposes changes exactly as before. It simply cannot land them.
+
+`agentGitHubWrite` is the second axis, and independent of the first: comments,
+labels, reviews, merges and PR creation, gated at `GitHubClient`'s single write
+path so a method added later is covered without touching the gate.
+
+**`attended` is the setting most people want.** It lets automation analyse, triage
+and screen continuously while nothing appears under the instance's GitHub identity
+unless a person asked for it in that moment. On a public repository that is the
+difference between a useful screening tool and a bot that comments on a stranger's
+first contribution unprompted. Verdicts are produced and stored either way; only
+publishing them is gated.
+
+Attendance is read from the request-scoped invoker the account resolver already
+uses to decide which credential to act as, so it has one definition here rather
+than two that drift: work outside an HTTP request (a webhook, a schedule, a queued
+run) sees no user and is unattended by construction.
 
 Refusals go to the audit trail (`policy.git-write.refused`,
 `policy.push.refused`), and `GET /api/agent-policy` returns the effective policy

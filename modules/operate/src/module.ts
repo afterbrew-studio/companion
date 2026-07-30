@@ -84,6 +84,19 @@ export default defineManifest({
       ],
     },
     {
+      key: 'agentGitHubWrite',
+      label: 'Writing to GitHub',
+      kind: 'select',
+      description:
+        'Whether this instance may post comments, labels, reviews and merges. "Only when asked" lets automation analyse and screen continuously while nothing appears under your GitHub identity unless a person clicks apply. Verdicts are always produced and stored either way.',
+      default: 'allowed',
+      options: [
+        { value: 'allowed', label: 'Automation may post on its own' },
+        { value: 'attended', label: 'Only when a person asks' },
+        { value: 'refused', label: 'Never write to GitHub' },
+      ],
+    },
+    {
       key: 'protectedBranches',
       label: 'Branches agents may never push to',
       kind: 'text',

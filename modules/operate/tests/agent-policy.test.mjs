@@ -115,6 +115,69 @@ test('read-only wins over the branch check, and says so rather than blaming the 
   }
 });
 
+// ---------- GitHub writes ----------
+
+test('the default lets automation post, so nothing changes for an instance that never set it', () => {
+  assert.doesNotThrow(() => policy().assertGitHubWrite(false, 'POST /comments'));
+});
+
+test('refused blocks the write even when a person is asking', () => {
+  // "Never write to GitHub" is a statement about the instance, not about who
+  // happens to be clicking.
+  const p = policy({ agentGitHubWrite: 'refused' });
+  assert.throws(() => p.assertGitHubWrite(true, 'POST /comments'), AgentPolicyError);
+  assert.throws(() => p.assertGitHubWrite(false, 'POST /comments'), AgentPolicyError);
+});
+
+test('attended is the whole point: a person may post, automation may not', () => {
+  const p = policy({ agentGitHubWrite: 'attended' });
+  assert.doesNotThrow(() => p.assertGitHubWrite(true, 'POST /comments'));
+  assert.throws(() => p.assertGitHubWrite(false, 'POST /comments'), AgentPolicyError);
+});
+
+test('the two refusals read differently, because the fix differs', () => {
+  try {
+    policy({ agentGitHubWrite: 'attended' }).assertGitHubWrite(false, 'POST /comments');
+    assert.fail('expected a refusal');
+  } catch (err) {
+    assert.match(err.message, /Apply the verdict yourself/);
+  }
+  try {
+    policy({ agentGitHubWrite: 'refused' }).assertGitHubWrite(true, 'POST /comments');
+    assert.fail('expected a refusal');
+  } catch (err) {
+    assert.match(err.message, /does not write to GitHub/);
+  }
+});
+
+test('a refusal is audited with the operation, so the trail says what was stopped', () => {
+  const audited = [];
+  assert.throws(() => policy({ agentGitHubWrite: 'refused' }, audited).assertGitHubWrite(false, 'PATCH /issues/7'));
+  assert.equal(audited[0].action, 'policy.github-write.refused');
+  assert.match(audited[0].detail, /PATCH \/issues\/7/);
+});
+
+test('an allowed write is not audited, or the trail becomes noise', () => {
+  const audited = [];
+  policy({}, audited).assertGitHubWrite(false, 'POST /comments');
+  policy({ agentGitHubWrite: 'attended' }, audited).assertGitHubWrite(true, 'POST /comments');
+  assert.deepEqual(audited, []);
+});
+
+test('an unrecognised setting falls back to allowed rather than locking the instance out', () => {
+  for (const bad of ['nope', '', null, 7]) {
+    assert.doesNotThrow(() => policy({ agentGitHubWrite: bad }).assertGitHubWrite(false, 'x'));
+  }
+});
+
+test('the two write axes are independent', () => {
+  // Read-only on git while still allowed to comment is a coherent posture, and
+  // one gate must not silently imply the other.
+  const p = policy({ agentGitWrite: 'refused' });
+  assert.doesNotThrow(() => p.assertGitHubWrite(false, 'POST /comments'));
+  assert.throws(() => p.assertGitWrite('acme/app'), AgentPolicyError);
+});
+
 // ---------- token ceiling ----------
 
 test('the ceiling keeps the value the constant had, so behaviour is unchanged by default', () => {
@@ -132,9 +195,14 @@ test('a configured ceiling is used, and nonsense falls back rather than becoming
 // ---------- snapshot ----------
 
 test('the snapshot reports the effective policy, which is what an auditor reads', () => {
-  const snapshot = policy({ agentGitWrite: 'refused', protectedBranches: 'main, dev' }).snapshot();
+  const snapshot = policy({
+    agentGitWrite: 'refused',
+    agentGitHubWrite: 'attended',
+    protectedBranches: 'main, dev',
+  }).snapshot();
   assert.deepEqual(snapshot, {
     gitWrite: 'refused',
+    gitHubWrite: 'attended',
     protectedBranches: ['main', 'dev'],
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
   });
