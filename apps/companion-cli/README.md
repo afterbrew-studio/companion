@@ -49,6 +49,22 @@ First run walks through three things and takes under a minute:
 Then Companion starts on <http://127.0.0.1:8901> and opens your browser. Later
 runs reuse the data directory and skip setup entirely.
 
+### Without a terminal
+
+`--background` starts the daemon as its own process, detached from the shell.
+Setup still happens in front of you; when it is done the CLI returns and
+Companion keeps running, so the terminal can be closed.
+
+```sh
+npx @moxxy/companion --background   # start, then hand the terminal back
+npx @moxxy/companion stop           # stop it again
+```
+
+Output goes to `~/.companion/companiond.log` (rolled at 5 MB, one file kept)
+instead of the screen. `stop` reads the pid from the data directory, so it stops
+the instance for that `--home` however it was started. Running `npx
+@moxxy/companion` again while one is up just opens the browser.
+
 ### Non-interactive
 
 ```sh
@@ -59,6 +75,7 @@ COMPANION_PROFILE=full npx @moxxy/companion --yes --no-open
 |---|---|
 | `--yes`, `-y` | Accept generated defaults; never prompt |
 | `--no-open` | Do not open a browser |
+| `--background` | Leave the daemon running after the CLI exits |
 | `--port <n>`, `--host <h>` | Bind somewhere other than `127.0.0.1:8901` |
 | `--home <path>` | Use a different data directory |
 | `COMPANION_PROFILE` | `slim` or `full`, instead of the prompt |

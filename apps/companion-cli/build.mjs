@@ -27,6 +27,7 @@ await build({
     modules: join(here, 'src/modules.ts'),
     acl: join(here, 'src/acl.ts'),
     client: join(here, 'src/client.ts'),
+    daemon: join(here, 'src/daemon.ts'),
     repair: join(here, 'src/repair.ts'),
     backup: join(here, 'src/backup.ts'),
     runs: join(here, 'src/runs.ts'),

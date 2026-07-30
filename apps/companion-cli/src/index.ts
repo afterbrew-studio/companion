@@ -44,13 +44,15 @@ import { RUN_HELP, parseRunCommand, runRunCommand } from './runs.js';
 import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
+import { daemonLog, runningPid, startDetached, stopDaemon, tailLog, waitUntilServing } from './daemon.js';
+import type { Detached } from './daemon.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
 const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
-  readonly command: 'start' | 'init' | 'connect-github' | 'backup' | 'restore' | ClientCommand;
+  readonly command: 'start' | 'stop' | 'init' | 'connect-github' | 'backup' | 'restore' | ClientCommand;
   readonly home: string;
   readonly host?: string;
   readonly port?: number;
@@ -58,6 +60,7 @@ interface CliOptions {
   readonly yes: boolean;
   readonly githubFromGh: boolean;
   readonly verbose: boolean;
+  readonly background: boolean;
   /** Positional path for `backup` / `restore`. */
   readonly file?: string;
 }
@@ -93,6 +96,8 @@ const HELP = `@moxxy/companion: run Companion locally
 
 Usage:
   npx @moxxy/companion                  Initialize when needed, start, open browser
+  npx @moxxy/companion --background     Same, but leave it running without a terminal
+  npx @moxxy/companion stop             Stop the daemon using this data directory
   npx @moxxy/companion init             Create the local admin configuration only
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
   npx @moxxy/companion run list         Runs awaiting you; also show/diff/approve/discard
@@ -108,6 +113,7 @@ Options:
   --host <host>    Bind host for this run (default: 127.0.0.1)
   --port <port>    HTTP port for this run (default: 8901)
   --no-open        Do not open a browser
+  --background     Run the daemon detached; logs go to <home>/companiond.log
   -y, --yes        Accept secure generated defaults without prompting
   --github-from-gh Connect the active local gh account to the new admin
   --verbose        Show daemon startup and diagnostic logs
@@ -147,6 +153,12 @@ async function main(): Promise<void> {
   }
 
   const options = parseArgs(argv);
+  if (options.command === 'stop') {
+    process.env.COMPANION_HOME = options.home;
+    const { host, port } = resolveAddress(options);
+    await stopDaemon(options.home, localUrl(host, port));
+    return;
+  }
   if (options.command === 'backup' || options.command === 'restore') {
     process.env.COMPANION_HOME = options.home;
     const { host, port } = resolveAddress(options);
@@ -355,6 +367,17 @@ async function start(options: CliOptions): Promise<void> {
     throw new Error('Companion bundle is incomplete. Reinstall @moxxy/companion.');
   }
 
+  // A daemon that outlives its terminal is one someone will start twice. Booting
+  // anyway means waiting out the instance lock for 75 seconds to be told what is
+  // already knowable here, so treat a second `npx` as "show me the one I have".
+  const already = runningPid(options.home);
+  if (already !== null) {
+    process.stdout.write(`\nCompanion is already running at ${url} (pid ${already}).\n`);
+    process.stdout.write(`Stop it with: npx @moxxy/companion stop\n`);
+    if (options.open) openBrowser(url);
+    return;
+  }
+
   process.env.COMPANION_HOME = options.home;
   // The one-command experience stays focused on actionable status. Warnings
   // and errors still surface; developers running `pnpm dev` keep full logs.
@@ -365,14 +388,34 @@ async function start(options: CliOptions): Promise<void> {
   process.env.COMPANION_STATIC_DIR = staticDir;
   if (options.host !== undefined) process.env.COMPANION_HOST = options.host;
   if (options.port !== undefined) process.env.COMPANION_PORT = String(options.port);
-  process.chdir(options.home);
 
-  process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\nPress Ctrl+C to stop.\n\n`);
+  const note = options.background ? `Logs: ${daemonLog(options.home)}` : 'Press Ctrl+C to stop.';
+  process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\n${note}\n\n`);
   const pendingModules = takePendingProfile(options.home);
-  const ready = waitForHealth(url, 30_000);
-  await import(pathToFileURL(server).href);
-  if (!(await ready)) {
-    process.stderr.write(`Companion did not become ready within 30 seconds. Check the logs above.\n`);
+  // Either way this process stays in the foreground until the questions below
+  // are answered; what --background changes is who owns the server afterwards.
+  let detached: Detached | null = null;
+  let outcome: 'ready' | 'timeout' | 'exited';
+  if (options.background) {
+    detached = startDetached(server, options.home);
+    outcome = await waitUntilServing(detached, options.home, url, 30_000);
+  } else {
+    process.chdir(options.home);
+    const ready = waitForHealth(url, 30_000);
+    await import(pathToFileURL(server).href);
+    outcome = (await ready) ? 'ready' : 'timeout';
+  }
+  if (outcome !== 'ready') {
+    process.exitCode = 1;
+    if (outcome === 'exited' && detached) {
+      process.stderr.write(
+        `Companion exited while starting. Last lines of ${detached.log}:\n\n${tailLog(detached.log)}\n`,
+      );
+    } else {
+      process.stderr.write(
+        `Companion did not become ready within 30 seconds. Check ${detached ? detached.log : 'the logs above'}.\n`,
+      );
+    }
     return;
   }
   if (pendingModules.length) {
@@ -397,6 +440,13 @@ async function start(options: CliOptions): Promise<void> {
   if (pendingAdmin) consumePendingAdminSetup(options.home);
   await settleRepo(url, options);
   if (options.open) openBrowser(url);
+  if (detached) {
+    process.stdout.write(
+      `\nRunning in the background (pid ${detached.pid}). Closing this terminal leaves it running.\n` +
+        `  logs:  ${detached.log}\n` +
+        `  stop:  npx @moxxy/companion stop\n`,
+    );
+  }
 }
 
 /**
@@ -501,12 +551,13 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let yes = false;
   let githubFromGh = false;
   let verbose = false;
+  let background = false;
   let file: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (CLIENT_COMMANDS.some((c) => c === arg) && command === 'start') command = arg as ClientCommand;
-    else if ((arg === 'init' || arg === 'connect-github') && command === 'start') command = arg;
+    else if ((arg === 'init' || arg === 'connect-github' || arg === 'stop') && command === 'start') command = arg;
     else if ((arg === 'backup' || arg === 'restore') && command === 'start') command = arg;
     // The one positional: the snapshot path these two commands operate on.
     else if ((command === 'backup' || command === 'restore') && !arg.startsWith('-') && file === undefined) file = arg;
@@ -517,13 +568,14 @@ function parseArgs(argv: readonly string[]): CliOptions {
     else if (arg === '--yes' || arg === '-y') yes = true;
     else if (arg === '--github-from-gh') githubFromGh = true;
     else if (arg === '--verbose') verbose = true;
+    else if (arg === '--background') background = true;
     else if (arg === '--help' || arg === '-h' || arg === 'help') {
       process.stdout.write(HELP);
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
   }
   home = isAbsolute(home) ? home : resolve(home);
-  return { command, home, host, port, open, yes, githubFromGh, verbose, file };
+  return { command, home, host, port, open, yes, githubFromGh, verbose, background, file };
 }
 
 /**

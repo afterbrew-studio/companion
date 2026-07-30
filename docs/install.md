@@ -38,6 +38,26 @@ printed or copied into the CLI configuration.
 `npx @moxxy/companion init` does setup without starting the server. `--no-open`,
 `--port` and `--home` do what they sound like.
 
+`--background` keeps the terminal out of it. Setup and the first-run questions
+still run in front of you, but the daemon is started detached and survives the
+CLI and the shell that ran it:
+
+```sh
+npx @moxxy/companion --background
+npx @moxxy/companion stop
+```
+
+Its output goes to `~/.companion/companiond.log`, rolled at 5 MB with one
+previous file kept, since nothing is watching the screen. `stop` sends SIGTERM
+to the pid recorded in `instance.lock` and waits for the daemon's own shutdown,
+escalating to SIGKILL only if that hangs; it therefore stops whatever holds that
+data directory, including a daemon started in the foreground. Starting a second
+time while one is already up prints where it is and opens a browser rather than
+waiting out the instance lock.
+
+Under a supervisor (pm2, systemd, Docker), keep using the supervisor's own start
+and stop: `stop` kills the process, and a supervisor will simply start it again.
+
 This path is always the `slim` module set. The registry is compiled into the
 published bundle, so picking a different one means Docker or a source build. See
 [`development.md`](development.md#build-profiles-what-ships).
