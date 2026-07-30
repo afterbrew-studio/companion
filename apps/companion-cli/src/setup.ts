@@ -7,20 +7,54 @@ const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const DEFAULT_EMAIL = 'admin@companion.local';
 const PENDING_SETUP_FILE = 'pending-admin-setup.json';
 
+/**
+ * Where an admin password came from, which is what decides whether the setup
+ * box may print it. A generated one has to be shown once or it is lost; the
+ * default one is public knowledge already, so hiding it would only make the
+ * operator hunt for something this CLI just told them to use; a chosen one is
+ * the operator's and is never echoed back.
+ */
+export type PasswordSource = 'generated' | 'default' | 'chosen';
+
 export interface AdminSetup {
   readonly username: string;
   readonly email: string;
   readonly password: string;
-  readonly generatedPassword: boolean;
+  readonly passwordSource: PasswordSource;
 }
 
-/** Secure local defaults: predictable identity, one-time random credential. */
+/**
+ * The login a first run offers to start with.
+ *
+ * Deliberately guessable, because it is the answer to "just let me in": an
+ * instance bound to the loopback interface, on a machine whose operator is
+ * standing in front of it, minutes old and holding nothing yet. It is OFFERED
+ * and never assumed, and a scripted install does not get it (see
+ * `createDefaultAdmin`), because nobody is watching that one to decide.
+ */
+export const DEFAULT_LOGIN = { username: 'admin', password: 'admin1234' } as const;
+
+export function createDefaultLogin(): AdminSetup {
+  return {
+    username: DEFAULT_LOGIN.username,
+    email: DEFAULT_EMAIL,
+    password: DEFAULT_LOGIN.password,
+    passwordSource: 'default',
+  };
+}
+
+/**
+ * What an install nobody is watching gets: the same predictable identity, and
+ * a credential that is not in this file. A `-y` run and a container both land
+ * here, and a well-known password on either is a public instance with a
+ * published login rather than a convenience.
+ */
 export function createDefaultAdmin(): AdminSetup {
   return {
-    username: 'admin',
+    username: DEFAULT_LOGIN.username,
     email: DEFAULT_EMAIL,
     password: randomBytes(18).toString('base64url'),
-    generatedPassword: true,
+    passwordSource: 'generated',
   };
 }
 
@@ -61,7 +95,9 @@ export function readAdminSetup(home: string, env: NodeJS.ProcessEnv = process.en
     env.COMPANION_ADMIN_EMAIL?.trim() || pending?.email || stored.COMPANION_ADMIN_EMAIL?.trim() || DEFAULT_EMAIL;
   const password = env.COMPANION_ADMIN_PASSWORD || pending?.password || stored.COMPANION_ADMIN_PASSWORD;
   if (!username || !password) return null;
-  return { username, email, password, generatedPassword: false };
+  // Read back rather than decided here, so its origin is unknown and the
+  // conservative reading is the one that never prints it.
+  return { username, email, password, passwordSource: 'chosen' };
 }
 
 const PENDING_PROFILE_FILE = 'pending-profile.json';
@@ -112,7 +148,7 @@ export function readPendingAdminSetup(home: string): AdminSetup | null {
     if (typeof value.username !== 'string' || typeof value.email !== 'string' || typeof value.password !== 'string') {
       return null;
     }
-    return { username: value.username, email: value.email, password: value.password, generatedPassword: false };
+    return { username: value.username, email: value.email, password: value.password, passwordSource: 'chosen' };
   } catch {
     return null;
   }
@@ -138,7 +174,7 @@ export function renderSetupBox(setup: AdminSetup, home: string, url: string): st
     ['Data', home],
     ['Username', setup.username],
     ['Email', setup.email],
-    ['Password', setup.generatedPassword ? setup.password : '•••••••• (chosen)'],
+    ['Password', setup.passwordSource === 'chosen' ? '•••••••• (chosen)' : setup.password],
   ] as const;
   const labelWidth = Math.max(...rows.map(([label]) => label.length));
   const lines = ['Companion local setup', ...rows.map(([label, value]) => `${label.padEnd(labelWidth)}  ${value}`)];

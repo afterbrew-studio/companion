@@ -20,10 +20,15 @@ The published CLI contains both the daemon and the built SPA.
 npx @moxxy/companion
 ```
 
-On first launch, choose an admin username, email and password, or press Enter
-for local defaults. The generated password is shown once. Later launches reuse
-`~/.companion`, start Companion at <http://127.0.0.1:8901> and open a browser
-without repeating setup.
+On first launch, press Enter to take the default login (`admin` / `admin1234`),
+or answer no and choose your own username, email and password. Later launches
+reuse `~/.companion`, start Companion at <http://127.0.0.1:8901> and open a
+browser without repeating setup.
+
+The default login is offered, never assumed. A run that cannot ask, `-y` or
+anything without a terminal, gets a generated password instead and prints it
+once, because a well-known credential on an install nobody watched is a
+published login rather than a convenience.
 
 If the GitHub CLI is already authenticated, setup offers to connect its active
 `github.com` identity as a personal GitHub account owned by the new admin. The
