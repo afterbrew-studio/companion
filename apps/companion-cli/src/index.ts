@@ -7,6 +7,8 @@ import {
   applyPendingAdminSetup,
   consumePendingAdminSetup,
   createDefaultAdmin,
+  createDefaultLogin,
+  DEFAULT_LOGIN,
   readAdminSetup,
   renderSetupBox,
   setupExists,
@@ -205,7 +207,7 @@ async function connectGithub(options: CliOptions): Promise<void> {
       username: username.trim(),
       password: chosenPassword,
       email: stored?.email ?? '',
-      generatedPassword: false,
+      passwordSource: 'chosen',
     };
   }
   if (!credentials) {
@@ -231,9 +233,8 @@ async function connectGithub(options: CliOptions): Promise<void> {
 
 async function initialize(options: CliOptions): Promise<void> {
   process.stdout.write('\nWelcome to Companion.\n\n');
-  const defaults = createDefaultAdmin();
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
-  const setup = interactive ? await promptForAdmin(defaults) : defaults;
+  const setup = interactive ? await promptForAdmin() : createDefaultAdmin();
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
   process.stdout.write(`${renderSetupBox(setup, options.home, url)}\n`);
@@ -265,7 +266,11 @@ async function initialize(options: CliOptions): Promise<void> {
     process.stderr.write('Could not find an active github.com account in gh; continuing without GitHub import.\n');
   }
   process.stdout.write(`\nSaved one-time bootstrap data in ${file} with owner-only permissions.\n`);
-  if (setup.generatedPassword) process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
+  // Only the generated one is lost by not being read: the default login is in
+  // the box above and in this CLI's own help.
+  if (setup.passwordSource === 'generated') {
+    process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
+  }
   if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
 }
 
@@ -311,10 +316,20 @@ async function resolveProfile(options: CliOptions): Promise<readonly string[]> {
   return closed;
 }
 
-async function promptForAdmin(defaults: AdminSetup): Promise<AdminSetup> {
+/**
+ * The admin this instance starts with.
+ *
+ * The question names the login it is offering instead of describing it. "Use
+ * recommended defaults (including a generated password)" asked someone to
+ * accept a credential they had not seen yet, and the answer to a question you
+ * cannot picture is to go and read the box; naming both halves makes it a
+ * choice that can be made where it is asked.
+ */
+async function promptForAdmin(): Promise<AdminSetup> {
+  const defaults = createDefaultLogin();
   const { confirm, input, password } = await import('@inquirer/prompts');
   const useDefaults = await confirm({
-    message: 'Use recommended local admin defaults (including a generated password)?',
+    message: `Use the default login (${DEFAULT_LOGIN.username} / ${DEFAULT_LOGIN.password})?`,
     default: true,
   });
   if (useDefaults) return defaults;
@@ -327,7 +342,7 @@ async function promptForAdmin(defaults: AdminSetup): Promise<AdminSetup> {
     mask: '*',
     validate: (value) => value === chosen || 'Passwords do not match.',
   });
-  return { username: username.trim(), email: email.trim(), password: chosen, generatedPassword: false };
+  return { username: username.trim(), email: email.trim(), password: chosen, passwordSource: 'chosen' };
 }
 
 async function start(options: CliOptions): Promise<void> {
