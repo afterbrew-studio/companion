@@ -30,10 +30,22 @@ export class PrsStore {
            head_sha = excluded.head_sha`,
       )
       .run({
-        ...pr,
+        repo: pr.repo,
+        number: pr.number,
+        title: pr.title,
+        body: pr.body,
+        state: pr.state,
+        headRef: pr.headRef,
+        headSha: pr.headSha,
+        baseRef: pr.baseRef,
         isDraft: pr.draft ? 1 : 0,
+        author: pr.author,
         labelsJson: JSON.stringify(pr.labels),
         assigneesJson: JSON.stringify(pr.assignees),
+        url: pr.url,
+        createdAt: pr.createdAt,
+        updatedAt: pr.updatedAt,
+        closedAt: pr.closedAt,
       });
   }
 

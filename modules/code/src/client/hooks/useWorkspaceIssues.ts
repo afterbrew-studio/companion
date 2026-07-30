@@ -14,7 +14,7 @@ import {
   type ContextMenuState,
   type MenuAction,
 } from '@moxxy/companion-sdk/ui';
-import type { IssueRecord, PipelineRecord, RepoRecord } from '../../contract/index.js';
+import type { IssueRecord, PipelineRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
@@ -53,6 +53,7 @@ export interface UseWorkspaceIssues {
   readonly loadMore: () => void;
   readonly error: string | null;
   readonly unavailableRepos: readonly string[];
+  readonly failedRepos: readonly RepoSyncFailure[];
 
   readonly canActIssues: boolean;
   readonly canRunPipelines: boolean;
@@ -210,6 +211,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     loadMore,
     error: listError ?? refresh.error,
     unavailableRepos: refresh.unavailableRepos,
+    failedRepos: refresh.failedRepos,
     canActIssues,
     canRunPipelines,
     pipelines,

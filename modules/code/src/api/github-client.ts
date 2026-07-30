@@ -7,6 +7,11 @@ export class GitHubError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * A spent budget answers with the same 403 as "you may not read this", so
+     * callers that turn a status into a verdict about access need it apart.
+     */
+    readonly rateLimited: boolean = false,
   ) {
     super(message);
   }
@@ -325,8 +330,13 @@ export class GitHubClient {
     } catch {
       // keep the status line
     }
-    return new GitHubError(`GitHub ${path}: ${message}`, res.status);
+    return new GitHubError(`GitHub ${path}: ${message}`, res.status, rateLimited(res));
   }
+}
+
+/** Primary budget spent: the remaining count is 0. Secondary: GitHub sends `retry-after`. */
+function rateLimited(res: Response): boolean {
+  return res.status === 429 || res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after');
 }
 
 export interface GhRepoSummary {

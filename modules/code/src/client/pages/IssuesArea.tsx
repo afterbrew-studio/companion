@@ -21,6 +21,7 @@ import {
 } from '@moxxy/companion-sdk/ui';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
+import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
 import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, TriageStateIcon } from '../widgets.js';
 
 /**
@@ -49,6 +50,7 @@ export function IssuesAreaPage(): JSX.Element {
     loadMore,
     error,
     unavailableRepos,
+    failedRepos,
     canActIssues,
     canRunPipelines,
     pipelines,
@@ -77,6 +79,7 @@ export function IssuesAreaPage(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
+  const failed = failedRepos.filter((failure) => repoFilter === 'all' || repoFilter === failure.repo);
 
   return (
     <Page>
@@ -203,6 +206,7 @@ export function IssuesAreaPage(): JSX.Element {
       ) : null}
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
+      <SyncFailureBanner failures={failed} />
 
       {issues.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
