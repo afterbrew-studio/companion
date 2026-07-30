@@ -93,7 +93,21 @@ jobs:
           curl -sf http://127.0.0.1:8901/healthz >/dev/null || { docker logs companion-ci; exit 1; }
           # `companion` must be on PATH: every runbook in the README uses it.
           docker exec companion-ci companion module list | tee /tmp/modules.txt
-          grep -q '13 enabled' /tmp/modules.txt || {
-            echo "expected a full build (13 modules); the PROFILE build arg did not take effect"
-            exit 1
-          }
+          # Every module of the profile has to be IN the image. How many of them
+          # boot enabled is each manifest's autoInstall and says nothing about
+          # the build arg, which is what a count of enabled ones was reading:
+          # the planning cluster and the reactors land as Available, so a correct
+          # full build reports "5 of 14 enabled". Take the expectation from
+          # profiles/ instead, so adding a module updates this check with it.
+          expected=$(node -e '
+            const read = (n) => JSON.parse(require("node:fs").readFileSync(`profiles/${n}.json`, "utf8"));
+            const ids = (n) => { const p = read(n); return [...(p.extends ? ids(p.extends) : []), ...p.modules]; };
+            console.log(ids("full").join(" "));
+          ')
+          for id in $expected; do
+            grep -qE "^$id[[:space:]]" /tmp/modules.txt || {
+              echo "module '$id' is not in the image; the PROFILE build arg did not take effect"
+              exit 1
+            }
+          done
+          echo "all $(echo "$expected" | wc -w) modules of the full profile are in the image"

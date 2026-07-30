@@ -57,7 +57,11 @@ jobs:
           git add -A -- '*/package.json'
           git commit -m "release: bump versions with unreleased changes" -m "$(cat /tmp/plan.txt)"
           git push --force-with-lease origin "$branch"
-          if gh pr view "$branch" --json number >/dev/null 2>&1; then
+          # Listing open pull requests, not `gh pr view "$branch"`: that resolves
+          # the branch's most recent pull request whatever its state, so once the
+          # first release merged it answered "already open" forever and no later
+          # bump was ever proposed.
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')" ]; then
             echo "Pull request already open; the force push updated it."
           else
             gh pr create --base main --head "$branch" \
