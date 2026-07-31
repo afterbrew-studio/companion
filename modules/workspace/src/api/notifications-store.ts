@@ -16,7 +16,22 @@ export class NotificationsStore {
         `INSERT INTO notifications (id, workspace_id, repo, kind, title, body, href, user_id, created_at)
          VALUES (@id, @workspaceId, @repo, @kind, @title, @body, @href, @userId, @createdAt)`,
       )
-      .run({ ...n, repo: n.repo ?? NON_REPO_SCOPE });
+      // Bound field by field, not spread: the driver rejects a named parameter
+      // the statement does not list, so any caller holding one extra field
+      // (`readAt` on a full NotificationRecord) would throw at run time, and
+      // the type is too wide to catch it — excess properties only fail on
+      // object literals.
+      .run({
+        id: n.id,
+        workspaceId: n.workspaceId,
+        repo: n.repo ?? NON_REPO_SCOPE,
+        kind: n.kind,
+        title: n.title,
+        body: n.body,
+        href: n.href,
+        userId: n.userId,
+        createdAt: n.createdAt,
+      });
     // Keep the inbox bounded — anything past 30 days is stale.
     this.db.prepare(`DELETE FROM notifications WHERE created_at < ?`).run(Date.now() - 30 * 24 * 3600_000);
   }
