@@ -1167,7 +1167,17 @@ function AnchoredMenu({
 }
 
 /** Labeled "Actions" overflow menu for secondary actions. */
-export function ActionMenu({ actions, label = 'Actions' }: { actions: MenuAction[]; label?: string }): JSX.Element {
+export function ActionMenu({
+  actions,
+  label = 'Actions',
+  trigger = 'Actions',
+}: {
+  actions: MenuAction[];
+  /** Accessible name. Callers pass a descriptive phrase, so it is NOT the visible text. */
+  label?: string;
+  /** Visible button text. Separate from `label` precisely because the two differ. */
+  trigger?: string;
+}): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   return (
@@ -1181,7 +1191,7 @@ export function ActionMenu({ actions, label = 'Actions' }: { actions: MenuAction
         aria-label={label}
         onClick={() => setOpen((o) => !o)}
       >
-        Actions
+        {trigger}
         <ChevronDown open={open} className="size-3.5" />
       </button>
       <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} actions={actions} label={label} />

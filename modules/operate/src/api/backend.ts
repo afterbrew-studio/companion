@@ -10,6 +10,7 @@ import type {
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
+import type { ExecOptions } from '../exec/verify.js';
 import type { RunnerHealth } from '../contract/index.js';
 
 /**
@@ -83,6 +84,21 @@ export interface RunnerBackend {
    * "we could not check" and "it does not build" are different answers.
    */
   verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse | null>;
+
+  /**
+   * Run an arbitrary command in a prepared working directory. The general form
+   * of `verify`, used by executable pipeline steps.
+   *
+   * `opts.env` is a per-invocation overlay and is the only channel a credential
+   * may take. A backend that cannot keep that overlay on this machine must
+   * REJECT rather than run the command without it: silently dropping a secret
+   * turns "this runner cannot do that" into "npm is not authenticated", which is
+   * a far worse thing to debug at publish time.
+   *
+   * Resolves to null on a runner too old to have the endpoint, exactly like
+   * `verify`.
+   */
+  exec(cwd: string, command: string, opts?: ExecOptions): Promise<AgentVerifyResponse | null>;
 }
 
 /** The event sink a backend feeds — one shared instance drives the orchestrator. */

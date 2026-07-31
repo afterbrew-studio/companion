@@ -26,6 +26,8 @@ declare module '@moxxy/companion-contracts' {
     'pipelines:manage': true;
     'pipelines:run': true;
     'github:connect': true;
+    'pipelines:execute': true;
+    'pipelines:author-execute': true;
   }
   interface ServerMessageRegistry {
     'repos.changed': Record<never, never>;
@@ -34,6 +36,16 @@ declare module '@moxxy/companion-contracts' {
     'prs.changed': { readonly repo: string };
     'pipelines.changed': Record<never, never>;
     'pipelineRuns.changed': { readonly repo: string };
+    /**
+     * A chunk of a running command's output. Not persisted in full: the run
+     * record keeps a bounded tail, this is the live view while it happens.
+     */
+    'pipelineStep.output': {
+      readonly repo: string;
+      readonly runId: string;
+      readonly stepIndex: number;
+      readonly chunk: string;
+    };
   }
   interface ServiceMap {
     /** The GitHub/code domain: repos + accounts + sync cache + triage/reviews/checks/fixes/pipelines. */
@@ -236,6 +248,22 @@ export interface IssueRecord {
   readonly triage: 'pending' | 'applied' | 'dismissed' | null;
 }
 
+/**
+ * GitHub's merge-state vocabulary (REST `mergeable_state`, GraphQL
+ * `mergeStateStatus`). `behind` only blocks when the base requires up-to-date
+ * branches, which is why a gate has to read branch protection rather than treat
+ * every non-clean value the same.
+ */
+export type MergeStateStatus =
+  | 'clean'
+  | 'dirty'
+  | 'blocked'
+  | 'behind'
+  | 'unstable'
+  | 'draft'
+  | 'has_hooks'
+  | 'unknown';
+
 export interface PrRecord {
   readonly repo: string;
   readonly number: number;
@@ -264,6 +292,13 @@ export interface PrRecord {
   readonly reviewDecision: 'approved' | 'changes_requested' | null;
   /** Whether GitHub can merge cleanly; null = unknown (still computing / not fetched). */
   readonly mergeable: boolean | null;
+  /**
+   * Why it cannot merge, when it cannot. `mergeable: false` alone conflates
+   * conflicts (fix the branch), a missing required check (wait or investigate),
+   * and being behind a strict base (update the branch), which need different
+   * responses. null = not fetched yet.
+   */
+  readonly mergeStateStatus: MergeStateStatus | null;
   /** Latest CI pipeline snapshot (null until first fetch). */
   readonly checks: ChecksSnapshot | null;
 }

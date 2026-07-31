@@ -90,7 +90,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
             onFixChecks={pr.canAct && p.state === 'open' ? () => void pr.fixChecks() : null}
           />
 
-          {!review ? <PrPipelines runs={pr.pipelineRuns} /> : null}
+          {!review ? <PrPipelines runs={pr.pipelineRuns} repo={pr.pr.repo} number={pr.pr.number} /> : null}
           {!review ? <AgentActivity repo={repo} issueNumber={number} /> : null}
 
           <CommentsSection

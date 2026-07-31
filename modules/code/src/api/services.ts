@@ -5,6 +5,7 @@ import { PrsStore } from './prs-store.js';
 import { TriageStore } from './triage-store.js';
 import { PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
+import { PipelineSecretsStore } from './pipeline-secrets-store.js';
 import { GithubAccountsStore } from './github-accounts-store.js';
 import { CodeStore } from './code-store.js';
 import { GitHubAccounts } from './github-accounts.js';
@@ -63,6 +64,7 @@ export default defineServices((ctx) => {
   const issuesStore = new IssuesStore(ctx.db, triageStore, githubAccountsStore);
   const prsStore = new PrsStore(ctx.db, prReviewsStore, githubAccountsStore);
   const pipelinesStore = new PipelinesStore(ctx.db);
+  const pipelineSecretsStore = new PipelineSecretsStore(ctx.db);
 
   const store = new CodeStore({
     repos: reposStore,
@@ -71,6 +73,7 @@ export default defineServices((ctx) => {
     triage: triageStore,
     prReviews: prReviewsStore,
     pipelines: pipelinesStore,
+    pipelineSecrets: pipelineSecretsStore,
     githubAccounts: githubAccountsStore,
     settings,
     workspaces: workspace,
@@ -185,6 +188,7 @@ export default defineServices((ctx) => {
       github: (c) => ghAccounts.clientFor('pipelines', c),
       checks: prChecks,
       reviews: prReviews,
+      fixes,
       // Reverse-direction soft dep: module-slop augments ServiceMap in ITS
       // contract, which code cannot import (slop dependsOn code) — so the key
       // is invisible to this compilation and the lookup goes through a cast.
@@ -193,6 +197,14 @@ export default defineServices((ctx) => {
         ((ctx.services.tryGet.bind(ctx.services) as (key: string) => unknown)('slop') as
           | SlopGateService
           | undefined) ?? null,
+      // Reads this module's own declared config INCLUDING its secret fields:
+      // redaction happens at the HTTP boundary, not here. That is the whole
+      // reason a step can resolve a token the client can never read back.
+      moduleConfig: ctx.moduleConfig,
+      // Values for hidden step variables, under keys this module invents. Same
+      // backend as the declared secret fields, so a Vault swap carries both.
+      secrets: ctx.secrets,
+      audit: (event) => ctx.audit.record({ at: Date.now(), module: 'code', ...event }),
     },
     ctx.broadcast,
   );

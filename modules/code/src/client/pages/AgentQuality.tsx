@@ -5,7 +5,7 @@ import { useWorkspace } from '@companion/module-workspace/client';
 import { EmptyState, ErrorBar, Page, PageHeader, PageLoading, SegmentedControl } from '@moxxy/companion-sdk/ui';
 import type { AgentQuality } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
-import { QualityStat } from '../components/QualityStat.js';
+import { QualityStat, hasQualitySignal } from '../components/QualityStat.js';
 
 const WINDOWS = [
   { value: '7', label: '7 days' },
@@ -54,6 +54,8 @@ export function AgentQualityPage(): JSX.Element {
   }
   if (quality === null && error === null) return <PageLoading label="Loading agent quality…" />;
 
+  const surfaces = quality?.surfaces ?? [];
+
   return (
     <Page>
       <PageHeader
@@ -71,18 +73,34 @@ export function AgentQualityPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {(quality?.surfaces ?? []).map((stat) => (
-          <QualityStat key={stat.surface} stat={stat} />
-        ))}
-        <QualityPanels days={Number(days)} />
-      </div>
+      {surfaces.length > 0 && !surfaces.some(hasQualitySignal) ? (
+        // One empty state for the page, not the same sentence repeated in every
+        // card next to a column of zeros. Nothing has happened yet, and saying
+        // so once is the whole message.
+        <EmptyState
+          title="Nothing to judge yet"
+          hint={`No agent verdict has been raised in the last ${days} days. Triage an issue or run an AI review, then come back: this page reports how often you accept what they propose.`}
+        />
+      ) : (
+        <>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {surfaces.map((stat) => (
+              <QualityStat key={stat.surface} stat={stat} />
+            ))}
+            <QualityPanels days={Number(days)} />
+          </div>
 
-      <p className="dim mt-4 max-w-2xl text-xs">
-        Accepted means a human applied the verdict; dismissed means they rejected it. Verdicts still awaiting a decision
-        are excluded from the percentage rather than counted either way, so the number tracks quality rather than how
-        far behind the queue is. Runs that produced nothing are a reliability problem and are counted separately.
-      </p>
+          <details className="mt-4 max-w-2xl">
+            <summary className="dim cursor-pointer text-xs">How the number is worked out</summary>
+            <p className="dim mt-1.5 text-xs">
+              Accepted means a human applied the verdict; dismissed means they rejected it. Verdicts still awaiting a
+              decision are excluded from the percentage rather than counted either way, so the number tracks quality
+              rather than how far behind the queue is. Runs that produced nothing are a reliability problem and are
+              counted separately.
+            </p>
+          </details>
+        </>
+      )}
     </Page>
   );
 }

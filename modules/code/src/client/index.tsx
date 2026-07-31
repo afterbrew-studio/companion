@@ -35,3 +35,6 @@ export default defineClientModule({
   onboarding,
   slots,
 });
+
+/** Published for other modules' bulk actions on the PR list. */
+export { usePrSelection } from './pr-selection.js';

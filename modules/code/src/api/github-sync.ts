@@ -61,7 +61,7 @@ export class GitHubSync {
     this.store.prs.upsert(mapPull(fullName, pr));
     // The list feed omits mergeable, so the upsert never carries it — apply it
     // separately from the payloads that do (webhooks, the single-PR GET).
-    if (pr.mergeable !== undefined) this.store.prs.setMergeable(fullName, pr.number, pr.mergeable);
+    if (pr.mergeable !== undefined) this.store.prs.setMergeable(fullName, pr.number, pr.mergeable, pr.mergeable_state ?? null);
     this.broadcast({ t: 'prs.changed', repo: fullName });
   }
 
@@ -77,7 +77,7 @@ export class GitHubSync {
     try {
       const pr = await client.pull(fullName, number);
       this.store.prs.upsert(mapPull(fullName, pr));
-      if (pr.mergeable !== undefined) this.store.prs.setMergeable(fullName, number, pr.mergeable);
+      if (pr.mergeable !== undefined) this.store.prs.setMergeable(fullName, number, pr.mergeable, pr.mergeable_state ?? null);
       this.broadcast({ t: 'prs.changed', repo: fullName });
     } catch (err) {
       log.warn(`single PR sync failed for ${fullName}#${number}`, { err: String(err) });

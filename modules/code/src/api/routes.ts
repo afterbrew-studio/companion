@@ -28,6 +28,7 @@ const moveSchema = z.object({ workspaceId: z.string().min(1), fromWorkspaceId: z
 const applyTriageSchema = z.object({ comment: z.boolean().default(true) });
 const commentSchema = z.object({ body: z.string().min(1).max(64_000) });
 const stateSchema = z.object({ state: z.enum(['open', 'closed']) });
+const labelsSchema = z.object({ labels: z.array(z.string().trim().min(1).max(50)).min(1).max(8) });
 
 // ---------- prs ----------
 
@@ -77,11 +78,24 @@ const ghTokenSchema = z.object({ token: z.string().min(10) });
 
 const genSchema = z.object({ instructions: z.string().min(8).max(4000) });
 
+// The document is validated by the engine's own export schema; here it is just
+// carried, so a shape error surfaces with that schema's wording.
+const importPipelineSchema = z.object({
+  document: z.unknown(),
+  acknowledgeExecutables: z.boolean().default(false),
+});
+
 const skillDraftSchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
   content: z.string().min(20).max(64_000),
 });
 
+/**
+ * What the AI pipeline generator is allowed to compose. `executable`,
+ * `npm-bootstrap` and `merge` are deliberately absent: they run commands or
+ * merge code, and a generated pipeline is not a place to discover either. A
+ * human adds those in the editor, where the warnings are.
+ */
 const STEP_SCHEMA_DOC = `A step is one of (JSON):
 - { "kind": "checks-gate", "name": string, "onFailure": "halt"|"continue", "config": { "allowPending": boolean } } — fail while GitHub CI is red
 - { "kind": "ai-review", "name": string, "onFailure": ..., "config": { "post": boolean, "failOn": "request_changes"|"high_risk"|"never" } } — built-in AI code review
@@ -124,6 +138,43 @@ export default defineRoutes((ctx) => {
   const pipelinesStore = new PipelinesStore(ctx.db);
   // Reports are workspace-owned; module-workspace registers the store below us.
   const reports = ctx.services.get('reports');
+
+  /**
+   * Whether this caller may run executable steps. Resolved here rather than in
+   * the engine because only the request knows an identity: a pipeline started by
+   * a webhook has no role to check, and the engine passing `false` for those is
+   * the rule that keeps a GitHub push away from a shell.
+   */
+  const mayExecute = (user: AuthUser | null): boolean =>
+    user !== null && ctx.rbac.has(user.role, 'pipelines:execute');
+
+  /**
+   * Authoring a command-running step is a strictly higher bar than running one.
+   * Running is a routine act on something already reviewed; authoring decides
+   * what code the daemon executes, so it stays with `admin`.
+   *
+   * Applied on every write path INCLUDING import, because an import that skipped
+   * this would be a hole straight through the restriction: paste a document,
+   * get an executable step a maintainer could never have typed.
+   */
+  /**
+   * Concrete kinds behind a pipeline's step specs. Library references have to be
+   * resolved first, or pointing at a saved executable step would be a way around
+   * the authoring check. Resolved as 'pr', the most permissive type, so nothing
+   * is filtered out before it can be inspected.
+   */
+  const kindsOf = (specs: Parameters<typeof code.pipelines.resolveSteps>[0]): { kind: string }[] =>
+    code.pipelines.resolveSteps(specs, 'pr').flatMap((r) => (r.ok ? [{ kind: r.step.kind }] : []));
+
+  const assertMayAuthorExecutable = (user: AuthUser | null, steps: readonly { kind: string }[]): void => {
+    const unsafe = steps.filter((s) => s.kind === 'executable' || s.kind === 'npm-bootstrap');
+    if (unsafe.length === 0) return;
+    if (!user || !ctx.rbac.has(user.role, 'pipelines:author-execute')) {
+      throw forbidden(
+        `creating or editing "${unsafe[0]!.kind}" steps needs the pipelines:author-execute permission`,
+      );
+    }
+  };
 
   // Resolve a repo and enforce its workspace's access rule — a repo in a
   // private workspace the user isn't in reads as "not connected".
@@ -550,7 +601,7 @@ export default defineRoutes((ctx) => {
         if (pipeline.type !== 'platform') {
           throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline — run it from a ${pipeline.type}`);
         }
-        const run = code.pipelines.start(params.pipelineId, fullName, 0, 'manual', user!.username);
+        const run = code.pipelines.start(params.pipelineId, fullName, 0, 'manual', user!.username, mayExecute(user));
         return created({ run });
       },
     }),
@@ -695,7 +746,7 @@ export default defineRoutes((ctx) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
         const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
         if (pipeline.type !== 'issue') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
-        const run = code.pipelines.start(params.pipelineId, fullName, issue.number, 'manual', user!.username);
+        const run = code.pipelines.start(params.pipelineId, fullName, issue.number, 'manual', user!.username, mayExecute(user));
         return created({ run });
       },
     }),
@@ -791,6 +842,128 @@ export default defineRoutes((ctx) => {
         );
         if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
         return { url: result.html_url };
+      },
+    }),
+
+    /** Answer a step's confirmation gate. */
+    route({
+      method: 'POST',
+      path: '/api/pipeline-runs/:id/steps/:index/approve',
+      access: 'pipelines:run',
+      body: z.object({ approved: z.boolean() }),
+      handler: ({ params, body, user }) => {
+        const run = pipelinesStore.getRun(params.id);
+        if (!run) throw notFound(`pipeline run ${params.id} not found`);
+        if (!user || !workspace.canAccessRepo(user, run.repo)) throw notFound(`pipeline run ${params.id} not found`);
+        const index = Number(params.index);
+        if (!code.pipelines.resolveApproval(params.id, index, body.approved)) {
+          // Already answered, timed out, or the daemon restarted since. Saying
+          // which is not possible, but saying that it is no longer waiting is.
+          throw badRequest('that step is no longer waiting for a confirmation');
+        }
+        return { ok: true as const };
+      },
+    }),
+
+    /** Re-run CI for the PR's head commit. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/rerun-checks',
+      access: 'prs:act',
+      body: z.object({ scope: z.enum(['failed', 'all']).default('failed') }),
+      handler: async ({ params, body, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        if (!pr.headSha) throw badRequest('this PR has no known head commit yet');
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.rerunChecks(fullName, pr.headSha!, body.scope),
+          { username: user!.username },
+        );
+        if (result === null) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        return { restarted: result };
+      },
+    }),
+
+    /** Take the PR out of draft. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/ready',
+      access: 'prs:act',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.markReadyForReview(fullName, pr.number).then(() => true),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        await code.sync.syncPr(fullName, pr.number, user!.username);
+        return { ok: true as const };
+      },
+    }),
+
+    /** Merge the base into the head, the fix for a branch that is behind. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/update-branch',
+      access: 'prs:act',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.updateBranch(fullName, pr.number).then(() => true),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        await code.sync.syncPr(fullName, pr.number, user!.username);
+        return { ok: true as const };
+      },
+    }),
+
+    /**
+     * Add labels. Its own route rather than only a pipeline step, because
+     * labelling a selection of pull requests is a daily gesture and routing it
+     * through a pipeline run for one API call would be absurd.
+     */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/labels',
+      access: 'prs:act',
+      body: labelsSchema,
+      handler: async ({ params, body, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          // GitHub labels pull requests through the issues endpoint; the number
+          // space is shared, so the PR number is the right argument.
+          (client) => client.addLabels(fullName, pr.number, [...body.labels]).then(() => true),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        await code.sync.syncPr(fullName, pr.number, user!.username);
+        return { ok: true as const };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/issues/:number/labels',
+      access: 'issues:act',
+      body: labelsSchema,
+      handler: async ({ params, body, user }) => {
+        const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
+        const { result } = await code.githubAccounts.performForRepo(
+          'pipelines',
+          fullName,
+          (client) => client.addLabels(fullName, issue.number, [...body.labels]).then(() => true),
+          { username: user!.username },
+        );
+        if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        return { ok: true as const };
       },
     }),
 
@@ -957,7 +1130,7 @@ export default defineRoutes((ctx) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const pipeline = requirePipelineForRepo(user, params.pipelineId, fullName);
         if (pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
-        const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual', user!.username);
+        const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual', user!.username, mayExecute(user));
         return created({ run });
       },
     }),
@@ -1113,7 +1286,8 @@ export default defineRoutes((ctx) => {
       body: savePipelineSchema,
       handler: ({ params, body, user }) => {
         requirePipeline(user, params.id);
-        return { pipeline: code.pipelines.update(params.id, body) };
+        if (body.steps) assertMayAuthorExecutable(user, kindsOf(body.steps));
+        return { pipeline: code.pipelines.update(params.id, body, user!.username) };
       },
     }),
 
@@ -1135,7 +1309,8 @@ export default defineRoutes((ctx) => {
       body: saveStepDefinitionSchema,
       handler: ({ params, body, user }) => {
         requireStepDefinition(user, params.id);
-        return { stepDefinition: code.pipelines.updateStepDefinition(params.id, body) };
+        if (body.step) assertMayAuthorExecutable(user, [body.step]);
+        return { stepDefinition: code.pipelines.updateStepDefinition(params.id, body, user!.username) };
       },
     }),
 
@@ -1315,7 +1490,53 @@ export default defineRoutes((ctx) => {
       body: savePipelineSchema,
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
-        return created({ pipeline: code.pipelines.create(params.id, body) });
+        assertMayAuthorExecutable(user, kindsOf(body.steps));
+        return created({ pipeline: code.pipelines.create(params.id, body, user!.username) });
+      },
+    }),
+
+    /** The portable document for this pipeline (library refs resolved inline). */
+    route({
+      method: 'GET',
+      path: '/api/pipelines/:id/export',
+      access: 'pipelines:read',
+      handler: ({ params, user }) => {
+        const pipeline = pipelinesStore.get(params.id);
+        if (!pipeline) throw notFound(`pipeline ${params.id} not found`);
+        requireWorkspace(user, pipeline.workspaceId);
+        return { document: code.pipelines.exportPipeline(params.id) };
+      },
+    }),
+
+    /**
+     * What an import would create, written nowhere. Separate from the import
+     * itself so the executable steps can be shown before anything is saved.
+     */
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/pipelines/import/preview',
+      access: 'pipelines:manage',
+      body: importPipelineSchema,
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        return { preview: code.pipelines.previewImport(body.document) };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/workspaces/:id/pipelines/import',
+      access: 'pipelines:manage',
+      body: importPipelineSchema,
+      handler: ({ params, body, user }) => {
+        requireWorkspace(user, params.id);
+        assertMayAuthorExecutable(
+          user,
+          code.pipelines.previewImport(body.document).executables.map((e) => ({ kind: e.kind })),
+        );
+        return created({
+          pipeline: code.pipelines.importPipeline(params.id, body.document, body.acknowledgeExecutables, user!.username),
+        });
       },
     }),
 
@@ -1326,7 +1547,8 @@ export default defineRoutes((ctx) => {
       body: saveStepDefinitionSchema,
       handler: ({ params, body, user }) => {
         requireWorkspace(user, params.id);
-        return created({ stepDefinition: code.pipelines.createStepDefinition(params.id, body) });
+        assertMayAuthorExecutable(user, [body.step]);
+        return created({ stepDefinition: code.pipelines.createStepDefinition(params.id, body, user!.username) });
       },
     }),
 
@@ -1399,7 +1621,7 @@ Reply with ONLY a fenced json block matching:
         } catch {
           throw badRequest('the agent reply was not a valid step definition — try rephrasing');
         }
-        return created({ stepDefinition: code.pipelines.createStepDefinition(params.id, draft) });
+        return created({ stepDefinition: code.pipelines.createStepDefinition(params.id, draft, user!.username) });
       },
     }),
 
@@ -1430,7 +1652,7 @@ Reply with ONLY a fenced json block matching:
         } catch {
           throw badRequest('the agent reply was not a valid pipeline — try rephrasing');
         }
-        return created({ pipeline: code.pipelines.create(params.id, draft) });
+        return created({ pipeline: code.pipelines.create(params.id, draft, user!.username) });
       },
     }),
 

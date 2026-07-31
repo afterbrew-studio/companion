@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Database } from '@moxxy/companion-services';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigValue } from '../module-config.js';
 import { HttpError } from './router.js';
-import type { SecretStore } from './capabilities.js';
+import type { ModuleSecrets, SecretStore } from './capabilities.js';
 import { SqliteSecretStore } from './secret-store.js';
 
 /**
@@ -43,6 +43,23 @@ export class ModuleConfigStore {
     }
     this.secrets = next;
     if (moved) onMoved?.(moved);
+  }
+
+  /**
+   * The module's own secret storage under run-time keys, scoped to `moduleId`.
+   *
+   * These keys are not in any manifest, so `getConfig` (which walks the declared
+   * field list) never reports them and they cannot reach a client through the
+   * config surface at all. `useSecretStore` still carries them across a backend
+   * swap, because it iterates stored keys rather than declared ones.
+   */
+  secretsFor(moduleId: string): ModuleSecrets {
+    return {
+      get: (key) => this.secrets.get(moduleId, key),
+      set: (key, value) => this.secrets.set(moduleId, key, value),
+      delete: (key) => this.secrets.delete(moduleId, key),
+      keys: () => this.secrets.keys(moduleId),
+    };
   }
 
   /** Stored values for one module (no defaults merged). */

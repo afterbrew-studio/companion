@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { defineSlots, useLive } from '@moxxy/companion-sdk/client';
 import { ListCard, Section, timeAgo } from '@moxxy/companion-sdk/ui';
-import { QualityStat } from '@companion/module-code/client';
+import { QualityStat, usePrSelection } from '@companion/module-code/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { AgentQualityStat } from '@companion/module-code/contract';
 import { SlopMeter } from './components/SlopMeter.js';
@@ -89,7 +89,58 @@ function SlopQualityPanel({ days }: { days?: number }): JSX.Element | null {
   return <QualityStat stat={stat} />;
 }
 
+/**
+ * Screen a selection of pull requests in one gesture.
+ *
+ * Lives here rather than in the PR list because module-code must not import
+ * this module: slop depends on code, so the arrow only points one way. The
+ * selection arrives through code's published context.
+ */
+function BulkSlopCheck(): JSX.Element | null {
+  const selection = usePrSelection();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!selection || selection.selected.length === 0) return null;
+
+  const count = selection.selected.length;
+  const run = (): void => {
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      const failures: string[] = [];
+      // Sequential: each detection is an agent run, and firing fifteen at once
+      // would just fill the queue in an order nobody chose.
+      for (const pr of selection.selected) {
+        try {
+          await slopApi.detect(pr.repo, pr.number);
+        } catch {
+          failures.push(`#${pr.number}`);
+        }
+      }
+      setBusy(false);
+      if (failures.length > 0) setError(`Failed for ${failures.join(', ')}`);
+      else selection.clear();
+    })();
+  };
+
+  return (
+    <>
+      <button className="btn-ghost" disabled={busy || selection.busy} onClick={run}>
+        {busy ? 'Screening…' : `Slop check ${count}`}
+      </button>
+      {error ? <span className="text-xs text-red-500">{error}</span> : null}
+    </>
+  );
+}
+
 export const slots = defineSlots([
+  {
+    slot: 'prs.bulkActions',
+    key: 'slop-bulk-check',
+    order: 10,
+    permission: 'slop:act',
+    component: BulkSlopCheck,
+  },
   {
     slot: 'dashboard.widgets',
     key: 'slop-radar',

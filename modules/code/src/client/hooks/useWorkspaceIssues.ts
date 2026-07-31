@@ -68,6 +68,9 @@ export interface UseWorkspaceIssues {
   readonly bulkRunning: string | null;
   readonly bulkAiTriage: () => void;
   readonly bulkRunPipeline: () => void;
+  readonly bulkLabel: (labels: string[]) => void;
+  readonly bulkComment: (body: string) => void;
+  readonly bulkClose: () => void;
 
   readonly rowActions: (issue: IssueRecord) => MenuAction[];
   readonly ctx: ContextMenuState | null;
@@ -134,6 +137,41 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
   const visibleIssues = issues.filter((issue) => !unavailable.has(issue.repo));
+
+  /**
+   * Every bulk action reports per item. A selection partially succeeds by
+   * nature, and one "done" would be a lie in both directions.
+   */
+  const bulkForEach = (fn: (i: IssueRecord) => Promise<unknown>, done: (n: number) => string): void => {
+    void runBulk(
+      visibleIssues.filter((i) => selection.has(issueKey(i))),
+      fn,
+      {
+        label: (i) => `#${i.number}`,
+        onSettled: (total, failures) => {
+          selection.clear();
+          if (failures.length > 0) setBulkError(`Failed for ${failures.join(', ')}`);
+          else show(done(total));
+        },
+      },
+    );
+  };
+
+  const bulkLabel = (labels: string[]): void =>
+    bulkForEach(
+      (i) => api.labelIssue(i.repo, i.number, labels),
+      (n) => `Labelled ${n} issue${n === 1 ? '' : 's'}`,
+    );
+  const bulkComment = (body: string): void =>
+    bulkForEach(
+      (i) => api.commentIssue(i.repo, i.number, body),
+      (n) => `Commented on ${n} issue${n === 1 ? '' : 's'}`,
+    );
+  const bulkClose = (): void =>
+    bulkForEach(
+      (i) => api.setIssueState(i.repo, i.number, 'closed'),
+      (n) => `Closed ${n} issue${n === 1 ? '' : 's'}`,
+    );
 
   const bulkAiTriage = (): void => {
     const targets = visibleIssues.filter((i) => selection.has(issueKey(i)));
@@ -224,6 +262,9 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     bulkRunning,
     bulkAiTriage,
     bulkRunPipeline,
+    bulkLabel,
+    bulkComment,
+    bulkClose,
     rowActions,
     ctx,
     setCtx,

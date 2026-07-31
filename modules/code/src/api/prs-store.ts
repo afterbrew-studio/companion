@@ -14,7 +14,7 @@ export class PrsStore {
     private readonly githubAccounts: GithubAccountsStore,
   ) {}
 
-  upsert(pr: Omit<PrRecord, 'review' | 'reviewRisk' | 'checks' | 'reviewDecision' | 'mergeable'>): void {
+  upsert(pr: Omit<PrRecord, 'review' | 'reviewRisk' | 'checks' | 'reviewDecision' | 'mergeable' | 'mergeStateStatus'>): void {
     this.db
       .prepare(
         `INSERT INTO prs (repo, number, title, body, state, head_ref, head_sha, base_ref, draft, author, labels, assignees, url, created_at, updated_at, closed_at)
@@ -27,6 +27,7 @@ export class PrsStore {
            closed_at = excluded.closed_at,
            checks = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.checks END,
            mergeable = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.mergeable END,
+           merge_state = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.merge_state END,
            head_sha = excluded.head_sha`,
       )
       .run({
@@ -60,10 +61,10 @@ export class PrsStore {
   }
 
   /** GitHub's merge-cleanliness verdict; null = unknown (still computing). */
-  setMergeable(repo: string, number: number, mergeable: boolean | null): void {
+  setMergeable(repo: string, number: number, mergeable: boolean | null, mergeState?: string | null): void {
     this.db
-      .prepare(`UPDATE prs SET mergeable = ? WHERE repo = ? AND number = ?`)
-      .run(mergeable === null ? null : mergeable ? 1 : 0, repo, number);
+      .prepare(`UPDATE prs SET mergeable = ?, merge_state = COALESCE(?, merge_state) WHERE repo = ? AND number = ?`)
+      .run(mergeable === null ? null : mergeable ? 1 : 0, mergeState ?? null, repo, number);
   }
 
   /** Cache the latest CI snapshot for a PR (invalidated when head_sha moves). */
@@ -75,6 +76,19 @@ export class PrsStore {
 
   list(repo: string): PrRecord[] {
     const rows = this.db.prepare(`SELECT * FROM prs WHERE repo = ? ORDER BY number DESC`).all(repo) as PrRow[];
+    const reviews = this.prReviews.latestByNumber(repo);
+    return rows.map((r) => prRowToRecord(r, reviews.get(r.number) ?? null));
+  }
+
+  /**
+   * Open PRs whose head is this commit. A check_run/status webhook names a SHA,
+   * not a PR, so this is how a CI event finds what it invalidates. Open only:
+   * a merged PR's checks are frozen and re-fetching them is wasted budget.
+   */
+  openByHeadSha(repo: string, headSha: string): PrRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM prs WHERE repo = ? AND head_sha = ? AND state = 'open'`)
+      .all(repo, headSha) as PrRow[];
     const reviews = this.prReviews.latestByNumber(repo);
     return rows.map((r) => prRowToRecord(r, reviews.get(r.number) ?? null));
   }
@@ -235,6 +249,7 @@ interface PrRow {
   comments: number;
   review_decision: string | null;
   mergeable: number | null;
+  merge_state: string | null;
   url: string;
   checks: string | null;
   created_at: number;
@@ -266,6 +281,7 @@ function prRowToRecord(row: PrRow, review: LatestReviewSignal | null): PrRecord 
     reviewDecision:
       row.review_decision === 'approved' || row.review_decision === 'changes_requested' ? row.review_decision : null,
     mergeable: row.mergeable === null ? null : row.mergeable === 1,
+    mergeStateStatus: (row.merge_state as PrRecord['mergeStateStatus']) ?? null,
     checks: row.checks ? safeParse<ChecksSnapshot | null>(row.checks, null) : null,
   };
 }

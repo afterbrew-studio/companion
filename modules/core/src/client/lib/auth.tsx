@@ -18,6 +18,8 @@ interface AuthState {
   readonly githubHost: string;
   /** Alternative sign-in methods contributed by identity modules; empty by default. */
   readonly providers: readonly AuthProvider[];
+  /** Shown on the sign-in screen when a loopback-only boot seeded an account. */
+  readonly localCredentials: { readonly username: string; readonly password: string } | null;
   /** Local update after saving branding in Settings — no refetch needed. */
   readonly setBranding: (b: InstanceBranding) => void;
   readonly can: (permission: Permission) => boolean;
@@ -35,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
   const [githubHost, setGithubHost] = useState('github.com');
   const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
+  const [localCredentials, setLocalCredentials] = useState<{ username: string; password: string } | null>(null);
 
   // The uploaded logo becomes the favicon (falling back to the bundled letter
   // tile from index.html). The tab title is route-aware and owned by the
@@ -53,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setBranding(state.branding);
       setGithubHost(state.githubHost);
       setProviders(state.providers);
+      setLocalCredentials(state.localCredentials ?? null);
       setNeedsSetup(state.setup);
       if (state.setup) {
         setUser(null);
@@ -116,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         setBranding,
         githubHost,
         providers,
+        localCredentials,
         can,
         login,
         logout,

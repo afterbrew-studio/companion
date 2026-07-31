@@ -68,6 +68,10 @@ export interface UseWorkspacePrs {
   readonly bulkRunning: string | null;
   readonly bulkAiReview: () => void;
   readonly bulkRunPipeline: () => void;
+  readonly bulkLabel: (labels: string[]) => void;
+  readonly bulkComment: (body: string) => void;
+  readonly bulkClose: () => void;
+  readonly bulkRerunChecks: () => void;
 
   readonly rowActions: (pr: PrRecord) => MenuAction[];
   readonly ctx: ContextMenuState | null;
@@ -156,6 +160,49 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     });
   };
 
+  /** The selection, as records, in the order the list shows them. */
+  const targets = (): PrRecord[] => visiblePrs.filter((pr) => selection.has(prKey(pr)));
+
+  /**
+   * Every bulk action reports per item. Fifteen pull requests partially succeed
+   * by nature, and one "done" would be a lie in both directions.
+   */
+  const bulkForEach = (
+    fn: (pr: PrRecord) => Promise<unknown>,
+    done: (n: number) => string,
+  ): void => {
+    void runBulk(targets(), fn, {
+      label: (pr) => `#${pr.number}`,
+      onSettled: (total, failures) => {
+        selection.clear();
+        // The list reloads on the broadcast these actions cause; no manual refresh.
+        if (failures.length > 0) setBulkError(`Failed for ${failures.join(', ')}`);
+        else show(done(total));
+      },
+    });
+  };
+
+  const bulkLabel = (labels: string[]): void =>
+    bulkForEach(
+      (pr) => api.labelPr(pr.repo, pr.number, labels),
+      (n) => `Labelled ${n} PR${n === 1 ? '' : 's'}`,
+    );
+  const bulkComment = (body: string): void =>
+    bulkForEach(
+      (pr) => api.commentPr(pr.repo, pr.number, body),
+      (n) => `Commented on ${n} PR${n === 1 ? '' : 's'}`,
+    );
+  const bulkClose = (): void =>
+    bulkForEach(
+      (pr) => api.closePr(pr.repo, pr.number),
+      (n) => `Closed ${n} PR${n === 1 ? '' : 's'}`,
+    );
+  const bulkRerunChecks = (): void =>
+    bulkForEach(
+      (pr) => api.rerunChecks(pr.repo, pr.number, 'failed'),
+      (n) => `Re-ran failed jobs on ${n} PR${n === 1 ? '' : 's'}`,
+    );
+
   const quick = async (fn: () => Promise<unknown>, done: string): Promise<void> => {
     setBulkError(null);
     try {
@@ -216,6 +263,10 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     bulkRunning,
     bulkAiReview,
     bulkRunPipeline,
+    bulkLabel,
+    bulkComment,
+    bulkClose,
+    bulkRerunChecks,
     rowActions,
     ctx,
     setCtx,

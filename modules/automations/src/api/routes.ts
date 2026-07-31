@@ -182,7 +182,7 @@ export default defineRoutes((ctx) => {
               // direction, and no preset step carries an array to begin with.
               steps: steps as Parameters<typeof code.pipelines.create>[1]['steps'],
               autoRunOnPrOpen: preset.pipeline.autoRunOnPrOpen,
-            }).id;
+            }, user!.username).id;
           }
         }
 

@@ -129,6 +129,18 @@ export class PipelinesStore {
     return row ? stepDefinitionRowToRecord(row) : undefined;
   }
 
+  /** Every workspace that owns a pipeline or a library step. Used by the
+   *  secret sweep, which has to see all of them, not one workspace's. */
+  workspaceIds(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT workspace_id FROM pipelines
+         UNION SELECT workspace_id FROM step_definitions`,
+      )
+      .all() as { workspace_id: string }[];
+    return rows.map((r) => r.workspace_id);
+  }
+
   listStepDefinitions(workspaceId: string): StepDefinitionRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM step_definitions WHERE workspace_id = ? ORDER BY name`)

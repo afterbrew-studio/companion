@@ -30,6 +30,7 @@ export function PrChecks({
   const [open, setOpen] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(true);
+  const [rerunning, setRerunning] = useState(false);
 
   const load = useCallback((): void => {
     setState('loading');
@@ -64,9 +65,31 @@ export function PrChecks({
     : [];
 
   const expandable = Boolean(checks && checks.runs.length > 0);
+  const rerun = async (scope: 'failed' | 'all'): Promise<void> => {
+    setRerunning(true);
+    try {
+      await api.rerunChecks(repo, number, scope);
+      // GitHub takes a moment to report the restarted runs as queued; refetching
+      // instantly would just redraw the old conclusions.
+      setTimeout(load, 2_000);
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   const aiActions: MenuAction[] =
     canAct && checks && checks.failed > 0
       ? [
+          {
+            label: rerunning ? 'Re-running…' : 'Re-run failed jobs',
+            disabled: rerunning,
+            onSelect: () => void rerun('failed'),
+          },
+          {
+            label: 'Re-run all jobs',
+            disabled: rerunning,
+            onSelect: () => void rerun('all'),
+          },
           {
             label: analyzing ? 'Investigating…' : 'Analyze failures with AI',
             disabled: analyzing,

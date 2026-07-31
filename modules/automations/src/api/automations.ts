@@ -43,6 +43,25 @@ export class Automations {
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
+  /**
+   * Re-read CI for every open PR at this commit and refresh the cached
+   * snapshot, which broadcasts prs.changed as a side effect.
+   *
+   * Fire-and-forget: a webhook must answer GitHub promptly, and a CI refresh
+   * that fails is recovered by the next event or the next pull. `fetchSummary`
+   * de-dupes in flight, so a burst of twenty check_run deliveries for one
+   * commit collapses into one GitHub round trip per PR.
+   */
+  private async refreshChecksForSha(repo: string, sha: string, username: string): Promise<void> {
+    for (const pr of this.store.prs.openByHeadSha(repo, sha)) {
+      try {
+        await this.prChecks.fetchSummary(repo, pr.number, username);
+      } catch (err) {
+        log.warn('webhook CI refresh failed', { repo, pr: pr.number, err: String(err) });
+      }
+    }
+  }
+
   // ---------- webhooks -----------------------------------------------------------
 
   /** Enable the receiver for a repo: mint (or return) its HMAC secret. */
@@ -165,6 +184,14 @@ export class Automations {
         }
       }
     }
+    // CI is the fastest-moving thing on a PR and the only one that used to
+    // reach the cache by a 60s-throttled pull. These three events name a commit
+    // rather than a PR, so the head SHA is what maps them back.
+    if (eventName === 'check_run' || eventName === 'check_suite' || eventName === 'status') {
+      const sha = checkEventSha(eventName, payload);
+      if (sha && ownerId) void this.refreshChecksForSha(repo, sha, ownerId);
+    }
+
     // Background reconcile for whatever the payload didn't carry (comment
     // counts, anything else that changed since the last poll).
 
@@ -560,6 +587,21 @@ export class Automations {
       createdAt: Date.now(),
     });
   }
+}
+
+/**
+ * The commit a CI delivery is about. Each of the three events puts it somewhere
+ * different: `status` at the top level, `check_run` under its own check_suite,
+ * and `check_suite` on the suite object.
+ */
+function checkEventSha(eventName: string, payload: Record<string, unknown>): string | null {
+  if (eventName === 'status') return typeof payload.sha === 'string' ? payload.sha : null;
+  if (eventName === 'check_run') {
+    const run = payload.check_run as { head_sha?: string } | undefined;
+    return run?.head_sha ?? null;
+  }
+  const suite = payload.check_suite as { head_sha?: string } | undefined;
+  return suite?.head_sha ?? null;
 }
 
 function verifySignature(secret: string, rawBody: Buffer, header: string): boolean {

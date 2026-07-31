@@ -19,6 +19,7 @@ const KIND_LABEL: Record<RunKind, string> = {
   analysis: 'Review',
   implement: 'Implement',
   report: 'Report',
+  command: 'Command',
 };
 
 /** Persistent shell banner while the viewer's whole eligible pool is full. */

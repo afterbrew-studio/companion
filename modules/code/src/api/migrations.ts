@@ -356,4 +356,55 @@ export default defineMigrations([
       }
     },
   },
+  {
+    /**
+     * Why a PR cannot merge, not just whether. `mergeable` alone cannot tell a
+     * conflict from a missing required check from a stale branch, and those are
+     * three different next actions.
+     */
+    version: 9,
+    name: 'code_pr_merge_state',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE prs ADD COLUMN merge_state TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      try {
+        db.exec(`ALTER TABLE prs DROP COLUMN merge_state`);
+      } catch {
+        // Older SQLite cannot drop a column; it is nullable, so leaving it is inert.
+      }
+    },
+  },
+  {
+    /**
+     * Ownership for hidden step variables. The VALUE never lands here: it stays
+     * in the kernel's SecretStore (swappable to Vault) under `key`. This table
+     * holds only who provided it, for which workspace, and whether they meant it
+     * to be usable by anyone else.
+     *
+     * Without this a credential was instance-wide, which on a multi-tenant or
+     * cloud deployment pools every user's publish rights into one token.
+     */
+    version: 10,
+    name: 'pipeline_secret_owners',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pipeline_secrets (
+          key TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          visibility TEXT NOT NULL DEFAULT 'private',
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pipeline_secrets_owner ON pipeline_secrets(owner_id);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP TABLE IF EXISTS pipeline_secrets`);
+    },
+  },
 ]);

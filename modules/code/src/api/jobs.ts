@@ -1,5 +1,6 @@
 import { defineJobs, type ModuleContext } from '@moxxy/companion-sdk/server';
 import type { TokenRefreshResult } from './github-accounts.js';
+import { createStepOutputScopeResolver } from './ws-scope.js';
 
 let offSetupCompleted: (() => void) | null = null;
 
@@ -50,6 +51,10 @@ export default defineJobs({
   onEnable: (ctx) => {
     const code = ctx.services.get('code');
     const operate = ctx.services.get('operate');
+
+    // Live command output is repo-private: the hub broadcasts anything no
+    // resolver claims, and this message carries a command's raw stdout.
+    ctx.ws.registerScopeResolver('code.stepOutput', createStepOutputScopeResolver(ctx));
 
     // Git credentials for clones/worktrees/pushes and remote runner agents,
     // resolved per repo and owning profile — and
@@ -133,6 +138,7 @@ export default defineJobs({
     announceCredentialHealth(ctx, result);
   },
   onDisable: (ctx) => {
+    ctx.ws.unregisterScopeResolver('code.stepOutput');
     offSetupCompleted?.();
     offSetupCompleted = null;
     // Unplug our account-aware resolver; operate then fails network Git closed.

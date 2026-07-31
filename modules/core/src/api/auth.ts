@@ -25,6 +25,11 @@ export interface SeedUser {
 
 /** Extends the kernel's StatusError so the router forwards its 401/403 (only
  *  framework errors status-map; a GitHubError's upstream status becomes a 500). */
+/** The account a loopback-only first boot creates so nobody fills in a form. */
+const LOCAL_ADMIN = 'admin';
+/** Settings key holding that account's password while it is still unchanged. */
+const LOCAL_SEED_KEY = 'auth.localSeedPassword';
+
 export class AuthError extends StatusError {
   constructor(message: string, status: 401 | 403) {
     super(status, message);
@@ -123,6 +128,46 @@ export class Auth implements Authenticator {
 
   setupNeeded(): boolean {
     return this.users.count() === 0;
+  }
+
+  /**
+   * Create the local admin on a first boot that only this machine can reach, so
+   * a `npx @moxxy/companion` try-out is not gated behind a form nobody needs to
+   * fill in on their own laptop.
+   *
+   * The gate is the BIND ADDRESS, not how the process was started. `npx` says
+   * how you launched it; it says nothing about who can connect, and
+   * `COMPANION_HOST=0.0.0.0 npx @moxxy/companion` is a real thing someone will
+   * type. Loopback is the only condition under which "no password was chosen"
+   * is defensible.
+   *
+   * The generated password is stored in the clear, deliberately: it exists to be
+   * shown on the sign-in screen, and a value nobody can read is a lockout rather
+   * than a convenience. It is deleted the moment the password is changed, and it
+   * is only ever served while the daemon is still loopback-bound.
+   */
+  seedLocalAdmin(): { username: string; password: string } | null {
+    if (!this.setupNeeded()) return null;
+    const password = randomBytes(9).toString('base64url');
+    this.users.insert({
+      username: LOCAL_ADMIN,
+      email: `${LOCAL_ADMIN}@localhost`,
+      passwordHash: hashPassword(password),
+      role: 'admin',
+    });
+    this.settings.set(LOCAL_SEED_KEY, password);
+    return { username: LOCAL_ADMIN, password };
+  }
+
+  /** The seeded credentials, while they are still the real ones. */
+  localSeed(): { username: string; password: string } | null {
+    const password = this.settings.get(LOCAL_SEED_KEY);
+    return password ? { username: LOCAL_ADMIN, password } : null;
+  }
+
+  /** Stop advertising the seed. Called whenever that password stops being true. */
+  clearLocalSeed(): void {
+    this.settings.delete(LOCAL_SEED_KEY);
   }
 
   setup(username: string, email: string, password: string): { token: string; user: AuthUser; expiresAt: number } {
@@ -228,6 +273,9 @@ export class Auth implements Authenticator {
       email: fields.email,
       passwordHash: fields.newPassword ? hashPassword(fields.newPassword) : undefined,
     });
+    // The advertised credential is no longer the real one; showing it after this
+    // would be worse than never showing it.
+    if (fields.newPassword && username === LOCAL_ADMIN) this.clearLocalSeed();
     return this.ownAccount(username);
   }
 

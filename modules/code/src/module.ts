@@ -21,6 +21,18 @@ export default defineManifest({
     'pipelines:manage',
     'pipelines:run',
     'github:connect',
+    'pipelines:execute',
+    'pipelines:author-execute',
   ],
-  messages: ['repos.changed', 'issues.changed', 'triage.changed', 'prs.changed', 'pipelines.changed', 'pipelineRuns.changed'],
+  messages: ['repos.changed', 'issues.changed', 'triage.changed', 'prs.changed', 'pipelines.changed', 'pipelineRuns.changed', 'pipelineStep.output'],
+  config: [
+    {
+      key: 'allowExecutableSteps',
+      label: 'Allow executable pipeline steps',
+      kind: 'boolean',
+      default: false,
+      description:
+        'Executable steps run arbitrary shell commands as the daemon user. An instance that leaves this off cannot be reached through that path at all. Turning it on also requires the pipelines:execute permission per user.',
+    },
+  ],
 });

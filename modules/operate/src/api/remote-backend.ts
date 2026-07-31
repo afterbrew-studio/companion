@@ -22,7 +22,7 @@ import { RUNNER_AGENT_PROTOCOL } from '@moxxy/companion-types';
 import { log } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver, RunnerHealth } from '../contract/index.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
-import { DEFAULT_VERIFY_TIMEOUT_MS } from '../exec/verify.js';
+import { DEFAULT_VERIFY_TIMEOUT_MS, type ExecOptions } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 const HTTP_TIMEOUT_MS = 30_000;
@@ -270,11 +270,30 @@ export class RemoteRunnerBackend implements RunnerBackend {
    * worse trade than simply not checking.
    */
   async verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse | null> {
+    return this.exec(cwd, command, { timeoutMs });
+  }
+
+  async exec(cwd: string, command: string, opts: ExecOptions = {}): Promise<AgentVerifyResponse | null> {
+    // The agent protocol carries no env field, on purpose (see AgentVerifyRequest).
+    // Refusing is the whole point: running the command anyway would execute it
+    // unauthenticated and report npm's confusing complaint instead of ours.
+    if (opts.env && Object.keys(opts.env).length > 0) {
+      throw new Error(
+        `runner ${this.id} is remote; commands needing injected credentials run on the local runner only`,
+      );
+    }
+    // No streaming over a single request/response. Dropping the callback
+    // silently would show an empty live panel that never fills, which reads as
+    // a hung command rather than as an unsupported one.
+    if (opts.onChunk) {
+      throw new Error(`runner ${this.id} is remote; live command output is available on the local runner only`);
+    }
+    const timeoutMs = opts.timeoutMs;
     try {
       return await this.call<AgentVerifyResponse>(
         'POST',
         '/verify',
-        { cwd, command, timeoutMs },
+        { cwd, command, timeoutMs, maxOutput: opts.maxOutput },
         (timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS) + 30_000,
       );
     } catch (err) {

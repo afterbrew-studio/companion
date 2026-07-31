@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ChevronDown, Field, FormActions, ListCard, Markdown, Modal, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
+import { ChevronDown, Field, FormActions, ListCard, Modal, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import type { PipelineRecord, PipelineRunRecord } from '../../../contract/index.js';
+import { StepRail } from '../../components/StepRail.js';
 import { pipelineStatusBadge } from '../../widgets.js';
 
 /**
@@ -8,7 +9,15 @@ import { pipelineStatusBadge } from '../../widgets.js';
  * Renders nothing when there are none — an empty section isn't worth the space;
  * starting a pipeline lives in the header's AI menu.
  */
-export function PrPipelines({ runs }: { runs: PipelineRunRecord[] }): JSX.Element | null {
+export function PrPipelines({
+  runs,
+  repo,
+  number,
+}: {
+  runs: PipelineRunRecord[];
+  repo: string;
+  number: number;
+}): JSX.Element | null {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (runs.length === 0) return null;
@@ -41,28 +50,9 @@ export function PrPipelines({ runs }: { runs: PipelineRunRecord[] }): JSX.Elemen
               <ChevronDown open={expanded === r.id} className="dim size-4 shrink-0" />
             </button>
             {expanded === r.id ? (
-              <ol
-                className="flex flex-col gap-2 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800/60 dark:bg-zinc-900/40"
-                aria-label="Step results"
-              >
-                {r.steps.map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-[13px]">
-                    <span className={pipelineStatusBadge(s.status)}>{s.status}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{s.name}</div>
-                      {s.summary ? <div className="dim">{s.summary}</div> : null}
-                      {s.detail ? (
-                        <details className="mt-0.5">
-                          <summary className="dim cursor-pointer text-xs">detail</summary>
-                          <div className="mt-1 max-h-48 overflow-y-auto">
-                            <Markdown text={s.detail} />
-                          </div>
-                        </details>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ol>
+              <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800/60 dark:bg-zinc-900/40">
+                <StepRail run={r} repo={repo} number={number} />
+              </div>
             ) : null}
           </div>
         ))}

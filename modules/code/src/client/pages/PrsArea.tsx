@@ -1,4 +1,5 @@
 import { useAiActivity } from '@companion/module-operate/client';
+import { useAuth } from '@companion/module-core/client';
 import {
   AiActivityChip,
   Checkbox,
@@ -21,6 +22,9 @@ import {
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
+import { Slot } from '@moxxy/companion-sdk/client';
+import { BulkActions } from '../components/BulkActions.js';
+import { PrSelectionProvider } from '../pr-selection.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
 import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrStateIcon } from '../widgets.js';
@@ -30,6 +34,7 @@ import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrState
  * the visible window is loaded; search and filters run in the database.
  */
 export function PrsAreaPage(): JSX.Element {
+  const { can } = useAuth();
   const s = useWorkspacePrs();
   const aiActivity = useAiActivity();
   const {
@@ -63,6 +68,10 @@ export function PrsAreaPage(): JSX.Element {
     setBulkPipeline,
     bulkRunning,
     bulkAiReview,
+    bulkLabel,
+    bulkComment,
+    bulkClose,
+    bulkRerunChecks,
     bulkRunPipeline,
     rowActions,
     ctx,
@@ -201,6 +210,31 @@ export function PrsAreaPage(): JSX.Element {
               AI review {selected.size}
             </button>
           ) : null}
+          {canActPrs ? (
+            <button className="btn-ghost" disabled={bulkRunning !== null} onClick={bulkRerunChecks}>
+              Re-run CI
+            </button>
+          ) : null}
+          <BulkActions
+            count={selected.size}
+            noun="PR"
+            canAct={canActPrs}
+            busy={bulkRunning !== null}
+            onLabel={bulkLabel}
+            onComment={bulkComment}
+            onClose={bulkClose}
+          />
+          {/* Other modules' bulk verbs (slop screening, for one) land here so
+              this module never imports theirs. */}
+          <PrSelectionProvider
+            value={{
+              selected: prs.filter((pr) => selected.has(`${pr.repo}#${pr.number}`)),
+              clear: clearSelected,
+              busy: bulkRunning !== null,
+            }}
+          >
+            <Slot name="prs.bulkActions" can={can} />
+          </PrSelectionProvider>
           {canRunPipelines && pipelines.length > 0 ? (
             <>
               <select
