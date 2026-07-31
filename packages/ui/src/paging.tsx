@@ -65,7 +65,11 @@ export function useInfiniteList<T>(
   // for a skeleton and back, so a feed with nothing in it flashed once per
   // incoming broadcast. Reset per fetchPage, because new filters or a new tab
   // really are a fresh list and should show that they are loading.
+<<<<<<< HEAD
   const settled = useRef(seed !== null);
+=======
+  const settled = useRef(false);
+>>>>>>> origin/main
 
   const load = useCallback(
     (offset: number) => {
@@ -82,10 +86,13 @@ export function useInfiniteList<T>(
         .then(({ items, total }) => {
           if (seq.current !== mySeq) return;
           settled.current = true;
+<<<<<<< HEAD
           // Only the first page is retained. Keeping every appended page would
           // grow with scrolling and re-seed a long list on the next visit,
           // which is slower to render than the page the user starts on.
           if (offset === 0) onFirstPage?.({ items, total });
+=======
+>>>>>>> origin/main
           setState((prev) => ({
             items: offset === 0 ? items : [...prev.items, ...items],
             total,
@@ -103,9 +110,14 @@ export function useInfiniteList<T>(
 
   useEffect(() => {
     // A failed load stays unsettled on purpose: a retry should show that it is
+<<<<<<< HEAD
     // trying again, not sit on a cleared error with nothing moving. A seeded
     // list is already settled: it has rows on screen and is only revalidating.
     settled.current = seedRef.current !== null;
+=======
+    // trying again, not sit on a cleared error with nothing moving.
+    settled.current = false;
+>>>>>>> origin/main
     load(0);
   }, [load]);
 
