@@ -129,6 +129,27 @@ export interface AuditSink {
  *
  * Non-secret config is unaffected: it stays in SQLite regardless.
  */
+/**
+ * A module's own secret storage for values whose keys it invents at run time,
+ * rather than declaring them in its manifest.
+ *
+ * Manifest `kind: 'secret'` config covers the fixed case (one npm token, one
+ * SMTP password). This covers the open one: a user adding a hidden variable to
+ * a pipeline step is naming a secret the manifest could never have anticipated.
+ *
+ * Scoped to the calling module and backed by the same `SecretStore` seam, so an
+ * instance that moved secrets to Vault keeps these there too. Values are
+ * redacted from `ModuleConfigState` exactly like declared ones.
+ */
+export interface ModuleSecrets {
+  /** `null` when unset. */
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+  /** Which keys hold a value. Never the values. */
+  keys(): readonly string[];
+}
+
 export interface SecretStore {
   /** `null` when unset. */
   get(moduleId: string, key: string): string | null;

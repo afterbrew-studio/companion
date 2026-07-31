@@ -62,6 +62,9 @@ test('a synced pull request lands in the cache with the fields the feed carries'
     reviewRisk: null,
     reviewDecision: null,
     mergeable: null,
+    // The list feed carries neither, and a PR nobody has asked GitHub about yet
+    // has no merge state — null is "not fetched", not "cannot merge".
+    mergeStateStatus: null,
     checks: null,
   });
 });

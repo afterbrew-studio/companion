@@ -148,10 +148,16 @@ export class Fixes {
       (r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped',
     );
     if (failing.length === 0) throw new Error('no failing checks on this PR');
+    // Same reason as the post-mortem: handing the agent the error it is about to
+    // go looking for saves it a full local reproduction, and a repair run is the
+    // more expensive of the two to waste.
+    const logs = pr.headSha
+      ? ((await this.github(repo, userId)?.failingJobLogs(repo, pr.headSha).catch(() => [])) ?? [])
+      : [];
     return this.createPrBranchRun(
       pr,
       `Fix CI on PR #${prNumber}: ${pr.title.slice(0, 50)}`,
-      checkFixObjective(pr, failing),
+      checkFixObjective(pr, failing, logs),
       { ...opts, userId },
     );
   }
@@ -380,20 +386,26 @@ export class Fixes {
 function checkFixObjective(
   pr: PrRecord,
   failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
+  logs: ReadonlyArray<{ name: string; log: string }>,
 ): string {
   const list = failing
     .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
     .join('\n');
+  const logSection = logs.length
+    ? `\n## Job logs (tail of each failing job)\n${logs
+        .map((l) => `### ${l.name}\n\`\`\`\n${l.log}\n\`\`\``)
+        .join('\n\n')}\n`
+    : '';
   return `You are an autonomous software engineer working in a git worktree checked out AT the head of pull request #${pr.number} ("${pr.title}", branch ${pr.headRef}). The PR's CI is failing; your job is to make it pass without changing what the PR intends to do.
 
 ## Failing pipelines
 ${list}
-
+${logSection}
 ${prDiffInspectionGuide(pr.baseRef)}
 
 ## Rules
 - Work ONLY inside this worktree, on this branch.
-- Reproduce the failures locally where practical (run the linter/build/test suite the failing check corresponds to), fix the causes minimally, and re-run to verify.
+- Start from the job logs above when they are present: they usually name the failure outright. Reproduce locally where they are absent or inconclusive (run the linter/build/test suite the failing check corresponds to), fix the causes minimally, and re-run to verify.
 - Respect the PR's intent — repair it, don't rewrite it.
 - Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
 - Finish with a short summary: cause of each failure, what you changed, and how you verified it.`;

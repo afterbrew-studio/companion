@@ -30,6 +30,12 @@ export const routes = defineClientRoutes([
     component: page(() => import('./pages/Runners.js').then((m) => m.RunnersPage)),
   },
   {
+    // Before the /runs prefix, or "/runs" would swallow it.
+    match: { prefix: '/queue' },
+    permission: 'runs:read',
+    component: page(() => import('./pages/Queue.js').then((m) => m.QueuePage)),
+  },
+  {
     match: { prefix: '/runs' },
     permission: 'runs:read',
     component: page(() => import('./pages/RunsPage.js').then((m) => m.RunsPage)),

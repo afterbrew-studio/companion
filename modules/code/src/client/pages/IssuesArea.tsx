@@ -19,6 +19,7 @@ import {
   Tabs,
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
+import { BulkActions } from '../components/BulkActions.js';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -62,6 +63,9 @@ export function IssuesAreaPage(): JSX.Element {
     setBulkPipeline,
     bulkRunning,
     bulkAiTriage,
+    bulkLabel,
+    bulkComment,
+    bulkClose,
     bulkRunPipeline,
     rowActions,
     ctx,
@@ -182,6 +186,15 @@ export function IssuesAreaPage(): JSX.Element {
               AI triage {selected.size}
             </button>
           ) : null}
+          <BulkActions
+            count={selected.size}
+            noun="issue"
+            canAct={canActIssues}
+            busy={bulkRunning !== null}
+            onLabel={bulkLabel}
+            onComment={bulkComment}
+            onClose={bulkClose}
+          />
           {canRunPipelines && pipelines.length > 0 ? (
             <>
               <select

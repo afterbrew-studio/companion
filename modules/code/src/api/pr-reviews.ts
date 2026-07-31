@@ -199,6 +199,16 @@ export class PrReviews {
     );
     if (failing.length === 0) throw new Error('no failing checks on this PR');
 
+    // The actual logs, not just the check names. Without them the agent is
+    // guessing from a label and then re-running the suite locally to find out
+    // what it could have read in one request. Best-effort: a repo whose logs
+    // have expired still gets the old, weaker analysis rather than no analysis.
+    let logs: Array<{ name: string; log: string }> = [];
+    if (pr.headSha) {
+      const client = this.github({ repo, username: userId });
+      logs = (await client?.failingJobLogs(repo, pr.headSha).catch(() => [])) ?? [];
+    }
+
     const { finalMessage } = await this.checkouts.withPullRequestWorktree(
       repo,
       `ci-analysis-${prNumber}-${randomUUID().slice(0, 8)}`,
@@ -213,7 +223,7 @@ export class PrReviews {
           repo,
           userId,
           issueNumber: prNumber,
-          prompt: ciAnalysisPrompt(pr.title, pr.headRef, pr.baseRef, failing),
+          prompt: ciAnalysisPrompt(pr.title, pr.headRef, pr.baseRef, failing, logs),
           timeoutMs: 14 * 60_000,
           resume: { type: 'ci-analysis', args: { repo, number: prNumber, userId } },
         }),
@@ -297,21 +307,30 @@ function ciAnalysisPrompt(
   headRef: string,
   baseRef: string,
   failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
+  logs: ReadonlyArray<{ name: string; log: string }>,
 ): string {
   const list = failing
     .map((f) => `- ${f.name}: ${f.conclusion ?? 'failed'}${f.detailsUrl ? ` (${f.detailsUrl})` : ''}`)
     .join('\n');
+  const logSection = logs.length
+    ? `\n## Job logs (tail of each failing job)\n${logs
+        .map((l) => `### ${l.name}\n\`\`\`\n${l.log}\n\`\`\``)
+        .join('\n\n')}\n`
+    : '\n(Job logs were unavailable — expired, still running, or not an Actions job. Reproduce locally instead.)\n';
   return `You are investigating why CI pipelines are failing on the pull request "${title}" (branch ${headRef}). The pull request head is checked out in the current directory.
 
 RULES: you may read files, search, and run non-destructive commands (installs into the existing environment, builds, linters, test suites) to reproduce the failures locally. You must NOT modify, commit, or push anything.
 
 ## Failing pipelines
 ${list}
-
+${logSection}
 ${diffInspectionGuide(baseRef)}
 
 ## Your task
-Figure out the most likely cause of each failing pipeline. Where practical, reproduce locally (e.g. run the linter or the test suite the check corresponds to) against the diff's changes. Reply with a concise markdown report:
+Read the logs above FIRST: the answer is usually in them, and reproducing a
+failure you have already been shown the error for wastes the run. Then figure out
+the most likely cause of each failing pipeline. Where the logs are absent or
+inconclusive, reproduce locally (e.g. run the linter or the test suite the check corresponds to) against the diff's changes. Reply with a concise markdown report:
 1. **Verdict per failing check** — probable cause, evidence, and whether you reproduced it.
 2. **Suggested fix** — concrete change(s) the author should make.
 3. **Confidence** — high/medium/low per finding.`;

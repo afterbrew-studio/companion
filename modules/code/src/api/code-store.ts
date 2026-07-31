@@ -6,6 +6,7 @@ import type { PrsStore } from './prs-store.js';
 import type { TriageStore } from './triage-store.js';
 import type { PrReviewsStore } from './pr-reviews-store.js';
 import type { PipelinesStore } from './pipelines-store.js';
+import type { PipelineSecretsStore } from './pipeline-secrets-store.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import type { RunsStore } from './operate-types.js';
 
@@ -26,6 +27,7 @@ export class CodeStore {
   readonly triage: TriageStore;
   readonly prReviews: PrReviewsStore;
   readonly pipelines: PipelinesStore;
+  readonly pipelineSecrets: PipelineSecretsStore;
   readonly githubAccounts: GithubAccountsStore;
   readonly settings: { get(key: string): string | null; set(key: string, value: string): void };
   readonly workspaces: ServiceMap['workspace'];
@@ -40,6 +42,7 @@ export class CodeStore {
     triage: TriageStore;
     prReviews: PrReviewsStore;
     pipelines: PipelinesStore;
+    pipelineSecrets: PipelineSecretsStore;
     githubAccounts: GithubAccountsStore;
     settings: { get(key: string): string | null; set(key: string, value: string): void };
     workspaces: ServiceMap['workspace'];
@@ -53,6 +56,7 @@ export class CodeStore {
     this.triage = opts.triage;
     this.prReviews = opts.prReviews;
     this.pipelines = opts.pipelines;
+    this.pipelineSecrets = opts.pipelineSecrets;
     this.githubAccounts = opts.githubAccounts;
     this.settings = opts.settings;
     this.workspaces = opts.workspaces;

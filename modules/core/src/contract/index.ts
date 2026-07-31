@@ -183,6 +183,13 @@ export interface AuthState {
    * everyone already fetches rather than earning an endpoint of its own.
    */
   readonly githubHost: string;
+  /**
+   * The account a loopback-only first boot created, while that password is still
+   * the real one. Present ONLY when the daemon is still bound to loopback, so it
+   * cannot survive into an instance anyone else can reach. Absent everywhere
+   * else, including after the password is changed.
+   */
+  readonly localCredentials?: { readonly username: string; readonly password: string };
   /** Alternative sign-in methods; empty on a local-accounts-only install. */
   readonly providers: readonly AuthProvider[];
 }

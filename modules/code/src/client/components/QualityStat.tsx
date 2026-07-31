@@ -1,73 +1,120 @@
-import { MetaSignal } from '@moxxy/companion-sdk/ui';
+import { StatusGlyph } from '@moxxy/companion-sdk/ui';
 import type { AgentQualityStat } from '../../contract/index.js';
 
 /**
- * One agent surface's card. Exported so a module contributing through the
- * `quality.panels` slot renders identically to the built-in ones instead of
+ * Whether a surface has produced anything worth reporting on. A surface with no
+ * verdicts at all is not a 0% surface, and the page leans on this to say so once
+ * rather than once per card.
+ */
+export function hasQualitySignal(stat: AgentQualityStat): boolean {
+  return stat.accepted + stat.rejected + stat.pending + stat.failed > 0;
+}
+
+/**
+ * Three bands rather than a gradient: the question a maintainer is asking is
+ * "can I trust this surface", and that has three useful answers. The word is
+ * carried alongside the colour, never by it — a red bar means nothing to a
+ * reader who cannot see red.
+ */
+function band(rate: number | null): { tone: 'ok' | 'warn' | 'danger' | 'muted'; word: string } {
+  if (rate === null) return { tone: 'muted', word: 'not yet judged' };
+  if (rate >= 0.8) return { tone: 'ok', word: 'trusted' };
+  if (rate >= 0.5) return { tone: 'warn', word: 'mixed' };
+  return { tone: 'danger', word: 'often wrong' };
+}
+
+const FILL: Record<'ok' | 'warn' | 'danger' | 'muted', string> = {
+  ok: 'bg-emerald-500',
+  warn: 'bg-amber-500',
+  danger: 'bg-red-500',
+  muted: 'bg-zinc-400',
+};
+// A lighter step of the fill's own ramp, so the band reads across the whole bar
+// rather than only across the filled part.
+const TRACK: Record<'ok' | 'warn' | 'danger' | 'muted', string> = {
+  ok: 'bg-emerald-500/15',
+  warn: 'bg-amber-500/15',
+  danger: 'bg-red-500/15',
+  muted: 'bg-zinc-400/15',
+};
+
+const TEXT: Record<'ok' | 'warn' | 'danger' | 'muted', string> = {
+  ok: 'text-emerald-600 dark:text-emerald-400',
+  warn: 'text-amber-600 dark:text-amber-400',
+  danger: 'text-red-600 dark:text-red-400',
+  muted: 'dim',
+};
+
+/**
+ * One agent surface, as a row.
+ *
+ * A row rather than a card because the page holds two or three of these and a
+ * grid of cards left two thirds of the width empty. Exported so a module
+ * contributing through the `quality.panels` slot renders identically instead of
  * inventing its own layout.
  */
 export function QualityStat({ stat }: { stat: AgentQualityStat }): JSX.Element {
   const decided = stat.accepted + stat.rejected;
   const rate = stat.acceptanceRate;
-  // Three bands rather than a gradient: the question a maintainer is asking is
-  // "can I trust this surface", and that has three useful answers.
-  const tone = rate === null ? 'zinc' : rate >= 0.8 ? 'green' : rate >= 0.5 ? 'amber' : 'red';
+  const { tone, word } = band(rate);
+  const pct = rate === null ? 0 : Math.round(rate * 100);
 
   return (
-    <div className="card flex flex-col gap-2 p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold">{stat.label}</h3>
+    <div className="card flex flex-col gap-2.5 p-4" aria-label={stat.label}>
+      <div className="flex items-center gap-2">
+        <StatusGlyph tone={tone} label={word} />
+        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{stat.label}</h3>
         {rate === null ? (
-          <MetaSignal tone="zinc" label="no decisions yet" />
+          <span className="dim text-xs">{word}</span>
         ) : (
-          <span className="text-lg font-semibold tabular-nums">{Math.round(rate * 100)}%</span>
+          <>
+            {/* Proportional figures on purpose: tabular-nums is for columns that
+                must align, and gives a standalone display number loose spacing. */}
+            <span className={`text-2xl font-semibold leading-none ${TEXT[tone]}`}>{pct}%</span>
+            <span className="dim text-xs">{word}</span>
+          </>
         )}
       </div>
-      <p className="dim text-xs">
-        {rate === null
-          ? 'Nobody has accepted or dismissed a verdict from this surface yet.'
-          : `${stat.accepted} of ${decided} decided verdicts were accepted.`}
-      </p>
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        <Row label="Accepted" value={stat.accepted} />
-        <Row label="Dismissed" value={stat.rejected} />
-        <Row label="Awaiting you" value={stat.pending} />
-        {/* Reliability, not judgement: an agent that crashed was never rejected. */}
-        <Row label="Produced nothing" value={stat.failed} tone={stat.failed > 0 ? 'warn' : undefined} />
-        {stat.overridden !== null ? (
-          <Row
-            label="Action softened"
-            value={stat.overridden}
-            title="The finding was accepted but a human applied something other than the recommended action."
-          />
-        ) : null}
-      </dl>
-    </div>
-  );
-}
 
-function Row({
-  label,
-  value,
-  tone,
-  title,
-}: {
-  label: string;
-  value: number;
-  tone?: 'warn';
-  title?: string;
-}): JSX.Element {
-  return (
-    <>
-      <dt className="dim" title={title}>
-        {label}
-      </dt>
-      <dd
-        className={`text-right tabular-nums ${tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : ''}`}
-        title={title}
+      <div
+        className={`h-1.5 w-full overflow-hidden rounded-full ${TRACK[tone]}`}
+        role="img"
+        aria-label={
+          rate === null
+            ? `${stat.label}: no decisions yet`
+            : `${stat.label}: ${stat.accepted} of ${decided} decided verdicts accepted`
+        }
       >
-        {value}
-      </dd>
-    </>
+        {rate === null ? null : (
+          <div className={`h-full rounded-full ${FILL[tone]}`} style={{ width: `${Math.max(pct, 2)}%` }} />
+        )}
+      </div>
+
+      <p className="dim text-xs">
+        {rate === null ? (
+          stat.pending > 0 ? (
+            <>
+              {stat.pending} verdict{stat.pending === 1 ? '' : 's'} waiting on a decision
+            </>
+          ) : (
+            'No verdicts yet.'
+          )
+        ) : (
+          <>
+            {stat.accepted} of {decided} accepted
+            {stat.pending > 0 ? ` · ${stat.pending} awaiting you` : ''}
+            {stat.overridden ? ` · ${stat.overridden} softened` : ''}
+          </>
+        )}
+        {/* Reliability, not judgement: an agent that crashed was never rejected,
+            so it is called out separately rather than folded into the rate. */}
+        {stat.failed > 0 ? (
+          <span className="text-amber-600 dark:text-amber-400">
+            {' · '}
+            {stat.failed} produced nothing
+          </span>
+        ) : null}
+      </p>
+    </div>
   );
 }

@@ -59,6 +59,13 @@ interface ModuleRow {
  * onEnable, and finally a single post-activation pass (resumers). Toggling is a
  * live operation (routes mount/unmount, the RBAC grid recomputes).
  */
+/**
+ * Key prefix reserving a `module_config` row as a run-time secret. Anything
+ * under it redacts like a declared `kind: 'secret'` field, which is what lets a
+ * module store a value whose key no manifest could have listed.
+ */
+export const RUNTIME_SECRET_PREFIX = 'secret:';
+
 export class ModuleKernel {
   private readonly db: Database;
   private readonly log: Logger;
@@ -82,7 +89,8 @@ export class ModuleKernel {
   /** Set by whichever enabled module provides it; absent = auditing is a no-op. */
   private auditSink: AuditSink | null = null;
   /** The shared base — `moduleConfig` is the one per-module member, added by moduleCtx(). */
-  private readonly ctx: Omit<ModuleContext, 'moduleConfig'>;
+  /** Both omitted fields are per-module, so they are added in `moduleCtx`. */
+  private readonly ctx: Omit<ModuleContext, 'moduleConfig' | 'secrets'>;
   /** Kernel-owned config storage — direct on the DB (never via the service registry). */
   private readonly moduleConfig: ModuleConfigStore;
   /** `kind: 'secret'` keys per module, from the manifests: known before any load. */
@@ -169,7 +177,12 @@ export class ModuleKernel {
    * the backend, so they cannot be kept inside it.
    */
   private isSecretField(id: string, key: string): boolean {
-    return id !== this.secretProvider && this.secretFields.get(id)?.has(key) === true;
+    if (id === this.secretProvider) return false;
+    // Run-time keys a module invented (ctx.secrets) rather than declared. The
+    // prefix is what makes them redact like a declared secret without any
+    // manifest ever having mentioned them.
+    if (key.startsWith(RUNTIME_SECRET_PREFIX)) return true;
+    return this.secretFields.get(id)?.has(key) === true;
   }
 
   /** Hand secret storage to `id` if it provides one, carrying stored values across. */
@@ -227,7 +240,11 @@ export class ModuleKernel {
   private moduleCtx(id: ModuleId): ModuleContext {
     let c = this.perModuleCtx.get(id);
     if (!c) {
-      c = { ...this.ctx, moduleConfig: this.moduleConfig.accessorFor(id, this.configFields(id)) };
+      c = {
+        ...this.ctx,
+        moduleConfig: this.moduleConfig.accessorFor(id, this.configFields(id)),
+        secrets: this.moduleConfig.secretsFor(id),
+      };
       this.perModuleCtx.set(id, c);
     }
     return c;

@@ -57,6 +57,9 @@ const KIND_PRIORITY: Record<RunKind, number> = {
   implement: 70,
   triage: 50,
   analysis: 50,
+  // Above analysis: a command is part of a pipeline someone is watching,
+  // not a background screen that can wait.
+  command: 60,
   report: 30,
   interactive: 10,
   assistant: 10,
@@ -995,6 +998,22 @@ export class Orchestrator implements RunnerEventSink {
    * and cancellable) and starts when a slot frees. Replaces the old serial
    * queue — batches now fan out across the whole pool.
    */
+  /**
+   * Run `job` under the same admission control as unattended runs: immediately
+   * when the pool has a slot, otherwise from the visible queue.
+   *
+   * Public because work that occupies a runner without creating a run row (a
+   * pipeline's executable step) must still compete for the same capacity.
+   * Bypassing this is how a bulk run over fifteen pull requests spawns fifteen
+   * concurrent shells on one machine.
+   */
+  schedule<T>(
+    meta: { kind: RunKind; title: string; repo: string | null; userId: string | null },
+    job: () => Promise<T>,
+  ): Promise<T> {
+    return this.scheduleOneShot({ ...meta, issueNumber: null }, job);
+  }
+
   private scheduleOneShot<T>(
     meta: {
       kind: RunKind;

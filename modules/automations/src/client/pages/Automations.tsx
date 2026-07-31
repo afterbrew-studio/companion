@@ -512,7 +512,8 @@ function RepoAutomation({
       {webhook ? (
         <div className="banner-info mb-0 flex-col items-start gap-1.5">
           <div>
-            Point a GitHub webhook (content type <code>application/json</code>, events: issues + pull requests) at:
+            Point a GitHub webhook (content type <code>application/json</code>, events: issues, pull requests,
+            check runs, check suites, statuses) at:
           </div>
           {webhook.url ? (
             <CopyText value={webhook.url} title="Copy webhook URL">

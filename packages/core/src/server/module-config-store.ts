@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Database } from '@moxxy/companion-services';
 import type { ModuleConfigAccessor, ModuleConfigField, ModuleConfigValue } from '../module-config.js';
 import { HttpError } from './router.js';
-import type { SecretStore } from './capabilities.js';
+import type { ModuleSecrets, SecretStore } from './capabilities.js';
+import { RUNTIME_SECRET_PREFIX } from './kernel.js';
 import { SqliteSecretStore } from './secret-store.js';
 
 /**
@@ -45,6 +46,32 @@ export class ModuleConfigStore {
     if (moved) onMoved?.(moved);
   }
 
+  /**
+   * The module's own secret storage under run-time keys, scoped to `moduleId`.
+   *
+   * These keys are not in any manifest, so `getConfig` (which walks the declared
+   * field list) never reports them and they cannot reach a client through the
+   * config surface at all. `useSecretStore` still carries them across a backend
+   * swap, because it iterates stored keys rather than declared ones.
+   */
+  secretsFor(moduleId: string): ModuleSecrets {
+    // The prefix is applied here and stripped on the way back, so a module deals
+    // in its own plain key names and never learns the convention. That keeps it
+    // off the SDK surface, and makes a run-time key structurally incapable of
+    // colliding with a declared `kind: 'secret'` config field.
+    const full = (key: string): string => `${RUNTIME_SECRET_PREFIX}${key}`;
+    return {
+      get: (key) => this.secrets.get(moduleId, full(key)),
+      set: (key, value) => this.secrets.set(moduleId, full(key), value),
+      delete: (key) => this.secrets.delete(moduleId, full(key)),
+      keys: () =>
+        this.secrets
+          .keys(moduleId)
+          .filter((k) => k.startsWith(RUNTIME_SECRET_PREFIX))
+          .map((k) => k.slice(RUNTIME_SECRET_PREFIX.length)),
+    };
+  }
+
   /** Stored values for one module (no defaults merged). */
   valuesFor(moduleId: string): Record<string, ModuleConfigValue> {
     const rows = this.db
@@ -57,6 +84,10 @@ export class ModuleConfigStore {
       if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[r.key] = v;
     }
     for (const key of this.secrets.keys(moduleId)) {
+      // Run-time keys are a separate namespace reached through `ctx.secrets`;
+      // letting them surface here would put them in `moduleConfig.values()`
+      // alongside declared fields, which is not what a module asked for.
+      if (key.startsWith(RUNTIME_SECRET_PREFIX)) continue;
       const v = this.secrets.get(moduleId, key);
       if (v !== null) out[key] = v;
     }
@@ -76,7 +107,12 @@ export class ModuleConfigStore {
       return set;
     };
     for (const r of rows) if (!this.isSecret(r.module_id, r.key)) setFor(r.module_id).add(r.key);
-    for (const id of moduleIds) for (const key of this.secrets.keys(id)) setFor(id).add(key);
+    for (const id of moduleIds)
+      for (const key of this.secrets.keys(id)) {
+        // Configured-ness is about DECLARED fields; a run-time key must not
+        // make a module look configured.
+        if (!key.startsWith(RUNTIME_SECRET_PREFIX)) setFor(id).add(key);
+      }
     return map;
   }
 

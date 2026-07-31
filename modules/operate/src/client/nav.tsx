@@ -29,6 +29,20 @@ export const nav = defineNav([
     ),
   },
   {
+    key: 'queue',
+    label: 'Queue',
+    hash: '#/queue',
+    shortcut: 'w',
+    permission: 'runs:read',
+    section: 'operate',
+    order: 10,
+    icon: (
+      <NavIcon>
+        <path d="M4 6h16M4 12h16M4 18h10" />
+      </NavIcon>
+    ),
+  },
+  {
     key: 'skills',
     label: 'Skills',
     hash: '#/skills',

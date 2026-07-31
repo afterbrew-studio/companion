@@ -4,14 +4,16 @@ import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 
 export function LoginPage(): JSX.Element {
-  const { login, branding, providers } = useAuth();
+  const { login, branding, providers, localCredentials } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
 
   useEffect(() => {
     document.title = `Sign in · ${brandName}`;
   }, [brandName]);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  // Prefilled from the seed when there is one: the box exists so nobody types
+  // a credential this machine generated for itself.
+  const [username, setUsername] = useState(localCredentials?.username ?? '');
+  const [password, setPassword] = useState(localCredentials?.password ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,12 +34,23 @@ export function LoginPage(): JSX.Element {
     <AuthLayout
       title={brandName}
       subtitle="Sign in to your workspace"
-      footer={
-        <>
-          Accounts are configured in the daemon&apos;s <code>.env</code> file.
-        </>
-      }
+      footer={localCredentials ? <>Anyone who can reach this machine can sign in.</> : undefined}
     >
+      {localCredentials ? (
+        <div className="card mb-3 border-amber-500/40 bg-amber-500/10">
+          <div className="text-sm font-medium">Local instance, no account needed</div>
+          <p className="dim mt-1 text-xs">
+            This daemon only listens on your own machine, so it created an admin for you and filled the form
+            in. Change the password in Settings, and this box disappears.
+          </p>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono text-xs">
+            <dt className="dim">user</dt>
+            <dd>{localCredentials.username}</dd>
+            <dt className="dim">password</dt>
+            <dd>{localCredentials.password}</dd>
+          </dl>
+        </div>
+      ) : null}
       <form
         className="card flex flex-col gap-3 bg-white dark:bg-zinc-900"
         onSubmit={(e) => void submit(e)}

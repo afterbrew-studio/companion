@@ -101,6 +101,11 @@ const updateAccountSchema = z
     path: ['currentPassword'],
   });
 
+/** Only these mean "nothing but this machine can connect". */
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
 export default defineRoutes((ctx) => {
   const auth = ctx.services.get('core');
   const roles = ctx.services.get('roles');
@@ -126,6 +131,12 @@ export default defineRoutes((ctx) => {
       access: 'public',
       handler: (): AuthState => ({
         setup: auth.setupNeeded(),
+        // Re-checked per request, not remembered from boot: an operator who
+        // rebinds to 0.0.0.0 must stop handing the admin password to whoever
+        // asks, without having to remember to clear anything.
+        ...(isLoopbackHost(ctx.config.host) && auth.localSeed()
+          ? { localCredentials: auth.localSeed()! }
+          : {}),
         version: APP_VERSION,
         branding: { name: settings.get('branding.name') || null, logo: settings.get('branding.logo') || null },
         githubHost: ctx.config.github.host,

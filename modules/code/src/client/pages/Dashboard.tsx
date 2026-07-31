@@ -250,6 +250,9 @@ const RUN_KIND_LABEL: Record<RunRecord['kind'], string> = {
   implement: 'AI implement',
   report: 'AI report',
   assistant: 'AI Help',
+  // Never appears in this feed (a command creates no run row), but the union is
+  // exhaustive and a missing key would be a compile error the next time it moves.
+  command: 'command',
 };
 
 function ActivityFeed({

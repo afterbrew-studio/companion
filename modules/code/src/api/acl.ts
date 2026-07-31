@@ -18,6 +18,8 @@ export default defineAcl({
     { id: 'pipelines:manage', title: 'Create and edit pipelines' },
     { id: 'pipelines:run', title: 'Run pipelines' },
     { id: 'github:connect', title: 'Connect a GitHub account' },
+    { id: 'pipelines:execute', title: 'Run unsafe executable pipeline steps' },
+    { id: 'pipelines:author-execute', title: 'Create or edit pipeline steps that execute commands' },
   ],
   grants: {
     admin: '*',
@@ -32,6 +34,11 @@ export default defineAcl({
       'pipelines:manage',
       'pipelines:run',
       'github:connect',
+      // Runs pipelines that execute commands, but cannot author one: the
+      // dangerous act is deciding WHAT runs, not clicking run on something a
+      // maintainer already reviewed. Same asymmetry as a CI system, where
+      // editing the workflow file is held far tighter than re-running a job.
+      'pipelines:execute',
     ],
     business: ['repos:read'],
   },

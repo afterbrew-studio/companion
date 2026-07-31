@@ -149,7 +149,7 @@ export class PrChecks {
       }),
     ]);
     if (ghPr && ghPr.mergeable !== undefined) {
-      this.store.prs.setMergeable(repo, prNumber, ghPr.mergeable);
+      this.store.prs.setMergeable(repo, prNumber, ghPr.mergeable, ghPr.mergeable_state ?? null);
     }
 
     const runs: CheckRunInfo[] = [
@@ -181,7 +181,7 @@ export class PrChecks {
 }
 
 /** Latest substantive review per reviewer; any CHANGES_REQUESTED outweighs approvals. */
-function foldReviewDecision(reviews: readonly GhReview[]): 'approved' | 'changes_requested' | null {
+export function foldReviewDecision(reviews: readonly GhReview[]): 'approved' | 'changes_requested' | null {
   const latest = new Map<string, GhReview['state']>();
   for (const r of reviews) {
     const who = r.user?.login;

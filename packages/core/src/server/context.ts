@@ -7,7 +7,7 @@ import type { CompiledRawRoute } from './raw-router.js';
 import type { Migration } from './migration-runner.js';
 import type { ServiceRegistry } from './service-registry.js';
 import type { ServerBus } from './bus.js';
-import type { AuditSink, NotificationEmitter, SecretStore, SettingsRegistry } from './capabilities.js';
+import type { AuditSink, ModuleSecrets, NotificationEmitter, SecretStore, SettingsRegistry } from './capabilities.js';
 import type { RbacReader, RoleOverrides } from './rbac-grid.js';
 import type { WsScopeRegistry } from './ws-hub.js';
 
@@ -33,6 +33,12 @@ export interface ModuleContext {
   readonly settings: SettingsRegistry;
   /** This module's own declared config — read-only, live, defaults merged. */
   readonly moduleConfig: ModuleConfigAccessor;
+  /**
+   * This module's secrets under keys it invents at run time (a hidden pipeline
+   * variable, for instance). `moduleConfig` covers the manifest-declared ones;
+   * this covers the open set. Same storage backend, same redaction.
+   */
+  readonly secrets: ModuleSecrets;
   /** The live effective RBAC grid (module-core's Auth reads this). */
   readonly rbac: RbacReader;
   /**

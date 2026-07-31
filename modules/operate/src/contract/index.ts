@@ -169,7 +169,21 @@ export function servesProviderModels(harnesses: readonly HarnessDescriptor[]): b
 
 // ---------- runs ----------
 
-export type RunKind = 'interactive' | 'triage' | 'fix' | 'analysis' | 'implement' | 'report' | 'assistant';
+/**
+ * What a queued unit of machine work is. `command` is the odd one: it occupies a
+ * runner slot like the others but never creates a run row, because a pipeline's
+ * executable step is a shell command, not an agent session. It is in this union
+ * so it competes for capacity through the same scheduler instead of alongside it.
+ */
+export type RunKind =
+  | 'interactive'
+  | 'triage'
+  | 'fix'
+  | 'analysis'
+  | 'implement'
+  | 'report'
+  | 'assistant'
+  | 'command';
 
 export type RunStatus =
   | 'queued'

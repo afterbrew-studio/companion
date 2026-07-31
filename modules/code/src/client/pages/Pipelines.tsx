@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@moxxy/companion-sdk/ui';
+import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@moxxy/companion-sdk/ui';
 import type {
+  ImportPreview,
+  PrActionId,
   PipelineRecord,
+  StepVariable,
   PipelineStep,
   PipelineStepKind,
   PipelineStepSpec,
@@ -45,6 +48,17 @@ const KIND_META: Record<PipelineStepKind, { label: string; hint: string }> = {
   label: { label: 'Add labels', hint: 'Applies labels to the PR' },
   comment: { label: 'Post comment', hint: 'Comments on the PR (supports {{pr.title}}…)' },
   'slop-check': { label: 'AI slop gate', hint: 'Fails when the slop score reaches the threshold (needs the Slop module)' },
+  executable: {
+    label: '[unsafe] Run command',
+    hint: 'Runs a shell command as the daemon user. Needs pipelines:execute and the instance switch',
+  },
+  'npm-bootstrap': {
+    label: '[unsafe] npm bootstrap',
+    hint: 'Publishes packages the registry is missing and registers trusted publishing. Irreversible',
+  },
+  'pr-state-gate': { label: 'PR state gate', hint: 'Fails on draft, conflicts, missing approval or a stale branch' },
+  merge: { label: 'Merge the PR', hint: 'Squash-merges and optionally deletes the branch. Irreversible' },
+  'pr-action': { label: 'PR action', hint: 'Runs one of the PR actions — pair it with a condition' },
 };
 
 function defaultStep(kind: PipelineStepKind): PipelineStep {
@@ -62,6 +76,37 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
       return { ...base, kind, config: { body: '' } };
     case 'slop-check':
       return { ...base, kind, config: { threshold: 70 } };
+    case 'executable':
+      return {
+        ...base,
+        kind,
+        config: { command: '', workdir: 'clone', timeoutMs: 10 * 60_000, variables: [] },
+      };
+    case 'npm-bootstrap':
+      // Defaults match what a Changesets repo prints; dryRun starts on so the
+      // first run of a newly added step cannot publish anything.
+      return {
+        ...base,
+        kind,
+        config: {
+          detectCommand: 'pnpm release:preflight',
+          sectionPattern: '^### Require bootstrap$',
+          packagePattern: '^\\s*-\\s*`([^`]+)`',
+          countPattern: '^- Require bootstrap: (\\d+)$',
+          token: { name: 'NPM_TOKEN', hidden: true },
+          workflowFile: 'publish.yml',
+          dryRun: true,
+          timeoutMs: 20 * 60_000,
+        },
+      };
+    case 'pr-state-gate':
+      return { ...base, kind, config: { requireReady: true, requireApproved: true, requireUpToDate: true } };
+    case 'merge':
+      return { ...base, kind, config: { method: 'squash', deleteBranch: true, requirePinnedHead: true } };
+    case 'pr-action':
+      // Confirmation on by default: an action step exists to do something to
+      // someone's pull request, usually as a reaction to a gate.
+      return { ...base, kind, requiresApproval: true, config: { action: 'pr.resolve-conflicts' } };
   }
 }
 
@@ -71,6 +116,8 @@ export function PipelinesPage(): JSX.Element {
   const [editing, setEditing] = useState<PipelineRecord | 'new' | null>(null);
   const [editingDef, setEditingDef] = useState<StepDefinitionRecord | 'new' | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [importing, setImporting] = useState<{ text: string; fileName?: string } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const canManage = can('pipelines:manage');
 
@@ -87,9 +134,14 @@ export function PipelinesPage(): JSX.Element {
               <button className="btn-ghost" onClick={() => setGenerating(true)}>
                 ✦ Generate with AI
               </button>
-              <button className="btn-ghost" onClick={() => setEditingDef('new')}>
-                New custom step
-              </button>
+              <ActionMenu
+                trigger="Import"
+                label="Import a pipeline"
+                actions={[
+                  { label: 'From a file…', onSelect: () => fileInput.current?.click() },
+                  { label: 'Paste JSON…', onSelect: () => setImporting({ text: '' }) },
+                ]}
+              />
               <button className="btn" onClick={() => setEditing('new')}>
                 New pipeline
               </button>
@@ -98,6 +150,18 @@ export function PipelinesPage(): JSX.Element {
         }
       />
       <ErrorBar error={error} />
+      <input
+        ref={fileInput}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          // Reset first: picking the same file again after fixing it must still fire.
+          e.target.value = '';
+          if (file) void file.text().then((text) => setImporting({ text, fileName: file.name }));
+        }}
+      />
 
       <div className="flex flex-col gap-3">
         {!loaded ? (
@@ -148,6 +212,9 @@ export function PipelinesPage(): JSX.Element {
                 {p.type === 'platform' && can('pipelines:run') ? (
                   <PlatformRunButton pipeline={p} onError={setError} />
                 ) : null}
+                <button className="btn-ghost" onClick={() => void exportPipeline(p, setError)}>
+                  Export
+                </button>
                 <span className="action-sep" aria-hidden />
                 <button
                   className="btn-danger-ghost"
@@ -186,6 +253,16 @@ export function PipelinesPage(): JSX.Element {
         title="Custom step library"
         description="Reusable steps shared by every pipeline in this workspace. Editing a library step updates all pipelines that reference it."
       >
+        {/* Creating a library step belongs beside the library, not in a header
+            row of four equal buttons where the primary action stopped reading
+            as primary. */}
+        {canManage && stepDefs.length > 0 ? (
+          <div className="mb-3">
+            <button className="btn-ghost" onClick={() => setEditingDef('new')}>
+              New custom step
+            </button>
+          </div>
+        ) : null}
         {!loaded ? (
           <div className="card">
             <RowsSkeleton rows={2} />
@@ -264,6 +341,18 @@ export function PipelinesPage(): JSX.Element {
         />
       ) : null}
       {confirmElement}
+      {importing ? (
+        <ImportModal
+          workspaceId={current.id}
+          initialText={importing.text}
+          fileName={importing.fileName}
+          onClose={() => setImporting(null)}
+          onImported={() => {
+            setImporting(null);
+            void refresh();
+          }}
+        />
+      ) : null}
       {generating ? (
         <GenerateModal
           workspaceId={current.id}
@@ -725,14 +814,114 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
   switch (step.kind) {
     case 'checks-gate':
       return (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={step.config.allowPending}
-            onChange={(e) => onChange({ ...step, config: { allowPending: e.target.checked } })}
-          />
-          Pass while checks are still running (only fail on red)
-        </label>
+        <div className="flex flex-col gap-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.allowPending}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, allowPending: e.target.checked } })}
+            />
+            Pass while checks are still running (only fail on red)
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.requireProtectedContexts ?? false}
+              onChange={(e) =>
+                onChange({ ...step, config: { ...step.config, requireProtectedContexts: e.target.checked } })
+              }
+            />
+            Also verify every required context by name (catches a missing or wholly skipped suite)
+          </label>
+        </div>
+      );
+    case 'pr-state-gate':
+      return (
+        <div className="flex flex-col gap-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.requireReady}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, requireReady: e.target.checked } })}
+            />
+            Fail while the PR is a draft
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.requireApproved}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, requireApproved: e.target.checked } })}
+            />
+            Require a human approval on GitHub
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.requireUpToDate}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, requireUpToDate: e.target.checked } })}
+            />
+            Fail when behind a base that requires up-to-date branches
+          </label>
+        </div>
+      );
+    case 'pr-action':
+      return (
+        <Field label="Action to perform on the pull request">
+          <select
+            className="input"
+            value={step.config.action}
+            onChange={(e) => onChange({ ...step, config: { action: e.target.value as PrActionId } })}
+          >
+            <option value="pr.resolve-conflicts">Resolve conflicts with an agent</option>
+            <option value="pr.address-reviews">Address review feedback with an agent</option>
+            <option value="pr.fix-checks">Repair failing checks with an agent</option>
+            <option value="pr.analyze-checks">Investigate failures with AI</option>
+            <option value="pr.rerun-failed">Re-run failed jobs</option>
+            <option value="pr.rerun-all">Re-run all jobs</option>
+            <option value="pr.update-branch">Update branch from base</option>
+            <option value="pr.mark-ready">Mark ready for review</option>
+          </select>
+        </Field>
+      );
+    case 'merge':
+      return (
+        <div className="flex flex-col gap-2 text-sm">
+          <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-xs">
+            Merging is irreversible. Every gate above this step decides whether it runs.
+          </div>
+          <Field label="Method">
+            <select
+              className="input"
+              value={step.config.method}
+              onChange={(e) =>
+                onChange({
+                  ...step,
+                  config: { ...step.config, method: e.target.value as 'merge' | 'squash' | 'rebase' },
+                })
+              }
+            >
+              <option value="squash">Squash</option>
+              <option value="merge">Merge commit</option>
+              <option value="rebase">Rebase</option>
+            </select>
+          </Field>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.deleteBranch}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, deleteBranch: e.target.checked } })}
+            />
+            Delete the head branch after merging
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={step.config.requirePinnedHead}
+              onChange={(e) => onChange({ ...step, config: { ...step.config, requirePinnedHead: e.target.checked } })}
+            />
+            Refuse if the head moved during this run (recommended)
+          </label>
+        </div>
       );
     case 'ai-review':
       return (
@@ -817,7 +1006,397 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
           />
         </Field>
       );
+    case 'executable':
+      return <ExecutableConfigForm step={step} onChange={onChange} />;
+    case 'npm-bootstrap':
+      return <NpmBootstrapConfigForm step={step} onChange={onChange} />;
   }
+}
+
+function NpmBootstrapConfigForm({
+  step,
+  onChange,
+}: {
+  step: Extract<PipelineStep, { kind: 'npm-bootstrap' }>;
+  onChange: (s: PipelineStep) => void;
+}): JSX.Element {
+  const cfg = step.config;
+  const set = (patch: Partial<typeof cfg>): void => onChange({ ...step, config: { ...cfg, ...patch } });
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-xs">
+        Publishing to npm is irreversible: versions are immutable. Detection runs without the token; the
+        token is resolved only once a package actually needs publishing, and the publish uses
+        <code> --ignore-scripts</code>.
+      </div>
+      <Field label="Detection command (must print the packages the registry is missing)">
+        <input className="input font-mono text-xs" value={cfg.detectCommand} onChange={(e) => set({ detectCommand: e.target.value })} />
+      </Field>
+      <div className="flex flex-wrap gap-4">
+        <Field label="Section heading pattern (scopes the search)">
+          <input
+            className="input font-mono text-xs"
+            value={cfg.sectionPattern ?? ''}
+            onChange={(e) => set({ sectionPattern: e.target.value || undefined })}
+          />
+        </Field>
+        <Field label="Package pattern (group 1 = one package spec)">
+          <input className="input font-mono text-xs" value={cfg.packagePattern} onChange={(e) => set({ packagePattern: e.target.value })} />
+        </Field>
+        <Field label="Count pattern (group 1 = how many it says)">
+          <input className="input font-mono text-xs" value={cfg.countPattern} onChange={(e) => set({ countPattern: e.target.value })} />
+        </Field>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <Field label="Workflow filename">
+          <input className="input" value={cfg.workflowFile} onChange={(e) => set({ workflowFile: e.target.value })} />
+        </Field>
+        <Field label="Timeout (minutes)">
+          <input
+            type="number"
+            className="input w-24"
+            min={1}
+            max={60}
+            value={Math.round(cfg.timeoutMs / 60_000)}
+            onChange={(e) => set({ timeoutMs: Math.min(60, Math.max(1, Number(e.target.value) || 1)) * 60_000 })}
+          />
+        </Field>
+      </div>
+      <VariablesEditor
+        variables={[cfg.token]}
+        onChange={(v) => set({ token: { ...(v[0] ?? cfg.token), hidden: true } })}
+        label="npm token — hidden, owned by whoever supplies it"
+        fixedHidden
+      />
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={cfg.dryRun} onChange={(e) => set({ dryRun: e.target.checked })} />
+        Dry run — detect and verify, publish nothing
+      </label>
+    </div>
+  );
+}
+
+/** Download the portable document as a file the user can hand to someone else. */
+async function exportPipeline(p: PipelineRecord, onError: (e: string) => void): Promise<void> {
+  try {
+    const { document: doc } = await api.exportPipeline(p.id);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+    const a = window.document.createElement('a');
+    a.href = url;
+    a.download = `${p.name.replace(/[^\w.-]+/g, '-').toLowerCase()}.pipeline.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    onError(String(e));
+  }
+}
+
+/**
+ * Two-phase import: preview first, then confirm. The preview exists so the
+ * command-running steps are read before anything is written, not to block them.
+ */
+function ImportModal({
+  workspaceId,
+  initialText,
+  fileName,
+  onClose,
+  onImported,
+}: {
+  workspaceId: string;
+  /** Already filled when a file was chosen; empty for the paste route. */
+  initialText: string;
+  fileName?: string;
+  onClose: () => void;
+  onImported: () => void;
+}): JSX.Element {
+  const [text, setText] = useState(initialText);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const parsed = (): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error('that is not valid JSON — paste the whole exported document, or choose the .json file');
+    }
+  };
+
+  const doPreview = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { preview: p } = await api.previewPipelineImport(workspaceId, parsed());
+      setPreview(p);
+      setAcknowledged(p.executables.length === 0);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A chosen file needs no second click to be read: the choice WAS the input.
+  // Declared after doPreview so it reads top-down, though the effect body only
+  // runs once the whole component function has finished either way.
+  useEffect(() => {
+    if (initialText.trim()) void doPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const doImport = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.importPipeline(workspaceId, parsed(), acknowledged);
+      onImported();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Import pipeline" onClose={onClose}>
+      <ErrorBar error={error} />
+      {!preview ? (
+        <>
+          {fileName ? (
+            <p className="dim text-sm">
+              Reading <span className="font-mono">{fileName}</span>.
+            </p>
+          ) : (
+            <Field label="Paste an exported pipeline document">
+              {/* Short by default: a tall empty box reads as a void, and the
+                  document is pasted in one go rather than typed. */}
+              <textarea
+                className="input min-h-24 font-mono text-xs"
+                value={text}
+                placeholder={'{ "version": 1, "pipeline": { … } }'}
+                autoFocus
+                onChange={(e) => setText(e.target.value)}
+              />
+              <p className="dim mt-1.5 text-xs">
+                Produced by <strong>Export</strong> on a pipeline card, here or on another instance. Hidden
+                variables travel as names only, so you will be asked for their values after importing.
+              </p>
+            </Field>
+          )}
+          <FormActions>
+            <button className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn" disabled={busy || !text.trim()} onClick={() => void doPreview()}>
+              {busy ? 'Reading…' : 'Review'}
+            </button>
+          </FormActions>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1 text-sm">
+            <div className="font-medium">{preview.name}</div>
+            <p className="dim text-xs">
+              {TYPE_META[preview.type].label} · {preview.stepCount} step{preview.stepCount === 1 ? '' : 's'}
+              {preview.description ? ` · ${preview.description}` : ''}
+            </p>
+          </div>
+
+          {preview.executables.length > 0 ? (
+            <Section title={`${preview.executables.length} step(s) run commands on this machine`}>
+              <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+                Importing only creates the definition. Running it still needs the
+                <code> pipelines:execute</code> permission and the instance switch. Read the commands anyway.
+              </div>
+              <ul className="mt-2 flex flex-col gap-2">
+                {preview.executables.map((e, i) => (
+                  <li key={i} className="rounded border border-[var(--border)] p-2">
+                    <div className="text-xs font-medium">
+                      {e.name} <span className="dim">({e.kind})</span>
+                    </div>
+                    <pre className="mt-1 overflow-x-auto text-xs">{e.command}</pre>
+                    {e.secretKeys.length > 0 ? (
+                      <p className="dim mt-1 text-xs">reads secrets: {e.secretKeys.join(', ')}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-2 flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
+                I have read these commands
+              </label>
+            </Section>
+          ) : null}
+
+          {preview.requiredSecrets.length > 0 ? (
+            <p className="dim mt-2 text-xs">
+              Expects these secrets to be configured on this instance: {preview.requiredSecrets.join(', ')}
+            </p>
+          ) : null}
+
+          <FormActions>
+            <button className="btn-ghost" onClick={() => setPreview(null)}>
+              Back
+            </button>
+            <button className="btn" disabled={busy || !acknowledged} onClick={() => void doImport()}>
+              {busy ? 'Importing…' : 'Import'}
+            </button>
+          </FormActions>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * The step's environment as one list. Ticking "hidden" moves the value out of
+ * the pipeline definition into the secret store, which is why a hidden row's
+ * value is never rendered back: the server does not have it to send.
+ */
+function VariablesEditor({
+  variables,
+  onChange,
+  label = 'Variables — these become environment variables for the command',
+  fixedHidden = false,
+}: {
+  variables: readonly StepVariable[];
+  onChange: (v: StepVariable[]) => void;
+  label?: string;
+  /** The slot exists to carry a credential, so hidden is not a choice here. */
+  fixedHidden?: boolean;
+}): JSX.Element {
+  const patch = (i: number, next: Partial<StepVariable>): void =>
+    onChange(variables.map((v, j) => (i === j ? { ...v, ...next } : v)));
+
+  return (
+    <Field label={label}>
+      <div className="flex flex-col gap-1.5">
+        {variables.map((v, i) => {
+          // A hidden row that already has a key holds a value we cannot read
+          // back, so an empty input means "leave it alone", not "clear it".
+          const stored = v.hidden && Boolean(v.secretKey);
+          return (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <input
+                className="input w-44 font-mono text-xs"
+                aria-label={`Variable ${i + 1} name`}
+                value={v.name}
+                placeholder="NPM_TOKEN"
+                onChange={(e) => patch(i, { name: e.target.value.trim() })}
+              />
+              <input
+                className="input min-w-0 flex-1 font-mono text-xs"
+                aria-label={`Variable ${i + 1} value`}
+                type={v.hidden ? 'password' : 'text'}
+                value={v.value ?? ''}
+                placeholder={stored ? '•••••••• stored — type to replace' : v.hidden ? 'value' : '{{steps.…}} or a literal'}
+                onChange={(e) => patch(i, { value: e.target.value })}
+              />
+              {fixedHidden ? null : (
+                <label className="flex shrink-0 items-center gap-1 text-xs" title="Store in the secret vault instead of the pipeline definition">
+                  <input
+                    type="checkbox"
+                    checked={v.hidden}
+                    onChange={(e) => patch(i, { hidden: e.target.checked, value: '' })}
+                  />
+                  hidden
+                </label>
+              )}
+              {v.hidden ? (
+                <select
+                  className="input input-sm w-28 shrink-0"
+                  aria-label={`Variable ${i + 1} visibility`}
+                  value={v.visibility ?? 'private'}
+                  onChange={(e) => patch(i, { visibility: e.target.value as 'private' | 'shared' })}
+                >
+                  <option value="private">only me</option>
+                  <option value="shared">workspace</option>
+                </select>
+              ) : null}
+              {v.ownerId ? <span className="dim shrink-0 text-xs">{v.ownerId}</span> : null}
+              {fixedHidden ? null : (
+                <button
+                  type="button"
+                  className="btn-ghost shrink-0"
+                  aria-label={`Remove variable ${i + 1}`}
+                  onClick={() => onChange(variables.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {fixedHidden ? null : (
+          <div>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => onChange([...variables, { name: '', hidden: false, value: '' }])}
+            >
+              + Add variable
+            </button>
+          </div>
+        )}
+        <p className="dim text-xs">
+          Visible values are stored with the pipeline and travel in an export. Hidden values go to the secret
+          store owned by whoever set them, are never exported, and are redacted from output and the audit
+          trail. "only me" means a run started by anyone else cannot use the value.
+        </p>
+      </div>
+    </Field>
+  );
+}
+
+function ExecutableConfigForm({
+  step,
+  onChange,
+}: {
+  step: Extract<PipelineStep, { kind: 'executable' }>;
+  onChange: (s: PipelineStep) => void;
+}): JSX.Element {
+  const cfg = step.config;
+  const set = (patch: Partial<typeof cfg>): void => onChange({ ...step, config: { ...cfg, ...patch } });
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+        This runs as the daemon user with no sandbox. It only runs when an admin has enabled executable
+        steps for this instance <em>and</em> the person starting the run holds <code>pipelines:execute</code>.
+        Webhook auto-runs never execute it.
+      </div>
+      <Field label="Command (supports the same {{…}} placeholders as comments)">
+        <textarea
+          className="input min-h-20 font-mono text-xs"
+          value={cfg.command}
+          placeholder="pnpm release:preflight"
+          onChange={(e) => set({ command: e.target.value })}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-4">
+        <Field label="Working directory">
+          <select
+            className="input"
+            value={cfg.workdir}
+            onChange={(e) => set({ workdir: e.target.value as 'pr-worktree' | 'clone' })}
+          >
+            <option value="clone">Repo clone</option>
+            <option value="pr-worktree">PR worktree (needs a PR target)</option>
+          </select>
+        </Field>
+        <Field label="Timeout (minutes)">
+          <input
+            type="number"
+            className="input w-24"
+            min={1}
+            max={60}
+            value={Math.round(cfg.timeoutMs / 60_000)}
+            onChange={(e) => set({ timeoutMs: Math.min(60, Math.max(1, Number(e.target.value) || 1)) * 60_000 })}
+          />
+        </Field>
+      </div>
+      <VariablesEditor variables={cfg.variables} onChange={(variables) => set({ variables })} />
+    </div>
+  );
 }
 
 // ---------- step definition editor ---------------------------------------------------

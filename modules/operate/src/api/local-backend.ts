@@ -25,7 +25,7 @@ import { runMoxxyProvision } from '../exec/provision.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
-import { runVerify } from '../exec/verify.js';
+import { runCommand, runVerify, type ExecOptions } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 /** What a run executes as on this machine, read off its row when it starts. */
@@ -310,6 +310,10 @@ export class LocalRunnerBackend implements RunnerBackend {
   /** This machine runs it directly; there is no agent hop to degrade through. */
   verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse> {
     return runVerify(cwd, command, timeoutMs);
+  }
+
+  exec(cwd: string, command: string, opts?: ExecOptions): Promise<AgentVerifyResponse> {
+    return runCommand(cwd, command, opts);
   }
 
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {

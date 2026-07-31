@@ -8,7 +8,9 @@ import type {
   GitHubAccountRecord,
   GitHubAccountScope,
   GitHubPurpose,
+  ImportPreview,
   IssueRecord,
+  PipelineExport,
   PipelineRecord,
   PipelineRunRecord,
   PrFileChange,
@@ -144,6 +146,18 @@ export const codeApi = {
   mergePr: (fullName: string, number: number, method: 'merge' | 'squash' | 'rebase') =>
     post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/merge`, { method }),
   closePr: (fullName: string, number: number) => post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/close`),
+  approvePipelineStep: (runId: string, stepIndex: number, approved: boolean) =>
+    post<{ ok: true }>(`/api/pipeline-runs/${runId}/steps/${stepIndex}/approve`, { approved }),
+  rerunChecks: (fullName: string, number: number, scope: 'failed' | 'all' = 'failed') =>
+    post<{ restarted: number }>(`/api/repos/${fullName}/prs/${number}/rerun-checks`, { scope }),
+  markPrReady: (fullName: string, number: number) =>
+    post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/ready`),
+  updatePrBranch: (fullName: string, number: number) =>
+    post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/update-branch`),
+  labelPr: (fullName: string, number: number, labels: string[]) =>
+    post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/labels`, { labels }),
+  labelIssue: (fullName: string, number: number, labels: string[]) =>
+    post<{ ok: true }>(`/api/repos/${fullName}/issues/${number}/labels`, { labels }),
   applyPrReview: (id: string, accountId?: string) =>
     post<{ ok: true }>(`/api/pr-reviews/${id}/apply${accountId ? `?account=${encodeURIComponent(accountId)}` : ''}`),
   dismissPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/dismiss`),
@@ -154,6 +168,14 @@ export const codeApi = {
   updatePipeline: (id: string, body: SavePipelineRequest) =>
     put<{ pipeline: PipelineRecord }>(`/api/pipelines/${id}`, body),
   deletePipeline: (id: string) => del<{ ok: true }>(`/api/pipelines/${id}`),
+  exportPipeline: (id: string) => request<{ document: PipelineExport }>(`/api/pipelines/${id}/export`),
+  previewPipelineImport: (workspaceId: string, document: unknown) =>
+    post<{ preview: ImportPreview }>(`/api/workspaces/${workspaceId}/pipelines/import/preview`, { document }),
+  importPipeline: (workspaceId: string, document: unknown, acknowledgeExecutables: boolean) =>
+    post<{ pipeline: PipelineRecord }>(`/api/workspaces/${workspaceId}/pipelines/import`, {
+      document,
+      acknowledgeExecutables,
+    }),
   createStepDefinition: (workspaceId: string, body: SaveStepDefinitionRequest) =>
     post<{ stepDefinition: StepDefinitionRecord }>(`/api/workspaces/${workspaceId}/step-definitions`, body),
   updateStepDefinition: (id: string, body: SaveStepDefinitionRequest) =>

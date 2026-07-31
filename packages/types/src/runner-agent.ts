@@ -62,6 +62,17 @@ export interface AgentVerifyRequest {
   readonly cwd: string;
   readonly command: string;
   readonly timeoutMs?: number;
+  /**
+   * How much output to keep. Safe to add without a protocol bump because an
+   * older agent ignoring it simply clips at its own default.
+   *
+   * There is deliberately NO `env` field. A secret sent to an agent too old to
+   * read it would produce an unauthenticated command rather than a refusal, and
+   * "npm is not logged in" is a much worse diagnosis than "this runner is too
+   * old". Env overlays are a local-backend capability; the remote backend
+   * refuses them outright.
+   */
+  readonly maxOutput?: number;
 }
 
 export interface AgentVerifyResponse {

@@ -20,6 +20,13 @@ export class GitHubError extends Error {
 /** github.com; a GitHub Enterprise Server instance serves the same paths under `/api/v3`. */
 export const DEFAULT_API = 'https://api.github.com';
 
+/**
+ * Ceiling on the per-client ETag cache. Generous enough that the hot paths (one
+ * repo's PR list, each open PR's checks) all stay resident, small enough that a
+ * daemon running for months cannot accumulate a response body per commit.
+ */
+const MAX_ETAG_ENTRIES = 500;
+
 export class GitHubClient {
   private readonly etags = new Map<string, { etag: string; body: unknown }>();
   private readonly branchCache = new Map<string, { at: number; branches: GhBranch[] }>();
@@ -38,7 +45,16 @@ export class GitHubClient {
     private readonly assertWrite: (what: string) => void = () => {},
   ) {}
 
-  /** GET with ETag cache. Returns the cached body on 304. */
+  /**
+   * GET with ETag cache. Returns the cached body on 304.
+   *
+   * Bounded LRU rather than an open map: some cached paths carry a commit SHA
+   * (`/commits/:ref/check-runs`), and those keys are unbounded over a
+   * repository's life while each entry holds a whole response body. Caching
+   * them is still right — the checks poller asks about the same head many times
+   * while CI runs, which is exactly what the 304 is for — so the fix is a
+   * ceiling, not an exemption.
+   */
   async get<T>(path: string): Promise<T> {
     const cached = this.etags.get(path);
     const res = await fetch(`${this.api}${path}`, {
@@ -47,12 +63,43 @@ export class GitHubClient {
         ...(cached ? { 'if-none-match': cached.etag } : {}),
       },
     });
-    if (res.status === 304 && cached) return cached.body as T;
+    if (res.status === 304 && cached) {
+      // Re-insert to move it to the young end: a path still being polled must
+      // not be evicted just because it was first seen long ago.
+      this.etags.delete(path);
+      this.etags.set(path, cached);
+      return cached.body as T;
+    }
     if (!res.ok) throw await this.error(res, path);
     const body = (await res.json()) as T;
     const etag = res.headers.get('etag');
-    if (etag) this.etags.set(path, { etag, body });
+    if (etag) {
+      this.etags.delete(path);
+      this.etags.set(path, { etag, body });
+      // Map iterates in insertion order, so the first key is the least recently
+      // used one.
+      while (this.etags.size > MAX_ETAG_ENTRIES) {
+        const oldest = this.etags.keys().next().value;
+        if (oldest === undefined) break;
+        this.etags.delete(oldest);
+      }
+    }
     return body;
+  }
+
+  /**
+   * GET without touching the ETag cache.
+   *
+   * For paths whose key contains a commit SHA or a run id. Those are unbounded
+   * over the life of a repository, so caching them would grow the map (and hold
+   * every response body) forever, unlike the stable `/repos/:x` paths the cache
+   * exists for. These callers also want current state by definition: nobody
+   * re-runs CI for the same commit twice expecting the first answer.
+   */
+  private async getUncached<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.api}${path}`, { headers: this.headers() });
+    if (!res.ok) throw await this.error(res, path);
+    return (await res.json()) as T;
   }
 
   async post<T>(path: string, payload: unknown): Promise<T> {
@@ -255,6 +302,153 @@ export class GitHubClient {
     return this.post(`/repos/${fullName}/pulls/${number}/reviews`, args);
   }
 
+  /**
+   * Branch protection, as three answers a merge gate needs: does `behind`
+   * actually block (`strict`), does an admin bypass exist at all
+   * (`enforceAdmins`), and which contexts must pass BY NAME.
+   *
+   * Counting green checks is not enough: a required context missing from the
+   * list entirely would sail past a count. Returns null when protection is
+   * unreadable (no admin rights, or none configured), which callers must treat
+   * as "unknown", never as "unprotected".
+   */
+  async branchProtection(
+    fullName: string,
+    branch: string,
+  ): Promise<{ strict: boolean; enforceAdmins: boolean; requiredContexts: string[] } | null> {
+    try {
+      const res = await this.get<{
+        required_status_checks?: { strict?: boolean; contexts?: string[] } | null;
+        enforce_admins?: { enabled?: boolean } | null;
+      }>(`/repos/${fullName}/branches/${encodeURIComponent(branch)}/protection`);
+      return {
+        strict: res.required_status_checks?.strict === true,
+        enforceAdmins: res.enforce_admins?.enabled === true,
+        requiredContexts: res.required_status_checks?.contexts ?? [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Re-run CI for a commit.
+   *
+   * Goes through workflow RUNS rather than check runs on purpose: `rerequest` on
+   * a single check-run is refused for anything GitHub Actions produced, and the
+   * daily case is "the lint lane flaked, run the failures again", which is one
+   * call per workflow run. `scope: 'all'` re-runs green lanes too, which costs
+   * minutes and is only worth it when the failure is suspected to be shared.
+   *
+   * Returns how many runs were asked to restart, so a caller can tell "nothing
+   * to re-run" from "asked three".
+   */
+  async rerunChecks(fullName: string, headSha: string, scope: 'failed' | 'all'): Promise<number> {
+    this.assertWrite(`POST /repos/${fullName}/actions/runs/:id/rerun`);
+    const { workflow_runs: runs } = await this.getUncached<{ workflow_runs: GhWorkflowRun[] }>(
+      `/repos/${fullName}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=50`,
+    );
+    const targets =
+      scope === 'all' ? runs : runs.filter((r) => r.status === 'completed' && r.conclusion !== 'success');
+    let restarted = 0;
+    for (const run of targets) {
+      const path = `/repos/${fullName}/actions/runs/${run.id}/${scope === 'all' ? 'rerun' : 'rerun-failed-jobs'}`;
+      const res = await fetch(`${this.api}${path}`, { method: 'POST', headers: this.headers() });
+      // 403 here usually means "this run is too old to re-run", which is not an
+      // error worth failing the whole request over when others succeeded.
+      if (res.ok) restarted++;
+      else if (res.status !== 403) throw await this.error(res, path);
+    }
+    return restarted;
+  }
+
+  /**
+   * The failing jobs at a commit, with the tail of each one's log.
+   *
+   * The TAIL, because a failure says what went wrong at the end, after however
+   * many thousand lines of progress output. Best-effort per job: a log that has
+   * expired or is still being written is skipped rather than failing the lot.
+   */
+  async failingJobLogs(
+    fullName: string,
+    headSha: string,
+    opts: { maxJobs?: number; maxChars?: number } = {},
+  ): Promise<Array<{ name: string; log: string }>> {
+    const maxJobs = opts.maxJobs ?? 4;
+    const maxChars = opts.maxChars ?? 15_000;
+    const { workflow_runs: runs } = await this.getUncached<{ workflow_runs: GhWorkflowRun[] }>(
+      `/repos/${fullName}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=50`,
+    );
+    const out: Array<{ name: string; log: string }> = [];
+    for (const run of runs.filter((r) => r.status === 'completed' && r.conclusion !== 'success')) {
+      if (out.length >= maxJobs) break;
+      const { jobs } = await this.getUncached<{ jobs: Array<{ id: number; name: string; conclusion: string | null }> }>(
+        `/repos/${fullName}/actions/runs/${run.id}/jobs?per_page=100`,
+      );
+      for (const job of jobs.filter((j) => j.conclusion === 'failure')) {
+        if (out.length >= maxJobs) break;
+        const log = await this.jobLog(fullName, job.id, maxChars).catch(() => null);
+        if (log) out.push({ name: job.name, log });
+      }
+    }
+    return out;
+  }
+
+  private async jobLog(fullName: string, jobId: number, maxChars: number): Promise<string | null> {
+    const path = `/repos/${fullName}/actions/jobs/${jobId}/logs`;
+    const res = await fetch(`${this.api}${path}`, { headers: this.headers(), redirect: 'manual' });
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location) {
+      // GitHub redirects to a signed blob URL where the signature IS the
+      // authorization. Following it with our token attached would both leak the
+      // credential to a storage host and be rejected by it, so this second
+      // request deliberately carries no headers.
+      const blob = await fetch(location);
+      return blob.ok ? await readTail(blob, maxChars) : null;
+    }
+    return res.ok ? await readTail(res, maxChars) : null;
+  }
+
+  /**
+   * Where GraphQL lives for this host.
+   *
+   * NOT `${api}/graphql`. On github.com the REST base is `https://api.github.com`
+   * and GraphQL is a sibling path, but a GitHub Enterprise Server base is
+   * `https://ghe.corp/api/v3` while its GraphQL endpoint is `https://ghe.corp/api/graphql`
+   * — one level up, not below. Appending blindly produces a 404 that looks like
+   * a permissions problem.
+   */
+  private graphqlUrl(): string {
+    return `${this.api.replace(/\/v3$/, '')}/graphql`;
+  }
+
+  /** Take a pull request out of draft. */
+  async markReadyForReview(fullName: string, number: number): Promise<void> {
+    this.assertWrite(`PATCH /repos/${fullName}/pulls/${number} (ready)`);
+    // Draft state is GraphQL-only on the REST v3 PATCH, so this is the one
+    // mutation here that has to go through the GraphQL endpoint.
+    const pr = await this.pull(fullName, number);
+    const res = await fetch(this.graphqlUrl(), {
+      method: 'POST',
+      headers: { ...this.headers(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        query: 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}',
+        variables: { id: (pr as unknown as { node_id: string }).node_id },
+      }),
+    });
+    if (!res.ok) throw await this.error(res, '/graphql markPullRequestReadyForReview');
+    const body = (await res.json()) as { errors?: Array<{ message: string }> };
+    if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join('; '));
+  }
+
+  /** Merge the base branch into the PR's head, the fix for a `behind` branch. */
+  async updateBranch(fullName: string, number: number): Promise<void> {
+    this.assertWrite(`PUT /repos/${fullName}/pulls/${number}/update-branch`);
+    const path = `/repos/${fullName}/pulls/${number}/update-branch`;
+    const res = await fetch(`${this.api}${path}`, { method: 'PUT', headers: this.headers() });
+    if (!res.ok) throw await this.error(res, path);
+  }
+
   async mergePr(
     fullName: string,
     number: number,
@@ -382,6 +576,13 @@ export interface GhPull {
   base: { ref: string };
   /** Only on the single-PR GET and webhook payloads (never the list); null = still computing. */
   mergeable?: boolean | null;
+  /**
+   * REST's name for what the GraphQL API calls `mergeStateStatus`: clean /
+   * dirty / blocked / behind / unstable / draft / has_hooks / unknown. Only
+   * `mergeable` cannot distinguish "conflicts" from "a required check is
+   * missing" from "the branch is behind", which are three different actions.
+   */
+  mergeable_state?: string;
   user: { login: string } | null;
   /**
    * The author's standing in THIS repository, as GitHub computes it:
@@ -395,6 +596,35 @@ export interface GhPull {
 }
 
 /** A public account profile (`GET /users/:login`). */
+/**
+ * Read only the last `maxChars` of a response body.
+ *
+ * `await res.text()` would materialise the whole thing first, and a CI job log
+ * runs to tens of megabytes; four of those at once is a real spike for a value
+ * we then throw almost all of away. Streaming keeps at most the tail plus one
+ * chunk resident.
+ */
+async function readTail(res: Response, maxChars: number): Promise<string> {
+  if (!res.body) return (await res.text()).slice(-maxChars);
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let tail = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      tail += decoder.decode(value, { stream: true });
+      // Trim on a hysteresis rather than every chunk: slicing a string is a
+      // copy, and doing it per chunk would cost more than the memory it saves.
+      if (tail.length > maxChars * 2) tail = tail.slice(-maxChars);
+    }
+    tail += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+  return tail.slice(-maxChars);
+}
+
 export interface GhUser {
   login: string;
   /** 'User' | 'Organization' | 'Bot'. */
@@ -443,6 +673,14 @@ export interface GhPrFile {
   additions: number;
   deletions: number;
   patch?: string;
+}
+
+/** One GitHub Actions workflow run for a commit. The unit `rerun` acts on. */
+export interface GhWorkflowRun {
+  id: number;
+  name: string | null;
+  status: string;
+  conclusion: string | null;
 }
 
 export interface GhCheckRun {
