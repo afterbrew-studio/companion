@@ -1054,34 +1054,49 @@ export interface ContextMenuState {
  * {x, y, actions} and clears it on close.
  */
 export function ContextMenu({ menu, onClose }: { menu: ContextMenuState | null; onClose: () => void }): JSX.Element | null {
+  const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
     const close = (): void => onClose();
+    // Clicks and scrolls INSIDE the menu are the user working it: picking an
+    // item already closes on its own, and filtering a long list must survive
+    // both. Anything outside still dismisses.
+    const outside = (e: Event): void => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
     // ui.tsx imports React's KeyboardEvent type; this is the DOM one.
     const onKey = (e: globalThis.KeyboardEvent): void => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    window.addEventListener('click', close);
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('click', outside);
+    window.addEventListener('scroll', outside, true);
     window.addEventListener('resize', close);
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('click', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('click', outside);
+      window.removeEventListener('scroll', outside, true);
       window.removeEventListener('resize', close);
     };
   }, [menu, onClose]);
   if (!menu) return null;
   const width = 224; // matches w-56
-  const estimatedHeight = menu.actions.length * 34 + 10;
-  const left = Math.max(8, Math.min(menu.x, window.innerWidth - width - 8));
-  const top = Math.max(8, Math.min(menu.y, window.innerHeight - estimatedHeight - 8));
+  const EDGE = 8;
+  const estH = menu.actions.length * 34 + 10;
+  // A menu that fits still shifts up to stay on screen, as it always did. One
+  // that cannot fit at all (an action per pipeline) takes the viewport and
+  // scrolls, instead of running off the bottom with its tail unreachable.
+  const maxHeight = window.innerHeight - EDGE * 2;
+  const height = Math.min(estH, maxHeight);
+  const left = Math.max(EDGE, Math.min(menu.x, window.innerWidth - width - EDGE));
+  const top = Math.max(EDGE, Math.min(menu.y, window.innerHeight - height - EDGE));
   return createPortal(
     <div
+      ref={menuRef}
       role="menu"
-      className="fixed z-50 w-56 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-      style={{ left, top }}
+      className="fixed z-50 w-56 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+      style={{ left, top, maxHeight }}
     >
       <MenuItems actions={menu.actions} onClose={onClose} />
     </div>,
@@ -1110,7 +1125,7 @@ function AnchoredMenu({
   width?: number;
   label?: string;
 }): JSX.Element | null {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1122,10 +1137,20 @@ function AnchoredMenu({
       const el = anchorRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
+      const GAP = 6;
+      const EDGE = 8;
       const estH = actions.length * 36 + 12;
-      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-      const top = r.bottom + estH > window.innerHeight - 8 ? Math.max(8, r.top - estH - 6) : r.bottom + 6;
-      setPos({ top, left });
+      // A menu is only as long as the caller's list, and some of those lists are
+      // user-defined (one item per pipeline). Cap it to the space on whichever
+      // side has more and let it scroll, or the tail of a long menu renders past
+      // the viewport with no way to reach it.
+      const below = window.innerHeight - r.bottom - GAP - EDGE;
+      const above = r.top - GAP - EDGE;
+      const up = estH > below && above > below;
+      const maxHeight = Math.max(120, up ? above : below);
+      const left = Math.max(EDGE, Math.min(r.left, window.innerWidth - width - EDGE));
+      const top = up ? Math.max(EDGE, r.top - GAP - Math.min(estH, maxHeight)) : r.bottom + GAP;
+      setPos({ top, left, maxHeight });
     };
     place();
     const onDown = (e: globalThis.MouseEvent): void => {
@@ -1136,7 +1161,12 @@ function AnchoredMenu({
     const onKey = (e: globalThis.KeyboardEvent): void => {
       if (e.key === 'Escape') onClose();
     };
-    const onScroll = (): void => onClose();
+    // The page scrolling out from under the menu closes it; the menu scrolling
+    // its own overflow must not, and capture-phase listeners see both.
+    const onScroll = (e: Event): void => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('keydown', onKey);
@@ -1157,8 +1187,8 @@ function AnchoredMenu({
       ref={menuRef}
       role="menu"
       aria-label={label}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, width }}
-      className="z-[60] rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width, maxHeight: pos.maxHeight }}
+      className="z-[60] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
     >
       <MenuItems actions={actions} onClose={onClose} />
     </div>,
