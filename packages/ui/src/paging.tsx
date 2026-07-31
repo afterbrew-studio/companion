@@ -36,22 +36,29 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
 } {
   const [state, setState] = useState<InfiniteState<T>>({ items: [], total: 0, loading: true, error: null });
   const seq = useRef(0);
+  // Has a load for THIS fetchPage already answered? Not "are there rows": an
+  // empty answer is still an answer. Keying the loading state off row count
+  // instead made every background reload of an empty list swap the empty state
+  // for a skeleton and back, so a feed with nothing in it flashed once per
+  // incoming broadcast. Reset per fetchPage, because new filters or a new tab
+  // really are a fresh list and should show that they are loading.
+  const settled = useRef(false);
 
   const load = useCallback(
     (offset: number) => {
       const mySeq = ++seq.current;
-      // Only show the loading state when there's nothing to show yet (first load
-      // or a page append). A background reload (offset 0 with rows already on
-      // screen — e.g. a prs.changed refresh) keeps the current rows so the list
-      // doesn't flash/flicker; they swap in place when the new data arrives.
+      // Only show the loading state before the first answer (or on a page
+      // append). A background reload keeps whatever is on screen, rows or empty
+      // state, and swaps it in place when the new data arrives.
       setState((prev) => ({
         ...prev,
-        loading: offset === 0 ? prev.items.length === 0 : true,
+        loading: offset === 0 ? !settled.current : true,
         error: null,
       }));
       fetchPage(offset)
         .then(({ items, total }) => {
           if (seq.current !== mySeq) return;
+          settled.current = true;
           setState((prev) => ({
             items: offset === 0 ? items : [...prev.items, ...items],
             total,
@@ -68,6 +75,9 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
   );
 
   useEffect(() => {
+    // A failed load stays unsettled on purpose: a retry should show that it is
+    // trying again, not sit on a cleared error with nothing moving.
+    settled.current = false;
     load(0);
   }, [load]);
 
