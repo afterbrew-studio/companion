@@ -1048,6 +1048,16 @@ const STRICTNESS_GUIDE: Record<ReviewStrictness, string> = {
   pedantic: `Report everything you would raise if you were being thorough, nits included, but label them honestly.`,
 };
 
+/**
+ * The posted review body, as both prompts ask for it.
+ *
+ * A review reads as one wall of text or as a set of pointed remarks next to the
+ * code they concern, and the difference is entirely how long this field is: the
+ * findings are already posted as inline comments, so every sentence spent here
+ * is one the author reads twice, detached from the line it is about.
+ */
+const REVIEW_BODY_SPEC = `"<ONE or TWO sentences, plain prose, no markdown headings, no bullet lists, no code blocks. State the verdict and the single most important reason for it, nothing else. Every finding is posted as its own inline comment on its own line — do not summarise, count, list or preview them here.>"`;
+
 /** Everything every review prompt needs to know about the pull request. */
 interface ReviewBriefing {
   title: string;
@@ -1105,7 +1115,7 @@ Assess correctness, risk, and fit with the surrounding code, then reply with ONL
       "confidence": <0.0 to 1.0>
     }
   ],
-  "reviewBody": "<the overall review comment to post on the PR, markdown, friendly and specific. Do NOT repeat the per-line findings here; they are posted as inline comments.>"
+  "reviewBody": ${REVIEW_BODY_SPEC}
 }
 Weigh the CI pipeline status in your assessment: failing or missing CI raises risk; do not recommend "approve" while required pipelines are failing.`;
 }
@@ -1226,7 +1236,7 @@ Reply with ONLY a JSON object (no fence, no prose):
   "summary": "<2-3 sentence assessment of what the PR does and its quality>",
   "risk": "low" | "medium" | "high",
   "recommendation": "approve" | "request_changes" | "comment",
-  "reviewBody": "<the overall review comment to post, markdown, friendly and specific>"
+  "reviewBody": ${REVIEW_BODY_SPEC}
 }`;
 }
 

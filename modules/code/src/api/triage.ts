@@ -133,6 +133,17 @@ export class Triage {
   }
 }
 
+/**
+ * The comment triage posts on the issue, as the prompt asks for it.
+ *
+ * This lands under a real person's report, so length is not a courtesy: an
+ * acknowledgement that says in six sentences what it could say in two reads as
+ * a bot filling space, and buries the one thing the reporter has to act on.
+ * The labels and severity carry the classification — prose repeating them is
+ * the same information twice.
+ */
+const DRAFT_REPLY_SPEC = `"<AT MOST 2 sentences of plain prose, no headings, no bullet lists, no code blocks, no greeting or sign-off. Say only what the reporter must do next or what will happen next. Do not summarise their issue back to them, and do not restate the labels or severity. Empty string if nothing needs saying — silence is better than an empty acknowledgement.>"`;
+
 function buildTriagePrompt(issue: IssueRecord, openIssues: IssueRecord[]): string {
   const others = openIssues
     .map((i) => `- #${i.number}: ${i.title}${i.labels.length ? ` [${i.labels.join(', ')}]` : ''}`)
@@ -152,13 +163,13 @@ ${others || '(none)'}
 ## Your task
 Investigate briefly (read relevant code if useful), then reply with ONLY a JSON object (no markdown fence, no prose before or after) matching exactly this shape:
 {
-  "summary": "<1-2 sentence assessment of what this issue is and whether it is valid>",
+  "summary": "<ONE sentence: what this issue is and whether it is valid. No preamble, no restating the title.>",
   "severity": "critical" | "high" | "medium" | "low" | "trivial",
   "kind": "bug" | "feature" | "question" | "docs" | "chore" | "invalid",
   "labels": ["<up to 5 suggested labels, lowercase-kebab>"],
   "duplicateOf": <issue number if this duplicates one of the other open issues, else null>,
   "needsInfo": <true if the report is missing information needed to act>,
-  "draftReply": "<a short, friendly reply to post on the issue; empty string if none needed>"
+  "draftReply": ${DRAFT_REPLY_SPEC}
 }`;
 }
 
