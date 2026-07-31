@@ -63,11 +63,9 @@ export interface UseWorkspacePrs {
   readonly toggleSelected: (key: string) => void;
   readonly selectAllLoaded: () => void;
   readonly clearSelected: () => void;
-  readonly bulkPipeline: string;
-  readonly setBulkPipeline: (id: string) => void;
   readonly bulkRunning: string | null;
   readonly bulkAiReview: () => void;
-  readonly bulkRunPipeline: () => void;
+  readonly bulkRunPipeline: (pipelineId: string) => void;
   readonly bulkLabel: (labels: string[]) => void;
   readonly bulkComment: (body: string) => void;
   readonly bulkClose: () => void;
@@ -99,7 +97,6 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { flash, show } = useFlash();
   const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
-  const [bulkPipeline, setBulkPipeline] = useState('');
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
   const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
   const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
@@ -147,15 +144,15 @@ export function useWorkspacePrs(): UseWorkspacePrs {
       },
     });
   };
-  const bulkRunPipeline = (): void => {
-    if (!bulkPipeline) return;
+  const bulkRunPipeline = (pipelineId: string): void => {
+    const name = pipelines.find((pl) => pl.id === pipelineId)?.name ?? 'Pipeline';
     const targets = visiblePrs.filter((pr) => selection.has(prKey(pr)));
-    void runBulk(targets, (pr) => api.runPipeline(pr.repo, pr.number, bulkPipeline), {
+    void runBulk(targets, (pr) => api.runPipeline(pr.repo, pr.number, pipelineId), {
       label: (pr) => `#${pr.number}`,
       onSettled: (total, failures) => {
         selection.clear();
         if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
-        else show(`Pipeline started for ${total} PR${total === 1 ? '' : 's'}`);
+        else show(`${name} started for ${total} PR${total === 1 ? '' : 's'}`);
       },
     });
   };
@@ -258,8 +255,6 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     toggleSelected: selection.toggle,
     selectAllLoaded: () => selection.selectAll(visiblePrs.map(prKey)),
     clearSelected: selection.clear,
-    bulkPipeline,
-    setBulkPipeline,
     bulkRunning,
     bulkAiReview,
     bulkRunPipeline,
