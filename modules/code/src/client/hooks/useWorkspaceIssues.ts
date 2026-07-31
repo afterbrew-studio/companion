@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage, useBulkRunner } from '@moxxy/companion-sdk/client';
+import { onServerMessage, readCached, useBulkRunner, writeCached } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -63,11 +63,9 @@ export interface UseWorkspaceIssues {
   readonly toggleSelected: (key: string) => void;
   readonly selectAllLoaded: () => void;
   readonly clearSelected: () => void;
-  readonly bulkPipeline: string;
-  readonly setBulkPipeline: (id: string) => void;
   readonly bulkRunning: string | null;
   readonly bulkAiTriage: () => void;
-  readonly bulkRunPipeline: () => void;
+  readonly bulkRunPipeline: (pipelineId: string) => void;
   readonly bulkLabel: (labels: string[]) => void;
   readonly bulkComment: (body: string) => void;
   readonly bulkClose: () => void;
@@ -98,7 +96,6 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   const { flash, show } = useFlash();
   const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
-  const [bulkPipeline, setBulkPipeline] = useState('');
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
   const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({
     authors: [],
@@ -106,6 +103,15 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     labels: [],
   });
   const [counts, setCounts] = useState<{ open: number; closed: number }>({ open: 0, closed: 0 });
+
+  // The retained first page is keyed by everything the query depends on, the
+  // workspace included: the same tab under another workspace is another list.
+  const listKey = `issues:${workspaceId ?? ''}:${tab}:${q}:${JSON.stringify(filters)}`;
+  const seed = readCached<{ items: IssueRecord[]; total: number }>(listKey);
+  const retain = useCallback(
+    (page: { items: IssueRecord[]; total: number }) => writeCached(listKey, page),
+    [listKey],
+  );
 
   const fetchPage = useCallback(
     async (offset: number) => {
@@ -127,7 +133,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.label, filters.triage],
   );
-  const { items: issues, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
+  const { items: issues, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage, { seed, onFirstPage: retain });
 
   useEffect(() => {
     return onServerMessage((msg) => {
@@ -184,15 +190,15 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
       },
     });
   };
-  const bulkRunPipeline = (): void => {
-    if (!bulkPipeline) return;
+  const bulkRunPipeline = (pipelineId: string): void => {
+    const name = pipelines.find((pl) => pl.id === pipelineId)?.name ?? 'Pipeline';
     const targets = visibleIssues.filter((i) => selection.has(issueKey(i)));
-    void runBulk(targets, (i) => api.runPipelineOnIssue(i.repo, i.number, bulkPipeline), {
+    void runBulk(targets, (i) => api.runPipelineOnIssue(i.repo, i.number, pipelineId), {
       label: (i) => `#${i.number}`,
       onSettled: (total, failures) => {
         selection.clear();
         if (failures.length > 0) setBulkError(`Failed to start for ${failures.join(', ')}`);
-        else show(`Pipeline started for ${total} issue${total === 1 ? '' : 's'}`);
+        else show(`${name} started for ${total} issue${total === 1 ? '' : 's'}`);
       },
     });
   };
@@ -257,8 +263,6 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     toggleSelected: selection.toggle,
     selectAllLoaded: () => selection.selectAll(visibleIssues.map(issueKey)),
     clearSelected: selection.clear,
-    bulkPipeline,
-    setBulkPipeline,
     bulkRunning,
     bulkAiTriage,
     bulkRunPipeline,

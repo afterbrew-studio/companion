@@ -75,6 +75,8 @@ export const nav = defineNav([
     permission: 'issues:read',
     section: 'code',
     order: 0,
+    // One issue lives under its repository's path, not under /issues.
+    owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/issues\/\d+/],
     icon: icons.issues,
   },
   {
@@ -85,6 +87,8 @@ export const nav = defineNav([
     permission: 'prs:read',
     section: 'code',
     order: 10,
+    // Both the detail view and its /review sibling.
+    owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/prs\/\d+/],
     icon: icons.prs,
   },
   {

@@ -284,8 +284,13 @@ function Shell(): JSX.Element {
   // while prefix matching still lights a section for its detail pages
   // (#/runs/:id → Runs). One entry wins everywhere: highlight, title, fresh-clear.
   const activeNavKey = useMemo(() => {
+    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
+    let claimed: string | null = null;
     let best: { key: string; len: number } | null = null;
     for (const m of kernel.nav) {
+      // An entry that names a detail page as its own wins over whichever entry
+      // merely happens to be a prefix of that page's path.
+      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
       const matches =
         hash === m.hash ||
         hash.startsWith(`${m.hash}/`) ||
@@ -293,7 +298,7 @@ function Shell(): JSX.Element {
         (m.key === 'overview' && hash === '#/');
       if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
     }
-    return best?.key ?? null;
+    return claimed ?? best?.key ?? null;
   }, [kernel.nav, hash]);
 
   // Visiting an area clears its mark.
@@ -483,6 +488,35 @@ function Shell(): JSX.Element {
                   </a>
                 );
               })}
+              {/* Instance configuration is navigation, not identity: it used to
+                  sit beside the avatar and sign-out, where a cog reads as "my
+                  settings" while every page behind it belongs to the platform.
+                  It rides the execution group because that is where the
+                  machines, runs and models it configures already are. */}
+              {section.id === 'operate' &&
+              settingsHref &&
+              !editingNav &&
+              !(!rail && foldedSections.has(section.id)) ? (
+                <a
+                  href={settingsHref}
+                  aria-current={inSettings ? 'page' : undefined}
+                  aria-label={rail ? 'Settings' : undefined}
+                  onMouseEnter={rail ? (e) => showRailTip(e, 'Settings') : undefined}
+                  onMouseLeave={rail ? () => setRailTip(null) : undefined}
+                  onFocus={rail ? (e) => showRailTip(e, 'Settings') : undefined}
+                  onBlur={rail ? () => setRailTip(null) : undefined}
+                  className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
+                    rail ? 'justify-center px-0' : 'px-2.5'
+                  } ${
+                    inSettings
+                      ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
+                      : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <GearIcon className="size-4 shrink-0" />
+                  {rail ? null : <span className="flex-1 truncate">Settings</span>}
+                </a>
+              ) : null}
             </div>
           ))}
 
@@ -512,6 +546,18 @@ function Shell(): JSX.Element {
           )}
         </nav>
 
+        {/* Ambient context, like the workspace at the top of this sidebar.
+            Contributed through a slot, not imported: a build without the module
+            that owns runs must still render this footer. `empty:hidden` is what
+            keeps that build from showing a bare divider over nothing. */}
+        <div
+          className={`border-t border-zinc-200 px-4 py-1.5 empty:hidden dark:border-zinc-800 ${
+            rail ? 'flex justify-center' : ''
+          }`}
+        >
+          <Slot name="shell.sidebar.footer" can={can} props={{ rail }} />
+        </div>
+
         <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           {rail ? (
             // Icon-only: the profile glyph and the way into settings. Sign out
@@ -527,24 +573,6 @@ function Shell(): JSX.Element {
                   {(user?.displayName ?? '?').slice(0, 1)}
                 </span>
               </a>
-              {settingsHref ? (
-                <a
-                  href={settingsHref}
-                  className={`flex size-8 items-center justify-center rounded-lg transition-colors ${
-                    inSettings
-                      ? 'bg-zinc-900 text-white dark:bg-zinc-700 dark:text-zinc-50'
-                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
-                  }`}
-                  aria-label="Settings"
-                  aria-current={inSettings ? 'page' : undefined}
-                  onMouseEnter={(e) => showRailTip(e, 'Settings')}
-                  onMouseLeave={() => setRailTip(null)}
-                  onFocus={(e) => showRailTip(e, 'Settings')}
-                  onBlur={() => setRailTip(null)}
-                >
-                  <GearIcon />
-                </a>
-              ) : null}
             </div>
           ) : (
             <div className="-mx-2 flex items-center gap-1">
@@ -556,21 +584,6 @@ function Shell(): JSX.Element {
                 <div className="truncate text-[13px] font-medium">{user?.displayName}</div>
                 <div className="text-[11px] capitalize">{user?.role}</div>
               </a>
-              {settingsHref ? (
-                <a
-                  href={settingsHref}
-                  className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
-                    inSettings
-                      ? 'bg-zinc-900 text-white dark:bg-zinc-700 dark:text-zinc-50'
-                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
-                  }`}
-                  aria-label="Settings"
-                  aria-current={inSettings ? 'page' : undefined}
-                  title="Settings"
-                >
-                  <GearIcon />
-                </a>
-              ) : null}
               <button
                 className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={() => void logout()}

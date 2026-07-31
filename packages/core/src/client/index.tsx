@@ -51,6 +51,17 @@ export interface NavEntry {
   readonly order?: number;
   /** Nest under another entry (by its key). */
   readonly parent?: string;
+  /**
+   * Detail pages this entry owns whose path does NOT sit under its own hash,
+   * matched against the path (no `#`, no query).
+   *
+   * A pull request lives at `/repos/:owner/:name/prs/:n`, so prefix matching
+   * alone lights Repositories while the user is looking at a pull request.
+   * Only the entry itself knows which detail pages belong to it, which is why
+   * the claim is declared here rather than guessed by the shell. An explicit
+   * claim beats any incidental prefix.
+   */
+  readonly owns?: readonly RegExp[];
   /** Nav "new activity" badge: a marker string on a matching live message, else null. */
   readonly freshOn?: (msg: SpaServerMessage) => string | null;
   /**
@@ -151,4 +162,5 @@ export * from './links.js';
 export * from './use-bulk-runner.js';
 export * from './nav-icon.js';
 export * from './fresh.js';
+export * from './cached-resource.js';
 export * from './slot.js';

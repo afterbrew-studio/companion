@@ -1,5 +1,6 @@
 import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-sdk/client';
 import type { RunRecord } from '@companion/module-operate/contract';
+import type { AskRequest, MoxxyEvent } from '@moxxy/companion-sdk/agents';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import type {
   AgentQuality,
@@ -16,6 +17,11 @@ import type {
   PrFileChange,
   PrRecord,
   PrReviewResult,
+  FindingSeverity,
+  FindingState,
+  ReviewFinding,
+  ReviewOptions,
+  ReviewPostMode,
   RepoAccountOption,
   RepoCandidate,
   RepoBranchRecord,
@@ -141,8 +147,8 @@ export const codeApi = {
     request<{ comments: CommentRecord[] }>(`/api/repos/${fullName}/prs/${number}/comments`),
   commentPr: (fullName: string, number: number, body: string) =>
     post<{ url: string }>(`/api/repos/${fullName}/prs/${number}/comment`, { body }),
-  analyzePr: (fullName: string, number: number) =>
-    post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/analyze`),
+  analyzePr: (fullName: string, number: number, opts?: ReviewOptions) =>
+    post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/analyze`, opts ?? {}),
   mergePr: (fullName: string, number: number, method: 'merge' | 'squash' | 'rebase') =>
     post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/merge`, { method }),
   closePr: (fullName: string, number: number) => post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/close`),
@@ -158,8 +164,39 @@ export const codeApi = {
     post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/labels`, { labels }),
   labelIssue: (fullName: string, number: number, labels: string[]) =>
     post<{ ok: true }>(`/api/repos/${fullName}/issues/${number}/labels`, { labels }),
-  applyPrReview: (id: string, accountId?: string) =>
-    post<{ ok: true }>(`/api/pr-reviews/${id}/apply${accountId ? `?account=${encodeURIComponent(accountId)}` : ''}`),
+  applyPrReview: (
+    id: string,
+    accountId?: string,
+    body: { findingIds?: readonly string[]; mode?: ReviewPostMode } = {},
+  ) =>
+    post<{ ok: true }>(
+      `/api/pr-reviews/${id}/apply${accountId ? `?account=${encodeURIComponent(accountId)}` : ''}`,
+      body,
+    ),
+  reviewChat: (id: string) =>
+    request<{
+      run: { id: string; live: boolean } | null;
+      pendingAsks: AskRequest[];
+      history: { events: MoxxyEvent[]; prevCursor: number | null };
+    }>(`/api/pr-reviews/${id}/chat`),
+  answerReviewChatAsk: (id: string, requestId: string, response: Record<string, unknown>) =>
+    post<{ ok: true }>(`/api/pr-reviews/${id}/chat/ask`, { requestId, response }),
+  askReviewChat: (id: string, findingId: string | null, text: string) =>
+    post<{ turnId: string; runId: string }>(`/api/pr-reviews/${id}/chat`, { findingId, text }),
+  prFileLines: (fullName: string, number: number, path: string, from: number, to: number) =>
+    request<{ from: number; lines: string[] }>(
+      `/api/repos/${fullName}/prs/${number}/file?path=${encodeURIComponent(path)}&from=${from}&to=${to}`,
+    ),
+  createReviewDraft: (fullName: string, number: number) =>
+    post<{ review: PrReviewResult }>(`/api/repos/${fullName}/prs/${number}/review-draft`),
+  addReviewFinding: (
+    id: string,
+    body: { file: string; side: 'LEFT' | 'RIGHT'; line: number; body: string; severity?: FindingSeverity },
+  ) => post<{ finding: ReviewFinding }>(`/api/pr-reviews/${id}/findings`, body),
+  updateReviewFinding: (
+    id: string,
+    body: { state?: FindingState; rejectionReason?: string; reason?: string; suggestion?: string },
+  ) => patch<{ ok: true }>(`/api/pr-review-findings/${id}`, body),
   dismissPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/dismiss`),
 
   // pipelines + step library

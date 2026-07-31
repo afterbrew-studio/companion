@@ -559,6 +559,37 @@
   .anim-in {
     animation: rise-in 220ms ease-out both;
   }
+  /* A list arriving row by row instead of all at once: the page unfolds to its
+     height rather than snapping to it, which is the same movement either way
+     but reads as growth rather than as a jump. Quicker than `anim-in` because
+     a row is one of many and the last one must not feel late. */
+  .row-in {
+    animation: rise-in 140ms ease-out both;
+    animation-delay: calc(var(--row-index, 0) * 22ms);
+  }
+  /* The same idea for cards, which are few and tall: a longer step so the
+     cascade is still legible over three items instead of thirty, and a touch
+     more travel because a card has the room for it. */
+  .card-in {
+    animation: card-rise 200ms ease-out both;
+    animation-delay: calc(var(--row-index, 0) * 55ms);
+  }
+  @keyframes card-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.995);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .row-in,
+    .card-in {
+      animation: none;
+    }
+  }
   .skeleton {
     animation: shimmer 1.4s ease-in-out infinite;
   }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@moxxy/companion-sdk/ui';
+import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, rowDelay, Section, useConfirm, useSettledFlag } from '@moxxy/companion-sdk/ui';
 import type {
   ImportPreview,
   PrActionId,
@@ -112,6 +112,8 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
 
 export function PipelinesPage(): JSX.Element {
   const { current, pipelines, stepDefs, loaded, error, setError, refresh } = usePipelines();
+  // A skeleton that appears and vanishes inside a blink reads as a glitch.
+  const settling = useSettledFlag(!loaded);
   const { can } = useAuth();
   const [editing, setEditing] = useState<PipelineRecord | 'new' | null>(null);
   const [editingDef, setEditingDef] = useState<StepDefinitionRecord | 'new' | null>(null);
@@ -164,13 +166,13 @@ export function PipelinesPage(): JSX.Element {
       />
 
       <div className="flex flex-col gap-3">
-        {!loaded ? (
+        {settling ? (
           <div className="card">
             <RowsSkeleton rows={2} />
           </div>
         ) : null}
-        {pipelines.map((p) => (
-          <article key={p.id} className="card" aria-label={p.name}>
+        {pipelines.map((p, i) => (
+          <article key={p.id} style={rowDelay(i, 6)} className="card card-in" aria-label={p.name}>
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{p.name}</div>
@@ -263,7 +265,7 @@ export function PipelinesPage(): JSX.Element {
             </button>
           </div>
         ) : null}
-        {!loaded ? (
+        {settling ? (
           <div className="card">
             <RowsSkeleton rows={2} />
           </div>
@@ -282,8 +284,8 @@ export function PipelinesPage(): JSX.Element {
           />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
-            {stepDefs.map((d) => (
-              <article key={d.id} className="card" aria-label={d.name}>
+            {stepDefs.map((d, i) => (
+              <article key={d.id} style={rowDelay(i, 6)} className="card card-in" aria-label={d.name}>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{d.name}</div>
                   <div className="dim mt-0.5 text-xs">{KIND_META[d.step.kind].label}</div>

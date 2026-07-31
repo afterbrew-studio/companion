@@ -25,7 +25,23 @@ interface InfiniteState<T> {
  * identity changes (memoize it on your filters), appends on demand, and
  * guards against out-of-order responses.
  */
-export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ items: T[]; total: number }>): {
+export function useInfiniteList<T>(
+  fetchPage: (offset: number) => Promise<{ items: T[]; total: number }>,
+  /**
+   * Retained first page, so returning to a list renders before the network
+   * answers. This package holds no cache of its own — it is a leaf with no idea
+   * who is signed in, and a cache nobody can clear on sign-out is a leak — so
+   * the caller owns the storage and passes what it kept.
+   *
+   * `seed` must be referentially stable for a given query, or every render
+   * would look like a new list.
+   */
+  cache?: {
+    readonly seed?: { items: T[]; total: number } | null;
+    /** Each first page as it arrives, for the caller to retain. */
+    readonly onFirstPage?: (page: { items: T[]; total: number }) => void;
+  },
+): {
   items: T[];
   total: number;
   loading: boolean;
@@ -34,24 +50,42 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
   loadMore: () => void;
   reload: () => void;
 } {
-  const [state, setState] = useState<InfiniteState<T>>({ items: [], total: 0, loading: true, error: null });
+  const seed = cache?.seed ?? null;
+  const onFirstPage = cache?.onFirstPage;
+  // Read inside the effect below, which re-runs on `load`, not on `seed`.
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
+  const [state, setState] = useState<InfiniteState<T>>(
+    seed ? { items: seed.items, total: seed.total, loading: false, error: null } : { items: [], total: 0, loading: true, error: null },
+  );
   const seq = useRef(0);
+  // Has a load for THIS fetchPage already answered? Not "are there rows": an
+  // empty answer is still an answer. Keying the loading state off row count
+  // instead made every background reload of an empty list swap the empty state
+  // for a skeleton and back, so a feed with nothing in it flashed once per
+  // incoming broadcast. Reset per fetchPage, because new filters or a new tab
+  // really are a fresh list and should show that they are loading.
+  const settled = useRef(seed !== null);
 
   const load = useCallback(
     (offset: number) => {
       const mySeq = ++seq.current;
-      // Only show the loading state when there's nothing to show yet (first load
-      // or a page append). A background reload (offset 0 with rows already on
-      // screen — e.g. a prs.changed refresh) keeps the current rows so the list
-      // doesn't flash/flicker; they swap in place when the new data arrives.
+      // Only show the loading state before the first answer (or on a page
+      // append). A background reload keeps whatever is on screen, rows or empty
+      // state, and swaps it in place when the new data arrives.
       setState((prev) => ({
         ...prev,
-        loading: offset === 0 ? prev.items.length === 0 : true,
+        loading: offset === 0 ? !settled.current : true,
         error: null,
       }));
       fetchPage(offset)
         .then(({ items, total }) => {
           if (seq.current !== mySeq) return;
+          settled.current = true;
+          // Only the first page is retained. Keeping every appended page would
+          // grow with scrolling and re-seed a long list on the next visit,
+          // which is slower to render than the page the user starts on.
+          if (offset === 0) onFirstPage?.({ items, total });
           setState((prev) => ({
             items: offset === 0 ? items : [...prev.items, ...items],
             total,
@@ -64,10 +98,14 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
           setState((prev) => ({ ...prev, loading: false, error: String(err) }));
         });
     },
-    [fetchPage],
+    [fetchPage, onFirstPage],
   );
 
   useEffect(() => {
+    // A failed load stays unsettled on purpose: a retry should show that it is
+    // trying again, not sit on a cleared error with nothing moving. A seeded
+    // list is already settled: it has rows on screen and is only revalidating.
+    settled.current = seedRef.current !== null;
     load(0);
   }, [load]);
 

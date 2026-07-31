@@ -146,7 +146,19 @@ function compilePath(path: string): { regex: RegExp; keys: string[] } {
 /** An error carrying an HTTP status (AuthError, HttpError, …) — duck-typed so
  *  core need not import each module's error class. */
 function statusOf(err: unknown): number | null {
-  return err instanceof StatusError ? err.status : null;
+  if (err instanceof StatusError) return err.status;
+  // Duck-typed rather than an import: a transport that talks to a third party
+  // (the GitHub client) says what the CLIENT should be told without depending
+  // on this router. Answering 500 for an upstream outage makes somebody else's
+  // hiccup read as our own crash, and sends whoever sees it looking here.
+  const upstream = (err as { clientStatus?: unknown }).clientStatus;
+  return typeof upstream === 'number' && upstream >= 400 && upstream < 600 ? upstream : null;
+}
+
+/** Seconds a failed request is worth retrying after, when the error says so. */
+function retryAfterOf(err: unknown): number | null {
+  const after = (err as { retryAfter?: unknown }).retryAfter;
+  return typeof after === 'number' && after > 0 ? after : null;
 }
 
 export class DynamicRouter {
@@ -282,7 +294,12 @@ function sendError(res: ServerResponse, err: unknown, method: string, path: stri
   }
   const status = statusOf(err);
   if (status !== null) {
-    return json(res, status, { error: err instanceof Error ? err.message : String(err) });
+    const retryAfter = retryAfterOf(err);
+    if (retryAfter !== null) res.setHeader('retry-after', String(retryAfter));
+    return json(res, status, {
+      error: err instanceof Error ? err.message : String(err),
+      ...(retryAfter !== null ? { retryAfter } : {}),
+    });
   }
   log.warn('request failed', { method, path, err: String(err) });
   return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
