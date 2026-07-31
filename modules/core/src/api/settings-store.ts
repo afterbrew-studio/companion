@@ -43,4 +43,26 @@ export class SettingsStore {
   resolveNotificationScope(username: string): NotificationScope {
     return this.userNotificationScope(username) ?? this.notificationDefaultScope();
   }
+
+  // ---------- sidebar personalisation -----------------------------------------
+
+  /**
+   * Nav entry keys this user has taken out of their sidebar. Purely cosmetic:
+   * RBAC stays the only thing that decides what a user may reach, so a stale key
+   * (module uninstalled, entry renamed) is inert rather than a broken menu.
+   */
+  userHiddenNav(username: string): readonly string[] {
+    const raw = this.get(`nav.hidden:${username}`);
+    if (!raw) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  setUserHiddenNav(username: string, keys: readonly string[]): void {
+    this.set(`nav.hidden:${username}`, JSON.stringify([...new Set(keys)]));
+  }
 }

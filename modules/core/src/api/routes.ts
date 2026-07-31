@@ -88,7 +88,12 @@ const addModuleSchema = z.object({
   force: z.boolean().optional(),
 });
 const scopeEnum = z.enum(['workspace', 'global']);
-const updateProfileSchema = z.object({ notificationScope: scopeEnum.nullable().optional() });
+const updateProfileSchema = z.object({
+  notificationScope: scopeEnum.nullable().optional(),
+  // Bounded so a client cannot grow one settings row without limit; the keys are
+  // module-owned strings the server never resolves, so anything else is ignored.
+  hiddenNav: z.array(z.string().min(1).max(64)).max(200).optional(),
+});
 const updateAccountSchema = z
   .object({
     displayName: z.string().trim().min(1).max(60).optional(),
@@ -119,7 +124,10 @@ export default defineRoutes((ctx) => {
     if (role !== undefined && !ctx.rbac.hasRole(role)) throw badRequest(`unknown role: ${role}`);
   };
   const profileResponse = (username: string): ProfileResponse => ({
-    profile: { notificationScope: settings.userNotificationScope(username) },
+    profile: {
+      notificationScope: settings.userNotificationScope(username),
+      hiddenNav: settings.userHiddenNav(username),
+    },
     defaults: { notificationScope: settings.notificationDefaultScope() },
   });
 
@@ -558,6 +566,7 @@ export default defineRoutes((ctx) => {
       handler: ({ user, body }): ProfileResponse => {
         if (!user) throw new AuthError('authentication required', 401);
         if ('notificationScope' in body) settings.setUserNotificationScope(user.username, body.notificationScope ?? null);
+        if (body.hiddenNav) settings.setUserHiddenNav(user.username, body.hiddenNav);
         return profileResponse(user.username);
       },
     }),

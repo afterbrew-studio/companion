@@ -2,7 +2,9 @@ import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client'
 
 /**
  * module-plan's sidebar contributions: the Plan group with its proposals /
- * specifications / documentation entries. Icons copied exactly from the legacy
+ * specifications / documentation entries. module-board declares the SAME section
+ * (id dedupes, first declaration wins) because it does not depend on this module,
+ * so keep the two declarations identical. Icons copied exactly from the legacy
  * modules.tsx registry.
  */
 

@@ -10,6 +10,7 @@ import {
   runIntent,
   useIntent,
   type NavEntry,
+  type NavSection,
 } from '@moxxy/companion-core/client';
 import {
   AuthProvider,
@@ -30,17 +31,35 @@ import {
   ChevronDown,
   Dropdown,
   ErrorBar,
+  EyeIcon,
+  EyeOffIcon,
   Field,
   FormActions,
+  GearIcon,
   LockIcon,
   Modal,
   PageLoading,
   SearchIcon,
+  SlidersIcon,
 } from '@moxxy/companion-ui';
 import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
 import { ShortcutHelp, useAppShortcuts } from './lib/shortcuts.js';
 import { CLIENT_LOADERS } from './modules.generated.js';
+
+/** Bucket the entries a viewer may see into the declared, ordered groups (module
+ *  ≠ group: the sidebar is a shared namespace). Empty groups don't render, and
+ *  an entry naming a group nobody declared is dropped. */
+function groupSections(
+  sections: readonly NavSection[],
+  entries: readonly NavEntry[],
+): ReadonlyArray<readonly [NavSection, readonly NavEntry[]]> {
+  const grouped = new Map<string, NavEntry[]>();
+  for (const m of entries) {
+    grouped.set(m.section, [...(grouped.get(m.section) ?? []), m]);
+  }
+  return sections.filter((s) => grouped.has(s.id)).map((s) => [s, grouped.get(s.id)!] as const);
+}
 
 /** '#/' when the URL is bare; the Shell then redirects to whichever nav entry
  *  claims the lowest `home`, because the shell owns no page of its own. */
@@ -106,18 +125,18 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 }
 
 function Shell(): JSX.Element {
-  const { user, can, logout, branding } = useAuth();
+  const { user, can, logout, branding, hiddenNav, setHiddenNav } = useAuth();
   const hash = useHashRoute();
   const kernel = useKernel();
 
   // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
   useEffect(() => {
     const name = branding.name?.trim() || 'Companion';
-    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav)
+    const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav, kernel.sections)
       .map((c) => c.label)
       .join(' · ');
     document.title = labels ? `${labels} · ${name}` : name;
-  }, [hash, branding, kernel.nav]);
+  }, [hash, branding, kernel.nav, kernel.sections]);
   const [collapsed, setCollapsed] = useState(localStorage.getItem('companion.sidebar') === 'collapsed');
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -129,6 +148,17 @@ function Shell(): JSX.Element {
       return new Set();
     }
   });
+  // Menu personalisation: the sidebar flips into a per-row show/hide editor.
+  // The hidden set itself is per USER (it rides the session), unlike the fold
+  // and rail states above, which are per browser like the theme.
+  const [editingNav, setEditingNav] = useState(false);
+  const hidden = useMemo(() => new Set(hiddenNav), [hiddenNav]);
+  const toggleHidden = (key: string): void => {
+    const next = hidden.has(key) ? hiddenNav.filter((k) => k !== key) : [...hiddenNav, key];
+    // The provider is optimistic and rolls the row back by itself if the write
+    // fails, which is the whole error report this needs.
+    void setHiddenNav(next).catch(() => undefined);
+  };
   const toggleSection = (section: string): void => {
     setFoldedSections((prev) => {
       const next = new Set(prev);
@@ -151,6 +181,8 @@ function Shell(): JSX.Element {
 
   const toggleSidebar = (): void => {
     setRailTip(null);
+    // There is nothing to edit on an icon-only rail: no labels, no toggles.
+    setEditingNav(false);
     if (window.matchMedia('(min-width: 768px)').matches) {
       setCollapsed((c) => {
         localStorage.setItem('companion.sidebar', c ? 'expanded' : 'collapsed');
@@ -162,12 +194,31 @@ function Shell(): JSX.Element {
   };
 
   const visibleModules = useMemo(() => kernel.nav.filter((m) => can(m.permission)), [kernel.nav, can]);
+  // Configuration groups leave the sidebar and render inside the settings shell.
+  const settingsSectionIds = useMemo(
+    () => new Set(kernel.sections.filter((s) => s.placement === 'settings').map((s) => s.id)),
+    [kernel.sections],
+  );
+  const settingsEntries = useMemo(
+    () => visibleModules.filter((m) => settingsSectionIds.has(m.section)),
+    [visibleModules, settingsSectionIds],
+  );
+  // Hiding applies to the sidebar only: the settings column is short, grouped,
+  // and the one place a user goes looking for a page they never see otherwise.
+  const sidebarEntries = useMemo(
+    () => visibleModules.filter((m) => !settingsSectionIds.has(m.section)),
+    [visibleModules, settingsSectionIds],
+  );
+  const navEntries = useMemo(
+    () => sidebarEntries.filter((m) => editingNav || !hidden.has(m.key)),
+    [sidebarEntries, editingNav, hidden],
+  );
   const shortcutTargets = useMemo(
     () =>
       visibleModules
-        .filter((m) => m.shortcut)
+        .filter((m) => m.shortcut && !hidden.has(m.key))
         .map((m) => ({ key: m.shortcut!, label: m.label, hash: m.hash })),
-    [visibleModules],
+    [visibleModules, hidden],
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -279,22 +330,27 @@ function Shell(): JSX.Element {
 
   // Land on the entry that claims the lowest `home`, else the first one the
   // role can see. Which module owns the front page is the modules' business.
+  // A user who hid the usual landing page gets the next one they kept, and a
+  // user whose whole sidebar is hidden still lands somewhere they can reach.
   useEffect(() => {
     const path = hash.replace(/^#/, '');
     if (path !== '/' && path !== '') return;
-    const landing = [...visibleModules].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+    const pool = navEntries.length > 0 ? navEntries : visibleModules;
+    const landing = [...pool].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
     if (landing) location.hash = landing.hash;
-  }, [hash, visibleModules]);
+  }, [hash, navEntries, visibleModules]);
 
-  // Group entries into the shared, ordered section namespace the enabled
-  // modules declared (module ≠ group); empty groups don't render.
-  const sections = useMemo(() => {
-    const grouped = new Map<string, NavEntry[]>();
-    for (const m of visibleModules) {
-      grouped.set(m.section, [...(grouped.get(m.section) ?? []), m]);
-    }
-    return kernel.sections.filter((s) => grouped.has(s.id)).map((s) => [s, grouped.get(s.id)!] as const);
-  }, [kernel.sections, visibleModules]);
+  const sections = useMemo(() => groupSections(kernel.sections, navEntries), [kernel.sections, navEntries]);
+  const settingsSections = useMemo(
+    () => groupSections(kernel.sections, settingsEntries),
+    [kernel.sections, settingsEntries],
+  );
+  // The settings shell owns the route the viewer is on, so the page renders with
+  // its own column instead of the sidebar's.
+  const inSettings = activeNavKey !== null && settingsEntries.some((m) => m.key === activeNavKey);
+  // Where the sidebar's gear points: the first entry of the first settings
+  // group the viewer can reach, so the shell never names a module.
+  const settingsHref = settingsSections[0]?.[1][0]?.hash ?? null;
 
   return (
     <div className="flex h-full">
@@ -317,12 +373,18 @@ function Shell(): JSX.Element {
 
         <WorkspaceSwitcher rail={rail} />
 
-        <nav className="flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
+        <nav className="group/nav flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
           {sections.map(([section, modules], si) => (
             <div key={section.id} className="mt-3">
               {rail ? (
                 <div className="mx-2 flex h-5 items-center" aria-hidden>
                   {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
+                </div>
+              ) : editingNav ? (
+                // Folding is off while editing: a folded group would hide the
+                // very rows the editor exists to reach.
+                <div className="dim flex h-5 items-end px-2 pb-1 text-[10px] font-medium tracking-widest uppercase">
+                  {section.label}
                 </div>
               ) : (
                 <button
@@ -336,9 +398,28 @@ function Shell(): JSX.Element {
                 </button>
               )}
               {/* The icon rail ignores folding — hiding icons there saves nothing. */}
-              {!rail && foldedSections.has(section.id)
+              {!rail && !editingNav && foldedSections.has(section.id)
                 ? null
                 : modules.map((m) => {
+                if (editingNav) {
+                  const off = hidden.has(m.key);
+                  return (
+                    <button
+                      key={m.key}
+                      type="button"
+                      onClick={() => toggleHidden(m.key)}
+                      aria-pressed={!off}
+                      aria-label={`${off ? 'Show' : 'Hide'} ${m.label}`}
+                      className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800 ${
+                        off ? 'text-zinc-400 dark:text-zinc-600' : 'text-zinc-700 dark:text-zinc-300'
+                      }`}
+                    >
+                      <span className="shrink-0">{m.icon}</span>
+                      <span className="flex-1 truncate text-left">{m.label}</span>
+                      {off ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                    </button>
+                  );
+                }
                 // Longest-match winner computed once above — boundary-aware
                 // (#/runners never lights #/runs) and nesting-aware
                 // (#/playground/pipelines lights only Pipeline Lab).
@@ -384,16 +465,19 @@ function Shell(): JSX.Element {
                           >
                             New
                           </span>
-                        ) : (
+                        ) : chordPending && m.shortcut ? (
+                          // Only while `g` is held open. A permanent column of
+                          // hints is noise on every row of a long sidebar, and
+                          // the moment they are useful is exactly this one.
                           <kbd
-                            className={`hidden rounded px-1 font-mono text-[10px] lg:inline ${
+                            className={`rounded px-1 font-mono text-[10px] ${
                               active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
                             }`}
                             aria-hidden
                           >
                             g{m.shortcut}
                           </kbd>
-                        )}
+                        ) : null}
                       </>
                     )}
                   </a>
@@ -401,13 +485,38 @@ function Shell(): JSX.Element {
               })}
             </div>
           ))}
+
+          {/* Quiet until wanted: the row holds its space so nothing jumps, and
+              shows on hover or focus. The drawer has no hover, so it is plain
+              there. */}
+          {rail ? null : (
+            <>
+              <button
+                type="button"
+                onClick={() => setEditingNav((e) => !e)}
+                className={`mt-4 flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
+                  editingNav
+                    ? 'bg-zinc-200 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100'
+                    : 'dim hover:bg-zinc-200 focus-visible:opacity-100 md:opacity-0 md:group-hover/nav:opacity-100 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <SlidersIcon className="size-4" />
+                <span className="flex-1 text-left">{editingNav ? 'Done' : 'Customize menu'}</span>
+              </button>
+              {editingNav ? (
+                <p className="dim mt-1.5 px-2.5 text-[11px] leading-snug">
+                  Hidden pages stay reachable from search and their links.
+                </p>
+              ) : null}
+            </>
+          )}
         </nav>
 
         <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           {rail ? (
-            // Icon-only: just the profile glyph, centered — sign out lives in
-            // the expanded sidebar.
-            <div className="-mx-2 flex justify-center">
+            // Icon-only: the profile glyph and the way into settings. Sign out
+            // lives in the expanded sidebar.
+            <div className="-mx-2 flex flex-col items-center gap-1">
               <a
                 href="#/profile"
                 className="flex w-fit items-center rounded-lg p-1.5 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
@@ -418,6 +527,24 @@ function Shell(): JSX.Element {
                   {(user?.displayName ?? '?').slice(0, 1)}
                 </span>
               </a>
+              {settingsHref ? (
+                <a
+                  href={settingsHref}
+                  className={`flex size-8 items-center justify-center rounded-lg transition-colors ${
+                    inSettings
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-700 dark:text-zinc-50'
+                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-label="Settings"
+                  aria-current={inSettings ? 'page' : undefined}
+                  onMouseEnter={(e) => showRailTip(e, 'Settings')}
+                  onMouseLeave={() => setRailTip(null)}
+                  onFocus={(e) => showRailTip(e, 'Settings')}
+                  onBlur={() => setRailTip(null)}
+                >
+                  <GearIcon />
+                </a>
+              ) : null}
             </div>
           ) : (
             <div className="-mx-2 flex items-center gap-1">
@@ -429,6 +556,21 @@ function Shell(): JSX.Element {
                 <div className="truncate text-[13px] font-medium">{user?.displayName}</div>
                 <div className="text-[11px] capitalize">{user?.role}</div>
               </a>
+              {settingsHref ? (
+                <a
+                  href={settingsHref}
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                    inSettings
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-700 dark:text-zinc-50'
+                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-label="Settings"
+                  aria-current={inSettings ? 'page' : undefined}
+                  title="Settings"
+                >
+                  <GearIcon />
+                </a>
+              ) : null}
               <button
                 className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={() => void logout()}
@@ -470,7 +612,19 @@ function Shell(): JSX.Element {
         <main id="main" className="relative min-h-0 flex-1 overflow-y-auto">
           {/* Keyed by route: navigating away from a crashed page recovers it. */}
           <ErrorBoundary area="this page" resetKey={hash}>
-            <RouterView hash={hash} />
+            {inSettings ? (
+              <div className="flex min-h-full flex-col md:flex-row">
+                <SettingsNav sections={settingsSections} activeKey={activeNavKey} />
+                {/* The divider rides the page, not the nav: the nav is sticky and
+                    only as tall as its rows, so its own border would stop short
+                    on any settings page long enough to scroll. */}
+                <div className="min-w-0 flex-1 md:border-l md:border-zinc-200 md:dark:border-zinc-800">
+                  <RouterView hash={hash} />
+                </div>
+              </div>
+            ) : (
+              <RouterView hash={hash} />
+            )}
           </ErrorBoundary>
         </main>
       </div>
@@ -649,6 +803,57 @@ function NewWorkspaceModal({
   );
 }
 
+/**
+ * The settings shell's own column: the groups whose `placement` took them out of
+ * the sidebar. Below md it collapses to a horizontally scrollable strip of the
+ * same rows, because a 10-row column above every settings page would push the
+ * page itself off a phone screen.
+ */
+function SettingsNav({
+  sections,
+  activeKey,
+}: {
+  sections: ReadonlyArray<readonly [NavSection, readonly NavEntry[]]>;
+  activeKey: string | null;
+}): JSX.Element {
+  return (
+    <nav
+      aria-label="Settings"
+      className="shrink-0 px-3 py-4 max-md:overflow-x-auto max-md:border-b max-md:border-zinc-200 md:sticky md:top-0 md:w-52 md:self-start max-md:dark:border-zinc-800"
+    >
+      <div className="flex gap-5 md:flex-col md:gap-0">
+        {sections.map(([section, entries]) => (
+          <div key={section.id} className="md:mt-5 md:first:mt-0">
+            <div className="dim mb-1 px-2 text-[10px] font-medium tracking-widest uppercase max-md:hidden">
+              {section.label}
+            </div>
+            <div className="flex gap-1 md:flex-col">
+              {entries.map((e) => {
+                const active = e.key === activeKey;
+                return (
+                  <a
+                    key={e.key}
+                    href={e.hash}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] whitespace-nowrap transition-colors ${
+                      active
+                        ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
+                        : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span className="shrink-0">{e.icon}</span>
+                    <span className="truncate">{e.label}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
 /** The list hash including the tab the user last had open (survives detail visits). */
 function listBackHref(base: '#/prs' | '#/issues'): string {
   const state = sessionStorage.getItem(`companion.tab:${base}`);
@@ -656,7 +861,11 @@ function listBackHref(base: '#/prs' | '#/issues'): string {
 }
 
 /** Route-derived crumbs: module label first, then detail segments. */
-function crumbsFor(path: string, nav: readonly NavEntry[]): Array<{ label: string; href?: string }> {
+function crumbsFor(
+  path: string,
+  nav: readonly NavEntry[],
+  sections: readonly NavSection[],
+): Array<{ label: string; href?: string }> {
   let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
   if (m) return [{ label: 'Agent Runs', href: '#/runs' }, { label: m[1]! }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
@@ -674,6 +883,11 @@ function crumbsFor(path: string, nav: readonly NavEntry[]): Array<{ label: strin
     if ((path === base || path.startsWith(`${base}/`)) && (mod === undefined || mm.hash.length > mod.hash.length)) {
       mod = mm;
     }
+  }
+  // A settings page is "Settings / General", not a bare "General": the group it
+  // sits in is the only thing that says where the user is.
+  if (mod && sections.some((s) => s.id === mod!.section && s.placement === 'settings')) {
+    return [{ label: 'Settings' }, { label: mod.label }];
   }
   return [{ label: mod?.label ?? 'Overview' }];
 }
@@ -694,7 +908,7 @@ function TopBar({
   const { can } = useAuth();
   const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
-  const crumbs = crumbsFor(path, kernel.nav);
+  const crumbs = crumbsFor(path, kernel.nav, kernel.sections);
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800">
       <button

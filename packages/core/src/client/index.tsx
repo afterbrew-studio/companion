@@ -10,13 +10,33 @@ import type { ModuleManifest } from '../manifest.js';
  */
 
 /** Sidebar groups — a shared, ordered namespace addressed by id (module ≠ group). */
-export type SectionId = 'workspace' | 'plan' | 'code' | 'operate' | 'admin' | (string & {});
+export type SectionId =
+  | 'workspace'
+  | 'plan'
+  | 'code'
+  | 'operate'
+  // Settings-shell groups, all owned by core so a module can attach to one
+  // without depending on whoever else uses it. A typo here is not a type error
+  // (the union stays open), it is an entry that never renders.
+  | 'admin'
+  | 'admin-ai'
+  | 'admin-access'
+  | 'admin-integrations'
+  | (string & {});
 
 export interface NavSection {
   readonly id: SectionId;
   readonly label: string;
   readonly order: number;
   readonly permission?: Permission;
+  /**
+   * Where the group renders. 'settings' takes it out of the sidebar and into the
+   * settings shell's own column, which is where instance configuration belongs:
+   * pages an operator opens once a month must not compete with the daily work
+   * surfaces. Entries and routes are untouched by this: only the chrome around
+   * them changes. Defaults to 'sidebar'.
+   */
+  readonly placement?: 'sidebar' | 'settings';
 }
 
 export interface NavEntry {

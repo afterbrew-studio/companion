@@ -235,12 +235,17 @@ export interface SessionInfo {
   readonly user: AuthUser;
   readonly permissions: readonly Permission[];
   readonly notificationScope: NotificationScope;
+  /** Nav entry keys this user hid from their sidebar; the shell needs them on
+   *  the first paint, so they ride the session rather than a second fetch. */
+  readonly hiddenNav: readonly string[];
 }
 
 /** A user's own editable settings, distinct from the admin-managed account. */
 export interface UserProfile {
   /** Inbox scope override; null = inherit the instance default. */
   readonly notificationScope: NotificationScope | null;
+  /** Sidebar entries this user hid. Cosmetic only: the pages stay reachable. */
+  readonly hiddenNav: readonly string[];
 }
 
 /** GET /api/profile — the user's overrides plus the defaults a null falls back to. */
@@ -251,6 +256,7 @@ export interface ProfileResponse {
 
 export interface UpdateProfileRequest {
   readonly notificationScope?: NotificationScope | null;
+  readonly hiddenNav?: readonly string[];
 }
 
 /** The signed-in user's own account, as shown on their profile page. */

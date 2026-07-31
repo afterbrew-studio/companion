@@ -532,6 +532,24 @@ export const nav = defineNav([
 ]);
 ```
 
+**Configuration pages don't belong in the sidebar.** A section declared with
+`placement: 'settings'` renders in the settings shell's own column instead, next
+to the page. Attach the entry to one of core's settings groups rather than
+declaring your own: `admin` (Instance), `admin-ai`, `admin-access`,
+`admin-integrations`:
+
+```tsx
+{ key: 'widget-keys', label: 'Widget keys', hash: '#/widget-keys',
+  permission: 'settings:manage', section: 'admin-integrations', order: 20, icon: … }
+```
+
+Core owns those groups because only core is `required: true`, and an entry whose
+section id nobody declared is dropped from the shell without a word.
+
+Users may hide sidebar entries they don't want (persisted per user, server-side).
+It is chrome only: hidden pages keep their routes, their permissions, and their
+place in ⌘K, so never treat a hidden entry as an unreachable one.
+
 ### routes.tsx — pages
 
 ```tsx

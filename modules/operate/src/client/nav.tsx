@@ -2,8 +2,9 @@ import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client
 
 /**
  * Operate owns the Operate sidebar group (agent runs, runners, skills) and
- * attaches its provider/model admin pages to core's Admin group. Icons follow
- * the shared stroke style from the legacy modules.tsx registry.
+ * attaches its provider/model/spend pages to core's AI settings group: they
+ * configure the instance rather than carry daily work. Icons follow the shared
+ * stroke style from the legacy modules.tsx registry.
  *
  * Skills lives in operate's OWN group: the page, route and API are operate's,
  * and module-playground is not installed by default, so hanging the entry off
@@ -63,7 +64,7 @@ export const nav = defineNav([
     hash: '#/providers',
     shortcut: 'v',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 0,
     icon: (
       <NavIcon>
@@ -77,7 +78,7 @@ export const nav = defineNav([
     label: 'Task models',
     hash: '#/task-models',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 5,
     icon: (
       <NavIcon>
@@ -92,7 +93,7 @@ export const nav = defineNav([
     label: 'Spend',
     hash: '#/spend',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 7,
     icon: (
       <NavIcon>

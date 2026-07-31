@@ -1,9 +1,10 @@
 import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * module-code's sidebar contributions. It owns the Code group; the repos and
- * github entries attach to the operate section and overview to the workspace
- * section (module ≠ group — the sidebar is a shared, ordered namespace).
+ * module-code's sidebar contributions. It owns the Code group; overview attaches
+ * to the workspace section and the GitHub account to core's Integrations
+ * settings group, which is configuration rather than a work surface (module ≠
+ * group: the sidebar is a shared, ordered namespace).
  * Icons copied exactly from the legacy modules.tsx registry.
  */
 
@@ -102,8 +103,8 @@ export const nav = defineNav([
     hash: '#/repos',
     shortcut: 'e',
     permission: 'repos:manage',
-    section: 'operate',
-    order: 20,
+    section: 'code',
+    order: 70,
     icon: icons.repos,
   },
   {
@@ -112,8 +113,8 @@ export const nav = defineNav([
     hash: '#/github',
     shortcut: 'h',
     permission: 'github:connect',
-    section: 'operate',
-    order: 30,
+    section: 'admin-integrations',
+    order: 0,
     icon: icons.github,
   },
   {

@@ -1,9 +1,9 @@
 import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * Attaches to core's Admin group rather than opening one of its own: forwarding
- * the inbox to a third party is instance administration, and a group holding a
- * single entry is noise in the sidebar.
+ * Attaches to core's Integrations settings group rather than opening one of its
+ * own: forwarding the inbox to a third party is instance configuration, not a
+ * daily work surface, and a group holding a single entry is noise.
  */
 export const nav = defineNav([
   {
@@ -11,7 +11,7 @@ export const nav = defineNav([
     label: 'Notifications',
     hash: '#/notify',
     permission: 'notify:read',
-    section: 'admin',
+    section: 'admin-integrations',
     order: 8,
     icon: (
       <NavIcon>
