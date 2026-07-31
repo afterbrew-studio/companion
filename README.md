@@ -28,6 +28,10 @@ That is the whole install. It carries the daemon and the built SPA, sets up an
 admin account on first launch, and opens <http://127.0.0.1:8901>. Docker, Coolify
 and source builds are in [`docs/install.md`](docs/install.md).
 
+<p align="center">
+  <img src="docs/media/cli.gif" alt="A first run: the setup box, the module selection, the agent runtimes this machine detected, and the URL it is serving on." width="820">
+</p>
+
 Agent runs additionally need an agent CLI, which Companion drives as an external
 runtime and which holds your model provider credentials rather than Companion
 doing so. Three are supported today, chosen per runner machine:
@@ -46,6 +50,8 @@ client, so the list is expected to grow.
 
 Everything is scoped to a **workspace**, a named group of repositories.
 
+![The workspace overview: open issues, open pull requests, failing CI and live agents, with velocity and token spend underneath.](docs/media/overview.png)
+
 - **Issues** sync from GitHub, with triage and fix agents on tap.
 - **Pull requests** review with CI context, conflict state and review decisions.
 - **Pipelines** compose typed steps: CI gates, AI review, custom agent runs,
@@ -57,6 +63,12 @@ Everything is scoped to a **workspace**, a named group of repositories.
   surprising you.
 - **Automations** react to webhooks and schedules, and the inbox can be
   forwarded to Slack, Discord, ntfy or a signed webhook of your own.
+
+A run is watchable while it works and reviewable when it stops: the transcript is
+the agent's own prompts, reasoning and tool calls, and a finished fix waits on
+its branch with the diff in front of you rather than pushing itself.
+
+![An agent run in review: the diff it produced on its branch, an approve-and-open-PR control, and the transcript of tool calls below it.](docs/media/run.png)
 
 Auth and RBAC are built in. Every REST route declares the permission it requires,
 the SPA hides what your role cannot use, and roles are instance data rather than
@@ -74,6 +86,8 @@ RBAC permissions, background jobs and pages, and declares what it depends on. An
 admin can enable, disable or uninstall any non-required module live: its API
 flips to `503`, its nav and routes disappear, its permissions drop from the grid,
 with no restart.
+
+![The Modules page: installed modules with their dependencies and enable toggles, and the rest of the build waiting under Available.](docs/media/modules.png)
 
 Modules do not have to live in this repository.
 [`@moxxy/companion-sdk`](https://www.npmjs.com/package/@moxxy/companion-sdk) is
