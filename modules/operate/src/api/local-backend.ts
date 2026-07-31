@@ -304,8 +304,8 @@ export class LocalRunnerBackend implements RunnerBackend {
   diffVsBase(cwd: string, baseBranch: string): Promise<string> {
     return this.checkouts.diffVsBase(cwd, baseBranch);
   }
-  commitAll(cwd: string, message: string): Promise<void> {
-    return this.checkouts.commitAll(cwd, message);
+  commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void> {
+    return this.checkouts.commitAll(cwd, message, author);
   }
   /** This machine runs it directly; there is no agent hop to degrade through. */
   verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse> {

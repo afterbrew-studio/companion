@@ -253,8 +253,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
   async diffVsBase(cwd: string, baseBranch: string): Promise<string> {
     return (await this.call<AgentDiffResponse>('POST', '/git/diff', { cwd, baseBranch })).diff;
   }
-  async commitAll(cwd: string, message: string): Promise<void> {
-    await this.call('POST', '/git/commit-all', { cwd, message });
+  async commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void> {
+    // The author rides along so a remote runner signs it the same way; an
+    // older runner ignores the extra field and keeps its previous behaviour.
+    await this.call('POST', '/git/commit-all', { cwd, message, ...(author ? { author } : {}) });
   }
   async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
     // Refuse here, on the daemon, rather than trusting a runner to re-derive the

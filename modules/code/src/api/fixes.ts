@@ -321,7 +321,15 @@ export class Fixes {
     const client = await this.requirePushAccess(run.repo, credentialOwner);
 
     const backend = this.backendForRun(run.runner_id);
-    await backend.commitAll(run.cwd, opts.title ?? run.title);
+    // Signed as the account whose credential is about to push it, so the commit
+    // attributes to a real GitHub user instead of a local identity nobody can
+    // resolve. Best effort: a failed lookup keeps the previous behaviour rather
+    // than losing work the agent already did.
+    const author = await client
+      .viewer()
+      .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
+      .catch(() => undefined);
+    await backend.commitAll(run.cwd, opts.title ?? run.title, author);
     await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 
     if (run.pr_url) {

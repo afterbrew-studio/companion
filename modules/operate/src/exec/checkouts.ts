@@ -307,12 +307,48 @@ export class Checkouts {
   }
 
   /** Commit everything in the worktree (agent may have left work uncommitted). */
-  async commitAll(worktree: string, message: string): Promise<void> {
+  /**
+   * Stage everything and commit it, refusing anything still in conflict.
+   *
+   * `git add -A` is indiscriminate, so without the check an agent that gave up
+   * halfway through a merge had its `<<<<<<<` markers staged, committed and
+   * pushed, and the branch stopped compiling. `--check` on the staged diff is
+   * git's own answer to "did a conflict marker survive", and refusing here is
+   * the last point before the push where it can still be caught.
+   *
+   * `author` signs the commit. Without one it lands as a local identity GitHub
+   * cannot attribute to anybody, which is how agent work ends up authored by a
+   * user that does not exist.
+   */
+  async commitAll(
+    worktree: string,
+    message: string,
+    author?: { name: string; email: string },
+  ): Promise<void> {
     await this.git(['add', '-A'], worktree);
     const status = await this.git(['status', '--porcelain'], worktree);
     if (!status.stdout.trim()) return;
+
+    const unmerged = await this.git(['diff', '--cached', '--name-only', '--diff-filter=U'], worktree);
+    if (unmerged.stdout.trim()) {
+      throw new Error(`unresolved merge conflicts in ${unmerged.stdout.trim().split('\n').join(', ')}`);
+    }
+    const markers = await this.git(['diff', '--cached', '--check'], worktree).catch(
+      (err: unknown) => ({ stdout: (err as { stdout?: string }).stdout ?? '' }),
+    );
+    const leftover = markers.stdout
+      .split('\n')
+      .filter((line) => line.includes('conflict marker'))
+      .map((line) => line.split(':')[0])
+      .filter((path, i, all) => path && all.indexOf(path) === i);
+    if (leftover.length > 0) {
+      throw new Error(`conflict markers left in ${leftover.join(', ')} — the merge was not finished`);
+    }
+
+    const name = author?.name ?? 'Companion';
+    const email = author?.email ?? 'companion@localhost';
     await this.git(
-      ['-c', 'user.name=Companion', '-c', 'user.email=companion@localhost', 'commit', '-q', '-m', message],
+      ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-q', '-m', message],
       worktree,
     );
   }
