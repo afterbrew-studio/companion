@@ -407,4 +407,82 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS pipeline_secrets`);
     },
   },
+  {
+    /**
+     * Findings become rows instead of strings inside the verdict JSON, because
+     * each one now carries state a reviewer edits (included/rejected), a
+     * verification verdict, and the id of the GitHub comment it became.
+     *
+     * Anchor columns are nullable on purpose: a finding that could not be tied
+     * to a line of the diff is still worth showing, it just travels in the
+     * review body rather than as an inline comment.
+     */
+    version: 11,
+    name: 'pr_review_findings',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pr_review_findings (
+          id                TEXT PRIMARY KEY,
+          review_id         TEXT NOT NULL,
+          source            TEXT NOT NULL DEFAULT 'native',
+          file              TEXT,
+          side              TEXT,
+          line              INTEGER,
+          start_line        INTEGER,
+          severity          TEXT NOT NULL DEFAULT 'minor',
+          title             TEXT NOT NULL,
+          reason            TEXT NOT NULL DEFAULT '',
+          impact            TEXT NOT NULL DEFAULT '',
+          suggestion        TEXT NOT NULL DEFAULT '',
+          suggested_patch   TEXT,
+          confidence        REAL NOT NULL DEFAULT 0.5,
+          state             TEXT NOT NULL DEFAULT 'proposed',
+          verification      TEXT NOT NULL DEFAULT 'unverified',
+          verification_note TEXT,
+          rejection_reason  TEXT,
+          github_comment_id INTEGER,
+          created_at        INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_prf_review ON pr_review_findings(review_id, state);
+      `);
+      for (const column of [
+        `ALTER TABLE pr_reviews ADD COLUMN head_sha TEXT`,
+        `ALTER TABLE pr_reviews ADD COLUMN depth TEXT NOT NULL DEFAULT 'in-depth'`,
+        `ALTER TABLE pr_reviews ADD COLUMN strictness TEXT NOT NULL DEFAULT 'balanced'`,
+      ]) {
+        try {
+          db.exec(column);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+    },
+    down: (db) => {
+      db.exec(`DROP TABLE IF EXISTS pr_review_findings`);
+    },
+  },
+  {
+    /**
+     * Answering, in thread, when a pull request author replies to one of the
+     * agent's inline comments. Per repository and off by default: unlike every
+     * other switch here it makes an agent speak publicly on someone else's pull
+     * request, so it is opted into deliberately, never inherited.
+     */
+    version: 12,
+    name: 'repos_review_replies',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos ADD COLUMN review_replies INTEGER NOT NULL DEFAULT 0`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos DROP COLUMN review_replies`);
+      } catch {
+        // Older SQLite cannot drop a column; it defaults to 0, so leaving it is inert.
+      }
+    },
+  },
 ]);

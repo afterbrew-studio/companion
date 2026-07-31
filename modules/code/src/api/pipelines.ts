@@ -125,7 +125,12 @@ export const pipelineStepSchema = z.discriminatedUnion('kind', [
     ...stepBase,
     config: z.object({
       post: z.boolean(),
-      failOn: z.enum(['request_changes', 'high_risk', 'never']),
+      failOn: z.enum(['request_changes', 'high_risk', 'blocker', 'never']),
+      // Optional so pipelines saved before anchored reviews keep validating.
+      depth: z.enum(['high-level', 'in-depth']).optional(),
+      strictness: z.enum(['blockers-only', 'balanced', 'pedantic']).optional(),
+      verify: z.boolean().optional(),
+      postMode: z.enum(['full', 'comments', 'summary']).optional(),
     }),
   }),
   z.object({
@@ -474,28 +479,38 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
 
     'ai-review': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
-      const result = await deps.reviews.analyzePr(ctx.repo, ctx.pr.number, ctx.userId);
+      const result = await deps.reviews.analyzePr(ctx.repo, ctx.pr.number, ctx.userId, {
+        ...(step.config.depth ? { depth: step.config.depth } : {}),
+        ...(step.config.strictness ? { strictness: step.config.strictness } : {}),
+        ...(step.config.verify === undefined ? {} : { verify: step.config.verify }),
+      });
       if (!result.verdict) {
         return { status: 'error', summary: result.error ?? 'review produced no verdict' };
       }
       let posted = '';
       if (step.config.post) {
         try {
-          await deps.reviews.apply(result.id, undefined, ctx.userId);
+          await deps.reviews.apply(result.id, {
+            userId: ctx.userId,
+            ...(step.config.postMode ? { mode: step.config.postMode } : {}),
+          });
           posted = ', posted to GitHub';
         } catch (err) {
           posted = `, posting failed: ${String(err)}`;
         }
       }
       const { risk, recommendation, reviewBody } = result.verdict;
+      const blockers = result.findings.filter((f) => f.severity === 'blocker' && f.verification !== 'refuted').length;
       const failed =
         (step.config.failOn === 'request_changes' && recommendation === 'request_changes') ||
-        (step.config.failOn === 'high_risk' && risk === 'high');
+        (step.config.failOn === 'high_risk' && risk === 'high') ||
+        (step.config.failOn === 'blocker' && blockers > 0);
+      const found = result.findings.length > 0 ? `, ${result.findings.length} finding(s)` : '';
       return {
         status: failed ? 'failed' : 'passed',
-        summary: `risk ${risk}, recommends ${recommendation.replace('_', ' ')}${posted}`,
+        summary: `risk ${risk}, recommends ${recommendation.replace('_', ' ')}${found}${posted}`,
         detail: reviewBody,
-        outputs: { risk, recommendation },
+        outputs: { risk, recommendation, blockers: String(blockers) },
       };
     },
 

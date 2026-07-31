@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ErrorBar, Eyebrow, Markdown, timeAgo } from '@moxxy/companion-sdk/ui';
-import type { PrReviewResult } from '../../../contract/index.js';
+import type { PrReviewResult, ReviewPostMode } from '../../../contract/index.js';
 import { AccountPicker } from '../../components/AccountPicker.js';
+import { ReviewFindings } from './ReviewFindings.js';
 
 const RISK_CLS: Record<'low' | 'medium' | 'high', string> = {
   low: 'badge-ok',
@@ -21,19 +22,35 @@ export function PrReview({
   busy,
   onApply,
   onDismiss,
+  onUpdateFinding,
+  focusedFinding = null,
+  onFocusFinding,
   emphasis = 'auto',
 }: {
   review: PrReviewResult;
   canAct: boolean;
   busy: boolean;
-  onApply: (accountId?: string) => void;
+  onApply: (accountId?: string, mode?: ReviewPostMode) => void;
   onDismiss: () => void;
+  onUpdateFinding?: (id: string, patch: { state?: 'included' | 'rejected'; rejectionReason?: string }) => void;
+  focusedFinding?: string | null;
+  onFocusFinding?: (id: string | null) => void;
   emphasis?: 'auto' | 'hero';
 }): JSX.Element {
   const [actAs, setActAs] = useState('');
+  const [mode, setMode] = useState<ReviewPostMode>('full');
   const v = review.verdict;
   const pending = review.status === 'pending';
   const hero = emphasis === 'hero';
+  const included = review.findings.filter((f) => f.state === 'included');
+  const selected = included.length;
+  // Findings with no anchor cannot be inline, so in comments mode they still
+  // travel in the body. Saying so beats letting the reviewer discover it on
+  // somebody else's pull request.
+  const strays = included.filter((f) => f.anchor === null).length;
+  // A draft a person started has no agent verdict to report; showing "low risk"
+  // for it would attribute a judgement nobody made.
+  const manual = review.runId === null;
   // A pending review needs the reviewer's attention — green, gently pulsing.
   const attn = pending && canAct;
   const border = attn
@@ -49,13 +66,17 @@ export function PrReview({
   return (
     <section className={`card anim-in ${border}`} aria-label="AI review">
       <div className="flex flex-wrap items-center gap-2">
-        <strong className="text-sm">AI review</strong>
-        {v ? <span className={RISK_CLS[v.risk]}>{v.risk} risk</span> : null}
-        {v ? <span className="badge">{v.recommendation.replace('_', ' ')}</span> : null}
-        <span className="dim text-xs">reviewed {timeAgo(review.createdAt)}</span>
-        <a className="linkish text-xs" href={`#/runs/${review.runId}`}>
-          view run →
-        </a>
+        <strong className="text-sm">{manual ? 'Your review' : 'AI review'}</strong>
+        {v && !manual ? <span className={RISK_CLS[v.risk]}>{v.risk} risk</span> : null}
+        {v && !manual ? <span className="badge">{v.recommendation.replace('_', ' ')}</span> : null}
+        <span className="dim text-xs">
+          {manual ? 'started' : 'reviewed'} {timeAgo(review.createdAt)}
+        </span>
+        {review.runId ? (
+          <a className="linkish text-xs" href={`#/runs/${review.runId}`}>
+            view run →
+          </a>
+        ) : null}
         <span className="flex-1" />
         {review.status === 'applied' ? <span className="badge-ok">posted</span> : null}
         {review.status === 'dismissed' ? <span className="badge">dismissed</span> : null}
@@ -63,11 +84,29 @@ export function PrReview({
 
       {v ? (
         <>
-          <div className="mt-3">
-            <Markdown text={v.summary} />
-          </div>
+          {v.summary.trim() ? (
+            <div className="mt-3">
+              <Markdown text={v.summary} />
+            </div>
+          ) : null}
 
-          {v.findings.length > 0 ? (
+          {review.findings.length > 0 ? (
+            <ReviewFindings
+              reviewId={review.id}
+              findings={review.findings}
+              canAct={canAct && pending && !!onUpdateFinding}
+              busy={busy}
+              onToggle={(id, include) => onUpdateFinding?.(id, { state: include ? 'included' : 'rejected' })}
+              onReject={(id, reason) => onUpdateFinding?.(id, { state: 'rejected', rejectionReason: reason })}
+              focusedFinding={focusedFinding}
+              {...(onFocusFinding ? { onFocusFinding } : {})}
+            />
+          ) : manual ? (
+            <p className="dim mt-3 text-[13px]">
+              Hover a line in the diff below and press <code>+</code> to comment on it.
+            </p>
+          ) : v.findings.length > 0 ? (
+            // Reviews that predate anchored findings still carry only titles.
             <div className="mt-3">
               <Eyebrow className="mb-1">Findings</Eyebrow>
               <ul className="list-disc space-y-1 pl-5 text-[13px]">
@@ -92,19 +131,44 @@ export function PrReview({
       )}
 
       {pending && canAct ? (
-        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
-          <span className="dim mr-auto text-xs">Posts to GitHub as</span>
-          <AccountPicker value={actAs} onChange={setActAs} />
-          <button className="btn-ghost" disabled={busy} onClick={onDismiss}>
-            Dismiss
-          </button>
-          <button className="btn" disabled={busy} onClick={() => onApply(actAs || undefined)}>
-            {busy ? 'Posting…' : 'Post review to GitHub'}
-          </button>
+        <div className="mt-4 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="dim mr-auto text-xs">Posts to GitHub as</span>
+            <AccountPicker value={actAs} onChange={setActAs} />
+            <select
+              className="input w-auto text-xs"
+              value={mode}
+              onChange={(e) => setMode(e.target.value as ReviewPostMode)}
+              aria-label="What to post"
+            >
+              <option value="full">Summary + inline comments</option>
+              <option value="comments">Inline comments only</option>
+              <option value="summary">Summary only</option>
+            </select>
+            <button className="btn-ghost" disabled={busy} onClick={onDismiss}>
+              Dismiss
+            </button>
+            <button className="btn" disabled={busy} onClick={() => onApply(actAs || undefined, mode)}>
+              {busy ? 'Posting…' : postLabel(mode, selected)}
+            </button>
+          </div>
+          {mode === 'comments' && strays > 0 ? (
+            <p className="dim mt-2 text-right text-xs">
+              {strays} selected finding{strays === 1 ? '' : 's'} {strays === 1 ? 'has' : 'have'} no line anchor and will
+              still be listed in the review body.
+            </p>
+          ) : null}
         </div>
       ) : null}
     </section>
   );
+}
+
+function postLabel(mode: ReviewPostMode, selected: number): string {
+  if (mode === 'summary') return 'Post summary to GitHub';
+  if (selected === 0) return 'Post review to GitHub';
+  const comments = `${selected} comment${selected === 1 ? '' : 's'}`;
+  return mode === 'comments' ? `Post ${comments}` : `Post review + ${comments}`;
 }
 
 /** Animated placeholder shown while the review agent is still working. */

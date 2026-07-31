@@ -19,9 +19,12 @@ export const EMPTY_OUTCOMES: OutcomeCounts = { accepted: 0, rejected: 0, pending
  * Callers pass their OWN table name; nothing here is interpolated from a request.
  */
 export function outcomeSql(table: 'triage_results' | 'pr_reviews'): string {
+  // Rows with no run behind them were written by a person (a manual review
+  // draft), and counting one as an accepted agent verdict would report the
+  // reviewer's own comments as the agent's accuracy.
   return `SELECT status, COUNT(*) AS n FROM ${table} t
           JOIN v_repos r ON r.full_name = t.repo
-          WHERE r.workspace_id = ? AND t.created_at >= ?
+          WHERE r.workspace_id = ? AND t.created_at >= ? AND t.run_id != ''
           GROUP BY status`;
 }
 

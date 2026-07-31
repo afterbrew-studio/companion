@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { AgentActivity } from '@companion/module-operate/client';
+import { AgentActivity, LaneNote } from '@companion/module-operate/client';
 import {
   ActionMenu,
   AiActionMenu,
@@ -21,7 +21,7 @@ import {
   useConfirm,
   type MenuAction,
 } from '@moxxy/companion-sdk/ui';
-import type { PrRecord } from '../../../contract/index.js';
+import type { PrRecord, ReviewDepth, ReviewOptions, ReviewStrictness } from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
 import { CommentsSection } from '../../components/Comments.js';
 import { ChecksIcon, GitHubUser, PrStateIcon } from '../../widgets.js';
@@ -30,6 +30,8 @@ import { RailBlock, RailRow } from './rail.js';
 import { PrChecks } from './PrChecks.js';
 import { PrPipelines, RunPipelineModal } from './PrPipelines.js';
 import { PrReview, ReviewingStage } from './PrReview.js';
+import { useFindingAnnotations } from './ReviewFindings.js';
+import { LineComposer, type DraftComment } from './LineComposer.js';
 import { PrChanges } from './PrChanges.js';
 
 type Mode = 'detail' | 'review';
@@ -43,6 +45,41 @@ type Mode = 'detail' | 'review';
 export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): JSX.Element {
   const pr = usePr(repo, number);
   const fetchFiles = useCallback(() => api.prFiles(repo, number), [repo, number]);
+  const expandContext = useCallback(
+    (path: string, from: number, to: number) =>
+      api.prFileLines(repo, number, path, from, to).then((r) => r.lines),
+    [repo, number],
+  );
+  // One focused finding, shared by the list and the diff: that shared value IS
+  // the two-way link between them.
+  const [focusedFinding, setFocusedFinding] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DraftComment | null>(null);
+  const findingAnnotations = useFindingAnnotations(pr.review?.findings ?? []);
+  // A comment being written is just another annotation, so it appears exactly
+  // where it will be posted instead of in a panel somewhere else.
+  const annotations = draft
+    ? [
+        ...findingAnnotations,
+        {
+          id: 'draft',
+          path: draft.path,
+          side: draft.side,
+          line: draft.line,
+          marker: <span className="text-accent-500">✎</span>,
+          body: (
+            <LineComposer
+              draft={draft}
+              busy={pr.busy}
+              onCancel={() => setDraft(null)}
+              onSubmit={async (body, severity) => {
+                await pr.addFinding({ file: draft.path, side: draft.side, line: draft.line, body, severity });
+                setDraft(null);
+              }}
+            />
+          ),
+        },
+      ]
+    : findingAnnotations;
 
   if (!pr.pr) return pr.error ? <Page><ErrorBar error={pr.error} /></Page> : <PageLoading />;
 
@@ -57,7 +94,13 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
       <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
         <div className="flex min-w-0 flex-col gap-4">
           {review ? (
-            <ReviewLead pr={pr} canAct={pr.canAct} onRun={() => void pr.analyze()} />
+            <ReviewLead
+              pr={pr}
+              canAct={pr.canAct}
+              onRun={(opts) => void pr.analyze(opts)}
+              focusedFinding={focusedFinding}
+              onFocusFinding={setFocusedFinding}
+            />
           ) : (
             <>
               <article className="card max-h-[360px] overflow-y-auto">
@@ -75,12 +118,27 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
                   busy={pr.busy}
                   onApply={(acct) => void pr.applyReview(acct)}
                   onDismiss={() => void pr.dismissReview()}
+                  onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
+                  focusedFinding={focusedFinding}
+                  onFocusFinding={setFocusedFinding}
                 />
               ) : null}
             </>
           )}
 
-          <PrChanges fetchFiles={fetchFiles} />
+          <PrChanges
+            fetchFiles={fetchFiles}
+            annotations={annotations}
+            focusedAnnotationId={focusedFinding}
+            onFocusAnnotation={setFocusedFinding}
+            onExpandContext={expandContext}
+            {...(pr.canAct && p.state === 'open'
+              ? {
+                  onAddComment: (path: string, side: 'LEFT' | 'RIGHT', line: number) =>
+                    setDraft({ path, side, line }),
+                }
+              : {})}
+          />
 
           <PrChecks
             repo={repo}
@@ -106,10 +164,56 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
   );
 }
 
+/**
+ * Depth changes how the agent works (and how long it runs); strictness only
+ * decides how much of what it found starts selected. They are offered together
+ * because the pair is the whole configuration of a review.
+ */
+function ReviewLauncher({ onRun }: { onRun: (opts: ReviewOptions) => void }): JSX.Element {
+  const [depth, setDepth] = useState<ReviewDepth>('in-depth');
+  const [strictness, setStrictness] = useState<ReviewStrictness>('balanced');
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <select className="input w-auto text-xs" value={depth} onChange={(e) => setDepth(e.target.value as ReviewDepth)} aria-label="Review depth">
+        <option value="in-depth">In depth (line by line)</option>
+        <option value="high-level">High level (architecture)</option>
+      </select>
+      <select
+        className="input w-auto text-xs"
+        value={strictness}
+        onChange={(e) => setStrictness(e.target.value as ReviewStrictness)}
+        aria-label="Review strictness"
+      >
+        <option value="blockers-only">Blockers only</option>
+        <option value="balanced">Balanced</option>
+        <option value="pedantic">Pedantic</option>
+      </select>
+      <button className="btn" onClick={() => onRun({ depth, strictness })}>
+        Run AI review
+      </button>
+      <LaneNote className="basis-full text-center" />
+    </div>
+  );
+}
+
 /** In review mode the AI verdict is the hero — reviewing / verdict / empty. */
-function ReviewLead({ pr, canAct, onRun }: { pr: UsePr; canAct: boolean; onRun: () => void }): JSX.Element {
+function ReviewLead({
+  pr,
+  canAct,
+  onRun,
+  focusedFinding,
+  onFocusFinding,
+}: {
+  pr: UsePr;
+  canAct: boolean;
+  onRun: (opts?: ReviewOptions) => void;
+  focusedFinding: string | null;
+  onFocusFinding: (id: string | null) => void;
+}): JSX.Element {
   if (pr.review) {
-    return (
+    // A manual draft is not an answer to "has this been reviewed" — the button
+    // to actually run one stays offered underneath it.
+    const card = (
       <PrReview
         review={pr.review}
         canAct={canAct}
@@ -117,21 +221,25 @@ function ReviewLead({ pr, canAct, onRun }: { pr: UsePr; canAct: boolean; onRun: 
         emphasis="hero"
         onApply={(acct) => void pr.applyReview(acct)}
         onDismiss={() => void pr.dismissReview()}
+        onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
+        focusedFinding={focusedFinding}
+        onFocusFinding={onFocusFinding}
       />
+    );
+    if (pr.review.runId !== null) return card;
+    return (
+      <div className="flex flex-col gap-4">
+        {card}
+        {canAct ? <ReviewLauncher onRun={onRun} /> : null}
+      </div>
     );
   }
   if (pr.analyzing) return <ReviewingStage />;
   return (
     <EmptyState
       title="No AI review yet"
-      hint="Run an AI review — it reads the diff and CI status, then proposes a verdict you can post to GitHub."
-      action={
-        canAct ? (
-          <button className="btn" onClick={onRun}>
-            Run AI review
-          </button>
-        ) : undefined
-      }
+      hint="An agent reads the diff and CI status, then proposes findings anchored to the lines they concern. You choose which ones get posted to GitHub."
+      action={canAct ? <ReviewLauncher onRun={onRun} /> : undefined}
     />
   );
 }
@@ -147,7 +255,12 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
     aiActions.push({
       label: data.analyzing ? 'Reviewing…' : data.review ? 'Re-run AI review' : 'AI review',
       disabled: data.analyzing,
-      onSelect: () => void data.analyze(),
+      onSelect: () => void data.analyze({ depth: 'in-depth' }),
+    });
+    aiActions.push({
+      label: 'Quick review (high level)',
+      disabled: data.analyzing,
+      onSelect: () => void data.analyze({ depth: 'high-level' }),
     });
     if (pr.state === 'open' && pr.checks?.state === 'failing') {
       aiActions.push({ label: 'Fix failing checks', disabled: data.agentBusy !== null, onSelect: () => void data.fixChecks() });
@@ -218,11 +331,15 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
         />
       ) : null}
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-        <h1 className="min-w-0 flex-1 text-xl leading-snug font-semibold">
-          <CopyText value={`#${pr.number}`} className="dim mr-1.5 align-baseline font-normal">
+        {/* One line: a wrapped title pushes the whole page down and the toolbar
+            beside it out of reach. The full text is in the tooltip. */}
+        <h1 className="flex min-w-0 flex-1 items-baseline gap-1.5 text-xl leading-snug font-semibold">
+          <CopyText value={`#${pr.number}`} className="dim shrink-0 align-baseline font-normal">
             #{pr.number}
           </CopyText>
-          {pr.title}
+          <span className="min-w-0 truncate" title={pr.title}>
+            {pr.title}
+          </span>
         </h1>
         <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Pull request actions">
           {aiActions.length > 0 ? (
@@ -290,6 +407,7 @@ function RunAgentModal({
             onChange={(e) => setInstructions(e.target.value)}
             autoFocus
           />
+          <LaneNote className="mt-1 block" />
         </Field>
         <p className="dim text-[13px]">
           The agent works in a worktree on the PR&apos;s branch; you review the diff and approve before anything is

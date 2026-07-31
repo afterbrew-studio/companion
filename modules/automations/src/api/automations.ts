@@ -8,6 +8,7 @@ import type {
   Checkouts,
   GhIssue,
   GhPull,
+  GhReviewComment,
   GitHubClient,
   GitHubSync,
   Orchestrator,
@@ -182,6 +183,22 @@ export class Automations {
           // (failures per pipeline are caught + logged inside autoRun).
           if (ownerId) this.pipelines.autoRunForPr(repo, number, ownerId);
         }
+      }
+    }
+    // The agent's own replies arrive as this same event. Every rule that stops
+    // it answering itself (our own logins, replies only, our own threads only,
+    // a per-thread cap) lives in the reply path, which holds the data to apply
+    // them; this branch only decides that the repo opted in.
+    if (eventName === 'pull_request_review_comment' && action === 'created') {
+      const pr = payload.pull_request as GhPull | undefined;
+      const comment = payload.comment as GhReviewComment | undefined;
+      if (pr?.number && comment && automationOwnerId && repoRow?.review_replies === 1) {
+        const number = pr.number;
+        void this.prReviews
+          .replyToReviewComment(repo, number, comment, automationOwnerId)
+          .catch((err) =>
+            this.automationFailed(repo, `Review reply failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
+          );
       }
     }
     // CI is the fastest-moving thing on a PR and the only one that used to

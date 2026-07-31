@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, DiffView, Spinner } from '@moxxy/companion-sdk/ui';
+import { ChevronDown, DiffView, Spinner, type DiffAnnotation } from '@moxxy/companion-sdk/ui';
 import type { PrFileChange } from '../../../contract/index.js';
 
 /**
@@ -25,13 +25,29 @@ interface Loaded {
 export function PrChanges({
   fetchFiles,
   fetchDiff,
+  annotations = [],
+  focusedAnnotationId = null,
+  onFocusAnnotation,
+  onAddComment,
+  onExpandContext,
 }: {
   fetchFiles?: () => Promise<{ files: PrFileChange[]; truncated: boolean }>;
   fetchDiff?: () => Promise<string>;
+  annotations?: readonly DiffAnnotation[];
+  focusedAnnotationId?: string | null;
+  onFocusAnnotation?: (id: string) => void;
+  onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
+  onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
 }): JSX.Element {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState(false);
   const [open, setOpen] = useState(false);
+
+  // Selecting a finding has to open the section it lives in, or the jump lands
+  // on a collapsed panel and looks like nothing happened.
+  useEffect(() => {
+    if (focusedAnnotationId) setOpen(true);
+  }, [focusedAnnotationId]);
 
   useEffect(() => {
     let alive = true;
@@ -80,13 +96,27 @@ export function PrChanges({
           </span>
         ) : null}
         {data && data.files === 0 ? <span className="dim">no file changes</span> : null}
+        {annotations.length > 0 ? (
+          <span className="badge-warn">
+            {annotations.length} finding{annotations.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
         <span className="flex-1" />
         {hasChanges ? <ChevronDown open={open} className="dim size-4 shrink-0" /> : null}
       </button>
 
       {open && data ? (
         <div className="mt-3 flex flex-col gap-2">
-          {data.diff.trim() ? <DiffView diff={data.diff} /> : null}
+          {data.diff.trim() ? (
+            <DiffView
+              diff={data.diff}
+              annotations={annotations}
+              focusedAnnotationId={focusedAnnotationId}
+              {...(onFocusAnnotation ? { onFocusAnnotation } : {})}
+              {...(onAddComment ? { onAddComment } : {})}
+              {...(onExpandContext ? { onExpandContext } : {})}
+            />
+          ) : null}
           {data.hidden > 0 ? (
             <p className="dim text-xs">
               {data.hidden} file{data.hidden === 1 ? '' : 's'} not shown (binary or too large to diff).

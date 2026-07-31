@@ -8,6 +8,10 @@
  * server-side handler; adding a step kind = one union member + one handler.
  */
 
+// Type-only, so this leaves no runtime edge back to the barrel that re-exports
+// this file.
+import type { ReviewDepth, ReviewPostMode, ReviewStrictness } from './index.js';
+
 export type PipelineType = 'pr' | 'issue' | 'platform';
 
 export type PipelineStepKind =
@@ -108,7 +112,18 @@ export interface AiReviewStep extends BaseStep {
     /** Post the review to GitHub when it completes. */
     readonly post: boolean;
     /** When the step itself counts as failed. */
-    readonly failOn: 'request_changes' | 'high_risk' | 'never';
+    readonly failOn: 'request_changes' | 'high_risk' | 'blocker' | 'never';
+    /**
+     * How the agent reviews, and how much it reports. All three are optional
+     * because pipelines saved before anchored reviews existed carry a config
+     * without them; absent means the review's own defaults.
+     */
+    readonly depth?: ReviewDepth;
+    readonly strictness?: ReviewStrictness;
+    /** Adversarial second pass. Defaults to on for in-depth reviews. */
+    readonly verify?: boolean;
+    /** How much of the review `post` publishes. Absent means summary + inline. */
+    readonly postMode?: ReviewPostMode;
   };
 }
 

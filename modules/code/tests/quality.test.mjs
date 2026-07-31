@@ -76,3 +76,9 @@ test('the table name is the caller’s own, never interpolated from a request', 
   assert.match(outcomeSql('pr_reviews'), /FROM pr_reviews t/);
   assert.match(outcomeSql('triage_results'), /FROM triage_results t/);
 });
+
+test('a manual review draft is not counted as an agent verdict', () => {
+  // A draft a person started carries no run. Counting one as accepted would
+  // report the reviewer's own comments back to them as the agent's accuracy.
+  assert.match(outcomeSql('pr_reviews'), /run_id != ''/);
+});

@@ -11,6 +11,7 @@ const automationSchema = z.object({
   staleSweep: z.boolean().optional(),
   prGate: z.boolean().optional(),
   autoMerge: z.boolean().optional(),
+  reviewReplies: z.boolean().optional(),
 });
 
 const presetSchema = z.object({ preset: z.enum(['oss', 'internal', 'watch']) });
@@ -102,13 +103,17 @@ export default defineRoutes((ctx) => {
         if (body.staleSweep !== undefined) code.repos.setAutomation(fullName, 'stale_enabled', body.staleSweep);
         if (body.prGate !== undefined) code.repos.setAutomation(fullName, 'pr_gate', body.prGate);
         if (body.autoMerge !== undefined) code.repos.setAutomation(fullName, 'auto_merge', body.autoMerge);
+        if (body.reviewReplies !== undefined) {
+          code.repos.setAutomation(fullName, 'review_replies', body.reviewReplies);
+        }
         const row = code.repos.get(fullName)!;
         const anyEnabled =
           row.auto_triage === 1 ||
           row.digest_enabled === 1 ||
           row.stale_enabled === 1 ||
           row.pr_gate === 1 ||
-          row.auto_merge === 1;
+          row.auto_merge === 1 ||
+          row.review_replies === 1;
         code.repos.setAutomationOwner(fullName, anyEnabled ? user!.username : null);
         ctx.broadcast({ t: 'repos.changed' });
         return { repo: code.repos.getRecord(fullName)! };

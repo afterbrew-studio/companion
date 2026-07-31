@@ -80,8 +80,8 @@ export class ReposStore {
       .prepare(
         `SELECT r.full_name, r.owner, r.name, rw.workspace_id, r.github_account_id, r.runner_id,
                 r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage,
-                r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.webhook_secret,
-                r.automation_owner_id
+                r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.review_replies,
+                r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
          WHERE rw.workspace_id = ? ORDER BY r.full_name`,
       )
@@ -93,8 +93,8 @@ export class ReposStore {
       .prepare(
         `SELECT r.full_name, r.owner, r.name, rw.workspace_id, r.github_account_id, r.runner_id,
                 r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage,
-                r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.webhook_secret,
-                r.automation_owner_id
+                r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.review_replies,
+                r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
          WHERE r.full_name = ? AND rw.workspace_id = ?`,
       )
@@ -111,7 +111,7 @@ export class ReposStore {
 
   setAutomation(
     fullName: string,
-    field: 'auto_triage' | 'digest_enabled' | 'stale_enabled' | 'pr_gate' | 'auto_merge',
+    field: 'auto_triage' | 'digest_enabled' | 'stale_enabled' | 'pr_gate' | 'auto_merge' | 'review_replies',
     value: boolean,
   ): void {
     this.db.prepare(`UPDATE repos SET ${field} = ? WHERE full_name = ?`).run(value ? 1 : 0, fullName);
@@ -221,7 +221,7 @@ export class ReposStore {
         `SELECT r.full_name, r.owner, r.name, MIN(rw.workspace_id) AS workspace_id,
                 r.github_account_id, r.runner_id, r.default_branch, r.private, r.clone_ready,
                 r.last_sync_at, r.auto_triage, r.digest_enabled, r.stale_enabled, r.pr_gate,
-                r.auto_merge, r.webhook_secret, r.automation_owner_id
+                r.auto_merge, r.review_replies, r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
          WHERE rw.workspace_id IN (${placeholders})
          GROUP BY r.full_name
@@ -265,6 +265,7 @@ export interface RepoRow {
   stale_enabled: number;
   pr_gate: number;
   auto_merge: number;
+  review_replies: number;
   webhook_secret: string | null;
   webhook_owner_id?: string | null;
   webhook_account_id?: string | null;
@@ -295,6 +296,7 @@ export function rowToRepo(row: RepoRow): RepoRecord {
     staleSweepEnabled: row.stale_enabled === 1,
     prGateEnabled: row.pr_gate === 1,
     autoMergeEnabled: row.auto_merge === 1,
+    reviewRepliesEnabled: row.review_replies === 1,
     webhookConfigured: row.webhook_secret !== null,
     automationOwnerId: row.automation_owner_id ?? null,
   };

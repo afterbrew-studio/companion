@@ -1037,7 +1037,7 @@ ${acceptance}${previous}${specSection}
       // Publish the verdict on the PR: the audit trail, and what a
       // review-fix run reads its feedback from.
       try {
-        await this.code.prReviews.apply(result.id, undefined, task.createdBy);
+        await this.code.prReviews.apply(result.id, { userId: task.createdBy });
       } catch (err) {
         this.store.insertEvent(taskId, 'review_post_failed', String(err).slice(0, 300));
       }

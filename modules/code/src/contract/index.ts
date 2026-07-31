@@ -3,10 +3,12 @@ import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import type { ChecksSnapshot } from './checks.js';
+import type { DiffSide } from './diff-anchors.js';
 import type { CodeService } from '../api/code-service.js';
 
 export * from './checks.js';
 export * from './pipelines.js';
+export * from './diff-anchors.js';
 
 /**
  * module-code contract slice — the GitHub-facing domain: repositories + the
@@ -90,6 +92,12 @@ export interface RepoRecord {
   readonly prGateEnabled: boolean;
   /** Auto-merge open PRs that are green + human-approved + AI-reviewed low risk. */
   readonly autoMergeEnabled: boolean;
+  /**
+   * Answer in thread when a PR author replies to one of the agent's inline
+   * review comments. The only switch here that makes an agent speak publicly on
+   * someone else's pull request, so it is off until a maintainer turns it on.
+   */
+  readonly reviewRepliesEnabled: boolean;
   /** Set once a webhook secret was generated (receiver active). */
   readonly webhookConfigured: boolean;
   /** Profile responsible for unattended repo automation; null means paused/unclaimed. */
@@ -323,19 +331,130 @@ export interface PrReviewVerdict {
   readonly summary: string;
   readonly risk: 'low' | 'medium' | 'high';
   readonly recommendation: 'approve' | 'request_changes' | 'comment';
+  /**
+   * Finding TITLES only, and a denormalized view at that: the findings
+   * themselves live in their own table, addressed as `PrReviewResult.findings`.
+   * Kept written so consumers predating anchored findings (the board's review
+   * card) keep rendering; new code must read the structured findings instead.
+   */
   readonly findings: ReadonlyArray<string>;
   readonly reviewBody: string;
+}
+
+/** How hard the review agent looks; also decides whether findings are anchored. */
+export type ReviewDepth = 'high-level' | 'in-depth';
+
+/**
+ * How much noise a review is allowed to surface. Applied as a severity floor
+ * when findings are stored — deliberately NOT enforced by prompt wording alone,
+ * which a model routes around by relabelling a nit as a blocker to smuggle it
+ * past the instruction. Everything is kept; the floor only decides what starts
+ * selected, so the reviewer can reveal the rest without a second run.
+ */
+export type ReviewStrictness = 'blockers-only' | 'balanced' | 'pedantic';
+
+export type FindingSeverity = 'blocker' | 'major' | 'minor' | 'nit';
+
+/** Where a finding stands on its way to becoming a GitHub review comment. */
+export type FindingState = 'proposed' | 'included' | 'rejected' | 'posted';
+
+export type FindingVerification = 'unverified' | 'confirmed' | 'refuted';
+
+/** A finding's position in the diff; null on a finding that has none. */
+export interface DiffAnchorRef {
+  readonly file: string;
+  readonly side: DiffSide;
+  readonly line: number;
+  /** Start of a multi-line range; null anchors a single line. */
+  readonly startLine: number | null;
+}
+
+/**
+ * One reviewable point, which becomes at most one GitHub review comment.
+ *
+ * Knows nothing about pull requests: `reviewId` is its only parent, so the same
+ * row shape serves a review of a local branch diff when that lands.
+ */
+export interface ReviewFinding {
+  readonly id: string;
+  readonly reviewId: string;
+  /** Which reviewer produced it. `native` is the built-in agent. */
+  readonly source: string;
+  readonly anchor: DiffAnchorRef | null;
+  readonly severity: FindingSeverity;
+  readonly title: string;
+  readonly reason: string;
+  readonly impact: string;
+  readonly suggestion: string;
+  /** Literal replacement text for the anchored range; null when there is none. */
+  readonly suggestedPatch: string | null;
+  readonly confidence: number;
+  readonly state: FindingState;
+  readonly verification: FindingVerification;
+  readonly verificationNote: string | null;
+  readonly rejectionReason: string | null;
+  readonly githubCommentId: number | null;
+  readonly createdAt: number;
 }
 
 export interface PrReviewResult {
   readonly id: string;
   readonly repo: string;
   readonly prNumber: number;
-  readonly runId: string;
+  /**
+   * The agent run behind this review, or null when a person started the draft
+   * themselves to leave their own comments. Null is also what distinguishes the
+   * two in the UI: a manual draft has no risk or recommendation to show.
+   */
+  readonly runId: string | null;
   readonly status: 'pending' | 'applied' | 'dismissed' | 'failed';
   readonly verdict: PrReviewVerdict | null;
   readonly error: string | null;
   readonly createdAt: number;
+  /**
+   * The head commit the review was computed against. Anchors are only valid
+   * against this commit, so publishing checks it against the PR's current head
+   * rather than trusting that nothing was pushed meanwhile. Null on rows that
+   * predate anchoring.
+   */
+  readonly headSha: string | null;
+  readonly depth: ReviewDepth;
+  readonly strictness: ReviewStrictness;
+  /** Empty on list payloads; hydrated for detail views. */
+  readonly findings: ReadonlyArray<ReviewFinding>;
+}
+
+/** Most severe first, so a floor is an index comparison. */
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = ['blocker', 'major', 'minor', 'nit'];
+
+const STRICTNESS_FLOOR: Record<ReviewStrictness, FindingSeverity> = {
+  'blockers-only': 'blocker',
+  balanced: 'minor',
+  pedantic: 'nit',
+};
+
+/** Whether a finding clears the strictness floor, i.e. starts out selected. */
+export function meetsStrictness(severity: FindingSeverity, strictness: ReviewStrictness): boolean {
+  return FINDING_SEVERITIES.indexOf(severity) <= FINDING_SEVERITIES.indexOf(STRICTNESS_FLOOR[strictness]);
+}
+
+/**
+ * How much of a review is published.
+ *
+ * `comments` exists because the per-line remarks are often the whole value and
+ * the write-up above them is noise on somebody else's pull request; `summary`
+ * for the opposite case, where the prose is the point and inline comments would
+ * clutter the diff.
+ */
+export type ReviewPostMode = 'full' | 'comments' | 'summary';
+
+/** What a caller may choose when starting a review. */
+export interface ReviewOptions {
+  readonly depth?: ReviewDepth;
+  readonly strictness?: ReviewStrictness;
+  /** Run the adversarial second pass. Defaults to true for in-depth. */
+  readonly verify?: boolean;
+  readonly context?: string;
 }
 
 // ---------- Triage -------------------------------------------------------------

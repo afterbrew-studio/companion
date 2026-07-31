@@ -4,7 +4,7 @@ import type { ReposStore } from './repos-store.js';
 import type { IssuesStore } from './issues-store.js';
 import type { PrsStore } from './prs-store.js';
 import type { TriageStore } from './triage-store.js';
-import type { PrReviewsStore } from './pr-reviews-store.js';
+import type { PrReviewFindingsStore, PrReviewsStore } from './pr-reviews-store.js';
 import type { PipelinesStore } from './pipelines-store.js';
 import type { PipelineSecretsStore } from './pipeline-secrets-store.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
@@ -26,6 +26,7 @@ export class CodeStore {
   readonly prs: PrsStore;
   readonly triage: TriageStore;
   readonly prReviews: PrReviewsStore;
+  readonly prReviewFindings: PrReviewFindingsStore;
   readonly pipelines: PipelinesStore;
   readonly pipelineSecrets: PipelineSecretsStore;
   readonly githubAccounts: GithubAccountsStore;
@@ -41,6 +42,7 @@ export class CodeStore {
     prs: PrsStore;
     triage: TriageStore;
     prReviews: PrReviewsStore;
+    prReviewFindings: PrReviewFindingsStore;
     pipelines: PipelinesStore;
     pipelineSecrets: PipelineSecretsStore;
     githubAccounts: GithubAccountsStore;
@@ -55,6 +57,7 @@ export class CodeStore {
     this.prs = opts.prs;
     this.triage = opts.triage;
     this.prReviews = opts.prReviews;
+    this.prReviewFindings = opts.prReviewFindings;
     this.pipelines = opts.pipelines;
     this.pipelineSecrets = opts.pipelineSecrets;
     this.githubAccounts = opts.githubAccounts;

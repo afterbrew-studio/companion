@@ -3,7 +3,7 @@ import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
 import { TriageStore } from './triage-store.js';
-import { PrReviewsStore } from './pr-reviews-store.js';
+import { PrReviewFindingsStore, PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
 import { PipelineSecretsStore } from './pipeline-secrets-store.js';
 import { GithubAccountsStore } from './github-accounts-store.js';
@@ -13,6 +13,7 @@ import { GitHubSync } from './github-sync.js';
 import { PrChecks } from './pr-checks.js';
 import { Triage } from './triage.js';
 import { PrReviews } from './pr-reviews.js';
+import { ReviewChat } from './review-chat.js';
 import { Fixes } from './fixes.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
@@ -36,6 +37,11 @@ export default defineServices((ctx) => {
   operate.registerRunTask({ id: 'code.implement', label: 'Implement runs', placeable: true, hint: 'proposal implementations — worktree goal runs' });
   operate.registerRunTask({ id: 'code.triage', label: 'Issue triage', placeable: false });
   operate.registerRunTask({ id: 'code.pr-review', label: 'PR reviews', placeable: false });
+  // Separate from the review itself so a cheaper model can be pinned to it:
+  // an in-depth review spawns one of these per serious finding.
+  operate.registerRunTask({ id: 'code.review-verify', label: 'Review verification', placeable: false });
+  operate.registerRunTask({ id: 'code.review-chat', label: 'Review discussions', placeable: false });
+  operate.registerRunTask({ id: 'code.review-reply', label: 'Review replies', placeable: false });
   operate.registerRunTask({ id: 'code.ci-analysis', label: 'CI analyses', placeable: false });
   operate.registerRunTask({ id: 'code.pipeline', label: 'Pipeline agents', placeable: false });
 
@@ -59,6 +65,7 @@ export default defineServices((ctx) => {
   // Stores, in the legacy store/db.ts construction order.
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);
+  const prReviewFindingsStore = new PrReviewFindingsStore(ctx.db);
   const githubAccountsStore = new GithubAccountsStore(ctx.db);
   const reposStore = new ReposStore(ctx.db, workspace);
   const issuesStore = new IssuesStore(ctx.db, triageStore, githubAccountsStore);
@@ -72,6 +79,7 @@ export default defineServices((ctx) => {
     prs: prsStore,
     triage: triageStore,
     prReviews: prReviewsStore,
+    prReviewFindings: prReviewFindingsStore,
     pipelines: pipelinesStore,
     pipelineSecrets: pipelineSecretsStore,
     githubAccounts: githubAccountsStore,
@@ -162,6 +170,7 @@ export default defineServices((ctx) => {
     prChecks,
     ctx.broadcast,
   );
+  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, ctx.broadcast);
   const fixes = new Fixes(
     store,
     operate.orchestrator,
@@ -217,6 +226,7 @@ export default defineServices((ctx) => {
     sync,
     triage,
     prReviews,
+    reviewChat,
     prChecks,
     fixes,
     pipelines,

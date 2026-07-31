@@ -9,7 +9,7 @@ import type { CommentRecord, PrFileChange, RepoPermission } from '../contract/in
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
-import { PrReviewsStore } from './pr-reviews-store.js';
+import { PrReviewFindingsStore, PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
 import { toStat } from './quality.js';
 import { GitHubError } from './github-client.js';
@@ -33,6 +33,37 @@ const labelsSchema = z.object({ labels: z.array(z.string().trim().min(1).max(50)
 // ---------- prs ----------
 
 const mergeSchema = z.object({ method: z.enum(['merge', 'squash', 'rebase']).default('squash') });
+const reviewOptionsSchema = z.object({
+  depth: z.enum(['high-level', 'in-depth']).optional(),
+  strictness: z.enum(['blockers-only', 'balanced', 'pedantic']).optional(),
+  verify: z.boolean().optional(),
+});
+const applyReviewSchema = z.object({
+  findingIds: z.array(z.string().min(1)).max(200).optional(),
+  mode: z.enum(['full', 'comments', 'summary']).optional(),
+});
+const reviewChatSchema = z.object({
+  findingId: z.string().min(1).nullish(),
+  text: z.string().trim().min(1).max(8000),
+});
+const addFindingSchema = z.object({
+  file: z.string().min(1).max(400),
+  side: z.enum(['LEFT', 'RIGHT']).default('RIGHT'),
+  line: z.number().int().positive(),
+  startLine: z.number().int().positive().nullish(),
+  body: z.string().trim().min(1).max(16_000),
+  severity: z.enum(['blocker', 'major', 'minor', 'nit']).optional(),
+});
+const chatAskSchema = z.object({
+  requestId: z.string().min(1),
+  response: z.record(z.unknown()),
+});
+const findingPatchSchema = z.object({
+  state: z.enum(['included', 'rejected', 'proposed']).optional(),
+  rejectionReason: z.string().max(2000).optional(),
+  reason: z.string().max(4000).optional(),
+  suggestion: z.string().max(4000).optional(),
+});
 /** Generous cap — a custom agent objective may carry pasted logs or specs. */
 const prAgentSchema = z.object({ instructions: z.string().trim().min(8).max(16_000) });
 
@@ -135,6 +166,7 @@ export default defineRoutes((ctx) => {
   // read exactly what the services write.
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);
+  const prReviewFindingsStore = new PrReviewFindingsStore(ctx.db);
   const pipelinesStore = new PipelinesStore(ctx.db);
   // Reports are workspace-owned; module-workspace registers the store below us.
   const reports = ctx.services.get('reports');
@@ -801,7 +833,7 @@ export default defineRoutes((ctx) => {
         await requirePersonalRepoAccess(user, fullName);
         return {
           pr,
-          review: prReviewsStore.latest(fullName, pr.number) ?? null,
+          review: code.prReviews.latestWithFindings(fullName, pr.number),
           pipelineRuns: pipelinesStore.listRunsForPr(fullName, pr.number),
           ciAnalysis: reports.latestFor(fullName, pr.number, 'ci-analysis'),
         };
@@ -1082,10 +1114,11 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/analyze',
       access: 'prs:act',
-      handler: ({ params, user }) => {
+      body: reviewOptionsSchema,
+      handler: ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         void code.prReviews
-          .analyzePr(fullName, pr.number, user!.username)
+          .analyzePr(fullName, pr.number, user!.username, body)
           .catch((err) => log.warn('pr analysis failed', { fullName, number: pr.number, err: String(err) }));
         return accepted({ queued: true });
       },
@@ -1150,13 +1183,15 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/pr-reviews/:id/apply',
       access: 'prs:act',
-      handler: async ({ params, query, user }) => {
+      body: applyReviewSchema,
+      handler: async ({ params, body, query, user }) => {
         await requirePrReview(user, params.id);
-        const { repo, number } = await code.prReviews.apply(
-          params.id,
-          query.get('account') ?? undefined,
-          user!.username,
-        );
+        const { repo, number } = await code.prReviews.apply(params.id, {
+          ...(query.get('account') ? { accountId: query.get('account')! } : {}),
+          userId: user!.username,
+          ...(body.findingIds ? { findingIds: body.findingIds } : {}),
+          ...(body.mode ? { mode: body.mode } : {}),
+        });
         await code.sync.syncPr(repo, number, user!.username);
         return { ok: true };
       },
@@ -1169,6 +1204,122 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         await requirePrReview(user, params.id);
         code.prReviews.dismiss(params.id);
+        return { ok: true };
+      },
+    }),
+
+    /**
+     * A slice of a changed file at the PR head, for expanding the diff beyond
+     * its hunks. Served from the local clone, so it costs no GitHub quota.
+     */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/prs/:number/file',
+      access: 'prs:read',
+      handler: async ({ params, query, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
+        const path = query.get('path');
+        if (!path) throw badRequest('path is required');
+        const from = Math.max(1, Number(query.get('from') ?? 1));
+        const to = Math.max(from, Number(query.get('to') ?? from));
+        // A whole file could be enormous; the caller only ever renders a gap.
+        if (to - from > 500) throw badRequest('range too large');
+        let content: string;
+        try {
+          content = await operate.checkouts.readPullRequestFile(fullName, pr.number, path, user!.username);
+        } catch {
+          // No clone, a path that does not exist at this head, an expired ref:
+          // none of these are worth failing the page over, and the caller
+          // simply does not get to expand.
+          return { from, lines: [] as string[] };
+        }
+        return { from, lines: content.split('\n').slice(from - 1, to) };
+      },
+    }),
+
+    /** Start (or reuse) an empty draft review to hang your own comments on. */
+    route({
+      method: 'POST',
+      path: '/api/repos/:owner/:name/prs/:number/review-draft',
+      access: 'prs:act',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        await requirePersonalRepoAccess(user, fullName);
+        return { review: code.prReviews.createManualReview(fullName, pr.number) };
+      },
+    }),
+
+    /** The reviewer's own inline comment, joining the same draft review. */
+    route({
+      method: 'POST',
+      path: '/api/pr-reviews/:id/findings',
+      access: 'prs:act',
+      body: addFindingSchema,
+      handler: async ({ params, body, user }) => {
+        await requirePrReview(user, params.id);
+        return { finding: await code.prReviews.addFinding(params.id, body, user!.username) };
+      },
+    }),
+
+    /**
+     * Talk to the agent about its own review. One conversation per review; the
+     * message names which finding it is about, and the UI threads them.
+     */
+    route({
+      method: 'POST',
+      path: '/api/pr-reviews/:id/chat',
+      access: 'prs:act',
+      body: reviewChatSchema,
+      handler: async ({ params, body, user }) => {
+        await requirePrReview(user, params.id);
+        return code.reviewChat.ask(params.id, body.findingId ?? null, body.text, user!.username);
+      },
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/pr-reviews/:id/chat',
+      access: 'prs:read',
+      handler: async ({ params, query, user }) => {
+        await requirePrReview(user, params.id);
+        const before = Number(query.get('before'));
+        return {
+          run: code.reviewChat.runFor(params.id),
+          pendingAsks: code.reviewChat.pendingAsks(params.id),
+          history: await code.reviewChat.history(params.id, Number.isFinite(before) && before > 0 ? before : null, 100),
+        };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/pr-reviews/:id/chat/ask',
+      access: 'prs:act',
+      body: chatAskSchema,
+      handler: async ({ params, body, user }) => {
+        await requirePrReview(user, params.id);
+        await code.reviewChat.respondAsk(params.id, body.requestId, body.response);
+        return { ok: true };
+      },
+    }),
+
+    /**
+     * The reviewer's call on ONE finding: arm it, drop it with a reason, or
+     * reword what will be posted. Guarded by the same access as publishing the
+     * review — deciding on one comment is strictly narrower than deciding on
+     * all of them.
+     */
+    route({
+      method: 'PATCH',
+      path: '/api/pr-review-findings/:id',
+      access: 'prs:act',
+      body: findingPatchSchema,
+      handler: async ({ params, body, user }) => {
+        const finding = prReviewFindingsStore.get(params.id);
+        if (!finding) throw notFound(`finding ${params.id} not found`);
+        await requirePrReview(user, finding.reviewId);
+        code.prReviews.updateFinding(params.id, body);
         return { ok: true };
       },
     }),

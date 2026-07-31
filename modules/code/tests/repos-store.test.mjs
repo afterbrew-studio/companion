@@ -13,7 +13,8 @@ function fixture() {
       clone_ready INTEGER NOT NULL DEFAULT 0, last_sync_at INTEGER,
       auto_triage INTEGER NOT NULL DEFAULT 0, digest_enabled INTEGER NOT NULL DEFAULT 0,
       stale_enabled INTEGER NOT NULL DEFAULT 0, pr_gate INTEGER NOT NULL DEFAULT 0,
-      auto_merge INTEGER NOT NULL DEFAULT 0, webhook_secret TEXT,
+      auto_merge INTEGER NOT NULL DEFAULT 0, review_replies INTEGER NOT NULL DEFAULT 0,
+      webhook_secret TEXT,
       webhook_owner_id TEXT, webhook_account_id TEXT, automation_owner_id TEXT
     );
     CREATE TABLE repo_workspaces (

@@ -199,6 +199,7 @@ function RepoCard({
     { label: 'auto-triage', on: repo.autoTriage },
     { label: 'PR gate', on: repo.prGateEnabled },
     { label: 'auto-merge', on: repo.autoMergeEnabled },
+    { label: 'review replies', on: repo.reviewRepliesEnabled },
     { label: 'digest', on: repo.digestEnabled },
     { label: 'stale sweep', on: repo.staleSweepEnabled },
     { label: 'webhook', on: repo.webhookConfigured },

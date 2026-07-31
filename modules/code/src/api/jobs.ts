@@ -99,13 +99,18 @@ export default defineJobs({
     operate.orchestrator.registerResumer('triage', (a) =>
       code.triage.triageIssue(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),
     );
+    // Every option the review ran with is replayed: a resumed review that
+    // silently reverted to the defaults would return a different verdict than
+    // the one the user asked for.
     operate.orchestrator.registerResumer('pr-review', (a) =>
-      code.prReviews.analyzePr(
-        str(a, 'repo'),
-        num(a, 'number'),
-        str(a, 'userId'),
-        typeof a.context === 'string' ? { context: a.context } : undefined,
-      ),
+      code.prReviews.analyzePr(str(a, 'repo'), num(a, 'number'), str(a, 'userId'), {
+        ...(typeof a.context === 'string' ? { context: a.context } : {}),
+        ...(a.depth === 'high-level' || a.depth === 'in-depth' ? { depth: a.depth } : {}),
+        ...(a.strictness === 'blockers-only' || a.strictness === 'balanced' || a.strictness === 'pedantic'
+          ? { strictness: a.strictness }
+          : {}),
+        ...(typeof a.verify === 'boolean' ? { verify: a.verify } : {}),
+      }),
     );
     operate.orchestrator.registerResumer('ci-analysis', (a) =>
       code.prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),

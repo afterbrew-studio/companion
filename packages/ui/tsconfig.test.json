@@ -7,5 +7,5 @@
     "outDir": "tests/dist",
     "rootDir": "src"
   },
-  "include": ["src/markdown.tsx"]
+  "include": ["src/markdown.tsx", "src/diff-view.tsx"]
 }
