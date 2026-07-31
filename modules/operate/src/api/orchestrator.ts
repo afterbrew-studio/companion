@@ -11,10 +11,14 @@ import type {
   ModelCatalogProvider,
   RunKind,
   RunnerFallback,
+  LaneModels,
+  RunLane,
   RunQueueSnapshot,
   RunRecord,
 } from '../contract/index.js';
-import { log, paths, type DaemonConfig } from '@moxxy/companion-services';
+import { laneKey } from '../contract/index.js';
+import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
+import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
 import { rowToRun } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
@@ -69,6 +73,21 @@ const KIND_PRIORITY: Record<RunKind, number> = {
 function taskPinKey(task: string): string {
   return `modelPin:task:${task}`;
 }
+
+/** The lane a person's own actions run in. Per profile, so two maintainers differ. */
+function userLaneKey(username: string): string {
+  return `lane:user:${username}`;
+}
+
+/** A lane's default model, and its pin for one task. */
+function laneModelKey(lane: RunLane): string {
+  return `lane:model:${laneKey(lane)}`;
+}
+function lanePinKey(lane: RunLane, task: string): string {
+  return `lane:pin:${laneKey(lane)}:${task}`;
+}
+
+const AUTO_LANE: RunLane = { runnerId: null, harness: null };
 
 /**
  * Is the queue stuck rather than merely busy?
@@ -482,6 +501,14 @@ export class Orchestrator implements RunnerEventSink {
     /** Feature-level task id (RunTaskDescriptor) — always server-assigned by
      *  the owning feature, never client input, so filters can't be dodged. */
     task?: string | null;
+    /** Agent runtime to start under; omitted lets the lane or the machine decide. */
+    harness?: string | null;
+    /**
+     * The acting person's lane, captured by a caller that queues work. Read
+     * here only when absent, because by the time a queued job runs the request
+     * that started it is long gone and `currentUser()` answers null.
+     */
+    lane?: RunLane;
   }): Promise<RunRecord> {
     // Before every other check and before any side effect: a run refused for
     // budget must leave no row, no worktree and no queue entry behind.
@@ -530,25 +557,46 @@ export class Orchestrator implements RunnerEventSink {
     // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
     // worktree/clone from a one-shot) pins to the local runner; otherwise pick
     // a ready runner for the repo and let its backend allocate a scratch dir.
-    const runnerId =
-      opts.runnerId !== undefined
-        ? opts.runnerId
-        : opts.cwd !== undefined
+    const lane = opts.lane ?? this.actingLane();
+    // A lane pins a machine by choice, so it skips placement — and with it the
+    // checks placement would have run. They are made here instead: a preference
+    // may outrank another preference, never a machine's own refusal.
+    if (lane.runnerId !== null && opts.runnerId === undefined && opts.cwd === undefined) {
+      const refusal = this.runners.refusalFor(lane.runnerId, {
+        task: opts.task ?? null,
+        repo: opts.repo ?? null,
+        userId: opts.userId ?? null,
+      });
+      if (refusal) throw new Error(`${refusal}. Change where your runs go, or pick Auto.`);
+    }
+    const runnerId = resolveRunner({
+      ...(opts.runnerId !== undefined ? { explicit: opts.runnerId } : {}),
+      hasPreparedCwd: opts.cwd !== undefined,
+      laneRunnerId: lane.runnerId,
+      placed:
+        opts.runnerId !== undefined || opts.cwd !== undefined || lane.runnerId !== null
           ? null
           : this.placeRun(opts.repo ?? null, {
               model: opts.model,
               preferredModel: opts.preferredModel,
               userId: opts.userId,
               task: opts.task,
-            });
-    // Model: explicit override → the unit of work's standing preference → the
-    // task's instance pin, the last two applied only where the machine can
-    // serve them. null falls through to the daemon default at dispatch, and to
-    // the runner's own moxxy default when even that cannot be served there.
-    const model =
-      opts.model ??
-      this.servableHere(runnerId, opts.preferredModel ?? null) ??
-      this.servablePin(runnerId, opts.task ?? null);
+            }),
+    });
+    // Model: a choice just made → the unit of work's standing preference → this
+    // lane's pin for the task → this lane's default → the task's instance pin.
+    // Everything but the explicit choice is narrowed to what the machine can
+    // serve; null falls through to the daemon default at dispatch, and to the
+    // runner's own default when even that cannot be served there.
+    const model = resolveModel({
+      ...(opts.model !== undefined ? { explicit: opts.model } : {}),
+      preferred: this.servableHere(runnerId, opts.preferredModel ?? null),
+      lanePin: isAutoLane(lane)
+        ? null
+        : this.servableHere(runnerId, opts.task ? (this.laneModels(lane, [opts.task]).pins[opts.task] ?? null) : null),
+      laneDefault: isAutoLane(lane) ? null : this.servableHere(runnerId, this.laneModels(lane, []).defaultModel),
+      taskPin: this.servablePin(runnerId, opts.task ?? null),
+    });
     const backend = this.runners.backend(runnerId);
     // Reserve the slot atomically: persist the provisioning row (carrying
     // runner_id) BEFORE the first await, so a concurrent createRun's placement
@@ -569,7 +617,12 @@ export class Orchestrator implements RunnerEventSink {
       runnerId,
       userId: opts.userId ?? null,
       task: opts.task ?? null,
-      harness: this.runners.harnessFor(runnerId).id,
+      harness: resolveHarness({
+        ...(opts.harness !== undefined ? { explicit: opts.harness } : {}),
+        laneHarness: lane.harness,
+        offered: this.runners.harnessIdsOn(runnerId),
+        machineDefault: this.runners.harnessFor(runnerId).id,
+      }),
       verification: null,
       createdAt: now,
       updatedAt: now,
@@ -746,6 +799,58 @@ export class Orchestrator implements RunnerEventSink {
   /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
   setTaskModelPin(task: string, model: string | null): void {
     this.store.settings.set(taskPinKey(task), model?.trim() ?? '');
+  }
+
+  /** Where this person's own actions run. Unset is auto placement. */
+  userLane(username: string): RunLane {
+    const raw = this.store.settings.get(userLaneKey(username));
+    if (!raw) return AUTO_LANE;
+    try {
+      const parsed = JSON.parse(raw) as Partial<RunLane>;
+      return {
+        runnerId: typeof parsed.runnerId === 'string' && parsed.runnerId ? parsed.runnerId : null,
+        harness: typeof parsed.harness === 'string' && parsed.harness ? parsed.harness : null,
+      };
+    } catch {
+      // A hand-edited or half-written value must not break every run this
+      // person starts; auto is the answer that always works.
+      return AUTO_LANE;
+    }
+  }
+
+  setUserLane(username: string, lane: RunLane): void {
+    this.store.settings.set(userLaneKey(username), JSON.stringify(lane));
+  }
+
+  /** The models set on one lane, as the settings page reads and writes them. */
+  laneModels(lane: RunLane, tasks: readonly string[]): LaneModels {
+    const pins: Record<string, string> = {};
+    for (const task of tasks) {
+      const pinned = this.store.settings.get(lanePinKey(lane, task));
+      if (pinned && pinned.trim() !== '') pins[task] = pinned;
+    }
+    const fallback = this.store.settings.get(laneModelKey(lane));
+    return { defaultModel: fallback && fallback.trim() !== '' ? fallback : null, pins };
+  }
+
+  setLaneDefaultModel(lane: RunLane, model: string | null): void {
+    this.store.settings.set(laneModelKey(lane), model?.trim() ?? '');
+  }
+
+  setLaneTaskPin(lane: RunLane, task: string, model: string | null): void {
+    this.store.settings.set(lanePinKey(lane, task), model?.trim() ?? '');
+  }
+
+  /**
+   * The lane a run should honour: the acting person's, and only when a person
+   * is acting. Work outside an HTTP request (webhooks, schedules, the queue's
+   * own retries) sees no user and therefore no lane, which is the whole point:
+   * unattended runs must not change behaviour because a maintainer switched
+   * their sidebar.
+   */
+  private actingLane(): RunLane {
+    const user = currentUser();
+    return user ? this.userLane(user.username) : AUTO_LANE;
   }
 
   /**
@@ -937,8 +1042,12 @@ export class Orchestrator implements RunnerEventSink {
     /** Called after the queue item becomes a concrete run. */
     onStarted?: (runId: string) => void;
   }): Promise<{ runId: string; finalMessage: string | null }> {
+    // Captured HERE, while the request that asked for this run is still on the
+    // stack. The job below may not start for minutes, by which point there is
+    // no request context left to read it from.
+    const lane = this.actingLane();
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
-      const run = await this.createRun(opts);
+      const run = await this.createRun({ ...opts, lane });
       try {
         opts.onStarted?.(run.id);
       } catch (err) {

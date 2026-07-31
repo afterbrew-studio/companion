@@ -120,19 +120,12 @@ function NothingConfigured({ machines }: { machines: readonly CatalogMachine[] }
   return (
     <EmptyState
       title="No machine has provider credentials yet"
-      hint="Agents run on a machine, and the model key lives there. Configure one on a machine you already have, or attach a machine that is already set up."
+      hint="Agents run on a machine, and the model key lives there. Configure the provider on the machine itself, the way its agent runtime expects, and it is picked up here on the next probe."
       action={
         can('runners:connect') ? (
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {target ? (
-              <a className="btn" href={`#/runners/${target.id}`}>
-                Configure a provider
-              </a>
-            ) : null}
-            <a className={target ? 'btn-ghost' : 'btn'} href="#/runners">
-              Attach a machine
-            </a>
-          </div>
+          <a className="btn" href="#/runners">
+            Attach a machine
+          </a>
         ) : null
       }
     />

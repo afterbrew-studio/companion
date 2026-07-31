@@ -121,6 +121,25 @@ export class RunsStore {
    * placement so a batch spreads across runners by the runs already assigned to
    * each — not just the gateways that have actually spawned yet.
    */
+  /**
+   * What actually ran each task last, and on what.
+   *
+   * A settings page can state what a task WOULD use, but only the run rows say
+   * what it DID: a pin can be dropped at dispatch and a lane can send work
+   * somewhere else, and neither is visible from the settings alone.
+   */
+  lastByTask(): Map<string, { harness: string; model: string | null; at: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT task, harness, model, created_at FROM runs t1
+          WHERE task IS NOT NULL
+            AND created_at = (SELECT MAX(created_at) FROM runs t2 WHERE t2.task = t1.task)
+          GROUP BY task`,
+      )
+      .all() as Array<{ task: string; harness: string; model: string | null; created_at: number }>;
+    return new Map(rows.map((r) => [r.task, { harness: r.harness, model: r.model, at: r.created_at }]));
+  }
+
   activeCountsByRunner(): Map<string | null, number> {
     const rows = this.db
       .prepare(

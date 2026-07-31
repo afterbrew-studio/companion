@@ -192,7 +192,31 @@ export class Checkouts {
     token?: string,
     username?: string | null,
   ): Promise<T> {
-    const worktree = await this.locked(fullName, async () => {
+    const worktree = await this.addPullRequestWorktree(fullName, key, number, baseBranch, token, username);
+    try {
+      return await fn(worktree);
+    } finally {
+      await this.removeWorktree(fullName, worktree).catch(() => undefined);
+    }
+  }
+
+  /**
+   * The same checkout, kept until the caller removes it.
+   *
+   * For work that outlives one turn — a conversation about a review that must
+   * be able to read the code between questions — where re-cloning the pull
+   * request per question would dominate the cost of answering it. The caller
+   * owns the teardown; forgetting it leaks a worktree.
+   */
+  async addPullRequestWorktree(
+    fullName: string,
+    key: string,
+    number: number,
+    baseBranch: string,
+    token?: string,
+    username?: string | null,
+  ): Promise<string> {
+    return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
       const credential = await this.creds(fullName, token, username);
       await this.git(
@@ -208,12 +232,27 @@ export class Checkouts {
       );
       return wt;
     });
+  }
 
-    try {
-      return await fn(worktree);
-    } finally {
-      await this.removeWorktree(fullName, worktree).catch(() => undefined);
-    }
+  /**
+   * One file as it stands at a pull request's head, read from the local clone.
+   *
+   * This is what makes "show me more context" free: the objects are already on
+   * disk, so expanding a diff costs a `git show` rather than an API call and a
+   * slice of the rate limit. The ref is fetched first because a pull request
+   * head is not a branch this clone tracks.
+   */
+  async readPullRequestFile(fullName: string, number: number, path: string, username?: string | null): Promise<string> {
+    return this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      await this.git(
+        ['fetch', '--quiet', 'origin', `refs/pull/${number}/head`],
+        clone,
+        await this.creds(fullName, undefined, username),
+      );
+      const { stdout } = await this.git(['show', `FETCH_HEAD:${path}`], clone);
+      return stdout;
+    });
   }
 
   async removeWorktree(fullName: string, worktreePath: string): Promise<void> {

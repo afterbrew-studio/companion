@@ -22,6 +22,20 @@ import type {
   TokenUsage,
   UpdateRunnerRequest,
 } from '../contract/index.js';
+import type { LaneModels, RunLane } from '../contract/index.js';
+
+/** What the lane picker renders: the choice, the choices, and the models on it. */
+export interface LaneSnapshot {
+  readonly lane: RunLane;
+  readonly machines: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly status: string;
+    readonly harnesses: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+  }>;
+  readonly models: LaneModels;
+  readonly servable: ReadonlyArray<{ readonly id: string }>;
+}
 
 /**
  * module-operate's REST surface, carved from the legacy `lib/api.ts`: the agent
@@ -71,11 +85,13 @@ export const operateApi = {
   updateRunner: (id: string, body: UpdateRunnerRequest) =>
     patch<{ runner: RunnerRecord }>(`/api/runners/${id}`, body),
   deleteRunner: (id: string) => del<{ ok: true }>(`/api/runners/${id}`),
+  // ---- the lane: which machine + runtime this person's own actions run on ----
+  lane: () => request<LaneSnapshot>('/api/me/lane'),
+  setLane: (lane: RunLane) => put<LaneSnapshot>('/api/me/lane', lane),
+  setLaneModel: (lane: RunLane, model: string | null, task?: string) =>
+    put<LaneSnapshot>('/api/me/lane/model', { lane, model, ...(task ? { task } : {}) }),
+
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
-  // Adding a provider answers with the machine's re-probe: health and catalog
-  // as it reports them now. The key travels one way only.
-  addRunnerProvider: (id: string, spec: ProvisionProviderSpec) =>
-    post<RunnerProbeResult>(`/api/runners/${id}/providers`, spec),
   updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
 
   // providers + models (grouped per machine; machines fetch their own catalog)
@@ -85,9 +101,17 @@ export const operateApi = {
   refreshProviderCatalog: () => post<ProviderCatalog>('/api/providers/refresh'),
 
   // model pins (per registered task)
-  taskModels: () => request<TaskModelSnapshot>('/api/settings/task-models'),
-  setTaskModel: (taskId: string, model: string | null) =>
-    put<TaskModelSnapshot>('/api/settings/task-models', { pins: { [taskId]: model } }),
+  taskModels: (lane?: RunLane) =>
+    request<TaskModelSnapshot>(
+      `/api/settings/task-models${lane?.runnerId && lane.harness ? `?runner=${encodeURIComponent(lane.runnerId)}&harness=${encodeURIComponent(lane.harness)}` : ''}`,
+    ),
+  setTaskModel: (taskId: string, model: string | null, lane?: RunLane) =>
+    put<TaskModelSnapshot>('/api/settings/task-models', {
+      pins: { [taskId]: model },
+      ...(lane?.runnerId && lane.harness ? { lane } : {}),
+    }),
+  setLaneDefaultModel: (lane: RunLane, model: string | null) =>
+    put<TaskModelSnapshot>('/api/settings/task-models', { pins: {}, lane, defaultModel: model }),
 
   // skills
   listSkills: () => request<{ skills: SkillFile[] }>('/api/skills'),

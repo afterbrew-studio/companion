@@ -185,11 +185,17 @@ export class GatewayPool {
       }
     };
 
+    // A stop tears both children down and only then drops the run, so without
+    // this the exit handlers below fire while the run is still live and report
+    // every deliberate shutdown as a failure.
+    let stopping = false;
+
     const handle: GatewayHandle = {
       runId: opts.runId,
       port,
       client,
       stop: async () => {
+        stopping = true;
         client.close();
         await stopChild(mobile);
         await stopChild(serve);
@@ -200,11 +206,18 @@ export class GatewayPool {
     // Either process dying makes the run non-live; tear the sibling down too.
     for (const child of [serve, mobile]) {
       void child.exited.then(({ code, signal }) => {
-        if (this.live.has(opts.runId)) {
-          log.warn('gateway process exited', { runId: opts.runId, code, signal });
-          void stopChild(child === serve ? mobile : serve);
-          this.drop(opts.runId);
+        if (stopping) {
+          log.debug('gateway process exited on request', { runId: opts.runId, code, signal });
+          return;
         }
+        if (!this.live.has(opts.runId)) return;
+        // Nobody asked for this. A clean exit still ends the run, but only a
+        // crash is something the operator has to do anything about.
+        const meta = { runId: opts.runId, code, signal };
+        if (code === 0 && signal === null) log.info('gateway process exited on its own', meta);
+        else log.warn('gateway process exited', meta);
+        void stopChild(child === serve ? mobile : serve);
+        this.drop(opts.runId);
       });
     }
 
