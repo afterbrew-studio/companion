@@ -28,8 +28,19 @@ That is the whole install. It carries the daemon and the built SPA, sets up an
 admin account on first launch, and opens <http://127.0.0.1:8901>. Docker, Coolify
 and source builds are in [`docs/install.md`](docs/install.md).
 
-Agent runs additionally need the [moxxy](https://github.com/moxxy-ai/moxxy) CLI,
-which Companion drives as an external runtime.
+Agent runs additionally need an agent CLI, which Companion drives as an external
+runtime and which holds your model provider credentials rather than Companion
+doing so. Three are supported today, chosen per runner machine:
+
+| Harness | Notes |
+|---|---|
+| [moxxy](https://github.com/moxxy-ai/moxxy) | The fullest set: interactive approvals, and switching model, provider or mode mid-session. |
+| [Claude Code](https://claude.com/claude-code) | Policy-based approvals; models come with the CLI. |
+| [Codex](https://developers.openai.com/codex) | Policy-based approvals; reports its own model list per session. |
+
+A runner advertises whichever it has installed, so a machine with only Claude
+Code is a perfectly good runner. Adding a harness is one descriptor plus a
+client, so the list is expected to grow.
 
 ## What it does
 
@@ -41,8 +52,9 @@ Everything is scoped to a **workspace**, a named group of repositories.
   labels, comments.
 - **Proposals** capture a business request, analyse it, and turn an approved one
   into an implementation run.
-- **Agent runs** show every moxxy-backed run and its lifecycle, live, under a
-  monthly spend ceiling that refuses work rather than surprising you.
+- **Agent runs** show every run and its lifecycle, live, whichever harness it
+  landed on, under a monthly spend ceiling that refuses work rather than
+  surprising you.
 - **Automations** react to webhooks and schedules, and the inbox can be
   forwarded to Slack, Discord, ntfy or a signed webhook of your own.
 
