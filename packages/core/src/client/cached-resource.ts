@@ -108,7 +108,9 @@ export function useCachedResource<T>(key: string | null, load: () => Promise<T>)
       if (liveKey.current !== key) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (liveKey.current === key) setRevalidating(false);
+      // Cleared unconditionally: keying it on the still-current key left the
+      // indicator lit for good when the key went null mid-flight.
+      setRevalidating(false);
     }
   }, [key, load]);
 
@@ -126,7 +128,10 @@ export function useCachedResource<T>(key: string | null, load: () => Promise<T>)
 
   return {
     data,
-    loading: data === null && error === null,
+    // A null key means "nothing to fetch", which is answered, not pending. It
+    // used to read as loading forever, so the documented hold-off usage gave
+    // the caller a page that spun instead of rendering its empty state.
+    loading: key !== null && data === null && error === null,
     revalidating,
     error,
     setError,

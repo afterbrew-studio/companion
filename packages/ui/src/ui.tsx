@@ -758,16 +758,6 @@ export function Skeleton({ className = '' }: { className?: string }): JSX.Elemen
 }
 
 /** N placeholder rows for a list still waiting on its feed (drop inside ListCard). */
-/**
- * A row's place in the entrance cascade, as the custom property `.row-in` reads.
- *
- * Capped, because the stagger exists to make arrival legible, not to make the
- * hundredth row wait two seconds for its turn.
- */
-export function rowDelay(index: number, cap = 12): Record<string, string> {
-  return { '--row-index': String(Math.min(index, cap)) };
-}
-
 export function RowsSkeleton({ rows = 4 }: { rows?: number }): JSX.Element {
   return (
     <div aria-hidden className="flex flex-col">
@@ -783,6 +773,16 @@ export function RowsSkeleton({ rows = 4 }: { rows?: number }): JSX.Element {
       ))}
     </div>
   );
+}
+
+/**
+ * A row's place in the entrance cascade, as the custom property `.row-in` reads.
+ *
+ * Capped, because the stagger exists to make arrival legible, not to make the
+ * hundredth row wait two seconds for its turn.
+ */
+export function rowDelay(index: number, cap = 12): Record<string, string> {
+  return { '--row-index': String(Math.min(index, cap)) };
 }
 
 // A pleasant deterministic bar series for chart placeholders.

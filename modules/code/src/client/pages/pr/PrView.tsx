@@ -169,7 +169,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
  * decides how much of what it found starts selected. They are offered together
  * because the pair is the whole configuration of a review.
  */
-function ReviewLauncher({ onRun }: { onRun: (opts: ReviewOptions) => void }): JSX.Element {
+function ReviewLauncher({ onRun, busy = false }: { onRun: (opts: ReviewOptions) => void; busy?: boolean }): JSX.Element {
   const [depth, setDepth] = useState<ReviewDepth>('in-depth');
   const [strictness, setStrictness] = useState<ReviewStrictness>('balanced');
   return (
@@ -188,8 +188,8 @@ function ReviewLauncher({ onRun }: { onRun: (opts: ReviewOptions) => void }): JS
         <option value="balanced">Balanced</option>
         <option value="pedantic">Pedantic</option>
       </select>
-      <button className="btn" onClick={() => onRun({ depth, strictness })}>
-        Run AI review
+      <button className="btn" disabled={busy} onClick={() => onRun({ depth, strictness })}>
+        {busy ? 'Reviewing…' : 'Run AI review'}
       </button>
       <LaneNote className="basis-full text-center" />
     </div>
@@ -227,10 +227,13 @@ function ReviewLead({
       />
     );
     if (pr.review.runId !== null) return card;
+    // A manual draft must not hide that an agent review is running: this branch
+    // returns before the `analyzing` check below, so without this the reviewer
+    // clicks Run, the page does not change at all, and they click again.
     return (
       <div className="flex flex-col gap-4">
         {card}
-        {canAct ? <ReviewLauncher onRun={onRun} /> : null}
+        {pr.analyzing ? <ReviewingStage /> : canAct ? <ReviewLauncher onRun={onRun} busy={pr.analyzing} /> : null}
       </div>
     );
   }

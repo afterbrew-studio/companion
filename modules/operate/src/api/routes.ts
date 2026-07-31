@@ -209,6 +209,13 @@ export default defineRoutes((ctx) => {
           status: runner.health.status,
           harnesses: runner.harnesses.map((h) => ({ id: h.id, label: h.label })),
         })),
+      // Which of those the Task models page can actually represent. It lists
+      // shared machines only, so a link from a personal one would arrive at a
+      // lane its "Applies to" select has no option for.
+      lanesConfigurable: op.runners
+        .list()
+        .filter((runner) => runner.enabled && runner.ownerId === null)
+        .map((runner) => runner.id),
       models: op.orchestrator.laneModels(lane, op.runTaskDescriptors().map((t) => t.id)),
       // Scoped to the chosen lane, so a page asking "what will this run on"
       // gets the models that lane can actually serve, not the instance's union.

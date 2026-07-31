@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { log } from '@moxxy/companion-sdk/server';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AskRequest } from '@moxxy/companion-sdk/agents';
+import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import type { ReviewFinding } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Checkouts, Orchestrator } from './operate-types.js';
@@ -59,7 +59,7 @@ export class ReviewChat {
     return run ? { id: run.id, live: run.live } : null;
   }
 
-  async history(reviewId: string, before: number | null, limit: number): Promise<unknown> {
+  async history(reviewId: string, before: number | null, limit: number): Promise<HistorySegment> {
     const runId = this.runIdFor(reviewId);
     if (!runId) return { events: [], prevCursor: null };
     return this.orchestrator.loadHistory(runId, before, limit);
@@ -104,7 +104,10 @@ export class ReviewChat {
     const result = await this.orchestrator.sendPrompt(runId, prompt);
     if (!primed) this.store.settings.set(primedKey, '1');
     this.lastActivity.set(runId, Date.now());
-    this.broadcast({ t: 'prs.changed', repo: review.repo });
+    // Deliberately no broadcast: asking a question changes no pull request,
+    // review or finding, and `prs.changed` reloads the workspace PR list, three
+    // overview feeds and the quality page in every connected browser. The chat
+    // reads its own answer off the run's event stream.
     // The run id travels back so the caller can subscribe to the stream: on the
     // first message of a conversation there is nothing else to learn it from.
     return { ...result, runId };

@@ -35,6 +35,8 @@ export interface LaneSnapshot {
   }>;
   readonly models: LaneModels;
   readonly servable: ReadonlyArray<{ readonly id: string }>;
+  /** Machines whose lanes the Task models page can edit. */
+  readonly lanesConfigurable?: readonly string[];
 }
 
 /**

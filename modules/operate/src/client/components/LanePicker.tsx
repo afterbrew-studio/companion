@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { onServerMessage } from '@moxxy/companion-core/client';
 import { ChevronDown, GearIcon, Portal, Spinner } from '@moxxy/companion-ui';
 import type { RunLane } from '../../contract/index.js';
+import { useAuth } from '@companion/module-core/client';
 import { operateApi as api, type LaneSnapshot } from '../api.js';
 
 /**
@@ -17,6 +18,7 @@ export function LanePicker({ rail }: { rail?: boolean }): JSX.Element | null {
   const [snapshot, setSnapshot] = useState<LaneSnapshot | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { can } = useAuth();
   const [filter, setFilter] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
@@ -96,6 +98,15 @@ export function LanePicker({ rail }: { rail?: boolean }): JSX.Element | null {
         .filter((m) => m.harnesses.length > 0)
     : machines;
 
+  /**
+   * Task models is gated on `settings:manage` while this picker is a slot every
+   * user who can read runs sees, and its lane list carries shared machines
+   * only. Offering the cog otherwise is a dead end on "no access", or a page
+   * whose "Applies to" select has no option for the lane it was handed.
+   */
+  const canConfigure = (m: (typeof machines)[number]): boolean =>
+    can('settings:manage') && (snapshot.lanesConfigurable?.includes(m.id) ?? true);
+
   const menu = (
     <div
       // Sized to the sidebar rather than to a guess: the aside is `w-56` with
@@ -141,7 +152,11 @@ export function LanePicker({ rail }: { rail?: boolean }): JSX.Element | null {
               hint={m.status === 'online' ? undefined : 'runs will queue'}
               active={lane.runnerId === m.id && lane.harness === h.id}
               onSelect={() => void choose({ runnerId: m.id, harness: h.id })}
-              configureHref={`#/task-models?runner=${encodeURIComponent(m.id)}&harness=${encodeURIComponent(h.id)}`}
+              {...(canConfigure(m)
+                ? {
+                    configureHref: `#/task-models?runner=${encodeURIComponent(m.id)}&harness=${encodeURIComponent(h.id)}`,
+                  }
+                : {})}
               onNavigate={() => {
                 setOpen(false);
                 setFilter('');

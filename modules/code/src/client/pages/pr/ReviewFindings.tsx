@@ -208,9 +208,12 @@ function FindingCard({
       className={`card anim-in py-3 transition-colors ${focused ? 'ring-1 ring-accent-500/60' : ''} ${
         rejected || finding.verification === 'refuted' ? 'opacity-60' : ''
       }`}
-      onClick={onFocus}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Only the card's own header and body select it. On the whole <li> this
+          fired for the Discuss button, the chat box and the drop-reason input
+          too, so opening the discussion immediately scrolled the page away from
+          it and expanded a diff nobody asked to see. */}
+      <div className="flex flex-wrap items-center gap-2" onClick={onFocus}>
         <span className={`size-2 shrink-0 rounded-full ${SEVERITY_DOT[finding.severity]}`} aria-hidden />
         {finding.source === 'human' ? <span className="badge">your comment</span> : null}
         <span className={SEVERITY_CLS[finding.severity]}>{finding.severity}</span>

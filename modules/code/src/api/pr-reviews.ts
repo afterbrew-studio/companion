@@ -19,7 +19,7 @@ import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
 import type { OutcomeCounts } from './quality.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
-import { GitHubError, type GhReviewCommentInput, type GitHubClient } from './github-client.js';
+import { GitHubError, type GhPrFile, type GhReviewCommentInput, type GitHubClient } from './github-client.js';
 import { describeChecks, type PrChecks } from './pr-checks.js';
 import {
   reviewCommentTrigger,
@@ -83,7 +83,11 @@ const CHUNK_TIMEOUT_MS = 15 * 60_000;
 
 /** A group reports findings only; the verdict is judged over all of them later. */
 const chunkSchema = z.object({
-  findings: z.array(z.union([modelFindingSchema, z.string()])).max(40).default([]),
+  // Required, not defaulted. `extractModelJson` takes the first balanced object
+  // it finds in prose, so with a default any stray JSON — a quoted
+  // package.json fragment from a pass that wandered off — parsed as a clean
+  // bill of health and that group was recorded as reviewed with nothing found.
+  findings: z.array(z.union([modelFindingSchema, z.string()])).max(40),
 });
 
 /** The verdict, judged from findings alone. */
@@ -173,6 +177,9 @@ export class PrReviews {
           // Said before the work, not after an hour of it: at this size the
           // agent cannot hold the change, and a verdict it produced anyway
           // would be about whatever stayed in its context.
+          // No run row is written for a refusal: `runId` round-trips through
+          // the store as null, which the contract reserves for a draft a PERSON
+          // started, so a refused review would render as "Your review".
           return {
             runId: '',
             verdict: null,
@@ -196,8 +203,7 @@ export class PrReviews {
         };
 
         if (plan.kind === 'chunked') {
-          const chunked = await this.reviewInChunks(cwd, repo, prNumber, userId, briefing, plan.chunks, reviewId, index, strictness);
-          return chunked;
+          return this.reviewInChunks(cwd, repo, prNumber, userId, briefing, plan.chunks, reviewId, index, strictness, verify);
         }
 
         const { runId, finalMessage } = await this.orchestrator.runOneShot({
@@ -259,7 +265,10 @@ export class PrReviews {
       id: reviewId,
       repo,
       prNumber,
-      runId: outcome.runId,
+      // A failed review keeps a non-null runId even when there was no run:
+      // null is reserved for a draft a PERSON started, and a refusal rendering
+      // as "Your review" hides what actually happened.
+      runId: outcome.runId || 'none',
       status: outcome.verdict ? 'pending' : 'failed',
       verdict: outcome.verdict,
       error: outcome.error,
@@ -306,6 +315,7 @@ export class PrReviews {
     reviewId: string,
     index: ReturnType<typeof buildAnchorIndex> | null,
     strictness: ReviewStrictness,
+    verify: boolean,
   ): Promise<{ runId: string; verdict: PrReviewVerdict | null; error: string | null; findings: ReviewFinding[] }> {
     const reported: ModelFinding[] = [];
     const failed: string[] = [];
@@ -346,7 +356,14 @@ export class PrReviews {
       return { runId: firstRunId, verdict: null, error: 'every group of this pull request failed to review', findings: [] };
     }
 
-    const findings = toFindings(reviewId, reported, index, strictness);
+    let findings = toFindings(reviewId, reported, index, strictness);
+    // Split reviews need this MORE than whole ones, not less: no pass saw the
+    // change entire, so the false-positive rate is the highest here of
+    // anywhere. Skipping it silently would have left exactly those findings
+    // unverified, and the gate's confirmed-only filter unsatisfiable.
+    if (verify && findings.length > 0) {
+      findings = await this.verifyFindings(cwd, repo, prNumber, userId, briefing.baseRef, findings);
+    }
     const summary = await this.summarise(cwd, repo, prNumber, userId, briefing, findings, failed);
     return {
       runId: firstRunId,
@@ -367,7 +384,10 @@ export class PrReviews {
     unread: readonly string[],
   ): Promise<PrReviewVerdict> {
     const fallback: PrReviewVerdict = {
-      summary: `Reviewed in ${findings.length === 0 ? 'pieces' : 'pieces'}; ${findings.length} finding(s).`,
+      summary:
+        findings.length === 0
+          ? 'Reviewed in pieces; nothing found worth raising.'
+          : `Reviewed in pieces; ${findings.length} finding(s).`,
       risk: findings.some((f) => f.severity === 'blocker') ? 'high' : 'medium',
       recommendation: findings.some((f) => f.severity === 'blocker') ? 'request_changes' : 'comment',
       findings: findings.map((f) => f.title),
@@ -548,7 +568,7 @@ export class PrReviews {
       line: input.line,
       startLine: input.startLine ?? null,
     };
-    const problem = checkAnchor(buildAnchorIndex(unifiedDiffFromPatches(files)), anchor);
+    const problem = checkAnchor(buildAnchorIndex(unifiedDiffFromPatches(files.map(toFileChange))), anchor);
     // Refused rather than silently demoted to the summary: the reviewer picked
     // this line, and a comment that quietly moves elsewhere is worse than one
     // that says it cannot go there.
@@ -684,7 +704,14 @@ export class PrReviews {
     }
 
     await this.recordPostedComments(client, result, review.id, comments, selected);
-    this.store.prReviews.update(id, 'applied');
+    // Only closed once nothing is left to publish. The gate posts confirmed
+    // blockers and leaves the rest for a human, and marking the review applied
+    // regardless sealed it: every later attempt threw "review is applied, not
+    // pending" and the withheld findings could never be posted at all.
+    const open = this.store.prReviewFindings
+      .listForReview(id)
+      .some((f) => f.state === 'included' || f.state === 'proposed');
+    if (!open) this.store.prReviews.update(id, 'applied');
     this.broadcast({ t: 'prs.changed', repo: result.repo });
     return { repo: result.repo, number: result.prNumber };
   }
@@ -710,7 +737,7 @@ export class PrReviews {
     findings: readonly ReviewFinding[],
   ): Promise<{ comments: GhReviewCommentInput[]; unanchored: ReviewFinding[] }> {
     const { files } = await client.prFiles(result.repo, result.prNumber);
-    const index = buildAnchorIndex(unifiedDiffFromPatches(files));
+    const index = buildAnchorIndex(unifiedDiffFromPatches(files.map(toFileChange)));
     const existing = await client
       .prReviewComments(result.repo, result.prNumber)
       .catch(() => [] as Array<{ path: string; line: number | null; body: string }>);
@@ -1402,6 +1429,21 @@ function composeBody(reviewBody: string, unanchored: readonly ReviewFinding[]): 
     return `- **${SEVERITY_LABEL[f.severity]}** ${f.title}${where}${detail ? `\n  ${detail}` : ''}`;
   });
   return `${reviewBody}${heading}${lines.join('\n')}`;
+}
+
+/**
+ * GitHub's files API spells the rename field `previous_filename`; the
+ * reassembler reads `previousFilename` and accepts it as optional, so passing
+ * the raw rows compiled and silently dropped every old-path alias. An anchor
+ * citing the pre-rename path then validated at review time (the local diff
+ * carries both) and was demoted to a body bullet at publish time.
+ */
+function toFileChange(file: GhPrFile): { filename: string; previousFilename: string | null; patch: string | null } {
+  return {
+    filename: file.filename,
+    previousFilename: file.previous_filename ?? null,
+    patch: file.patch ?? null,
+  };
 }
 
 /** Same file, same line, same opening sentence — said already, do not repeat. */

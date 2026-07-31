@@ -54,7 +54,7 @@ export function ProvidersPage(): JSX.Element {
 
       {detection === null ? null : (
         <>
-          {detection.state === 'none' ? <NothingConfigured machines={machines} /> : null}
+          {detection.state === 'none' ? <NothingConfigured /> : null}
           {detection.state === 'builtin' ? (
             <EmptyState
               title="No machine takes its models from a provider"
@@ -101,22 +101,18 @@ export function ProvidersPage(): JSX.Element {
 }
 
 /**
- * The only honest thing to show when detection came back empty: not "import
- * something", but the two moves that actually put credentials on a machine.
- * Provisioning lives on a machine's own settings page, because the key is sent
- * to that machine's moxxy and stored nowhere else.
+ * The only honest thing to show when detection came back empty. Companion no
+ * longer takes a key and forwards it, so there is nothing here to click that
+ * would add one: the credential is configured on the machine, the way its
+ * agent runtime expects, and the next probe picks it up.
  *
- * Both routes are gated on `runners:connect` while this page is gated on
- * `settings:manage`; a custom role may hold one without the other, and a CTA
- * that lands on "no access" is the dead end this replaced.
+ * What remains is the one move Companion can still make, attaching a machine,
+ * and it is gated on `runners:connect` while this page is gated on
+ * `settings:manage`. A custom role may hold one without the other, so the CTA
+ * is hidden rather than left to land on "no access".
  */
-function NothingConfigured({ machines }: { machines: readonly CatalogMachine[] }): JSX.Element {
+function NothingConfigured(): JSX.Element {
   const { can } = useAuth();
-  // Provisioning runs against the machine, so offer a reachable one that a
-  // credential would actually reach: a built-in-model machine has nowhere to
-  // put one.
-  const usable = machines.filter((m) => m.providerModels);
-  const target = can('runners:connect') ? (usable.find((m) => m.online) ?? usable[0]) : undefined;
   return (
     <EmptyState
       title="No machine has provider credentials yet"

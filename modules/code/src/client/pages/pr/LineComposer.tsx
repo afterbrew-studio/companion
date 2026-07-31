@@ -58,7 +58,9 @@ export function LineComposer({
           if (e.key === 'Escape') onCancel();
           // Enter alone inserts a newline: a review comment is usually more
           // than one line, unlike a chat message.
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit();
+          // The same guard the button carries: `addFinding` makes a GitHub
+          // round trip before it inserts, so a second press lands a duplicate.
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) void submit();
         }}
       />
       <ErrorBar error={error} />

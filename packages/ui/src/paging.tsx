@@ -33,8 +33,11 @@ export function useInfiniteList<T>(
    * who is signed in, and a cache nobody can clear on sign-out is a leak — so
    * the caller owns the storage and passes what it kept.
    *
-   * `seed` must be referentially stable for a given query, or every render
-   * would look like a new list.
+   * `onFirstPage` MUST be referentially stable (memoize it): it is in the fetch
+   * effect's dependency chain, so one that changes identity per render
+   * re-creates the loader, refetches, re-renders and refetches again. `seed`
+   * has no such requirement — it only feeds initial values — which is why the
+   * warning used to sit on the wrong one of the two.
    */
   cache?: {
     readonly seed?: { items: T[]; total: number } | null;

@@ -129,11 +129,15 @@ export class RunsStore {
    * somewhere else, and neither is visible from the settings alone.
    */
   lastByTask(): Map<string, { harness: string; model: string | null; at: number }> {
+    // SQLite's bare-column-with-MAX form: one grouped pass, and the other
+    // columns come from the row that MAX picked. The correlated subquery this
+    // replaces was evaluated once per candidate row against a table with no
+    // index on `task` and one that only grows, so it was quadratic — and the
+    // settings page that calls it refetches on two broadcasts.
     const rows = this.db
       .prepare(
-        `SELECT task, harness, model, created_at FROM runs t1
+        `SELECT task, harness, model, MAX(created_at) AS created_at FROM runs
           WHERE task IS NOT NULL
-            AND created_at = (SELECT MAX(created_at) FROM runs t2 WHERE t2.task = t1.task)
           GROUP BY task`,
       )
       .all() as Array<{ task: string; harness: string; model: string | null; created_at: number }>;
