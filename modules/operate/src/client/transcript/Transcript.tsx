@@ -64,16 +64,23 @@ function BlockView({ block }: { block: Block }): JSX.Element | null {
       );
     }
     case 'reasoning':
+      // Set apart from what the agent SAID and from what it DID: reasoning is
+      // neither, and giving it the same weight as either made a transcript read
+      // as three kinds of statement with equal standing. Folded by default once
+      // it settles, because it is worth having and rarely worth reading.
       return (
         <details
-          className="group shrink-0 self-start border-l-2 border-zinc-200 pl-3 dark:border-zinc-700"
+          className="group shrink-0 self-start rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40"
           open={block.streaming}
         >
-          <summary className="dim flex cursor-pointer list-none items-center gap-1.5 text-xs select-none [&::-webkit-details-marker]:hidden">
-            <span aria-hidden>✳</span> Thinking{block.streaming ? '…' : ''}
-            <span className="text-[10px] opacity-60 group-open:hidden">show</span>
+          <summary className="dim flex cursor-pointer list-none items-center gap-2 text-xs italic select-none [&::-webkit-details-marker]:hidden">
+            <span className={`shrink-0 ${block.streaming ? 'think-pulse' : 'opacity-50'}`} aria-hidden>
+              ✳
+            </span>
+            <span>{block.streaming ? 'Thinking…' : 'Thought about it'}</span>
+            <span className="text-[10px] not-italic opacity-50 group-open:hidden">show</span>
           </summary>
-          <pre className="dim mt-1.5 text-xs whitespace-pre-wrap">{block.text}</pre>
+          <pre className="dim mt-1.5 text-xs whitespace-pre-wrap not-italic">{block.text}</pre>
         </details>
       );
     case 'tool':

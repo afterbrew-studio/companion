@@ -593,6 +593,29 @@
   .skeleton {
     animation: shimmer 1.4s ease-in-out infinite;
   }
+  /* The reasoning marker while a turn is still thinking: a slow breath, not a
+     spinner. It sits in a transcript that may run for minutes and must not
+     compete with the tool rows scrolling past it. */
+  .think-pulse {
+    animation: think-breathe 1.8s ease-in-out infinite;
+  }
+  @keyframes think-breathe {
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: scale(0.92);
+    }
+    50% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .think-pulse {
+      animation: none;
+      opacity: 0.7;
+    }
+  }
   .ai-glow {
     animation: ai-breathe 3.2s ease-in-out infinite;
   }
