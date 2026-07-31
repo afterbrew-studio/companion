@@ -173,8 +173,10 @@ export function Dropdown<T extends string>({
       className={`relative ${className}`}
       onBlur={(e) => {
         // The menu lives in a portal, so DOM containment must check both trees.
+        // A null relatedTarget means focus went nowhere — Safari does that on
+        // every press inside the menu, and closing there eats the option click.
         const next = e.relatedTarget as Node | null;
-        if (!e.currentTarget.contains(next) && !menuRef.current?.contains(next)) setOpen(false);
+        if (next && !e.currentTarget.contains(next) && !menuRef.current?.contains(next)) setOpen(false);
       }}
     >
       <button
@@ -216,6 +218,7 @@ export function Dropdown<T extends string>({
         ? createPortal(
             <div
               ref={menuRef}
+              data-dropdown-menu
               style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? undefined : 'hidden' }}
               className="z-[60] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
             >
@@ -974,11 +977,33 @@ export function FiltersPopover({
   children: ReactNode;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // The panel hosts Dropdowns that portal their menu to <body>, so picking an
+  // option is a press *outside* this subtree. Dismiss on an outside press
+  // instead of on blur: blur fires with a null relatedTarget on every press
+  // inside such a menu, and unmounting there would eat the option's click.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: globalThis.MouseEvent): void => {
+      const t = e.target as Element | null;
+      if (rootRef.current?.contains(t) || t?.closest('[data-dropdown-menu]')) return;
+      setOpen(false);
+    };
+    const id = window.setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
   return (
     <div
+      ref={rootRef}
       className="relative"
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+        const next = e.relatedTarget as Element | null;
+        if (next && !e.currentTarget.contains(next) && !next.closest('[data-dropdown-menu]')) setOpen(false);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') setOpen(false);
