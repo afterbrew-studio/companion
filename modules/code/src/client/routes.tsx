@@ -125,6 +125,14 @@ export const routes = defineClientRoutes([
     component: gated(() => import('./pages/Dashboard.js').then((m) => ({ default: m.DashboardPage })), 'The overview'),
   },
   {
+    match: { prefix: '/needs-attention' },
+    permission: 'issues:read',
+    component: gated(
+      () => import('./pages/NeedsAttention.js').then((m) => ({ default: m.NeedsAttentionPage })),
+      'Needs attention',
+    ),
+  },
+  {
     match: { prefix: '/overview' },
     permission: 'issues:read',
     component: gated(() => import('./pages/Dashboard.js').then((m) => ({ default: m.DashboardPage })), 'The overview'),

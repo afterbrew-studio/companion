@@ -17,6 +17,12 @@ const icons = {
       <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
     </NavIcon>
   ),
+  needsAttention: (
+    <NavIcon>
+      <path d="M18 8.5a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5z" />
+      <path d="M10.5 19a2 2 0 0 0 3 0" />
+    </NavIcon>
+  ),
   issues: (
     <NavIcon>
       <circle cx="12" cy="12" r="8.5" />
@@ -68,6 +74,20 @@ export const nav = defineNav([
     icon: icons.overview,
   },
   {
+    key: 'needs-attention',
+    label: 'Needs attention',
+    hash: '#/needs-attention',
+    // No shortcut: a-y are all claimed, and a meaningless letter is worse than
+    // reaching this from the sidebar or the command palette.
+    permission: 'issues:read',
+    section: 'workspace',
+    // Below Daily Digest (order 10, module-automations): the digest is the
+    // daily read, this is what it points at. The gap tolerates a module that
+    // is not in the build — the shell just closes it up.
+    order: 15,
+    icon: icons.needsAttention,
+  },
+  {
     key: 'issues',
     label: 'Issues',
     hash: '#/issues',
@@ -107,8 +127,10 @@ export const nav = defineNav([
     hash: '#/repos',
     shortcut: 'e',
     permission: 'repos:manage',
-    section: 'code',
-    order: 70,
+    // Under Workspace, not Code: what a workspace CONTAINS, alongside its
+    // overview and digest — the Code group is the work happening inside it.
+    section: 'workspace',
+    order: 20,
     icon: icons.repos,
   },
   {

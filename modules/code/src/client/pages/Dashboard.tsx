@@ -115,8 +115,11 @@ export function DashboardPage(): JSX.Element {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section aria-labelledby="needs-attention">
-          <h2 id="needs-attention" className="mb-2 text-sm font-semibold">
+          <h2 id="needs-attention" className="mb-2 flex items-baseline justify-between text-sm font-semibold">
             Needs attention
+            <a className="linkish text-xs font-normal" href="#/needs-attention">
+              See all
+            </a>
           </h2>
           <ListCard>
             {attentionCount === null ? <RowsSkeleton rows={3} /> : null}
