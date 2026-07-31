@@ -1382,11 +1382,17 @@ export class Orchestrator implements RunnerEventSink {
       // check) misread a dead run as "ran and changed nothing".
       const { kind, message } = event as { kind?: string; message?: string };
       if (kind === 'fatal' && message?.trim()) {
+        const row = this.store.runs.get(runId);
+        // It also ENDS an unattended run: leaving it 'running' lets the turn
+        // ending flip it to 'review', which offers a pull request for work the
+        // agent never did. Attended chats stay live so the human can retry.
+        const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
         this.setStatus(
           runId,
-          this.store.runs.get(runId)?.status ?? 'running',
+          attended ? (row?.status ?? 'running') : 'failed',
           `fatal: ${message.trim().slice(0, 400)}`,
         );
+        if (!attended) this.emitRunChanged(runId);
       }
     }
     this.broadcast({ t: 'event', runId, event });
