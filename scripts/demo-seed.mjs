@@ -86,6 +86,9 @@ for (const table of [
   'pipelines',
   'github_accounts',
   'github_account_workspaces',
+  'pipeline_runs',
+  'pr_reviews',
+  'triage_results',
 ]) {
   db.exec(`DELETE FROM ${table}`);
 }
@@ -169,6 +172,29 @@ const issues = [
   ['acme/mobile-app', 84, 'Bump the minimum supported iOS to 16', 'chore', 'priya-n', 'closed', 4, 8 * DAY],
 ];
 
+/** Bodies for the two the screenshots open; the rest are only ever seen as rows. */
+const BODIES = {
+  412: `Refunds over 10k sit in \`pending\` for hours before they settle. Smaller ones
+clear in seconds, so it looks like a threshold problem rather than load.
+
+**Steps**
+
+1. Issue a refund above the approval threshold on an account.
+2. While it waits for approval, issue any second write on the same account.
+3. The second write does not complete until the first refund is approved.
+
+Happens on staging too, so it is not a production data problem.`,
+  418: `Closes #412.
+
+The pending row is committed on its own transaction before the processor is
+asked to confirm, so the approval wait no longer holds the account's row lock.
+
+Adds \`refund.settlement.test.ts\`, which fails on the old code: it asserts a
+second write on the same account completes while an approval is outstanding.`,
+  417: `Adds \`settlement_currency\` to the ledger export so multi-currency accounts
+can be reconciled without joining back to the account table.`,
+};
+
 // Creation is spread back over the quarter the dashboard charts, so the
 // velocity trends read like a team's history rather than one seeding run.
 insert(
@@ -177,7 +203,7 @@ insert(
     repo,
     number,
     title,
-    body: '',
+    body: BODIES[number] ?? '',
     state,
     labels: JSON.stringify(labels.split(',')),
     author,
@@ -216,9 +242,13 @@ insert(
     base_ref: 'main',
     author,
     url: `https://github.com/${repo}/pull/${number}`,
-    body: '',
+    body: BODIES[number] ?? '',
     draft,
-    head_sha: null,
+    // A head commit is what the checks panel keys off; without one the PR page
+    // has nothing to ask CI about. The PR number rides in the first four
+    // characters so the GitHub stub can answer per pull request, and the CI a
+    // page reports agrees with the summary on its row.
+    head_sha: `${String(number).padStart(4, '0')}${(number * 2_654_435_761).toString(16).padStart(36, '0').slice(0, 36)}`,
     checks: JSON.stringify(check),
     labels: JSON.stringify(labels ? labels.split(',') : []),
     assignees: '[]',
@@ -279,14 +309,117 @@ insert('pipelines', [
     description: 'What every pull request into main has to clear.',
     type: 'pr',
     auto_run: 1,
-    steps: JSON.stringify([
-      { kind: 'checks-gate', name: 'CI is green', onFailure: 'halt', config: { allowPending: false, requireProtectedContexts: true } },
-      { kind: 'ai-review', name: 'AI review', onFailure: 'continue', config: { post: true, failOn: 'request_changes' } },
-      { kind: 'agent', name: 'Check the migration is additive', onFailure: 'halt', config: { prompt: 'Inspect any SQL migration in this diff. Fail if a column or table is dropped or renamed rather than added.' } },
-      { kind: 'label', name: 'Mark it reviewed', onFailure: 'continue', config: { labels: ['reviewed'] } },
-    ]),
+    // Steps are stored as specs: an inline step carries its own definition,
+    // a ref points at the workspace's step library.
+    steps: JSON.stringify(
+      [
+        { kind: 'checks-gate', name: 'CI is green', onFailure: 'halt', config: { allowPending: false, requireProtectedContexts: true } },
+        { kind: 'ai-review', name: 'AI review', onFailure: 'continue', config: { post: true, failOn: 'request_changes' } },
+        { kind: 'agent', name: 'Check the migration is additive', onFailure: 'halt', config: { prompt: 'Inspect any SQL migration in this diff. Fail if a column or table is dropped or renamed rather than added.' } },
+        { kind: 'label', name: 'Mark it reviewed', onFailure: 'continue', config: { labels: ['reviewed'] } },
+      ].map((step) => ({ type: 'inline', step })),
+    ),
     created_at: now - 30 * DAY,
     updated_at: now - 5 * DAY,
+  },
+]);
+
+/** The gate's last two executions, as the PR pages show them: one clean pass,
+ *  one halted on the step that found the problem. */
+const step = (name, kind, status, summary, minutesAgo, detail = null) => ({
+  name,
+  kind,
+  status,
+  summary,
+  detail,
+  startedAt: now - minutesAgo * MIN,
+  finishedAt: now - (minutesAgo - 1) * MIN,
+});
+
+insert('pipeline_runs', [
+  {
+    id: 'plr-demo-418',
+    pipeline_id: 'pipeline-demo-pr-gate',
+    pipeline_name: 'PR gate',
+    target: 'pr',
+    repo: 'acme/payments-api',
+    pr_number: 418,
+    status: 'passed',
+    trigger: 'pr-opened',
+    steps: JSON.stringify([
+      step('CI is green', 'checks-gate', 'passed', '6 checks passed, every required context reported', 34),
+      step('AI review', 'ai-review', 'passed', 'Low risk. Approved and posted to GitHub.', 32),
+      step('Check the migration is additive', 'agent', 'skipped', 'No migration in this diff', 30),
+      step('Mark it reviewed', 'label', 'passed', 'Added label: reviewed', 29),
+    ]),
+    created_at: now - 35 * MIN,
+    finished_at: now - 28 * MIN,
+  },
+  {
+    id: 'plr-demo-417',
+    pipeline_id: 'pipeline-demo-pr-gate',
+    pipeline_name: 'PR gate',
+    target: 'pr',
+    repo: 'acme/payments-api',
+    pr_number: 417,
+    status: 'failed',
+    trigger: 'pr-opened',
+    steps: JSON.stringify([
+      step('CI is green', 'checks-gate', 'failed', '2 of 6 checks failed', 118, 'ledger-export (failure), contract-tests (failure)'),
+      step('AI review', 'ai-review', 'pending', null, 118),
+      step('Check the migration is additive', 'agent', 'pending', null, 118),
+      step('Mark it reviewed', 'label', 'pending', null, 118),
+    ]),
+    created_at: now - 2 * HOUR,
+    finished_at: now - 117 * MIN,
+  },
+]);
+
+insert('pr_reviews', [
+  {
+    id: 'prr-demo-417',
+    repo: 'acme/payments-api',
+    pr_number: 417,
+    run_id: 'run-demo-review-417',
+    status: 'pending',
+    verdict: JSON.stringify({
+      summary:
+        'The export gains a currency column, but the reconciliation job still sums the amount column across rows without grouping by it. Mixed-currency accounts would reconcile to a meaningless total.',
+      risk: 'high',
+      recommendation: 'request_changes',
+      findings: [
+        'reconcile.ts sums `amount` across currencies; group by `settlement_currency` or the total is nonsense.',
+        'The new column is nullable with no backfill, so historic rows export as an empty cell rather than the account default.',
+        'No test covers an account holding two currencies, which is the case this change exists for.',
+      ],
+      reviewBody:
+        'Requesting changes on the reconciliation path. The column itself is fine; what reads it is not.',
+    }),
+    error: null,
+    created_at: now - 2 * HOUR,
+  },
+]);
+
+insert('triage_results', [
+  {
+    id: 'trg-demo-412',
+    repo: 'acme/payments-api',
+    issue_number: 412,
+    run_id: 'run-demo-triage-409',
+    status: 'applied',
+    verdict: JSON.stringify({
+      summary:
+        'Refunds over the approval threshold hold a row lock across the approval wait, so every later write on the same account queues behind a person.',
+      severity: 'high',
+      kind: 'bug',
+      labels: ['bug', 'priority:high', 'area:settlement'],
+      duplicateOf: null,
+      needsInfo: false,
+      draftReply:
+        'Thanks for the report. Confirmed: the lock is held across the approval, which is why only refunds above 10k are affected. Fix is on `companion/fix-412`.',
+    }),
+    error: null,
+    created_at: now - 3 * HOUR,
   },
 ]);
 

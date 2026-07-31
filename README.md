@@ -64,11 +64,12 @@ Everything is scoped to a **workspace**, a named group of repositories.
 - **Automations** react to webhooks and schedules, and the inbox can be
   forwarded to Slack, Discord, ntfy or a signed webhook of your own.
 
-A run is watchable while it works and reviewable when it stops: the transcript is
-the agent's own prompts, reasoning and tool calls, and a finished fix waits on
-its branch with the diff in front of you rather than pushing itself.
+Each of those is a surface you work in rather than a feed you read: an issue
+carries its triage verdict, a pull request its CI, its AI review and the
+pipeline that gated it, and a run its transcript and the diff it left on a
+branch, waiting for you to approve it rather than pushing itself.
 
-![An agent run in review: the diff it produced on its branch, an approve-and-open-PR control, and the transcript of tool calls below it.](docs/media/run.png)
+![A tour of the workspace: issues and one issue with its AI triage, pull requests and one with its diff and CI, an AI review requesting changes, the pipeline that gates them, the agent runs and one run's transcript.](docs/media/tour.gif)
 
 Auth and RBAC are built in. Every REST route declares the permission it requires,
 the SPA hides what your role cannot use, and roles are instance data rather than

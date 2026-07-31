@@ -14,14 +14,16 @@
  * credential below is the one a local first run offers.
  */
 
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9333;
 const OUT = 'docs/media';
+/** Tour frames are intermediates: they become tour.gif, so they stay out of the repo. */
+const FRAMES = '/tmp/companion-demo/frames';
 const LOGIN = { username: 'admin', password: 'admin1234' };
 const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 2 };
 /** Every step key the modules declare: marking them seen keeps the first-run tour off the shots. */
@@ -29,13 +31,25 @@ const ONBOARDING_STEPS = ['welcome', 'connect', 'code', 'workspaces', 'runners',
 
 /**
  * Each shot: the hash route, the file, and what proves the page has rendered.
- * These are the ones the README embeds; any other route works the same way.
+ * `tour` marks the frames that become docs/media/tour.gif; the two that do not
+ * are embedded as stills, where a reader needs to stop and read them.
  */
 const SHOTS = [
   { name: 'overview', hash: '#/overview', awaits: 'Acme' },
-  { name: 'run', hash: '#/runs/run-demo-fix-412', awaits: 'settlement' },
+  { name: 'issues', hash: '#/issues', awaits: 'refunds above', tour: true },
+  { name: 'issue', hash: '#/repos/acme/payments-api/issues/412', awaits: 'threshold problem', tour: true },
+  { name: 'prs', hash: '#/prs', awaits: 'settlement currency', tour: true },
+  { name: 'pr', hash: '#/repos/acme/payments-api/prs/418', awaits: 'Changed files', tour: true, expand: 'Changed files' },
+  { name: 'pr-review', hash: '#/repos/acme/payments-api/prs/417/review', awaits: 'reconcil', tour: true },
+  { name: 'pipelines', hash: '#/pipelines', awaits: 'PR gate', tour: true },
+  { name: 'runs', hash: '#/runs', awaits: 'Triage', tour: true },
+  { name: 'run', hash: '#/runs/run-demo-fix-412', awaits: 'settlement', tour: true },
   { name: 'modules', hash: '#/modules', awaits: 'workspace' },
 ];
+
+/** Seconds each tour frame holds. Long enough to read a heading and a row or two. */
+const FRAME_SECONDS = 2.6;
+const TOUR_WIDTH = 1100;
 
 const base = readArg('--url') ?? 'http://127.0.0.1:8901';
 const theme = readArg('--theme') ?? 'dark';
@@ -73,17 +87,47 @@ try {
     localStorage.setItem('companion.onboarding.seen', ${JSON.stringify(JSON.stringify(ONBOARDING_STEPS))});`);
 
   mkdirSync(OUT, { recursive: true });
+  mkdirSync(FRAMES, { recursive: true });
   for (const shot of SHOTS) {
     await goto(cdp, `${base}/${shot.hash}`, true);
     await settle(cdp, shot.awaits);
+    if (shot.expand) await expand(cdp, shot.expand);
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
-    const file = join(OUT, `${shot.name}${theme === 'light' ? '-light' : ''}.png`);
+    const file = join(shot.tour ? FRAMES : OUT, `${shot.name}${theme === 'light' ? '-light' : ''}.png`);
     writeFileSync(file, Buffer.from(data, 'base64'));
     console.log(`${file}`);
   }
   cdp.close();
 } finally {
   chrome.kill();
+}
+
+if (theme !== 'light') buildTour();
+
+/**
+ * Assemble the tour frames into one GIF. A shared palette across all frames
+ * (rather than one per frame) is what keeps a UI this flat from banding, and
+ * keeps the file small enough to sit in a README.
+ */
+function buildTour() {
+  const frames = SHOTS.filter((shot) => shot.tour).map((shot) => join(FRAMES, `${shot.name}.png`));
+  const list = join(FRAMES, 'frames.txt');
+  // concat demuxer: every frame holds FRAME_SECONDS, and the last one is
+  // repeated because its duration is otherwise ignored.
+  writeFileSync(
+    list,
+    [...frames, frames[frames.length - 1]]
+      .map((frame) => `file '${basename(frame)}'\nduration ${FRAME_SECONDS}`)
+      .join('\n') + '\n',
+  );
+
+  const filters = `scale=${TOUR_WIDTH}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=192[p];[b][p]paletteuse=dither=bayer:bayer_scale=3`;
+  const out = join(OUT, 'tour.gif');
+  execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', list, '-filter_complex', filters, '-loop', '0', out], {
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  rmSync(list, { force: true });
+  console.log(`${out}`);
 }
 
 async function login() {
@@ -164,6 +208,22 @@ async function settle(cdp, needle) {
     await sleep(250);
   }
   console.warn(`  (never saw "${needle}", capturing anyway)`);
+}
+
+/** Open a collapsed section by its heading, so the shot shows its contents. */
+async function expand(cdp, label) {
+  await evaluate(
+    cdp,
+    `(() => {
+      const label = ${JSON.stringify(label)};
+      const node = [...document.querySelectorAll('button, summary, [role="button"]')]
+        .find((el) => el.textContent?.trim().startsWith(label));
+      if (!node) return false;
+      node.click();
+      return true;
+    })()`,
+  );
+  await sleep(900);
 }
 
 function evaluate(cdp, expression) {
