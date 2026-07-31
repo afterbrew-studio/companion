@@ -86,13 +86,13 @@ export const codeApi = {
   workspacePrs: (
     id: string,
     state?: 'open' | 'merged' | 'closed',
-    page?: PageQuery & { author?: string; assignee?: string; decision?: string; draft?: string; review?: string },
+    page?: PageQuery & { author?: string; assignee?: string; label?: string; decision?: string; draft?: string; review?: string },
   ) =>
     request<{
       prs: PrRecord[];
       total: number;
       counts: { open: number; merged: number; closed: number };
-      facets: { authors: string[]; assignees: string[] };
+      facets: { authors: string[]; assignees: string[]; labels: string[] };
     }>(`/api/workspaces/${id}/prs${qs({ state, ...page })}`),
   workspacePipelines: (id: string) =>
     request<{ pipelines: PipelineRecord[]; stepDefinitions: StepDefinitionRecord[] }>(

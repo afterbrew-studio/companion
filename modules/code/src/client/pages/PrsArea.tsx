@@ -85,6 +85,7 @@ export function PrsAreaPage(): JSX.Element {
     repo: repoFilter,
     author: authorFilter,
     assignee: assigneeFilter,
+    label: labelFilter,
     decision: decisionFilter,
     review: reviewFilter,
     draft: draftFilter,
@@ -140,6 +141,18 @@ export function PrsAreaPage(): JSX.Element {
                     { value: '__me', label: 'Assigned to me' },
                     { value: '__none', label: 'Unassigned' },
                     ...facets.assignees.map((a) => ({ value: a, label: a })),
+                  ]}
+                />
+              </FilterField>
+              <FilterField label="Label">
+                <Dropdown
+                  ariaLabel="Filter by label"
+                  value={labelFilter}
+                  onChange={setFilter('label')}
+                  searchable={facets.labels.length > 8}
+                  options={[
+                    { value: 'all', label: 'Any label' },
+                    ...facets.labels.map((l) => ({ value: l, label: l })),
                   ]}
                 />
               </FilterField>

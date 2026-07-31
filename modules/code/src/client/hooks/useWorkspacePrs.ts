@@ -23,7 +23,7 @@ import { useWorkspaceRefresh } from './useWorkspaceRefresh.js';
 export type PrTab = 'open' | 'merged' | 'closed';
 
 const TABS = ['open', 'merged', 'closed'] as const;
-const FILTER_KEYS = ['repo', 'author', 'assignee', 'decision', 'review', 'draft'] as const;
+const FILTER_KEYS = ['repo', 'author', 'assignee', 'label', 'decision', 'review', 'draft'] as const;
 
 /**
  * The Pull Requests list's business logic, composed from atomic hooks — hash
@@ -43,7 +43,7 @@ export interface UseWorkspacePrs {
   readonly activeFilters: number;
 
   readonly repos: RepoRecord[];
-  readonly facets: { authors: string[]; assignees: string[] };
+  readonly facets: { authors: string[]; assignees: string[]; labels: string[] };
   readonly counts: { open: number; merged: number; closed: number };
 
   readonly prs: PrRecord[];
@@ -98,7 +98,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
-  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
+  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({ authors: [], assignees: [], labels: [] });
   const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
 
   // The retained first page is keyed by everything the query depends on, the
@@ -118,6 +118,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
         repo: filters.repo === 'all' ? undefined : filters.repo,
         author: filters.author === 'all' ? undefined : filters.author,
         assignee: filters.assignee === 'all' ? undefined : filters.assignee,
+        label: filters.label === 'all' ? undefined : filters.label,
         decision: filters.decision === 'all' ? undefined : filters.decision,
         review: filters.review === 'all' ? undefined : filters.review,
         draft: filters.draft === 'all' ? undefined : filters.draft,
@@ -129,7 +130,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
       return { items: page.prs, total: page.total };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.decision, filters.review, filters.draft],
+    [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.label, filters.decision, filters.review, filters.draft],
   );
   const { items: prs, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage, { seed, onFirstPage: retain });
 

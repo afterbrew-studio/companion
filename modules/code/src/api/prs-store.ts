@@ -128,6 +128,7 @@ export class PrsStore {
       repo?: string;
       author?: string;
       assignee?: string;
+      label?: string;
       decision?: 'approved' | 'changes_requested' | 'none';
       /** Latest AI review verdict status for the PR. */
       review?: 'pending' | 'applied' | 'dismissed';
@@ -141,7 +142,7 @@ export class PrsStore {
     prs: PrRecord[];
     total: number;
     counts: { open: number; merged: number; closed: number };
-    facets: { authors: string[]; assignees: string[] };
+    facets: { authors: string[]; assignees: string[]; labels: string[] };
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
@@ -174,6 +175,10 @@ export class PrsStore {
     } else if (opts.assignee) {
       where.push(`EXISTS (SELECT 1 FROM json_each(p.assignees) WHERE json_each.value = ?)`);
       args.push(opts.assignee);
+    }
+    if (opts.label) {
+      where.push(`EXISTS (SELECT 1 FROM json_each(p.labels) WHERE json_each.value = ?)`);
+      args.push(opts.label);
     }
     if (opts.decision === 'none') {
       where.push('p.review_decision IS NULL');
@@ -228,6 +233,7 @@ export class PrsStore {
     const facets = {
       authors: (this.db.prepare(`SELECT DISTINCT p.author AS v ${facetBase} AND p.author != '' ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
       assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.assignees) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+      labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.labels) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
     };
     return { prs, total, counts, facets };
   }

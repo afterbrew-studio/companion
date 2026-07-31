@@ -1605,6 +1605,7 @@ export default defineRoutes((ctx) => {
             repo: query.get('repo') ?? undefined,
             author: query.get('author') ?? undefined,
             assignee: query.get('assignee') ?? undefined,
+            label: query.get('label') ?? undefined,
             decision: pick(query.get('decision'), ['approved', 'changes_requested', 'none'] as const),
             review: pick(query.get('review'), ['pending', 'applied', 'dismissed'] as const),
             draft: pick(query.get('draft'), ['hide', 'only'] as const),
