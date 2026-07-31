@@ -200,3 +200,45 @@ export function unifiedDiffFromPatches(
   }
   return parts.join('\n');
 }
+
+/** One changed file and how much of it moved, for planning a review. */
+export interface FileChangeSize {
+  readonly path: string;
+  /** Added plus removed lines. Context is not counted: it is not under review. */
+  readonly changed: number;
+}
+
+/**
+ * Per-file change sizes, read from the same diff the anchors come from.
+ *
+ * Used to plan how a large pull request is split, so the split is driven by how
+ * much there is to read rather than by the file count: fifty one-line renames
+ * and one two-thousand-line rewrite are not the same amount of review.
+ */
+export function fileChangeSizes(unifiedDiff: string): FileChangeSize[] {
+  const sizes: FileChangeSize[] = [];
+  let current: { path: string; changed: number } | null = null;
+  let inHunk = false;
+
+  const lines = unifiedDiff.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+
+  for (const raw of lines) {
+    const header = headerPaths(raw);
+    if (header) {
+      if (current) sizes.push(current);
+      current = { path: header.display, changed: 0 };
+      inHunk = false;
+      continue;
+    }
+    if (!current) continue;
+    if (HUNK.test(raw)) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    if ((raw.startsWith('+') || raw.startsWith('-')) && !raw.startsWith('\\')) current.changed++;
+  }
+  if (current) sizes.push(current);
+  return sizes;
+}

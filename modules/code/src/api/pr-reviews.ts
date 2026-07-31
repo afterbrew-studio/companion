@@ -11,7 +11,8 @@ import type {
   ReviewPostMode,
   ReviewStrictness,
 } from '../contract/index.js';
-import { buildAnchorIndex, checkAnchor, unifiedDiffFromPatches } from '../contract/diff-anchors.js';
+import { buildAnchorIndex, checkAnchor, fileChangeSizes, unifiedDiffFromPatches } from '../contract/diff-anchors.js';
+import { planReview, type ReviewChunk } from '../contract/review-chunks.js';
 import { meetsStrictness } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
@@ -67,6 +68,31 @@ const VERIFY_SEVERITIES: ReadonlySet<FindingSeverity> = new Set<FindingSeverity>
 const VERIFY_CONFIDENCE_FLOOR = 0.6;
 /** Concurrent verifier runs sharing one worktree. */
 const VERIFY_CONCURRENCY = 3;
+/**
+ * Concurrent chunk reviews. Lower than the verifiers': each holds a slice of
+ * the diff in context and does real reading, so the limit is the machine's
+ * appetite rather than the queue's.
+ */
+const CHUNK_CONCURRENCY = 2;
+/**
+ * One group's wall clock. Short on purpose: a group is a bounded slice, so a
+ * pass that runs this long is stuck rather than thorough, and the others still
+ * finish.
+ */
+const CHUNK_TIMEOUT_MS = 15 * 60_000;
+
+/** A group reports findings only; the verdict is judged over all of them later. */
+const chunkSchema = z.object({
+  findings: z.array(z.union([modelFindingSchema, z.string()])).max(40).default([]),
+});
+
+/** The verdict, judged from findings alone. */
+const summarySchema = z.object({
+  summary: z.string(),
+  risk: z.enum(['low', 'medium', 'high']),
+  recommendation: z.enum(['approve', 'request_changes', 'comment']),
+  reviewBody: z.string(),
+});
 /** Inline comments per posted review; the rest travel in the body. */
 const MAX_INLINE_COMMENTS = 25;
 
@@ -137,6 +163,43 @@ export class PrReviews {
       prNumber,
       pr.baseRef,
       async (cwd) => {
+        // The diff is read once, here: it decides whether this pull request
+        // fits one pass, and the same text validates anchors afterwards.
+        const diff = await this.checkouts.diffVsBase(cwd, pr.baseRef).catch(() => '');
+        const plan = depth === 'in-depth' ? planReview(fileChangeSizes(diff)) : ({ kind: 'single' } as const);
+        const index = diff ? buildAnchorIndex(diff) : null;
+
+        if (plan.kind === 'too-large') {
+          // Said before the work, not after an hour of it: at this size the
+          // agent cannot hold the change, and a verdict it produced anyway
+          // would be about whatever stayed in its context.
+          return {
+            runId: '',
+            verdict: null,
+            error:
+              `this pull request changes ${plan.changed} lines across ${plan.chunks} groups, which is more than a ` +
+              'line-by-line review can hold. Run a high-level review instead, or split the pull request.',
+            findings: [],
+          };
+        }
+
+        const briefing = {
+          title: pr.title,
+          body: pr.body,
+          author: pr.author,
+          baseRef: pr.baseRef,
+          checks: describeChecks(checksSummary),
+          depth,
+          strictness,
+          dismissed: this.store.prReviewFindings.recentRejections(repo),
+          context: opts?.context,
+        };
+
+        if (plan.kind === 'chunked') {
+          const chunked = await this.reviewInChunks(cwd, repo, prNumber, userId, briefing, plan.chunks, reviewId, index, strictness);
+          return chunked;
+        }
+
         const { runId, finalMessage } = await this.orchestrator.runOneShot({
           kind: 'analysis',
           task: 'code.pr-review',
@@ -145,17 +208,7 @@ export class PrReviews {
           repo,
           userId,
           issueNumber: prNumber,
-          prompt: reviewPrompt({
-            title: pr.title,
-            body: pr.body,
-            author: pr.author,
-            baseRef: pr.baseRef,
-            checks: describeChecks(checksSummary),
-            depth,
-            strictness,
-            dismissed: this.store.prReviewFindings.recentRejections(repo),
-            context: opts?.context,
-          }),
+          prompt: reviewPrompt(briefing),
           timeoutMs: reviewTimeoutMs(depth),
           // The caller's context rides along so a resumed review keeps its briefing.
           resume: {
@@ -175,9 +228,6 @@ export class PrReviews {
         let verdict: PrReviewVerdict | null = null;
         let error: string | null = null;
         let findings: ReviewFinding[] = [];
-        // No final message at all means the turn never finished — almost always
-        // the ceiling below. Reporting that as a parse failure sends whoever
-        // reads it looking for a malformed verdict that was never produced.
         if (!finalMessage?.trim()) {
           const minutes = Math.round(reviewTimeoutMs(depth) / 60_000);
           return {
@@ -189,11 +239,7 @@ export class PrReviews {
         }
         try {
           const parsed = parseVerdictWithFindings(finalMessage);
-          // The local diff is free and merge-base scoped exactly like GitHub's,
-          // so hallucinated anchors are dropped here rather than at publish
-          // time. GitHub's own patches are still the authority when posting.
-          const diff = await this.checkouts.diffVsBase(cwd, pr.baseRef).catch(() => '');
-          findings = toFindings(reviewId, parsed.findings, diff ? buildAnchorIndex(diff) : null, strictness);
+          findings = toFindings(reviewId, parsed.findings, index, strictness);
           verdict = { ...parsed, findings: findings.map((f) => f.title) };
         } catch (err) {
           error = `could not parse review verdict: ${String(err)}`;
@@ -235,6 +281,119 @@ export class PrReviews {
     }
     this.broadcast({ t: 'prs.changed', repo });
     return { ...result, findings: this.store.prReviewFindings.listForReview(result.id) };
+  }
+
+  /**
+   * Review a large pull request in pieces, then summarise from the findings.
+   *
+   * Every pass runs in the SAME worktree with its OWN session, which is the
+   * point: the checkout is expensive and shared, the context is cheap and must
+   * not be. A single pass over a few hundred changed lines loses the files it
+   * read first, and loses them silently — it still produces a verdict, just one
+   * about the part it can still remember.
+   *
+   * The summary comes last and never sees the diff. It is a judgement about the
+   * findings, and giving it the change as well would put it in the same context
+   * bind the split exists to avoid.
+   */
+  private async reviewInChunks(
+    cwd: string,
+    repo: string,
+    prNumber: number,
+    userId: string,
+    briefing: ReviewBriefing,
+    chunks: readonly ReviewChunk[],
+    reviewId: string,
+    index: ReturnType<typeof buildAnchorIndex> | null,
+    strictness: ReviewStrictness,
+  ): Promise<{ runId: string; verdict: PrReviewVerdict | null; error: string | null; findings: ReviewFinding[] }> {
+    const reported: ModelFinding[] = [];
+    const failed: string[] = [];
+    let firstRunId = '';
+
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < chunks.length) {
+        const at = cursor++;
+        const chunk = chunks[at]!;
+        try {
+          const { runId, finalMessage } = await this.orchestrator.runOneShot({
+            kind: 'analysis',
+            task: 'code.pr-review',
+            title: `Review PR #${prNumber} (${at + 1}/${chunks.length})`,
+            cwd,
+            repo,
+            userId,
+            issueNumber: prNumber,
+            prompt: chunkPrompt(briefing, chunk, at + 1, chunks.length),
+            timeoutMs: CHUNK_TIMEOUT_MS,
+          });
+          if (!firstRunId) firstRunId = runId;
+          const parsed = chunkSchema.parse(extractModelJson(finalMessage ?? ''));
+          reported.push(...parsed.findings.filter((f): f is ModelFinding => typeof f !== 'string'));
+        } catch (err) {
+          // One group failing must not lose the others: the reviewer is told
+          // what went unread rather than shown a verdict that silently covers
+          // less than it claims.
+          failed.push(chunk.paths.join(', '));
+          log.warn('review chunk failed', { repo, prNumber, chunk: at, err: String(err) });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunks.length) }, worker));
+
+    if (failed.length === chunks.length) {
+      return { runId: firstRunId, verdict: null, error: 'every group of this pull request failed to review', findings: [] };
+    }
+
+    const findings = toFindings(reviewId, reported, index, strictness);
+    const summary = await this.summarise(cwd, repo, prNumber, userId, briefing, findings, failed);
+    return {
+      runId: firstRunId,
+      verdict: summary,
+      error: failed.length > 0 ? `${failed.length} of ${chunks.length} groups could not be reviewed` : null,
+      findings,
+    };
+  }
+
+  /** The verdict over findings already gathered; no diff, so no context bind. */
+  private async summarise(
+    cwd: string,
+    repo: string,
+    prNumber: number,
+    userId: string,
+    briefing: ReviewBriefing,
+    findings: readonly ReviewFinding[],
+    unread: readonly string[],
+  ): Promise<PrReviewVerdict> {
+    const fallback: PrReviewVerdict = {
+      summary: `Reviewed in ${findings.length === 0 ? 'pieces' : 'pieces'}; ${findings.length} finding(s).`,
+      risk: findings.some((f) => f.severity === 'blocker') ? 'high' : 'medium',
+      recommendation: findings.some((f) => f.severity === 'blocker') ? 'request_changes' : 'comment',
+      findings: findings.map((f) => f.title),
+      reviewBody: '',
+    };
+    try {
+      const { finalMessage } = await this.orchestrator.runOneShot({
+        kind: 'analysis',
+        task: 'code.pr-review',
+        title: `Review PR #${prNumber} — summary`,
+        cwd,
+        repo,
+        userId,
+        issueNumber: prNumber,
+        prompt: summaryPrompt(briefing, findings, unread),
+        timeoutMs: 8 * 60_000,
+      });
+      const parsed = summarySchema.parse(extractModelJson(finalMessage ?? ''));
+      return { ...parsed, findings: findings.map((f) => f.title) };
+    } catch (err) {
+      // The findings are the review; losing the prose that frames them is worth
+      // far less than losing them, so a failed summary is filled in rather than
+      // allowed to fail the whole thing.
+      log.warn('review summary failed', { repo, prNumber, err: String(err) });
+      return fallback;
+    }
   }
 
   /**
@@ -831,6 +990,26 @@ export class PrReviews {
   }
 }
 
+/**
+ * How a finding may be tied to a line, stated once.
+ *
+ * Both the whole-PR prompt and the per-group one need these rules to be
+ * identical: a second copy would drift, and the copy that drifts is the one
+ * whose anchors start getting discarded.
+ */
+function ANCHOR_RULES(baseRef: string): string {
+  return `## Anchoring findings
+A finding may only be anchored to a line that is PART OF THE DIFF (\`git diff origin/${baseRef}...HEAD\`). Lines you read for context but that the pull request does not touch cannot be anchored.
+
+- \`file\` is the path as it appears in the diff, \`line\` its number in the NEW file, and \`side\` is "RIGHT". Use \`side\`: "LEFT" with the OLD file's numbering only to comment on a deleted line.
+- \`quotedLine\` MUST be the exact text of the line you anchored to, copied from the diff. It is checked against the real diff, and a finding whose quote does not match is discarded as unreliable.
+- \`startLine\` opens a multi-line range ending at \`line\`; omit it for a single line.
+- Have a real point that is not in the diff? Report it with \`file\`, \`line\` and \`side\` set to null. It still reaches the reviewer.
+- \`suggestedPatch\` is the literal replacement text for the anchored lines, no fences and no diff markers, so it can be offered as a one-click fix. Omit it unless you are confident it compiles.
+
+Assign \`severity\` honestly: "blocker" breaks something or must not ship, "major" is a real defect worth fixing before merge, "minor" is a genuine improvement, "nit" is taste. Do not inflate a severity to make a point more likely to be read.`;
+}
+
 const DEPTH_GUIDE: Record<ReviewDepth, string> = {
   'high-level': `Review at ARCHITECTURE level. Judge whether the change is the right thing to build and whether it fits the codebase: design, layering, risk, missing cases. Do not go line by line and do not report style or naming points. Anchoring findings to lines is optional here.`,
   'in-depth': `Review IN DEPTH. Go through every changed file and reason about the concrete lines: correctness, edge cases, error handling, resource lifecycle, security, and fit with the surrounding code. ANCHOR every finding you can to the exact line it concerns.`,
@@ -842,7 +1021,8 @@ const STRICTNESS_GUIDE: Record<ReviewStrictness, string> = {
   pedantic: `Report everything you would raise if you were being thorough, nits included, but label them honestly.`,
 };
 
-function reviewPrompt(opts: {
+/** Everything every review prompt needs to know about the pull request. */
+interface ReviewBriefing {
   title: string;
   body: string;
   author: string;
@@ -852,7 +1032,9 @@ function reviewPrompt(opts: {
   strictness: ReviewStrictness;
   dismissed: ReadonlyArray<{ title: string; reason: string }>;
   context?: string;
-}): string {
+}
+
+function reviewPrompt(opts: ReviewBriefing): string {
   return `You are reviewing a GitHub pull request against the repository checked out in the current directory (branch ${opts.baseRef}).
 
 READ-ONLY RULES (mandatory): you may read files and search the codebase for context, but you must NOT modify anything. Your ONLY output is the final JSON.
@@ -872,16 +1054,7 @@ ${DEPTH_GUIDE[opts.depth]}
 ${STRICTNESS_GUIDE[opts.strictness]}
 ${dismissedSection(opts.dismissed)}
 
-## Anchoring findings
-A finding may only be anchored to a line that is PART OF THE DIFF (\`git diff origin/${opts.baseRef}...HEAD\`). Lines you read for context but that the pull request does not touch cannot be anchored.
-
-- \`file\` is the path as it appears in the diff, \`line\` its number in the NEW file, and \`side\` is "RIGHT". Use \`side\`: "LEFT" with the OLD file's numbering only to comment on a deleted line.
-- \`quotedLine\` MUST be the exact text of the line you anchored to, copied from the diff. It is checked against the real diff, and a finding whose quote does not match is discarded as unreliable.
-- \`startLine\` opens a multi-line range ending at \`line\`; omit it for a single line.
-- Have a real point that is not in the diff? Report it with \`file\`, \`line\` and \`side\` set to null. It still reaches the reviewer.
-- \`suggestedPatch\` is the literal replacement text for the anchored lines, no fences and no diff markers, so it can be offered as a one-click fix. Omit it unless you are confident it compiles.
-
-Assign \`severity\` honestly: "blocker" breaks something or must not ship, "major" is a real defect worth fixing before merge, "minor" is a genuine improvement, "nit" is taste. Do not inflate a severity to make a point more likely to be read.
+${ANCHOR_RULES(opts.baseRef)}
 
 ## Your task
 Assess correctness, risk, and fit with the surrounding code, then reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
@@ -926,6 +1099,108 @@ Reviewers here have rejected these minor points, with their reasoning. Treat it 
 
 ${lines}
 `;
+}
+
+/**
+ * One group of a split review: the same rules, narrowed to a list of files.
+ *
+ * It is told the narrowing explicitly. An agent that believes it is seeing the
+ * whole change writes a verdict about the whole change, and here it is not,
+ * which is exactly the confusion the split exists to prevent.
+ */
+function chunkPrompt(opts: ReviewBriefing, chunk: ReviewChunk, position: number, total: number): string {
+  return `You are reviewing PART of a GitHub pull request against the repository checked out in the current directory (branch ${opts.baseRef}).
+
+READ-ONLY RULES (mandatory): you may read files and search the codebase for context, but you must NOT modify anything. Your ONLY output is the final JSON.
+
+## PR: ${opts.title}
+Author: ${opts.author}
+
+${opts.body || '(no description)'}
+
+## CI pipelines
+${opts.checks}
+${opts.context ? `\n## Review context\n${opts.context}\n` : ''}
+## Your part (${position} of ${total})
+This pull request is too large for one pass, so it was split. Review ONLY these files:
+
+${chunk.paths.map((p) => `- ${p}`).join('\n')}
+
+Inspect them with \`git diff origin/${opts.baseRef}...HEAD -- <path>\`. You may read anything else in the repository for context — imports, callers, tests — but do not report findings about files outside your list: another pass owns them and would report them twice.
+
+Do NOT write an overall assessment, a risk level or a recommendation. Another pass judges the pull request once every part has been read; yours is to find what is wrong in these files.
+
+## How to review
+${DEPTH_GUIDE[opts.depth]}
+${STRICTNESS_GUIDE[opts.strictness]}
+${dismissedSection(opts.dismissed)}
+${ANCHOR_RULES(opts.baseRef)}
+
+Reply with ONLY a JSON object (no fence, no prose):
+{
+  "findings": [
+    {
+      "title": "<one line naming the problem>",
+      "severity": "blocker" | "major" | "minor" | "nit",
+      "file": "<path from your list, or null>",
+      "side": "RIGHT" | "LEFT" | null,
+      "line": <line number, or null>,
+      "startLine": <start of a multi-line range, or null>,
+      "quotedLine": "<exact text of that line, or null>",
+      "reason": "<why it is wrong, concretely>",
+      "impact": "<what goes wrong in practice if it ships>",
+      "suggestion": "<what to do about it>",
+      "suggestedPatch": "<literal replacement for the anchored lines, or null>",
+      "confidence": <0.0 to 1.0>
+    }
+  ]
+}`;
+}
+
+/**
+ * The verdict over findings already gathered.
+ *
+ * Deliberately given no diff. It judges what the passes found, and handing it
+ * the change as well would put it in the same context bind the split exists to
+ * avoid, on the one step that has to see everything at once.
+ */
+function summaryPrompt(
+  opts: ReviewBriefing,
+  findings: readonly ReviewFinding[],
+  unread: readonly string[],
+): string {
+  const list = findings.length
+    ? findings
+        .map((f) => {
+          const where = f.anchor ? ` (${f.anchor.file}:${f.anchor.line})` : '';
+          return `- [${f.severity}] ${f.title}${where}\n  ${f.reason || '(no reasoning recorded)'}`;
+        })
+        .join('\n')
+    : '(none)';
+  return `A pull request was reviewed in parts because of its size, and every part is done. Write the overall verdict.
+
+## PR: ${opts.title}
+Author: ${opts.author}
+
+${opts.body || '(no description)'}
+
+## CI pipelines
+${opts.checks}
+
+## What the reviewers found
+${list}
+${unread.length > 0 ? `\n## Not reviewed\nThese files could not be read, so say so plainly in your summary rather than implying full coverage:\n${unread.map((u) => `- ${u}`).join('\n')}\n` : ''}
+You have the repository checked out and may look at anything you need to judge severity, but the findings above are the review: do not go hunting for new ones, and do not repeat them one by one in the body — each is posted as its own inline comment.
+
+Weigh the CI pipeline status: failing or missing CI raises risk, and do not recommend "approve" while required pipelines are failing.
+
+Reply with ONLY a JSON object (no fence, no prose):
+{
+  "summary": "<2-3 sentence assessment of what the PR does and its quality>",
+  "risk": "low" | "medium" | "high",
+  "recommendation": "approve" | "request_changes" | "comment",
+  "reviewBody": "<the overall review comment to post, markdown, friendly and specific>"
+}`;
 }
 
 const verificationSchema = z.object({

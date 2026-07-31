@@ -9,6 +9,7 @@ import type { CodeService } from '../api/code-service.js';
 export * from './checks.js';
 export * from './pipelines.js';
 export * from './diff-anchors.js';
+export * from './review-chunks.js';
 
 /**
  * module-code contract slice — the GitHub-facing domain: repositories + the
