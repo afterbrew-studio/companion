@@ -21,7 +21,7 @@ import type {
   PipelineType,
 } from '../contract/index.js';
 import { PIPELINE_EXPORT_VERSION, PIPELINE_TYPE_STEPS } from '../contract/index.js';
-import { log, RUNTIME_SECRET_PREFIX } from '@moxxy/companion-sdk/server';
+import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
@@ -1421,7 +1421,7 @@ export class Pipelines {
         );
       }
 
-      const key = v.secretKey ?? `${RUNTIME_SECRET_PREFIX}${randomUUID()}`;
+      const key = v.secretKey ?? randomUUID();
       if (supplying) this.deps.secrets.set(key, v.value!);
       this.deps.store.pipelineSecrets.upsert({
         key,
@@ -1471,8 +1471,10 @@ export class Pipelines {
       }
       for (const d of this.deps.store.pipelines.listStepDefinitions(workspaceId)) walk(d.step);
     }
+    // Every key here is one this module minted, so an unreferenced one is
+    // unambiguously ours to drop.
     for (const key of this.deps.secrets.keys()) {
-      if (key.startsWith(RUNTIME_SECRET_PREFIX) && !live.has(key)) {
+      if (!live.has(key)) {
         this.deps.secrets.delete(key);
         this.deps.store.pipelineSecrets.delete(key);
       }

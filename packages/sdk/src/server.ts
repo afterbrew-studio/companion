@@ -34,9 +34,6 @@ export type {
 // ---- routing ----
 export { route, Reply, created, accepted, document, redirect, bearerToken } from '@moxxy/companion-core/server';
 export { HttpError, notFound, badRequest, forbidden } from '@moxxy/companion-core/server';
-/** Prefix a module must use for `ctx.secrets` keys it invents at run time, so
- *  they redact like a declared secret and are distinguishable from manifest ones. */
-export { RUNTIME_SECRET_PREFIX } from '@moxxy/companion-core/server';
 export type { RouteContext, RouteDef, HttpMethod, PathParams, StatusError } from '@moxxy/companion-core/server';
 
 /** Byte-body, self-authenticating endpoints (webhooks): outside the JSON router and RBAC. */
