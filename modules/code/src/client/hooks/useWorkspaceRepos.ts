@@ -12,19 +12,35 @@ import { codeApi as api } from '../api.js';
  * names only) because it sits below code in the dependency order.
  */
 export function useWorkspaceRepos(workspaceId: string | undefined): RepoRecord[] {
-  const [repos, setRepos] = useState<RepoRecord[]>([]);
+  return useWorkspaceReposState(workspaceId).repos;
+}
+
+/**
+ * The same list, with whether it has actually been read yet.
+ *
+ * "Empty" and "not answered yet" look identical in an array and mean opposite
+ * things: a gate that reads the first as the second tells someone with twenty
+ * repositories to go and add one, for as long as the request takes.
+ */
+export function useWorkspaceReposState(workspaceId: string | undefined): {
+  repos: RepoRecord[];
+  loaded: boolean;
+} {
+  const [state, setState] = useState<{ repos: RepoRecord[]; loaded: boolean }>({ repos: [], loaded: false });
   const load = useCallback(async () => {
     if (!workspaceId) {
-      setRepos([]);
+      setState({ repos: [], loaded: true });
       return;
     }
     try {
       const { repos } = await api.workspaceRepos(workspaceId);
-      setRepos(repos);
+      setState({ repos, loaded: true });
     } catch {
-      setRepos([]);
+      // A failed read is not an empty workspace; keep whatever is on screen and
+      // let the gate stay quiet rather than accuse the instance of being unset up.
+      setState((prev) => ({ repos: prev.repos, loaded: true }));
     }
   }, [workspaceId]);
   useLive(load, (msg) => msg.t === 'repos.changed');
-  return repos;
+  return state;
 }
