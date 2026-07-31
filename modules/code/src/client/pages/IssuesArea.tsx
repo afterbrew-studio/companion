@@ -19,7 +19,7 @@ import {
   Tabs,
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
-import { BulkActions } from '../components/BulkActions.js';
+import { BulkBar } from '../components/BulkBar.js';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -59,8 +59,6 @@ export function IssuesAreaPage(): JSX.Element {
     toggleSelected,
     selectAllLoaded,
     clearSelected,
-    bulkPipeline,
-    setBulkPipeline,
     bulkRunning,
     bulkAiTriage,
     bulkLabel,
@@ -172,50 +170,21 @@ export function IssuesAreaPage(): JSX.Element {
       />
 
       {tab === 'open' && (canActIssues || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          <span className="text-[13px] font-medium tabular-nums">{selected.size} selected</span>
-          <button className="linkish text-xs" onClick={selectAllLoaded}>
-            select all loaded
-          </button>
-          <button className="linkish text-xs" onClick={clearSelected}>
-            clear
-          </button>
-          <span className="flex-1" />
-          {canActIssues ? (
-            <button className="btn-ghost" disabled={bulkRunning !== null} onClick={bulkAiTriage}>
-              AI triage {selected.size}
-            </button>
-          ) : null}
-          <BulkActions
-            count={selected.size}
-            noun="issue"
-            canAct={canActIssues}
-            busy={bulkRunning !== null}
-            onLabel={bulkLabel}
-            onComment={bulkComment}
-            onClose={bulkClose}
-          />
-          {canRunPipelines && pipelines.length > 0 ? (
-            <>
-              <select
-                className="input"
-                aria-label="Issue pipeline to run against the selected issues"
-                value={bulkPipeline}
-                onChange={(e) => setBulkPipeline(e.target.value)}
-              >
-                <option value="">Choose pipeline…</option>
-                {pipelines.map((pl) => (
-                  <option key={pl.id} value={pl.id}>
-                    {pl.name}
-                  </option>
-                ))}
-              </select>
-              <button className="btn" disabled={!bulkPipeline || bulkRunning !== null} onClick={bulkRunPipeline}>
-                {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} issue${selected.size === 1 ? '' : 's'}`}
-              </button>
-            </>
-          ) : null}
-        </div>
+        <BulkBar
+          count={selected.size}
+          noun="issue"
+          busy={bulkRunning !== null}
+          running={bulkRunning}
+          canAct={canActIssues}
+          ai={canActIssues ? { label: 'AI triage', onRun: bulkAiTriage } : null}
+          pipelines={canRunPipelines ? pipelines : []}
+          onRunPipeline={bulkRunPipeline}
+          onLabel={bulkLabel}
+          onComment={bulkComment}
+          onCloseItems={bulkClose}
+          onSelectAll={selectAllLoaded}
+          onClear={clearSelected}
+        />
       ) : null}
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}

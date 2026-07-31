@@ -23,7 +23,7 @@ import {
 } from '@moxxy/companion-sdk/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { Slot } from '@moxxy/companion-sdk/client';
-import { BulkActions } from '../components/BulkActions.js';
+import { BulkBar } from '../components/BulkBar.js';
 import { PrSelectionProvider } from '../pr-selection.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -64,8 +64,6 @@ export function PrsAreaPage(): JSX.Element {
     toggleSelected,
     selectAllLoaded,
     clearSelected,
-    bulkPipeline,
-    setBulkPipeline,
     bulkRunning,
     bulkAiReview,
     bulkLabel,
@@ -196,34 +194,22 @@ export function PrsAreaPage(): JSX.Element {
       />
 
       {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          <span className="text-[13px] font-medium tabular-nums">{selected.size} selected</span>
-          <button className="linkish text-xs" onClick={selectAllLoaded}>
-            select all loaded
-          </button>
-          <button className="linkish text-xs" onClick={clearSelected}>
-            clear
-          </button>
-          <span className="flex-1" />
-          {canActPrs ? (
-            <button className="btn-ghost" disabled={bulkRunning !== null} onClick={bulkAiReview}>
-              AI review {selected.size}
-            </button>
-          ) : null}
-          {canActPrs ? (
-            <button className="btn-ghost" disabled={bulkRunning !== null} onClick={bulkRerunChecks}>
-              Re-run CI
-            </button>
-          ) : null}
-          <BulkActions
-            count={selected.size}
-            noun="PR"
-            canAct={canActPrs}
-            busy={bulkRunning !== null}
-            onLabel={bulkLabel}
-            onComment={bulkComment}
-            onClose={bulkClose}
-          />
+        <BulkBar
+          count={selected.size}
+          noun="PR"
+          busy={bulkRunning !== null}
+          running={bulkRunning}
+          canAct={canActPrs}
+          ai={canActPrs ? { label: 'AI review', onRun: bulkAiReview } : null}
+          pipelines={canRunPipelines ? pipelines : []}
+          onRunPipeline={bulkRunPipeline}
+          onLabel={bulkLabel}
+          onComment={bulkComment}
+          onCloseItems={bulkClose}
+          onRerunChecks={canActPrs ? bulkRerunChecks : undefined}
+          onSelectAll={selectAllLoaded}
+          onClear={clearSelected}
+        >
           {/* Other modules' bulk verbs (slop screening, for one) land here so
               this module never imports theirs. */}
           <PrSelectionProvider
@@ -235,27 +221,7 @@ export function PrsAreaPage(): JSX.Element {
           >
             <Slot name="prs.bulkActions" can={can} />
           </PrSelectionProvider>
-          {canRunPipelines && pipelines.length > 0 ? (
-            <>
-              <select
-                className="input"
-                aria-label="Pipeline to run against the selected PRs"
-                value={bulkPipeline}
-                onChange={(e) => setBulkPipeline(e.target.value)}
-              >
-                <option value="">Choose pipeline…</option>
-                {pipelines.map((pl) => (
-                  <option key={pl.id} value={pl.id}>
-                    {pl.name}
-                  </option>
-                ))}
-              </select>
-              <button className="btn" disabled={!bulkPipeline || bulkRunning !== null} onClick={bulkRunPipeline}>
-                {bulkRunning ? `Starting ${bulkRunning}…` : `Run against ${selected.size} PR${selected.size === 1 ? '' : 's'}`}
-              </button>
-            </>
-          ) : null}
-        </div>
+        </BulkBar>
       ) : null}
       <ErrorBar error={bulkError} />
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
