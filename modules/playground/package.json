@@ -24,6 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
@@ -38,6 +39,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
+    "@moxxy/companion-services": "workspace:*",
     "react": "^18.3.1",
     "typescript": "^5.8.0"
   },

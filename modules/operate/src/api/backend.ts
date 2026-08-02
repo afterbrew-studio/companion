@@ -1,4 +1,5 @@
 import type {
+  AgentRunAccess,
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
   AgentVerifyResponse,
@@ -40,7 +41,7 @@ export interface RunnerBackend {
 
   // ---------- gateway lifecycle ----------
   /** Bring up serve+gateway for a run whose working dir is `cwd`. */
-  spawn(runId: string, cwd: string): Promise<void>;
+  spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void>;
   stop(runId: string): Promise<void>;
   isLive(runId: string): boolean;
   liveIds(): string[];

@@ -883,7 +883,7 @@ function crumbsFor(
   if (m) return [{ label: 'Agent Runs', href: '#/runs' }, { label: m[1]! }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
-  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)$/);
+  m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)(?:\/review)?$/);
   if (m) return [{ label: 'Pull Requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   // Standalone pages outside the module registry.
   if (path === '/inbox') return [{ label: 'Inbox' }];
@@ -940,7 +940,10 @@ function TopBar({
         {crumbs.map((c, i) => {
           const last = i === crumbs.length - 1;
           return (
-            <span key={`${c.label}-${i}`} className="flex min-w-0 items-center gap-1.5">
+            <span
+              key={`${c.label}-${i}`}
+              className={`flex min-w-0 items-center gap-1.5 ${i > 0 ? 'max-sm:hidden' : ''}`}
+            >
               {c.href && !last ? (
                 <a href={c.href} className="dim shrink-0 hover:text-zinc-800 dark:hover:text-zinc-200">
                   {c.label}
@@ -949,7 +952,7 @@ function TopBar({
                 <span className={last ? 'truncate font-medium' : 'dim shrink-0'}>{c.label}</span>
               )}
               {!last ? (
-                <span className="dim select-none" aria-hidden>
+                <span className="dim max-sm:hidden select-none" aria-hidden>
                   /
                 </span>
               ) : null}

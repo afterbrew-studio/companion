@@ -1,4 +1,4 @@
-import { del, patch, post, put, request } from '@moxxy/companion-sdk/client';
+import { del, patch, post, put, qs, request } from '@moxxy/companion-sdk/client';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import type {
   BoardConfig,
@@ -9,6 +9,7 @@ import type {
   TaskModelOptions,
   TaskPriority,
   TaskPrView,
+  TaskListRecord,
   TaskRecord,
   TaskStatus,
   WorkerRole,
@@ -17,9 +18,12 @@ import type {
 } from '../contract/index.js';
 
 export interface BoardSnapshot {
-  readonly tasks: TaskRecord[];
+  readonly tasks: TaskListRecord[];
   readonly workers: WorkerView[];
   readonly config: BoardConfig;
+  readonly doneTotal: number;
+  readonly doneOffset: number;
+  readonly taskRepos: string[];
 }
 
 export interface TaskDetail {
@@ -31,7 +35,8 @@ export interface TaskDetail {
 }
 
 export const boardApi = {
-  get: (workspaceId: string) => request<BoardSnapshot>(`/api/board?workspace=${encodeURIComponent(workspaceId)}`),
+  get: (workspaceId: string, doneOffset = 0, doneRepo?: string) =>
+    request<BoardSnapshot>(`/api/board${qs({ workspace: workspaceId, doneLimit: 100, doneOffset, doneRepo })}`),
   task: (id: string) => request<TaskDetail>(`/api/board/tasks/${id}`),
   createTask: (input: {
     workspaceId: string;

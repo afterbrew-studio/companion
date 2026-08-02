@@ -1,30 +1,17 @@
 import { legacyNotifications, type NotificationEmitter, type Database } from '@moxxy/companion-sdk/server';
 import type { ServiceMap } from '@moxxy/companion-contracts';
-import type { ProposalRecord } from '@companion/module-plan/contract';
 import type { IssuesStore, PrsStore, ReposStore, RunsStore } from './cross-types.js';
-
-/** The slice of a proposal the workspace briefing reads. */
-interface ProposalLite {
-  readonly title: string;
-  readonly status: ProposalRecord['status'];
-}
 
 /**
  * The automations domain's view of persistence — a same-shape stand-in for the
  * legacy Store facade so the moved service bodies (automations/assistant) stay
- * verbatim. This module owns NO tables: everything is injected — `repos` /
+ * verbatim. This module owns only the bounded `automation_deliveries`
+ * idempotency ledger; domain state is injected — `repos` /
  * `issues` / `prs` (module-code's stores, reached through its service bundle),
  * `runs` (operate's runs store, exposed on its bundle exactly for this),
  * `reports` (module-workspace's), `settings` (module-core), `workspaces`
  * (module-workspace's access-control owner) and `notifications` (an adapter
  * over ctx.notify).
- *
- * FLAGGED SEAM — `proposals`: the briefing reads pending proposals, but plan's
- * bundle publishes services only, not its store, and none of them re-expose a
- * workspace listing. Until plan grows one, this is a guarded raw-SQL lite read
- * against the plan-owned `proposals` table (operate-store's repos pattern);
- * plan is a hard dependency so the table exists, and the guard only covers a
- * torn install.
  */
 export class AutomationsStore {
   readonly repos: ReposStore;
@@ -59,21 +46,42 @@ export class AutomationsStore {
     this.notify = opts.notify;
   }
 
-  /** See the class doc — a flagged read-only shim over plan's proposals table. */
-  readonly proposals = {
-    listWorkspace: (workspaceId: string): ProposalLite[] => {
-      try {
-        return this.db
-          .prepare(
-            `SELECT title, status FROM proposals WHERE workspace_id = ? ORDER BY created_at DESC`,
-          )
-          .all(workspaceId) as ProposalLite[];
-      } catch {
-        return [];
-      }
-    },
-  };
-
   /** Legacy `notifications.insert({...})` call shape, routed through the shared emitter. */
   readonly notifications = legacyNotifications(() => this.notify);
+
+  /**
+   * Claim one GitHub delivery. Completed/recent duplicates are ignored; a
+   * processing claim older than ten minutes may be retried after a crash.
+   */
+  claimDelivery(id: string, repo: string, event: string, now = Date.now()): boolean {
+    const staleBefore = now - 10 * 60_000;
+    const claim = this.db.transaction(() => {
+      const existing = this.db
+        .prepare(`SELECT status, received_at FROM automation_deliveries WHERE id = ?`)
+        .get(id) as { status: string; received_at: number } | undefined;
+      if (existing?.status === 'completed' || (existing && existing.received_at >= staleBefore)) return false;
+      this.db
+        .prepare(
+          `INSERT INTO automation_deliveries (id, repo, event, status, received_at, completed_at)
+           VALUES (?, ?, ?, 'processing', ?, NULL)
+           ON CONFLICT(id) DO UPDATE SET repo = excluded.repo, event = excluded.event,
+             status = 'processing', received_at = excluded.received_at, completed_at = NULL`,
+        )
+        .run(id, repo, event, now);
+      return true;
+    });
+    const claimed = claim();
+    if (claimed) {
+      this.db
+        .prepare(`DELETE FROM automation_deliveries WHERE received_at < ?`)
+        .run(now - 30 * 24 * 60 * 60_000);
+    }
+    return claimed;
+  }
+
+  completeDelivery(id: string): void {
+    this.db
+      .prepare(`UPDATE automation_deliveries SET status = 'completed', completed_at = ? WHERE id = ?`)
+      .run(Date.now(), id);
+  }
 }

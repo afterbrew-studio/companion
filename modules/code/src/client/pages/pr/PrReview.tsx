@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ErrorBar, Eyebrow, Markdown, timeAgo } from '@moxxy/companion-sdk/ui';
-import type { PrReviewResult, ReviewPostMode } from '../../../contract/index.js';
+import { formatUsd } from '@companion/module-operate/contract';
+import { ErrorBar, Eyebrow, Markdown, formatTokens, timeAgo } from '@moxxy/companion-sdk/ui';
+import type { PrReviewBudgetProgress, PrReviewResult, ReviewPostMode } from '../../../contract/index.js';
 import { AccountPicker } from '../../components/AccountPicker.js';
 import { ReviewFindings } from './ReviewFindings.js';
 
@@ -21,6 +22,7 @@ export function PrReview({
   canAct,
   busy,
   onApply,
+  onCancel,
   onDismiss,
   onUpdateFinding,
   focusedFinding = null,
@@ -31,6 +33,7 @@ export function PrReview({
   canAct: boolean;
   busy: boolean;
   onApply: (accountId?: string, mode?: ReviewPostMode) => void;
+  onCancel: () => void;
   onDismiss: () => void;
   onUpdateFinding?: (id: string, patch: { state?: 'included' | 'rejected'; rejectionReason?: string }) => void;
   focusedFinding?: string | null;
@@ -39,6 +42,9 @@ export function PrReview({
 }): JSX.Element {
   const [actAs, setActAs] = useState('');
   const [mode, setMode] = useState<ReviewPostMode>('full');
+  if (review.status === 'running') {
+    return <ReviewingStage review={review} canCancel={canAct} busy={busy} onCancel={onCancel} />;
+  }
   const v = review.verdict;
   const pending = review.status === 'pending';
   const hero = emphasis === 'hero';
@@ -50,7 +56,7 @@ export function PrReview({
   const strays = included.filter((f) => f.anchor === null).length;
   // A draft a person started has no agent verdict to report; showing "low risk"
   // for it would attribute a judgement nobody made.
-  const manual = review.runId === null;
+  const manual = review.source === 'human';
   // A pending review needs the reviewer's attention — green, gently pulsing.
   const attn = pending && canAct;
   const border = attn
@@ -59,7 +65,7 @@ export function PrReview({
       ? 'border-accent-500/50 bg-gradient-to-b from-accent-500/5 to-transparent'
       : review.status === 'applied'
         ? 'border-emerald-500/60'
-        : review.status === 'dismissed'
+        : review.status === 'dismissed' || review.status === 'cancelled'
           ? 'border-zinc-300 dark:border-zinc-700'
           : 'border-amber-500/60';
 
@@ -80,6 +86,7 @@ export function PrReview({
         <span className="flex-1" />
         {review.status === 'applied' ? <span className="badge-ok">posted</span> : null}
         {review.status === 'dismissed' ? <span className="badge">dismissed</span> : null}
+        {review.status === 'cancelled' ? <span className="badge">cancelled</span> : null}
       </div>
 
       {v ? (
@@ -126,9 +133,22 @@ export function PrReview({
             </details>
           ) : null}
         </>
+      ) : review.status === 'cancelled' ? (
+        <p className="dim mt-3 text-[13px]">{review.error ?? 'This review was stopped before it produced a verdict.'}</p>
       ) : (
         <ErrorBar error={review.error ?? 'no verdict'} className="mt-3" />
       )}
+
+      {review.coverage.state !== 'complete' && !manual ? (
+        <div className="banner-warn mt-3 text-xs">
+          Coverage {review.coverage.state}: {review.coverage.reviewedFiles}/{review.coverage.totalFiles} changed files
+          reviewed. This result cannot be posted automatically.
+        </div>
+      ) : null}
+
+      {review.progress.budget && !manual ? (
+        <ReviewBudgetSummary budget={review.progress.budget} panel />
+      ) : null}
 
       {pending && canAct ? (
         <div className="mt-4 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
@@ -172,7 +192,29 @@ function postLabel(mode: ReviewPostMode, selected: number): string {
 }
 
 /** Animated placeholder shown while the review agent is still working. */
-export function ReviewingStage(): JSX.Element {
+export function ReviewingStage({
+  review,
+  canCancel = false,
+  busy = false,
+  onCancel,
+}: {
+  review?: PrReviewResult;
+  canCancel?: boolean;
+  busy?: boolean;
+  onCancel?: () => void;
+}): JSX.Element {
+  const progress = review?.progress;
+  const budget = progress?.budget;
+  const ratio = progress && progress.total > 0 ? Math.min(1, progress.completed / progress.total) : 0;
+  const phase = progress?.phase ?? 'reviewing';
+  const phaseLabel: Record<PrReviewResult['progress']['phase'], string> = {
+    queued: 'Waiting for a runner',
+    planning: 'Planning review coverage',
+    reviewing: 'Reviewing changed files',
+    verifying: 'Verifying findings',
+    summarizing: 'Combining the evidence',
+    complete: 'Finishing review',
+  };
   return (
     <section className="anim-in rounded-2xl border border-accent-500/40 bg-gradient-to-b from-accent-500/10 to-transparent p-8 text-center">
       <div className="ppv-orb mx-auto flex size-16 items-center justify-center rounded-2xl bg-accent-500/15 text-accent-600 dark:text-accent-400">
@@ -182,9 +224,89 @@ export function ReviewingStage(): JSX.Element {
       </div>
       <h2 className="mt-4 text-lg font-semibold">Reviewing this pull request</h2>
       <p className="dim mx-auto mt-1 max-w-md text-[13px]">
-        An agent is reading the diff and CI status. Its verdict — risk, findings, and a review comment — appears here.
+        {progress?.message ?? 'An agent is reading the diff and CI status.'}
       </p>
-      <div className="ppv-shimmer mx-auto mt-5 h-1 w-56 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" />
+      <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-2 text-xs">
+        <span className="badge">{phaseLabel[phase]}</span>
+        {progress && progress.total > 1 ? (
+          <span className="dim tabular-nums">{progress.completed}/{progress.total}</span>
+        ) : null}
+      </div>
+      <div className="mx-auto mt-3 h-1 w-56 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+        {progress && progress.total > 0 ? (
+          <div
+            className="h-full rounded-full bg-accent-500 transition-[width] duration-500"
+            style={{ width: `${Math.max(4, ratio * 100)}%` }}
+            role="progressbar"
+            aria-label="Pull request review progress"
+            aria-valuemin={0}
+            aria-valuemax={progress.total}
+            aria-valuenow={progress.completed}
+          />
+        ) : (
+          <div className="ppv-shimmer h-full w-full" />
+        )}
+      </div>
+      {budget ? <ReviewBudgetSummary budget={budget} /> : null}
+      {review && review.runIds.length > 0 ? (
+        <p className="dim mt-3 text-xs">
+          {review.runIds.length} agent run{review.runIds.length === 1 ? '' : 's'} ·{' '}
+          <a className="linkish" href={`#/runs/${review.runIds[review.runIds.length - 1]}`}>
+            view current run →
+          </a>
+        </p>
+      ) : null}
+      {canCancel && onCancel ? (
+        <button className="btn-ghost mt-4" disabled={busy} onClick={onCancel}>
+          {busy ? 'Cancelling…' : 'Cancel review'}
+        </button>
+      ) : null}
     </section>
   );
+}
+
+function ReviewBudgetSummary({
+  budget,
+  panel = false,
+}: {
+  budget: PrReviewBudgetProgress;
+  panel?: boolean;
+}): JSX.Element {
+  const usage = budget.tokenUsage;
+  const totalTokens = usage ? usage.inputTokens + usage.outputTokens : 0;
+  const cost = usage ? reviewCost(usage.estimatedCostUsd, usage.costPartial, usage.reportedRuns) : null;
+  return (
+    <div
+      className={`${panel ? 'mt-3 rounded-lg border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/30' : 'mt-3'} dim flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs tabular-nums`}
+      aria-label="Aggregate review budget"
+    >
+      <span className="whitespace-nowrap">{budget.modelCalls}/{budget.maxModelCalls} agent calls</span>
+      {usage ? (
+        <>
+          <span className="whitespace-nowrap">
+            {formatTokens(totalTokens)}/{formatTokens(usage.maxTokens)} tokens
+          </span>
+          {usage.reportedRuns > 0 ? (
+            <span className="whitespace-nowrap">
+              {formatTokens(usage.inputTokens)} in · {formatTokens(usage.outputTokens)} out
+            </span>
+          ) : null}
+          {cost ? <span className="whitespace-nowrap">{cost}</span> : null}
+          {usage.missingRuns > 0 ? (
+            <span className="badge-danger">usage missing for {usage.missingRuns} run{usage.missingRuns === 1 ? '' : 's'}</span>
+          ) : null}
+        </>
+      ) : null}
+      <span className="whitespace-nowrap">
+        hard stop at {new Date(budget.deadlineAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      </span>
+    </div>
+  );
+}
+
+function reviewCost(knownUsd: number, partial: boolean, reportedRuns: number): string | null {
+  if (reportedRuns === 0) return partial ? 'cost unavailable' : null;
+  if (knownUsd === 0 && partial) return 'cost incomplete';
+  const formatted = formatUsd(knownUsd);
+  return partial ? `known cost ${formatted}` : `≈ ${formatted}`;
 }

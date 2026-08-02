@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/companion-sdk/client';
+import { RequiresGithubAccount, RequiresRepo } from './components/SetupGate.js';
 
 /**
  * Wrap a lazily-loaded page in the prerequisite gate.
@@ -10,7 +11,7 @@ import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/comp
  */
 const gated = (load: () => Promise<{ default: ComponentType<RouteProps> }>, what: string) =>
   lazyView(async () => {
-    const [{ default: Inner }, { RequiresRepo }] = await Promise.all([load(), import('./components/SetupGate.js')]);
+    const { default: Inner } = await load();
     const Wrapped = (props: RouteProps): JSX.Element => (
       <RequiresRepo what={what}>
         <Inner {...props} />
@@ -99,10 +100,7 @@ export const routes = defineClientRoutes([
     match: { prefix: '/repos' },
     permission: 'repos:manage',
     component: lazyView(async () => {
-      const [{ ReposPage }, { RequiresGithubAccount }] = await Promise.all([
-        import('./pages/ReposPage.js'),
-        import('./components/SetupGate.js'),
-      ]);
+      const { ReposPage } = await import('./pages/ReposPage.js');
       // Only the account half: this page is where a repository gets added, so
       // gating it on having one would send you here from here.
       const Wrapped = (): JSX.Element => (

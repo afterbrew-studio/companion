@@ -49,6 +49,29 @@ const setModelSchema = z.object({
   provider: z.string().min(1).max(64).optional(),
 });
 
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function queryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} must be at most ${max} characters`);
+  return value;
+}
+
+function queryChoice<const T extends string>(raw: string | null, values: readonly T[], name: string): T | undefined {
+  if (raw === null || raw === '') return undefined;
+  if (!values.includes(raw as T)) throw badRequest(`${name} has an unsupported value`);
+  return raw as T;
+}
+
 // ---------- runners ----------
 
 const workspaceIds = z.array(z.string()).max(200).optional();
@@ -273,6 +296,35 @@ export default defineRoutes((ctx) => {
       path: '/api/runs',
       access: 'runs:read',
       handler: ({ user }) => ({ runs: op.orchestrator.listRuns().filter((r) => canSeeRun(user, r)) }),
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/runs/page',
+      access: 'runs:read',
+      handler: ({ query, user }) => {
+        if (!user) return { runs: [], total: 0 };
+        const workspaceId = queryText(query.get('workspace'), 100, 'workspace');
+        if (workspaceId) workspace.requireAccessible(user, workspaceId);
+        return op.orchestrator.listRunsPage({
+          userId: user.username,
+          repoNames: workspaceId ? workspace.repoNames(workspaceId) : undefined,
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 200, 'repo'),
+          kind: queryChoice(
+            query.get('kind'),
+            ['interactive', 'assistant', 'triage', 'fix', 'analysis', 'implement', 'report'] as const,
+            'kind',
+          ),
+          status: queryChoice(
+            query.get('status'),
+            ['active', 'review', 'running', 'completed', 'failed', 'stopped'] as const,
+            'status',
+          ),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
+      },
     }),
 
     route({

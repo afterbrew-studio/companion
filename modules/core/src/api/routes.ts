@@ -6,7 +6,7 @@ import {
   route,
   created,
   badRequest,
-  document,
+  documentStream,
   forbidden,
   HttpError,
   isModuleId,
@@ -266,23 +266,23 @@ export default defineRoutes((ctx) => {
       handler: () => ctx.services.get('auditForwarder').state(),
     }),
     route({
-      // "Get our data out" as one NDJSON stream: one JSON object per line, so a
-      // year of entries neither builds a giant array in memory nor needs paging
-      // logic in whatever ingests it.
+      // "Get our data out" as one real NDJSON stream: one bounded DB page and
+      // one response chunk at a time, with HTTP backpressure.
       method: 'GET',
       path: '/api/audit/export',
       access: 'audit:read',
       handler: ({ query }) => {
         const since = Number(query.get('since'));
-        let before: number | undefined;
-        const lines: string[] = [];
-        for (;;) {
-          const page = audit.list({ since: Number.isFinite(since) ? since : undefined, before, limit: 1000 });
-          if (!page.length) break;
-          for (const e of page) lines.push(JSON.stringify(e));
-          before = page[page.length - 1]!.id;
-        }
-        return document(`${lines.join('\n')}\n`, 'application/x-ndjson', 'companion-audit.ndjson');
+        const entries = async function* (): AsyncGenerator<string> {
+          let before: number | undefined;
+          for (;;) {
+            const page = audit.list({ since: Number.isFinite(since) ? since : undefined, before, limit: 1000 });
+            if (!page.length) return;
+            yield `${page.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+            before = page[page.length - 1]!.id;
+          }
+        };
+        return documentStream(entries(), 'application/x-ndjson', 'companion-audit.ndjson');
       },
     }),
 

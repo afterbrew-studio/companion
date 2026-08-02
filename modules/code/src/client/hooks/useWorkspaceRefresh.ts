@@ -10,6 +10,7 @@ export interface WorkspaceRefreshState {
   readonly unavailableRepos: readonly string[];
   readonly failedRepos: readonly RepoSyncFailure[];
   readonly error: string | null;
+  readonly retry: () => void;
 }
 
 export function useWorkspaceRefresh(
@@ -19,6 +20,7 @@ export function useWorkspaceRefresh(
   const [error, setError] = useState<string | null>(null);
   const [unavailableRepos, setUnavailableRepos] = useState<readonly string[]>([]);
   const [failedRepos, setFailedRepos] = useState<readonly RepoSyncFailure[]>([]);
+  const [retryKey, setRetryKey] = useState(0);
   // Membership, not list identity: a repository added while this feed is open
   // has never been refreshed, and a verdict from before it existed outlives it
   // otherwise. Every successful sync broadcasts repos.changed and reloads the
@@ -48,7 +50,12 @@ export function useWorkspaceRefresh(
     return () => {
       active = false;
     };
-  }, [workspaceId, members]);
+  }, [workspaceId, members, retryKey]);
 
-  return { unavailableRepos, failedRepos, error };
+  return {
+    unavailableRepos,
+    failedRepos,
+    error,
+    retry: () => setRetryKey((value) => value + 1),
+  };
 }

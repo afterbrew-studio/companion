@@ -8,6 +8,7 @@ import type {
   ArtifactBundle,
   FeatureBrief,
   FeaturePlanningSession,
+  FeaturePlanningSessionSummary,
   PlannerAnswer,
   PlannerDiscussionContext,
   PlannerMessage,
@@ -121,10 +122,19 @@ export class PlannerService {
     return session;
   }
 
+  /** Full records for trusted in-process consumers that explicitly need them. */
   list(workspaceId: string): FeaturePlanningSession[] {
     return this.store
       .listByWorkspace(workspaceId)
       .filter((session) => session.status !== 'cancelled');
+  }
+
+  /** Lightweight server page for the browser's Ideas history. */
+  listPage(
+    workspaceId: string,
+    opts: { readonly limit?: number; readonly offset?: number } = {},
+  ): { sessions: FeaturePlanningSessionSummary[]; total: number } {
+    return this.store.listSummariesByWorkspace(workspaceId, opts.limit, opts.offset);
   }
 
   get(id: string): FeaturePlanningSession | undefined {
@@ -146,11 +156,9 @@ export class PlannerService {
   }
 
   legacyActiveCount(workspaceId: string): number {
-    const plannerProposalIds = new Set(
-      this.store.listByWorkspace(workspaceId).flatMap((session) => session.proposalId ? [session.proposalId] : []),
-    );
+    const plannerProposalIds = new Set(this.store.listProposalIdsByWorkspace(workspaceId));
     return this.plan.proposals
-      .list(workspaceId)
+      .listStatuses(workspaceId)
       .filter((proposal) => !plannerProposalIds.has(proposal.id) && !['implemented', 'rejected'].includes(proposal.status))
       .length;
   }
@@ -564,6 +572,10 @@ export class PlannerService {
     this.actionLeases.clear();
     if (count > 0) this.changed();
     return count;
+  }
+
+  compactEvents(): number {
+    return this.store.compactEvents();
   }
 
   private async runClarification(id: string, userId: string): Promise<void> {

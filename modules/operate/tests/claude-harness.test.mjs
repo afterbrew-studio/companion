@@ -260,7 +260,15 @@ test('a resumed run comes back with its transcript, not a blank page', async (t)
   const harness = new ClaudeCodeHarness({ runId, cwd: '/tmp', cliPath: bin, model: null }, {});
   t.after(() => harness.close());
   await harness.connect(400);
-  const live = await harness.loadHistory(runId, null, 500);
+  // connect proves the process stayed up; it intentionally has no protocol
+  // handshake. Under a busy full-suite run stdout may arrive just after that
+  // settle window, so wait on the event this assertion actually needs instead
+  // of treating scheduler latency as a lost transcript.
+  let live = await harness.loadHistory(runId, null, 500);
+  for (let attempt = 0; attempt < 40 && !live.events.some((e) => e.callId === 'after-resume'); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    live = await harness.loadHistory(runId, null, 500);
+  }
   assert.ok(harness.isOpen, 'the stand-in session should still be up');
   assert.ok(live.events.length > 1, 'a resumed session answered with nothing');
   assert.ok(live.events.some((e) => e.type === 'user_prompt'), 'the replayed prompts are missing');

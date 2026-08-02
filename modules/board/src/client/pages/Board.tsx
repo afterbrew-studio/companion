@@ -46,6 +46,7 @@ import type {
   TaskEventRecord,
   TaskModelOptions,
   TaskPriority,
+  TaskListRecord,
   TaskRecord,
   TaskStatus,
   WorkerRole,
@@ -77,7 +78,7 @@ const COLUMNS: ReadonlyArray<{ key: ColumnKey; label: string }> = [
 const MAX_DEP_MATCHES = 30;
 
 /** A card waiting on a human call (merge / reject) rather than on machinery. */
-function needsDecision(task: TaskRecord, autoMerge: boolean): boolean {
+function needsDecision(task: TaskListRecord, autoMerge: boolean): boolean {
   return (
     task.status === 'in_review' &&
     task.stage === 'awaiting_merge' &&
@@ -86,7 +87,7 @@ function needsDecision(task: TaskRecord, autoMerge: boolean): boolean {
 }
 
 /** Human drag targets, mirroring the server's moveTask validation. */
-function canMove(task: TaskRecord, to: TaskStatus): boolean {
+function canMove(task: TaskListRecord, to: TaskStatus): boolean {
   if (to === task.status) return false;
   if (to === 'ready') return ['backlog', 'failed', 'in_review'].includes(task.status);
   if (to === 'backlog') return ['ready', 'failed', 'in_review', 'in_progress'].includes(task.status);
@@ -94,7 +95,7 @@ function canMove(task: TaskRecord, to: TaskStatus): boolean {
   return false;
 }
 
-function stageLabel(task: TaskRecord): string | null {
+function stageLabel(task: TaskListRecord): string | null {
   switch (task.stage) {
     case 'build':
       return task.status === 'ready' ? 'queued to build' : 'building';
@@ -120,7 +121,7 @@ function stageLabel(task: TaskRecord): string | null {
 
 /** The card's one status line: tone + label for where the task is right now. */
 function cardSignal(
-  task: TaskRecord,
+  task: TaskListRecord,
   attention: boolean,
 ): { tone: StatusTone; label: string; pulse?: boolean } | null {
   if (task.status === 'failed') return { tone: 'red', label: 'failed' };
@@ -313,13 +314,33 @@ function HeaderChip({
 
 export default function Board({ query }: RouteProps): JSX.Element {
   const { current } = useWorkspace();
-  const { tasks, workers, config, loaded, error, setError } = useBoard(current?.id);
   const repos = useWorkspaceRepos(current?.id);
+  // The persisted repository scope also scopes the paged Done archive. Active
+  // tasks remain in the snapshot across repos for scheduling and dependencies.
+  const [scope, setScope] = useState<string | null>(null);
+  useEffect(() => {
+    setScope(current?.id ? window.localStorage.getItem(scopeKey(current.id)) : null);
+  }, [current?.id]);
+  const requestedDoneRepo = scope && scope !== ALL_REPOS ? scope : undefined;
+  const {
+    tasks,
+    workers,
+    config,
+    taskRepos,
+    doneTotal,
+    doneOffset,
+    loadingDonePage,
+    loadOlderDone,
+    loadNewerDone,
+    loaded,
+    error,
+    setError,
+  } = useBoard(current?.id, requestedDoneRepo);
   const [creating, setCreating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [managingWorkers, setManagingWorkers] = useState(false);
   const [configuring, setConfiguring] = useState(false);
-  const [dragging, setDragging] = useState<TaskRecord | null>(null);
+  const [dragging, setDragging] = useState<TaskListRecord | null>(null);
   const [dropTarget, setDropTarget] = useState<ColumnKey | null>(null);
 
   // Notification deep link (#/board?task=…) opens the task's detail view.
@@ -339,14 +360,10 @@ export default function Board({ query }: RouteProps): JSX.Element {
   // access and its own acting account, so the scope selector is also where
   // those are stated. `null` means "not resolved yet" — the first render after
   // a workspace switch picks a repo rather than dumping every repo's cards.
-  const [scope, setScope] = useState<string | null>(null);
-  useEffect(() => {
-    setScope(current?.id ? window.localStorage.getItem(scopeKey(current.id)) : null);
-  }, [current?.id]);
   const repoOptions = useMemo(() => {
-    const names = new Set<string>([...repos.map((r) => r.fullName), ...tasks.map((t) => t.repo)]);
+    const names = new Set<string>([...repos.map((r) => r.fullName), ...taskRepos]);
     return [...names].sort();
-  }, [repos, tasks]);
+  }, [repos, taskRepos]);
   useEffect(() => {
     if (scope !== null || repoOptions.length === 0) return;
     // Prefer a repo this profile can actually push to — that is where work lands.
@@ -359,6 +376,10 @@ export default function Board({ query }: RouteProps): JSX.Element {
     },
     [current?.id],
   );
+  useEffect(() => {
+    if (!scope || scope === ALL_REPOS || repoOptions.length === 0 || repoOptions.includes(scope)) return;
+    chooseScope(ALL_REPOS);
+  }, [chooseScope, repoOptions, scope]);
 
   const scopedRepo = scope && scope !== ALL_REPOS && repoOptions.includes(scope) ? scope : null;
   const visibleTasks = useMemo(
@@ -369,7 +390,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
 
   const autoMerge = config?.autoMerge ?? true;
   const byColumn = useMemo(() => {
-    const map = new Map<ColumnKey, TaskRecord[]>(COLUMNS.map((c) => [c.key, []]));
+    const map = new Map<ColumnKey, TaskListRecord[]>(COLUMNS.map((c) => [c.key, []]));
     for (const t of visibleTasks) map.get(needsDecision(t, autoMerge) ? 'needs_decision' : t.status)?.push(t);
     return map;
   }, [visibleTasks, autoMerge]);
@@ -403,7 +424,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
   // repo access aren't in the snapshot and simply don't show.
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const waitingOn = useCallback(
-    (task: TaskRecord): string[] =>
+    (task: TaskListRecord): string[] =>
       task.status === 'done'
         ? []
         : task.dependsOn.flatMap((depId) => {
@@ -530,6 +551,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
         <div className="flex items-stretch gap-3 pb-4">
         {COLUMNS.map((col) => {
           const cards = byColumn.get(col.key) ?? [];
+          const displayedCount = col.key === 'done' ? doneTotal : cards.length;
           const droppable = dragging && col.key !== 'needs_decision' ? canMove(dragging, col.key) : false;
           const countClass =
             cards.length > 0 && col.key === 'needs_decision'
@@ -561,7 +583,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
             >
               <header className="mb-2 flex items-center justify-between px-1">
                 <h2 className="text-xs font-semibold tracking-wide uppercase">{col.label}</h2>
-                <span className={`text-xs tabular-nums ${countClass}`}>{cards.length}</span>
+                <span className={`text-xs tabular-nums ${countClass}`}>{displayedCount}</span>
               </header>
               <div className="flex flex-1 flex-col gap-2">
                 {cards.map((task) => (
@@ -582,6 +604,29 @@ export default function Board({ query }: RouteProps): JSX.Element {
                 ))}
                 {col.key === 'needs_decision' && cards.length === 0 ? (
                   <p className="dim px-1 text-[11px]">Cards land here when a merge needs your call.</p>
+                ) : null}
+                {col.key === 'done' && doneTotal > 0 ? (
+                  <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-200 px-1 pt-2 dark:border-zinc-800">
+                    <button
+                      className="linkish text-xs"
+                      disabled={loadingDonePage || doneOffset === 0}
+                      onClick={loadNewerDone}
+                    >
+                      Newer
+                    </button>
+                    <span className="dim text-[10px] tabular-nums" role="status">
+                      {loadingDonePage
+                        ? 'Loading…'
+                        : `${doneOffset + 1}–${doneOffset + cards.length} of ${doneTotal}`}
+                    </span>
+                    <button
+                      className="linkish text-xs"
+                      disabled={loadingDonePage || doneOffset + cards.length >= doneTotal}
+                      onClick={loadOlderDone}
+                    >
+                      Older
+                    </button>
+                  </div>
                 ) : null}
               </div>
             </section>
@@ -634,7 +679,7 @@ function TaskCard({
   onDragStart,
   onDragEnd,
 }: {
-  task: TaskRecord;
+  task: TaskListRecord;
   /** Repo display name — short, or owner/name when the short name is ambiguous. */
   repoLabel: string;
   workerName: string | null;
@@ -1075,7 +1120,7 @@ function TaskDetailDrawer({
 }: {
   id: string;
   /** The board snapshot — candidates for the dependency picker. */
-  allTasks: TaskRecord[];
+  allTasks: TaskListRecord[];
   workerName: (id: string | null) => string | null;
   onClose: () => void;
   onError: (e: string | null) => void;

@@ -14,4 +14,5 @@ export type OperateService = ServiceMap['operate'];
 export type Orchestrator = OperateService['orchestrator'];
 export type Checkouts = OperateService['checkouts'];
 export type RunsStore = OperateService['runsStore'];
+export type RunUsageSnapshot = NonNullable<ReturnType<OperateService['usageForRun']>>;
 export type RunnerBackend = ReturnType<Orchestrator['runners']['backend']>;

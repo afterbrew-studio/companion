@@ -40,6 +40,19 @@ export type SlopAppliedAction = SlopAction | 'refinement';
 
 export type SlopConfidence = 'low' | 'medium' | 'high';
 
+/** Maintainer-facing quality bucket, deliberately independent of AI authorship. */
+export type PrQualityClass = 'valuable' | 'promising' | 'needs_evidence' | 'low_value' | 'unsafe';
+export type PrTechnicalRisk = 'low' | 'medium' | 'high' | 'critical';
+export type PrTestEvidence = 'strong' | 'partial' | 'weak' | 'none' | 'unavailable';
+export type PrReviewability = 'ready' | 'needs_split' | 'blocked';
+
+/** One auditable reason a PR landed in its quality bucket. */
+export interface PrDecisionFactor {
+  readonly dimension: 'value' | 'correctness' | 'tests' | 'scope' | 'provenance';
+  readonly effect: 'positive' | 'negative' | 'neutral';
+  readonly observation: string;
+}
+
 /** One piece of evidence a detection rule produced. */
 export interface SlopSignal {
   /** The rule that fired (built-in or custom id; unknown ids survive verbatim). */
@@ -55,6 +68,17 @@ export interface SlopVerdict {
   /** 0–100: how likely the PR was substantially machine-generated with low human oversight. */
   readonly aiLikelihood: number;
   readonly confidence: SlopConfidence;
+  /** Overall usefulness/readiness. Never inferred from aiLikelihood alone. */
+  readonly qualityClass: PrQualityClass;
+  /** 0–100: evidenced benefit to users or maintainers relative to the churn. */
+  readonly valueScore: number;
+  /** 0–100: strength of tests, CI, reproduction, and description↔diff proof. */
+  readonly evidenceScore: number;
+  readonly technicalRisk: PrTechnicalRisk;
+  readonly testEvidence: PrTestEvidence;
+  /** Whether the change can be decided safely at its current size and shape. */
+  readonly reviewability: PrReviewability;
+  readonly decisionFactors: ReadonlyArray<PrDecisionFactor>;
   readonly summary: string;
   readonly signals: ReadonlyArray<SlopSignal>;
   readonly recommendedAction: SlopAction;

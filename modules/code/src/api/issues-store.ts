@@ -1,5 +1,5 @@
 import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
-import type { IssueRecord, TriageResult } from '../contract/index.js';
+import type { IssueListRecord, IssueRecord, TriageResult } from '../contract/index.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import type { TriageStore } from './triage-store.js';
 
@@ -40,6 +40,13 @@ export class IssuesStore {
     ) as IssueRow[];
     const triage = this.triage.latestByIssue(repo);
     return rows.map((row) => issueRowToRecord(row, triage.get(row.number) ?? null));
+  }
+
+  count(repo: string, state?: 'open' | 'closed'): number {
+    const row = (state
+      ? this.db.prepare(`SELECT COUNT(*) AS n FROM issues WHERE repo = ? AND state = ?`).get(repo, state)
+      : this.db.prepare(`SELECT COUNT(*) AS n FROM issues WHERE repo = ?`).get(repo)) as { n: number };
+    return row.n;
   }
 
   get(repo: string, number: number): IssueRecord | undefined {
@@ -105,14 +112,15 @@ export class IssuesStore {
       assignee?: string;
       label?: string;
       /** Latest triage verdict status for the issue. */
-      triage?: 'pending' | 'applied' | 'dismissed';
+      triage?: 'running' | 'pending' | 'applied' | 'dismissed';
       limit?: number;
       offset?: number;
       accessibleRepos?: readonly string[];
       myLogins?: readonly string[];
+      includeFacets?: boolean;
     },
   ): {
-    issues: IssueRecord[];
+    issues: IssueListRecord[];
     total: number;
     counts: { open: number; closed: number };
     facets: { authors: string[]; assignees: string[]; labels: string[] };
@@ -175,17 +183,29 @@ export class IssuesStore {
     }
     const stateCond = state ? ` AND i.state = ?` : '';
     const stateArgs = state ? [...args, state] : args;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.min(Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0), 1_000_000);
     const rows = this.db
-      .prepare(`SELECT i.* ${base}${stateCond} ORDER BY i.updated_at DESC LIMIT ? OFFSET ?`)
-      .all(...stateArgs, opts.limit ?? -1, opts.offset ?? 0) as IssueRow[];
+      .prepare(
+        `SELECT i.repo, i.number, i.title, i.state, i.labels, i.author, i.assignees,
+                i.comments, i.url, i.created_at, i.updated_at, i.closed_at
+         ${base}${stateCond} ORDER BY i.updated_at DESC, i.repo, i.number DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...stateArgs, limit, offset) as IssueListRow[];
     const triageByRepo = new Map<string, Map<number, TriageResult['status']>>();
+    const pageNumbersByRepo = new Map<string, number[]>();
+    for (const row of rows) {
+      const numbers = pageNumbersByRepo.get(row.repo) ?? [];
+      numbers.push(row.number);
+      pageNumbersByRepo.set(row.repo, numbers);
+    }
     const issues = rows.map((row) => {
       let map = triageByRepo.get(row.repo);
       if (!map) {
-        map = this.triage.latestByIssue(row.repo);
+        map = this.triage.latestByIssue(row.repo, pageNumbersByRepo.get(row.repo));
         triageByRepo.set(row.repo, map);
       }
-      return issueRowToRecord(row, map.get(row.number) ?? null);
+      return issueListRowToRecord(row, map.get(row.number) ?? null);
     });
     const total = state ? counts[state] : counts.open + counts.closed;
     const facetAccess = opts.accessibleRepos
@@ -195,11 +215,13 @@ export class IssuesStore {
       : '';
     const facetBase = `FROM issues i JOIN v_repos r ON r.full_name = i.repo WHERE r.workspace_id = ?${facetAccess}`;
     const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
-    const facets = {
-      authors: (this.db.prepare(`SELECT DISTINCT i.author AS v ${facetBase} AND i.author != '' ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
-      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.assignees) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
-      labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.labels) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
-    };
+    const facets = opts.includeFacets === false
+      ? { authors: [], assignees: [], labels: [] }
+      : {
+          authors: (this.db.prepare(`SELECT DISTINCT i.author AS v ${facetBase} AND i.author != '' ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+          assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.assignees) WHERE')} ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+          labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(i.labels) WHERE')} ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+        };
     return { issues, total, counts, facets };
   }
 }
@@ -220,12 +242,16 @@ interface IssueRow {
   closed_at: number | null;
 }
 
-function issueRowToRecord(row: IssueRow, triage: TriageResult['status'] | null): IssueRecord {
+type IssueListRow = Omit<IssueRow, 'body'>;
+
+function issueListRowToRecord(
+  row: IssueListRow,
+  triage: TriageResult['status'] | null,
+): IssueListRecord {
   return {
     repo: row.repo,
     number: row.number,
     title: row.title,
-    body: row.body,
     state: row.state,
     labels: safeParse(row.labels, []),
     author: row.author,
@@ -236,5 +262,12 @@ function issueRowToRecord(row: IssueRow, triage: TriageResult['status'] | null):
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
     triage: triage === 'failed' ? null : triage,
+  };
+}
+
+function issueRowToRecord(row: IssueRow, triage: TriageResult['status'] | null): IssueRecord {
+  return {
+    ...issueListRowToRecord(row, triage),
+    body: row.body,
   };
 }

@@ -155,6 +155,41 @@ export default defineMigrations([
     // older code, which simply ignores the column.
     down: () => undefined,
   },
+  {
+    version: 5,
+    name: 'planner_usage_totals',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS planner_usage_totals (
+          session_id                TEXT PRIMARY KEY,
+          total_runs                INTEGER NOT NULL DEFAULT 0,
+          total_input_tokens        INTEGER NOT NULL DEFAULT 0,
+          total_output_tokens       INTEGER NOT NULL DEFAULT 0,
+          repository_scan_runs      INTEGER NOT NULL DEFAULT 0,
+          cached_snapshot_runs      INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY(session_id) REFERENCES planner_sessions(id) ON DELETE CASCADE
+        );
+
+        INSERT OR IGNORE INTO planner_usage_totals (
+          session_id, total_runs, total_input_tokens, total_output_tokens,
+          repository_scan_runs, cached_snapshot_runs
+        )
+        SELECT
+          session_id,
+          COUNT(*),
+          COALESCE(SUM(CAST(json_extract(detail_json, '$.inputTokens') AS INTEGER)), 0),
+          COALESCE(SUM(CAST(json_extract(detail_json, '$.outputTokens') AS INTEGER)), 0),
+          SUM(CASE WHEN json_extract(detail_json, '$.contextMode') = 'repository_scan' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN json_extract(detail_json, '$.contextMode') = 'cached_snapshot' THEN 1 ELSE 0 END)
+        FROM planner_events
+        WHERE kind = 'planner_run_completed' AND json_valid(detail_json)
+        GROUP BY session_id;
+      `);
+    },
+    // Usage totals preserve historical resource accounting after event
+    // compaction, so module disable/enable must not remove them.
+    down: () => undefined,
+  },
 ]);
 
 function parseJsonArray(value: string): unknown[] {

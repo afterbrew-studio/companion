@@ -1,6 +1,11 @@
 import { defineServices } from '@moxxy/companion-sdk/server';
 import { RefinementStore } from './refinement-store.js';
-import { RefinementService } from './refinement-service.js';
+import {
+  buildRefinementEvaluationPrompt,
+  parseDecomposition,
+  REFINEMENT_DECOMPOSITION_PROMPT_VERSION,
+  RefinementService,
+} from './refinement-service.js';
 
 /**
  * Construct the refinement domain: the store over the refinement tables and
@@ -12,6 +17,15 @@ export default defineServices((ctx) => {
   const store = new RefinementStore(ctx.db);
   const operate = ctx.services.get('operate');
   operate.registerRunTask({ id: 'refinement.analyses', label: 'Refinement', placeable: false });
+  operate.promptEvaluations.register({
+    id: 'refinement.decomposition',
+    moduleId: 'refinement',
+    label: 'Epic decomposition',
+    task: 'refinement.analyses',
+    version: REFINEMENT_DECOMPOSITION_PROMPT_VERSION,
+    buildPrompt: buildRefinementEvaluationPrompt,
+    parseResponse: parseDecomposition,
+  });
   ctx.services.register(
     'refinement',
     new RefinementService(

@@ -3,10 +3,13 @@ import type {
   AreaStorage,
   AreaStorageConfig,
   AreaStorageState,
+  DocListRecord,
   DocRecord,
   DocSearchHit,
+  ProposalListRecord,
   ProposalRecord,
   RepoDocFile,
+  SpecListRecord,
   SpecRecord,
 } from '../contract/index.js';
 
@@ -20,8 +23,11 @@ import type {
 
 export const planApi = {
   // proposals
-  workspaceProposals: (id: string) =>
-    request<{ proposals: ProposalRecord[] }>(`/api/workspaces/${id}/proposals`),
+  workspaceProposals: (
+    id: string,
+    page: { q?: string; repo?: string; status?: string; limit?: number; offset?: number } = {},
+  ) => request<{ proposals: ProposalListRecord[]; total: number }>(`/api/workspaces/${id}/proposals${qs(page)}`),
+  getProposal: (id: string) => request<{ proposal: ProposalRecord }>(`/api/proposals/${id}`),
   createProposal: (workspaceId: string, repo: string, title: string, body: string) =>
     post<{ proposal: ProposalRecord }>('/api/proposals', { workspaceId, repo, title, body }),
   analyzeProposal: (id: string) => post<{ queued: true }>(`/api/proposals/${id}/analyze`),
@@ -33,7 +39,10 @@ export const planApi = {
   rejectProposal: (id: string) => post<{ ok: true }>(`/api/proposals/${id}/reject`),
 
   // specifications
-  workspaceSpecs: (id: string) => request<{ specs: SpecRecord[] }>(`/api/workspaces/${id}/specs`),
+  workspaceSpecs: (
+    id: string,
+    page: { q?: string; repo?: string; status?: string; source?: string; storage?: string; limit?: number; offset?: number } = {},
+  ) => request<{ specs: SpecListRecord[]; total: number }>(`/api/workspaces/${id}/specs${qs(page)}`),
   specsConfig: (id: string) => request<AreaStorageState>(`/api/workspaces/${id}/specs-config`),
   saveSpecsConfig: (id: string, dir: string | null) =>
     put<{ config: AreaStorageConfig; imported: number }>(`/api/workspaces/${id}/specs-config`, { dir }),
@@ -52,7 +61,10 @@ export const planApi = {
     post<{ proposal: ProposalRecord }>(`/api/specs/${id}/create-feature`, fields),
 
   // documentation
-  workspaceDocs: (id: string) => request<{ docs: DocRecord[] }>(`/api/workspaces/${id}/docs`),
+  workspaceDocs: (
+    id: string,
+    page: { q?: string; repo?: string; source?: string; storage?: string; limit?: number; offset?: number } = {},
+  ) => request<{ docs: DocListRecord[]; total: number }>(`/api/workspaces/${id}/docs${qs(page)}`),
   docsConfig: (id: string) => request<AreaStorageState>(`/api/workspaces/${id}/docs-config`),
   saveDocsConfig: (id: string, dir: string | null) =>
     put<{ config: AreaStorageConfig; imported: number }>(`/api/workspaces/${id}/docs-config`, { dir }),

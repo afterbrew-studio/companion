@@ -75,6 +75,21 @@ const FILES = [
   },
 ];
 
+/** Opt-in volume fixture for paging/loading-state audits; ordinary README shots stay unchanged. */
+const CHANGED_FILES = process.env.COMPANION_DEMO_LARGE_PR === 'true'
+  ? [
+      ...FILES,
+      ...Array.from({ length: 118 }, (_, index) => ({
+        filename: `src/generated/scenario-${String(index + 1).padStart(3, '0')}.ts`,
+        status: 'modified',
+        additions: 2,
+        deletions: 1,
+        changes: 3,
+        patch: `@@ -1,2 +1,3 @@\n-export const enabled = false;\n+// Deliberately small synthetic patch for the large-PR paging fixture.\n+export const enabled = true;`,
+      })),
+    ]
+  : FILES;
+
 const SUITE = ['build', 'unit', 'contract-tests', 'lint', 'typecheck', 'ledger-export'];
 
 /**
@@ -116,9 +131,10 @@ const COMMENTS = [
 ];
 
 const server = createServer((req, res) => {
-  const { pathname } = new URL(req.url ?? '/', 'http://localhost');
-  const json = (body) => {
-    res.writeHead(200, { 'content-type': 'application/json' });
+  const requestUrl = new URL(req.url ?? '/', 'http://localhost');
+  const { pathname } = requestUrl;
+  const json = (body, headers = {}) => {
+    res.writeHead(200, { 'content-type': 'application/json', ...headers });
     res.end(JSON.stringify(body));
   };
 
@@ -138,7 +154,16 @@ const server = createServer((req, res) => {
 
   // A pull request's changed files, which is what the PR page draws its diff
   // from. Served for any number: the demo only ever opens one.
-  if (/^\/repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+\/files$/.test(pathname)) return json(FILES);
+  if (/^\/repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+\/files$/.test(pathname)) {
+    const perPage = Math.min(100, Math.max(1, Number(requestUrl.searchParams.get('per_page')) || 30));
+    const page = Math.max(1, Number(requestUrl.searchParams.get('page')) || 1);
+    const start = (page - 1) * perPage;
+    const links = [];
+    const pageUrl = (target) => `http://127.0.0.1:${PORT}${pathname}?per_page=${perPage}&page=${target}`;
+    if (page > 1) links.push(`<${pageUrl(page - 1)}>; rel="prev"`);
+    if (start + perPage < CHANGED_FILES.length) links.push(`<${pageUrl(page + 1)}>; rel="next"`);
+    return json(CHANGED_FILES.slice(start, start + perPage), links.length > 0 ? { link: links.join(', ') } : {});
+  }
 
   // The conversation on an issue or a pull request (GitHub serves both here).
   if (/^\/repos\/[\w.-]+\/[\w.-]+\/issues\/\d+\/comments$/.test(pathname)) return json(COMMENTS);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useLive } from '@moxxy/companion-core/client';
 import type { CatalogMachine, ProviderCatalog, RunnerProviderPolicy } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
@@ -33,9 +33,6 @@ export function useProviders(): {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
   useLive(refresh, (msg) => msg.t === 'runners.changed');
 
   const save = async (machineId: string, policy: RunnerProviderPolicy): Promise<void> => {

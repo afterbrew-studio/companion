@@ -49,8 +49,16 @@ export interface RefinementRecord {
   readonly updatedAt: number;
 }
 
-/** List-page view: the record plus its item tallies. */
-export interface RefinementListEntry extends RefinementRecord {
+/** Lightweight list-page view; epic/summary/context stay on the detail route. */
+export interface RefinementListEntry {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly repo: string;
+  readonly branch: string;
+  readonly title: string;
+  readonly status: RefinementRecord['status'];
+  readonly createdAt: number;
+  readonly updatedAt: number;
   readonly proposedCount: number;
   readonly importedCount: number;
 }

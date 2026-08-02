@@ -42,9 +42,10 @@ export const REPO_PRESETS: readonly RepoPreset[] = [
     automation: { autoTriage: true, digest: true, staleSweep: false, prGate: true, autoMerge: true },
     pipeline: {
       name: 'Merge gate',
-      description: 'CI must be green and the AI review must not be asking for changes.',
+      description: 'PR quality, CI, and an evidence-backed AI review must all clear before the change can progress.',
       autoRunOnPrOpen: true,
       steps: [
+        { kind: 'slop-check', threshold: 70 },
         { kind: 'checks-gate', allowPending: false },
         { kind: 'ai-review', post: true, failOn: 'request_changes' },
       ],
@@ -93,7 +94,12 @@ function toSpec(step: PresetStepShorthand): PipelineStepSpec {
     case 'slop-check':
       return {
         type: 'inline',
-        step: { kind: 'slop-check', name: 'Slop screen', onFailure: 'halt', config: { threshold: step.threshold } },
+        step: {
+          kind: 'slop-check',
+          name: 'PR quality gate',
+          onFailure: 'halt',
+          config: { threshold: step.threshold },
+        },
       };
     case 'ai-review':
       return {

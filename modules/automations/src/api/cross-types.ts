@@ -37,6 +37,7 @@ export type GhReviewComment = Parameters<PrReviews['replyToReviewComment']>[2];
 export type RepoRow = NonNullable<ReturnType<ReposStore['get']>>;
 
 export type PlanService = ServiceMap['plan'];
+export type Proposals = PlanService['proposals'];
 export type Specs = PlanService['specs'];
 
 /** module-core's Auth service (AI Help mints scoped API tokens through it). */

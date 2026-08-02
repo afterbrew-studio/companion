@@ -1209,7 +1209,7 @@ export class Runners {
     const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
     try {
       const cwd = await backend.scratchDir(probeId);
-      await backend.spawn(probeId, cwd);
+      await backend.spawn(probeId, cwd, 'workspace-write');
       const catalog = parseCatalog((await backend.sessionInfo(probeId)) as SessionInfo);
       this.storeCatalog(id, catalog);
       return catalog;

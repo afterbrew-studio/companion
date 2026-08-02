@@ -201,6 +201,42 @@ export class Checkouts {
   }
 
   /**
+   * Temporary detached worktree at the repository's current base branch.
+   * Read-only agents must never receive the shared clone as their cwd: a
+   * compromised prompt could corrupt the cache for every later operation even
+   * when it cannot push. The worktree is disposable, while the clone remains a
+   * Git-owned object/cache store only.
+   */
+  async withBaseWorktree<T>(
+    fullName: string,
+    key: string,
+    baseBranch: string,
+    fn: (cwd: string) => Promise<T>,
+    token?: string,
+    username?: string | null,
+  ): Promise<T> {
+    const worktree = await this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      await this.git(
+        ['fetch', '--quiet', 'origin', `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`],
+        clone,
+        await this.creds(fullName, token, username),
+      );
+      const wt = join(paths.worktrees(), key);
+      await this.git(['worktree', 'add', '--detach', wt, `origin/${baseBranch}`], clone);
+      await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
+        () => undefined,
+      );
+      return wt;
+    });
+    try {
+      return await fn(worktree);
+    } finally {
+      await this.removeWorktree(fullName, worktree).catch(() => undefined);
+    }
+  }
+
+  /**
    * The same checkout, kept until the caller removes it.
    *
    * For work that outlives one turn — a conversation about a review that must
@@ -300,6 +336,12 @@ export class Checkouts {
     const uncommitted = await this.git(['diff', 'HEAD'], worktree).catch(() => ({ stdout: '' }));
     const untracked = await this.untrackedPatch(worktree);
     return [committed.stdout, uncommitted.stdout, untracked].filter(Boolean).join('\n');
+  }
+
+  /** A server-controlled diff slice for a read-only agent prompt. */
+  async diffPaths(worktree: string, baseBranch: string, paths: readonly string[]): Promise<string> {
+    if (paths.length === 0) return '';
+    return (await this.git(['diff', `origin/${baseBranch}...HEAD`, '--', ...paths], worktree)).stdout;
   }
 
   async hasChanges(worktree: string, baseBranch: string): Promise<boolean> {

@@ -485,4 +485,140 @@ export default defineMigrations([
       }
     },
   },
+  {
+    /**
+     * A PR review is an aggregate job: a large change fans out into chunk,
+     * verifier, and summary runs. Persist its source, progress, coverage, and
+     * every child run so the UI stays truthful across reconnects and restarts.
+     */
+    version: 13,
+    name: 'pr_review_execution_state',
+    up: (db) => {
+      for (const column of [
+        `ALTER TABLE pr_reviews ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'`,
+        `ALTER TABLE pr_reviews ADD COLUMN run_ids TEXT NOT NULL DEFAULT '[]'`,
+        `ALTER TABLE pr_reviews ADD COLUMN progress TEXT`,
+        `ALTER TABLE pr_reviews ADD COLUMN coverage TEXT`,
+      ]) {
+        try {
+          db.exec(column);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+      // Empty run ids were the legacy marker for a person's own draft.
+      db.exec(`UPDATE pr_reviews SET source = 'human' WHERE run_id = '' AND status <> 'failed'`);
+      db.exec(`UPDATE pr_reviews SET run_ids = json_array(run_id) WHERE run_id <> ''`);
+    },
+    down: () => {
+      // Additive compatibility columns are inert to an older build. Rebuilding
+      // this history table merely to remove them would risk the review record.
+    },
+  },
+  {
+    /** Pipeline definitions are editable/deletable; their run history is not. */
+    version: 14,
+    name: 'pipeline_run_workspace_history',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN workspace_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+      db.exec(`
+        UPDATE pipeline_runs
+           SET workspace_id = (SELECT workspace_id FROM pipelines WHERE pipelines.id = pipeline_runs.pipeline_id)
+         WHERE workspace_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_pipeline_runs_workspace
+          ON pipeline_runs(workspace_id, created_at DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_pipeline_runs_workspace`);
+    },
+  },
+  {
+    /** Hot paths for paged maintainer queues and latest-review decoration. */
+    version: 15,
+    name: 'maintainer_queue_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_latest
+          ON pr_reviews(repo, pr_number, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_prs_repo_state_updated
+          ON prs(repo, state, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_prs_open_head
+          ON prs(repo, head_sha) WHERE state = 'open';
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_pr_reviews_latest;
+        DROP INDEX IF EXISTS idx_prs_repo_state_updated;
+        DROP INDEX IF EXISTS idx_prs_open_head;
+      `);
+    },
+  },
+  {
+    /** Exactly-once admission for webhook-triggered pipeline/head pairs. */
+    version: 16,
+    name: 'pipeline_run_idempotency',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN idempotency_key TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_runs_idempotency
+          ON pipeline_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_pipeline_runs_idempotency`);
+    },
+  },
+  {
+    /** Attribute run control and scope its raw live command stream to its starter. */
+    version: 17,
+    name: 'pipeline_run_owner',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN owner_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: () => {
+      // Additive compatibility column; rebuilding run history to remove it is unsafe.
+    },
+  },
+  {
+    /** Workspace issue queues order within one repository and state. */
+    version: 18,
+    name: 'issue_maintainer_queue_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_issues_repo_state_updated
+          ON issues(repo, state, updated_at DESC, number DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_issues_repo_state_updated`);
+    },
+  },
+  {
+    /** Latest triage decoration is read for only the visible queue window. */
+    version: 19,
+    name: 'triage_latest_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_triage_latest
+          ON triage_results(repo, issue_number, created_at DESC, id DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_triage_latest`);
+    },
+  },
 ]);

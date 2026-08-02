@@ -26,6 +26,7 @@ import {
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { Slot } from '@moxxy/companion-sdk/client';
 import { BulkBar } from '../components/BulkBar.js';
+import { ListLoadFailure, listLoadErrorMessage } from '../components/ListLoadFailure.js';
 import { PrSelectionProvider } from '../pr-selection.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -58,6 +59,7 @@ export function PrsAreaPage(): JSX.Element {
     loading,
     hasMore,
     loadMore,
+    retry,
     error,
     unavailableRepos,
     failedRepos,
@@ -94,6 +96,7 @@ export function PrsAreaPage(): JSX.Element {
   if (!current) return <EmptyState title="No workspace selected" />;
   const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
   const failed = failedRepos.filter((failure) => repoFilter === 'all' || repoFilter === failure.repo);
+  const loadFailed = !loading && prs.length === 0 && unavailable.length === 0 && error !== null;
 
   return (
     <Page>
@@ -198,17 +201,19 @@ export function PrsAreaPage(): JSX.Element {
           </>
         }
       />
-      <ErrorBar error={error} />
+      <ErrorBar error={!loadFailed && error ? listLoadErrorMessage('pull requests', error) : null} />
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={[
-          { value: 'open', label: 'Open', count: counts.open },
-          { value: 'merged', label: 'Merged', count: counts.merged },
-          { value: 'closed', label: 'Closed', count: counts.closed },
-        ]}
-      />
+      {!loadFailed ? (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'open', label: 'Open', count: settling && prs.length === 0 ? undefined : counts.open },
+            { value: 'merged', label: 'Merged', count: settling && prs.length === 0 ? undefined : counts.merged },
+            { value: 'closed', label: 'Closed', count: settling && prs.length === 0 ? undefined : counts.closed },
+          ]}
+        />
+      ) : null}
 
       {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
         <BulkBar
@@ -244,7 +249,9 @@ export function PrsAreaPage(): JSX.Element {
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
       <SyncFailureBanner failures={failed} />
 
-      {prs.length === 0 && unavailable.length === 0 && !loading ? (
+      {loadFailed ? (
+        <ListLoadFailure noun="pull requests" error={error ?? 'unknown error'} onRetry={retry} />
+      ) : prs.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
         />

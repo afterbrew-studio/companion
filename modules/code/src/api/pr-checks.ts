@@ -3,6 +3,7 @@ import type {
   ChecksSummary,
   CheckRunInfo,
   ChecksSnapshot,
+  PrListRecord,
   PrRecord,
 } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
@@ -72,7 +73,11 @@ export class PrChecks {
    * the list endpoint. Each finished fetch broadcasts prs.changed, so badges
    * stream into the open list view as they land.
    */
-  preloadWorkspace(workspaceId: string, prs: ReadonlyArray<PrRecord>, username: string): void {
+  preloadWorkspace(
+    workspaceId: string,
+    prs: ReadonlyArray<PrListRecord | PrRecord>,
+    username: string,
+  ): void {
     const now = Date.now();
     if ((this.lastWorkspacePreload.get(workspaceId) ?? 0) > now - 60_000) return;
     this.lastWorkspacePreload.set(workspaceId, now);

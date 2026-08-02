@@ -6,9 +6,10 @@ export interface OutcomeCounts {
   rejected: number;
   pending: number;
   failed: number;
+  cancelled: number;
 }
 
-export const EMPTY_OUTCOMES: OutcomeCounts = { accepted: 0, rejected: 0, pending: 0, failed: 0 };
+export const EMPTY_OUTCOMES: OutcomeCounts = { accepted: 0, rejected: 0, pending: 0, failed: 0, cancelled: 0 };
 
 /**
  * The SQL every outcome aggregate shares. Grouping in SQL matters here: these
@@ -19,12 +20,13 @@ export const EMPTY_OUTCOMES: OutcomeCounts = { accepted: 0, rejected: 0, pending
  * Callers pass their OWN table name; nothing here is interpolated from a request.
  */
 export function outcomeSql(table: 'triage_results' | 'pr_reviews'): string {
-  // Rows with no run behind them were written by a person (a manual review
-  // draft), and counting one as an accepted agent verdict would report the
-  // reviewer's own comments as the agent's accuracy.
+  // A cancelled review may never have left the queue and therefore has no run
+  // id. `source` is the durable distinction for review rows; triage has no
+  // human-draft shape and keeps its legacy non-empty-run predicate.
+  const agentOnly = table === 'pr_reviews' ? `t.source = 'agent'` : `t.run_id != ''`;
   return `SELECT status, COUNT(*) AS n FROM ${table} t
           JOIN v_repos r ON r.full_name = t.repo
-          WHERE r.workspace_id = ? AND t.created_at >= ? AND t.run_id != ''
+          WHERE r.workspace_id = ? AND t.created_at >= ? AND ${agentOnly}
           GROUP BY status`;
 }
 
@@ -34,6 +36,7 @@ export function toCounts(rows: ReadonlyArray<{ status: string; n: number }>): Ou
     if (row.status === 'applied') counts.accepted += row.n;
     else if (row.status === 'dismissed') counts.rejected += row.n;
     else if (row.status === 'failed') counts.failed += row.n;
+    else if (row.status === 'cancelled') counts.cancelled += row.n;
     // 'pending' and anything a later status adds count as undecided rather than
     // being silently folded into a rate they did not contribute to.
     else counts.pending += row.n;
@@ -64,6 +67,7 @@ export function toStat(
     rejected: counts.rejected,
     pending: counts.pending,
     failed: counts.failed,
+    cancelled: counts.cancelled,
     acceptanceRate: decided === 0 ? null : counts.accepted / decided,
     overridden,
   };

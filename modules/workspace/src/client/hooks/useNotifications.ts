@@ -47,15 +47,23 @@ export function useNotifications(): UseNotifications {
 
   const unread = items.filter((n) => n.readAt === null).length;
 
-  // Server broadcasts notifications.changed, which refetches; markRead is a
-  // no-op on already-read rows so double taps are harmless.
+  // Make acknowledgement feel immediate. The server broadcast reconciles the
+  // timestamp after success; a failed request restores authoritative state.
   const markRead = useCallback((id: string): void => {
-    void workspaceApi.markNotificationRead(id).catch(() => undefined);
-  }, []);
+    const optimisticReadAt = Date.now();
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.id === id && item.readAt === null ? { ...item, readAt: optimisticReadAt } : item)),
+    );
+    void workspaceApi.markNotificationRead(id).catch(() => void refresh());
+  }, [refresh]);
 
   const markAllRead = useCallback((): void => {
-    void workspaceApi.markAllNotificationsRead(workspaceArg).catch(() => undefined);
-  }, [workspaceArg]);
+    const optimisticReadAt = Date.now();
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.readAt === null ? { ...item, readAt: optimisticReadAt } : item)),
+    );
+    void workspaceApi.markAllNotificationsRead(workspaceArg).catch(() => void refresh());
+  }, [refresh, workspaceArg]);
 
   return { items, unread, scope: notificationScope, markRead, markAllRead, refresh };
 }

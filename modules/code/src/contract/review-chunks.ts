@@ -3,12 +3,11 @@ import type { FileChangeSize } from './diff-anchors.js';
 /**
  * Splitting a large pull request into reviewable pieces.
  *
- * A review agent works against a checkout, so the diff never travels in its
- * prompt and prompt size is not what limits it. Its CONTEXT is: every
- * `git diff -- <path>` it reads stays there, and past a few hundred changed
- * lines the earlier files fall out of it. The failure is silent — a verdict
- * still arrives, it is simply invented about the half the agent no longer
- * remembers — which is why this exists rather than a larger timeout.
+ * Each review pass receives a server-built, size-bounded diff and may inspect a
+ * disposable checkout for surrounding code. Context is still finite: past a
+ * few hundred changed lines the earliest evidence can fall out while a verdict
+ * still arrives. Splitting therefore protects reasoning quality as well as the
+ * transport budget; a larger timeout would not make an overfilled context safe.
  *
  * Pure and separate so the split can be reasoned about without a repository.
  */
@@ -90,6 +89,12 @@ export function planReview(
   const budget = opts.budget ?? CHUNK_BUDGET_LINES;
   const maxChunks = opts.maxChunks ?? MAX_CHUNKS;
   const chunks = planReviewChunks(files, budget);
+  // A single giant file used to produce exactly one chunk and therefore fall
+  // through as a safe single pass. It is the worst context-overflow case: the
+  // path cannot be split without hunk-aware planning, so refuse honestly.
+  if (chunks.some((chunk) => chunk.changed > budget)) {
+    return { kind: 'too-large', chunks: chunks.length, changed: chunks.reduce((n, c) => n + c.changed, 0) };
+  }
   if (chunks.length <= 1) return { kind: 'single' };
   if (chunks.length > maxChunks) {
     return { kind: 'too-large', chunks: chunks.length, changed: chunks.reduce((n, c) => n + c.changed, 0) };

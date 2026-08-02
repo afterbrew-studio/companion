@@ -15,6 +15,10 @@ export const notifyApi = {
   create: (draft: NotifyChannelDraft) => post<{ channel: NotifyChannelRecord }>('/api/notify/channels', draft),
   update: (id: string, fields: Partial<NotifyChannelDraft>) =>
     patch<{ channel: NotifyChannelRecord }>(`/api/notify/channels/${id}`, fields),
+  updateMine: (id: string, fields: Partial<NotifyChannelDraft>) =>
+    patch<{ channel: NotifyChannelRecord }>(`/api/notify/channels/mine/${id}`, fields),
   remove: (id: string) => del<{ ok: true }>(`/api/notify/channels/${id}`),
+  removeMine: (id: string) => del<{ ok: true }>(`/api/notify/channels/mine/${id}`),
   test: (id: string) => post<NotifyTestResult>(`/api/notify/channels/${id}/test`),
+  testMine: (id: string) => post<NotifyTestResult>(`/api/notify/channels/mine/${id}/test`),
 };

@@ -1,7 +1,7 @@
 import type { Database } from '@moxxy/companion-services';
 import type { AgentStorageRunLease } from '@moxxy/companion-types';
-import { safeParse } from '@moxxy/companion-services';
-import type { RunKind, RunRecord, RunStatus, RunVerification } from '../contract/index.js';
+import { likeArg, safeParse } from '@moxxy/companion-services';
+import type { RunKind, RunListRecord, RunRecord, RunStatus, RunVerification } from '../contract/index.js';
 import { describeHarness } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -95,6 +95,66 @@ export class RunsStore {
     return this.db
       .prepare(`SELECT * FROM runs ORDER BY created_at DESC LIMIT ?`)
       .all(limit) as RunRow[];
+  }
+
+  listPage(opts: {
+    readonly userId: string;
+    readonly repoNames?: readonly string[];
+    readonly q?: string;
+    readonly repo?: string;
+    readonly kind?: RunKind;
+    readonly status?: 'active' | 'review' | 'running' | 'completed' | 'failed' | 'stopped';
+    readonly limit?: number;
+    readonly offset?: number;
+  }): { rows: RunListRow[]; total: number } {
+    const where = [
+      `(((kind IN ('interactive', 'assistant') OR repo IS NOT NULL) AND user_id = ?)
+         OR (kind NOT IN ('interactive', 'assistant') AND repo IS NULL))`,
+    ];
+    const args: unknown[] = [opts.userId];
+    if (opts.repoNames) {
+      where.push(
+        opts.repoNames.length > 0
+          ? `(repo IS NULL OR repo IN (${opts.repoNames.map(() => '?').join(', ')}))`
+          : 'repo IS NULL',
+      );
+      args.push(...opts.repoNames);
+    }
+    if (opts.q) {
+      const like = likeArg(opts.q);
+      where.push(`(title LIKE ? ESCAPE '\\' OR COALESCE(repo, '') LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')`);
+      args.push(like, like, like);
+    }
+    if (opts.repo) {
+      where.push('repo = ?');
+      args.push(opts.repo);
+    }
+    if (opts.kind) {
+      where.push('kind = ?');
+      args.push(opts.kind);
+    }
+    if (opts.status === 'active') {
+      where.push(`status IN ('provisioning', 'running', 'idle', 'review')`);
+    } else if (opts.status === 'failed') {
+      where.push(`status IN ('failed', 'interrupted')`);
+    } else if (opts.status === 'stopped') {
+      where.push(`status IN ('stopped', 'abandoned')`);
+    } else if (opts.status) {
+      where.push('status = ?');
+      args.push(opts.status);
+    }
+    const clause = `WHERE ${where.join(' AND ')}`;
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM runs ${clause}`).get(...args) as { n: number }).n;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.min(Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0), 1_000_000);
+    const rows = this.db
+      .prepare(
+        `SELECT id, kind, status, title, repo, issue_number, proposal_id, branch, pr_url, model,
+                runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens
+         FROM runs ${clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...args, limit, offset) as RunListRow[];
+    return { rows, total };
   }
 
   /** Bounded runner artifact lease set: active/review rows are always included;
@@ -404,13 +464,14 @@ export interface RunRow {
   outcome: string | null;
 }
 
-export function rowToRun(row: RunRow, live: boolean): RunRecord {
+export type RunListRow = Omit<RunRow, 'cwd' | 'verification' | 'outcome'>;
+
+export function rowToRunList(row: RunListRow, live: boolean): RunListRecord {
   return {
     id: row.id,
     kind: row.kind,
     status: row.status,
     title: row.title,
-    cwd: row.cwd,
     repo: row.repo,
     issueNumber: row.issue_number,
     proposalId: row.proposal_id,
@@ -421,12 +482,19 @@ export function rowToRun(row: RunRow, live: boolean): RunRecord {
     harness: describeHarness(row.harness),
     userId: row.user_id,
     task: row.task,
-    verification: row.verification ? (safeParse<RunVerification | null>(row.verification, null)) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     live,
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
+  };
+}
+
+export function rowToRun(row: RunRow, live: boolean): RunRecord {
+  return {
+    ...rowToRunList(row, live),
+    cwd: row.cwd,
+    verification: row.verification ? (safeParse<RunVerification | null>(row.verification, null)) : null,
     outcome: row.outcome,
   };
 }

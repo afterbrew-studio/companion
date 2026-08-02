@@ -248,6 +248,25 @@ export interface RunRecord {
   readonly outcome: string | null;
 }
 
+/** Lightweight run-list row; filesystem and terminal evidence stay on detail. */
+export type RunListRecord = Omit<RunRecord, 'cwd' | 'verification' | 'outcome'>;
+
+/**
+ * Final usage evidence for one run as consumed by aggregate jobs in other
+ * modules. Pricing stays owned by Operate: consumers receive its estimate and
+ * never duplicate the model-price table.
+ */
+export interface RunUsageSnapshot {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly estimatedCostUsd: number | null;
+  /**
+   * `missing` means this runtime promises tokens but the run recorded none;
+   * `unsupported` means its declared capability cannot feed the token ledger.
+   */
+  readonly telemetry: 'reported' | 'missing' | 'unsupported';
+}
+
 /**
  * An unattended run waiting for a runner slot. It has no run row yet — it
  * becomes a real run only once it starts — so the queue is its own list the

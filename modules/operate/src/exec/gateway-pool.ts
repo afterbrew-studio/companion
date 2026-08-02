@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
-import type { AskRequest, MoxxyEvent } from '@moxxy/companion-types';
+import type { AgentRunAccess, AskRequest, MoxxyEvent } from '@moxxy/companion-types';
 import { log, paths } from '@moxxy/companion-services';
 import { GatewayClient } from './gateway-client.js';
 import { providerDefaultsFromConfigYaml, readHomeFile, type ProviderDefaults } from './home.js';
@@ -52,6 +52,7 @@ export interface SpawnOptions {
   readonly runId: string;
   readonly cwd: string;
   readonly moxxyCliPath: string;
+  readonly access: AgentRunAccess;
 }
 
 const SERVE_READY_TIMEOUT_MS = 120_000;
@@ -59,11 +60,36 @@ const GATEWAY_READY_TIMEOUT_MS = 60_000;
 const STOP_GRACE_MS = 5_000;
 
 /** Build the isolated per-run overlay without mutating the imported moxxy config. */
-export function gatewayConfigYaml(port: number, skillsDir: string, provider: ProviderDefaults | null): string {
+export function gatewayConfigYaml(
+  port: number,
+  skillsDir: string,
+  provider: ProviderDefaults | null,
+  access: AgentRunAccess = 'workspace-write',
+): string {
   const providerYaml = provider
     ? `provider:\n  name: ${JSON.stringify(provider.name)}\n${provider.model ? `  model: ${JSON.stringify(provider.model)}\n` : ''}`
     : '';
-  return `${providerYaml}channels:\n  mobile:\n    port: ${port}\nskills:\n  userDir: ${JSON.stringify(skillsDir)}\n`;
+  // These are config-level immutable denies. Goal-mode auto approval and an
+  // "allow always" response cannot remove them, so read-only is a property of
+  // the run rather than a sentence the model may disregard. Bash is denied in
+  // full because attempting to enumerate every writable shell spelling is not
+  // a security boundary.
+  const permissionsYaml =
+    access === 'read-only'
+      ? `security:\n  enabled: true\n  requireDeclaration: true\n  thirdPartyRequireDeclaration: enforce\n  strict: true\n  perTool:\n    Read: subprocess\n    Grep: inproc\npermissions:\n  deny:\n${[
+          'Write',
+          'Edit',
+          'Bash',
+          'web_fetch',
+          'browser_session',
+          'workflow_create',
+          'dispatch_agent',
+          'load_skill',
+        ]
+          .map((name) => `    - name: ${JSON.stringify(name)}\n      reason: ${JSON.stringify('Companion read-only analysis policy')}`)
+          .join('\n')}\n`
+      : '';
+  return `${providerYaml}${permissionsYaml}channels:\n  mobile:\n    port: ${port}\nskills:\n  userDir: ${JSON.stringify(skillsDir)}\n`;
 }
 
 interface Child {
@@ -113,7 +139,7 @@ export class GatewayPool {
     const provider = providerDefaultsFromConfigYaml(readHomeFile('config.yaml'));
     writeFileSync(
       configFile,
-      gatewayConfigYaml(port, join(paths.moxxyHome(), 'skills'), provider),
+      gatewayConfigYaml(port, join(paths.moxxyHome(), 'skills'), provider, opts.access),
     );
 
     const baseEnv = {

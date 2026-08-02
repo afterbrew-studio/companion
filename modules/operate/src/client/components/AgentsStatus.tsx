@@ -32,7 +32,7 @@ export function AgentsStatus(): JSX.Element | null {
     const mineOrAutomation = (userId: string | null): boolean => userId === null || userId === me;
     let alive = true;
     operateApi
-      .listRuns()
+      .listRunsPage({ status: 'active', limit: 100 })
       .then(({ runs }) => {
         if (alive) setLiveIds(new Set(runs.filter((r) => r.live && mineOrAutomation(r.userId)).map((r) => r.id)));
       })

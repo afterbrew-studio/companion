@@ -26,13 +26,27 @@ export const nav = defineNav([
     ),
   },
   {
+    key: 'playground-evaluations',
+    label: 'Evaluations',
+    hash: '#/playground/evaluations',
+    permission: 'playground:run',
+    section: 'playground',
+    order: 10,
+    icon: (
+      <NavIcon>
+        <path d="M5 4h14v16H5z" />
+        <path d="m8 9 2 2 4-4M8 15h8" />
+      </NavIcon>
+    ),
+  },
+  {
     key: 'playground-pipelines',
     label: 'Pipeline Lab',
     hash: '#/playground/pipelines',
     shortcut: 'j',
     permission: 'playground:run',
     section: 'playground',
-    order: 10,
+    order: 20,
     icon: (
       <NavIcon>
         <circle cx="5" cy="12" r="2" />

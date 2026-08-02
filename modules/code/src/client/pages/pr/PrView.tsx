@@ -44,7 +44,7 @@ type Mode = 'detail' | 'review';
  */
 export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): JSX.Element {
   const pr = usePr(repo, number);
-  const fetchFiles = useCallback(() => api.prFiles(repo, number), [repo, number]);
+  const fetchFiles = useCallback((page: number) => api.prFiles(repo, number, page), [repo, number]);
   const expandContext = useCallback(
     (path: string, from: number, to: number) =>
       api.prFileLines(repo, number, path, from, to).then((r) => r.lines),
@@ -117,6 +117,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
                   canAct={pr.canAct}
                   busy={pr.busy}
                   onApply={(acct) => void pr.applyReview(acct)}
+                  onCancel={() => void pr.cancelReview()}
                   onDismiss={() => void pr.dismissReview()}
                   onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
                   focusedFinding={focusedFinding}
@@ -127,6 +128,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
           )}
 
           <PrChanges
+            key={`${repo}:${number}`}
             fetchFiles={fetchFiles}
             annotations={annotations}
             focusedAnnotationId={focusedFinding}
@@ -148,7 +150,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
             onFixChecks={pr.canAct && p.state === 'open' ? () => void pr.fixChecks() : null}
           />
 
-          {!review ? <PrPipelines runs={pr.pipelineRuns} repo={pr.pr.repo} number={pr.pr.number} /> : null}
+          {!review ? <PrPipelines runs={pr.pipelineRuns} /> : null}
           {!review ? <AgentActivity repo={repo} issueNumber={number} /> : null}
 
           <CommentsSection
@@ -220,13 +222,23 @@ function ReviewLead({
         busy={pr.busy}
         emphasis="hero"
         onApply={(acct) => void pr.applyReview(acct)}
+        onCancel={() => void pr.cancelReview()}
         onDismiss={() => void pr.dismissReview()}
         onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
         focusedFinding={focusedFinding}
         onFocusFinding={onFocusFinding}
       />
     );
-    if (pr.review.runId !== null) return card;
+    if (pr.review.source === 'agent') {
+      return pr.review.status === 'failed' || pr.review.status === 'cancelled' ? (
+        <div className="flex flex-col gap-4">
+          {card}
+          {canAct ? <ReviewLauncher onRun={onRun} /> : null}
+        </div>
+      ) : (
+        card
+      );
+    }
     // A manual draft must not hide that an agent review is running: this branch
     // returns before the `analyzing` check below, so without this the reviewer
     // clicks Run, the page does not change at all, and they click again.

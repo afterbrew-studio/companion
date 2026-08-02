@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@moxxy/companion-types';
+import type { AgentRunAccess, AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@moxxy/companion-types';
 import type { ModuleConfigAccessor } from '@moxxy/companion-core';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
@@ -14,13 +14,14 @@ import type {
   LaneModels,
   RunLane,
   RunQueueSnapshot,
+  RunListRecord,
   RunRecord,
 } from '../contract/index.js';
 import { laneKey } from '../contract/index.js';
 import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
 import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
-import { rowToRun } from './runs-store.js';
+import { rowToRun, rowToRunList } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
@@ -68,6 +69,13 @@ const KIND_PRIORITY: Record<RunKind, number> = {
   interactive: 10,
   assistant: 10,
 };
+
+/** Least privilege for the execution runtime, independent of product labels. */
+export function accessForRunKind(kind: RunKind): AgentRunAccess {
+  if (kind === 'analysis' || kind === 'triage' || kind === 'report') return 'read-only';
+  if (kind === 'assistant') return 'trusted-assistant';
+  return 'workspace-write';
+}
 
 /** Settings key holding a task's instance-wide model pin. */
 function taskPinKey(task: string): string {
@@ -129,6 +137,12 @@ export class Orchestrator implements RunnerEventSink {
   private readonly pendingAsks = new Map<string, Map<string, AskRequest>>();
   /** waitForTurn resolvers, keyed by runId. */
   private readonly turnWaiters = new Map<string, Set<() => void>>();
+  /**
+   * Narrow live-usage hooks for aggregate operations such as a split PR
+   * review. The run row remains the source of truth; observers receive only a
+   * signal to read the already-persisted cumulative snapshot from Operate.
+   */
+  private readonly usageObservers = new Map<string, (runId: string) => void>();
   // Unattended runs schedule against the runners' combined capacity (shared +
   // dedicated): up to that many run at once, the rest wait in a visible queue
   // the user can reorder and cancel.
@@ -246,14 +260,18 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   onAsk(runId: string, ask: AskRequest): void {
-    // Unattended runs must never park on a human. Tools without a declared
-    // allow-policy (e.g. Glob on moxxy 0.26.0) reach the ask path; auto-allow
-    // them — the real fences are the isolated clone/worktree cwd and the
-    // permissions.json deny rules. Attended kinds (interactive chats, the AI
-    // Help assistant) keep the human in the loop: their asks park in the UI.
+    // Unattended runs must never park on a human. Read-only work fails closed:
+    // an unknown tool cannot become a side-effect escape hatch merely because
+    // it was added after Companion's immutable deny list. Writable goal runs
+    // retain their automatic policy; attended chats keep the human in the loop.
     const row = this.store.runs.get(runId);
     const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
     if (row && !attended && ask.kind === 'permission') {
+      if (accessForRunKind(row.kind) === 'read-only') {
+        log.info('denying undeclared tool for read-only run', { runId, tool: ask.tool?.name });
+        void this.respondAsk(runId, ask.requestId, { mode: 'deny' }).catch(() => undefined);
+        return;
+      }
       log.info('auto-allowing ask for unattended run', { runId, tool: ask.tool?.name });
       void this.respondAsk(runId, ask.requestId, { mode: 'allow' }).catch(() => undefined);
       return;
@@ -428,6 +446,18 @@ export class Orchestrator implements RunnerEventSink {
 
   listRuns(): RunRecord[] {
     return this.store.runs.list().map((row) => rowToRun(row, this.isLive(row.id)));
+  }
+
+  /** Lightweight, bounded run queue. Filesystem paths and terminal evidence
+   * stay on detail; gateway liveness is attached only for the visible page. */
+  listRunsPage(
+    opts: Parameters<OperateStore['runs']['listPage']>[0],
+  ): { runs: RunListRecord[]; total: number } {
+    const page = this.store.runs.listPage(opts);
+    return {
+      runs: page.rows.map((row) => rowToRunList(row, this.isLive(row.id))),
+      total: page.total,
+    };
   }
 
   getRun(runId: string): RunRecord | null {
@@ -647,7 +677,7 @@ export class Orchestrator implements RunnerEventSink {
           cwd = await placedBackend.scratchDir(id);
           this.store.runs.setPlacement(id, placedOn, cwd, this.runners.harnessFor(placedOn).id);
         }
-        await placedBackend.spawn(id, cwd!);
+        await placedBackend.spawn(id, cwd!, accessForRunKind(kind));
         this.setStatus(id, 'running');
         // The gateway is up anyway — top up that machine's catalog for free if
         // it has gone stale (never blocks the run).
@@ -708,7 +738,7 @@ export class Orchestrator implements RunnerEventSink {
     if (!row) throw new Error(`unknown run: ${runId}`);
     if (!this.isLive(runId)) {
       try {
-        await this.backend(runId).spawn(runId, row.cwd);
+        await this.backend(runId).spawn(runId, row.cwd, accessForRunKind(row.kind));
       } catch (err) {
         log.warn('resume failed', { runId, err: String(err) });
         throw new Error(`could not resume: ${err instanceof Error ? err.message : String(err)}`);
@@ -794,6 +824,11 @@ export class Orchestrator implements RunnerEventSink {
   taskModelPin(task: string): string | null {
     const pinned = this.store.settings.get(taskPinKey(task));
     return pinned && pinned.trim() !== '' ? pinned : null;
+  }
+
+  /** Daemon fallback included in evaluation configuration snapshots. */
+  defaultModelPreference(): string {
+    return this.config.defaultModel;
   }
 
   /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
@@ -1029,6 +1064,8 @@ export class Orchestrator implements RunnerEventSink {
     issueNumber?: number | null;
     /** Feature-level task id — carried for when one-shots learn to place. */
     task?: string;
+    /** Server-captured lane for work that continues after its HTTP request. */
+    lane?: RunLane;
     prompt: string;
     timeoutMs?: number;
     /**
@@ -1041,19 +1078,35 @@ export class Orchestrator implements RunnerEventSink {
     onQueued?: (queueId: string) => void;
     /** Called after the queue item becomes a concrete run. */
     onStarted?: (runId: string) => void;
+    /** Final cancellation gate after run creation and before the first prompt. */
+    shouldStart?: (runId: string) => boolean;
+    /** Called after each non-empty provider usage event is persisted. */
+    onUsage?: (runId: string) => void;
   }): Promise<{ runId: string; finalMessage: string | null }> {
     // Captured HERE, while the request that asked for this run is still on the
     // stack. The job below may not start for minutes, by which point there is
     // no request context left to read it from.
-    const lane = this.actingLane();
+    const lane = opts.lane ?? this.actingLane();
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
       const run = await this.createRun({ ...opts, lane });
+      if (opts.onUsage) this.usageObservers.set(run.id, opts.onUsage);
       try {
         opts.onStarted?.(run.id);
       } catch (err) {
         log.warn('one-shot onStarted callback failed', { runId: run.id, err: String(err) });
       }
+      let shouldStart = true;
       try {
+        shouldStart = opts.shouldStart?.(run.id) !== false;
+      } catch (err) {
+        shouldStart = false;
+        log.warn('one-shot shouldStart callback failed closed', { runId: run.id, err: String(err) });
+      }
+      try {
+        if (!shouldStart) {
+          this.setStatus(run.id, 'stopped', 'cancelled before the first prompt');
+          return { runId: run.id, finalMessage: null };
+        }
         const wait = this.waitForTurn(run.id, opts.timeoutMs ?? 10 * 60_000);
         await this.sendPrompt(run.id, opts.prompt);
         await wait;
@@ -1083,6 +1136,7 @@ export class Orchestrator implements RunnerEventSink {
         throw err;
       } finally {
         await this.stopRun(run.id).catch(() => undefined);
+        this.usageObservers.delete(run.id);
       }
     };
     return this.scheduleOneShot(
@@ -1117,7 +1171,14 @@ export class Orchestrator implements RunnerEventSink {
    * concurrent shells on one machine.
    */
   schedule<T>(
-    meta: { kind: RunKind; title: string; repo: string | null; userId: string | null },
+    meta: {
+      kind: RunKind;
+      title: string;
+      repo: string | null;
+      userId: string | null;
+      /** Gives non-run work the same pre-start cancellation handle as one-shots. */
+      onQueued?: (queueId: string) => void;
+    },
     job: () => Promise<T>,
   ): Promise<T> {
     return this.scheduleOneShot({ ...meta, issueNumber: null }, job);
@@ -1353,7 +1414,22 @@ export class Orchestrator implements RunnerEventSink {
     if (event.type === 'provider_response') {
       const input = numberField(event, 'inputTokens');
       const output = numberField(event, 'outputTokens');
-      if (input || output) this.store.runs.addUsage(runId, input, output);
+      if (input || output) {
+        this.store.runs.addUsage(runId, input, output);
+        try {
+          this.usageObservers.get(runId)?.(runId);
+        } catch (err) {
+          // Usage accounting is a safety hook. Keep folding the transcript,
+          // but fail the active turn closed rather than spend with a blind
+          // aggregate after a consumer bug.
+          log.warn('run usage observer failed', { runId, err: String(err) });
+          const row = this.store.runs.get(runId);
+          if (row?.status === 'running') {
+            this.setStatus(runId, row.status, 'aborted: live usage accounting failed');
+            void this.abortTurn(runId).catch(() => undefined);
+          }
+        }
+      }
       // moxxy's goal mode is uncapped (its built-in budgets were removed in
       // #439) — companiond's ceiling is the PRIMARY runaway-cost guard.
       const row = this.store.runs.get(runId);

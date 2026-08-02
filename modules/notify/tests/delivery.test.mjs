@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
-import { buildRequest, deliver, redactTarget } from '../dist/api/delivery.js';
+import {
+  assertPublicDeliveryTarget,
+  buildRequest,
+  deliver,
+  isPublicAddress,
+  redactTarget,
+} from '../dist/api/delivery.js';
 
 const NOTIFICATION = {
   id: 'n1',
@@ -152,4 +158,46 @@ test('a network error is retried and then reported, never thrown', async () => {
   assert.equal(outcome.ok, false);
   assert.equal(outcome.httpStatus, null);
   assert.match(outcome.error, /ECONNREFUSED/);
+});
+
+test('personal targets cannot resolve to local, private, metadata, or documentation addresses', async () => {
+  for (const address of ['127.0.0.1', '10.1.2.3', '169.254.169.254', '192.168.1.2', '::1', 'fc00::1', '2001:db8::1']) {
+    assert.equal(isPublicAddress(address), false, address);
+  }
+  assert.equal(isPublicAddress('1.1.1.1'), true);
+  await assert.rejects(assertPublicDeliveryTarget('http://localhost/hook'), /publicly reachable/);
+  await assert.rejects(
+    assertPublicDeliveryTarget('https://notifications.example/hook', async () => ['10.0.0.4']),
+    /public addresses/,
+  );
+});
+
+test('personal delivery validates DNS and never follows redirects', async () => {
+  let calls = 0;
+  const outcome = await deliver(
+    REQUEST,
+    async (_url, init) => {
+      calls++;
+      assert.equal(init.redirect, 'manual');
+      return { ok: true, status: 204, statusText: 'No Content' };
+    },
+    { publicOnly: true, resolveAddresses: async () => ['93.184.216.34'] },
+  );
+  assert.equal(outcome.ok, true);
+  assert.equal(calls, 1);
+});
+
+test('a personal channel targeting a private service fails before fetch', async () => {
+  let calls = 0;
+  const outcome = await deliver(
+    REQUEST,
+    async () => {
+      calls++;
+      return { ok: true, status: 200, statusText: 'OK' };
+    },
+    { publicOnly: true, resolveAddresses: async () => ['169.254.169.254'] },
+  );
+  assert.equal(outcome.ok, false);
+  assert.equal(calls, 0);
+  assert.match(outcome.error, /public addresses/);
 });

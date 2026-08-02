@@ -252,7 +252,10 @@ export interface PlannerUsageRun {
 }
 
 export interface PlannerUsageSummary {
+  /** Most recent runs only; totals below cover the complete retained history. */
   readonly runs: ReadonlyArray<PlannerUsageRun>;
+  readonly totalRuns: number;
+  readonly runsTruncated: boolean;
   readonly totalInputTokens: number;
   readonly totalOutputTokens: number;
   readonly repositoryScanRuns: number;
@@ -293,6 +296,21 @@ export interface FeaturePlanningSession {
   readonly activeQueueId: string | null;
   readonly activeRunId: string | null;
   readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/**
+ * Lightweight row for the Ideas history. Full sessions can contain repository
+ * snapshots, long conversations and three markdown artifacts; those belong to
+ * the explicit detail endpoint, never a workspace list response.
+ */
+export interface FeaturePlanningSessionSummary {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly repo: string;
+  readonly title: string;
+  readonly status: PlannerStatus;
+  readonly progress: PlannerProgress;
   readonly updatedAt: number;
 }
 

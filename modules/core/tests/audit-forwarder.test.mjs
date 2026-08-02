@@ -113,7 +113,7 @@ test('a dead collector costs bounded memory and counts what it dropped', async (
   assert.ok(f.state().dropped > 0, 'far more than the cap was enqueued, so something must have been dropped');
 });
 
-test('overflow drops from the front, so the newest entries survive', async () => {
+test('overflow never discards the failed oldest batch it promised to retry', async () => {
   const { calls, f } = forwarder({ respond: () => ({ ok: false, status: 503, statusText: '' }) });
   for (let i = 0; i < 20_000; i++) f.enqueue(event(i));
   // Let the failed in-flight batch settle back into the buffer, then ship.
@@ -122,11 +122,8 @@ test('overflow drops from the front, so the newest entries survive', async () =>
   await f.flush();
   assert.ok(calls.length > before);
   const shipped = calls[calls.length - 1].body.trimEnd().split('\n').map((l) => JSON.parse(l).at);
-  const newest = 1_700_000_000_000 + 19_999;
-  assert.ok(
-    Math.max(...shipped) > newest - 10_000,
-    'the retained window must be the recent end of the stream, not the start',
-  );
+  assert.equal(shipped[0], 1_700_000_000_000, 'the failed oldest event was silently discarded');
+  assert.deepEqual(shipped, [...shipped].sort((a, b) => a - b), 'the retained audit order changed');
 });
 
 test('enqueue never touches the network, so the request path pays nothing', () => {

@@ -46,6 +46,7 @@ export default defineServices((ctx) => {
     code.sync,
     operate.checkouts,
     operate.webhookTunnel,
+    plan.proposals,
     plan.specs,
     (repo, username) => code.githubAccounts.clientFor('pipelines', { repo, username }),
     ctx.broadcast,

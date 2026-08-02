@@ -1,4 +1,4 @@
-import { del, patch, post, put, request } from '@moxxy/companion-sdk/client';
+import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-sdk/client';
 import type {
   RefineContextOptions,
   RefineItemRecord,
@@ -17,8 +17,16 @@ export interface RefinementDetail {
 }
 
 export const refinementApi = {
-  list: (workspaceId: string) =>
-    request<{ refinements: RefinementListEntry[] }>(`/api/workspaces/${workspaceId}/refinements`),
+  list: (workspaceId: string, page?: PageQuery & { status?: string }) =>
+    request<{ refinements: RefinementListEntry[]; total: number }>(
+      `/api/workspaces/${workspaceId}/refinements${qs({
+        q: page?.q,
+        repo: page?.repo,
+        status: page?.status,
+        limit: page?.limit,
+        offset: page?.offset,
+      })}`,
+    ),
   create: (input: { workspaceId: string; repo: string; branch?: string; title: string; story: string }) =>
     post<{ refinement: RefinementRecord }>('/api/refinements', input),
   get: (id: string) => request<RefinementDetail>(`/api/refinements/${id}`),

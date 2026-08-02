@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { pipelineRunHref, reportHref, runHref, useKernel, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { RunListRecord } from '@companion/module-operate/contract';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
 import { ChartSkeleton, EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, Spinner, StatTile, StatusDot, timeAgo, type StatusTone } from '@moxxy/companion-sdk/ui';
 import type { PipelineRunRecord } from '../../contract/index.js';
@@ -36,6 +36,7 @@ export function DashboardPage(): JSX.Element {
     workspaceReports,
     pipelineRuns,
     openIssueCount,
+    openPrCount,
     openPrs,
     failingPrs,
     liveRuns,
@@ -72,8 +73,8 @@ export function DashboardPage(): JSX.Element {
         />
         <StatTile
           label="Open PRs"
-          loading={openPrs === null}
-          value={openPrs?.length ?? 0}
+          loading={openPrCount === null}
+          value={openPrCount ?? 0}
           href="#/prs"
           delta={prBacklogDelta}
           trend={prBacklog ?? undefined}
@@ -245,7 +246,7 @@ interface ActivityEntry {
   readonly href: string;
 }
 
-const RUN_KIND_LABEL: Record<RunRecord['kind'], string> = {
+const RUN_KIND_LABEL: Record<RunListRecord['kind'], string> = {
   interactive: 'chat',
   triage: 'AI triage',
   fix: 'AI fix',
@@ -263,7 +264,7 @@ function ActivityFeed({
   pipelineRuns,
   reports,
 }: {
-  runs: RunRecord[];
+  runs: RunListRecord[];
   pipelineRuns: PipelineRunRecord[];
   reports: ReportRecord[];
 }): JSX.Element {
@@ -343,7 +344,7 @@ function formatTokens(n: number): string {
  * Sessions + token spend for this workspace. The gateway does not report money,
  * so tokens are the cost proxy; per-session bars use dataviz sequential slot 1.
  */
-function UsageSection({ runs }: { runs: RunRecord[] | null }): JSX.Element | null {
+function UsageSection({ runs }: { runs: RunListRecord[] | null }): JSX.Element | null {
   if (runs === null) {
     return (
       <section className="mt-6" aria-labelledby="usage-heading" aria-busy>

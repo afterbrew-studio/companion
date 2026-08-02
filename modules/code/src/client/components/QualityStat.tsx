@@ -7,7 +7,7 @@ import type { AgentQualityStat } from '../../contract/index.js';
  * rather than once per card.
  */
 export function hasQualitySignal(stat: AgentQualityStat): boolean {
-  return stat.accepted + stat.rejected + stat.pending + stat.failed > 0;
+  return stat.accepted + stat.rejected + stat.pending + stat.failed + (stat.cancelled ?? 0) > 0;
 }
 
 /**
@@ -58,6 +58,7 @@ export function QualityStat({ stat }: { stat: AgentQualityStat }): JSX.Element {
   const rate = stat.acceptanceRate;
   const { tone, word } = band(rate);
   const pct = rate === null ? 0 : Math.round(rate * 100);
+  const cancelled = stat.cancelled ?? 0;
 
   return (
     <div className="card flex flex-col gap-2.5 p-4" aria-label={stat.label}>
@@ -114,6 +115,7 @@ export function QualityStat({ stat }: { stat: AgentQualityStat }): JSX.Element {
             {stat.failed} produced nothing
           </span>
         ) : null}
+        {cancelled > 0 ? <span className="dim"> · {cancelled} stopped</span> : null}
       </p>
     </div>
   );

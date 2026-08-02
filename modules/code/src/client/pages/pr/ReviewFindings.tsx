@@ -25,6 +25,9 @@ const SEVERITY_DOT: Record<FindingSeverity, string> = {
   nit: 'bg-zinc-400',
 };
 
+const INITIAL_FINDINGS = 20;
+const FINDINGS_PAGE = 20;
+
 /**
  * Anchored findings as annotations for the diff viewer.
  *
@@ -93,14 +96,28 @@ export function ReviewFindings({
 }): JSX.Element | null {
   const [showRefuted, setShowRefuted] = useState(false);
   const [cursor, setCursor] = useState(0);
+  const [renderLimit, setRenderLimit] = useState(INITIAL_FINDINGS);
   const listRef = useRef<HTMLUListElement>(null);
 
-  const ordered = [...findings].sort(
-    (a, b) => FINDING_SEVERITIES.indexOf(a.severity) - FINDING_SEVERITIES.indexOf(b.severity),
+  const ordered = useMemo(
+    () =>
+      [...findings].sort(
+        (a, b) => FINDING_SEVERITIES.indexOf(a.severity) - FINDING_SEVERITIES.indexOf(b.severity),
+      ),
+    [findings],
   );
-  const refuted = ordered.filter((f) => f.verification === 'refuted');
-  const visible = showRefuted ? ordered : ordered.filter((f) => f.verification !== 'refuted');
-  const included = visible.filter((f) => f.state === 'included' || f.state === 'posted').length;
+  const refuted = useMemo(() => ordered.filter((f) => f.verification === 'refuted'), [ordered]);
+  const available = useMemo(
+    () => (showRefuted ? ordered : ordered.filter((f) => f.verification !== 'refuted')),
+    [ordered, showRefuted],
+  );
+  const rendered = available.slice(0, renderLimit);
+  const included = available.filter((f) => f.state === 'included' || f.state === 'posted').length;
+
+  useEffect(() => {
+    setRenderLimit(INITIAL_FINDINGS);
+    setCursor(0);
+  }, [reviewId, showRefuted]);
 
   // j/k to walk the list, a to arm, x to drop: a reviewer works through
   // findings faster than a mouse allows, and this is the whole point of a
@@ -108,16 +125,17 @@ export function ReviewFindings({
   useEffect(() => {
     if (!canAct) return;
     const step = (by: number): void => {
-      const next = Math.min(Math.max(cursor + by, 0), visible.length - 1);
+      const next = Math.min(Math.max(cursor + by, 0), available.length - 1);
       setCursor(next);
-      const finding = visible[next];
+      if (next >= renderLimit) setRenderLimit(Math.min(available.length, next + FINDINGS_PAGE));
+      const finding = available[next];
       if (finding) onFocusFinding?.(finding.id);
     };
     const onKey = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (!listRef.current?.offsetParent) return;
-      const current = visible[cursor];
+      const current = available[cursor];
       if (e.key === 'j') step(1);
       else if (e.key === 'k') step(-1);
       else if (e.key === 'a' && current) onToggle(current.id, true);
@@ -127,15 +145,18 @@ export function ReviewFindings({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [canAct, cursor, visible, onToggle, onFocusFinding]);
+  }, [available, canAct, cursor, onFocusFinding, onToggle, renderLimit]);
 
   // Focus set from the diff moves the cursor, so keyboard work continues from
   // wherever the reviewer just clicked.
   useEffect(() => {
     if (!focusedFinding) return;
-    const at = visible.findIndex((f) => f.id === focusedFinding);
-    if (at >= 0) setCursor(at);
-  }, [focusedFinding, visible]);
+    const at = available.findIndex((f) => f.id === focusedFinding);
+    if (at >= 0) {
+      setCursor(at);
+      if (at >= renderLimit) setRenderLimit(Math.min(available.length, at + FINDINGS_PAGE));
+    }
+  }, [available, focusedFinding, renderLimit]);
 
   if (findings.length === 0) return null;
 
@@ -144,7 +165,7 @@ export function ReviewFindings({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <strong className="text-sm">Findings</strong>
         <span className="dim text-xs tabular-nums">
-          {included} of {visible.length} selected
+          {included} of {available.length} selected
         </span>
         <span className="flex-1" />
         {refuted.length > 0 ? (
@@ -156,7 +177,7 @@ export function ReviewFindings({
       </div>
 
       <ul ref={listRef} className="flex flex-col gap-2">
-        {visible.map((finding, i) => (
+        {rendered.map((finding, i) => (
           <FindingCard
             key={finding.id}
             reviewId={reviewId}
@@ -173,6 +194,19 @@ export function ReviewFindings({
           />
         ))}
       </ul>
+      {rendered.length < available.length ? (
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+          <span className="dim text-xs tabular-nums">
+            Showing {rendered.length} of {available.length} findings
+          </span>
+          <button
+            className="btn-ghost text-xs"
+            onClick={() => setRenderLimit((limit) => Math.min(available.length, limit + FINDINGS_PAGE))}
+          >
+            Show next {Math.min(FINDINGS_PAGE, available.length - rendered.length)}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

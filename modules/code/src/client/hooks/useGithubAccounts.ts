@@ -38,12 +38,11 @@ export function useGithubAccounts(): {
   }, []);
 
   useEffect(() => {
-    void refresh();
     workspaceApi
       .listWorkspaces()
       .then((r) => setWorkspaces(r.workspaces))
       .catch(() => setWorkspaces([]));
-  }, [refresh]);
+  }, []);
 
   // Account mutations and the post-setup local-gh import reuse the existing
   // repos.changed signal, keeping this page correct even when import finishes

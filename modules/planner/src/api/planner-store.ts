@@ -3,6 +3,7 @@ import type {
   ClarificationState,
   FeatureBrief,
   FeaturePlanningSession,
+  FeaturePlanningSessionSummary,
   PlannerAnswer,
   PlannerEventRecord,
   PlannerQuestion,
@@ -28,6 +29,9 @@ export class PlannerQuestionSetConflict extends Error {
 }
 
 export type PlannerSessionPatch = Partial<Omit<FeaturePlanningSession, 'id' | 'workspaceId' | 'repo' | 'branch' | 'author' | 'createdAt' | 'updatedAt' | 'revision' | 'progress'>>;
+
+const MAX_EVENTS_PER_SESSION = 500;
+const MAX_USAGE_RUNS_IN_DETAIL = 100;
 
 export class PlannerStore {
   constructor(private readonly db: Database) {}
@@ -68,6 +72,38 @@ export class PlannerStore {
       .prepare(`SELECT * FROM planner_sessions WHERE workspace_id = ? ORDER BY updated_at DESC`)
       .all(workspaceId) as PlannerSessionRow[];
     return rows.map(rowToSession);
+  }
+
+  /**
+   * Paged list projection: deliberately excludes every large JSON/text column.
+   * The small clarification fields are enough to derive the same progress bar
+   * as detail without materialising repository context, messages or artifacts.
+   */
+  listSummariesByWorkspace(
+    workspaceId: string,
+    limit = 50,
+    offset = 0,
+  ): { sessions: FeaturePlanningSessionSummary[]; total: number } {
+    const safeLimit = Math.min(Math.max(Number.isSafeInteger(limit) ? limit : 50, 1), 100);
+    const safeOffset = Math.max(Number.isSafeInteger(offset) ? offset : 0, 0);
+    const where = `WHERE workspace_id = ? AND status != 'cancelled'`;
+    const count = this.db.prepare(`SELECT COUNT(*) AS n FROM planner_sessions ${where}`).get(workspaceId) as { n: number };
+    const rows = this.db
+      .prepare(
+        `SELECT id, workspace_id, repo, title, step, status, active_action,
+                clarification_state_json, questions_json, answers_json, updated_at
+         FROM planner_sessions ${where}
+         ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(workspaceId, safeLimit, safeOffset) as PlannerSessionSummaryRow[];
+    return { sessions: rows.map(rowToSummary), total: count.n };
+  }
+
+  /** Small bridge used to exclude Ideas-owned proposals from the legacy badge. */
+  listProposalIdsByWorkspace(workspaceId: string): string[] {
+    return (this.db
+      .prepare(`SELECT proposal_id FROM planner_sessions WHERE workspace_id = ? AND proposal_id IS NOT NULL`)
+      .all(workspaceId) as Array<{ proposal_id: string }>).map((row) => row.proposal_id);
   }
 
   countActiveRuns(author: string): number {
@@ -135,16 +171,44 @@ export class PlannerStore {
 
   usage(sessionId: string): PlannerUsageSummary {
     const rows = this.db
-      .prepare(`SELECT detail_json FROM planner_events WHERE session_id = ? AND kind = 'planner_run_completed' ORDER BY id`)
-      .all(sessionId) as Array<{ detail_json: string }>;
-    const runs = rows.map((row) => safeParse<PlannerUsageRun | null>(row.detail_json, null)).filter(isUsageRun);
+      .prepare(
+        `SELECT detail_json FROM planner_events
+         WHERE session_id = ? AND kind = 'planner_run_completed'
+         ORDER BY id DESC LIMIT ?`,
+      )
+      .all(sessionId, MAX_USAGE_RUNS_IN_DETAIL) as Array<{ detail_json: string }>;
+    const runs = rows
+      .reverse()
+      .map((row) => safeParse<PlannerUsageRun | null>(row.detail_json, null))
+      .filter(isUsageRun);
+    const totals = this.db
+      .prepare(`SELECT * FROM planner_usage_totals WHERE session_id = ?`)
+      .get(sessionId) as PlannerUsageTotalsRow | undefined;
     return {
       runs,
-      totalInputTokens: runs.reduce((sum, run) => sum + run.inputTokens, 0),
-      totalOutputTokens: runs.reduce((sum, run) => sum + run.outputTokens, 0),
-      repositoryScanRuns: runs.filter((run) => run.contextMode === 'repository_scan').length,
-      cachedSnapshotRuns: runs.filter((run) => run.contextMode === 'cached_snapshot').length,
+      totalRuns: totals?.total_runs ?? runs.length,
+      runsTruncated: (totals?.total_runs ?? runs.length) > runs.length,
+      totalInputTokens: totals?.total_input_tokens ?? runs.reduce((sum, run) => sum + run.inputTokens, 0),
+      totalOutputTokens: totals?.total_output_tokens ?? runs.reduce((sum, run) => sum + run.outputTokens, 0),
+      repositoryScanRuns: totals?.repository_scan_runs
+        ?? runs.filter((run) => run.contextMode === 'repository_scan').length,
+      cachedSnapshotRuns: totals?.cached_snapshot_runs
+        ?? runs.filter((run) => run.contextMode === 'cached_snapshot').length,
     };
+  }
+
+  /** Boot maintenance for rows created before bounded event retention shipped. */
+  compactEvents(): number {
+    return this.db
+      .prepare(
+        `DELETE FROM planner_events WHERE id IN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id DESC) AS event_number
+             FROM planner_events
+           ) WHERE event_number > ?
+         )`,
+      )
+      .run(MAX_EVENTS_PER_SESSION).changes;
   }
 
   resetDangling(): number {
@@ -167,9 +231,37 @@ export class PlannerStore {
   }
 
   private insertEvent(sessionId: string, kind: string, detail: Readonly<Record<string, unknown>>): void {
-    this.db
-      .prepare(`INSERT INTO planner_events (session_id, kind, detail_json, created_at) VALUES (?, ?, ?, ?)`)
-      .run(sessionId, kind, JSON.stringify(detail), Date.now());
+    this.db.transaction(() => {
+      this.db
+        .prepare(`INSERT INTO planner_events (session_id, kind, detail_json, created_at) VALUES (?, ?, ?, ?)`)
+        .run(sessionId, kind, JSON.stringify(detail), Date.now());
+      if (kind === 'planner_run_completed' && isUsageRun(detail)) {
+        this.db.prepare(`
+          INSERT INTO planner_usage_totals (
+            session_id, total_runs, total_input_tokens, total_output_tokens,
+            repository_scan_runs, cached_snapshot_runs
+          ) VALUES (?, 1, ?, ?, ?, ?)
+          ON CONFLICT(session_id) DO UPDATE SET
+            total_runs = total_runs + 1,
+            total_input_tokens = total_input_tokens + excluded.total_input_tokens,
+            total_output_tokens = total_output_tokens + excluded.total_output_tokens,
+            repository_scan_runs = repository_scan_runs + excluded.repository_scan_runs,
+            cached_snapshot_runs = cached_snapshot_runs + excluded.cached_snapshot_runs
+        `).run(
+          sessionId,
+          detail.inputTokens,
+          detail.outputTokens,
+          detail.contextMode === 'repository_scan' ? 1 : 0,
+          detail.contextMode === 'cached_snapshot' ? 1 : 0,
+        );
+      }
+      this.db.prepare(`
+        DELETE FROM planner_events
+        WHERE session_id = ? AND id < (
+          SELECT id FROM planner_events WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?
+        )
+      `).run(sessionId, sessionId, MAX_EVENTS_PER_SESSION - 1);
+    })();
   }
 }
 
@@ -209,12 +301,35 @@ interface PlannerSessionRow {
   updated_at: number;
 }
 
+interface PlannerSessionSummaryRow {
+  id: string;
+  workspace_id: string;
+  repo: string;
+  title: string;
+  step: FeaturePlanningSession['step'];
+  status: FeaturePlanningSession['status'];
+  active_action: FeaturePlanningSession['activeAction'];
+  clarification_state_json: string | null;
+  questions_json: string;
+  answers_json: string;
+  updated_at: number;
+}
+
 interface PlannerEventRow {
   id: number;
   session_id: string;
   kind: string;
   detail_json: string;
   created_at: number;
+}
+
+interface PlannerUsageTotalsRow {
+  session_id: string;
+  total_runs: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  repository_scan_runs: number;
+  cached_snapshot_runs: number;
 }
 
 /**
@@ -306,6 +421,26 @@ function rowToSession(row: PlannerSessionRow): FeaturePlanningSession {
   return { ...sessionWithoutProgress, progress: plannerProgress(sessionWithoutProgress) };
 }
 
+function rowToSummary(row: PlannerSessionSummaryRow): FeaturePlanningSessionSummary {
+  const questions = normalizeQuestions(safeParse<PlannerQuestion[]>(row.questions_json, []));
+  const answers = normalizeAnswers(safeParse<PlannerAnswer[]>(row.answers_json, []), questions);
+  const input = {
+    step: row.step,
+    status: row.status,
+    activeAction: row.active_action,
+    clarification: normalizeClarificationState(row.clarification_state_json, questions, answers),
+  };
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    repo: row.repo,
+    title: row.title,
+    status: row.status,
+    progress: plannerProgress(input),
+    updatedAt: row.updated_at,
+  };
+}
+
 type StoredPlannerRevision = Partial<PlannerRevision> & {
   readonly summary: string;
   readonly kind?: PlannerRevision['kind'];
@@ -375,6 +510,16 @@ function legacyDecisionKey(prompt: string, id: string): string {
   return normalized || `legacy_${id.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 48)}`;
 }
 
-function isUsageRun(value: PlannerUsageRun | null): value is PlannerUsageRun {
-  return value !== null && typeof value.runId === 'string' && typeof value.promptChars === 'number';
+function isUsageRun(value: PlannerUsageRun | Readonly<Record<string, unknown>> | null): value is PlannerUsageRun {
+  if (value === null) return false;
+  const numeric = (field: keyof PlannerUsageRun): boolean =>
+    typeof value[field] === 'number' && Number.isFinite(value[field]) && (value[field] as number) >= 0;
+  return typeof value.runId === 'string'
+    && typeof value.action === 'string'
+    && (value.round === null || (typeof value.round === 'number' && Number.isInteger(value.round)))
+    && (value.contextMode === 'repository_scan' || value.contextMode === 'cached_snapshot')
+    && numeric('promptChars')
+    && numeric('inputTokens')
+    && numeric('outputTokens')
+    && numeric('durationMs');
 }

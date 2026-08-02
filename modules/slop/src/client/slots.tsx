@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
 import { defineSlots, useLive } from '@moxxy/companion-sdk/client';
-import { ListCard, Section, timeAgo } from '@moxxy/companion-sdk/ui';
+import { ListCard, MetaSignal, Section, timeAgo } from '@moxxy/companion-sdk/ui';
 import { QualityStat, usePrSelection } from '@companion/module-code/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { AgentQualityStat } from '@companion/module-code/contract';
-import { SlopMeter } from './components/SlopMeter.js';
+import { QUALITY_META } from './components/PrQualityAssessment.js';
 import { useSlopDetections } from './hooks/useSlopDetections.js';
 import { slopApi } from './api.js';
 
@@ -14,25 +14,41 @@ import { slopApi } from './api.js';
  * awaiting review are visible at a glance, without code importing this module.
  */
 
-const RADAR_MIN_LIKELIHOOD = 50;
+const QUALITY_PRIORITY = {
+  unsafe: 4,
+  low_value: 3,
+  needs_evidence: 2,
+  promising: 1,
+  valuable: 0,
+} as const;
+
+const RISK_PRIORITY = { critical: 4, high: 3, medium: 2, low: 1 } as const;
 
 function SlopRadarWidget(): JSX.Element | null {
   const { detections } = useSlopDetections();
   const hot = (detections ?? [])
-    .filter((d) => d.status === 'pending' && (d.verdict?.aiLikelihood ?? 0) >= RADAR_MIN_LIKELIHOOD)
+    .filter(
+      (d) =>
+        d.status === 'pending' &&
+        d.verdict !== null &&
+        (d.verdict.recommendedAction !== 'none' || QUALITY_PRIORITY[d.verdict.qualityClass] >= 2),
+    )
     .sort(
       (a, b) =>
-        (b.verdict?.aiLikelihood ?? 0) - (a.verdict?.aiLikelihood ?? 0) || b.createdAt - a.createdAt,
+        RISK_PRIORITY[b.verdict!.technicalRisk] - RISK_PRIORITY[a.verdict!.technicalRisk] ||
+        QUALITY_PRIORITY[b.verdict!.qualityClass] - QUALITY_PRIORITY[a.verdict!.qualityClass] ||
+        a.verdict!.evidenceScore - b.verdict!.evidenceScore ||
+        b.createdAt - a.createdAt,
     )
     .slice(0, 5);
   // No blip, no widget: the dashboard stays quiet when the radar is clear.
   if (hot.length === 0) return null;
   return (
     <Section
-      title="Slop radar"
+      title="Contribution quality radar"
       description={
         <>
-          PRs with elevated AI-likelihood scores awaiting review.{' '}
+          Actionable PR assessments, ranked by technical risk and missing evidence — not by who or what authored them.{' '}
           <a className="linkish" href="#/slop">
             View all detections
           </a>
@@ -49,8 +65,13 @@ function SlopRadarWidget(): JSX.Element | null {
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-2.5">
-              <span className="dim hidden text-[11px] sm:inline">AI likelihood</span>
-              <SlopMeter value={d.verdict?.aiLikelihood ?? 0} />
+              <span className="dim hidden text-[11px] sm:inline">
+                evidence {d.verdict!.evidenceScore}/100
+              </span>
+              <MetaSignal
+                tone={QUALITY_META[d.verdict!.qualityClass].tone}
+                label={QUALITY_META[d.verdict!.qualityClass].label}
+              />
             </span>
           </a>
         ))}

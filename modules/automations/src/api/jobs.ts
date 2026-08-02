@@ -10,7 +10,9 @@ let offConfigChanged: (() => void) | null = null;
 
 export default defineJobs({
   onEnable: (ctx) => {
-    ctx.services.get('automations').automations.start();
+    const service = ctx.services.get('automations');
+    service.automations.start();
+    service.assistant.start();
     // The per-repo webhook URLs this module shows derive from operate's tunnel,
     // which follows operate's `webhookTunnel` config — refresh them on a change.
     offConfigChanged = ctx.bus.on('module-config.changed', ({ moduleId, keys }) => {
@@ -20,6 +22,8 @@ export default defineJobs({
   onDisable: (ctx) => {
     offConfigChanged?.();
     offConfigChanged = null;
-    ctx.services.get('automations').automations.stop();
+    const service = ctx.services.get('automations');
+    service.automations.stop();
+    service.assistant.stop();
   },
 });

@@ -13,9 +13,36 @@
   shows the very snapshot `start()` would execute — refs resolved, overrides
   applied, unresolvable refs flagged with the engine's conservative pre-halt.
   Zero side effects: no run row, no GitHub call, no broadcast.
-- The **run endpoint is synchronous** (the HTTP request awaits the one-shot),
-  matching the existing generate-* endpoints. Bounded by the request's
-  `timeoutMs` ceiling (10 min hard max).
+- **Evaluations** (`#/playground/evaluations`): named, revisioned regression
+  cases with deterministic expectations (required/forbidden evidence, tolerant
+  production-style JSON extraction, JSON paths/allowed values, latency and
+  token ceilings). Every replay snapshots the case revision and server prompt
+  version, links the canonical operate transcript, and stores only a bounded
+  64k answer copy. Repo cases are shared through live workspace access; scratch
+  cases stay private to their author. Safety-critical failures are explicit
+  rollout blockers. Custom suites run sequentially with visible progress.
+- **Production rollout gate** (the first section of Evaluations): immutable,
+  version-controlled fixtures execute the exact prompt builder and parser
+  registered by Code PR review, Code issue triage, Slop contribution quality,
+  Planner clarification, and Refinement decomposition. Results snapshot the
+  adapter version, exact prompt fingerprint, current model/lane configuration,
+  actual runtime, deterministic checks, usage, and bounded parser/output copies.
+  Any prompt/parser/fixture/config change makes old evidence stale. Each
+  safety-critical case needs two consecutive current passes, so one stochastic
+  success cannot make the rollout gate green.
+- Production suites are **durable server-owned background jobs**: POST returns
+  a handle immediately, progress and the current case persist across navigation,
+  one owner can run only one suite, cancellation terminalizes before queued/live
+  work is stopped, and boot recovery turns abandoned work into `interrupted`.
+  Histories are owner-private and bounded. The current eight-case corpus expands
+  to a 15-turn execution plan; one suite has a live 1,000,000-token and 60-minute
+  aggregate guard. Provider events are folded monotonically, missing telemetry
+  fails closed, budget refreshes are coalesced, and module shutdown joins the
+  detached suite task before its stores close.
+- Exploratory/custom **run endpoints remain synchronous** (the HTTP request
+  awaits the one-shot), matching the existing generate-* endpoints and bounded
+  by a 10-minute hard timeout. The production release gate is deliberately
+  asynchronous because it contains several paid turns.
 
 ## Deferred: true pipeline step dry-run execution
 
@@ -36,10 +63,17 @@ That touches the engine's dependency wiring and the run store schema — too dee
 for this cut and mid-flight with concurrent checks work; the preview ships now,
 the engine seam is the named next increment.
 
-## Deferred: async playground runs
+## Deferred: async custom runs and broader calibration
 
-`runOneShot` yields the run id only on completion, so the endpoint cannot
-return a handle early without new infrastructure (parked results keyed by queue
-entry, or reading the outcome off the run row). If long playground runs become
-common, switch to: enqueue → return queue id → client follows `runs.changed`
-and pulls the final message from the transcript endpoint.
+Exploratory custom replays still await one bounded HTTP request. If they become
+long-running, reuse the production suite's durable job shape rather than adding
+a second queue protocol.
+
+The initial production corpus defends eight high-impact decisions, including a
+false-positive control, test theatre around an authorization bypass, and partial
+huge-diff evidence that must stay undecided. It is not a statistically calibrated
+benchmark. Next work is larger anonymized labeled corpora, synthesis/verifier
+and true multi-chunk cases, precision/recall and unsupported-claim metrics,
+billed/cache-aware cost cohorts, shadow evaluation against maintainer outcomes,
+and an optional policy that blocks prompt/model promotion until every
+safety-critical case is current and green.

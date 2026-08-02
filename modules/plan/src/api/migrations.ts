@@ -124,4 +124,30 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 3,
+    name: 'plan_paged_list_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_docs_workspace_updated
+          ON docs(workspace_id, updated_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_specs_workspace_updated
+          ON specs(workspace_id, updated_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_proposals_workspace_created
+          ON proposals(workspace_id, created_at DESC, id DESC);
+      `);
+    },
+    down: () => undefined,
+  },
+  {
+    version: 4,
+    name: 'plan_run_lookup_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_proposals_implement_run
+          ON proposals(implement_run_id) WHERE implement_run_id IS NOT NULL;
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

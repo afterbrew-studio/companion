@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { OidcClient } from '../dist/api/oidc-client.js';
+import { safeReturnTo } from '../dist/api/routes.js';
 
 /**
  * A provider that actually enforces the protocol, so a client that skipped PKCE
@@ -151,6 +152,7 @@ for (const [name, claims, message] of [
   ['a different issuer', { iss: 'https://evil.test' }, /different provider/],
   ['a different audience', { aud: 'other-client' }, /different client/],
   ['an expired token', { exp: 1000 }, /expired/],
+  ['no expiry', { exp: undefined }, /missing exp/],
 ]) {
   test(`an id_token from ${name} is refused`, async (t) => {
     const p = await idp({ claims });
@@ -173,4 +175,12 @@ test('discovery missing an endpoint is a hard failure, not a guessed URL', async
   const p = await idp({ discovery: { token_endpoint: undefined } });
   t.after(p.close);
   await assert.rejects(() => clientFor(p.base).authorizeUrl(`${p.base}/back`, '/'), /missing token_endpoint/);
+});
+
+test('OIDC return targets stay on the Companion origin', () => {
+  assert.equal(safeReturnTo('/#/board?task=1'), '/#/board?task=1');
+  assert.equal(safeReturnTo('//evil.example/path'), '/');
+  assert.equal(safeReturnTo('/\\evil.example/path'), '/');
+  assert.equal(safeReturnTo('/safe\n//evil.example'), '/');
+  assert.equal(safeReturnTo('https://evil.example/path'), '/');
 });

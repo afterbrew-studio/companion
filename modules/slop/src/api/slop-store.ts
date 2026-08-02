@@ -1,4 +1,4 @@
-import { safeParse, type Database } from '@moxxy/companion-sdk/server';
+import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   SlopAppliedAction,
   SlopDetectionResult,
@@ -34,7 +34,7 @@ interface RuleRow {
 }
 
 function rowToDetection(row: DetectionRow): SlopDetectionResult {
-  const verdict = row.verdict ? safeParse<SlopVerdict | null>(row.verdict, null) : null;
+  const verdict = row.verdict ? safeParse<Partial<SlopVerdict> | null>(row.verdict, null) : null;
   return {
     id: row.id,
     repo: row.repo,
@@ -42,13 +42,34 @@ function rowToDetection(row: DetectionRow): SlopDetectionResult {
     prTitle: row.pr_title,
     runId: row.run_id,
     status: row.status as SlopDetectionResult['status'],
-    // reviewerHints post-dates the first verdicts; old JSON normalizes to [].
-    verdict: verdict ? { ...verdict, reviewerHints: verdict.reviewerHints ?? [] } : null,
+    verdict: verdict ? normalizeVerdict(verdict) : null,
     error: row.error,
     appliedAction: row.applied_action as SlopAppliedAction | null,
     ruleIds: safeParse<string[]>(row.rule_ids, []),
     provenance: row.provenance ? safeParse<SlopProvenance | null>(row.provenance, null) : null,
     createdAt: row.created_at,
+  };
+}
+
+/** Old verdict JSON remains readable without pretending it carried new proof. */
+function normalizeVerdict(verdict: Partial<SlopVerdict>): SlopVerdict {
+  return {
+    aiLikelihood: verdict.aiLikelihood ?? 0,
+    confidence: verdict.confidence ?? 'low',
+    qualityClass: verdict.qualityClass ?? 'needs_evidence',
+    valueScore: verdict.valueScore ?? 50,
+    evidenceScore: verdict.evidenceScore ?? 0,
+    technicalRisk: verdict.technicalRisk ?? 'medium',
+    testEvidence: verdict.testEvidence ?? 'unavailable',
+    reviewability: verdict.reviewability ?? 'blocked',
+    decisionFactors:
+      verdict.decisionFactors ??
+      [{ dimension: 'tests', effect: 'neutral', observation: 'Legacy detection: quality evidence was not captured.' }],
+    summary: verdict.summary ?? 'Legacy detection without a quality assessment.',
+    signals: verdict.signals ?? [],
+    recommendedAction: verdict.recommendedAction ?? 'comment',
+    reviewerHints: verdict.reviewerHints ?? [],
+    draftComment: verdict.draftComment ?? '',
   };
 }
 
@@ -147,13 +168,56 @@ export class SlopStore {
    * code's published `v_repos` view — never a raw JOIN on its repos table.
    */
   listByWorkspace(workspaceId: string, limit = 100): SlopDetectionResult[] {
+    return this.listByWorkspacePage(workspaceId, { limit }).detections;
+  }
+
+  listByWorkspacePage(
+    workspaceId: string,
+    opts: {
+      readonly q?: string;
+      readonly repo?: string;
+      readonly status?: SlopDetectionResult['status'];
+      readonly quality?: SlopVerdict['qualityClass'];
+      readonly limit?: number;
+      readonly offset?: number;
+      readonly accessibleRepos?: readonly string[];
+    } = {},
+  ): { detections: SlopDetectionResult[]; total: number } {
+    const where = ['r.workspace_id = ?'];
+    const args: unknown[] = [workspaceId];
+    if (opts.accessibleRepos) {
+      where.push(
+        opts.accessibleRepos.length > 0
+          ? `d.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})`
+          : '1 = 0',
+      );
+      args.push(...opts.accessibleRepos);
+    }
+    if (opts.q) {
+      const like = likeArg(opts.q);
+      where.push(`(d.pr_title LIKE ? ESCAPE '\\' OR d.repo LIKE ? ESCAPE '\\' OR CAST(d.pr_number AS TEXT) = ?)`);
+      args.push(like, like, opts.q.replace(/^#/, ''));
+    }
+    if (opts.repo) {
+      where.push('d.repo = ?');
+      args.push(opts.repo);
+    }
+    if (opts.status) {
+      where.push('d.status = ?');
+      args.push(opts.status);
+    }
+    if (opts.quality) {
+      where.push(`d.verdict IS NOT NULL AND json_valid(d.verdict) AND json_extract(d.verdict, '$.qualityClass') = ?`);
+      args.push(opts.quality);
+    }
+    const base = `FROM slop_detections d JOIN v_repos r ON r.full_name = d.repo WHERE ${where.join(' AND ')}`;
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...args) as { n: number }).n;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.min(Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0), 1_000_000);
     const rows = this.db
-      .prepare(
-        `SELECT d.* FROM slop_detections d JOIN v_repos r ON r.full_name = d.repo
-         WHERE r.workspace_id = ? ORDER BY d.created_at DESC LIMIT ?`,
-      )
-      .all(workspaceId, limit) as DetectionRow[];
-    return rows.map(rowToDetection);
+      .prepare(`SELECT d.* ${base} ORDER BY d.created_at DESC, d.id DESC LIMIT ? OFFSET ?`)
+      .all(...args, limit, offset) as DetectionRow[];
+    return { detections: rows.map(rowToDetection), total };
   }
 
   /**

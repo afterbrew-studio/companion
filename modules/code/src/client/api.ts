@@ -10,11 +10,14 @@ import type {
   GitHubAccountScope,
   GitHubPurpose,
   ImportPreview,
+  IssueListRecord,
   IssueRecord,
   PipelineExport,
   PipelineRecord,
   PipelineRunRecord,
-  PrFileChange,
+  PipelineStepLog,
+  PrFileChangesPage,
+  PrListRecord,
   PrRecord,
   PrReviewResult,
   FindingSeverity,
@@ -78,7 +81,7 @@ export const codeApi = {
     page?: PageQuery & { author?: string; assignee?: string; label?: string; triage?: string },
   ) =>
     request<{
-      issues: IssueRecord[];
+      issues: IssueListRecord[];
       total: number;
       counts: { open: number; closed: number };
       facets: { authors: string[]; assignees: string[]; labels: string[] };
@@ -89,7 +92,7 @@ export const codeApi = {
     page?: PageQuery & { author?: string; assignee?: string; label?: string; decision?: string; draft?: string; review?: string },
   ) =>
     request<{
-      prs: PrRecord[];
+      prs: PrListRecord[];
       total: number;
       counts: { open: number; merged: number; closed: number };
       facets: { authors: string[]; assignees: string[]; labels: string[] };
@@ -131,8 +134,8 @@ export const codeApi = {
     }>(`/api/repos/${fullName}/prs/${number}`),
   prChecks: (fullName: string, number: number) =>
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
-  prFiles: (fullName: string, number: number) =>
-    request<{ files: PrFileChange[]; truncated: boolean }>(`/api/repos/${fullName}/prs/${number}/files`),
+  prFiles: (fullName: string, number: number, page = 1) =>
+    request<PrFileChangesPage>(`/api/repos/${fullName}/prs/${number}/files?page=${page}`),
   analyzeFailedChecks: (fullName: string, number: number) =>
     post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/checks/analyze`),
   fixChecks: (fullName: string, number: number) =>
@@ -154,6 +157,12 @@ export const codeApi = {
   closePr: (fullName: string, number: number) => post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/close`),
   approvePipelineStep: (runId: string, stepIndex: number, approved: boolean) =>
     post<{ ok: true }>(`/api/pipeline-runs/${runId}/steps/${stepIndex}/approve`, { approved }),
+  cancelPipelineRun: (runId: string) =>
+    post<{ run: PipelineRunRecord }>(`/api/pipeline-runs/${runId}/cancel`),
+  pipelineStepLog: (runId: string, stepIndex: number, afterSequence = 0) =>
+    request<{ log: PipelineStepLog | null }>(
+      `/api/pipeline-runs/${runId}/steps/${stepIndex}/log?after=${afterSequence}`,
+    ),
   rerunChecks: (fullName: string, number: number, scope: 'failed' | 'all' = 'failed') =>
     post<{ restarted: number }>(`/api/repos/${fullName}/prs/${number}/rerun-checks`, { scope }),
   markPrReady: (fullName: string, number: number) =>
@@ -197,6 +206,7 @@ export const codeApi = {
     id: string,
     body: { state?: FindingState; rejectionReason?: string; reason?: string; suggestion?: string },
   ) => patch<{ ok: true }>(`/api/pr-review-findings/${id}`, body),
+  cancelPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/cancel`),
   dismissPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/dismiss`),
 
   // pipelines + step library

@@ -32,6 +32,14 @@ test('a file larger than the whole budget gets a pass to itself', () => {
   );
 });
 
+test('one oversized file is refused instead of masquerading as one safe pass', () => {
+  assert.deepEqual(planReview([file('generated.ts', 5000)], { budget: 1000 }), {
+    kind: 'too-large',
+    chunks: 1,
+    changed: 5000,
+  });
+});
+
 test('neighbouring files land together, so each is context for the others', () => {
   const chunks = planReviewChunks(
     [file('web/z.ts', 400), file('api/a.ts', 400), file('api/b.ts', 400)],

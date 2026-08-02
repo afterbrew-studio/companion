@@ -78,6 +78,13 @@ export interface ProposalRecord {
   readonly updatedAt: number;
 }
 
+/** Lightweight legacy-proposal card; body/analysis stay on the detail route. */
+export type ProposalListRecord = Omit<ProposalRecord, 'body' | 'analysis'> & {
+  readonly bodyPreview: string;
+  readonly bodyLength: number;
+  readonly analysisFeasibility: ProposalAnalysis['feasibility'] | null;
+};
+
 // ---------- Specifications --------------------------------------------------------
 
 /** Where a spec/doc lives: only in Companion's DB, or mirrored into the repo clone. */
@@ -125,6 +132,11 @@ export interface SpecRecord {
   readonly createdAt: number;
   readonly updatedAt: number;
 }
+
+/** Lightweight specification card; markdown is fetched only for an opened card. */
+export type SpecListRecord = Omit<SpecRecord, 'content'> & {
+  readonly contentLength: number;
+};
 
 export interface CreateSpecRequest {
   readonly repo: string;
@@ -176,6 +188,11 @@ export interface DocRecord {
   readonly createdAt: number;
   readonly updatedAt: number;
 }
+
+/** Lightweight documentation card; full indexed markdown stays on the detail route. */
+export type DocListRecord = Omit<DocRecord, 'content'> & {
+  readonly contentLength: number;
+};
 
 export interface SaveDocRequest {
   readonly repo?: string | null;

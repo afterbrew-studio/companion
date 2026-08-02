@@ -13,6 +13,7 @@ import type {
   TaskEventRecord,
   TaskModelOptions,
   TaskPriority,
+  TaskListRecord,
   TaskPrView,
   TaskRecord,
   TaskStage,
@@ -90,11 +91,16 @@ export class BoardService {
 
   // ---------- reads -------------------------------------------------------------------
 
-  listBoard(user: AuthUser, workspaceId: string): { tasks: TaskRecord[]; workers: WorkerView[]; config: BoardConfig } {
-    const tasks = this.store
-      .listTasks()
-      .filter((task) => task.workspaceId === workspaceId)
-      .map((task) => ({ ...task, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) }));
+  listBoard(
+    user: AuthUser,
+    workspaceId: string,
+    opts: { readonly doneRepo?: string; readonly doneLimit?: number; readonly doneOffset?: number } = {},
+  ): { tasks: TaskListRecord[]; workers: WorkerView[]; config: BoardConfig; doneTotal: number; doneOffset: number; taskRepos: string[] } {
+    const boardTasks = this.store.listBoardTasks(workspaceId, opts);
+    const tasks = boardTasks.tasks.map((task): TaskListRecord => {
+      const { description: _description, acceptance: _acceptance, ...card } = task;
+      return { ...card, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) };
+    });
     const busy = this.store.busyWorkerMap();
     const workers = this.store.listWorkers(workspaceId).map((w): WorkerView => {
       const b = busy.get(w.id);
@@ -109,7 +115,14 @@ export class BoardService {
         busyTaskRepo: visible ? b!.repo : null,
       };
     });
-    return { tasks, workers, config: this.store.getConfig(workspaceId) };
+    return {
+      tasks,
+      workers,
+      config: this.store.getConfig(workspaceId),
+      doneTotal: boardTasks.doneTotal,
+      doneOffset: boardTasks.doneOffset,
+      taskRepos: boardTasks.taskRepos,
+    };
   }
 
   getTask(
@@ -163,10 +176,7 @@ export class BoardService {
   specOptions(repo: string, workspaceId: string): SpecOption[] {
     const plan = this.plan();
     if (!plan) return [];
-    return plan.specs
-      .list(workspaceId)
-      .filter((s) => s.repo === repo && s.status === 'ready')
-      .map((s) => ({ id: s.id, title: s.title }));
+    return plan.specs.listReadyOptions(workspaceId, repo);
   }
 
   // ---------- task CRUD -----------------------------------------------------------------
@@ -790,8 +800,8 @@ export class BoardService {
     let specSection = '';
     if (task.specId) {
       const plan = this.plan();
-      const spec = plan ? plan.specs.list(task.workspaceId).find((s) => s.id === task.specId) : undefined;
-      if (spec) {
+      const spec = plan?.specs.get(task.specId);
+      if (spec?.workspaceId === task.workspaceId && spec.repo === task.repo) {
         const content = spec.content.length > MAX_SPEC_CHARS ? `${spec.content.slice(0, MAX_SPEC_CHARS)}\n… (spec truncated)` : spec.content;
         specSection = `\n## Specification: ${spec.title}\n${content}\n`;
       }
@@ -828,7 +838,10 @@ ${acceptance}${previous}${specSection}
     const task = this.store.getTask(taskId);
     if (!task || task.runId !== runId || task.status !== 'in_progress') return;
 
-    const { diff } = await this.code.fixes.diff(runId, task.targetBranch).catch(() => ({ diff: '' }));
+    // A transport/checkout failure is not evidence that the agent produced no
+    // change. Let the caller record the real failure instead of charging a
+    // misleading "finished without changes" retry.
+    const { diff } = await this.code.fixes.diff(runId, task.targetBranch);
     if (!diff.trim()) {
       // Detach/charge BEFORE discarding — the discard re-emits run.changed
       // synchronously and must find nothing to react to.
@@ -940,6 +953,45 @@ ${acceptance}${previous}${specSection}
       if (task.stage !== 'awaiting_review' || !config.autoReview) {
         this.clearBlocker(task.id, 'reviewer');
       }
+
+      // An approval is evidence about one immutable head. A force-push after
+      // the board review must send the card through review again, even when CI
+      // on the new commit is green.
+      const latestReview = config.autoReview
+        ? this.code.prReviews.latestWithFindings(task.repo, task.prNumber)
+        : null;
+      const reviewEvidenceCurrent =
+        latestReview?.source === 'agent' &&
+        (latestReview.status === 'pending' || latestReview.status === 'applied') &&
+        latestReview.headSha === pr.headSha &&
+        latestReview.error === null &&
+        latestReview.coverage.state === 'complete';
+      const currentBoardReview = reviewEvidenceCurrent && latestReview.status === 'applied';
+      if (config.autoReview && task.stage === 'awaiting_merge' && !currentBoardReview) {
+        // The analysis succeeded but publishing it failed. Its evidence is
+        // still current, so leave the card with the maintainer instead of
+        // silently launching an identical (and potentially expensive) review.
+        if (reviewEvidenceCurrent && latestReview.status === 'pending') continue;
+        this.store.updateTask(task.id, {
+          stage: 'awaiting_review',
+          reviewRisk: null,
+          reviewRecommendation: null,
+        });
+        this.store.insertEvent(task.id, 'review_stale', `PR #${task.prNumber} changed after its review`);
+        this.changed();
+        continue;
+      }
+      if (
+        config.autoReview &&
+        task.stage === 'awaiting_merge' &&
+        currentBoardReview &&
+        latestReview.verdict?.recommendation === 'request_changes'
+      ) {
+        // A maintainer published a review that the automatic post step could
+        // not. Resume the same remediation path runReview() would have taken.
+        this.bindBack(task.id, 'address_review', `reviewer requested changes on PR #${task.prNumber}`, config);
+        continue;
+      }
       if (task.stage === 'awaiting_review' && config.autoReview) {
         const reviewer = this.resolveReviewer(config, task.workspaceId);
         // Review paused until the workspace has an enabled reviewer worker.
@@ -961,7 +1013,7 @@ ${acceptance}${previous}${specSection}
       // Merge gate — reached with a positive verdict (awaiting_merge), or in
       // human-review mode (autoReview off) where GitHub's decision governs.
       const approved = config.autoReview
-        ? task.reviewRecommendation === 'approve'
+        ? currentBoardReview && latestReview.verdict?.recommendation === 'approve'
         : pr.reviewDecision === 'approved';
       // Nothing actionable would come out of a checks fetch — skip the API call.
       if ((!approved || !config.autoMerge) && !config.autoFixCi) continue;
@@ -979,9 +1031,10 @@ ${acceptance}${previous}${specSection}
       }
       if (summary.state === 'pending') continue;
       if (!approved || !config.autoMerge) continue;
+      if (!summary.headSha) continue;
       const notBefore = this.mergeBackoff.get(task.id) ?? 0;
       if (Date.now() < notBefore) continue;
-      await this.mergeTask(task, config);
+      await this.mergeTask(task, config, summary.headSha);
     }
   }
 
@@ -1021,7 +1074,12 @@ ${acceptance}${previous}${specSection}
       const fresh = this.store.getTask(taskId);
       if (!fresh || fresh.status !== 'in_review' || fresh.stage !== 'reviewing' || fresh.prNumber !== task.prNumber) return;
 
-      if (!result.verdict) {
+      if (
+        result.status !== 'pending' ||
+        !result.verdict ||
+        result.error !== null ||
+        result.coverage.state !== 'complete'
+      ) {
         // Reviewer-infrastructure failure — not the task's fault. Back off and
         // retry later without charging the task's attempt budget.
         this.reviewBackoff.set(taskId, Date.now() + REVIEW_BACKOFF_MS);
@@ -1040,6 +1098,16 @@ ${acceptance}${previous}${specSection}
         await this.code.prReviews.apply(result.id, { userId: task.createdBy });
       } catch (err) {
         this.store.insertEvent(taskId, 'review_post_failed', String(err).slice(0, 300));
+        this.store.updateTask(taskId, { stage: 'awaiting_merge' });
+        this.notifyUser(
+          task,
+          'action_required',
+          `Board review could not be published: ${task.title.slice(0, 60)}`,
+          `The evidence is ready for PR #${task.prNumber}, but posting it failed. Review and publish it from the pull request before merging.`,
+          `#/repos/${task.repo}/prs/${task.prNumber}/review`,
+        );
+        this.changed();
+        return;
       }
 
       if (recommendation === 'request_changes') {
@@ -1132,12 +1200,19 @@ ${acceptance}${previous}${specSection}
   }
 
   /** Merge, comment, complete — with a backoff so a refusing branch doesn't get hammered. */
-  private async mergeTask(task: TaskRecord, config: BoardConfig): Promise<void> {
+  private async mergeTask(task: TaskRecord, config: BoardConfig, reviewedHead?: string): Promise<void> {
     try {
       const { result, client, tried } = await this.code.githubAccounts.performForRepo(
         'pipelines',
         task.repo,
-        (candidate) => candidate.mergePr(task.repo, task.prNumber!, config.mergeMethod),
+        async (candidate) => {
+          const live = await candidate.pull(task.repo, task.prNumber!);
+          if (live.state !== 'open' || live.draft === true) throw new Error('pull request is no longer open and ready');
+          if (reviewedHead && live.head.sha !== reviewedHead) {
+            throw new Error('pull request head changed after checks/review; refusing to merge stale evidence');
+          }
+          return candidate.mergePr(task.repo, task.prNumber!, config.mergeMethod, live.head.sha);
+        },
         {
           username: task.createdBy,
           workspaceId: task.workspaceId,

@@ -4,6 +4,7 @@ import type {
   PipelineRunRecord,
   PipelineRunStatus,
   PipelineStep,
+  PipelineStepLog,
   PipelineStepResult,
   PipelineStepSpec,
   PipelineTrigger,
@@ -154,15 +155,19 @@ export class PipelinesStore {
 
   // ---------- pipeline runs -----------------------------------------------------------
 
-  insertRun(r: PipelineRunRecord): void {
-    this.db
+  insertRun(r: PipelineRunRecord, idempotencyKey: string | null = null): boolean {
+    const result = this.db
       .prepare(
-        `INSERT INTO pipeline_runs (id, pipeline_id, pipeline_name, target, repo, pr_number, status, trigger, steps, created_at, finished_at)
-         VALUES (@id, @pipelineId, @pipelineName, @target, @repo, @prNumber, @status, @trigger, @steps, @createdAt, @finishedAt)`,
+        `INSERT OR IGNORE INTO pipeline_runs
+           (id, pipeline_id, owner_id, workspace_id, pipeline_name, target, repo, pr_number, status, trigger, steps, created_at, finished_at, idempotency_key)
+         VALUES
+           (@id, @pipelineId, @ownerId, @workspaceId, @pipelineName, @target, @repo, @prNumber, @status, @trigger, @steps, @createdAt, @finishedAt, @idempotencyKey)`,
       )
       .run({
         id: r.id,
         pipelineId: r.pipelineId,
+        ownerId: r.ownerId,
+        workspaceId: r.workspaceId,
         pipelineName: r.pipelineName,
         target: r.target,
         repo: r.repo,
@@ -172,24 +177,34 @@ export class PipelinesStore {
         steps: JSON.stringify(r.steps),
         createdAt: r.createdAt,
         finishedAt: r.finishedAt,
+        idempotencyKey,
       });
+    return result.changes === 1;
   }
 
-  updateRun(
+  getRunByIdempotencyKey(key: string): PipelineRunRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM pipeline_runs WHERE idempotency_key = ?`).get(key) as
+      | PipelineRunRow
+      | undefined;
+    return row ? pipelineRunRowToRecord(row) : undefined;
+  }
+
+  /** Update only while the run is live; a late step must never revive a terminal row. */
+  updateRunningRun(
     id: string,
     fields: {
       status?: PipelineRunStatus;
       steps?: ReadonlyArray<PipelineStepResult>;
       finishedAt?: number | null;
     },
-  ): void {
-    this.db
+  ): boolean {
+    const result = this.db
       .prepare(
         `UPDATE pipeline_runs SET
            status = COALESCE(@status, status),
            steps = COALESCE(@steps, steps),
            finished_at = COALESCE(@finishedAt, finished_at)
-         WHERE id = @id`,
+         WHERE id = @id AND status = 'running'`,
       )
       .run({
         id,
@@ -197,13 +212,33 @@ export class PipelinesStore {
         steps: fields.steps ? JSON.stringify(fields.steps) : null,
         finishedAt: fields.finishedAt ?? null,
       });
+    return result.changes === 1;
   }
 
   getRun(id: string): PipelineRunRecord | undefined {
     const row = this.db.prepare(`SELECT * FROM pipeline_runs WHERE id = ?`).get(id) as
       | PipelineRunRow
       | undefined;
-    return row ? pipelineRunRowToRecord(row) : undefined;
+    return row ? pipelineRunRowToRecord(row, true) : undefined;
+  }
+
+  /** Scope-only lookup for hot authorization paths; never parses the steps blob. */
+  getRunScope(id: string): { readonly repo: string } | undefined {
+    return this.db.prepare(`SELECT repo FROM pipeline_runs WHERE id = ?`).get(id) as
+      | { readonly repo: string }
+      | undefined;
+  }
+
+  /** Undefined means no such step; null is a real step that emitted no log. */
+  getStepLog(id: string, stepIndex: number): PipelineStepLog | null | undefined {
+    const row = this.db.prepare(`SELECT steps FROM pipeline_runs WHERE id = ?`).get(id) as
+      | Pick<PipelineRunRow, 'steps'>
+      | undefined;
+    if (!row) return undefined;
+    const steps = safeParse<PipelineStepResult[]>(row.steps, []);
+    if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= steps.length) return undefined;
+    const step = steps[stepIndex];
+    return step?.log ?? null;
   }
 
   listRunsForIssue(repo: string, issueNumber: number, limit = 50): PipelineRunRecord[] {
@@ -212,7 +247,7 @@ export class PipelinesStore {
         `SELECT * FROM pipeline_runs WHERE repo = ? AND pr_number = ? AND target = 'issue' ORDER BY created_at DESC LIMIT ?`,
       )
       .all(repo, issueNumber, limit) as PipelineRunRow[];
-    return rows.map(pipelineRunRowToRecord);
+    return rows.map((row) => pipelineRunRowToRecord(row));
   }
 
   listRunsForPr(repo: string, prNumber: number, limit = 50): PipelineRunRecord[] {
@@ -221,25 +256,70 @@ export class PipelinesStore {
         `SELECT * FROM pipeline_runs WHERE repo = ? AND pr_number = ? AND target = 'pr' ORDER BY created_at DESC LIMIT ?`,
       )
       .all(repo, prNumber, limit) as PipelineRunRow[];
-    return rows.map(pipelineRunRowToRecord);
+    return rows.map((row) => pipelineRunRowToRecord(row));
   }
 
   listWorkspaceRuns(workspaceId: string, limit = 100): PipelineRunRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT pr.* FROM pipeline_runs pr JOIN pipelines p ON p.id = pr.pipeline_id
-         WHERE p.workspace_id = ? ORDER BY pr.created_at DESC LIMIT ?`,
+        `SELECT * FROM pipeline_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?`,
       )
       .all(workspaceId, limit) as PipelineRunRow[];
-    return rows.map(pipelineRunRowToRecord);
+    return rows.map((row) => pipelineRunRowToRecord(row));
+  }
+
+  /** Persist cancellation first; active work is stopped only after this CAS wins. */
+  cancelRun(
+    id: string,
+    reason: string,
+    latestSteps?: ReadonlyArray<PipelineStepResult>,
+  ): PipelineRunRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM pipeline_runs WHERE id = ?`).get(id) as PipelineRunRow | undefined;
+    if (!row || row.status !== 'running') return row ? pipelineRunRowToRecord(row, true) : undefined;
+    const now = Date.now();
+    const steps = cancelledSteps(latestSteps ?? safeParse<PipelineStepResult[]>(row.steps, []), reason, now);
+    this.db
+      .prepare(
+        `UPDATE pipeline_runs
+            SET status = 'cancelled', steps = ?, finished_at = ?
+          WHERE id = ? AND status = 'running'`,
+      )
+      .run(JSON.stringify(steps), now, id);
+    return this.getRun(id);
+  }
+
+  /** Terminalize a run when the engine itself throws outside a step handler. */
+  failRun(
+    id: string,
+    reason: string,
+    latestSteps?: ReadonlyArray<PipelineStepResult>,
+  ): PipelineRunRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM pipeline_runs WHERE id = ?`).get(id) as PipelineRunRow | undefined;
+    if (!row || row.status !== 'running') return row ? pipelineRunRowToRecord(row, true) : undefined;
+    const now = Date.now();
+    const steps = interruptedSteps(latestSteps ?? safeParse<PipelineStepResult[]>(row.steps, []), reason, now);
+    this.db
+      .prepare(`UPDATE pipeline_runs SET status = 'error', steps = ?, finished_at = ? WHERE id = ? AND status = 'running'`)
+      .run(JSON.stringify(steps), now, id);
+    return this.getRun(id);
   }
 
   /** Boot sweep: runs left 'running' by a dead daemon are errors. */
   markInterruptedRuns(): number {
-    const result = this.db
-      .prepare(`UPDATE pipeline_runs SET status = 'error', finished_at = ? WHERE status = 'running'`)
-      .run(Date.now());
-    return result.changes;
+    const rows = this.db.prepare(`SELECT * FROM pipeline_runs WHERE status = 'running'`).all() as PipelineRunRow[];
+    const finish = this.db.prepare(
+      `UPDATE pipeline_runs SET status = 'error', steps = ?, finished_at = ? WHERE id = ? AND status = 'running'`,
+    );
+    const now = Date.now();
+    const sweep = this.db.transaction(() => {
+      let changed = 0;
+      for (const row of rows) {
+        const steps = interruptedSteps(safeParse<PipelineStepResult[]>(row.steps, []), 'daemon restarted during this run', now);
+        changed += finish.run(JSON.stringify(steps), now, row.id).changes;
+      }
+      return changed;
+    });
+    return sweep();
   }
 }
 
@@ -268,6 +348,8 @@ interface StepDefinitionRow {
 interface PipelineRunRow {
   id: string;
   pipeline_id: string;
+  owner_id: string | null;
+  workspace_id: string | null;
   pipeline_name: string;
   target: string;
   repo: string;
@@ -307,18 +389,57 @@ function stepDefinitionRowToRecord(row: StepDefinitionRow): StepDefinitionRecord
   };
 }
 
-function pipelineRunRowToRecord(row: PipelineRunRow): PipelineRunRecord {
+function pipelineRunRowToRecord(row: PipelineRunRow, includeEvidence = false): PipelineRunRecord {
+  const steps = safeParse<PipelineStepResult[]>(row.steps, []);
   return {
     id: row.id,
     pipelineId: row.pipeline_id,
+    ownerId: row.owner_id,
+    workspaceId: row.workspace_id,
     pipelineName: row.pipeline_name,
     target: row.target === 'issue' || row.target === 'platform' ? row.target : 'pr',
     repo: row.repo,
     prNumber: row.pr_number,
     status: row.status,
     trigger: row.trigger,
-    steps: safeParse<PipelineStepResult[]>(row.steps, []),
+    // List feeds stay small even when old command/review-heavy runs are
+    // retained. One explicitly opened run loads its complete evidence.
+    steps: includeEvidence
+      ? steps
+      : steps.map(({ log: _log, detail: _detail, ...step }) => ({ ...step, detail: null })),
     createdAt: row.created_at,
     finishedAt: row.finished_at,
   };
+}
+
+function cancelledSteps(
+  steps: readonly PipelineStepResult[],
+  reason: string,
+  now: number,
+): PipelineStepResult[] {
+  return steps.map((step) => {
+    if (step.status === 'running' || step.status === 'awaiting') {
+      return { ...step, status: 'cancelled', summary: reason, finishedAt: now };
+    }
+    if (step.status === 'pending') {
+      return { ...step, status: 'skipped', summary: 'not run because the pipeline was cancelled', finishedAt: now };
+    }
+    return step;
+  });
+}
+
+function interruptedSteps(
+  steps: readonly PipelineStepResult[],
+  reason: string,
+  now: number,
+): PipelineStepResult[] {
+  return steps.map((step) => {
+    if (step.status === 'running' || step.status === 'awaiting') {
+      return { ...step, status: 'error', summary: reason, finishedAt: now };
+    }
+    if (step.status === 'pending') {
+      return { ...step, status: 'skipped', summary: 'not run because the pipeline was interrupted', finishedAt: now };
+    }
+    return step;
+  });
 }

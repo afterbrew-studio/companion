@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { EmptyState, ErrorBar, ListCard, Page, PageHeader, RowsSkeleton, StatusDot, timeAgo } from '@moxxy/companion-sdk/ui';
-import type { PrRecord } from '../../contract/index.js';
+import type { PrListRecord } from '../../contract/index.js';
 import { useOverview } from '../hooks/useOverview.js';
 import { ChecksIcon } from '../widgets.js';
 
@@ -152,7 +152,7 @@ export function NeedsAttentionPage(): JSX.Element {
 }
 
 const repoName = (repo: string): string => repo.split('/')[1] ?? repo;
-const where = (pr: PrRecord): string => `#${pr.number} · ${repoName(pr.repo)}`;
+const where = (pr: PrListRecord): string => `#${pr.number} · ${repoName(pr.repo)}`;
 
 /** A queue, or nothing at all — an empty group is not news, it is noise. */
 function Group({ title, count, children }: { title: string; count: number; children: ReactNode }): JSX.Element | null {

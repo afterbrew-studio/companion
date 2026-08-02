@@ -37,6 +37,7 @@ export interface UsePr {
   readonly analyzing: boolean;
   readonly analyze: (opts?: ReviewOptions) => Promise<void>;
   readonly applyReview: (accountId?: string, mode?: ReviewPostMode) => Promise<void>;
+  readonly cancelReview: () => Promise<void>;
   readonly dismissReview: () => Promise<void>;
   readonly updateFinding: (
     id: string,
@@ -89,10 +90,11 @@ export function usePr(repo: string, number: number): UsePr {
   const pipelineRuns = data?.pipelineRuns ?? [];
   const ciAnalysis = data?.ciAnalysis ?? null;
 
-  // The verdict landing is what ends the "reviewing" state, wherever the
-  // payload came from.
+  // Durable server state wins over this tab's local click state. This also
+  // restores the progress view after navigation/reload and clears it on every
+  // terminal outcome, failed included.
   useEffect(() => {
-    if (review && review.status !== 'failed') setAnalyzing(false);
+    if (review) setAnalyzing(review.status === 'running');
   }, [review]);
 
   useEffect(() => {
@@ -135,6 +137,23 @@ export function usePr(repo: string, number: number): UsePr {
     [refresh],
   );
 
+  const runPipeline = useCallback(
+    async (pipelineId: string): Promise<void> => {
+      setBusy(true);
+      setError(null);
+      try {
+        await api.runPipeline(repo, number, pipelineId);
+        await refresh();
+      } catch (err) {
+        setError(String(err));
+        throw err;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [repo, number, refresh],
+  );
+
   // Branch agents push to the PR's own branch, so we follow the run into the
   // building preview rather than the raw transcript.
   const startAgent = useCallback(
@@ -172,6 +191,7 @@ export function usePr(repo: string, number: number): UsePr {
     analyzing,
     analyze,
     applyReview: (accountId, mode) => withBusy(() => api.applyPrReview(review!.id, accountId, mode ? { mode } : {})),
+    cancelReview: () => withBusy(() => api.cancelPrReview(review!.id)),
     dismissReview: () => withBusy(() => api.dismissPrReview(review!.id)),
     updateFinding: (id, patch) => withBusy(() => api.updateReviewFinding(id, patch)),
     // A comment may be the first thing anyone does on this PR, so the draft it
@@ -179,7 +199,9 @@ export function usePr(repo: string, number: number): UsePr {
     addFinding: (input) =>
       withBusy(async () => {
         const target =
-          review && review.status === 'pending' ? review.id : (await api.createReviewDraft(repo, number)).review.id;
+          review && (review.status === 'pending' || review.status === 'running')
+            ? review.id
+            : (await api.createReviewDraft(repo, number)).review.id;
         return api.addReviewFinding(target, input);
       }),
     agentBusy,
@@ -190,6 +212,6 @@ export function usePr(repo: string, number: number): UsePr {
     busy,
     merge: (method = 'squash') => withBusy(() => api.mergePr(repo, number, method)),
     close: () => withBusy(() => api.closePr(repo, number)),
-    runPipeline: (pipelineId) => withBusy(() => api.runPipeline(repo, number, pipelineId)),
+    runPipeline,
   };
 }

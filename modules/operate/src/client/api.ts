@@ -1,5 +1,5 @@
 import type { AskRequest, HistorySegment, ProvisionProviderSpec } from '@moxxy/companion-types';
-import { del, patch, post, put, request } from '@moxxy/companion-core/client';
+import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-core/client';
 import type {
   BudgetStatus,
   CreateRunnerRequest,
@@ -7,6 +7,7 @@ import type {
   ModelCatalog,
   MoxxyStatus,
   ProviderCatalog,
+  RunListRecord,
   RunQueueSnapshot,
   RunRecord,
   RunnerMoxxyUpdateResult,
@@ -51,6 +52,19 @@ export const operateApi = {
 
   // runs
   listRuns: () => request<{ runs: RunRecord[] }>('/api/runs'),
+  listRunsPage: (
+    page: PageQuery & { readonly workspace?: string; readonly kind?: string; readonly status?: string } = {},
+  ) => request<{ runs: RunListRecord[]; total: number }>(
+    `/api/runs/page${qs({
+      q: page.q,
+      repo: page.repo,
+      workspace: page.workspace,
+      kind: page.kind,
+      status: page.status,
+      limit: page.limit,
+      offset: page.offset,
+    })}`,
+  ),
   createRun: (title?: string) => post<{ run: RunRecord }>('/api/runs', { title }),
   getRun: (id: string) => request<{ run: RunRecord; pendingAsks: AskRequest[] }>(`/api/runs/${id}`),
   history: (id: string, before: number | null, limit = 300) =>

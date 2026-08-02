@@ -1,34 +1,52 @@
-import { useCallback, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { useCallback, useEffect } from 'react';
+import { onServerMessage } from '@moxxy/companion-sdk/client';
+import { PAGE_SIZE, useInfiniteList } from '@moxxy/companion-sdk/ui';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import type { RefinementListEntry } from '../../contract/index.js';
 import { refinementApi } from '../api.js';
 
 /** The active workspace's refinements, kept live over refinement.changed. */
-export function useRefinements(): {
+export function useRefinements(
+  filters: { readonly q?: string; readonly repo?: string; readonly status?: string } = {},
+): {
   current: WorkspaceRecord | null;
   /** null until the first load resolves. */
   refinements: RefinementListEntry[] | null;
+  total: number;
+  loading: boolean;
+  hasMore: boolean;
+  loadMore: () => void;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: () => void;
 } {
   const { current } = useWorkspace();
-  const [refinements, setRefinements] = useState<RefinementListEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!current) return;
-    try {
-      setRefinements((await refinementApi.list(current.id)).refinements);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-      setRefinements([]);
-    }
-  }, [current]);
+  const fetchPage = useCallback(
+    async (offset: number) => {
+      if (!current) return { items: [] as RefinementListEntry[], total: 0 };
+      const page = await refinementApi.list(current.id, { ...filters, limit: PAGE_SIZE, offset });
+      return { items: page.refinements, total: page.total };
+    },
+    [current, filters.q, filters.repo, filters.status],
+  );
+  const { items, total, loading, hasMore, loadMore, reload, error } = useInfiniteList(fetchPage);
 
-  useLive(refresh, (msg) => msg.t === 'refinement.changed');
+  useEffect(
+    () => onServerMessage((message) => {
+      if (message.t === 'refinement.changed') reload();
+    }),
+    [reload],
+  );
 
-  return { current, refinements, error, refresh };
+  return {
+    current,
+    refinements: loading && items.length === 0 ? null : items,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    error,
+    refresh: reload,
+  };
 }

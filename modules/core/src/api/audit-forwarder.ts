@@ -120,7 +120,10 @@ export class AuditForwarder {
       this.buffer.unshift(...batch);
       if (this.buffer.length > MAX_BUFFERED) {
         this.dropped += this.buffer.length - MAX_BUFFERED;
-        this.buffer = this.buffer.slice(this.buffer.length - MAX_BUFFERED);
+        // The failed batch is the oldest evidence and sits at the front. Drop
+        // the newest overflow so the next tick really retries that batch in
+        // order, as promised, instead of silently deleting it here.
+        this.buffer = this.buffer.slice(0, MAX_BUFFERED);
       }
       this.log('audit forwarding failed', { err: this.lastError, buffered: this.buffer.length });
     } finally {

@@ -35,6 +35,12 @@ test('rich proposal analysis caps over-detailed model lists instead of failing',
   assert.throws(() => parseAnalysis(JSON.stringify({ ...richAnalysis, tests: Array.from({ length: 101 }, () => 'test') })));
 });
 
+test('proposal analysis bounds verbose summaries before persistence', () => {
+  const parsed = parseAnalysis(JSON.stringify({ ...richAnalysis, summary: 'x'.repeat(10_000) }));
+  assert.equal(parsed.summary.length, 4_000);
+  assert.throws(() => parseAnalysis(JSON.stringify({ ...richAnalysis, summary: 'x'.repeat(20_001) })));
+});
+
 test('legacy analyses are normalized with empty rich sections', () => {
   const normalized = normalizeProposalAnalysis({
     summary: 'Old result', feasibility: 'medium', steps: ['One'], touchedAreas: ['x'], risks: ['y'],
@@ -77,10 +83,13 @@ test('invalid model output stores failure while returning a user-safe error', as
     branch: null, prUrl: null, createdAt: now, updatedAt: now,
   });
   const service = new Proposals(
-    { proposals: proposalsStore },
+    { proposals: proposalsStore, repos: { get: () => ({ default_branch: 'main' }) } },
     { runOneShot: async () => ({ runId: 'run-invalid', finalMessage: '{ not valid JSON' }) },
     { createGoalRun: () => { throw new Error('must not implement'); } },
-    { hasClone: () => true, cloneDir: () => '/tmp/repo' },
+    {
+      hasClone: () => true,
+      withBaseWorktree: async (_repo, _id, _branch, fn) => fn('/tmp/repo'),
+    },
     () => undefined,
   );
   await assert.rejects(service.analyze('prop-invalid', 'admin'), /did not match the expected structure/);
@@ -157,6 +166,107 @@ test('cached proposal analysis rejects an oversized prompt before starting a run
   );
   assert.equal(runs, 0);
   assert.equal(proposalsStore.get('prop-oversized').status, 'draft');
+  db.close();
+});
+
+test('proposal status counters do not materialise large bodies or analyses', () => {
+  const { db, proposalsStore } = proposalStore();
+  const now = Date.now();
+  proposalsStore.insert({
+    id: 'prop-heavy', workspaceId: 'ws-1', repo: 'owner/repo', title: 'Heavy', body: 'x'.repeat(250_000),
+    status: 'analyzed', analysis: richAnalysis, analysisRunId: 'run-1', implementRunId: null,
+    branch: null, prUrl: null, createdAt: now, updatedAt: now,
+  });
+  proposalsStore.insert({
+    id: 'prop-other', workspaceId: 'ws-2', repo: 'owner/other', title: 'Other', body: 'body',
+    status: 'draft', analysis: null, analysisRunId: null, implementRunId: null,
+    branch: null, prUrl: null, createdAt: now, updatedAt: now,
+  });
+
+  assert.deepEqual(proposalsStore.listStatusesByWorkspace('ws-1'), [{ id: 'prop-heavy', status: 'analyzed' }]);
+  db.close();
+});
+
+test('implementation run transitions resolve one proposal directly', () => {
+  const { db, proposalsStore } = proposalStore();
+  const now = Date.now();
+  for (let index = 0; index < 40; index += 1) {
+    proposalsStore.insert({
+      id: `prop-run-${index}`,
+      workspaceId: 'ws-1',
+      repo: 'owner/repo',
+      title: `Proposal ${index}`,
+      body: 'x'.repeat(50_000),
+      status: index === 19 ? 'implementing' : 'draft',
+      analysis: null,
+      analysisRunId: null,
+      implementRunId: index === 19 ? 'run-target' : null,
+      branch: null,
+      prUrl: null,
+      createdAt: now + index,
+      updatedAt: now + index,
+    });
+  }
+  const broadcasts = [];
+  const service = new Proposals(
+    { proposals: proposalsStore },
+    {},
+    {},
+    {},
+    (message) => broadcasts.push(message),
+  );
+
+  assert.deepEqual(proposalsStore.getByImplementRunId('run-target'), {
+    id: 'prop-run-19',
+    status: 'implementing',
+  });
+  service.onRunReview('run-target');
+  assert.equal(proposalsStore.get('prop-run-19').status, 'review');
+  service.onRunFailed('run-target');
+  assert.equal(proposalsStore.get('prop-run-19').status, 'failed');
+  service.onRunFailed('run-missing');
+  assert.equal(broadcasts.length, 2);
+  db.close();
+});
+
+test('proposal cards are server-paged and search bodies without returning them', () => {
+  const { db, proposalsStore } = proposalStore();
+  for (let index = 0; index < 75; index += 1) {
+    proposalsStore.insert({
+      id: `prop-${String(index).padStart(3, '0')}`,
+      workspaceId: 'ws-1',
+      repo: index % 2 === 0 ? 'owner/repo-a' : 'owner/repo-b',
+      title: `Proposal ${index}`,
+      body: index === 31 ? `${'z'.repeat(250_000)} body-only-marker` : `Body ${index}`,
+      status: index % 3 === 0 ? 'analyzed' : 'draft',
+      analysis: index % 3 === 0 ? richAnalysis : null,
+      analysisRunId: index % 3 === 0 ? `run-${index}` : null,
+      implementRunId: null,
+      branch: null,
+      prUrl: null,
+      createdAt: index,
+      updatedAt: index,
+    });
+  }
+
+  const page = proposalsStore.listWorkspacePage('ws-1', { limit: 20, offset: 50 });
+  assert.equal(page.total, 75);
+  assert.equal(page.proposals.length, 20);
+  assert.equal(page.proposals[0].id, 'prop-024');
+  assert.equal(page.proposals.at(-1).id, 'prop-005');
+  assert.equal(Object.hasOwn(page.proposals[0], 'body'), false);
+  assert.equal(Object.hasOwn(page.proposals[0], 'analysis'), false);
+
+  const match = proposalsStore.listWorkspacePage('ws-1', { q: 'body-only-marker' });
+  assert.equal(match.total, 1);
+  assert.equal(match.proposals[0].id, 'prop-031');
+  assert.equal(match.proposals[0].bodyPreview.length, 500);
+  assert.equal(match.proposals[0].bodyLength, 250_017);
+  const analyzed = proposalsStore.listWorkspacePage('ws-1', {
+    repo: 'owner/repo-a', status: 'analyzed', limit: 100,
+  });
+  assert.ok(analyzed.total > 0);
+  assert.ok(analyzed.proposals.every((proposal) => proposal.analysisFeasibility === 'high'));
   db.close();
 });
 

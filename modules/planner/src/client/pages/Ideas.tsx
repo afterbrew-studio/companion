@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, Dropdown, EmptyState, ErrorBar, Page, SparkleIcon, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
+import { ChevronDown, Dropdown, EmptyState, ErrorBar, ListFooter, Page, SparkleIcon, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
-import type { FeaturePlanningSession } from '../../contract/index.js';
+import type { FeaturePlanningSessionSummary } from '../../contract/index.js';
 import { ideasApi } from '../api.js';
 import { useIdeas } from '../hooks/useIdeas.js';
 
@@ -17,17 +17,14 @@ export default function Ideas(): JSX.Element {
   const { current } = useWorkspace();
   const { can } = useAuth();
   const repos = useWorkspaceRepos(current?.id);
-  const { sessions, legacyActiveCount, loading, error, setError } = useIdeas();
+  const { sessions, legacyActiveCount, total, loading, hasMore, loadMore, error, setError } = useIdeas();
   const prefill = useMemo(readPrefill, []);
   const [repo, setRepo] = useState<string | null>(prefill.repo);
   const [idea, setIdea] = useState(prefill.idea);
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const ideaRef = useRef<HTMLTextAreaElement>(null);
-  const sortedSessions = useMemo(
-    () => [...(sessions ?? [])].sort((left, right) => right.updatedAt - left.updatedAt),
-    [sessions],
-  );
+  const sortedSessions = sessions ?? [];
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const available = repos.filter((candidate) => candidate.githubAccessible);
@@ -141,7 +138,7 @@ export default function Ideas(): JSX.Element {
 
         {loading || newestSession ? (
           <section className="mx-auto mt-10 w-full max-w-3xl" aria-label="Recent ideas">
-            {loading ? (
+            {loading && !newestSession ? (
               <div className="flex items-center justify-center gap-2 py-4 text-xs text-zinc-500 dark:text-zinc-400"><Spinner /> Loading ideas...</div>
             ) : newestSession ? (
               <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -158,6 +155,16 @@ export default function Ideas(): JSX.Element {
                         {olderSessions.map((session) => (
                           <IdeaCard key={session.id} session={session} tabIndex={showAll ? 0 : -1} />
                         ))}
+                        {showAll ? (
+                          <ListFooter
+                            loading={loading}
+                            hasMore={hasMore}
+                            shown={sortedSessions.length}
+                            total={total}
+                            noun="ideas"
+                            onVisible={loadMore}
+                          />
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -165,7 +172,7 @@ export default function Ideas(): JSX.Element {
               </div>
             ) : null}
 
-            {olderSessions.length > 0 ? (
+            {total > 1 ? (
               <div className="mt-4 text-center">
                 <button
                   type="button"
@@ -174,7 +181,7 @@ export default function Ideas(): JSX.Element {
                   aria-expanded={showAll}
                   onClick={() => setShowAll((visible) => !visible)}
                 >
-                  <span>{showAll ? 'Hide older ideas' : `View ${olderSessions.length} more ${olderSessions.length === 1 ? 'idea' : 'ideas'}`}</span>
+                  <span>{showAll ? 'Hide older ideas' : `View ${total - 1} more ${total === 2 ? 'idea' : 'ideas'}`}</span>
                   <span className="transition-transform duration-200 group-hover:translate-y-0.5" aria-hidden="true"><ChevronDown open={showAll} /></span>
                 </button>
               </div>
@@ -192,7 +199,7 @@ export default function Ideas(): JSX.Element {
   );
 }
 
-function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSession; tabIndex?: number }): JSX.Element {
+function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSessionSummary; tabIndex?: number }): JSX.Element {
   const currentStage = session.progress.stages[session.progress.currentIndex];
   return (
     <a href={`#/ideas/${session.id}`} tabIndex={tabIndex} className="group flex cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 dark:hover:bg-zinc-800/50 sm:flex-row sm:items-center">

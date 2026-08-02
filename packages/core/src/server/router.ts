@@ -52,9 +52,8 @@ export class Reply {
     readonly status: number,
     readonly body: unknown,
     /**
-     * Set to send `body` (a string) verbatim instead of JSON-encoding it. Needed
-     * by exports: an NDJSON document run through JSON.stringify becomes one
-     * quoted string with literal `\n`, which no ingester accepts.
+     * Set to send `body` verbatim instead of JSON-encoding it. The body may be
+     * one string or an AsyncIterable of byte/string chunks for bounded exports.
      */
     readonly contentType?: string,
     /** Extra response headers. `Location` for a redirect is the only current use. */
@@ -66,7 +65,14 @@ export const created = (body: unknown): Reply => new Reply(201, body);
 export const accepted = (body: unknown): Reply => new Reply(202, body);
 /** A downloadable, non-JSON document (NDJSON export, CSV, …). */
 export const document = (body: string, contentType: string, filename?: string): Reply =>
-  new Reply(200, body, filename ? `${contentType}; filename="${filename}"` : contentType);
+  new Reply(200, body, contentType, filename ? { 'content-disposition': `attachment; filename="${filename}"` } : undefined);
+/** A bounded-memory downloadable document; chunks are written with backpressure. */
+export const documentStream = (
+  body: AsyncIterable<string | Uint8Array>,
+  contentType: string,
+  filename?: string,
+): Reply =>
+  new Reply(200, body, contentType, filename ? { 'content-disposition': `attachment; filename="${filename}"` } : undefined);
 
 /** Send the browser elsewhere. Needed by handshakes that run before any session exists. */
 export const redirect = (location: string, status: 302 | 303 = 302): Reply =>
@@ -247,7 +253,10 @@ export class DynamicRouter {
         // changes that never happened. Failures are audited in sendError, with
         // their real status.
         this.recordIfMutating(r, user, status);
-        if (result instanceof Reply) return send(res, result);
+        if (result instanceof Reply) {
+          await send(res, result);
+          return;
+        }
         return json(res, 200, result);
       }
       if (pathMatched) return json(res, 405, { error: `method ${method} not allowed on ${path}` });
@@ -311,9 +320,25 @@ export function bearerToken(req: IncomingMessage, url: URL): string | null {
   return url.searchParams.get('token');
 }
 
-/** A Reply either carries a verbatim string body with its own type, or JSON. */
-function send(res: ServerResponse, reply: Reply): void {
-  if (!reply.contentType || typeof reply.body !== 'string') return json(res, reply.status, reply.body);
+/** A Reply carries JSON, one verbatim string, or an async byte/string stream. */
+async function send(res: ServerResponse, reply: Reply): Promise<void> {
+  if (reply.contentType && isAsyncIterable(reply.body)) {
+    res.writeHead(reply.status, { 'content-type': reply.contentType, ...reply.headers });
+    try {
+      for await (const chunk of reply.body) {
+        if (res.destroyed) return;
+        if (!res.write(chunk) && !(await waitForDrain(res))) return;
+      }
+      res.end();
+    } catch (err) {
+      res.destroy(err instanceof Error ? err : new Error(String(err)));
+    }
+    return;
+  }
+  if (!reply.contentType || typeof reply.body !== 'string') {
+    json(res, reply.status, reply.body);
+    return;
+  }
   const raw = Buffer.from(reply.body, 'utf8');
   res.writeHead(reply.status, {
     'content-type': reply.contentType,
@@ -321,6 +346,26 @@ function send(res: ServerResponse, reply: Reply): void {
     ...reply.headers,
   });
   res.end(raw);
+}
+
+/** Wait for backpressure without hanging when the downloader disconnects. */
+function waitForDrain(res: ServerResponse): Promise<boolean> {
+  if (res.destroyed) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const finish = (drained: boolean): void => {
+      res.off('drain', onDrain);
+      res.off('close', onClose);
+      resolve(drained);
+    };
+    const onDrain = (): void => finish(true);
+    const onClose = (): void => finish(false);
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+  });
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<string | Uint8Array> {
+  return Boolean(value && typeof value === 'object' && Symbol.asyncIterator in value);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

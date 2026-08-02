@@ -18,6 +18,17 @@ import { Fixes } from './fixes.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
 import { readActiveLocalGhAccount } from './local-gh-account.js';
+import { DEFAULT_MAX_PR_REVIEW_TOKENS } from '../contract/index.js';
+import {
+  buildPrReviewEvaluationPrompt,
+  parseVerdictWithFindings,
+  PR_REVIEW_PROMPT_VERSION,
+} from './pr-reviews.js';
+import {
+  buildTriageEvaluationPrompt,
+  ISSUE_TRIAGE_PROMPT_VERSION,
+  parseVerdict as parseTriageVerdict,
+} from './triage.js';
 
 /**
  * Construct the GitHub/code domain: the sync-cache stores, the narrow store
@@ -44,6 +55,24 @@ export default defineServices((ctx) => {
   operate.registerRunTask({ id: 'code.review-reply', label: 'Review replies', placeable: false });
   operate.registerRunTask({ id: 'code.ci-analysis', label: 'CI analyses', placeable: false });
   operate.registerRunTask({ id: 'code.pipeline', label: 'Pipeline agents', placeable: false });
+  operate.promptEvaluations.register({
+    id: 'code.pr-review',
+    moduleId: 'code',
+    label: 'Pull request review',
+    task: 'code.pr-review',
+    version: PR_REVIEW_PROMPT_VERSION,
+    buildPrompt: buildPrReviewEvaluationPrompt,
+    parseResponse: parseVerdictWithFindings,
+  });
+  operate.promptEvaluations.register({
+    id: 'code.issue-triage',
+    moduleId: 'code',
+    label: 'Issue triage',
+    task: 'code.triage',
+    version: ISSUE_TRIAGE_PROMPT_VERSION,
+    buildPrompt: buildTriageEvaluationPrompt,
+    parseResponse: parseTriageVerdict,
+  });
 
   // Adopt orphan repos into the oldest workspace — the legacy second half of
   // workspace's ensureDefault(), relocated to the repos owner (our migration
@@ -159,14 +188,26 @@ export default defineServices((ctx) => {
     store,
     operate.orchestrator,
     operate.checkouts,
+    (runId) => operate.usageForRun(runId),
+    () => {
+      const value = ctx.moduleConfig.get('maxPrReviewTokens');
+      return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.floor(value)
+        : DEFAULT_MAX_PR_REVIEW_TOKENS;
+    },
     (c) => ghAccounts.clientFor('pipelines', c),
     // Merging is a write action: skip accounts that can only read the repo
     // rather than burning a failover round on a guaranteed 403.
     (repo, prNumber, method, c) =>
-      ghAccounts.performForRepo('pipelines', repo, (client) => client.mergePr(repo, prNumber, method), {
-        ...c,
-        need: 'push',
-      }),
+      ghAccounts.performForRepo(
+        'pipelines',
+        repo,
+        async (client) => {
+          const fresh = await client.pull(repo, prNumber);
+          return client.mergePr(repo, prNumber, method, fresh.head.sha);
+        },
+        { ...c, need: 'push' },
+      ),
     prChecks,
     ctx.broadcast,
   );

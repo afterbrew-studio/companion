@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type {
+  AgentRunAccess,
   AskResponse,
   Harness,
   HarnessCapabilities,
@@ -65,12 +66,31 @@ export const CLAUDE_PROVIDER = 'claude-code';
  */
 const DENIED_TOOLS = ['Bash(git push:*)'];
 
+/**
+ * Safe mode prevents repository CLAUDE.md files, hooks, plugins and MCP config
+ * from becoming executable instructions merely because an untrusted PR was
+ * checked out. Read-only runs additionally expose only non-mutating built-ins.
+ */
+export function claudeAccessArgs(access: AgentRunAccess): string[] {
+  if (access === 'read-only') {
+    return ['--safe-mode', '--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep'];
+  }
+  return [
+    '--safe-mode',
+    '--permission-mode',
+    'bypassPermissions',
+    '--disallowedTools',
+    ...DENIED_TOOLS,
+  ];
+}
+
 export interface ClaudeCodeOptions {
   readonly runId: string;
   readonly cwd: string;
   readonly cliPath: string;
   /** `--model`; omitted lets Claude Code use the account default. */
   readonly model?: string | null;
+  readonly access?: AgentRunAccess;
 }
 
 export interface ClaudeCodeHandlers {
@@ -159,10 +179,7 @@ export class ClaudeCodeHarness implements Harness {
       '--include-partial-messages',
       '--verbose',
       // Permission is settled here, once, for the life of the session.
-      '--permission-mode',
-      'bypassPermissions',
-      '--disallowedTools',
-      ...DENIED_TOOLS,
+      ...claudeAccessArgs(this.opts.access ?? 'workspace-write'),
       resuming ? '--resume' : '--session-id',
       this.sessionId,
     ];
@@ -289,7 +306,9 @@ export class ClaudeCodeHarness implements Harness {
         },
       ],
       tools: this.session?.tools ?? [],
-      permissionMode: this.session?.permissionMode ?? 'bypassPermissions',
+      permissionMode:
+        this.session?.permissionMode ??
+        ((this.opts.access ?? 'workspace-write') === 'read-only' ? 'dontAsk/read-only' : 'bypassPermissions'),
       slashCommands: this.session?.slashCommands ?? [],
     };
   }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '@moxxy/companion-sdk/client';
 import type { RepoRecord } from '@companion/module-code/contract';
 import { useWorkspaceRepos } from '@companion/module-code/client';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { RunListRecord } from '@companion/module-operate/contract';
 import { operateApi } from '@companion/module-operate/client';
 import type { ReportRecord, WorkspaceRecord } from '@companion/module-workspace/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
@@ -18,7 +18,7 @@ export function useDigest(): {
   current: WorkspaceRecord | null;
   repos: RepoRecord[];
   reports: ReportRecord[];
-  runs: RunRecord[];
+  runs: RunListRecord[];
   selected: string | null;
   setSelected: (repo: string | null) => void;
   loaded: boolean;
@@ -29,7 +29,7 @@ export function useDigest(): {
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
   const [reports, setReports] = useState<ReportRecord[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runs, setRuns] = useState<RunListRecord[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +39,9 @@ export function useDigest(): {
     try {
       const [rep, r] = await Promise.all([
         workspaceApi.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
-        operateApi.listRuns().catch(() => ({ runs: [] as RunRecord[] })),
+        operateApi
+          .listRunsPage({ workspace: current.id, status: 'active', limit: 100 })
+          .catch(() => ({ runs: [] as RunListRecord[], total: 0 })),
       ]);
       setReports(rep.reports);
       setRuns(r.runs);

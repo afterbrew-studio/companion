@@ -5,7 +5,7 @@ import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log, paths } from '@moxxy/companion-sdk/server';
-import type { CommentRecord, PrFileChange, RepoPermission } from '../contract/index.js';
+import type { CommentRecord, PrFileChange, PrFileChangesPage, RepoPermission } from '../contract/index.js';
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
@@ -66,6 +66,37 @@ const findingPatchSchema = z.object({
 });
 /** Generous cap — a custom agent objective may carry pasted logs or specs. */
 const prAgentSchema = z.object({ instructions: z.string().trim().min(8).max(16_000) });
+
+/** Fifty patches keep one response and one render bounded; 100 pages is an abuse guard, not a coverage claim. */
+const PR_FILES_PAGE_SIZE = 50;
+const MAX_PR_FILES_PAGE = 100;
+
+function changedFilesPage(raw: string | null): number {
+  if (raw === null) return 1;
+  if (!/^[1-9]\d*$/.test(raw)) throw badRequest('page must be a positive integer');
+  const page = Number(raw);
+  if (!Number.isSafeInteger(page) || page > MAX_PR_FILES_PAGE) {
+    throw badRequest(`page must be between 1 and ${MAX_PR_FILES_PAGE}`);
+  }
+  return page;
+}
+
+function listPageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function listQueryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} must be at most ${max} characters`);
+  return value;
+}
 
 // ---------- github accounts ----------
 
@@ -303,7 +334,7 @@ export default defineRoutes((ctx) => {
   };
 
   const requirePipelineRun = async (user: AuthUser | null, id: string) => {
-    const run = pipelinesStore.getRun(id);
+    const run = pipelinesStore.getRunScope(id);
     if (!run || !user || !workspace.canAccessRepo(user, run.repo)) {
       throw notFound(`pipeline run ${id} not found`);
     }
@@ -389,7 +420,7 @@ export default defineRoutes((ctx) => {
                 ...rowToRepo(row),
                 githubAccessible: permission !== null,
                 githubPermission: permission,
-                openIssues: permission ? code.issues.list(row.full_name, 'open').length : 0,
+                openIssues: permission ? code.issues.count(row.full_name, 'open') : 0,
               };
             }),
           ),
@@ -693,6 +724,7 @@ export default defineRoutes((ctx) => {
       access: 'issues:act',
       handler: ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
+        code.triage.validateTriage(fullName, issue.number);
         // Long-running; kick it and let the UI follow triage.changed.
         void code.triage
           .triageIssue(fullName, issue.number, user!.username)
@@ -883,10 +915,8 @@ export default defineRoutes((ctx) => {
       path: '/api/pipeline-runs/:id/steps/:index/approve',
       access: 'pipelines:run',
       body: z.object({ approved: z.boolean() }),
-      handler: ({ params, body, user }) => {
-        const run = pipelinesStore.getRun(params.id);
-        if (!run) throw notFound(`pipeline run ${params.id} not found`);
-        if (!user || !workspace.canAccessRepo(user, run.repo)) throw notFound(`pipeline run ${params.id} not found`);
+      handler: async ({ params, body, user }) => {
+        await requirePipelineRun(user, params.id);
         const index = Number(params.index);
         if (!code.pipelines.resolveApproval(params.id, index, body.approved)) {
           // Already answered, timed out, or the daemon restarted since. Saying
@@ -894,6 +924,38 @@ export default defineRoutes((ctx) => {
           throw badRequest('that step is no longer waiting for a confirmation');
         }
         return { ok: true as const };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/pipeline-runs/:id/cancel',
+      access: 'pipelines:run',
+      handler: async ({ params, user }) => {
+        await requirePipelineRun(user, params.id);
+        try {
+          return { run: await code.pipelines.cancel(params.id, user!.username) };
+        } catch (err) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
+      },
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/pipeline-runs/:id/steps/:index/log',
+      access: 'pipelines:read',
+      handler: async ({ params, query, user }) => {
+        await requirePipelineRun(user, params.id);
+        const index = Number(params.index);
+        const log = pipelinesStore.getStepLog(params.id, index);
+        if (log === undefined) {
+          throw notFound(`pipeline step ${params.index} not found`);
+        }
+        const after = Number(query.get('after'));
+        return {
+          log: Number.isSafeInteger(after) && after >= 0 && log && log.sequence <= after ? null : log,
+        };
       },
     }),
 
@@ -1085,20 +1147,18 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    /**
-     * Changed files via the paginated files API — powers the changed-files view.
-     * Unlike the single `.diff` payload this doesn't 406 on large PRs.
-     */
+    /** One bounded page for the human diff browser; AI review uses its separate complete-coverage path. */
     route({
       method: 'GET',
       path: '/api/repos/:owner/:name/prs/:number/files',
       access: 'prs:read',
-      handler: async ({ params, user }) => {
+      handler: async ({ params, query, user }): Promise<PrFileChangesPage> => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
         const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, { username: user!.username });
         if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
-        const { files, truncated } = await client.prFiles(fullName, pr.number);
-        const mapped: PrFileChange[] = files.map((f) => ({
+        const page = changedFilesPage(query.get('page'));
+        const result = await client.prFilesPage(fullName, pr.number, page, PR_FILES_PAGE_SIZE);
+        const files: PrFileChange[] = result.files.map((f) => ({
           filename: f.filename,
           previousFilename: f.previous_filename ?? null,
           status: f.status,
@@ -1106,7 +1166,12 @@ export default defineRoutes((ctx) => {
           deletions: f.deletions,
           patch: f.patch ?? null,
         }));
-        return { files: mapped, truncated };
+        return {
+          files,
+          page: result.page,
+          pageSize: result.pageSize,
+          hasNextPage: result.hasNextPage,
+        };
       },
     }),
 
@@ -1117,6 +1182,11 @@ export default defineRoutes((ctx) => {
       body: reviewOptionsSchema,
       handler: ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        try {
+          code.prReviews.validateAnalyze(fullName, pr.number, user!.username);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
         void code.prReviews
           .analyzePr(fullName, pr.number, user!.username, body)
           .catch((err) => log.warn('pr analysis failed', { fullName, number: pr.number, err: String(err) }));
@@ -1199,11 +1269,30 @@ export default defineRoutes((ctx) => {
 
     route({
       method: 'POST',
+      path: '/api/pr-reviews/:id/cancel',
+      access: 'prs:act',
+      handler: async ({ params, user }) => {
+        await requirePrReview(user, params.id);
+        try {
+          await code.prReviews.cancel(params.id);
+        } catch (err) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
+        return { ok: true };
+      },
+    }),
+
+    route({
+      method: 'POST',
       path: '/api/pr-reviews/:id/dismiss',
       access: 'prs:act',
       handler: async ({ params, user }) => {
         await requirePrReview(user, params.id);
-        code.prReviews.dismiss(params.id);
+        try {
+          code.prReviews.dismiss(params.id);
+        } catch (err) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
         return { ok: true };
       },
     }),
@@ -1480,7 +1569,12 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/pipeline-runs/:id',
       access: 'pipelines:read',
-      handler: async ({ params, user }) => ({ run: await requirePipelineRun(user, params.id) }),
+      handler: async ({ params, user }) => {
+        await requirePipelineRun(user, params.id);
+        const run = pipelinesStore.getRun(params.id);
+        if (!run) throw notFound(`pipeline run ${params.id} not found`);
+        return { run };
+      },
     }),
 
     // ---------- workspace area feeds (code-owned cross-domain reads) --------------
@@ -1543,7 +1637,7 @@ export default defineRoutes((ctx) => {
               ...rowToRepo(row),
               githubAccessible: permission !== null,
               githubPermission: permission,
-              openIssues: permission ? code.issues.list(row.full_name, 'open').length : 0,
+              openIssues: permission ? code.issues.count(row.full_name, 'open') : 0,
             };
           }),
         };
@@ -1569,20 +1663,22 @@ export default defineRoutes((ctx) => {
         const accessibleRepos = await accessibleRepoNames(user!, params.id);
         const myLogins = code.githubAccounts.list().filter((account) => account.ownerId === user!.username).map((account) => account.login);
         const state = query.get('state');
+        const offset = listPageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset');
         return code.issues.listWorkspacePaged(
           params.id,
           state === 'open' || state === 'closed' ? state : undefined,
           {
-            q: query.get('q') ?? undefined,
-            repo: query.get('repo') ?? undefined,
-            author: query.get('author') ?? undefined,
-            assignee: query.get('assignee') ?? undefined,
-            label: query.get('label') ?? undefined,
-            triage: pick(query.get('triage'), ['pending', 'applied', 'dismissed'] as const),
-            limit: Number(query.get('limit')) || undefined,
-            offset: Number(query.get('offset')) || undefined,
+            q: listQueryText(query.get('q'), 200, 'q'),
+            repo: listQueryText(query.get('repo'), 300, 'repo'),
+            author: listQueryText(query.get('author'), 200, 'author'),
+            assignee: listQueryText(query.get('assignee'), 200, 'assignee'),
+            label: listQueryText(query.get('label'), 100, 'label'),
+            triage: pick(query.get('triage'), ['running', 'pending', 'applied', 'dismissed'] as const),
+            limit: listPageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+            offset,
             accessibleRepos,
             myLogins,
+            includeFacets: offset === 0,
           },
         );
       },
@@ -1597,22 +1693,24 @@ export default defineRoutes((ctx) => {
         const accessibleRepos = await accessibleRepoNames(user!, params.id);
         const myLogins = code.githubAccounts.list().filter((account) => account.ownerId === user!.username).map((account) => account.login);
         const state = query.get('state');
+        const offset = listPageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset');
         const page = code.prs.listWorkspacePaged(
           params.id,
           state === 'open' || state === 'merged' || state === 'closed' ? state : undefined,
           {
-            q: query.get('q') ?? undefined,
-            repo: query.get('repo') ?? undefined,
-            author: query.get('author') ?? undefined,
-            assignee: query.get('assignee') ?? undefined,
-            label: query.get('label') ?? undefined,
+            q: listQueryText(query.get('q'), 200, 'q'),
+            repo: listQueryText(query.get('repo'), 300, 'repo'),
+            author: listQueryText(query.get('author'), 200, 'author'),
+            assignee: listQueryText(query.get('assignee'), 200, 'assignee'),
+            label: listQueryText(query.get('label'), 100, 'label'),
             decision: pick(query.get('decision'), ['approved', 'changes_requested', 'none'] as const),
             review: pick(query.get('review'), ['pending', 'applied', 'dismissed'] as const),
             draft: pick(query.get('draft'), ['hide', 'only'] as const),
-            limit: Number(query.get('limit')) || undefined,
-            offset: Number(query.get('offset')) || undefined,
+            limit: listPageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+            offset,
             accessibleRepos,
             myLogins,
+            includeFacets: offset === 0,
           },
         );
         // Warm missing/stale check snapshots for exactly the page being viewed;

@@ -2,7 +2,7 @@ import { Markdown, Spinner, StatusGlyph } from '@moxxy/companion-sdk/ui';
 import type { PipelineRunRecord, PipelineStepResult } from '../../contract/index.js';
 import { StepRemedies } from './PrActions.js';
 import { StepOutput } from './StepOutput.js';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { codeApi as api } from '../api.js';
 
 type Status = PipelineStepResult['status'];
@@ -15,6 +15,7 @@ type Status = PipelineStepResult['status'];
 const STATE: Record<Status, { tone: 'ok' | 'warn' | 'danger' | 'muted'; word: string; node: string }> = {
   passed: { tone: 'ok', word: 'passed', node: 'border-emerald-500 bg-emerald-500' },
   failed: { tone: 'danger', word: 'failed', node: 'border-red-500 bg-red-500' },
+  cancelled: { tone: 'muted', word: 'stopped', node: 'border-zinc-400 bg-zinc-400 dark:border-zinc-600 dark:bg-zinc-600' },
   error: { tone: 'warn', word: 'could not run', node: 'border-amber-500 bg-amber-500' },
   running: { tone: 'muted', word: 'running', node: 'border-sky-500 bg-sky-500' },
   awaiting: { tone: 'warn', word: 'needs your confirmation', node: 'border-amber-500 bg-amber-500' },
@@ -39,6 +40,13 @@ function durationOf(s: PipelineStepResult): string | null {
  * colour stops.
  */
 export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: string; number: number }): JSX.Element {
+  const [, setClock] = useState(0);
+  useEffect(() => {
+    if (run.status !== 'running') return;
+    const timer = setInterval(() => setClock((value) => value + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [run.status]);
+
   return (
     <ol className="flex flex-col" aria-label={`${run.pipelineName} steps`}>
       {run.steps.map((s, i) => {
@@ -80,7 +88,9 @@ export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: 
 
               {s.summary ? <p className="dim mt-0.5 text-xs">{s.summary}</p> : null}
 
-              {s.status === 'running' ? <StepOutput runId={run.id} stepIndex={i} /> : null}
+              {(s.kind === 'executable' || s.kind === 'npm-bootstrap') && (s.status === 'running' || s.log?.text) ? (
+                <StepOutput runId={run.id} stepIndex={i} initialLog={s.log} running={s.status === 'running'} />
+              ) : null}
               {s.status === 'awaiting' ? <ApprovalPrompt runId={run.id} stepIndex={i} /> : null}
 
               {s.outputs && Object.keys(s.outputs).length > 0 ? (

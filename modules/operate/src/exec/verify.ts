@@ -7,6 +7,8 @@ export const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 60_000;
 
 export interface ExecOptions {
   readonly timeoutMs?: number;
+  /** Cancels the whole local process group, including shell grandchildren. */
+  readonly signal?: AbortSignal;
   /**
    * Extra environment for this invocation only, merged over the daemon's.
    *
@@ -48,6 +50,13 @@ export function killTree(pid: number | undefined): void {
   } catch {
     // Already gone.
   }
+}
+
+/** Graceful daemon shutdown must not leave detached verification shells behind. */
+const activeCommandPids = new Set<number>();
+
+export function killAllCommands(): void {
+  for (const pid of [...activeCommandPids]) killTree(pid);
 }
 
 /**
@@ -100,9 +109,11 @@ export async function runCommand(
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, CI: '1', ...opts.env },
     });
+    if (child.pid !== undefined) activeCommandPids.add(child.pid);
 
     let output = '';
     let timedOut = false;
+    let finished = false;
     const append = (chunk: Buffer): void => {
       const text = chunk.toString('utf8');
       output += text;
@@ -125,8 +136,16 @@ export async function runCommand(
     }, timeoutMs);
     timer.unref();
 
+    const abort = (): void => killTree(child.pid);
+    if (opts.signal?.aborted) abort();
+    else opts.signal?.addEventListener('abort', abort, { once: true });
+
     const finish = (exitCode: number | null): void => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', abort);
+      if (child.pid !== undefined) activeCommandPids.delete(child.pid);
       resolve({
         exitCode,
         output: output.slice(-maxOutput).trimEnd(),

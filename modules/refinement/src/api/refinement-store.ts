@@ -1,4 +1,4 @@
-import { safeParse, type Database } from '@moxxy/companion-sdk/server';
+import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   RefineItemRecord,
   RefineMethodRecord,
@@ -23,6 +23,19 @@ interface RefinementRow {
   run_id: string | null;
   created_at: number;
   updated_at: number;
+}
+
+interface RefinementListRow {
+  id: string;
+  workspace_id: string;
+  repo: string;
+  branch: string;
+  title: string;
+  status: RefinementRecord['status'];
+  created_at: number;
+  updated_at: number;
+  proposed_count: number;
+  imported_count: number;
 }
 
 interface ItemRow {
@@ -174,21 +187,59 @@ export class RefinementStore {
 
   /** One workspace's refinements, newest activity first, with item tallies. */
   listByWorkspace(workspaceId: string): RefinementListEntry[] {
+    return this.listWorkspacePage(workspaceId, { limit: 100 }).refinements;
+  }
+
+  listWorkspacePage(
+    workspaceId: string,
+    opts: {
+      readonly q?: string;
+      readonly repo?: string;
+      readonly status?: RefinementRecord['status'];
+      readonly limit?: number;
+      readonly offset?: number;
+    } = {},
+  ): { refinements: RefinementListEntry[]; total: number } {
+    const where = ['f.workspace_id = ?'];
+    const args: unknown[] = [workspaceId];
+    if (opts.q) {
+      where.push(`(f.title LIKE ? ESCAPE '\\' OR f.story LIKE ? ESCAPE '\\')`);
+      args.push(likeArg(opts.q), likeArg(opts.q));
+    }
+    if (opts.repo) {
+      where.push('f.repo = ?');
+      args.push(opts.repo);
+    }
+    if (opts.status) {
+      where.push('f.status = ?');
+      args.push(opts.status);
+    }
+    const clause = `WHERE ${where.join(' AND ')}`;
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM refinements f ${clause}`).get(...args) as { n: number }).n;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.min(Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0), 1_000_000);
     const rows = this.db
       .prepare(
-        `SELECT f.*,
+        `SELECT f.id, f.workspace_id, f.repo, f.branch, f.title, f.status, f.created_at, f.updated_at,
            (SELECT COUNT(*) FROM refine_items i WHERE i.refinement_id = f.id AND i.status = 'proposed') AS proposed_count,
            (SELECT COUNT(*) FROM refine_items i WHERE i.refinement_id = f.id AND i.status = 'imported') AS imported_count
          FROM refinements f
-         WHERE f.workspace_id = ?
-         ORDER BY f.updated_at DESC`,
+         ${clause}
+         ORDER BY f.updated_at DESC, f.id DESC LIMIT ? OFFSET ?`,
       )
-      .all(workspaceId) as Array<RefinementRow & { proposed_count: number; imported_count: number }>;
-    return rows.map((row) => ({
-      ...rowToRefinement(row),
+      .all(...args, limit, offset) as RefinementListRow[];
+    return { refinements: rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      repo: row.repo,
+      branch: row.branch,
+      title: row.title,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
       proposedCount: row.proposed_count,
       importedCount: row.imported_count,
-    }));
+    })), total };
   }
 
   /** Boot sweep: a 'decomposing' refinement whose driver died dangles — fail it. */

@@ -56,6 +56,30 @@ export const BUILTIN_RULES: readonly SlopRuleRecord[] = [
     updatedAt: 0,
   },
   {
+    id: 'builtin-evidence-quality',
+    workspaceId: null,
+    name: 'Test and validation evidence',
+    description: 'Whether tests and CI genuinely exercise the behavior the PR changes.',
+    instructions:
+      'Inspect the changed behavior and the actual assertions meant to prove it. Strong evidence exercises the public path plus important failure/edge cases and would fail on the old code. Flag tests that only assert mocks were called, snapshots that accept broad churn without semantic checks, fixtures never reached by the production path, skipped/disabled suites, weakened assertions, coverage exclusions added with the feature, or a behavior change with no corresponding test in a repository that tests this area. Cross-check CI/workflow configuration when the diff touches it. Never treat a test filename, the phrase "tests added", or unrelated green checks as proof; cite the assertion and production path, or the precise missing case.',
+    builtin: true,
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+  {
+    id: 'builtin-value-and-scope',
+    workspaceId: null,
+    name: 'Contribution value and scope',
+    description: 'Concrete benefit versus duplication, churn, generated bulk, and review cost.',
+    instructions:
+      'Identify the concrete user or maintainer problem and where the diff solves it. Look for an existing helper/feature that makes the change redundant; broad refactors unrelated to the stated goal; generated documentation or inventories with no reproducible source; copied code instead of the project abstraction; dependency or configuration churn with no behavior benefit; and one PR combining separable features, formatting, generated output, and refactors. Also record positive evidence: a focused diff, removal of complexity, a reproduced bug tied to the fix, or a feature aligned with repository specs/issues. Size alone and first-time contribution are not negative evidence. Report low value only when redundancy or absent benefit is concrete; otherwise ask for evidence or a split.',
+    builtin: true,
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+  {
     id: 'builtin-hallucination',
     workspaceId: null,
     name: 'Hallucinated APIs and dependencies',

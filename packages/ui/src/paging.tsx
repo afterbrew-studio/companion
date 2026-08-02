@@ -108,7 +108,16 @@ export function useInfiniteList<T>(
     // A failed load stays unsettled on purpose: a retry should show that it is
     // trying again, not sit on a cleared error with nothing moving. A seeded
     // list is already settled: it has rows on screen and is only revalidating.
-    settled.current = seedRef.current !== null;
+    // This effect means the query itself changed (filters/tab/workspace), so
+    // never label rows from the previous query as results for the new one.
+    // Explicit reload() does not pass here and intentionally keeps its rows.
+    const nextSeed = seedRef.current;
+    settled.current = nextSeed !== null;
+    setState(
+      nextSeed
+        ? { items: nextSeed.items, total: nextSeed.total, loading: false, error: null }
+        : { items: [], total: 0, loading: true, error: null },
+    );
     load(0);
   }, [load]);
 
@@ -118,12 +127,15 @@ export function useInfiniteList<T>(
       return prev;
     });
   }, [load]);
+  const reload = useCallback(() => load(0), [load]);
 
   return {
     ...state,
     hasMore: state.items.length < state.total,
     loadMore,
-    reload: () => load(0),
+    // Consumers subscribe this to WebSocket events. A stable identity avoids
+    // tearing down and re-adding that listener after every page render.
+    reload,
   };
 }
 

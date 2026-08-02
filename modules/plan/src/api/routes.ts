@@ -11,9 +11,9 @@ import { SpecsStore } from './specs-store.js';
 
 const proposalSchema = z.object({
   workspaceId: z.string().min(1).max(100),
-  repo: z.string(),
+  repo: z.string().min(3).max(300),
   title: z.string().min(3).max(200),
-  body: z.string().min(1),
+  body: z.string().min(1).max(256_000),
 });
 
 const patchProposalSchema = z.object({
@@ -83,6 +83,29 @@ const generateDocSchema = z.object({
   instructions: z.string().min(8).max(4000),
   storage: storageSchema,
 });
+
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null) return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function queryChoice<const T extends string>(raw: string | null, choices: readonly T[], name: string): T | undefined {
+  if (raw === null || raw === '') return undefined;
+  if (!choices.includes(raw as T)) throw badRequest(`invalid ${name}`);
+  return raw as T;
+}
+
+function queryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} is too long`);
+  return value;
+}
 
 /**
  * The plan domain's HTTP surface: proposals and their analyze → approve →
@@ -162,6 +185,11 @@ export default defineRoutes((ctx) => {
       access: 'proposals:create',
       handler: ({ params, user }) => {
         requireProposal(user, params.id);
+        try {
+          plan.proposals.validateAnalyze(params.id);
+        } catch (err) {
+          throw badRequest(String(err instanceof Error ? err.message : err));
+        }
         void plan.proposals
           .analyze(params.id, user!.username)
           .catch((err) => log.warn('analysis failed', { id: params.id, err: String(err) }));
@@ -234,10 +262,26 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/proposals',
       access: 'proposals:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        return { proposals: proposalsStore.listWorkspace(params.id) };
+        return plan.proposals.listPage(params.id, {
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 300, 'repo'),
+          status: queryChoice(query.get('status'), [
+            'draft', 'analyzing', 'analyzed', 'approved', 'implementing',
+            'review', 'implemented', 'rejected', 'failed',
+          ] as const, 'status'),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
       },
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/proposals/:id',
+      access: 'proposals:read',
+      handler: ({ params, user }) => ({ proposal: requireProposal(user, params.id) }),
     }),
 
     // ---------- specs ---------------------------------------------------------------
@@ -246,9 +290,17 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/specs',
       access: 'specs:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        return { specs: plan.specs.list(params.id) };
+        return plan.specs.listPage(params.id, {
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 300, 'repo'),
+          status: queryChoice(query.get('status'), ['generating', 'ready', 'failed', 'drifted'] as const, 'status'),
+          source: queryChoice(query.get('source'), ['manual', 'generated', 'imported'] as const, 'source'),
+          storage: queryChoice(query.get('storage'), ['virtual', 'repo'] as const, 'storage'),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
       },
     }),
 
@@ -389,9 +441,17 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/docs',
       access: 'docs:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        return { docs: plan.docs.list(params.id) };
+        const repo = queryText(query.get('repo'), 300, 'repo');
+        return plan.docs.listPage(params.id, {
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: repo === '__workspace' ? null : repo,
+          source: queryChoice(query.get('source'), ['manual', 'generated', 'imported'] as const, 'source'),
+          storage: queryChoice(query.get('storage'), ['virtual', 'repo'] as const, 'storage'),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
       },
     }),
 

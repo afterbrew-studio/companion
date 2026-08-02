@@ -53,15 +53,20 @@ export class NotificationsService implements NotificationEmitter {
     accessibleIds?: readonly string[],
     /** The reader; an addressed notification is theirs alone. */
     viewer?: string,
+    before?: { readonly createdAt: number; readonly id: string },
   ): NotificationRecord[] {
-    return this.store.list(workspaceId, limit, accessibleIds, viewer);
+    return this.store.list(workspaceId, limit, accessibleIds, viewer, before);
   }
 
-  markRead(id: string): void {
-    this.store.markRead(id);
+  get(id: string, viewer: string): NotificationRecord | undefined {
+    return this.store.get(id, viewer);
   }
 
-  markAllRead(workspaceId: string | null | undefined, accessibleIds?: readonly string[]): void {
-    this.store.markAllRead(workspaceId, accessibleIds);
+  markRead(id: string, viewer: string): void {
+    this.store.markRead(id, viewer);
+  }
+
+  markManyRead(ids: readonly string[], viewer: string): void {
+    this.store.markManyRead(ids, viewer);
   }
 }

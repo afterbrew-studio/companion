@@ -18,6 +18,13 @@ test('failed is kept apart from rejected, because a crash is not a judgement', (
   assert.equal(counts.failed, 5);
 });
 
+test('maintainer cancellation is neither pending nor a reliability failure', () => {
+  const counts = toCounts(rows({ cancelled: 4, pending: 2 }));
+  assert.equal(counts.cancelled, 4);
+  assert.equal(counts.pending, 2);
+  assert.equal(counts.failed, 0);
+});
+
 test('an unknown status counts as undecided rather than being dropped', () => {
   // A status added by a later migration must not silently vanish from the totals
   // or quietly inflate a rate it never contributed to.
@@ -34,12 +41,12 @@ test('no rows is all zeroes, not a crash', () => {
 
 test('the rate is over decided verdicts only, so a backlog cannot move it', () => {
   // 8 accepted, 2 rejected, 90 still waiting: 80%, not 8%.
-  const stat = toStat('triage', 'Triage', { accepted: 8, rejected: 2, pending: 90, failed: 0 });
+  const stat = toStat('triage', 'Triage', { accepted: 8, rejected: 2, pending: 90, failed: 0, cancelled: 0 });
   assert.equal(stat.acceptanceRate, 0.8);
 });
 
 test('failures do not drag the rate down either', () => {
-  const stat = toStat('triage', 'Triage', { accepted: 1, rejected: 0, pending: 0, failed: 99 });
+  const stat = toStat('triage', 'Triage', { accepted: 1, rejected: 0, pending: 0, failed: 99, cancelled: 0 });
   assert.equal(stat.acceptanceRate, 1);
   assert.equal(stat.failed, 99, 'but they are still reported, loudly');
 });
@@ -47,12 +54,12 @@ test('failures do not drag the rate down either', () => {
 test('nothing decided reports null rather than a flattering 100%', () => {
   // The whole point: a surface nobody has judged has no score, and inventing one
   // would be the single most misleading thing this page could do.
-  const stat = toStat('triage', 'Triage', { accepted: 0, rejected: 0, pending: 12, failed: 0 });
+  const stat = toStat('triage', 'Triage', { accepted: 0, rejected: 0, pending: 12, failed: 0, cancelled: 0 });
   assert.equal(stat.acceptanceRate, null);
 });
 
 test('total rejection is 0, not null, which is a different statement', () => {
-  const stat = toStat('triage', 'Triage', { accepted: 0, rejected: 5, pending: 0, failed: 0 });
+  const stat = toStat('triage', 'Triage', { accepted: 0, rejected: 5, pending: 0, failed: 0, cancelled: 0 });
   assert.equal(stat.acceptanceRate, 0);
 });
 
@@ -80,5 +87,6 @@ test('the table name is the caller’s own, never interpolated from a request', 
 test('a manual review draft is not counted as an agent verdict', () => {
   // A draft a person started carries no run. Counting one as accepted would
   // report the reviewer's own comments back to them as the agent's accuracy.
-  assert.match(outcomeSql('pr_reviews'), /run_id != ''/);
+  assert.match(outcomeSql('pr_reviews'), /source = 'agent'/);
+  assert.match(outcomeSql('triage_results'), /run_id != ''/);
 });

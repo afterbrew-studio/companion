@@ -45,7 +45,8 @@ export interface DiffAnnotation {
   readonly body: React.ReactNode;
 }
 
-const MAX_DIFF_CHARS = 400_000;
+/** Public so callers assembling per-file patches can stay below the renderer's memory ceiling. */
+export const MAX_DIFF_CHARS = 400_000;
 /** Lines pulled in per click when expanding context around a hunk. */
 const EXPAND_LINES = 20;
 /** Sentinel key for the after-the-last-hunk expansion, which has no hunk index. */

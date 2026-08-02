@@ -14,7 +14,7 @@ import {
   type ContextMenuState,
   type MenuAction,
 } from '@moxxy/companion-sdk/ui';
-import type { IssueRecord, PipelineRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
+import type { IssueListRecord, PipelineRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
@@ -46,11 +46,12 @@ export interface UseWorkspaceIssues {
   readonly facets: { authors: string[]; assignees: string[]; labels: string[] };
   readonly counts: { open: number; closed: number };
 
-  readonly issues: IssueRecord[];
+  readonly issues: IssueListRecord[];
   readonly total: number;
   readonly loading: boolean;
   readonly hasMore: boolean;
   readonly loadMore: () => void;
+  readonly retry: () => void;
   readonly error: string | null;
   readonly unavailableRepos: readonly string[];
   readonly failedRepos: readonly RepoSyncFailure[];
@@ -70,14 +71,14 @@ export interface UseWorkspaceIssues {
   readonly bulkComment: (body: string) => void;
   readonly bulkClose: () => void;
 
-  readonly rowActions: (issue: IssueRecord) => MenuAction[];
+  readonly rowActions: (issue: IssueListRecord) => MenuAction[];
   readonly ctx: ContextMenuState | null;
   readonly setCtx: (c: ContextMenuState | null) => void;
   readonly flash: string | null;
   readonly bulkError: string | null;
 }
 
-const issueKey = (i: IssueRecord): string => `${i.repo}#${i.number}`;
+const issueKey = (i: IssueListRecord): string => `${i.repo}#${i.number}`;
 
 export function useWorkspaceIssues(): UseWorkspaceIssues {
   const { current } = useWorkspace();
@@ -107,15 +108,15 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   // The retained first page is keyed by everything the query depends on, the
   // workspace included: the same tab under another workspace is another list.
   const listKey = `issues:${workspaceId ?? ''}:${tab}:${q}:${JSON.stringify(filters)}`;
-  const seed = readCached<{ items: IssueRecord[]; total: number }>(listKey);
+  const seed = readCached<{ items: IssueListRecord[]; total: number }>(listKey);
   const retain = useCallback(
-    (page: { items: IssueRecord[]; total: number }) => writeCached(listKey, page),
+    (page: { items: IssueListRecord[]; total: number }) => writeCached(listKey, page),
     [listKey],
   );
 
   const fetchPage = useCallback(
     async (offset: number) => {
-      if (!workspaceId) return { items: [] as IssueRecord[], total: 0 };
+      if (!workspaceId) return { items: [] as IssueListRecord[], total: 0 };
       const page = await api.workspaceIssues(workspaceId, tab, {
         q: q || undefined,
         repo: filters.repo === 'all' ? undefined : filters.repo,
@@ -127,7 +128,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
         offset,
       });
       setCounts(page.counts);
-      setFacets(page.facets);
+      if (offset === 0) setFacets(page.facets);
       return { items: page.issues, total: page.total };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,7 +149,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
    * Every bulk action reports per item. A selection partially succeeds by
    * nature, and one "done" would be a lie in both directions.
    */
-  const bulkForEach = (fn: (i: IssueRecord) => Promise<unknown>, done: (n: number) => string): void => {
+  const bulkForEach = (fn: (i: IssueListRecord) => Promise<unknown>, done: (n: number) => string): void => {
     void runBulk(
       visibleIssues.filter((i) => selection.has(issueKey(i))),
       fn,
@@ -212,7 +213,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
       setBulkError(String(err));
     }
   };
-  const rowActions = (issue: IssueRecord): MenuAction[] => [
+  const rowActions = (issue: IssueListRecord): MenuAction[] => [
     ...(canActIssues && issue.state === 'open'
       ? [
           {
@@ -253,6 +254,10 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     loading,
     hasMore,
     loadMore,
+    retry: () => {
+      reload();
+      refresh.retry();
+    },
     error: listError ?? refresh.error,
     unavailableRepos: refresh.unavailableRepos,
     failedRepos: refresh.failedRepos,

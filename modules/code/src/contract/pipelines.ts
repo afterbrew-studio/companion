@@ -410,7 +410,7 @@ export interface PipelineRecord {
 
 // ---------- execution ------------------------------------------------------------
 
-export type PipelineRunStatus = 'running' | 'passed' | 'failed' | 'error';
+export type PipelineRunStatus = 'running' | 'passed' | 'failed' | 'cancelled' | 'error';
 
 export type StepResultStatus =
   | 'pending'
@@ -419,8 +419,25 @@ export type StepResultStatus =
   | 'awaiting'
   | 'passed'
   | 'failed'
+  | 'cancelled'
   | 'skipped'
   | 'error';
+
+/**
+ * Bounded, secret-scrubbed tail of a command step's stdout/stderr.
+ *
+ * `sequence` is incremented for every emitted chunk. The browser uses it to
+ * reconcile an immediate WS stream with a slower persisted replay without
+ * duplicating or rolling back text after a reconnect.
+ */
+export const MAX_PIPELINE_STEP_LOG_CHARS = 64_000;
+
+export interface PipelineStepLog {
+  readonly text: string;
+  readonly sequence: number;
+  readonly truncated: boolean;
+  readonly updatedAt: number;
+}
 
 export interface PipelineStepResult {
   readonly name: string;
@@ -430,6 +447,8 @@ export interface PipelineStepResult {
   readonly summary: string | null;
   /** Longer output (agent verdict detail, review body, …). */
   readonly detail: string | null;
+  /** Absent on legacy records and on steps that do not emit command output. */
+  readonly log?: PipelineStepLog | null;
   /**
    * Named values this step exported for later steps to interpolate as
    * `{{steps.<name>.outputs.<key>}}`. Persisted with the run, so it is visible
@@ -472,6 +491,10 @@ export type PipelineTrigger = 'manual' | 'pr-opened' | 'issue-opened';
 export interface PipelineRunRecord {
   readonly id: string;
   readonly pipelineId: string;
+  /** Profile that started the run; null only for history created before attribution existed. */
+  readonly ownerId: string | null;
+  /** Denormalized so workspace history survives pipeline deletion. */
+  readonly workspaceId: string | null;
   /** Denormalized so history survives pipeline deletion. */
   readonly pipelineName: string;
   /** What the run targeted (copied from the pipeline's type at start). */

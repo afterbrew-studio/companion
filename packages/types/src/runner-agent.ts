@@ -39,14 +39,21 @@ export interface AgentHealth {
 }
 
 /**
- * Version 3 adds platform-enforced storage cleanup. Bumping this makes a new
- * companiond mark agents that cannot receive cleanup leases as outdated rather
- * than continuing to place work on a machine whose disk can grow without bound.
+ * Version 4 carries the execution access profile into the runner. Without the
+ * bump, a new daemon could label an analysis read-only while an older runner
+ * silently started it with its former unrestricted policy.
  *
  * `POST /agent/update-moxxy` was added WITHOUT a bump: it's additive — an old
  * agent answers 404 and the daemon falls back to "update it manually" guidance.
  */
-export const RUNNER_AGENT_PROTOCOL = 3;
+export const RUNNER_AGENT_PROTOCOL = 4;
+
+/**
+ * The hard execution boundary selected by Companion for a run. It is separate
+ * from RunKind: kind describes the product job, while access is the least
+ * privilege the selected harness is allowed to exercise.
+ */
+export type AgentRunAccess = 'read-only' | 'workspace-write' | 'trusted-assistant';
 
 /**
  * POST /agent/verify — run a repository's own verification command inside a
@@ -125,6 +132,8 @@ export interface AgentSpawnRequest {
   readonly cwd: string;
   /** Sticky moxxy session id (companiond uses the run id). */
   readonly sessionId: string;
+  /** Immutable per-run policy; runners must reject unknown values. */
+  readonly access: AgentRunAccess;
 }
 
 /** POST /agent/runs/:runId/prompt */

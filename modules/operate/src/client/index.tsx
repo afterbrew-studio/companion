@@ -27,7 +27,7 @@ export { emptyFold, foldEvent, foldMany } from './transcript/fold.js';
 export type { Block, FoldState } from './transcript/fold.js';
 export { useRun } from './hooks/useRun.js';
 export type { UseRun } from './hooks/useRun.js';
-export { useRuns } from './hooks/useRuns.js';
+export { useRuns, useRunsPage } from './hooks/useRuns.js';
 export { useRunQueue } from './hooks/useRunQueue.js';
 export { useRunnerCapacity } from './hooks/useRunnerCapacity.js';
 export { useAiActivity } from './hooks/useAiActivity.js';

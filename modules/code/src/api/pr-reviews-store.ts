@@ -2,12 +2,16 @@ import { safeParse, type Database } from '@moxxy/companion-sdk/server';
 import type {
   FindingState,
   FindingVerification,
+  PrReviewBudgetProgress,
+  PrReviewCoverage,
+  PrReviewProgress,
   PrReviewResult,
   PrReviewVerdict,
   ReviewDepth,
   ReviewFinding,
   ReviewStrictness,
 } from '../contract/index.js';
+import { terminalReviewCoverage } from '../contract/index.js';
 import { outcomeSql, toCounts, type OutcomeCounts } from './quality.js';
 
 /** AI PR review verdicts; the latest row per PR wins. */
@@ -24,10 +28,10 @@ export class PrReviewsStore {
   insert(r: PrReviewResult): void {
     this.db
       .prepare(
-        `INSERT INTO pr_reviews (id, repo, pr_number, run_id, status, verdict, error, created_at,
-                                 head_sha, depth, strictness)
-         VALUES (@id, @repo, @prNumber, @runId, @status, @verdict, @error, @createdAt,
-                 @headSha, @depth, @strictness)`,
+        `INSERT INTO pr_reviews (id, repo, pr_number, run_id, run_ids, source, status, verdict, error, created_at,
+                                 head_sha, depth, strictness, progress, coverage)
+         VALUES (@id, @repo, @prNumber, @runId, @runIds, @source, @status, @verdict, @error, @createdAt,
+                 @headSha, @depth, @strictness, @progress, @coverage)`,
       )
       .run({
         id: r.id,
@@ -36,6 +40,8 @@ export class PrReviewsStore {
         // The column is NOT NULL from the original schema and SQLite cannot
         // relax that without rebuilding the table; '' is the stored absence.
         runId: r.runId ?? '',
+        runIds: JSON.stringify(r.runIds),
+        source: r.source,
         status: r.status,
         verdict: r.verdict ? JSON.stringify(r.verdict) : null,
         error: r.error,
@@ -43,7 +49,137 @@ export class PrReviewsStore {
         headSha: r.headSha,
         depth: r.depth,
         strictness: r.strictness,
+        progress: JSON.stringify(r.progress),
+        coverage: JSON.stringify(r.coverage),
       });
+  }
+
+  /** Update the aggregate job while its child runs progress. */
+  setProgress(id: string, progress: PrReviewProgress, coverage?: PrReviewCoverage): void {
+    this.db
+      .prepare(
+        `UPDATE pr_reviews SET progress = ?, coverage = COALESCE(?, coverage)
+         WHERE id = ? AND status = 'running'`,
+      )
+      .run(JSON.stringify(progress), coverage ? JSON.stringify(coverage) : null, id);
+  }
+
+  /**
+   * A sibling child can report its final tokens just after another child trips
+   * the aggregate ceiling. Preserve the terminal phase/message while folding
+   * that late evidence into the durable budget snapshot.
+   */
+  setBudgetEvidence(id: string, budget: PrReviewBudgetProgress): void {
+    const row = this.db.prepare(`SELECT progress, created_at FROM pr_reviews WHERE id = ?`).get(id) as
+      | { progress: string | null; created_at: number }
+      | undefined;
+    if (!row) return;
+    const progress = row.progress
+      ? safeParse<PrReviewProgress>(row.progress, finishedProgress(row.created_at))
+      : finishedProgress(row.created_at);
+    this.db
+      .prepare(`UPDATE pr_reviews SET progress = ? WHERE id = ?`)
+      .run(JSON.stringify({ ...progress, budget }), id);
+  }
+
+  /** Attach a child run and make the first one the backwards-compatible link. */
+  appendRun(id: string, runId: string): boolean {
+    const row = this.db.prepare(`SELECT run_id, run_ids, status FROM pr_reviews WHERE id = ?`).get(id) as
+      | { run_id: string; run_ids: string | null; status: PrReviewResult['status'] }
+      | undefined;
+    if (!row || row.status !== 'running') return false;
+    const ids = row.run_ids ? safeParse<string[]>(row.run_ids, []) : [];
+    if (!ids.includes(runId)) ids.push(runId);
+    return (
+      this.db
+        .prepare(
+          `UPDATE pr_reviews SET run_id = CASE WHEN run_id = '' THEN ? ELSE run_id END, run_ids = ?
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(runId, JSON.stringify(ids), id).changes > 0
+    );
+  }
+
+  /** Settle a running aggregate without overwriting another terminal outcome that raced it. */
+  finish(r: PrReviewResult): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pr_reviews SET run_id = ?, run_ids = ?, status = ?, verdict = ?, error = ?,
+                                 progress = ?, coverage = ?, head_sha = ?, depth = ?, strictness = ?
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(
+          r.runId ?? '',
+          JSON.stringify(r.runIds),
+          r.status,
+          r.verdict ? JSON.stringify(r.verdict) : null,
+          r.error,
+          JSON.stringify(r.progress),
+          JSON.stringify(r.coverage),
+          r.headSha,
+          r.depth,
+          r.strictness,
+          r.id,
+        ).changes > 0
+    );
+  }
+
+  /** Atomically stop a running aggregate while leaving its partial coverage/run history intact. */
+  terminateRunning(
+    id: string,
+    status: 'cancelled' | 'failed',
+    error: string,
+    progress: PrReviewProgress,
+    coverage: PrReviewCoverage,
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pr_reviews SET status = ?, error = ?, progress = ?, coverage = ?
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(status, error, JSON.stringify(progress), JSON.stringify(terminalReviewCoverage(coverage)), id).changes > 0
+    );
+  }
+
+  /** A daemon restart cannot leave a review looking live forever. */
+  failInterrupted(): string[] {
+    const rows = this.db
+      .prepare(`SELECT id, repo, created_at, progress, coverage FROM pr_reviews WHERE status = 'running'`)
+      .all() as Array<{
+      id: string;
+      repo: string;
+      created_at: number;
+      progress: string | null;
+      coverage: string | null;
+    }>;
+    const now = Date.now();
+    const update = this.db.prepare(
+      `UPDATE pr_reviews SET status = 'failed', error = ?, progress = ?, coverage = ?
+       WHERE id = ? AND status = 'running'`,
+    );
+    const failAll = this.db.transaction(() => {
+      for (const row of rows) {
+        const progress = row.progress
+          ? safeParse<PrReviewProgress>(row.progress, finishedProgress(row.created_at))
+          : finishedProgress(row.created_at);
+        const coverage = row.coverage ? safeParse<PrReviewCoverage>(row.coverage, legacyCoverage) : legacyCoverage;
+        update.run(
+          'interrupted before the review finished',
+          JSON.stringify({
+            ...progress,
+            phase: 'complete',
+            message: 'Interrupted before the review finished',
+            updatedAt: now,
+          } satisfies PrReviewProgress),
+          JSON.stringify(terminalReviewCoverage(coverage)),
+          row.id,
+        );
+      }
+    });
+    failAll();
+    return [...new Set(rows.map((row) => row.repo))];
   }
 
   update(id: string, status: PrReviewResult['status']): void {
@@ -70,13 +206,32 @@ export class PrReviewsStore {
     return row ? prReviewRowToResult(row) : undefined;
   }
 
-  latestByNumber(repo: string): Map<number, LatestReviewSignal> {
+  running(repo: string, prNumber: number): PrReviewResult | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM pr_reviews WHERE repo = ? AND pr_number = ? AND status = 'running'
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(repo, prNumber) as PrReviewRow | undefined;
+    return row ? prReviewRowToResult(row) : undefined;
+  }
+
+  latestByNumber(repo: string, only?: readonly number[]): Map<number, LatestReviewSignal> {
+    const numbers = only ? [...new Set(only)] : null;
+    if (numbers?.length === 0) return new Map();
+    const restricted = numbers ? ` AND t1.pr_number IN (${numbers.map(() => '?').join(', ')})` : '';
     const rows = this.db
       .prepare(
-        `SELECT pr_number, status, verdict FROM pr_reviews t1 WHERE repo = ?
-         AND created_at = (SELECT MAX(created_at) FROM pr_reviews t2 WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number)`,
+        `SELECT pr_number, status, verdict FROM pr_reviews t1 WHERE repo = ?${restricted}
+         AND id = (SELECT id FROM pr_reviews t2
+                    WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number
+                    ORDER BY created_at DESC, id DESC LIMIT 1)`,
       )
-      .all(repo) as Array<{ pr_number: number; status: PrReviewResult['status']; verdict: string | null }>;
+      .all(repo, ...(numbers ?? [])) as Array<{
+      pr_number: number;
+      status: PrReviewResult['status'];
+      verdict: string | null;
+    }>;
     return new Map(rows.map((r) => [r.pr_number, toSignal(r.status, r.verdict)]));
   }
 }
@@ -102,6 +257,8 @@ interface PrReviewRow {
   repo: string;
   pr_number: number;
   run_id: string;
+  run_ids: string | null;
+  source: 'agent' | 'human' | null;
   status: PrReviewResult['status'];
   verdict: string | null;
   error: string | null;
@@ -109,7 +266,26 @@ interface PrReviewRow {
   head_sha: string | null;
   depth: ReviewDepth | null;
   strictness: ReviewStrictness | null;
+  progress: string | null;
+  coverage: string | null;
 }
+
+const finishedProgress = (createdAt: number): PrReviewProgress => ({
+  phase: 'complete',
+  completed: 1,
+  total: 1,
+  message: 'Review finished',
+  updatedAt: createdAt,
+});
+
+const legacyCoverage: PrReviewCoverage = {
+  state: 'unavailable',
+  reviewedGroups: 0,
+  totalGroups: 0,
+  reviewedFiles: 0,
+  totalFiles: 0,
+  unread: [],
+};
 
 function prReviewRowToResult(row: PrReviewRow): PrReviewResult {
   return {
@@ -117,9 +293,13 @@ function prReviewRowToResult(row: PrReviewRow): PrReviewResult {
     repo: row.repo,
     prNumber: row.pr_number,
     runId: row.run_id || null,
+    runIds: row.run_ids ? safeParse<string[]>(row.run_ids, row.run_id ? [row.run_id] : []) : row.run_id ? [row.run_id] : [],
+    source: row.source ?? (row.run_id ? 'agent' : 'human'),
     status: row.status,
     verdict: row.verdict ? safeParse<PrReviewVerdict | null>(row.verdict, null) : null,
     error: row.error,
+    progress: row.progress ? safeParse<PrReviewProgress>(row.progress, finishedProgress(row.created_at)) : finishedProgress(row.created_at),
+    coverage: row.coverage ? safeParse<PrReviewCoverage>(row.coverage, legacyCoverage) : legacyCoverage,
     createdAt: row.created_at,
     headSha: row.head_sha,
     depth: row.depth ?? 'in-depth',

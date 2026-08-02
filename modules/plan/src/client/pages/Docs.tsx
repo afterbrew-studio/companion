@@ -1,28 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CardActions,
   EmptyState,
   ErrorBar,
   Field,
+  FilterField,
+  FiltersPopover,
   FormActions,
   InlineLoading,
-  ListFilterToolbar,
+  ListFooter,
   Markdown,
   Modal,
   Page,
   PageHeader,
+  SearchInput,
   Spinner,
   StatusGlyph,
-  facet,
   timeAgo,
   useConfirm,
-  useListFilter,
-  type FilterSelectField,
 } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { RepoRecord } from '@companion/module-code/contract';
-import type { AreaStorage, DocRecord, DocSearchHit, RepoDocFile } from '../../contract/index.js';
+import type { AreaStorage, DocListRecord, DocRecord, DocSearchHit, RepoDocFile } from '../../contract/index.js';
 import { planApi as api } from '../api.js';
 import { useDocs } from '../hooks/useDocs.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
@@ -37,49 +37,26 @@ import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup
  */
 export function DocsPage(): JSX.Element {
   const { can } = useAuth();
-  const { current, repos, docs, storage, error, refresh } = useDocs();
+  const {
+    current,
+    repos,
+    docs,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    search,
+    setSearch,
+    filters,
+    setFilter,
+    clearFilters,
+    activeFilters,
+    storage,
+    error,
+    refresh,
+  } = useDocs();
   const [configuring, setConfiguring] = useState(false);
   const [modal, setModal] = useState<'write' | 'import' | 'generate' | null>(null);
-
-  const filterFields: Array<FilterSelectField<DocRecord>> = [
-    {
-      key: 'repo',
-      label: 'Repository',
-      allLabel: 'All docs',
-      options: [
-        { value: '__workspace', label: 'Workspace-wide' },
-        ...facet(docs ?? [], (d) => d.repo).map((r) => ({ value: r, label: r })),
-      ],
-      match: (d, v) => (v === '__workspace' ? d.repo === null : d.repo === v),
-    },
-    {
-      key: 'source',
-      label: 'Source',
-      allLabel: 'Any source',
-      options: [
-        { value: 'manual', label: 'Manual' },
-        { value: 'imported', label: 'Imported' },
-        { value: 'generated', label: 'Generated' },
-      ],
-      match: (d, v) => d.source === v,
-    },
-    {
-      key: 'storage',
-      label: 'Storage',
-      allLabel: 'Any storage',
-      options: [
-        { value: 'virtual', label: 'Virtual' },
-        { value: 'repo', label: 'Repository' },
-      ],
-      match: (d, v) => d.storage === v,
-    },
-  ];
-  const filter = useListFilter(
-    docs ?? [],
-    (d, needle) => d.title.toLowerCase().includes(needle) || d.content.toLowerCase().includes(needle),
-    filterFields,
-  );
-  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('docs:manage');
@@ -92,7 +69,7 @@ export function DocsPage(): JSX.Element {
         title="Documentation"
         subtitle={`${current.name} · indexed for retrieval by agents and the assistant`}
         actions={
-          canManage && !needsSetup ? (
+          canManage && storage?.config ? (
             <div className="flex gap-2">
               <button className="btn-ghost" onClick={() => setModal('import')}>
                 Import from repo
@@ -127,24 +104,67 @@ export function DocsPage(): JSX.Element {
 
       <RetrievalSearch workspaceId={current.id} />
 
-      {docs !== null && docs.length > 0 ? (
-        <div className="mt-4">
-          <ListFilterToolbar
-            filter={filter}
-            fields={filterFields}
-            total={docs.length}
-            placeholder="Filter docs by title or content…"
-            searchLabel="Filter the documentation list"
-          />
-        </div>
-      ) : null}
-
-      <div className="mt-4 flex flex-col gap-3">
-        {filtered.map((d) => (
-          <DocCard key={d.id} doc={d} onChange={refresh} />
-        ))}
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search title or content…  ( / )"
+          ariaLabel="Search documentation by title or content"
+          className="w-full sm:w-72"
+        />
+        <FiltersPopover active={activeFilters} onClear={clearFilters}>
+          <FilterField label="Repository">
+            <select className="input" value={filters.repo} onChange={(event) => setFilter('repo')(event.target.value)}>
+              <option value="all">All docs</option>
+              <option value="__workspace">Workspace-wide</option>
+              {repos.map((repo) => (
+                <option key={repo.fullName} value={repo.fullName}>
+                  {repo.fullName}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Source">
+            <select className="input" value={filters.source} onChange={(event) => setFilter('source')(event.target.value)}>
+              <option value="all">Any source</option>
+              <option value="manual">Manual</option>
+              <option value="imported">Imported</option>
+              <option value="generated">Generated</option>
+            </select>
+          </FilterField>
+          <FilterField label="Storage">
+            <select className="input" value={filters.storage} onChange={(event) => setFilter('storage')(event.target.value)}>
+              <option value="all">Any storage</option>
+              <option value="virtual">Virtual</option>
+              <option value="repo">Repository</option>
+            </select>
+          </FilterField>
+        </FiltersPopover>
       </div>
-      {docs !== null && docs.length === 0 ? (
+
+      {docs === null ? (
+        <div className="mt-4">
+          <InlineLoading label="Loading documentation…" />
+        </div>
+      ) : docs.length > 0 ? (
+        <>
+          <div className="mt-4 flex flex-col gap-3">
+            {docs.map((doc) => (
+              <DocCard key={doc.id} doc={doc} onChange={refresh} />
+            ))}
+          </div>
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={docs.length}
+            total={total}
+            noun="docs"
+            onVisible={loadMore}
+          />
+        </>
+      ) : !error && (search.trim() !== '' || activeFilters > 0) ? (
+        <EmptyState title="No docs match" hint="Loosen the search or clear the filters." />
+      ) : !error ? (
         <EmptyState
           title="No documentation yet"
           hint="Everything indexed here becomes retrievable knowledge — architecture notes, business context, runbooks. Import a repo's markdown to start."
@@ -156,8 +176,6 @@ export function DocsPage(): JSX.Element {
             ) : undefined
           }
         />
-      ) : docs !== null && filtered.length === 0 ? (
-        <EmptyState title="No docs match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {modal === 'write' ? (
@@ -205,20 +223,29 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<DocSearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const searchSeq = useRef(0);
 
   useEffect(() => {
+    const mySeq = ++searchSeq.current;
     const query = q.trim();
     if (query.length < 2) {
       setHits(null);
+      setBusy(false);
       return;
     }
     setBusy(true);
     const timer = setTimeout(() => {
       api
         .searchDocs(workspaceId, query)
-        .then(({ hits }) => setHits(hits))
-        .catch(() => setHits([]))
-        .finally(() => setBusy(false));
+        .then(({ hits }) => {
+          if (searchSeq.current === mySeq) setHits(hits);
+        })
+        .catch(() => {
+          if (searchSeq.current === mySeq) setHits([]);
+        })
+        .finally(() => {
+          if (searchSeq.current === mySeq) setBusy(false);
+        });
     }, 250);
     return () => clearTimeout(timer);
   }, [q, workspaceId]);
@@ -266,13 +293,54 @@ function DocStateIcon({ indexed }: { indexed: boolean }): JSX.Element {
   );
 }
 
-function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<void> }): JSX.Element {
+function DocCard({ doc, onChange }: { doc: DocListRecord; onChange: () => Promise<void> }): JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [detail, setDetail] = useState<DocRecord | null>(null);
+  const [detailIntent, setDetailIntent] = useState<'read' | 'edit' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const detailSeq = useRef(0);
   const { confirmDanger, confirmElement } = useConfirm();
   const { current } = useWorkspace();
+
+  useEffect(() => {
+    detailSeq.current += 1;
+    setDetail(null);
+    setDetailIntent(null);
+    setExpanded(false);
+    setEditing(false);
+  }, [doc.id, doc.updatedAt]);
+
+  const loadDetail = async (intent: 'read' | 'edit'): Promise<DocRecord | null> => {
+    if (detail) return detail;
+    const mySeq = ++detailSeq.current;
+    setDetailIntent(intent);
+    setError(null);
+    try {
+      const response = await api.getDoc(doc.id);
+      if (detailSeq.current !== mySeq) return null;
+      setDetail(response.doc);
+      return response.doc;
+    } catch (err) {
+      if (detailSeq.current === mySeq) setError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      if (detailSeq.current === mySeq) setDetailIntent(null);
+    }
+  };
+
+  const toggleRead = async (): Promise<void> => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (await loadDetail('read')) setExpanded(true);
+  };
+
+  const startEdit = async (): Promise<void> => {
+    if (await loadDetail('edit')) setEditing(true);
+  };
 
   const remove = async (): Promise<void> => {
     const ok = await confirmDanger({
@@ -304,22 +372,28 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
             {timeAgo(doc.updatedAt)}
           </div>
         </div>
-        <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? 'Hide' : 'Read'}
-        </button>
+        {doc.contentLength > 0 ? (
+          <button
+            className="linkish shrink-0 text-sm"
+            disabled={detailIntent !== null}
+            onClick={() => void toggleRead()}
+          >
+            {detailIntent === 'read' ? 'Loading…' : expanded ? 'Hide' : 'Read'}
+          </button>
+        ) : null}
       </div>
 
-      {expanded ? (
+      {expanded && detail ? (
         <div className="well markdown mt-3 max-h-[32rem] overflow-y-auto p-4">
-          <Markdown text={doc.content} />
+          <Markdown text={detail.content} />
         </div>
       ) : null}
       <ErrorBar error={error} />
 
       {can('docs:manage') ? (
         <CardActions>
-          <button className="btn-ghost" onClick={() => setEditing(true)}>
-            Edit
+          <button className="btn-ghost" disabled={detailIntent !== null} onClick={() => void startEdit()}>
+            {detailIntent === 'edit' ? 'Loading…' : 'Edit'}
           </button>
           <span className="action-sep" aria-hidden />
           <button className="btn-danger-ghost" onClick={() => void remove()}>
@@ -328,11 +402,11 @@ function DocCard({ doc, onChange }: { doc: DocRecord; onChange: () => Promise<vo
         </CardActions>
       ) : null}
 
-      {editing && current ? (
+      {editing && current && detail ? (
         <WriteDocModal
           workspaceId={current.id}
           repos={[]}
-          doc={doc}
+          doc={detail}
           configDir={null}
           onClose={() => setEditing(false)}
           onDone={() => {

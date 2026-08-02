@@ -8,14 +8,16 @@ import {
   type Block,
   type FoldState,
 } from '@companion/module-operate/client';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { RunListRecord } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import { workspaceApi } from '@companion/module-workspace/client';
 
 export type DigestLivePhase = 'starting' | 'working' | 'failed' | 'done';
+/** List seed plus the outcome carried by a subsequent full run.changed event. */
+export type DigestRun = RunListRecord & { readonly outcome?: string | null };
 
 export interface UseDigestLive {
-  readonly run: RunRecord | null;
+  readonly run: DigestRun | null;
   readonly blocks: Block[];
   readonly phase: DigestLivePhase;
   /** The digest that landed while this page was watching, once it exists. */
@@ -32,7 +34,7 @@ export interface UseDigestLive {
  * runs:read keeps the staged loader, just without the live activity.
  */
 export function useDigestLive(repo: string): UseDigestLive {
-  const [run, setRun] = useState<RunRecord | null>(null);
+  const [run, setRun] = useState<DigestRun | null>(null);
   const [fold, setFold] = useState<FoldState>(emptyFold);
   const [report, setReport] = useState<ReportRecord | null>(null);
   const foldRef = useRef(fold);
@@ -52,7 +54,7 @@ export function useDigestLive(repo: string): UseDigestLive {
       // reports:read gates this page, so this only delays "done" transiently.
     }
     try {
-      const { runs } = await operateApi.listRuns();
+      const { runs } = await operateApi.listRunsPage({ repo, status: 'active', limit: 100 });
       // Adopt only a LIVE report run — the newest reaped one is yesterday's.
       // Once adopted, follow it by id so terminal status updates still arrive.
       const mine = runIdRef.current
