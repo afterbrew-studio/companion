@@ -31,6 +31,27 @@ const applySchema = z.object({
 
 const moveToRefinementSchema = z.object({ workspaceId: z.string().min(1).max(100) });
 
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function queryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} must be at most ${max} characters`);
+  return value;
+}
+
+function choice<const T extends string>(raw: string | null, values: readonly T[]): T | undefined {
+  return raw !== null && values.includes(raw as T) ? raw as T : undefined;
+}
+
 export default defineRoutes((ctx) => {
   const slop = ctx.services.get('slop');
   const workspace = ctx.services.get('workspace');
@@ -92,6 +113,7 @@ export default defineRoutes((ctx) => {
             rejected: counts.rejected,
             pending: counts.pending,
             failed: counts.failed,
+            cancelled: 0,
             acceptanceRate: decided === 0 ? null : counts.accepted / decided,
             overridden: counts.overridden,
           },
@@ -103,13 +125,24 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/slop',
       access: 'slop:read',
-      handler: async ({ params, user }) => {
+      handler: async ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        const detections = slop.listByWorkspace(params.id);
+        const repoRows = code.repos.listByWorkspace(params.id);
         const visible = await Promise.all(
-          detections.map((detection) => requireRepo(user, detection.repo).then(() => true).catch(() => false)),
+          repoRows.map((repo) => requireRepo(user, repo.full_name).then(() => repo.full_name).catch(() => null)),
         );
-        return { detections: detections.filter((_, index) => visible[index]) };
+        return slop.listByWorkspacePage(params.id, {
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 300, 'repo'),
+          status: choice(query.get('status'), ['running', 'pending', 'applied', 'dismissed', 'failed'] as const),
+          quality: choice(
+            query.get('quality'),
+            ['valuable', 'promising', 'needs_evidence', 'low_value', 'unsafe'] as const,
+          ),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+          accessibleRepos: visible.filter((repo): repo is string => repo !== null),
+        });
       },
     }),
 

@@ -1,5 +1,6 @@
 import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-sdk/client';
 import type { RunRecord } from '@companion/module-operate/contract';
+import type { AskRequest, MoxxyEvent } from '@moxxy/companion-sdk/agents';
 import type { ReportRecord } from '@companion/module-workspace/contract';
 import type {
   AgentQuality,
@@ -9,13 +10,21 @@ import type {
   GitHubAccountScope,
   GitHubPurpose,
   ImportPreview,
+  IssueListRecord,
   IssueRecord,
   PipelineExport,
   PipelineRecord,
   PipelineRunRecord,
-  PrFileChange,
+  PipelineStepLog,
+  PrFileChangesPage,
+  PrListRecord,
   PrRecord,
   PrReviewResult,
+  FindingSeverity,
+  FindingState,
+  ReviewFinding,
+  ReviewOptions,
+  ReviewPostMode,
   RepoAccountOption,
   RepoCandidate,
   RepoBranchRecord,
@@ -72,7 +81,7 @@ export const codeApi = {
     page?: PageQuery & { author?: string; assignee?: string; label?: string; triage?: string },
   ) =>
     request<{
-      issues: IssueRecord[];
+      issues: IssueListRecord[];
       total: number;
       counts: { open: number; closed: number };
       facets: { authors: string[]; assignees: string[]; labels: string[] };
@@ -80,13 +89,13 @@ export const codeApi = {
   workspacePrs: (
     id: string,
     state?: 'open' | 'merged' | 'closed',
-    page?: PageQuery & { author?: string; assignee?: string; decision?: string; draft?: string; review?: string },
+    page?: PageQuery & { author?: string; assignee?: string; label?: string; decision?: string; draft?: string; review?: string },
   ) =>
     request<{
-      prs: PrRecord[];
+      prs: PrListRecord[];
       total: number;
       counts: { open: number; merged: number; closed: number };
-      facets: { authors: string[]; assignees: string[] };
+      facets: { authors: string[]; assignees: string[]; labels: string[] };
     }>(`/api/workspaces/${id}/prs${qs({ state, ...page })}`),
   workspacePipelines: (id: string) =>
     request<{ pipelines: PipelineRecord[]; stepDefinitions: StepDefinitionRecord[] }>(
@@ -125,8 +134,8 @@ export const codeApi = {
     }>(`/api/repos/${fullName}/prs/${number}`),
   prChecks: (fullName: string, number: number) =>
     request<{ checks: ChecksSummary }>(`/api/repos/${fullName}/prs/${number}/checks`),
-  prFiles: (fullName: string, number: number) =>
-    request<{ files: PrFileChange[]; truncated: boolean }>(`/api/repos/${fullName}/prs/${number}/files`),
+  prFiles: (fullName: string, number: number, page = 1) =>
+    request<PrFileChangesPage>(`/api/repos/${fullName}/prs/${number}/files?page=${page}`),
   analyzeFailedChecks: (fullName: string, number: number) =>
     post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/checks/analyze`),
   fixChecks: (fullName: string, number: number) =>
@@ -141,13 +150,19 @@ export const codeApi = {
     request<{ comments: CommentRecord[] }>(`/api/repos/${fullName}/prs/${number}/comments`),
   commentPr: (fullName: string, number: number, body: string) =>
     post<{ url: string }>(`/api/repos/${fullName}/prs/${number}/comment`, { body }),
-  analyzePr: (fullName: string, number: number) =>
-    post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/analyze`),
+  analyzePr: (fullName: string, number: number, opts?: ReviewOptions) =>
+    post<{ queued: true }>(`/api/repos/${fullName}/prs/${number}/analyze`, opts ?? {}),
   mergePr: (fullName: string, number: number, method: 'merge' | 'squash' | 'rebase') =>
     post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/merge`, { method }),
   closePr: (fullName: string, number: number) => post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/close`),
   approvePipelineStep: (runId: string, stepIndex: number, approved: boolean) =>
     post<{ ok: true }>(`/api/pipeline-runs/${runId}/steps/${stepIndex}/approve`, { approved }),
+  cancelPipelineRun: (runId: string) =>
+    post<{ run: PipelineRunRecord }>(`/api/pipeline-runs/${runId}/cancel`),
+  pipelineStepLog: (runId: string, stepIndex: number, afterSequence = 0) =>
+    request<{ log: PipelineStepLog | null }>(
+      `/api/pipeline-runs/${runId}/steps/${stepIndex}/log?after=${afterSequence}`,
+    ),
   rerunChecks: (fullName: string, number: number, scope: 'failed' | 'all' = 'failed') =>
     post<{ restarted: number }>(`/api/repos/${fullName}/prs/${number}/rerun-checks`, { scope }),
   markPrReady: (fullName: string, number: number) =>
@@ -158,8 +173,40 @@ export const codeApi = {
     post<{ ok: true }>(`/api/repos/${fullName}/prs/${number}/labels`, { labels }),
   labelIssue: (fullName: string, number: number, labels: string[]) =>
     post<{ ok: true }>(`/api/repos/${fullName}/issues/${number}/labels`, { labels }),
-  applyPrReview: (id: string, accountId?: string) =>
-    post<{ ok: true }>(`/api/pr-reviews/${id}/apply${accountId ? `?account=${encodeURIComponent(accountId)}` : ''}`),
+  applyPrReview: (
+    id: string,
+    accountId?: string,
+    body: { findingIds?: readonly string[]; mode?: ReviewPostMode } = {},
+  ) =>
+    post<{ ok: true }>(
+      `/api/pr-reviews/${id}/apply${accountId ? `?account=${encodeURIComponent(accountId)}` : ''}`,
+      body,
+    ),
+  reviewChat: (id: string) =>
+    request<{
+      run: { id: string; live: boolean } | null;
+      pendingAsks: AskRequest[];
+      history: { events: MoxxyEvent[]; prevCursor: number | null };
+    }>(`/api/pr-reviews/${id}/chat`),
+  answerReviewChatAsk: (id: string, requestId: string, response: Record<string, unknown>) =>
+    post<{ ok: true }>(`/api/pr-reviews/${id}/chat/ask`, { requestId, response }),
+  askReviewChat: (id: string, findingId: string | null, text: string) =>
+    post<{ turnId: string; runId: string }>(`/api/pr-reviews/${id}/chat`, { findingId, text }),
+  prFileLines: (fullName: string, number: number, path: string, from: number, to: number) =>
+    request<{ from: number; lines: string[] }>(
+      `/api/repos/${fullName}/prs/${number}/file?path=${encodeURIComponent(path)}&from=${from}&to=${to}`,
+    ),
+  createReviewDraft: (fullName: string, number: number) =>
+    post<{ review: PrReviewResult }>(`/api/repos/${fullName}/prs/${number}/review-draft`),
+  addReviewFinding: (
+    id: string,
+    body: { file: string; side: 'LEFT' | 'RIGHT'; line: number; body: string; severity?: FindingSeverity },
+  ) => post<{ finding: ReviewFinding }>(`/api/pr-reviews/${id}/findings`, body),
+  updateReviewFinding: (
+    id: string,
+    body: { state?: FindingState; rejectionReason?: string; reason?: string; suggestion?: string },
+  ) => patch<{ ok: true }>(`/api/pr-review-findings/${id}`, body),
+  cancelPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/cancel`),
   dismissPrReview: (id: string) => post<{ ok: true }>(`/api/pr-reviews/${id}/dismiss`),
 
   // pipelines + step library

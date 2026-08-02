@@ -1,26 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CardActions,
   EmptyState,
   ErrorBar,
   Field,
+  FilterField,
+  FiltersPopover,
   FormActions,
-  ListFilterToolbar,
+  InlineLoading,
+  ListFooter,
   Modal,
   Page,
   PageHeader,
+  SearchInput,
   Spinner,
   StatusGlyph,
   Tooltip,
-  facet,
   timeAgo,
   useConfirm,
-  useListFilter,
-  type FilterSelectField,
 } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { RepoRecord } from '@companion/module-code/contract';
-import type { ProposalRecord } from '../../contract/index.js';
+import type { ProposalListRecord, ProposalRecord } from '../../contract/index.js';
 import { planApi as api } from '../api.js';
 import { useProposals } from '../hooks/useProposals.js';
 
@@ -31,42 +32,25 @@ import { useProposals } from '../hooks/useProposals.js';
  * implemented.
  */
 export function ProposalsPage(): JSX.Element {
-  const { current, repos, proposals, error, refresh } = useProposals();
+  const {
+    current,
+    repos,
+    proposals,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    search,
+    setSearch,
+    filters,
+    setFilter,
+    clearFilters,
+    activeFilters,
+    error,
+    refresh,
+  } = useProposals();
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
-
-  const filterFields: Array<FilterSelectField<ProposalRecord>> = [
-    {
-      key: 'repo',
-      label: 'Repository',
-      allLabel: 'All repositories',
-      options: facet(proposals, (p) => p.repo).map((r) => ({ value: r, label: r })),
-      match: (p, v) => p.repo === v,
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      allLabel: 'Any status',
-      options: [
-        'draft',
-        'analyzing',
-        'analyzed',
-        'approved',
-        'implementing',
-        'review',
-        'implemented',
-        'rejected',
-        'failed',
-      ].map((s) => ({ value: s, label: s[0]!.toUpperCase() + s.slice(1) })),
-      match: (p, v) => p.status === v,
-    },
-  ];
-  const filter = useListFilter(
-    proposals,
-    (p, needle) => p.title.toLowerCase().includes(needle) || p.body.toLowerCase().includes(needle),
-    filterFields,
-  );
-  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
 
@@ -85,22 +69,58 @@ export function ProposalsPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {proposals.length > 0 ? (
-        <ListFilterToolbar
-          filter={filter}
-          fields={filterFields}
-          total={proposals.length}
-          placeholder="Search title or body…"
-          searchLabel="Search proposals"
+      <div className="flex items-center justify-end gap-2">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search title or body…  ( / )"
+          ariaLabel="Search proposals by title or body"
+          className="w-full sm:w-72"
         />
-      ) : null}
-
-      <div className="flex flex-col gap-3">
-        {filtered.map((p) => (
-          <ProposalCard key={p.id} proposal={p} onChange={refresh} />
-        ))}
+        <FiltersPopover active={activeFilters} onClear={clearFilters}>
+          <FilterField label="Repository">
+            <select className="input" value={filters.repo} onChange={(event) => setFilter('repo')(event.target.value)}>
+              <option value="all">All repositories</option>
+              {repos.map((repo) => (
+                <option key={repo.fullName} value={repo.fullName}>{repo.fullName}</option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Status">
+            <select className="input" value={filters.status} onChange={(event) => setFilter('status')(event.target.value)}>
+              <option value="all">Any status</option>
+              {[
+                'draft', 'analyzing', 'analyzed', 'approved', 'implementing',
+                'review', 'implemented', 'rejected', 'failed',
+              ].map((status) => (
+                <option key={status} value={status}>{status[0]!.toUpperCase() + status.slice(1)}</option>
+              ))}
+            </select>
+          </FilterField>
+        </FiltersPopover>
       </div>
-      {proposals.length === 0 ? (
+
+      {proposals === null ? (
+        <InlineLoading label="Loading proposals…" />
+      ) : proposals.length > 0 ? (
+        <>
+          <div className="flex flex-col gap-3">
+            {proposals.map((proposal) => (
+              <ProposalCard key={proposal.id} proposal={proposal} onChange={refresh} />
+            ))}
+          </div>
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={proposals.length}
+            total={total}
+            noun="proposals"
+            onVisible={loadMore}
+          />
+        </>
+      ) : !error && (search.trim() !== '' || activeFilters > 0) ? (
+        <EmptyState title="No proposals match" hint="Loosen the search or clear the filters." />
+      ) : !error ? (
         <EmptyState
           title="No proposals yet"
           hint="Describe a change in plain language; an agent analyzes feasibility before any code is written."
@@ -112,8 +132,6 @@ export function ProposalsPage(): JSX.Element {
             ) : undefined
           }
         />
-      ) : filtered.length === 0 ? (
-        <EmptyState title="No proposals match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {creating ? (
@@ -238,17 +256,51 @@ function ProposalCard({
   proposal,
   onChange,
 }: {
-  proposal: ProposalRecord;
+  proposal: ProposalListRecord;
   onChange: () => Promise<void>;
 }): JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<ProposalRecord | null>(null);
+  const [detailBusy, setDetailBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captured, setCaptured] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const [error, setError] = useState<string | null>(null);
+  const detailSeq = useRef(0);
   const canAct = can('proposals:act');
+
+  useEffect(() => {
+    detailSeq.current += 1;
+    setDetail(null);
+    setDetailBusy(false);
+    setExpanded(false);
+  }, [proposal.id, proposal.updatedAt]);
+
+  const toggleAnalysis = async (): Promise<void> => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (detail) {
+      setExpanded(true);
+      return;
+    }
+    const mySeq = ++detailSeq.current;
+    setDetailBusy(true);
+    setError(null);
+    try {
+      const response = await api.getProposal(proposal.id);
+      if (detailSeq.current !== mySeq) return;
+      setDetail(response.proposal);
+      setExpanded(true);
+    } catch (err) {
+      if (detailSeq.current === mySeq) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (detailSeq.current === mySeq) setDetailBusy(false);
+    }
+  };
 
   /** Distill what shipped into a spec draft — an agent reads the merged work. */
   const capture = async (): Promise<void> => {
@@ -277,7 +329,7 @@ function ProposalCard({
     }
   };
 
-  const a = proposal.analysis;
+  const analysis = detail?.analysis ?? null;
 
   return (
     <article className="card" aria-label={proposal.title}>
@@ -292,28 +344,34 @@ function ProposalCard({
         </div>
       </div>
 
-      <p className="dim mt-2.5 line-clamp-2 text-[13px] whitespace-pre-wrap">{proposal.body}</p>
+      <p className="dim mt-2.5 line-clamp-2 text-[13px] whitespace-pre-wrap">
+        {proposal.bodyPreview}{proposal.bodyLength > proposal.bodyPreview.length ? '…' : ''}
+      </p>
 
-      {a ? (
+      {proposal.analysisFeasibility ? (
         <div className="mt-2.5">
-          <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? 'Hide analysis' : `Analysis: feasibility ${a.feasibility} — details`}
+          <button className="linkish shrink-0 text-sm" disabled={detailBusy} onClick={() => void toggleAnalysis()}>
+            {detailBusy
+              ? 'Loading analysis…'
+              : expanded
+                ? 'Hide analysis'
+                : `Analysis: feasibility ${proposal.analysisFeasibility} — details`}
           </button>
-          {expanded ? (
+          {expanded && analysis ? (
             <div className="well mt-2 text-[13px]">
-              <p>{a.summary}</p>
-              {a.steps.length > 0 ? (
+              <p>{analysis.summary}</p>
+              {analysis.steps.length > 0 ? (
                 <ol className="mt-2 list-decimal pl-5">
-                  {a.steps.map((s, i) => (
+                  {analysis.steps.map((s, i) => (
                     <li key={i}>{s}</li>
                   ))}
                 </ol>
               ) : null}
-              {a.risks.length > 0 ? (
+              {analysis.risks.length > 0 ? (
                 <div className="mt-2">
                   <span className="dim">Risks:</span>
                   <ul className="list-disc pl-5">
-                    {a.risks.map((r, i) => (
+                    {analysis.risks.map((r, i) => (
                       <li key={i}>{r}</li>
                     ))}
                   </ul>

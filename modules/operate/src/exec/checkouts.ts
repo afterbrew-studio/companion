@@ -192,7 +192,67 @@ export class Checkouts {
     token?: string,
     username?: string | null,
   ): Promise<T> {
+    const worktree = await this.addPullRequestWorktree(fullName, key, number, baseBranch, token, username);
+    try {
+      return await fn(worktree);
+    } finally {
+      await this.removeWorktree(fullName, worktree).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Temporary detached worktree at the repository's current base branch.
+   * Read-only agents must never receive the shared clone as their cwd: a
+   * compromised prompt could corrupt the cache for every later operation even
+   * when it cannot push. The worktree is disposable, while the clone remains a
+   * Git-owned object/cache store only.
+   */
+  async withBaseWorktree<T>(
+    fullName: string,
+    key: string,
+    baseBranch: string,
+    fn: (cwd: string) => Promise<T>,
+    token?: string,
+    username?: string | null,
+  ): Promise<T> {
     const worktree = await this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      await this.git(
+        ['fetch', '--quiet', 'origin', `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`],
+        clone,
+        await this.creds(fullName, token, username),
+      );
+      const wt = join(paths.worktrees(), key);
+      await this.git(['worktree', 'add', '--detach', wt, `origin/${baseBranch}`], clone);
+      await this.git(['config', 'core.excludesFile', join(wt, '.git-companion-exclude')], wt).catch(
+        () => undefined,
+      );
+      return wt;
+    });
+    try {
+      return await fn(worktree);
+    } finally {
+      await this.removeWorktree(fullName, worktree).catch(() => undefined);
+    }
+  }
+
+  /**
+   * The same checkout, kept until the caller removes it.
+   *
+   * For work that outlives one turn — a conversation about a review that must
+   * be able to read the code between questions — where re-cloning the pull
+   * request per question would dominate the cost of answering it. The caller
+   * owns the teardown; forgetting it leaks a worktree.
+   */
+  async addPullRequestWorktree(
+    fullName: string,
+    key: string,
+    number: number,
+    baseBranch: string,
+    token?: string,
+    username?: string | null,
+  ): Promise<string> {
+    return this.locked(fullName, async () => {
       const clone = this.cloneDir(fullName);
       const credential = await this.creds(fullName, token, username);
       await this.git(
@@ -208,12 +268,27 @@ export class Checkouts {
       );
       return wt;
     });
+  }
 
-    try {
-      return await fn(worktree);
-    } finally {
-      await this.removeWorktree(fullName, worktree).catch(() => undefined);
-    }
+  /**
+   * One file as it stands at a pull request's head, read from the local clone.
+   *
+   * This is what makes "show me more context" free: the objects are already on
+   * disk, so expanding a diff costs a `git show` rather than an API call and a
+   * slice of the rate limit. The ref is fetched first because a pull request
+   * head is not a branch this clone tracks.
+   */
+  async readPullRequestFile(fullName: string, number: number, path: string, username?: string | null): Promise<string> {
+    return this.locked(fullName, async () => {
+      const clone = this.cloneDir(fullName);
+      await this.git(
+        ['fetch', '--quiet', 'origin', `refs/pull/${number}/head`],
+        clone,
+        await this.creds(fullName, undefined, username),
+      );
+      const { stdout } = await this.git(['show', `FETCH_HEAD:${path}`], clone);
+      return stdout;
+    });
   }
 
   async removeWorktree(fullName: string, worktreePath: string): Promise<void> {
@@ -263,17 +338,59 @@ export class Checkouts {
     return [committed.stdout, uncommitted.stdout, untracked].filter(Boolean).join('\n');
   }
 
+  /** A server-controlled diff slice for a read-only agent prompt. */
+  async diffPaths(worktree: string, baseBranch: string, paths: readonly string[]): Promise<string> {
+    if (paths.length === 0) return '';
+    return (await this.git(['diff', `origin/${baseBranch}...HEAD`, '--', ...paths], worktree)).stdout;
+  }
+
   async hasChanges(worktree: string, baseBranch: string): Promise<boolean> {
     return (await this.diffVsBase(worktree, baseBranch)).trim().length > 0;
   }
 
   /** Commit everything in the worktree (agent may have left work uncommitted). */
-  async commitAll(worktree: string, message: string): Promise<void> {
+  /**
+   * Stage everything and commit it, refusing anything still in conflict.
+   *
+   * `git add -A` is indiscriminate, so without the check an agent that gave up
+   * halfway through a merge had its `<<<<<<<` markers staged, committed and
+   * pushed, and the branch stopped compiling. `--check` on the staged diff is
+   * git's own answer to "did a conflict marker survive", and refusing here is
+   * the last point before the push where it can still be caught.
+   *
+   * `author` signs the commit. Without one it lands as a local identity GitHub
+   * cannot attribute to anybody, which is how agent work ends up authored by a
+   * user that does not exist.
+   */
+  async commitAll(
+    worktree: string,
+    message: string,
+    author?: { name: string; email: string },
+  ): Promise<void> {
     await this.git(['add', '-A'], worktree);
     const status = await this.git(['status', '--porcelain'], worktree);
     if (!status.stdout.trim()) return;
+
+    const unmerged = await this.git(['diff', '--cached', '--name-only', '--diff-filter=U'], worktree);
+    if (unmerged.stdout.trim()) {
+      throw new Error(`unresolved merge conflicts in ${unmerged.stdout.trim().split('\n').join(', ')}`);
+    }
+    const markers = await this.git(['diff', '--cached', '--check'], worktree).catch(
+      (err: unknown) => ({ stdout: (err as { stdout?: string }).stdout ?? '' }),
+    );
+    const leftover = markers.stdout
+      .split('\n')
+      .filter((line) => line.includes('conflict marker'))
+      .map((line) => line.split(':')[0])
+      .filter((path, i, all) => path && all.indexOf(path) === i);
+    if (leftover.length > 0) {
+      throw new Error(`conflict markers left in ${leftover.join(', ')} — the merge was not finished`);
+    }
+
+    const name = author?.name ?? 'Companion';
+    const email = author?.email ?? 'companion@localhost';
     await this.git(
-      ['-c', 'user.name=Companion', '-c', 'user.email=companion@localhost', 'commit', '-q', '-m', message],
+      ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-q', '-m', message],
       worktree,
     );
   }

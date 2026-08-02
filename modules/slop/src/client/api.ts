@@ -1,4 +1,4 @@
-import { del, post, put, request } from '@moxxy/companion-sdk/client';
+import { del, post, put, qs, request, type PageQuery } from '@moxxy/companion-sdk/client';
 import type { AgentQualityStat } from '@companion/module-code/contract';
 import type {
   SlopAction,
@@ -11,8 +11,20 @@ import type {
 export const slopApi = {
   stats: (workspaceId: string, days: number) =>
     request<{ since: number; stat: AgentQualityStat }>(`/api/workspaces/${workspaceId}/slop-stats?days=${days}`),
-  list: (workspaceId: string) =>
-    request<{ detections: SlopDetectionResult[] }>(`/api/workspaces/${workspaceId}/slop`),
+  list: (
+    workspaceId: string,
+    page?: PageQuery & { status?: string; quality?: string },
+  ) =>
+    request<{ detections: SlopDetectionResult[]; total: number }>(
+      `/api/workspaces/${workspaceId}/slop${qs({
+        q: page?.q,
+        repo: page?.repo,
+        status: page?.status,
+        quality: page?.quality,
+        limit: page?.limit,
+        offset: page?.offset,
+      })}`,
+    ),
   rules: (workspaceId: string) =>
     request<{ rules: SlopRuleRecord[] }>(`/api/workspaces/${workspaceId}/slop-rules`),
   createRule: (workspaceId: string, fields: { name: string; description: string; instructions: string }) =>

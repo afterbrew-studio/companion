@@ -59,6 +59,12 @@ export default defineRoutes((ctx) => {
     if (channel.userId !== null && channel.userId !== user?.username) throw notFound('channel not found');
   };
 
+  const requireOwnedChannel = (user: AuthUser | null, id: string): void => {
+    const channel = notify.get(id);
+    if (!channel || !user || channel.userId !== user.username) throw notFound('channel not found');
+    requireScope(user, channel.workspaceId);
+  };
+
   return [
     route({
       method: 'GET',
@@ -117,6 +123,43 @@ export default defineRoutes((ctx) => {
       handler: ({ body, user }) => {
         requireScope(user, body.workspaceId);
         return created({ channel: notify.create({ ...body, userId: null }) });
+      },
+    }),
+
+    // Personal destinations have their own route family so the router can
+    // enforce notify:self centrally. Reusing the team route made it possible
+    // for business users to create a channel they could never edit, test, or
+    // remove afterwards.
+    route({
+      method: 'PATCH',
+      path: '/api/notify/channels/mine/:id',
+      access: 'notify:self',
+      body: patchSchema,
+      handler: ({ params, body, user }) => {
+        requireOwnedChannel(user, params.id);
+        requireScope(user, body.workspaceId);
+        return { channel: notify.update(params.id, body) };
+      },
+    }),
+
+    route({
+      method: 'DELETE',
+      path: '/api/notify/channels/mine/:id',
+      access: 'notify:self',
+      handler: ({ params, user }) => {
+        requireOwnedChannel(user, params.id);
+        notify.remove(params.id);
+        return { ok: true };
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/notify/channels/mine/:id/test',
+      access: 'notify:self',
+      handler: async ({ params, user }) => {
+        requireOwnedChannel(user, params.id);
+        return notify.test(params.id);
       },
     }),
 

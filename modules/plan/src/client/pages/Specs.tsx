@@ -1,27 +1,28 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CardActions,
   EmptyState,
   ErrorBar,
   Field,
+  FilterField,
+  FiltersPopover,
   FormActions,
-  ListFilterToolbar,
+  InlineLoading,
+  ListFooter,
   Markdown,
   Modal,
   Page,
   PageHeader,
+  SearchInput,
   Spinner,
   StatusGlyph,
   Tooltip,
-  facet,
   timeAgo,
   useConfirm,
-  useListFilter,
-  type FilterSelectField,
 } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import type { RepoRecord } from '@companion/module-code/contract';
-import type { AreaStorage, SpecRecord } from '../../contract/index.js';
+import type { AreaStorage, SpecListRecord, SpecRecord } from '../../contract/index.js';
 import { planApi as api } from '../api.js';
 import { useSpecs } from '../hooks/useSpecs.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
@@ -33,59 +34,27 @@ import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup
  * (a proposal carrying the spec rides the normal analyze → implement flow).
  */
 export function SpecsPage(): JSX.Element {
-  const { current, repos, specs, storage, error, refresh } = useSpecs();
+  const {
+    current,
+    repos,
+    specs,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    search,
+    setSearch,
+    filters,
+    setFilter,
+    clearFilters,
+    activeFilters,
+    storage,
+    error,
+    refresh,
+  } = useSpecs();
   const { can } = useAuth();
   const [configuring, setConfiguring] = useState(false);
   const [creating, setCreating] = useState<'write' | 'generate' | null>(null);
-
-  const filterFields: Array<FilterSelectField<SpecRecord>> = [
-    {
-      key: 'repo',
-      label: 'Repository',
-      allLabel: 'All repositories',
-      options: facet(specs ?? [], (s) => s.repo).map((r) => ({ value: r, label: r })),
-      match: (s, v) => s.repo === v,
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      allLabel: 'Any status',
-      options: [
-        { value: 'ready', label: 'Ready' },
-        { value: 'generating', label: 'Generating' },
-        { value: 'failed', label: 'Failed' },
-        { value: 'drifted', label: 'Drifted' },
-      ],
-      match: (s, v) => (v === 'drifted' ? s.driftNote !== null : s.status === v),
-    },
-    {
-      key: 'source',
-      label: 'Source',
-      allLabel: 'Any source',
-      options: [
-        { value: 'manual', label: 'Manual' },
-        { value: 'generated', label: 'Generated' },
-        { value: 'imported', label: 'Imported' },
-      ],
-      match: (s, v) => s.source === v,
-    },
-    {
-      key: 'storage',
-      label: 'Storage',
-      allLabel: 'Any storage',
-      options: [
-        { value: 'virtual', label: 'Virtual' },
-        { value: 'repo', label: 'Repository' },
-      ],
-      match: (s, v) => s.storage === v,
-    },
-  ];
-  const filter = useListFilter(
-    specs ?? [],
-    (s, needle) => s.title.toLowerCase().includes(needle) || s.content.toLowerCase().includes(needle),
-    filterFields,
-  );
-  const filtered = filter.filtered;
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('specs:manage');
@@ -98,7 +67,7 @@ export function SpecsPage(): JSX.Element {
         title="Specifications"
         subtitle={current.name}
         actions={
-          canManage && !needsSetup ? (
+          canManage && storage?.config ? (
             <div className="flex gap-2">
               <button className="btn-ghost" onClick={() => setCreating('generate')}>
                 ✦ Generate from repo
@@ -128,22 +97,73 @@ export function SpecsPage(): JSX.Element {
         <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
       ) : null}
 
-      {specs !== null && specs.length > 0 ? (
-        <ListFilterToolbar
-          filter={filter}
-          fields={filterFields}
-          total={specs.length}
-          placeholder="Search title or content…"
-          searchLabel="Search specifications"
+      <div className="flex items-center justify-end gap-2">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search title or content…  ( / )"
+          ariaLabel="Search specifications by title or content"
+          className="w-full sm:w-72"
         />
-      ) : null}
-
-      <div className="flex flex-col gap-3">
-        {filtered.map((s) => (
-          <SpecCard key={s.id} spec={s} onChange={refresh} />
-        ))}
+        <FiltersPopover active={activeFilters} onClear={clearFilters}>
+          <FilterField label="Repository">
+            <select className="input" value={filters.repo} onChange={(event) => setFilter('repo')(event.target.value)}>
+              <option value="all">All repositories</option>
+              {repos.map((repo) => (
+                <option key={repo.fullName} value={repo.fullName}>
+                  {repo.fullName}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Status">
+            <select className="input" value={filters.status} onChange={(event) => setFilter('status')(event.target.value)}>
+              <option value="all">Any status</option>
+              <option value="ready">Ready</option>
+              <option value="generating">Generating</option>
+              <option value="failed">Failed</option>
+              <option value="drifted">Drifted</option>
+            </select>
+          </FilterField>
+          <FilterField label="Source">
+            <select className="input" value={filters.source} onChange={(event) => setFilter('source')(event.target.value)}>
+              <option value="all">Any source</option>
+              <option value="manual">Manual</option>
+              <option value="generated">Generated</option>
+              <option value="imported">Imported</option>
+            </select>
+          </FilterField>
+          <FilterField label="Storage">
+            <select className="input" value={filters.storage} onChange={(event) => setFilter('storage')(event.target.value)}>
+              <option value="all">Any storage</option>
+              <option value="virtual">Virtual</option>
+              <option value="repo">Repository</option>
+            </select>
+          </FilterField>
+        </FiltersPopover>
       </div>
-      {specs !== null && specs.length === 0 ? (
+
+      {specs === null ? (
+        <InlineLoading label="Loading specifications…" />
+      ) : specs.length > 0 ? (
+        <>
+          <div className="flex flex-col gap-3">
+            {specs.map((spec) => (
+              <SpecCard key={spec.id} spec={spec} onChange={refresh} />
+            ))}
+          </div>
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={specs.length}
+            total={total}
+            noun="specifications"
+            onVisible={loadMore}
+          />
+        </>
+      ) : !error && (search.trim() !== '' || activeFilters > 0) ? (
+        <EmptyState title="No specs match" hint="Loosen the search or clear the filters." />
+      ) : !error ? (
         <EmptyState
           title="No specifications yet"
           hint="A spec pins down how something should behave — agents implement against it instead of guessing. Write one, or let an agent draft it from the codebase."
@@ -155,8 +175,6 @@ export function SpecsPage(): JSX.Element {
             ) : undefined
           }
         />
-      ) : specs !== null && filtered.length === 0 ? (
-        <EmptyState title="No specs match" hint="Loosen the search or clear the filters." />
       ) : null}
 
       {creating ? (
@@ -177,7 +195,7 @@ export function SpecsPage(): JSX.Element {
 }
 
 /** Spinner while an agent drafts; colored glyph for the settled states. */
-function SpecStateIcon({ status, drifted }: { status: SpecRecord['status']; drifted?: boolean }): JSX.Element {
+function SpecStateIcon({ status, drifted }: { status: SpecListRecord['status']; drifted?: boolean }): JSX.Element {
   if (status === 'generating') {
     return (
       <Tooltip content="Agent is drafting this spec from the codebase">
@@ -190,13 +208,59 @@ function SpecStateIcon({ status, drifted }: { status: SpecRecord['status']; drif
   return <StatusGlyph tone="ok" label="Ready" />;
 }
 
-function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promise<void> }): JSX.Element {
+function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Promise<void> }): JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [filing, setFiling] = useState(false);
+  const [detail, setDetail] = useState<SpecRecord | null>(null);
+  const [detailIntent, setDetailIntent] = useState<'read' | 'edit' | 'file' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const detailSeq = useRef(0);
   const { confirmDanger, confirmElement } = useConfirm();
+
+  useEffect(() => {
+    detailSeq.current += 1;
+    setDetail(null);
+    setDetailIntent(null);
+    setExpanded(false);
+    setEditing(false);
+    setFiling(false);
+  }, [spec.id, spec.updatedAt]);
+
+  const loadDetail = async (intent: 'read' | 'edit' | 'file'): Promise<SpecRecord | null> => {
+    if (detail) return detail;
+    const mySeq = ++detailSeq.current;
+    setDetailIntent(intent);
+    setError(null);
+    try {
+      const response = await api.getSpec(spec.id);
+      if (detailSeq.current !== mySeq) return null;
+      setDetail(response.spec);
+      return response.spec;
+    } catch (err) {
+      if (detailSeq.current === mySeq) setError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      if (detailSeq.current === mySeq) setDetailIntent(null);
+    }
+  };
+
+  const toggleRead = async (): Promise<void> => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (await loadDetail('read')) setExpanded(true);
+  };
+
+  const startEdit = async (): Promise<void> => {
+    if (await loadDetail('edit')) setEditing(true);
+  };
+
+  const startFiling = async (): Promise<void> => {
+    if (await loadDetail('file')) setFiling(true);
+  };
 
   const remove = async (): Promise<void> => {
     const ok = await confirmDanger({
@@ -234,9 +298,13 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
             {timeAgo(spec.updatedAt)}
           </div>
         </div>
-        {spec.status === 'ready' && spec.content ? (
-          <button className="linkish shrink-0 text-sm" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? 'Hide' : 'Read'}
+        {spec.status === 'ready' && spec.contentLength > 0 ? (
+          <button
+            className="linkish shrink-0 text-sm"
+            disabled={detailIntent !== null}
+            onClick={() => void toggleRead()}
+          >
+            {detailIntent === 'read' ? 'Loading…' : expanded ? 'Hide' : 'Read'}
           </button>
         ) : null}
       </div>
@@ -252,9 +320,9 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
         </div>
       ) : null}
 
-      {expanded && spec.status === 'ready' && spec.content ? (
+      {expanded && detail && spec.status === 'ready' ? (
         <div className="well markdown mt-3 max-h-[32rem] overflow-y-auto p-4">
-          <Markdown text={spec.content} />
+          <Markdown text={detail.content} />
         </div>
       ) : null}
 
@@ -265,13 +333,13 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
       spec.generateRunId ? (
         <CardActions>
           {spec.status === 'ready' && can('proposals:create') ? (
-            <button className="btn" onClick={() => setFiling(true)}>
-              Create feature
+            <button className="btn" disabled={detailIntent !== null} onClick={() => void startFiling()}>
+              {detailIntent === 'file' ? 'Loading…' : 'Create feature'}
             </button>
           ) : null}
           {can('specs:manage') && spec.status !== 'generating' ? (
-            <button className="btn-ghost" onClick={() => setEditing(true)}>
-              {spec.status === 'failed' ? 'Write by hand' : 'Edit'}
+            <button className="btn-ghost" disabled={detailIntent !== null} onClick={() => void startEdit()}>
+              {detailIntent === 'edit' ? 'Loading…' : spec.status === 'failed' ? 'Write by hand' : 'Edit'}
             </button>
           ) : null}
           {spec.generateRunId ? (
@@ -290,9 +358,9 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
         </CardActions>
       ) : null}
 
-      {editing ? (
+      {editing && detail ? (
         <EditSpecModal
-          spec={spec}
+          spec={detail}
           onClose={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
@@ -300,9 +368,9 @@ function SpecCard({ spec, onChange }: { spec: SpecRecord; onChange: () => Promis
           }}
         />
       ) : null}
-      {filing ? (
+      {filing && detail ? (
         <CreateFeatureModal
-          spec={spec}
+          spec={detail}
           onClose={() => setFiling(false)}
           onFiled={() => {
             setFiling(false);

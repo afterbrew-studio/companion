@@ -15,11 +15,14 @@ import {
   Page,
   PageHeader,
   RowsSkeleton,
+  rowDelay,
+  useSettledFlag,
   SearchInput,
   Tabs,
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import { BulkBar } from '../components/BulkBar.js';
+import { ListLoadFailure, listLoadErrorMessage } from '../components/ListLoadFailure.js';
 import { useWorkspaceIssues } from '../hooks/useWorkspaceIssues.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -31,6 +34,8 @@ import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, Triag
  */
 export function IssuesAreaPage(): JSX.Element {
   const s = useWorkspaceIssues();
+  // A skeleton that appears and vanishes inside a blink reads as a glitch.
+  const settling = useSettledFlag(s.loading);
   const aiActivity = useAiActivity();
   const {
     current,
@@ -49,6 +54,7 @@ export function IssuesAreaPage(): JSX.Element {
     loading,
     hasMore,
     loadMore,
+    retry,
     error,
     unavailableRepos,
     failedRepos,
@@ -82,6 +88,7 @@ export function IssuesAreaPage(): JSX.Element {
   if (!current) return <EmptyState title="No workspace selected" />;
   const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
   const failed = failedRepos.filter((failure) => repoFilter === 'all' || repoFilter === failure.repo);
+  const loadFailed = !loading && issues.length === 0 && unavailable.length === 0 && error !== null;
 
   return (
     <Page>
@@ -148,6 +155,7 @@ export function IssuesAreaPage(): JSX.Element {
                   onChange={setFilter('triage')}
                   options={[
                     { value: 'all', label: 'Any triage' },
+                    { value: 'running', label: 'Triage running' },
                     { value: 'pending', label: 'Pending triage' },
                     { value: 'applied', label: 'Triage applied' },
                     { value: 'dismissed', label: 'Triage dismissed' },
@@ -158,16 +166,18 @@ export function IssuesAreaPage(): JSX.Element {
           </>
         }
       />
-      <ErrorBar error={error} />
+      <ErrorBar error={!loadFailed && error ? listLoadErrorMessage('issues', error) : null} />
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={[
-          { value: 'open', label: 'Open', count: counts.open },
-          { value: 'closed', label: 'Closed', count: counts.closed },
-        ]}
-      />
+      {!loadFailed ? (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'open', label: 'Open', count: settling && issues.length === 0 ? undefined : counts.open },
+            { value: 'closed', label: 'Closed', count: settling && issues.length === 0 ? undefined : counts.closed },
+          ]}
+        />
+      ) : null}
 
       {tab === 'open' && (canActIssues || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
         <BulkBar
@@ -190,20 +200,31 @@ export function IssuesAreaPage(): JSX.Element {
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
       <SyncFailureBanner failures={failed} />
 
-      {issues.length === 0 && unavailable.length === 0 && !loading ? (
+      {loadFailed ? (
+        <ListLoadFailure noun="issues" error={error ?? 'unknown error'} onRetry={retry} />
+      ) : issues.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No issues match the filters' : `No ${tab} issues`}
-          hint={!search.trim() && repoFilter === 'all' ? 'Connect repositories to this workspace to start syncing issues.' : undefined}
+          hint={
+            !search.trim() && repoFilter === 'all'
+              ? repos.length === 0
+                ? 'Connect repositories to this workspace to start syncing issues.'
+                : tab === 'open'
+                  ? 'There are no open issues in the connected repositories.'
+                  : 'Closed issues will appear here after the next repository sync.'
+              : undefined
+          }
         />
       ) : (
         <>
         <ListCard className="mt-3" ariaLabel="Issue list">
-          {loading && issues.length === 0 ? <RowsSkeleton rows={6} /> : null}
+          {settling && issues.length === 0 ? <RowsSkeleton rows={6} /> : null}
           {!loading ? unavailable.map((repo) => <RepoUnavailableRow key={repo} repo={repo} />) : null}
-          {issues.map((issue) => (
+          {issues.map((issue, i) => (
             <a
               key={`${issue.repo}#${issue.number}`}
-              className="row-link group/row"
+              style={rowDelay(i)}
+              className="row-link group/row row-in"
               href={`#/repos/${issue.repo}/issues/${issue.number}`}
               onContextMenu={(e) => {
                 e.preventDefault();

@@ -1,5 +1,5 @@
 import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
-import type { ChecksSnapshot, PrRecord } from '../contract/index.js';
+import type { ChecksSnapshot, PrListRecord, PrRecord } from '../contract/index.js';
 import type { GithubAccountsStore } from './github-accounts-store.js';
 import { reviewSignal, type LatestReviewSignal, type PrReviewsStore } from './pr-reviews-store.js';
 
@@ -128,6 +128,7 @@ export class PrsStore {
       repo?: string;
       author?: string;
       assignee?: string;
+      label?: string;
       decision?: 'approved' | 'changes_requested' | 'none';
       /** Latest AI review verdict status for the PR. */
       review?: 'pending' | 'applied' | 'dismissed';
@@ -136,12 +137,13 @@ export class PrsStore {
       offset?: number;
       accessibleRepos?: readonly string[];
       myLogins?: readonly string[];
+      includeFacets?: boolean;
     },
   ): {
-    prs: PrRecord[];
+    prs: PrListRecord[];
     total: number;
     counts: { open: number; merged: number; closed: number };
-    facets: { authors: string[]; assignees: string[] };
+    facets: { authors: string[]; assignees: string[]; labels: string[] };
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
@@ -175,6 +177,10 @@ export class PrsStore {
       where.push(`EXISTS (SELECT 1 FROM json_each(p.assignees) WHERE json_each.value = ?)`);
       args.push(opts.assignee);
     }
+    if (opts.label) {
+      where.push(`EXISTS (SELECT 1 FROM json_each(p.labels) WHERE json_each.value = ?)`);
+      args.push(opts.label);
+    }
     if (opts.decision === 'none') {
       where.push('p.review_decision IS NULL');
     } else if (opts.decision) {
@@ -205,17 +211,30 @@ export class PrsStore {
     }
     const stateCond = state ? ` AND p.state = ?` : '';
     const stateArgs = state ? [...args, state] : args;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.min(Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0), 1_000_000);
     const rows = this.db
-      .prepare(`SELECT p.* ${base}${stateCond} ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`)
-      .all(...stateArgs, opts.limit ?? -1, opts.offset ?? 0) as PrRow[];
+      .prepare(
+        `SELECT p.repo, p.number, p.title, p.state, p.head_ref, p.head_sha, p.base_ref,
+                p.draft, p.author, p.labels, p.assignees, p.comments, p.review_decision,
+                p.mergeable, p.merge_state, p.url, p.checks, p.created_at, p.updated_at, p.closed_at
+         ${base}${stateCond} ORDER BY p.updated_at DESC, p.repo, p.number DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...stateArgs, limit, offset) as PrListRow[];
     const reviewsByRepo = new Map<string, Map<number, LatestReviewSignal>>();
+    const pageNumbersByRepo = new Map<string, number[]>();
+    for (const row of rows) {
+      const numbers = pageNumbersByRepo.get(row.repo) ?? [];
+      numbers.push(row.number);
+      pageNumbersByRepo.set(row.repo, numbers);
+    }
     const prs = rows.map((row) => {
       let map = reviewsByRepo.get(row.repo);
       if (!map) {
-        map = this.prReviews.latestByNumber(row.repo);
+        map = this.prReviews.latestByNumber(row.repo, pageNumbersByRepo.get(row.repo));
         reviewsByRepo.set(row.repo, map);
       }
-      return prRowToRecord(row, map.get(row.number) ?? null);
+      return prListRowToRecord(row, map.get(row.number) ?? null);
     });
     const total = state ? counts[state] : counts.open + counts.merged + counts.closed;
     const facetAccess = opts.accessibleRepos
@@ -225,10 +244,13 @@ export class PrsStore {
       : '';
     const facetBase = `FROM prs p JOIN v_repos r ON r.full_name = p.repo WHERE r.workspace_id = ?${facetAccess}`;
     const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
-    const facets = {
-      authors: (this.db.prepare(`SELECT DISTINCT p.author AS v ${facetBase} AND p.author != '' ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
-      assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.assignees) WHERE')} ORDER BY 1`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
-    };
+    const facets = opts.includeFacets === false
+      ? { authors: [], assignees: [], labels: [] }
+      : {
+          authors: (this.db.prepare(`SELECT DISTINCT p.author AS v ${facetBase} AND p.author != '' ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+          assignees: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.assignees) WHERE')} ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+          labels: (this.db.prepare(`SELECT DISTINCT json_each.value AS v ${facetBase.replace('WHERE', ', json_each(p.labels) WHERE')} ORDER BY 1 LIMIT 250`).all(...facetArgs) as Array<{ v: string }>).map((r) => r.v),
+        };
     return { prs, total, counts, facets };
   }
 }
@@ -257,12 +279,13 @@ interface PrRow {
   closed_at: number | null;
 }
 
-function prRowToRecord(row: PrRow, review: LatestReviewSignal | null): PrRecord {
+type PrListRow = Omit<PrRow, 'body'>;
+
+function prListRowToRecord(row: PrListRow, review: LatestReviewSignal | null): PrListRecord {
   return {
     repo: row.repo,
     number: row.number,
     title: row.title,
-    body: row.body,
     state: row.state as PrRecord['state'],
     headRef: row.head_ref,
     headSha: row.head_sha,
@@ -276,12 +299,19 @@ function prRowToRecord(row: PrRow, review: LatestReviewSignal | null): PrRecord 
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
-    review: review === null || review.status === 'failed' ? null : review.status,
+    review: review === null || review.status === 'failed' || review.status === 'cancelled' ? null : review.status,
     reviewRisk: review?.risk ?? null,
     reviewDecision:
       row.review_decision === 'approved' || row.review_decision === 'changes_requested' ? row.review_decision : null,
     mergeable: row.mergeable === null ? null : row.mergeable === 1,
     mergeStateStatus: (row.merge_state as PrRecord['mergeStateStatus']) ?? null,
     checks: row.checks ? safeParse<ChecksSnapshot | null>(row.checks, null) : null,
+  };
+}
+
+function prRowToRecord(row: PrRow, review: LatestReviewSignal | null): PrRecord {
+  return {
+    ...prListRowToRecord(row, review),
+    body: row.body,
   };
 }

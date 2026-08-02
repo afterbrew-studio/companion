@@ -95,6 +95,30 @@ export default defineRoutes((ctx) => {
     return { workspaceId: null, accessibleIds: [...workspaces.accessibleIds(user)] };
   };
 
+  const visibleNotifications = async (
+    items: ReturnType<typeof notifications.list>,
+    user: AuthUser,
+  ): Promise<ReturnType<typeof notifications.list>> => {
+    const code = codeAccess();
+    if (!code) return items.filter((item) => item.repo === null);
+    const checks = new Map<string, Promise<boolean>>();
+    const visible = await Promise.all(
+      items.map(async (item) => {
+        if (!item.repo) return true;
+        let check = checks.get(item.repo);
+        if (!check) {
+          check = code.githubAccounts
+            .verifiedClientFor('fetch', item.repo, { username: user.username })
+            .then(({ client }) => client !== null)
+            .catch(() => false);
+          checks.set(item.repo, check);
+        }
+        return check;
+      }),
+    );
+    return items.filter((_, index) => visible[index]);
+  };
+
   return [
     // ---------- workspace lifecycle ---------------------------------------------
 
@@ -250,24 +274,7 @@ export default defineRoutes((ctx) => {
         const s = scope(user, query.get('workspace'));
         // The reader, so a notification addressed to somebody else stays theirs.
         const items = notifications.list(s.workspaceId, 100, s.accessibleIds, user?.username);
-        const code = codeAccess();
-        if (!code) return { notifications: items.filter((item) => item.repo === null) };
-        const checks = new Map<string, Promise<boolean>>();
-        const visible = await Promise.all(
-          items.map(async (item) => {
-            if (!item.repo) return true;
-            let check = checks.get(item.repo);
-            if (!check) {
-              check = code.githubAccounts
-                .verifiedClientFor('fetch', item.repo, { username: user!.username })
-                .then(({ client }) => client !== null)
-                .catch(() => false);
-              checks.set(item.repo, check);
-            }
-            return check;
-          }),
-        );
-        return { notifications: items.filter((_, index) => visible[index]) };
+        return { notifications: await visibleNotifications(items, user!) };
       },
     }),
 
@@ -275,8 +282,13 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/notifications/:id/read',
       access: 'workspaces:read',
-      handler: ({ params }) => {
-        notifications.markRead(params.id);
+      handler: async ({ params, user }) => {
+        const item = notifications.get(params.id, user!.username);
+        if (!item) throw notFound('notification not found');
+        if (item.workspaceId) requireWorkspace(user, item.workspaceId);
+        const visible = await visibleNotifications([item], user!);
+        if (visible.length === 0) throw notFound('notification not found');
+        notifications.markRead(params.id, user!.username);
         ctx.broadcast({ t: 'notifications.changed' });
         return { ok: true };
       },
@@ -286,10 +298,33 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/notifications/read-all',
       access: 'workspaces:read',
-      handler: ({ query, user }) => {
+      handler: async ({ query, user }) => {
         const s = scope(user, query.get('workspace'));
-        notifications.markAllRead(s.workspaceId, s.accessibleIds);
-        ctx.broadcast({ t: 'notifications.changed' });
+        const pageSize = 500;
+        let before: { createdAt: number; id: string } | undefined;
+        let changed = false;
+        try {
+          for (;;) {
+            const candidates = notifications.list(
+              s.workspaceId,
+              pageSize,
+              s.accessibleIds,
+              user!.username,
+              before,
+            );
+            if (candidates.length === 0) break;
+            const visible = await visibleNotifications(candidates, user!);
+            notifications.markManyRead(visible.map((item) => item.id), user!.username);
+            changed ||= visible.length > 0;
+            if (candidates.length < pageSize) break;
+            const last = candidates[candidates.length - 1]!;
+            before = { createdAt: last.createdAt, id: last.id };
+          }
+        } finally {
+          // A later page can fail after earlier receipts committed. Preserve
+          // the mutation→broadcast invariant even on that partial failure.
+          if (changed) ctx.broadcast({ t: 'notifications.changed' });
+        }
         return { ok: true };
       },
     }),

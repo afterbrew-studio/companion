@@ -4,13 +4,19 @@ import {
   EmptyState,
   ErrorBar,
   Field,
+  FilterField,
+  FiltersPopover,
   FormActions,
+  ListFooter,
   Modal,
   Page,
   PageHeader,
   PageLoading,
+  SearchInput,
   Spinner,
   timeAgo,
+  useHashFilters,
+  useHashSearch,
 } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
@@ -25,10 +31,17 @@ import { useRefinements } from '../hooks/useRefinements.js';
  * the decomposition and import the results.
  */
 export default function Refinements(): JSX.Element {
-  const { current, refinements, error } = useRefinements();
+  const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['repo', 'status'] as const);
+  const { search, setSearch, q } = useHashSearch();
+  const { current, refinements, total, loading, hasMore, loadMore, error, refresh } = useRefinements({
+    q: q || undefined,
+    repo: filters.repo === 'all' ? undefined : filters.repo,
+    status: filters.status === 'all' ? undefined : filters.status,
+  });
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const repos = useWorkspaceRepos(current?.id);
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('refine:manage');
@@ -39,18 +52,62 @@ export default function Refinements(): JSX.Element {
         title="Product Refinement"
         subtitle={current.name}
         actions={
-          canManage ? (
-            <button className="btn" onClick={() => setCreating(true)}>
-              New refinement
-            </button>
-          ) : undefined
+          <div className="flex items-center gap-1.5">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search refinements…  ( / )"
+              ariaLabel="Search refinements"
+            />
+            <FiltersPopover active={activeFilters} onClear={clearFilters}>
+              {repos.length > 1 ? (
+                <FilterField label="Repository">
+                  <Dropdown
+                    ariaLabel="Filter refinements by repository"
+                    value={filters.repo}
+                    onChange={setFilter('repo')}
+                    searchable
+                    options={[
+                      { value: 'all', label: 'All repositories' },
+                      ...repos.map((repo) => ({ value: repo.fullName, label: repo.fullName })),
+                    ]}
+                  />
+                </FilterField>
+              ) : null}
+              <FilterField label="Status">
+                <Dropdown
+                  ariaLabel="Filter refinements by status"
+                  value={filters.status}
+                  onChange={setFilter('status')}
+                  options={[
+                    { value: 'all', label: 'Any status' },
+                    { value: 'draft', label: 'Draft' },
+                    { value: 'decomposing', label: 'Decomposing' },
+                    { value: 'ready', label: 'Ready' },
+                    { value: 'failed', label: 'Failed' },
+                  ]}
+                />
+              </FilterField>
+            </FiltersPopover>
+            {canManage ? (
+              <button className="btn" onClick={() => setCreating(true)}>
+                New refinement
+              </button>
+            ) : null}
+          </div>
         }
       />
       <ErrorBar error={error ?? createError} className="mb-3" />
 
       {refinements === null ? (
         <PageLoading label="Loading refinements…" />
-      ) : refinements.length === 0 ? (
+      ) : error && refinements.length === 0 ? (
+        <EmptyState
+          title="Could not load refinements"
+          hint="Retry when the service is reachable. Existing refinements were not changed."
+          action={<button className="btn" onClick={refresh}>Retry</button>}
+        />
+      ) : refinements.length === 0 && activeFilters === 0 && !search.trim() ? (
         <EmptyState
           title="No refinements yet"
           hint="Write an epic, pick a decomposition method, and let an agent read the codebase and split it into concrete, board-ready tasks. You review — nothing lands on the board until you import it."
@@ -62,12 +119,24 @@ export default function Refinements(): JSX.Element {
             ) : undefined
           }
         />
+      ) : refinements.length === 0 ? (
+        <EmptyState title="No refinements match" hint="Loosen the search or clear the filters." />
       ) : (
-        <div className="flex flex-col gap-3">
-          {refinements.map((r) => (
-            <RefinementCard key={r.id} refinement={r} />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-col gap-3">
+            {refinements.map((r) => (
+              <RefinementCard key={r.id} refinement={r} />
+            ))}
+          </div>
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={refinements.length}
+            total={total}
+            noun="refinements"
+            onVisible={loadMore}
+          />
+        </>
       )}
 
       {creating ? (

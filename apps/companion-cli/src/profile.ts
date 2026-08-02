@@ -34,12 +34,12 @@ export const PROFILE_CHOICES: ReadonlyArray<{ value: ProfileId; name: string; de
   {
     value: 'slim',
     name: 'Slim (recommended)',
-    description: 'Repositories, agent runs and administration. Everything else stays one click away.',
+    description: 'Repositories, agent runs, the daily digest and administration. Everything else stays one click away.',
   },
   {
     value: 'full',
     name: 'Full',
-    description: 'Adds planning, the task board, refinement, ideas, automations, slop detection and the playground.',
+    description: 'Adds the task board, refinement, ideas, slop detection and the playground.',
   },
   { value: 'custom', name: 'Custom', description: 'Pick the optional modules yourself.' },
 ];
@@ -94,8 +94,15 @@ export function requires(id: string): readonly string[] {
     .map((dep) => labels.get(dep) ?? dep);
 }
 
+/**
+ * Slim is not "nothing optional": the daily digest is what makes an instance
+ * tell you about itself without being opened, and it ships in automations.
+ * `withDependencies` drags Plan in behind it, which is the price of the digest.
+ */
+const SLIM_MODULES = withDependencies(['automations']);
+
 export const modulesFor = (profile: ProfileId): readonly string[] =>
-  profile === 'full' ? OPTIONAL_MODULES.map((m) => m.id) : [];
+  profile === 'full' ? OPTIONAL_MODULES.map((m) => m.id) : profile === 'slim' ? SLIM_MODULES : [];
 
 /**
  * Install the chosen modules against the freshly started daemon.

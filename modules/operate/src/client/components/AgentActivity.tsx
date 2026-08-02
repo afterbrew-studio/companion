@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MoxxyEvent } from '@moxxy/companion-types';
 import { onServerMessage } from '@moxxy/companion-core/client';
 import { OutcomeDot, StatusDot, timeAgo } from '@moxxy/companion-ui';
-import type { RunRecord } from '../../contract/index.js';
+import type { RunListRecord } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 
 /**
@@ -29,16 +29,16 @@ export function AgentActivity({
   repo: string;
   issueNumber: number;
 }): JSX.Element | null {
-  const [run, setRun] = useState<RunRecord | null>(null);
+  const [run, setRun] = useState<RunListRecord | null>(null);
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const toolNames = useRef(new Map<string, string>());
-  const matches = (r: RunRecord): boolean =>
+  const matches = (r: RunListRecord): boolean =>
     r.repo === repo && r.issueNumber === issueNumber && r.kind !== 'interactive';
 
   useEffect(() => {
     let alive = true;
     api
-      .listRuns()
+      .listRunsPage({ repo, status: 'active', limit: 100 })
       .then(({ runs }) => {
         if (!alive) return;
         const live = runs.find((r) => r.live && matches(r));

@@ -19,6 +19,8 @@ export function fixture({
   startReviewFix,
   servableModels = () => [],
   taskModelPin = () => null,
+  pr = { state: 'open', reviewDecision: null, checks: null, headSha: 'head-1' },
+  latestReview = null,
   /** Run rows the board can read back, keyed by run id (id → row). */
   runRows = {},
   /** What the finished run left in its worktree; empty diff by default. */
@@ -74,8 +76,8 @@ export function fixture({
       get: (name) => (name === 'owner/repo' ? repo : undefined),
       inWorkspace: (name, workspaceId) => name === 'owner/repo' && workspaceId === 'ws-1',
     },
-    prs: { get: () => ({ state: 'open', reviewDecision: null, checks: null }) },
-    prReviews: { listForPr: () => [] },
+    prs: { get: () => pr },
+    prReviews: { listForPr: () => [], latestWithFindings: () => latestReview },
     fixes: {
       discard: async () => undefined,
       diff,

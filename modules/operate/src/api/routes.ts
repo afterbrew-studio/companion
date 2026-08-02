@@ -5,6 +5,7 @@ import type {
   MoxxyStatus,
   RunnerPolicyOptions,
   RunRecord,
+  RunLane,
   RunTaskDescriptor,
   RunTaskGroup,
   TaskModelPin,
@@ -24,6 +25,16 @@ const createRunSchema = z.object({
   title: z.string().max(200).optional(),
 });
 const promptSchema = z.object({ prompt: z.string().min(1), model: z.string().optional() });
+const laneSchema = z.object({
+  runnerId: z.string().min(1).nullable(),
+  harness: z.string().min(1).nullable(),
+});
+const laneModelSchema = z.object({
+  lane: laneSchema,
+  /** Omitted task sets the lane default; present pins that task. */
+  task: z.string().min(1).max(64).optional(),
+  model: z.string().max(200).nullable(),
+});
 const askRespondSchema = z.object({
   requestId: z.string(),
   response: z.object({
@@ -37,6 +48,29 @@ const setModelSchema = z.object({
   model: z.string().min(1).max(256).nullable(),
   provider: z.string().min(1).max(64).optional(),
 });
+
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function queryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} must be at most ${max} characters`);
+  return value;
+}
+
+function queryChoice<const T extends string>(raw: string | null, values: readonly T[], name: string): T | undefined {
+  if (raw === null || raw === '') return undefined;
+  if (!values.includes(raw as T)) throw badRequest(`${name} has an unsupported value`);
+  return raw as T;
+}
 
 // ---------- runners ----------
 
@@ -106,6 +140,10 @@ const taskModelsSchema = z.object({
   pins: z
     .record(z.string().min(1).max(64), z.string().max(200).nullable())
     .refine((pins) => Object.keys(pins).length <= 100, 'too many tasks in one write'),
+  /** Absent writes the instance-wide layer; present writes that lane's pins. */
+  lane: laneSchema.optional(),
+  /** Lane only: its fallback for tasks with no pin of their own. */
+  defaultModel: z.string().max(200).nullable().optional(),
 });
 
 /**
@@ -134,20 +172,80 @@ export default defineRoutes((ctx) => {
    * them, read off the id prefix (`<moduleId>.<name>`) and titled from the
    * kernel's catalogue, so there is no second registry to keep in step.
    */
-  const taskModelSnapshot = (): TaskModelSnapshot => {
+  const taskModelSnapshot = (lane?: RunLane): TaskModelSnapshot => {
     const titles = new Map<string, string>(ctx.modules.list().map((m) => [m.id, m.title]));
+    const tasks = op.runTaskDescriptors();
+    const laneModels = lane ? op.orchestrator.laneModels(lane, tasks.map((t) => t.id)) : null;
+    const lastRuns = op.runsStore.lastByTask();
+    // Every machine × runtime a lane can be configured for. Personal machines
+    // belonging to somebody else are left out for the same reason they are not
+    // offered in the picker: nobody here can place work there.
+    const lanes = op.runners
+      .list()
+      .filter((runner) => runner.enabled && runner.ownerId === null)
+      .flatMap((runner) =>
+        runner.harnesses.map((harness) => ({
+          runnerId: runner.id,
+          harness: harness.id,
+          label: `${runner.name} · ${harness.label}`,
+        })),
+      );
     return {
-      tasks: op.runTaskDescriptors().map((task): TaskModelPin => {
+      tasks: tasks.map((task): TaskModelPin => {
         const moduleId = taskModuleId(task.id);
         return {
           task,
           moduleId,
           moduleTitle: titles.get(moduleId) ?? moduleId,
           model: op.orchestrator.taskModelPin(task.id),
+          ...(laneModels ? { laneModel: laneModels.pins[task.id] ?? null } : {}),
+          lastRun: lastRuns.get(task.id) ?? null,
         };
       }),
-      models: op.runners.servableModels(),
+      // Scoped to the lane when one is being configured: a runtime that cannot
+      // serve a model must not offer it, or the pin is dropped at dispatch and
+      // nobody is told why.
+      models: lane ? op.runners.modelsForLane(lane.runnerId, lane.harness) : op.runners.servableModels(),
       defaultModel: ctx.config.defaultModel,
+      ...(lane ? { lane, laneDefaultModel: laneModels?.defaultModel ?? null } : {}),
+      lanes,
+    };
+  };
+
+  /**
+   * The lane a person's own actions run in, with everything the picker needs to
+   * render it: the machines they can reach, the runtimes each of those runs,
+   * and the models set on the chosen lane.
+   */
+  const laneSnapshot = (user: AuthUser | null) => {
+    const lane = user ? op.orchestrator.userLane(user.username) : { runnerId: null, harness: null };
+    return {
+      lane,
+      // Personal machines belonging to somebody else are not choices this
+      // person can make, so they are not offered as ones.
+      machines: op.runners
+        .list()
+        .filter((runner) => runner.enabled && (runner.ownerId === null || runner.ownerId === user?.username))
+        .map((runner) => ({
+          id: runner.id,
+          name: runner.name,
+          status: runner.health.status,
+          harnesses: runner.harnesses.map((h) => ({ id: h.id, label: h.label })),
+        })),
+      // Which of those the Task models page can actually represent. It lists
+      // shared machines only, so a link from a personal one would arrive at a
+      // lane its "Applies to" select has no option for.
+      lanesConfigurable: op.runners
+        .list()
+        .filter((runner) => runner.enabled && runner.ownerId === null)
+        .map((runner) => runner.id),
+      models: op.orchestrator.laneModels(lane, op.runTaskDescriptors().map((t) => t.id)),
+      // Scoped to the chosen lane, so a page asking "what will this run on"
+      // gets the models that lane can actually serve, not the instance's union.
+      servable:
+        lane.runnerId !== null
+          ? op.runners.modelsForLane(lane.runnerId, lane.harness)
+          : op.runners.servableModels(),
     };
   };
 
@@ -198,6 +296,35 @@ export default defineRoutes((ctx) => {
       path: '/api/runs',
       access: 'runs:read',
       handler: ({ user }) => ({ runs: op.orchestrator.listRuns().filter((r) => canSeeRun(user, r)) }),
+    }),
+
+    route({
+      method: 'GET',
+      path: '/api/runs/page',
+      access: 'runs:read',
+      handler: ({ query, user }) => {
+        if (!user) return { runs: [], total: 0 };
+        const workspaceId = queryText(query.get('workspace'), 100, 'workspace');
+        if (workspaceId) workspace.requireAccessible(user, workspaceId);
+        return op.orchestrator.listRunsPage({
+          userId: user.username,
+          repoNames: workspaceId ? workspace.repoNames(workspaceId) : undefined,
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 200, 'repo'),
+          kind: queryChoice(
+            query.get('kind'),
+            ['interactive', 'assistant', 'triage', 'fix', 'analysis', 'implement', 'report'] as const,
+            'kind',
+          ),
+          status: queryChoice(
+            query.get('status'),
+            ['active', 'review', 'running', 'completed', 'failed', 'stopped'] as const,
+            'status',
+          ),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
+      },
     }),
 
     route({
@@ -354,6 +481,38 @@ export default defineRoutes((ctx) => {
         requireRunAccess(user, params.id);
         await op.orchestrator.abortTurn(params.id, body.turnId);
         return { ok: true };
+      },
+    }),
+
+    /** Which machine and runtime this person's own actions run on. */
+    route({
+      method: 'GET',
+      path: '/api/me/lane',
+      access: 'runs:read',
+      handler: ({ user }) => laneSnapshot(user),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/api/me/lane',
+      access: 'runs:act',
+      body: laneSchema,
+      handler: ({ body, user }) => {
+        op.orchestrator.setUserLane(user!.username, body);
+        return laneSnapshot(user);
+      },
+    }),
+
+    /** A model on a lane: the lane's default, or its pin for one task. */
+    route({
+      method: 'PUT',
+      path: '/api/me/lane/model',
+      access: 'runs:act',
+      body: laneModelSchema,
+      handler: ({ body, user }) => {
+        if (body.task === undefined) op.orchestrator.setLaneDefaultModel(body.lane, body.model);
+        else op.orchestrator.setLaneTaskPin(body.lane, body.task, body.model);
+        return laneSnapshot(user);
       },
     }),
 
@@ -629,7 +788,11 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/settings/task-models',
       access: 'settings:manage',
-      handler: () => taskModelSnapshot(),
+      handler: ({ query }) => {
+        const runnerId = query.get('runner');
+        const harness = query.get('harness');
+        return taskModelSnapshot(runnerId && harness ? { runnerId, harness } : undefined);
+      },
     }),
 
     route({
@@ -647,11 +810,17 @@ export default defineRoutes((ctx) => {
           if (!known.has(task)) throw badRequest(`unknown task ${task}`);
         }
         for (const [task, model] of Object.entries(body.pins)) {
-          op.orchestrator.setTaskModelPin(task, model);
+          if (body.lane) op.orchestrator.setLaneTaskPin(body.lane, task, model);
+          else op.orchestrator.setTaskModelPin(task, model);
         }
-        // Instance-wide policy: every other admin's page is now stale.
+        if (body.lane && body.defaultModel !== undefined) {
+          op.orchestrator.setLaneDefaultModel(body.lane, body.defaultModel);
+        }
+        // Instance-wide policy: every other admin's page is now stale. A lane's
+        // own pins are broadcast too, so a second tab editing the same lane
+        // does not sit on a copy that is already wrong.
         ctx.broadcast({ t: 'task-models.changed' });
-        return taskModelSnapshot();
+        return taskModelSnapshot(body.lane ?? undefined);
       },
     }),
 

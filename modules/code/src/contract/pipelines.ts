@@ -8,6 +8,10 @@
  * server-side handler; adding a step kind = one union member + one handler.
  */
 
+// Type-only, so this leaves no runtime edge back to the barrel that re-exports
+// this file.
+import type { ReviewDepth, ReviewPostMode, ReviewStrictness } from './index.js';
+
 export type PipelineType = 'pr' | 'issue' | 'platform';
 
 export type PipelineStepKind =
@@ -108,7 +112,18 @@ export interface AiReviewStep extends BaseStep {
     /** Post the review to GitHub when it completes. */
     readonly post: boolean;
     /** When the step itself counts as failed. */
-    readonly failOn: 'request_changes' | 'high_risk' | 'never';
+    readonly failOn: 'request_changes' | 'high_risk' | 'blocker' | 'never';
+    /**
+     * How the agent reviews, and how much it reports. All three are optional
+     * because pipelines saved before anchored reviews existed carry a config
+     * without them; absent means the review's own defaults.
+     */
+    readonly depth?: ReviewDepth;
+    readonly strictness?: ReviewStrictness;
+    /** Adversarial second pass. Defaults to on for in-depth reviews. */
+    readonly verify?: boolean;
+    /** How much of the review `post` publishes. Absent means summary + inline. */
+    readonly postMode?: ReviewPostMode;
   };
 }
 
@@ -395,7 +410,7 @@ export interface PipelineRecord {
 
 // ---------- execution ------------------------------------------------------------
 
-export type PipelineRunStatus = 'running' | 'passed' | 'failed' | 'error';
+export type PipelineRunStatus = 'running' | 'passed' | 'failed' | 'cancelled' | 'error';
 
 export type StepResultStatus =
   | 'pending'
@@ -404,8 +419,25 @@ export type StepResultStatus =
   | 'awaiting'
   | 'passed'
   | 'failed'
+  | 'cancelled'
   | 'skipped'
   | 'error';
+
+/**
+ * Bounded, secret-scrubbed tail of a command step's stdout/stderr.
+ *
+ * `sequence` is incremented for every emitted chunk. The browser uses it to
+ * reconcile an immediate WS stream with a slower persisted replay without
+ * duplicating or rolling back text after a reconnect.
+ */
+export const MAX_PIPELINE_STEP_LOG_CHARS = 64_000;
+
+export interface PipelineStepLog {
+  readonly text: string;
+  readonly sequence: number;
+  readonly truncated: boolean;
+  readonly updatedAt: number;
+}
 
 export interface PipelineStepResult {
   readonly name: string;
@@ -415,6 +447,8 @@ export interface PipelineStepResult {
   readonly summary: string | null;
   /** Longer output (agent verdict detail, review body, …). */
   readonly detail: string | null;
+  /** Absent on legacy records and on steps that do not emit command output. */
+  readonly log?: PipelineStepLog | null;
   /**
    * Named values this step exported for later steps to interpolate as
    * `{{steps.<name>.outputs.<key>}}`. Persisted with the run, so it is visible
@@ -457,6 +491,10 @@ export type PipelineTrigger = 'manual' | 'pr-opened' | 'issue-opened';
 export interface PipelineRunRecord {
   readonly id: string;
   readonly pipelineId: string;
+  /** Profile that started the run; null only for history created before attribution existed. */
+  readonly ownerId: string | null;
+  /** Denormalized so workspace history survives pipeline deletion. */
+  readonly workspaceId: string | null;
   /** Denormalized so history survives pipeline deletion. */
   readonly pipelineName: string;
   /** What the run targeted (copied from the pipeline's type at start). */

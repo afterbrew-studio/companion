@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { useRuns } from './useRuns.js';
+import { useWorkspace } from '@companion/module-workspace/client';
+import { useRunsPage } from './useRuns.js';
 import { useRunQueue } from './useRunQueue.js';
 
 export type AiActivity = 'running' | 'queued';
@@ -11,14 +12,17 @@ export type AiActivity = 'running' | 'queued';
  * itself up directly. `running` wins over `queued`.
  */
 export function useAiActivity(): Map<string, AiActivity> {
-  const { runs } = useRuns();
+  const { current } = useWorkspace();
+  // Filter before the limit: a large terminal history must never hide the few
+  // runs that are actually acting on cards in the current workspace.
+  const { runs } = useRunsPage({ workspaceId: current?.id, status: 'active', limit: 100 });
   const { entries } = useRunQueue();
   return useMemo(() => {
     const map = new Map<string, AiActivity>();
     for (const e of entries) {
       if (e.repo && e.issueNumber != null) map.set(`${e.repo}#${e.issueNumber}`, 'queued');
     }
-    for (const r of runs) {
+    for (const r of runs ?? []) {
       if (r.repo && r.issueNumber != null && (r.status === 'running' || r.status === 'provisioning')) {
         map.set(`${r.repo}#${r.issueNumber}`, 'running');
       }

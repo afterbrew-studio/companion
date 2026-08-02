@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { RunListRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
 import type { ReportRecord, WeeklyCounts, WorkspaceMetrics } from '@companion/module-workspace/contract';
-import type { IssueRecord, PipelineRunRecord, PrRecord, RepoRecord } from '../../contract/index.js';
+import type { IssueListRecord, PipelineRunRecord, PrListRecord, RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 
 /**
@@ -49,18 +49,19 @@ export interface UseOverview {
   readonly repos: RepoRecord[] | null;
   readonly metrics: WorkspaceMetrics | null;
   /** Runs and reports already scoped to this workspace's repos (or instance-wide). */
-  readonly workspaceRuns: RunRecord[] | null;
+  readonly workspaceRuns: RunListRecord[] | null;
   readonly workspaceReports: ReportRecord[] | null;
   readonly pipelineRuns: PipelineRunRecord[] | null;
 
   readonly openIssueCount: number | null;
-  readonly openPrs: PrRecord[] | null;
-  readonly failingPrs: PrRecord[] | null;
-  readonly liveRuns: RunRecord[] | null;
-  readonly reviewRuns: RunRecord[] | null;
+  readonly openPrCount: number | null;
+  readonly openPrs: PrListRecord[] | null;
+  readonly failingPrs: PrListRecord[] | null;
+  readonly liveRuns: RunListRecord[] | null;
+  readonly reviewRuns: RunListRecord[] | null;
   readonly actionableProposals: OverviewProposal[] | null;
-  readonly prReviewsPending: PrRecord[] | null;
-  readonly triagePending: IssueRecord[] | null;
+  readonly prReviewsPending: PrListRecord[] | null;
+  readonly triagePending: IssueListRecord[] | null;
   /** Null while any of the attention feeds is still loading. */
   readonly attentionCount: number | null;
 
@@ -72,10 +73,27 @@ export interface UseOverview {
 
 // Stable fetchers (useFeed keys its refresh on identity — an inline arrow
 // would refetch every render). Reports stay best-effort, as before.
-const fetchOpenIssues = (id: string): Promise<IssueRecord[]> => api.workspaceIssues(id, 'open').then((r) => r.issues);
-const fetchPrs = (id: string): Promise<PrRecord[]> => api.workspacePrs(id).then((r) => r.prs);
+const fetchOpenIssues = (id: string): Promise<{ total: number }> =>
+  api.workspaceIssues(id, 'open', { limit: 1 }).then((r) => ({ total: r.total }));
+const fetchPrs = (id: string): Promise<{ prs: PrListRecord[]; total: number }> =>
+  api.workspacePrs(id, 'open', { limit: 100 }).then((r) => ({ prs: r.prs, total: r.total }));
 const fetchProposals = (id: string): Promise<OverviewProposal[]> => workspaceProposals(id).then((r) => r.proposals);
-const fetchRuns = (): Promise<RunRecord[]> => operateApi.listRuns().then((r) => r.runs);
+interface OverviewRunFeed {
+  readonly recent: RunListRecord[];
+  readonly active: RunListRecord[];
+  readonly review: RunListRecord[];
+  readonly reviewTotal: number;
+}
+const fetchRuns = async (id: string): Promise<OverviewRunFeed> => {
+  // Filter before bounding: a long terminal history must not hide live work or
+  // under-count the queue awaiting maintainer review.
+  const [recent, active, review] = await Promise.all([
+    operateApi.listRunsPage({ workspace: id, limit: 100 }),
+    operateApi.listRunsPage({ workspace: id, status: 'active', limit: 100 }),
+    operateApi.listRunsPage({ workspace: id, status: 'review', limit: 100 }),
+  ]);
+  return { recent: recent.runs, active: active.runs, review: review.runs, reviewTotal: review.total };
+};
 const fetchPipelineRuns = (id: string): Promise<PipelineRunRecord[]> => api.workspacePipelineRuns(id).then((r) => r.runs);
 const fetchRepos = (id: string): Promise<RepoRecord[]> => api.workspaceRepos(id).then((r) => r.repos);
 const fetchMetrics = (id: string): Promise<WorkspaceMetrics> => workspaceApi.workspaceMetrics(id).then((r) => r.metrics);
@@ -84,9 +102,9 @@ const fetchReports = (): Promise<ReportRecord[]> =>
     .listReports()
     .then((r) => r.reports)
     .catch(() => []);
-const fetchPendingReviews = (id: string): Promise<PrRecord[]> =>
+const fetchPendingReviews = (id: string): Promise<PrListRecord[]> =>
   api.workspacePrs(id, 'open', { review: 'pending', limit: 50 }).then((r) => r.prs);
-const fetchPendingTriage = (id: string): Promise<IssueRecord[]> =>
+const fetchPendingTriage = (id: string): Promise<IssueListRecord[]> =>
   api.workspaceIssues(id, 'open', { triage: 'pending', limit: 50 }).then((r) => r.issues);
 
 /**
@@ -100,17 +118,23 @@ function useFeed<T>(
 ): { data: T | null; error: string | null } {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestSequence = useRef(0);
   // Workspace switch: back to the loader.
   useEffect(() => {
+    requestSequence.current += 1;
     setData(null);
     setError(null);
   }, [id]);
   const refresh = useCallback(async () => {
     if (!id) return;
+    const requestId = ++requestSequence.current;
     try {
-      setData(await fetcher(id));
+      const next = await fetcher(id);
+      if (requestId !== requestSequence.current) return;
+      setData(next);
       setError(null);
     } catch (err) {
+      if (requestId !== requestSequence.current) return;
       setError(String(err));
     }
   }, [id, fetcher]);
@@ -160,19 +184,21 @@ export function useOverview(): UseOverview {
   // Workspace scoping needs the repo list — run-derived slices hold until both landed.
   const wsRepoNames = repos.data ? new Set(repos.data.map((r) => r.fullName)) : null;
   const inWorkspace = (repo: string | null): boolean => repo === null || (wsRepoNames?.has(repo) ?? false);
-  const scopedRuns = runs.data && wsRepoNames ? runs.data.filter((r) => inWorkspace(r.repo)) : null;
-  const openPrs = prs.data?.filter((p) => p.state === 'open') ?? null;
+  const scopedRuns = runs.data && wsRepoNames ? runs.data.recent.filter((r) => inWorkspace(r.repo)) : null;
+  const scopedActiveRuns = runs.data && wsRepoNames ? runs.data.active.filter((r) => inWorkspace(r.repo)) : null;
+  const openPrs = prs.data?.prs ?? null;
   const failingPrs = openPrs?.filter((p) => p.checks?.state === 'failing') ?? null;
-  const liveRuns = scopedRuns?.filter((r) => r.live) ?? null;
-  const reviewRuns = scopedRuns?.filter((r) => r.status === 'review') ?? null;
+  const liveRuns = scopedActiveRuns?.filter((r) => r.live) ?? null;
+  const reviewRuns = runs.data && wsRepoNames ? runs.data.review.filter((r) => inWorkspace(r.repo)) : null;
+  const reviewRunTotal = runs.data?.reviewTotal ?? null;
   // Without plan there are no proposals to wait for, so an empty list rather
   // than `null`: a permanently-loading tile would be its own bug.
   const actionableProposals = planEnabled
     ? (proposals.data?.filter((p) => p.status === 'analyzed' || p.status === 'review') ?? null)
     : [];
   const attentionCount =
-    reviewRuns && pendingReviews.data && pendingTriage.data && failingPrs && actionableProposals
-      ? reviewRuns.length +
+    reviewRunTotal !== null && pendingReviews.data && pendingTriage.data && failingPrs && actionableProposals
+      ? reviewRunTotal +
         pendingReviews.data.length +
         pendingTriage.data.length +
         failingPrs.length +
@@ -181,26 +207,26 @@ export function useOverview(): UseOverview {
 
   const issueBacklog =
     metrics.data && issues.data
-      ? backlogTrend(metrics.data.weekly, issues.data.length, (w) => w.issuesOpened, (w) => w.issuesClosed)
+      ? backlogTrend(metrics.data.weekly, issues.data.total, (w) => w.issuesOpened, (w) => w.issuesClosed)
       : null;
   const prBacklog =
-    metrics.data && openPrs
-      ? backlogTrend(metrics.data.weekly, openPrs.length, (w) => w.prsOpened, (w) => w.prsClosed)
+    metrics.data && prs.data
+      ? backlogTrend(metrics.data.weekly, prs.data.total, (w) => w.prsOpened, (w) => w.prsClosed)
       : null;
   const issueBacklogDelta =
     metrics.data && issues.data
       ? {
-          current: issues.data.length,
-          previous: Math.max(0, issues.data.length - (metrics.data.issuesOpened7d - metrics.data.issuesClosed7d)),
+          current: issues.data.total,
+          previous: Math.max(0, issues.data.total - (metrics.data.issuesOpened7d - metrics.data.issuesClosed7d)),
           period: 'vs 7 days ago',
           upIsGood: false,
         }
       : undefined;
   const prBacklogDelta =
-    metrics.data && openPrs
+    metrics.data && prs.data
       ? {
-          current: openPrs.length,
-          previous: Math.max(0, openPrs.length - (metrics.data.prsOpened7d - metrics.data.prsClosed7d)),
+          current: prs.data.total,
+          previous: Math.max(0, prs.data.total - (metrics.data.prsOpened7d - metrics.data.prsClosed7d)),
           period: 'vs 7 days ago',
           upIsGood: false,
         }
@@ -215,7 +241,8 @@ export function useOverview(): UseOverview {
     workspaceRuns: scopedRuns,
     workspaceReports: reports.data && wsRepoNames ? reports.data.filter((r) => inWorkspace(r.repo)) : null,
     pipelineRuns: pipelineRuns.data,
-    openIssueCount: issues.data?.length ?? null,
+    openIssueCount: issues.data?.total ?? null,
+    openPrCount: prs.data?.total ?? null,
     openPrs,
     failingPrs,
     liveRuns,

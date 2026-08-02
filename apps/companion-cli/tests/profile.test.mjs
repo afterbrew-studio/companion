@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OPTIONAL_MODULES, modulesFor, profileFromEnv, requires, withDependencies } from '../dist/profile.js';
 
-test('slim starts with nothing optional, full starts with all of it', () => {
-  assert.deepEqual(modulesFor('slim'), []);
+test('slim includes the daily digest dependencies, full starts with every optional module', () => {
+  assert.deepEqual(modulesFor('slim'), ['plan', 'automations']);
   assert.deepEqual(modulesFor('full'), OPTIONAL_MODULES.map((m) => m.id));
 });
 

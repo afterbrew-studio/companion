@@ -70,7 +70,7 @@ test('a card created without a model stores null, and one created with a model k
   assert.equal(service.createTask({ ...base, title: 'inherits' }).model, null);
   assert.equal(service.createTask({ ...base, title: 'blank' , model: '  ' }).model, null);
   assert.equal(service.createTask({ ...base, title: 'chosen', model: 'opus' }).model, 'opus');
-  assert.equal(store.listTasks().find((t) => t.title === 'chosen').model, 'opus');
+  assert.equal(store.listTasks('ws-1').find((t) => t.title === 'chosen').model, 'opus');
   service.dispose();
   db.close();
 });

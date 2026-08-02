@@ -107,6 +107,9 @@ export const repositoryPlanningContextSchema = z
   })
   .strict();
 
+/** Frozen-corpus compatibility version for cached-context clarification. */
+export const PLANNER_CLARIFICATION_PROMPT_VERSION = 1;
+
 const initialClarificationSchema = z
   .object({
     ...clarificationFields,
@@ -425,6 +428,24 @@ Reply with ONLY strict JSON, no markdown or prose, matching exactly:
   },
   "questions": ${questionsExample}
 }`;
+}
+
+const plannerEvaluationFixtureSchema = z
+  .object({
+    idea: z.string().min(1).max(20_000),
+    brief: featureBriefSchema,
+    answers: z
+      .array(z.object({ question: z.string().max(1_000), answer: z.string().max(4_000) }).strict())
+      .max(15),
+    maxQuestions: z.number().int().min(0).max(3),
+    repositoryContext: repositoryPlanningContextSchema,
+    resolvedDecisionKeys: z.array(z.string().min(1).max(100)).max(30),
+  })
+  .strict();
+
+/** Build the exact cached-context production prompt from a frozen fixture. */
+export function buildPlannerClarificationEvaluationPrompt(fixture: unknown): string {
+  return clarificationPrompt(plannerEvaluationFixtureSchema.parse(fixture));
 }
 
 function removeVerbatimOriginalIdea(brief: FeatureBrief, idea: string): FeatureBrief {

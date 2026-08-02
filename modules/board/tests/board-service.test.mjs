@@ -2,6 +2,65 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixture, insertDeveloper, insertTask } from './fixture.mjs';
 
+test('board list query is scoped in SQLite before rows from another workspace are materialized', () => {
+  const { db, store } = fixture();
+  insertTask(store, { id: 'tsk-one', workspaceId: 'ws-1', title: 'Workspace one' });
+  insertTask(store, { id: 'tsk-two', workspaceId: 'ws-2', title: 'Workspace two' });
+
+  assert.deepEqual(store.listTasks('ws-1').map((task) => task.id), ['tsk-one']);
+  assert.deepEqual(store.listTasks('ws-2').map((task) => task.id), ['tsk-two']);
+  db.close();
+});
+
+test('board keeps active work complete while paging the Done archive by repository', () => {
+  const { db, store } = fixture();
+  insertTask(store, { id: 'active-other', repo: 'owner/other', status: 'ready', createdAt: 10, updatedAt: 10 });
+  for (let index = 0; index < 230; index += 1) {
+    insertTask(store, {
+      id: `done-${String(index).padStart(3, '0')}`,
+      status: 'done',
+      stage: null,
+      createdAt: index,
+      updatedAt: index,
+      finishedAt: index,
+    });
+  }
+  insertTask(store, {
+    id: 'done-other-repo', repo: 'owner/other', status: 'done', stage: null,
+    createdAt: 999, updatedAt: 999, finishedAt: 999,
+  });
+
+  const middle = store.listBoardTasks('ws-1', { doneRepo: 'owner/repo', doneLimit: 100, doneOffset: 100 });
+  assert.equal(middle.doneTotal, 230);
+  assert.equal(middle.doneOffset, 100);
+  assert.equal(middle.tasks.filter((task) => task.status !== 'done').length, 1);
+  assert.equal(middle.tasks.filter((task) => task.status === 'done').length, 100);
+  assert.equal(middle.tasks.find((task) => task.status === 'done').id, 'done-129');
+  assert.deepEqual(middle.taskRepos, ['owner/other', 'owner/repo']);
+
+  const final = store.listBoardTasks('ws-1', { doneRepo: 'owner/repo', doneLimit: 100, doneOffset: 999_999 });
+  assert.equal(final.doneOffset, 200);
+  assert.equal(final.tasks.filter((task) => task.status === 'done').length, 30);
+  assert.equal(final.tasks.at(-1).id, 'done-000');
+  db.close();
+});
+
+test('board cards omit long authoring fields and attachment bodies', () => {
+  const { db, store, makeService } = fixture();
+  insertTask(store, {
+    description: 'd'.repeat(20_000),
+    acceptance: 'a'.repeat(10_000),
+    attachments: [{ name: 'evidence.png', mediaType: 'image/png', content: 'base64-body' }],
+  });
+
+  const snapshot = makeService().listBoard({ username: 'alice' }, 'ws-1');
+  assert.equal(snapshot.tasks.length, 1);
+  assert.equal(Object.hasOwn(snapshot.tasks[0], 'description'), false);
+  assert.equal(Object.hasOwn(snapshot.tasks[0], 'acceptance'), false);
+  assert.equal(snapshot.tasks[0].attachments[0].content, null);
+  db.close();
+});
+
 test('developer blocker is deduplicated across ticks and service restarts', async () => {
   const { db, store, notifications, makeService } = fixture();
   insertTask(store);
@@ -51,6 +110,67 @@ test('manual completion clears the reviewer blocker', async () => {
 
   await service.moveTask('tsk-1', 'done');
   assert.equal(store.hasActiveBlocker('tsk-1', 'reviewer'), false);
+  db.close();
+});
+
+test('a current pending review waits for human publication instead of running again', async () => {
+  const latestReview = {
+    source: 'agent',
+    status: 'pending',
+    headSha: 'head-1',
+    error: null,
+    coverage: { state: 'complete' },
+    verdict: { recommendation: 'approve' },
+  };
+  const { db, store, notifications, makeService } = fixture({ latestReview });
+  insertTask(store, {
+    status: 'in_review',
+    stage: 'awaiting_merge',
+    prNumber: 14,
+    prUrl: 'https://example.test/pr/14',
+    reviewRisk: 'low',
+    reviewRecommendation: 'approve',
+  });
+
+  const service = makeService();
+  await service.tick();
+
+  assert.equal(store.getTask('tsk-1').stage, 'awaiting_merge');
+  assert.equal(store.listEvents('tsk-1').some((event) => event.kind === 'review_stale'), false);
+  assert.equal(notifications.length, 0);
+  service.dispose();
+  db.close();
+});
+
+test('a manually published request-changes review resumes remediation', async () => {
+  const latestReview = {
+    source: 'agent',
+    status: 'applied',
+    headSha: 'head-1',
+    error: null,
+    coverage: { state: 'complete' },
+    verdict: { recommendation: 'request_changes' },
+  };
+  const { db, store, makeService } = fixture({ latestReview });
+  insertTask(store, {
+    status: 'in_review',
+    stage: 'awaiting_merge',
+    prNumber: 14,
+    prUrl: 'https://example.test/pr/14',
+    reviewRisk: 'high',
+    reviewRecommendation: 'request_changes',
+  });
+
+  const service = makeService();
+  await service.tick();
+
+  const task = store.getTask('tsk-1');
+  assert.equal(task.status, 'ready');
+  assert.equal(task.stage, 'address_review');
+  assert.equal(task.attempts, 1);
+  assert.equal(store.listEvents('tsk-1').some((event) => event.kind === 'changes_requested'), true);
+  service.dispose();
+  await new Promise((resolve) => setImmediate(resolve));
   db.close();
 });
 

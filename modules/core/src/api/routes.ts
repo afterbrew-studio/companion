@@ -6,7 +6,7 @@ import {
   route,
   created,
   badRequest,
-  document,
+  documentStream,
   forbidden,
   HttpError,
   isModuleId,
@@ -88,7 +88,12 @@ const addModuleSchema = z.object({
   force: z.boolean().optional(),
 });
 const scopeEnum = z.enum(['workspace', 'global']);
-const updateProfileSchema = z.object({ notificationScope: scopeEnum.nullable().optional() });
+const updateProfileSchema = z.object({
+  notificationScope: scopeEnum.nullable().optional(),
+  // Bounded so a client cannot grow one settings row without limit; the keys are
+  // module-owned strings the server never resolves, so anything else is ignored.
+  hiddenNav: z.array(z.string().min(1).max(64)).max(200).optional(),
+});
 const updateAccountSchema = z
   .object({
     displayName: z.string().trim().min(1).max(60).optional(),
@@ -119,7 +124,10 @@ export default defineRoutes((ctx) => {
     if (role !== undefined && !ctx.rbac.hasRole(role)) throw badRequest(`unknown role: ${role}`);
   };
   const profileResponse = (username: string): ProfileResponse => ({
-    profile: { notificationScope: settings.userNotificationScope(username) },
+    profile: {
+      notificationScope: settings.userNotificationScope(username),
+      hiddenNav: settings.userHiddenNav(username),
+    },
     defaults: { notificationScope: settings.notificationDefaultScope() },
   });
 
@@ -258,23 +266,23 @@ export default defineRoutes((ctx) => {
       handler: () => ctx.services.get('auditForwarder').state(),
     }),
     route({
-      // "Get our data out" as one NDJSON stream: one JSON object per line, so a
-      // year of entries neither builds a giant array in memory nor needs paging
-      // logic in whatever ingests it.
+      // "Get our data out" as one real NDJSON stream: one bounded DB page and
+      // one response chunk at a time, with HTTP backpressure.
       method: 'GET',
       path: '/api/audit/export',
       access: 'audit:read',
       handler: ({ query }) => {
         const since = Number(query.get('since'));
-        let before: number | undefined;
-        const lines: string[] = [];
-        for (;;) {
-          const page = audit.list({ since: Number.isFinite(since) ? since : undefined, before, limit: 1000 });
-          if (!page.length) break;
-          for (const e of page) lines.push(JSON.stringify(e));
-          before = page[page.length - 1]!.id;
-        }
-        return document(`${lines.join('\n')}\n`, 'application/x-ndjson', 'companion-audit.ndjson');
+        const entries = async function* (): AsyncGenerator<string> {
+          let before: number | undefined;
+          for (;;) {
+            const page = audit.list({ since: Number.isFinite(since) ? since : undefined, before, limit: 1000 });
+            if (!page.length) return;
+            yield `${page.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+            before = page[page.length - 1]!.id;
+          }
+        };
+        return documentStream(entries(), 'application/x-ndjson', 'companion-audit.ndjson');
       },
     }),
 
@@ -558,6 +566,7 @@ export default defineRoutes((ctx) => {
       handler: ({ user, body }): ProfileResponse => {
         if (!user) throw new AuthError('authentication required', 401);
         if ('notificationScope' in body) settings.setUserNotificationScope(user.username, body.notificationScope ?? null);
+        if (body.hiddenNav) settings.setUserHiddenNav(user.username, body.hiddenNav);
         return profileResponse(user.username);
       },
     }),

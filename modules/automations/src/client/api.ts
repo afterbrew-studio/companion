@@ -15,7 +15,14 @@ export const automationsApi = {
   // per-repo automation switches + webhook receiver
   setAutomation: (
     fullName: string,
-    fields: { autoTriage?: boolean; digest?: boolean; staleSweep?: boolean; prGate?: boolean; autoMerge?: boolean },
+    fields: {
+      autoTriage?: boolean;
+      digest?: boolean;
+      staleSweep?: boolean;
+      prGate?: boolean;
+      autoMerge?: boolean;
+      reviewReplies?: boolean;
+    },
   ) => post<{ repo: RepoRecord }>(`/api/repos/${fullName}/automation`, fields),
   /** The preset catalogue, served so the choices and what they write cannot drift. */
   repoPresets: () => request<{ presets: RepoPreset[] }>('/api/repo-presets'),

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
+  AgentRunAccess,
   AgentStorageCleanupRequest,
   AgentVerifyResponse,
   AgentStorageCleanupResponse,
@@ -25,7 +26,7 @@ import { runMoxxyProvision } from '../exec/provision.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
-import { runCommand, runVerify, type ExecOptions } from '../exec/verify.js';
+import { killAllCommands, runCommand, runVerify, type ExecOptions } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
 /** What a run executes as on this machine, read off its row when it starts. */
@@ -145,7 +146,7 @@ export class LocalRunnerBackend implements RunnerBackend {
     return runMoxxyProvision(this.moxxyCliPath, paths.moxxyHome(), spec);
   }
 
-  async spawn(runId: string, cwd: string): Promise<void> {
+  async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
     mkdirSync(cwd, { recursive: true });
     const spec = this.host.runSpec(runId);
     // Named rather than "everything that is not moxxy": a run recorded under a
@@ -153,7 +154,7 @@ export class LocalRunnerBackend implements RunnerBackend {
     // machine ran before the choice existed, not on whichever branch happens to
     // be last.
     if (spec.harness !== CLAUDE_CODE_HARNESS.id && spec.harness !== CODEX_HARNESS.id) {
-      await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath });
+      await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath, access });
       return;
     }
     if (this.sessions.has(runId)) return;
@@ -170,8 +171,8 @@ export class LocalRunnerBackend implements RunnerBackend {
     };
     const harness =
       spec.harness === CODEX_HARNESS.id
-        ? new CodexHarness({ runId, cwd, cliPath: 'codex', model: spec.model }, handlers)
-        : new ClaudeCodeHarness({ runId, cwd, cliPath: 'claude', model: spec.model }, handlers);
+        ? new CodexHarness({ runId, cwd, cliPath: 'codex', model: spec.model, access }, handlers)
+        : new ClaudeCodeHarness({ runId, cwd, cliPath: 'claude', model: spec.model, access }, handlers);
     await harness.connect();
     this.sessions.set(runId, harness);
   }
@@ -304,8 +305,8 @@ export class LocalRunnerBackend implements RunnerBackend {
   diffVsBase(cwd: string, baseBranch: string): Promise<string> {
     return this.checkouts.diffVsBase(cwd, baseBranch);
   }
-  commitAll(cwd: string, message: string): Promise<void> {
-    return this.checkouts.commitAll(cwd, message);
+  commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void> {
+    return this.checkouts.commitAll(cwd, message, author);
   }
   /** This machine runs it directly; there is no agent hop to degrade through. */
   verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse> {
@@ -328,6 +329,7 @@ export class LocalRunnerBackend implements RunnerBackend {
 
   /** Reap every live session, of any kind (daemon shutdown). */
   async stopAll(): Promise<void> {
+    killAllCommands();
     for (const [, session] of this.sessions) session.close();
     this.sessions.clear();
     await this.pool.stopAll();

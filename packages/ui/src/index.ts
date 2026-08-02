@@ -13,3 +13,4 @@ export * from './use-hash-filters.js';
 export * from './use-hash-search.js';
 export * from './use-selection.js';
 export * from './use-flash.js';
+export * from './portal.js';

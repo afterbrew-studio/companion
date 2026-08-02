@@ -1,4 +1,4 @@
-import type { ModuleContext, ScopeResolver } from '@moxxy/companion-sdk/server';
+import type { ScopeResolver } from '@moxxy/companion-sdk/server';
 
 /**
  * Who may see a pipeline step's live output.
@@ -7,23 +7,16 @@ import type { ModuleContext, ScopeResolver } from '@moxxy/companion-sdk/server';
  * `*.changed` signals this module already emits: they carry a repository name
  * and nothing else. `pipelineStep.output` is different in kind — it carries the
  * raw stdout of a command run inside a private repository's checkout, which can
- * name files, print environment detail, or quote source. That must reach only
- * the people who may see the repository at all.
+ * name files, print environment detail, or quote source. The synchronous WS
+ * scope cannot perform the personal GitHub credential check used by REST, so
+ * raw chunks go only to the run owner. Other maintainers read the same bounded,
+ * scrubbed tail through the authenticated log route.
  *
  * Registered in onEnable, so disabling this module removes the claim with it.
  */
-export function createStepOutputScopeResolver(ctx: ModuleContext): ScopeResolver {
+export function createStepOutputScopeResolver(): ScopeResolver {
   return (msg) => {
     if (msg.t !== 'pipelineStep.output') return null;
-    const repo = msg.repo;
-    return (username: string): boolean => {
-      const role = ctx.services.get('core').userRole(username);
-      if (!role) return false;
-      // Same check the REST routes make before returning anything about a repo,
-      // so a socket can never be a way around the workspace rule.
-      return ctx.services
-        .get('workspace')
-        .canAccessRepo({ username, displayName: username, role }, repo);
-    };
+    return (username: string): boolean => username === msg.ownerId;
   };
 }

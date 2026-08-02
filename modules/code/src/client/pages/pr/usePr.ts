@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage } from '@moxxy/companion-sdk/client';
+import { onServerMessage, useCachedResource } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import type { PipelineRecord, PipelineRunRecord, PrRecord, PrReviewResult } from '../../../contract/index.js';
+import type {
+  FindingSeverity,
+  FindingState,
+  PipelineRecord,
+  PipelineRunRecord,
+  PrRecord,
+  PrReviewResult,
+  ReviewOptions,
+  ReviewPostMode,
+} from '../../../contract/index.js';
 import { codeApi as api } from '../../api.js';
 
 /**
@@ -26,9 +35,22 @@ export interface UsePr {
 
   /** AI review agent. */
   readonly analyzing: boolean;
-  readonly analyze: () => Promise<void>;
-  readonly applyReview: (accountId?: string) => Promise<void>;
+  readonly analyze: (opts?: ReviewOptions) => Promise<void>;
+  readonly applyReview: (accountId?: string, mode?: ReviewPostMode) => Promise<void>;
+  readonly cancelReview: () => Promise<void>;
   readonly dismissReview: () => Promise<void>;
+  readonly updateFinding: (
+    id: string,
+    patch: { state?: FindingState; rejectionReason?: string },
+  ) => Promise<void>;
+  /** The reviewer's own inline comment, added to the pending review. */
+  readonly addFinding: (input: {
+    file: string;
+    side: 'LEFT' | 'RIGHT';
+    line: number;
+    body: string;
+    severity?: FindingSeverity;
+  }) => Promise<void>;
 
   /** Branch agents — each opens the building preview for the run it starts. */
   readonly agentBusy: 'checks' | 'reviews' | 'conflicts' | 'custom' | null;
@@ -50,31 +72,32 @@ export function usePr(repo: string, number: number): UsePr {
   const { current } = useWorkspace();
   const canAct = can('prs:act');
 
-  const [pr, setPr] = useState<PrRecord | null>(null);
-  const [review, setReview] = useState<PrReviewResult | null>(null);
-  const [pipelineRuns, setPipelineRuns] = useState<PipelineRunRecord[]>([]);
-  const [ciAnalysis, setCiAnalysis] = useState<ReportRecord | null>(null);
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [agentBusy, setAgentBusy] = useState<'checks' | 'reviews' | 'conflicts' | 'custom' | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const r = await api.getPr(repo, number);
-      setPr(r.pr);
-      setReview(r.review);
-      setPipelineRuns(r.pipelineRuns);
-      setCiAnalysis(r.ciAnalysis);
-      if (r.review && r.review.status !== 'failed') setAnalyzing(false);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [repo, number]);
+  // Coming back to a pull request renders the copy from last time and refreshes
+  // behind it, rather than blanking the page for a round trip to a daemon that
+  // already holds the answer.
+  const load = useCallback(() => api.getPr(repo, number), [repo, number]);
+  const feed = useCachedResource(`pr:${repo}#${number}`, load);
+  const { data, error, setError } = feed;
+  const refresh = feed.refresh;
+
+  const pr = data?.pr ?? null;
+  const review = data?.review ?? null;
+  const pipelineRuns = data?.pipelineRuns ?? [];
+  const ciAnalysis = data?.ciAnalysis ?? null;
+
+  // Durable server state wins over this tab's local click state. This also
+  // restores the progress view after navigation/reload and clears it on every
+  // terminal outcome, failed included.
+  useEffect(() => {
+    if (review) setAnalyzing(review.status === 'running');
+  }, [review]);
 
   useEffect(() => {
-    void refresh();
     if (current && can('pipelines:read')) {
       api
         .workspacePipelines(current.id)
@@ -87,11 +110,11 @@ export function usePr(repo: string, number: number): UsePr {
     });
   }, [refresh, current, can, repo]);
 
-  const analyze = useCallback(async (): Promise<void> => {
+  const analyze = useCallback(async (opts?: ReviewOptions): Promise<void> => {
     setAnalyzing(true);
     setError(null);
     try {
-      await api.analyzePr(repo, number);
+      await api.analyzePr(repo, number, opts);
     } catch (err) {
       setAnalyzing(false);
       setError(String(err));
@@ -112,6 +135,23 @@ export function usePr(repo: string, number: number): UsePr {
       }
     },
     [refresh],
+  );
+
+  const runPipeline = useCallback(
+    async (pipelineId: string): Promise<void> => {
+      setBusy(true);
+      setError(null);
+      try {
+        await api.runPipeline(repo, number, pipelineId);
+        await refresh();
+      } catch (err) {
+        setError(String(err));
+        throw err;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [repo, number, refresh],
   );
 
   // Branch agents push to the PR's own branch, so we follow the run into the
@@ -143,15 +183,27 @@ export function usePr(repo: string, number: number): UsePr {
     pipelineRuns,
     ciAnalysis,
     pipelines,
-    loading: pr === null && error === null,
+    loading: feed.loading,
     error,
     setError,
     refresh,
     canAct,
     analyzing,
     analyze,
-    applyReview: (accountId) => withBusy(() => api.applyPrReview(review!.id, accountId)),
+    applyReview: (accountId, mode) => withBusy(() => api.applyPrReview(review!.id, accountId, mode ? { mode } : {})),
+    cancelReview: () => withBusy(() => api.cancelPrReview(review!.id)),
     dismissReview: () => withBusy(() => api.dismissPrReview(review!.id)),
+    updateFinding: (id, patch) => withBusy(() => api.updateReviewFinding(id, patch)),
+    // A comment may be the first thing anyone does on this PR, so the draft it
+    // hangs on is created here rather than demanded of the caller.
+    addFinding: (input) =>
+      withBusy(async () => {
+        const target =
+          review && (review.status === 'pending' || review.status === 'running')
+            ? review.id
+            : (await api.createReviewDraft(repo, number)).review.id;
+        return api.addReviewFinding(target, input);
+      }),
     agentBusy,
     fixChecks: () => startAgent('checks', () => api.fixChecks(repo, number)),
     addressReviews: () => startAgent('reviews', () => api.addressReviews(repo, number)),
@@ -160,6 +212,6 @@ export function usePr(repo: string, number: number): UsePr {
     busy,
     merge: (method = 'squash') => withBusy(() => api.mergePr(repo, number, method)),
     close: () => withBusy(() => api.closePr(repo, number)),
-    runPipeline: (pipelineId) => withBusy(() => api.runPipeline(repo, number, pipelineId)),
+    runPipeline,
   };
 }

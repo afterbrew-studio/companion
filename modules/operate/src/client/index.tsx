@@ -19,12 +19,15 @@ export { RunQueueIndicator, RunnerCapacityBanner } from './components/RunQueue.j
 export { TokenBurnWidget } from './components/TokenBurn.js';
 export { AgentActivity } from './components/AgentActivity.js';
 export { AskSheet } from './components/AskSheet.js';
+export { LanePicker } from './components/LanePicker.js';
+export { useLane, type UseLane } from './hooks/useLane.js';
+export { LaneNote } from './components/LaneNote.js';
 export { Transcript } from './transcript/Transcript.js';
 export { emptyFold, foldEvent, foldMany } from './transcript/fold.js';
 export type { Block, FoldState } from './transcript/fold.js';
 export { useRun } from './hooks/useRun.js';
 export type { UseRun } from './hooks/useRun.js';
-export { useRuns } from './hooks/useRuns.js';
+export { useRuns, useRunsPage } from './hooks/useRuns.js';
 export { useRunQueue } from './hooks/useRunQueue.js';
 export { useRunnerCapacity } from './hooks/useRunnerCapacity.js';
 export { useAiActivity } from './hooks/useAiActivity.js';

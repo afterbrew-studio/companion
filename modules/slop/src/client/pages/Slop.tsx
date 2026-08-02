@@ -4,28 +4,32 @@ import {
   EmptyState,
   ErrorBar,
   Field,
+  FilterField,
+  FiltersPopover,
   FormActions,
   IconButton,
   ListCard,
-  ListFilterToolbar,
+  ListFooter,
+  MetaSignal,
   Modal,
   Page,
   PageHeader,
   PageLoading,
+  SearchInput,
   SparkleIcon,
   Spinner,
   StatusDot,
-  facet,
   timeAgo,
-  useListFilter,
-  type FilterSelectField,
+  useHashFilters,
+  useHashSearch,
 } from '@moxxy/companion-sdk/ui';
 import { NavIcon } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspaceRepos, codeApi } from '@companion/module-code/client';
-import type { SlopDetectionResult } from '../../contract/index.js';
+import type { PrQualityClass, SlopDetectionResult } from '../../contract/index.js';
 import { slopApi } from '../api.js';
 import { SlopMeter } from '../components/SlopMeter.js';
+import { QUALITY_META } from '../components/PrQualityAssessment.js';
 import { ACTION_LABEL, STATUS_META } from '../detection-meta.js';
 import { useSlopDetections } from '../hooks/useSlopDetections.js';
 
@@ -37,38 +41,19 @@ import { useSlopDetections } from '../hooks/useSlopDetections.js';
  * the score).
  */
 export default function Slop(): JSX.Element {
-  const { current, detections, error, setError } = useSlopDetections();
+  const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['status', 'repo', 'quality'] as const);
+  const { search, setSearch, q } = useHashSearch();
+  const { current, detections, total, loading, hasMore, loadMore, error, setError, refresh } = useSlopDetections({
+    q: q || undefined,
+    status: filters.status === 'all' ? undefined : filters.status,
+    repo: filters.repo === 'all' ? undefined : filters.repo,
+    quality: filters.quality === 'all' ? undefined : filters.quality,
+  });
   const { can } = useAuth();
   const [detecting, setDetecting] = useState(false);
+  const repos = useWorkspaceRepos(current?.id);
 
   const all = detections ?? [];
-  const filterFields: Array<FilterSelectField<SlopDetectionResult>> = [
-    {
-      key: 'status',
-      label: 'Status',
-      allLabel: 'Any status',
-      options: (Object.keys(STATUS_META) as Array<SlopDetectionResult['status']>).map((s) => ({
-        value: s,
-        label: STATUS_META[s].label,
-      })),
-      match: (d, v) => d.status === v,
-    },
-    {
-      key: 'repo',
-      label: 'Repository',
-      allLabel: 'All repositories',
-      options: facet(all, (d) => d.repo).map((r) => ({ value: r, label: r })),
-      match: (d, v) => d.repo === v,
-    },
-  ];
-  const filter = useListFilter(
-    all,
-    (d, needle) =>
-      d.prTitle.toLowerCase().includes(needle) ||
-      d.repo.toLowerCase().includes(needle) ||
-      `${d.repo}#${d.prNumber}`.toLowerCase().includes(needle),
-    filterFields,
-  );
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canAct = can('slop:act');
@@ -83,10 +68,60 @@ export default function Slop(): JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Slop Detection"
-        subtitle={`${current.name}: an agent scores pull requests against your rules; nothing touches GitHub until you apply a verdict`}
+        title="Contribution Quality"
+        subtitle={`${current.name}: assess value, evidence, risk and reviewability; provenance never decides quality by itself`}
         actions={
           <div className="flex items-center gap-1.5">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search assessments…  ( / )"
+              ariaLabel="Search contribution assessments"
+            />
+            <FiltersPopover active={activeFilters} onClear={clearFilters}>
+              <FilterField label="Status">
+                <Dropdown
+                  ariaLabel="Filter assessments by status"
+                  value={filters.status}
+                  onChange={setFilter('status')}
+                  options={[
+                    { value: 'all', label: 'Any status' },
+                    ...(Object.keys(STATUS_META) as Array<SlopDetectionResult['status']>).map((status) => ({
+                      value: status,
+                      label: STATUS_META[status].label,
+                    })),
+                  ]}
+                />
+              </FilterField>
+              {repos.length > 1 ? (
+                <FilterField label="Repository">
+                  <Dropdown
+                    ariaLabel="Filter assessments by repository"
+                    value={filters.repo}
+                    onChange={setFilter('repo')}
+                    searchable
+                    options={[
+                      { value: 'all', label: 'All repositories' },
+                      ...repos.map((repo) => ({ value: repo.fullName, label: repo.fullName })),
+                    ]}
+                  />
+                </FilterField>
+              ) : null}
+              <FilterField label="PR quality">
+                <Dropdown
+                  ariaLabel="Filter assessments by PR quality"
+                  value={filters.quality}
+                  onChange={setFilter('quality')}
+                  options={[
+                    { value: 'all', label: 'Any quality' },
+                    ...(Object.keys(QUALITY_META) as PrQualityClass[]).map((quality) => ({
+                      value: quality,
+                      label: QUALITY_META[quality].label,
+                    })),
+                  ]}
+                />
+              </FilterField>
+            </FiltersPopover>
             {can('slop:manage') ? (
               <IconButton
                 label="Detection rules"
@@ -108,31 +143,34 @@ export default function Slop(): JSX.Element {
 
       {detections === null ? (
         <PageLoading label="Loading detections…" />
-      ) : all.length === 0 ? (
+      ) : error && all.length === 0 ? (
+        <EmptyState
+          title="Could not load contribution assessments"
+          hint="The previous queue remains untouched. Retry when the service is reachable."
+          action={<button className="btn" onClick={() => void refresh()}>Retry</button>}
+        />
+      ) : all.length === 0 && activeFilters === 0 && !search.trim() ? (
         <EmptyState
           title="No detections yet"
-          hint="Point the detector at a pull request and an agent scores it against your workspace's rules: style tells, hallucinated APIs, diff-vs-description drift. Verdicts land here for review."
+          hint="Point the assessor at a pull request. It separates contribution quality from authorship, then leaves every action for human review."
           action={canAct ? detectButton : undefined}
         />
+      ) : all.length === 0 ? (
+        <EmptyState title="No assessments match" hint="Loosen the search or clear the filters." />
       ) : (
-        <>
-          <ListFilterToolbar
-            filter={filter}
-            fields={filterFields}
-            total={all.length}
-            placeholder="Search PR title or repository…"
-            searchLabel="Search detections"
+        <ListCard ariaLabel="Contribution assessments">
+          {all.map((d) => (
+            <DetectionRow key={d.id} detection={d} />
+          ))}
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={all.length}
+            total={total}
+            noun="assessments"
+            onVisible={loadMore}
           />
-          {filter.filtered.length === 0 ? (
-            <EmptyState title="No detections match" hint="Loosen the search or clear the filters." />
-          ) : (
-            <ListCard ariaLabel="Slop detections">
-              {filter.filtered.map((d) => (
-                <DetectionRow key={d.id} detection={d} />
-              ))}
-            </ListCard>
-          )}
-        </>
+        </ListCard>
       )}
 
       {detecting ? <DetectModal workspaceId={current.id} onClose={() => setDetecting(false)} onError={setError} /> : null}
@@ -148,6 +186,8 @@ function DetectionRow({ detection: d }: { detection: SlopDetectionResult }): JSX
     ...(verdict
       ? [
           `${verdict.confidence} confidence`,
+          QUALITY_META[verdict.qualityClass].label,
+          `${verdict.testEvidence} test evidence`,
           `recommends ${ACTION_LABEL[verdict.recommendedAction]}`,
           `${verdict.signals.length} signal${verdict.signals.length === 1 ? '' : 's'}`,
         ]
@@ -167,7 +207,12 @@ function DetectionRow({ detection: d }: { detection: SlopDetectionResult }): JSX
         </span>
         <span className="dim mt-0.5 block truncate text-xs">{detailBits.join(' · ')}</span>
       </span>
-      {verdict ? <SlopMeter value={verdict.aiLikelihood} /> : null}
+      {verdict ? (
+        <span className="flex shrink-0 items-center gap-2">
+          <MetaSignal tone={QUALITY_META[verdict.qualityClass].tone} label={QUALITY_META[verdict.qualityClass].label} />
+          <SlopMeter value={verdict.aiLikelihood} />
+        </span>
+      ) : null}
       <span className="dim shrink-0 text-xs tabular-nums" title={new Date(d.createdAt).toLocaleString()}>
         {timeAgo(d.createdAt)}
       </span>
@@ -198,17 +243,17 @@ function DetectModal({
     if (!effectiveRepo) return;
     let cancelled = false;
     void codeApi
-      .listPrs(effectiveRepo)
+      .workspacePrs(workspaceId, 'open', { repo: effectiveRepo, limit: 100 })
       .then(({ prs }) => {
         if (cancelled) return;
-        setPrs(prs.filter((pr) => pr.state === 'open').map((pr) => ({ number: pr.number, title: pr.title })));
+        setPrs(prs.map((pr) => ({ number: pr.number, title: pr.title })));
         setPrNumber(null);
       })
       .catch(() => setPrs([]));
     return () => {
       cancelled = true;
     };
-  }, [effectiveRepo]);
+  }, [effectiveRepo, workspaceId]);
 
   const effectivePr = prNumber ?? (prs[0] ? String(prs[0].number) : null);
 

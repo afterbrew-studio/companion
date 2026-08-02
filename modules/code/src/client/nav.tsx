@@ -1,9 +1,10 @@
 import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * module-code's sidebar contributions. It owns the Code group; the repos and
- * github entries attach to the operate section and overview to the workspace
- * section (module ≠ group — the sidebar is a shared, ordered namespace).
+ * module-code's sidebar contributions. It owns the Code group; overview attaches
+ * to the workspace section and the GitHub account to core's Integrations
+ * settings group, which is configuration rather than a work surface (module ≠
+ * group: the sidebar is a shared, ordered namespace).
  * Icons copied exactly from the legacy modules.tsx registry.
  */
 
@@ -14,6 +15,12 @@ const icons = {
       <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
       <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
       <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
+    </NavIcon>
+  ),
+  needsAttention: (
+    <NavIcon>
+      <path d="M18 8.5a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5z" />
+      <path d="M10.5 19a2 2 0 0 0 3 0" />
     </NavIcon>
   ),
   issues: (
@@ -67,6 +74,20 @@ export const nav = defineNav([
     icon: icons.overview,
   },
   {
+    key: 'needs-attention',
+    label: 'Needs attention',
+    hash: '#/needs-attention',
+    // No shortcut: a-y are all claimed, and a meaningless letter is worse than
+    // reaching this from the sidebar or the command palette.
+    permission: 'issues:read',
+    section: 'workspace',
+    // Below Daily Digest (order 10, module-automations): the digest is the
+    // daily read, this is what it points at. The gap tolerates a module that
+    // is not in the build — the shell just closes it up.
+    order: 15,
+    icon: icons.needsAttention,
+  },
+  {
     key: 'issues',
     label: 'Issues',
     hash: '#/issues',
@@ -74,6 +95,8 @@ export const nav = defineNav([
     permission: 'issues:read',
     section: 'code',
     order: 0,
+    // One issue lives under its repository's path, not under /issues.
+    owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/issues\/\d+/],
     icon: icons.issues,
   },
   {
@@ -84,6 +107,8 @@ export const nav = defineNav([
     permission: 'prs:read',
     section: 'code',
     order: 10,
+    // Both the detail view and its /review sibling.
+    owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/prs\/\d+/],
     icon: icons.prs,
   },
   {
@@ -102,7 +127,9 @@ export const nav = defineNav([
     hash: '#/repos',
     shortcut: 'e',
     permission: 'repos:manage',
-    section: 'operate',
+    // Under Workspace, not Code: what a workspace CONTAINS, alongside its
+    // overview and digest — the Code group is the work happening inside it.
+    section: 'workspace',
     order: 20,
     icon: icons.repos,
   },
@@ -112,8 +139,8 @@ export const nav = defineNav([
     hash: '#/github',
     shortcut: 'h',
     permission: 'github:connect',
-    section: 'operate',
-    order: 30,
+    section: 'admin-integrations',
+    order: 0,
     icon: icons.github,
   },
   {

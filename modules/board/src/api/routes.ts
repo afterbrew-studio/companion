@@ -86,7 +86,21 @@ export default defineRoutes((ctx) => {
         const workspaceId = query.get('workspace') ?? '';
         if (!workspaceId) throw badRequest('workspace is required');
         if (!workspace.canAccessWorkspace(user!, workspaceId)) throw forbidden('no access to that workspace');
-        return board.listBoard(user!, workspaceId);
+        const rawLimit = query.get('doneLimit');
+        if (rawLimit !== null && !/^\d+$/.test(rawLimit)) throw badRequest('doneLimit must be an integer');
+        const doneLimit = rawLimit === null ? 100 : Number(rawLimit);
+        if (!Number.isSafeInteger(doneLimit) || doneLimit < 1 || doneLimit > 100) {
+          throw badRequest('doneLimit must be between 1 and 100');
+        }
+        const rawOffset = query.get('doneOffset');
+        if (rawOffset !== null && !/^\d+$/.test(rawOffset)) throw badRequest('doneOffset must be an integer');
+        const doneOffset = rawOffset === null ? 0 : Number(rawOffset);
+        if (!Number.isSafeInteger(doneOffset) || doneOffset < 0 || doneOffset > 1_000_000) {
+          throw badRequest('doneOffset must be between 0 and 1000000');
+        }
+        const doneRepo = query.get('doneRepo')?.trim() || undefined;
+        if (doneRepo && doneRepo.length > 200) throw badRequest('doneRepo is too long');
+        return board.listBoard(user!, workspaceId, { doneLimit, doneOffset, doneRepo });
       },
     }),
 

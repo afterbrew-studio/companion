@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onServerMessage, useBulkRunner } from '@moxxy/companion-sdk/client';
+import { onServerMessage, readCached, useBulkRunner, writeCached } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
@@ -14,7 +14,7 @@ import {
   type ContextMenuState,
   type MenuAction,
 } from '@moxxy/companion-sdk/ui';
-import type { PipelineRecord, PrRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
+import type { PipelineRecord, PrListRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
@@ -23,7 +23,7 @@ import { useWorkspaceRefresh } from './useWorkspaceRefresh.js';
 export type PrTab = 'open' | 'merged' | 'closed';
 
 const TABS = ['open', 'merged', 'closed'] as const;
-const FILTER_KEYS = ['repo', 'author', 'assignee', 'decision', 'review', 'draft'] as const;
+const FILTER_KEYS = ['repo', 'author', 'assignee', 'label', 'decision', 'review', 'draft'] as const;
 
 /**
  * The Pull Requests list's business logic, composed from atomic hooks — hash
@@ -43,14 +43,15 @@ export interface UseWorkspacePrs {
   readonly activeFilters: number;
 
   readonly repos: RepoRecord[];
-  readonly facets: { authors: string[]; assignees: string[] };
+  readonly facets: { authors: string[]; assignees: string[]; labels: string[] };
   readonly counts: { open: number; merged: number; closed: number };
 
-  readonly prs: PrRecord[];
+  readonly prs: PrListRecord[];
   readonly total: number;
   readonly loading: boolean;
   readonly hasMore: boolean;
   readonly loadMore: () => void;
+  readonly retry: () => void;
   readonly error: string | null;
   readonly unavailableRepos: readonly string[];
   readonly failedRepos: readonly RepoSyncFailure[];
@@ -71,14 +72,14 @@ export interface UseWorkspacePrs {
   readonly bulkClose: () => void;
   readonly bulkRerunChecks: () => void;
 
-  readonly rowActions: (pr: PrRecord) => MenuAction[];
+  readonly rowActions: (pr: PrListRecord) => MenuAction[];
   readonly ctx: ContextMenuState | null;
   readonly setCtx: (c: ContextMenuState | null) => void;
   readonly flash: string | null;
   readonly bulkError: string | null;
 }
 
-const prKey = (pr: PrRecord): string => `${pr.repo}#${pr.number}`;
+const prKey = (pr: PrListRecord): string => `${pr.repo}#${pr.number}`;
 
 export function useWorkspacePrs(): UseWorkspacePrs {
   const { current } = useWorkspace();
@@ -98,17 +99,27 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
-  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[] }>({ authors: [], assignees: [] });
+  const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({ authors: [], assignees: [], labels: [] });
   const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
+
+  // The retained first page is keyed by everything the query depends on, the
+  // workspace included: the same tab under another workspace is another list.
+  const listKey = `prs:${workspaceId ?? ''}:${tab}:${q}:${JSON.stringify(filters)}`;
+  const seed = readCached<{ items: PrListRecord[]; total: number }>(listKey);
+  const retain = useCallback(
+    (page: { items: PrListRecord[]; total: number }) => writeCached(listKey, page),
+    [listKey],
+  );
 
   const fetchPage = useCallback(
     async (offset: number) => {
-      if (!workspaceId) return { items: [] as PrRecord[], total: 0 };
+      if (!workspaceId) return { items: [] as PrListRecord[], total: 0 };
       const page = await api.workspacePrs(workspaceId, tab, {
         q: q || undefined,
         repo: filters.repo === 'all' ? undefined : filters.repo,
         author: filters.author === 'all' ? undefined : filters.author,
         assignee: filters.assignee === 'all' ? undefined : filters.assignee,
+        label: filters.label === 'all' ? undefined : filters.label,
         decision: filters.decision === 'all' ? undefined : filters.decision,
         review: filters.review === 'all' ? undefined : filters.review,
         draft: filters.draft === 'all' ? undefined : filters.draft,
@@ -116,13 +127,13 @@ export function useWorkspacePrs(): UseWorkspacePrs {
         offset,
       });
       setCounts(page.counts);
-      setFacets(page.facets);
+      if (offset === 0) setFacets(page.facets);
       return { items: page.prs, total: page.total };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.decision, filters.review, filters.draft],
+    [workspaceId, tab, q, filters.repo, filters.author, filters.assignee, filters.label, filters.decision, filters.review, filters.draft],
   );
-  const { items: prs, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
+  const { items: prs, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage, { seed, onFirstPage: retain });
 
   useEffect(() => {
     return onServerMessage((msg) => {
@@ -158,14 +169,14 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   };
 
   /** The selection, as records, in the order the list shows them. */
-  const targets = (): PrRecord[] => visiblePrs.filter((pr) => selection.has(prKey(pr)));
+  const targets = (): PrListRecord[] => visiblePrs.filter((pr) => selection.has(prKey(pr)));
 
   /**
    * Every bulk action reports per item. Fifteen pull requests partially succeed
    * by nature, and one "done" would be a lie in both directions.
    */
   const bulkForEach = (
-    fn: (pr: PrRecord) => Promise<unknown>,
+    fn: (pr: PrListRecord) => Promise<unknown>,
     done: (n: number) => string,
   ): void => {
     void runBulk(targets(), fn, {
@@ -209,7 +220,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
       setBulkError(String(err));
     }
   };
-  const rowActions = (pr: PrRecord): MenuAction[] => [
+  const rowActions = (pr: PrListRecord): MenuAction[] => [
     ...(canActPrs && pr.state === 'open'
       ? [
           {
@@ -245,6 +256,10 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     loading,
     hasMore,
     loadMore,
+    retry: () => {
+      reload();
+      refresh.retry();
+    },
     error: listError ?? refresh.error,
     unavailableRepos: refresh.unavailableRepos,
     failedRepos: refresh.failedRepos,

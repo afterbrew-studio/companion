@@ -26,8 +26,22 @@ export default defineRoutes((ctx) => {
   // One client instance per activation, so PKCE verifiers survive between the
   // two requests of a single login.
   let cached: OidcClient | null = null;
+  let cachedKey = '';
   const client = (): OidcClient => {
-    cached ??= clientFor(ctx);
+    // Config fields are editable at runtime. Preserve PKCE state while they
+    // stay unchanged, but never keep authenticating against stale endpoints or
+    // a rotated client secret after an admin saves new values.
+    const key = JSON.stringify([
+      ctx.moduleConfig.get('issuer'),
+      ctx.moduleConfig.get('clientId'),
+      ctx.moduleConfig.get('clientSecret'),
+      ctx.moduleConfig.get('scopes'),
+      ctx.moduleConfig.get('usernameClaim'),
+    ]);
+    if (!cached || key !== cachedKey) {
+      cached = clientFor(ctx);
+      cachedKey = key;
+    }
     if (!cached) throw badRequest('OIDC is not configured: set the issuer, client id and secret on the Modules page');
     return cached;
   };
@@ -48,7 +62,7 @@ export default defineRoutes((ctx) => {
         // Only same-origin paths, so the callback cannot be turned into an open
         // redirect by a crafted link to /start.
         const raw = query.get('returnTo') ?? '/';
-        const returnTo = raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
+        const returnTo = safeReturnTo(raw);
         return redirect(await client().authorizeUrl(redirectUri(), returnTo));
       },
     }),
@@ -92,8 +106,8 @@ export default defineRoutes((ctx) => {
         // (`TOKEN_KEY` in @moxxy/companion-core/client), so hand it over in a page it
         // controls rather than a cookie the app does not use.
         return html(
-          `<script>localStorage.setItem('companion.session', ${JSON.stringify(session.token)});` +
-            `location.replace(${JSON.stringify(returnTo)});</script>` +
+          `<script>localStorage.setItem('companion.session', ${scriptJson(session.token)});` +
+            `location.replace(${scriptJson(returnTo)});</script>` +
             `<noscript>Signed in. <a href="${escapeHtml(returnTo)}">Continue</a>.</noscript>`,
         );
       },
@@ -103,3 +117,18 @@ export default defineRoutes((ctx) => {
 
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** JSON embedded in a script element must not be able to close that element. */
+const scriptJson = (value: string): string =>
+  JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+
+/** Normalize a callback target and reject URL-parser backslash/control tricks. */
+export function safeReturnTo(raw: string): string {
+  if (!raw.startsWith('/') || /[\\\u0000-\u001f\u007f]/.test(raw)) return '/';
+  try {
+    const base = 'https://companion.invalid';
+    return new URL(raw, base).origin === base ? raw : '/';
+  } catch {
+    return '/';
+  }
+}

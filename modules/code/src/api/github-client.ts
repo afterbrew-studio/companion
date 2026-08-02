@@ -4,6 +4,30 @@
  */
 
 export class GitHubError extends Error {
+  /**
+   * What the CLIENT should be told. GitHub failing is not this daemon failing,
+   * and answering 500 makes an upstream hiccup read as our own crash, which
+   * sends whoever sees it looking in the wrong place.
+   *
+   * A spent budget or an upstream outage is worth retrying shortly; anything
+   * else is a real answer about this request and travels as it came.
+   */
+  get clientStatus(): number {
+    if (this.rateLimited) return 429;
+    // A rejected GitHub credential is not an expired Companion session. The
+    // SPA treats every 401 as a signal to clear its local login, so forwarding
+    // this status would sign the maintainer out because an upstream token was
+    // revoked. Surface it as an integration failure instead.
+    if (this.status === 401) return 502;
+    return this.status >= 500 || this.status === 0 ? 502 : this.status;
+  }
+
+  /** Seconds to wait before it is worth asking again; null when it is not. */
+  get retryAfter(): number | null {
+    if (this.rateLimited) return 60;
+    return this.clientStatus === 502 ? 10 : null;
+  }
+
   constructor(
     message: string,
     readonly status: number,
@@ -261,18 +285,41 @@ export class GitHubClient {
    */
   async prFiles(fullName: string, number: number, maxPages = 15): Promise<{ files: GhPrFile[]; truncated: boolean }> {
     const files: GhPrFile[] = [];
-    let full = false;
+    let hasNextPage = false;
     for (let page = 1; page <= maxPages; page++) {
-      const res = await fetch(`${this.api}/repos/${fullName}/pulls/${number}/files?per_page=100&page=${page}`, {
-        headers: this.headers(),
-      });
-      if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}/files`);
-      const batch = (await res.json()) as GhPrFile[];
-      files.push(...batch);
-      full = batch.length === 100;
-      if (!full) break;
+      const result = await this.prFilesPage(fullName, number, page, 100);
+      files.push(...result.files);
+      hasNextPage = result.hasNextPage;
+      if (!hasNextPage) break;
     }
-    return { files, truncated: full };
+    return { files, truncated: hasNextPage };
+  }
+
+  /**
+   * One bounded changed-file page for the human diff browser. Review planning
+   * deliberately uses {@link prFiles} instead: paging the UI must never make an
+   * automated review mistake a visible page for complete coverage.
+   */
+  async prFilesPage(
+    fullName: string,
+    number: number,
+    page: number,
+    pageSize = 50,
+  ): Promise<{ files: GhPrFile[]; page: number; pageSize: number; hasNextPage: boolean }> {
+    if (!Number.isSafeInteger(page) || page < 1) throw new RangeError('PR files page must be a positive integer');
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new RangeError('PR files page size must be between 1 and 100');
+    }
+    const path = `/repos/${fullName}/pulls/${number}/files`;
+    const res = await fetch(`${this.api}${path}?per_page=${pageSize}&page=${page}`, { headers: this.headers() });
+    if (!res.ok) throw await this.error(res, path);
+    const files = (await res.json()) as GhPrFile[];
+    const link = res.headers.get('link');
+    // GitHub and current GHES return RFC 8288 links. The length fallback keeps
+    // older installations navigable; at worst an exact-full last page exposes
+    // one empty next page instead of silently hiding real changes.
+    const hasNextPage = link === null ? files.length === pageSize : linkHasRelation(link, 'next');
+    return { files, page, pageSize, hasNextPage };
   }
 
   /**
@@ -293,13 +340,55 @@ export class GitHubClient {
     return { commits, truncated: full };
   }
 
-  /** Post a PR review (COMMENT / APPROVE / REQUEST_CHANGES). */
+  /**
+   * Post a PR review (COMMENT / APPROVE / REQUEST_CHANGES), optionally with
+   * inline comments anchored to lines of the diff.
+   *
+   * The comments travel WITH the review rather than as separate calls: that is
+   * what makes them one review, one notification, and one set of threads the
+   * author can resolve. It also makes the call all-or-nothing — GitHub rejects
+   * the entire request if any single comment names a line outside the diff —
+   * so callers must validate anchors before getting here.
+   */
   async createPrReview(
     fullName: string,
     number: number,
-    args: { body: string; event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES' },
-  ): Promise<{ html_url: string }> {
-    return this.post(`/repos/${fullName}/pulls/${number}/reviews`, args);
+    args: {
+      body: string;
+      event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+      /** Head the review was computed against; pins the comments to it. */
+      commitId?: string;
+      comments?: ReadonlyArray<GhReviewCommentInput>;
+    },
+  ): Promise<{ id: number; html_url: string }> {
+    const { commitId, comments, ...rest } = args;
+    return this.post(`/repos/${fullName}/pulls/${number}/reviews`, {
+      ...rest,
+      ...(commitId ? { commit_id: commitId } : {}),
+      ...(comments && comments.length > 0 ? { comments } : {}),
+    });
+  }
+
+  /**
+   * The comments one review created, so the ids can be mapped back onto the
+   * findings that produced them. The create response does not carry them.
+   */
+  async prReviewCommentsFor(fullName: string, prNumber: number, reviewId: number): Promise<GhReviewComment[]> {
+    return this.get(`/repos/${fullName}/pulls/${prNumber}/reviews/${reviewId}/comments?per_page=100`);
+  }
+
+  /**
+   * Answer inside an existing inline thread. Posting a fresh comment on the
+   * same line would open a second thread beside the one being answered, which
+   * is not a reply to anybody.
+   */
+  async replyToReviewComment(
+    fullName: string,
+    prNumber: number,
+    commentId: number,
+    body: string,
+  ): Promise<{ id: number; html_url: string }> {
+    return this.post(`/repos/${fullName}/pulls/${prNumber}/comments/${commentId}/replies`, { body });
   }
 
   /**
@@ -453,11 +542,14 @@ export class GitHubClient {
     fullName: string,
     number: number,
     method: 'merge' | 'squash' | 'rebase' = 'squash',
+    expectedHeadSha?: string,
   ): Promise<{ merged: boolean; message: string }> {
     const res = await fetch(`${this.api}/repos/${fullName}/pulls/${number}/merge`, {
       method: 'PUT',
       headers: { ...this.headers(), 'content-type': 'application/json' },
-      body: JSON.stringify({ merge_method: method }),
+      // GitHub rejects with 409/422 if the PR moved after the caller's gates.
+      // Without `sha`, a race merges a commit nobody reviewed or tested.
+      body: JSON.stringify({ merge_method: method, ...(expectedHeadSha ? { sha: expectedHeadSha } : {}) }),
     });
     if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}/merge`);
     return (await res.json()) as { merged: boolean; message: string };
@@ -531,6 +623,16 @@ export class GitHubClient {
 /** Primary budget spent: the remaining count is 0. Secondary: GitHub sends `retry-after`. */
 function rateLimited(res: Response): boolean {
   return res.status === 429 || res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after');
+}
+
+/** Read one relation from GitHub's comma-separated RFC 8288 Link header. */
+function linkHasRelation(header: string, relation: string): boolean {
+  return header.split(',').some((part) =>
+    part
+      .split(';')
+      .slice(1)
+      .some((attribute) => attribute.trim() === `rel="${relation}"`),
+  );
 }
 
 export interface GhRepoSummary {
@@ -656,14 +758,31 @@ export interface GhReview {
 }
 
 export interface GhReviewComment {
+  id?: number;
   user: { login: string } | null;
   body: string;
   path: string;
   /** Line in the current diff; original_line survives force-pushes. */
   line: number | null;
   original_line?: number | null;
+  side?: 'LEFT' | 'RIGHT';
   diff_hunk?: string;
+  /** Set on every reply, to the id of the comment that STARTED the thread. */
+  in_reply_to_id?: number | null;
   created_at: string;
+}
+
+/**
+ * One inline comment as GitHub accepts it. Snake_case because it goes on the
+ * wire verbatim; `start_side` is mandatory whenever `start_line` is present.
+ */
+export interface GhReviewCommentInput {
+  path: string;
+  body: string;
+  line: number;
+  side: 'LEFT' | 'RIGHT';
+  start_line?: number;
+  start_side?: 'LEFT' | 'RIGHT';
 }
 
 export interface GhPrFile {

@@ -25,7 +25,26 @@ interface InfiniteState<T> {
  * identity changes (memoize it on your filters), appends on demand, and
  * guards against out-of-order responses.
  */
-export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ items: T[]; total: number }>): {
+export function useInfiniteList<T>(
+  fetchPage: (offset: number) => Promise<{ items: T[]; total: number }>,
+  /**
+   * Retained first page, so returning to a list renders before the network
+   * answers. This package holds no cache of its own — it is a leaf with no idea
+   * who is signed in, and a cache nobody can clear on sign-out is a leak — so
+   * the caller owns the storage and passes what it kept.
+   *
+   * `onFirstPage` MUST be referentially stable (memoize it): it is in the fetch
+   * effect's dependency chain, so one that changes identity per render
+   * re-creates the loader, refetches, re-renders and refetches again. `seed`
+   * has no such requirement — it only feeds initial values — which is why the
+   * warning used to sit on the wrong one of the two.
+   */
+  cache?: {
+    readonly seed?: { items: T[]; total: number } | null;
+    /** Each first page as it arrives, for the caller to retain. */
+    readonly onFirstPage?: (page: { items: T[]; total: number }) => void;
+  },
+): {
   items: T[];
   total: number;
   loading: boolean;
@@ -34,7 +53,14 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
   loadMore: () => void;
   reload: () => void;
 } {
-  const [state, setState] = useState<InfiniteState<T>>({ items: [], total: 0, loading: true, error: null });
+  const seed = cache?.seed ?? null;
+  const onFirstPage = cache?.onFirstPage;
+  // Read inside the effect below, which re-runs on `load`, not on `seed`.
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
+  const [state, setState] = useState<InfiniteState<T>>(
+    seed ? { items: seed.items, total: seed.total, loading: false, error: null } : { items: [], total: 0, loading: true, error: null },
+  );
   const seq = useRef(0);
   // Has a load for THIS fetchPage already answered? Not "are there rows": an
   // empty answer is still an answer. Keying the loading state off row count
@@ -42,7 +68,7 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
   // for a skeleton and back, so a feed with nothing in it flashed once per
   // incoming broadcast. Reset per fetchPage, because new filters or a new tab
   // really are a fresh list and should show that they are loading.
-  const settled = useRef(false);
+  const settled = useRef(seed !== null);
 
   const load = useCallback(
     (offset: number) => {
@@ -59,6 +85,10 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
         .then(({ items, total }) => {
           if (seq.current !== mySeq) return;
           settled.current = true;
+          // Only the first page is retained. Keeping every appended page would
+          // grow with scrolling and re-seed a long list on the next visit,
+          // which is slower to render than the page the user starts on.
+          if (offset === 0) onFirstPage?.({ items, total });
           setState((prev) => ({
             items: offset === 0 ? items : [...prev.items, ...items],
             total,
@@ -71,13 +101,23 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
           setState((prev) => ({ ...prev, loading: false, error: String(err) }));
         });
     },
-    [fetchPage],
+    [fetchPage, onFirstPage],
   );
 
   useEffect(() => {
     // A failed load stays unsettled on purpose: a retry should show that it is
-    // trying again, not sit on a cleared error with nothing moving.
-    settled.current = false;
+    // trying again, not sit on a cleared error with nothing moving. A seeded
+    // list is already settled: it has rows on screen and is only revalidating.
+    // This effect means the query itself changed (filters/tab/workspace), so
+    // never label rows from the previous query as results for the new one.
+    // Explicit reload() does not pass here and intentionally keeps its rows.
+    const nextSeed = seedRef.current;
+    settled.current = nextSeed !== null;
+    setState(
+      nextSeed
+        ? { items: nextSeed.items, total: nextSeed.total, loading: false, error: null }
+        : { items: [], total: 0, loading: true, error: null },
+    );
     load(0);
   }, [load]);
 
@@ -87,12 +127,15 @@ export function useInfiniteList<T>(fetchPage: (offset: number) => Promise<{ item
       return prev;
     });
   }, [load]);
+  const reload = useCallback(() => load(0), [load]);
 
   return {
     ...state,
     hasMore: state.items.length < state.total,
     loadMore,
-    reload: () => load(0),
+    // Consumers subscribe this to WebSocket events. A stable identity avoids
+    // tearing down and re-adding that listener after every page render.
+    reload,
   };
 }
 

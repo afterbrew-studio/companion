@@ -1,9 +1,10 @@
-import { patch, post, put, request } from '@moxxy/companion-sdk/client';
+import { patch, post, put, qs, request } from '@moxxy/companion-sdk/client';
 import type { RefineItemUpdate } from '@companion/module-refinement/contract';
 import type {
   ArtifactBundle,
   FeatureBrief,
   FeaturePlanningSession,
+  FeaturePlanningSessionSummary,
   PlannerDiscussionContext,
   PlannerSessionDetail,
 } from '../contract/index.js';
@@ -11,7 +12,10 @@ import type {
 const revision = (expectedRevision: number): { expectedRevision: number } => ({ expectedRevision });
 
 export const ideasApi = {
-  list: (workspaceId: string) => request<{ sessions: FeaturePlanningSession[]; legacyActiveCount: number }>(`/api/workspaces/${workspaceId}/ideas`),
+  list: (workspaceId: string, limit: number, offset: number) =>
+    request<{ sessions: FeaturePlanningSessionSummary[]; total: number; legacyActiveCount: number }>(
+      `/api/workspaces/${workspaceId}/ideas${qs({ limit, offset })}`,
+    ),
   create: (input: { workspaceId: string; repo: string; idea: string; title?: string }) =>
     post<{ session: FeaturePlanningSession }>('/api/ideas', input),
   get: (id: string) => request<PlannerSessionDetail>(`/api/ideas/${id}`),

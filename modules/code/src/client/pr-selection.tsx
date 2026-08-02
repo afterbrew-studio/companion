@@ -1,8 +1,8 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import type { PrRecord } from '../contract/index.js';
+import type { PrListRecord } from '../contract/index.js';
 
 interface PrSelection {
-  readonly selected: readonly PrRecord[];
+  readonly selected: readonly PrListRecord[];
   /** Drop the selection once an action has consumed it. */
   readonly clear: () => void;
   readonly busy: boolean;

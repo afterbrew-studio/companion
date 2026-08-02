@@ -173,8 +173,10 @@ export function Dropdown<T extends string>({
       className={`relative ${className}`}
       onBlur={(e) => {
         // The menu lives in a portal, so DOM containment must check both trees.
+        // A null relatedTarget means focus went nowhere — Safari does that on
+        // every press inside the menu, and closing there eats the option click.
         const next = e.relatedTarget as Node | null;
-        if (!e.currentTarget.contains(next) && !menuRef.current?.contains(next)) setOpen(false);
+        if (next && !e.currentTarget.contains(next) && !menuRef.current?.contains(next)) setOpen(false);
       }}
     >
       <button
@@ -216,6 +218,7 @@ export function Dropdown<T extends string>({
         ? createPortal(
             <div
               ref={menuRef}
+              data-dropdown-menu
               style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? undefined : 'hidden' }}
               className="z-[60] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
             >
@@ -775,6 +778,16 @@ export function RowsSkeleton({ rows = 4 }: { rows?: number }): JSX.Element {
   );
 }
 
+/**
+ * A row's place in the entrance cascade, as the custom property `.row-in` reads.
+ *
+ * Capped, because the stagger exists to make arrival legible, not to make the
+ * hundredth row wait two seconds for its turn.
+ */
+export function rowDelay(index: number, cap = 12): Record<string, string> {
+  return { '--row-index': String(Math.min(index, cap)) };
+}
+
 // A pleasant deterministic bar series for chart placeholders.
 const CHART_SKELETON_BARS = [35, 60, 45, 80, 55, 70, 40, 65, 50, 75, 45, 60];
 
@@ -801,9 +814,38 @@ export function InlineLoading({ label = 'Loading…', className = '' }: { label?
   );
 }
 
-export function PageLoading({ label = 'Loading…' }: { label?: string }): JSX.Element {
+/**
+ * How long a page may take before it is worth SAYING it is loading.
+ *
+ * The daemon is local, so most navigations answer well inside this and the
+ * skeleton would appear and vanish in the same breath — a flash that reads as a
+ * glitch rather than as progress. Waiting costs nothing on a fast load and
+ * shows the same thing as before on a slow one.
+ */
+const LOADING_GRACE_MS = 250;
+
+/**
+ * `flag`, but only once it has been true for long enough to be worth showing.
+ * Falls back to false the moment it clears, so a fast answer never flashes.
+ */
+export function useSettledFlag(flag: boolean, delayMs = LOADING_GRACE_MS): boolean {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!flag) {
+      setSettled(false);
+      return;
+    }
+    const timer = setTimeout(() => setSettled(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [flag, delayMs]);
+  return settled;
+}
+
+export function PageLoading({ label = 'Loading…' }: { label?: string }): JSX.Element | null {
+  const show = useSettledFlag(true);
+  if (!show) return null;
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-6">
+    <div className="anim-in mx-auto w-full max-w-5xl px-6 py-6">
       <InlineLoading label={label} />
       <div className="mt-5 flex flex-col gap-3">
         <Skeleton className="h-7 w-2/3" />
@@ -935,11 +977,33 @@ export function FiltersPopover({
   children: ReactNode;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // The panel hosts Dropdowns that portal their menu to <body>, so picking an
+  // option is a press *outside* this subtree. Dismiss on an outside press
+  // instead of on blur: blur fires with a null relatedTarget on every press
+  // inside such a menu, and unmounting there would eat the option's click.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: globalThis.MouseEvent): void => {
+      const t = e.target as Element | null;
+      if (rootRef.current?.contains(t) || t?.closest('[data-dropdown-menu]')) return;
+      setOpen(false);
+    };
+    const id = window.setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
   return (
     <div
+      ref={rootRef}
       className="relative"
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+        const next = e.relatedTarget as Element | null;
+        if (next && !e.currentTarget.contains(next) && !next.closest('[data-dropdown-menu]')) setOpen(false);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') setOpen(false);

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, Section, useConfirm } from '@moxxy/companion-sdk/ui';
+import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, rowDelay, Section, useConfirm, useSettledFlag } from '@moxxy/companion-sdk/ui';
 import type {
   ImportPreview,
   PrActionId,
@@ -16,6 +16,7 @@ import type {
 } from '../../contract/index.js';
 import { PIPELINE_TYPE_STEPS } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
+import { PipelineRunList } from '../components/PipelineRunList.js';
 import { usePipelines } from '../hooks/usePipelines.js';
 
 /**
@@ -47,7 +48,10 @@ const KIND_META: Record<PipelineStepKind, { label: string; hint: string }> = {
   agent: { label: 'Custom agent', hint: 'Your prompt; agent returns pass/fail' },
   label: { label: 'Add labels', hint: 'Applies labels to the PR' },
   comment: { label: 'Post comment', hint: 'Comments on the PR (supports {{pr.title}}…)' },
-  'slop-check': { label: 'AI slop gate', hint: 'Fails when the slop score reaches the threshold (needs the Slop module)' },
+  'slop-check': {
+    label: 'PR quality gate',
+    hint: 'Screens AI likelihood, contribution value, test evidence, technical risk, and reviewability (needs Slop)',
+  },
   executable: {
     label: '[unsafe] Run command',
     hint: 'Runs a shell command as the daemon user. Needs pipelines:execute and the instance switch',
@@ -111,7 +115,9 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
 }
 
 export function PipelinesPage(): JSX.Element {
-  const { current, pipelines, stepDefs, loaded, error, setError, refresh } = usePipelines();
+  const { current, pipelines, runs, stepDefs, loaded, definitionsFailed, error, setError, refresh } = usePipelines();
+  // A skeleton that appears and vanishes inside a blink reads as a glitch.
+  const settling = useSettledFlag(!loaded);
   const { can } = useAuth();
   const [editing, setEditing] = useState<PipelineRecord | 'new' | null>(null);
   const [editingDef, setEditingDef] = useState<StepDefinitionRecord | 'new' | null>(null);
@@ -127,7 +133,7 @@ export function PipelinesPage(): JSX.Element {
     <Page>
       <PageHeader
         title="Pipelines"
-        subtitle={`${current.name} — run against any pull request, or automatically when a PR opens`}
+        subtitle={`${current.name} — controllable PR, issue and repository workflows with durable progress`}
         actions={
           canManage ? (
             <>
@@ -150,6 +156,13 @@ export function PipelinesPage(): JSX.Element {
         }
       />
       <ErrorBar error={error} />
+      {error ? (
+        <div className="mb-3">
+          <button type="button" className="btn-ghost text-xs" onClick={() => void refresh()}>
+            Retry pipeline data
+          </button>
+        </div>
+      ) : null}
       <input
         ref={fileInput}
         type="file"
@@ -164,13 +177,13 @@ export function PipelinesPage(): JSX.Element {
       />
 
       <div className="flex flex-col gap-3">
-        {!loaded ? (
+        {settling ? (
           <div className="card">
             <RowsSkeleton rows={2} />
           </div>
         ) : null}
-        {pipelines.map((p) => (
-          <article key={p.id} className="card" aria-label={p.name}>
+        {pipelines.map((p, i) => (
+          <article key={p.id} style={rowDelay(i, 6)} className="card card-in" aria-label={p.name}>
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{p.name}</div>
@@ -235,7 +248,7 @@ export function PipelinesPage(): JSX.Element {
           </article>
         ))}
       </div>
-      {loaded && pipelines.length === 0 ? (
+      {loaded && !definitionsFailed && pipelines.length === 0 ? (
         <EmptyState
           title="No pipelines yet"
           hint="A pipeline is an ordered set of steps — CI gate, AI review, custom agents, labels, comments — that you run against pull requests."
@@ -247,6 +260,15 @@ export function PipelinesPage(): JSX.Element {
             ) : undefined
           }
         />
+      ) : null}
+
+      {runs.length > 0 ? (
+        <Section
+          title="Recent runs"
+          description="Open a run to inspect each step, replay command output after a refresh, or stop work that is no longer useful."
+        >
+          <PipelineRunList runs={runs} title="Run history" showTarget />
+        </Section>
       ) : null}
 
       <Section
@@ -263,12 +285,12 @@ export function PipelinesPage(): JSX.Element {
             </button>
           </div>
         ) : null}
-        {!loaded ? (
+        {settling ? (
           <div className="card">
             <RowsSkeleton rows={2} />
           </div>
         ) : null}
-        {loaded && stepDefs.length === 0 ? (
+        {loaded && !definitionsFailed && stepDefs.length === 0 ? (
           <EmptyState
             title="No custom steps yet"
             hint="Custom steps let you reuse an agent prompt or gate across pipelines."
@@ -282,8 +304,8 @@ export function PipelinesPage(): JSX.Element {
           />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
-            {stepDefs.map((d) => (
-              <article key={d.id} className="card" aria-label={d.name}>
+            {stepDefs.map((d, i) => (
+              <article key={d.id} style={rowDelay(i, 6)} className="card card-in" aria-label={d.name}>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{d.name}</div>
                   <div className="dim mt-0.5 text-xs">{KIND_META[d.step.kind].label}</div>

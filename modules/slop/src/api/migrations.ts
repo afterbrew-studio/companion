@@ -48,4 +48,17 @@ export default defineMigrations([
       db.exec(`ALTER TABLE slop_detections DROP COLUMN provenance`);
     },
   },
+  {
+    version: 3,
+    name: 'slop_detection_queue_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_slop_detections_repo_created
+          ON slop_detections(repo, created_at DESC, id DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_slop_detections_repo_created`);
+    },
+  },
 ]);

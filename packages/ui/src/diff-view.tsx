@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { languageForPath, highlightLine } from './highlight.js';
 
@@ -11,50 +11,116 @@ import { languageForPath, highlightLine } from './highlight.js';
 interface DiffLine {
   readonly kind: 'add' | 'del' | 'hunk' | 'ctx' | 'meta';
   readonly text: string;
+  /**
+   * Line numbers in the old and new file, null where the line does not exist on
+   * that side. These are what an anchored annotation matches against, so the
+   * counter arithmetic below has to agree with whatever produced the anchors.
+   */
+  readonly oldLine: number | null;
+  readonly newLine: number | null;
 }
 
 interface DiffFile {
   readonly path: string;
+  /** The `a/` path; differs from `path` only for a rename. */
+  readonly fromPath: string;
   readonly adds: number;
   readonly dels: number;
   readonly lines: ReadonlyArray<DiffLine>;
 }
 
-const MAX_DIFF_CHARS = 400_000;
+/**
+ * A note tied to one line of the diff: a gutter marker plus a row rendered
+ * under that line. Deliberately content-agnostic — this component knows about
+ * lines, not about whatever the caller is annotating them with.
+ */
+export interface DiffAnnotation {
+  readonly id: string;
+  /** File path as it appears in the diff (either side of a rename works). */
+  readonly path: string;
+  readonly side: 'LEFT' | 'RIGHT';
+  readonly line: number;
+  /** Shown in the gutter; falls back to a dot. */
+  readonly marker?: React.ReactNode;
+  readonly body: React.ReactNode;
+}
 
-function parseDiff(diff: string): DiffFile[] {
-  const files: Array<{ path: string; adds: number; dels: number; lines: DiffLine[] }> = [];
+/** Public so callers assembling per-file patches can stay below the renderer's memory ceiling. */
+export const MAX_DIFF_CHARS = 400_000;
+/** Lines pulled in per click when expanding context around a hunk. */
+const EXPAND_LINES = 20;
+/** Sentinel key for the after-the-last-hunk expansion, which has no hunk index. */
+const TAIL_KEY = -1;
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/** First line of the NEW file that a hunk header covers. */
+function hunkStart(text: string): number {
+  const m = text.match(HUNK_HEADER);
+  return m ? Number(m[2]) : 1;
+}
+
+/** Highest new-file line already rendered before `index`; 0 before the first hunk. */
+function lastShownLine(lines: ReadonlyArray<DiffLine>, index: number): number {
+  for (let i = index - 1; i >= 0; i--) {
+    const at = lines[i]!.newLine;
+    if (at !== null) return at;
+  }
+  return 0;
+}
+
+export function parseDiff(diff: string): DiffFile[] {
+  const files: Array<{ path: string; fromPath: string; adds: number; dels: number; lines: DiffLine[] }> = [];
   let current: (typeof files)[number] | null = null;
   let sawHunk = false;
+  let oldLine = 0;
+  let newLine = 0;
 
-  for (const line of diff.split('\n')) {
+  const lines = diff.split('\n');
+  // A diff ends with a newline, so the split leaves a trailing empty element.
+  // Counting it as context would number a line that is not there.
+  if (lines[lines.length - 1] === '') lines.pop();
+
+  for (const line of lines) {
     const fileStart = line.match(/^diff --git a\/(.+) b\/(.+)$/);
     if (fileStart) {
-      current = { path: fileStart[2] ?? fileStart[1]!, adds: 0, dels: 0, lines: [] };
+      const from = fileStart[1]!;
+      current = { path: fileStart[2] ?? from, fromPath: from, adds: 0, dels: 0, lines: [] };
       files.push(current);
       sawHunk = false;
       continue;
     }
     if (!current) {
       // Diff without a git header (plain `diff`/patch) — collect under one file.
-      current = { path: '', adds: 0, dels: 0, lines: [] };
+      current = { path: '', fromPath: '', adds: 0, dels: 0, lines: [] };
       files.push(current);
       sawHunk = false;
     }
-    if (line.startsWith('@@')) {
+    const hunk = line.match(HUNK_HEADER);
+    if (hunk) {
       sawHunk = true;
-      current.lines.push({ kind: 'hunk', text: line });
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      current.lines.push({ kind: 'hunk', text: line, oldLine: null, newLine: null });
+    } else if (line.startsWith('@@')) {
+      // A malformed header still opens a hunk; without numbers to trust, the
+      // lines under it simply carry none.
+      sawHunk = true;
+      current.lines.push({ kind: 'hunk', text: line, oldLine: null, newLine: null });
     } else if (!sawHunk) {
       // index/mode/---/+++ preamble
-      current.lines.push({ kind: 'meta', text: line });
+      current.lines.push({ kind: 'meta', text: line, oldLine: null, newLine: null });
     } else if (line.startsWith('+')) {
       current.adds++;
-      current.lines.push({ kind: 'add', text: line });
+      current.lines.push({ kind: 'add', text: line, oldLine: null, newLine: newLine++ });
     } else if (line.startsWith('-')) {
       current.dels++;
-      current.lines.push({ kind: 'del', text: line });
+      current.lines.push({ kind: 'del', text: line, oldLine: oldLine++, newLine: null });
+    } else if (line.startsWith('\\')) {
+      // "\ No newline at end of file" belongs to the line above and counts on
+      // neither side.
+      current.lines.push({ kind: 'meta', text: line, oldLine: null, newLine: null });
     } else {
-      current.lines.push({ kind: 'ctx', text: line });
+      current.lines.push({ kind: 'ctx', text: line, oldLine: oldLine++, newLine: newLine++ });
     }
   }
   return files;
@@ -157,29 +223,246 @@ function Caret({ open }: { open: boolean }): JSX.Element {
   );
 }
 
-function FileLines({ file }: { file: DiffFile }): JSX.Element {
+/** Annotations of one file, keyed by the line they hang off. */
+function annotationsByLine(
+  file: DiffFile,
+  annotations: readonly DiffAnnotation[],
+): Map<string, DiffAnnotation[]> {
+  const map = new Map<string, DiffAnnotation[]>();
+  for (const a of annotations) {
+    if (a.path !== file.path && a.path !== file.fromPath) continue;
+    const key = `${a.side}:${a.line}`;
+    const bucket = map.get(key);
+    if (bucket) bucket.push(a);
+    else map.set(key, [a]);
+  }
+  return map;
+}
+
+function FileLines({
+  file,
+  annotations = [],
+  focusedAnnotationId = null,
+  onFocusAnnotation,
+  onAddComment,
+  onExpandContext,
+}: {
+  file: DiffFile;
+  annotations?: readonly DiffAnnotation[];
+  focusedAnnotationId?: string | null;
+  onFocusAnnotation?: (id: string) => void;
+  onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
+  onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
+}): JSX.Element {
   const lang = useMemo(() => languageForPath(file.path), [file.path]);
+  const anchored = useMemo(() => annotationsByLine(file, annotations), [file, annotations]);
+  const focusedRef = useRef<HTMLDivElement>(null);
+  /** Lines pulled in above a hunk, keyed by that hunk's index in `file.lines`. */
+  const [expanded, setExpanded] = useState<Record<number, { from: number; lines: string[] }>>({});
+  /** Lines pulled in after the last hunk, which no header sits below. */
+  const [tail, setTail] = useState<{ from: number; lines: string[] } | null>(null);
+  const [expanding, setExpanding] = useState<number | null>(null);
+
+  // A different file reuses this component; its expansions are not ours.
+  useEffect(() => {
+    setExpanded({});
+    setTail(null);
+  }, [file]);
+
+  /**
+   * Lines after the final hunk. Unlike a gap between hunks there is no ceiling
+   * to stop at, so it simply runs until the file does — an empty answer.
+   */
+  const expandTail = async (after: number): Promise<void> => {
+    if (!onExpandContext) return;
+    const from = tail ? tail.from + tail.lines.length : after + 1;
+    setExpanding(TAIL_KEY);
+    try {
+      const lines = await onExpandContext(file.path, from, from + EXPAND_LINES - 1);
+      if (lines.length === 0) return;
+      setTail((prev) => (prev ? { ...prev, lines: [...prev.lines, ...lines] } : { from, lines }));
+    } finally {
+      setExpanding(null);
+    }
+  };
+
+  const expand = async (at: number, hunkStart: number, floor: number): Promise<void> => {
+    if (!onExpandContext) return;
+    const already = expanded[at];
+    const to = (already?.from ?? hunkStart) - 1;
+    if (to < floor) return;
+    const from = Math.max(floor, to - EXPAND_LINES + 1);
+    setExpanding(at);
+    try {
+      const lines = await onExpandContext(file.path, from, to);
+      if (lines.length === 0) return;
+      setExpanded((prev) => {
+        const prior = prev[at];
+        return { ...prev, [at]: { from, lines: prior ? [...lines, ...prior.lines] : lines } };
+      });
+    } finally {
+      setExpanding(null);
+    }
+  };
+
+  // Selecting a finding elsewhere has to bring its line into view; without this
+  // the two-way link only works in one direction.
+  useEffect(() => {
+    if (focusedAnnotationId && focusedRef.current) {
+      focusedRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [focusedAnnotationId, file]);
+
+  /** Last new-file line the diff itself shows; 0 when it shows none. */
+  const lastLine = lastShownLine(file.lines, file.lines.length);
+
+  const gutter = (line: DiffLine): JSX.Element => {
+    // A deletion is addressable on the LEFT, everything else on the RIGHT —
+    // the same rule GitHub applies to where a comment may hang.
+    const side: 'LEFT' | 'RIGHT' = line.kind === 'del' ? 'LEFT' : 'RIGHT';
+    const at = side === 'LEFT' ? line.oldLine : line.newLine;
+    return (
+      <>
+        <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none">
+          {line.oldLine ?? ''}
+        </span>
+        <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none">
+          {line.newLine ?? ''}
+        </span>
+        {onAddComment ? (
+          at !== null ? (
+            <button
+              type="button"
+              className="mr-1 w-4 shrink-0 cursor-pointer text-accent-500 opacity-0 transition-opacity select-none group-hover:opacity-100"
+              onClick={() => onAddComment(file.path, side, at)}
+              aria-label={`Comment on line ${at}`}
+              title="Comment on this line"
+            >
+              +
+            </button>
+          ) : (
+            <span className="mr-1 inline-block w-4 shrink-0 select-none" />
+          )
+        ) : null}
+      </>
+    );
+  };
+
   return (
     <div className="min-w-0 flex-1 overflow-auto font-mono text-xs leading-5">
       {file.lines.map((line, li) => {
         // Hunk/meta lines are diff chrome, not source — leave them unhighlighted.
         if (line.kind === 'hunk' || line.kind === 'meta') {
+          if (line.kind !== 'hunk' || !onExpandContext) {
+            return (
+              <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
+                {line.text || ' '}
+              </div>
+            );
+          }
+          const start = hunkStart(line.text);
+          const shown = expanded[li];
+          // Never reach back into the previous hunk: those lines are already on
+          // screen, and pulling them in again renders them twice.
+          const floor = lastShownLine(file.lines, li) + 1;
+          const more = (shown?.from ?? start) > floor;
           return (
-            <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
-              {line.text || ' '}
+            <div key={li}>
+              <div className={`flex items-center px-3 whitespace-pre ${LINE_CLS.hunk}`}>
+                {more ? (
+                  <button
+                    type="button"
+                    className="mr-2 cursor-pointer rounded px-1 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                    onClick={() => void expand(li, start, floor)}
+                    title={`Show ${EXPAND_LINES} more lines above`}
+                    aria-label="Expand context above"
+                  >
+                    {expanding === li ? '…' : '↑'}
+                  </button>
+                ) : null}
+                <span>{line.text || ' '}</span>
+              </div>
+              {shown?.lines.map((text, i) => (
+                <div key={`x${i}`} className={`flex px-3 whitespace-pre ${LINE_CLS.ctx} opacity-70`}>
+                  <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none" />
+                  <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none">
+                    {shown.from + i}
+                  </span>
+                  {onAddComment ? <span className="mr-1 inline-block w-4 shrink-0" /> : null}
+                  <span className="mr-1 inline-block w-3 shrink-0" />
+                  <span className="select-none"> </span>
+                  <span dangerouslySetInnerHTML={{ __html: highlightLine(text, lang) }} />
+                </div>
+              ))}
             </div>
           );
         }
+        // A deletion is addressed on the LEFT, everything else on the RIGHT.
+        const here = [
+          ...(line.newLine !== null ? (anchored.get(`RIGHT:${line.newLine}`) ?? []) : []),
+          ...(line.oldLine !== null && line.kind === 'del' ? (anchored.get(`LEFT:${line.oldLine}`) ?? []) : []),
+        ];
         // Split the +/−/space marker from the code so highlighting sees only source.
         const marker = line.text.slice(0, 1);
         const code = line.text.slice(1);
+        const focused = here.some((a) => a.id === focusedAnnotationId);
         return (
-          <div key={li} className={`px-3 whitespace-pre ${LINE_CLS[line.kind]}`}>
-            <span className="select-none">{marker || ' '}</span>
-            <span dangerouslySetInnerHTML={{ __html: highlightLine(code, lang) }} />
+          <div key={li} ref={focused ? focusedRef : undefined}>
+            <div
+              className={`group flex px-3 whitespace-pre ${LINE_CLS[line.kind]} ${
+                focused ? 'ring-1 ring-inset ring-accent-500/70' : ''
+              }`}
+            >
+              {gutter(line)}
+              {here.length > 0 ? (
+                <button
+                  type="button"
+                  className="mr-1 shrink-0 cursor-pointer select-none"
+                  onClick={() => onFocusAnnotation?.(here[0]!.id)}
+                  title="Jump to this finding"
+                >
+                  {here[0]!.marker ?? <span className="text-accent-500">●</span>}
+                </button>
+              ) : (
+                <span className="mr-1 inline-block w-3 shrink-0 select-none" />
+              )}
+              <span className="select-none">{marker || ' '}</span>
+              <span dangerouslySetInnerHTML={{ __html: highlightLine(code, lang) }} />
+            </div>
+            {here.map((a) => (
+              <div key={a.id} className="border-y border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                {a.body}
+              </div>
+            ))}
           </div>
         );
       })}
+
+      {onExpandContext && lastLine > 0 ? (
+        <>
+          {tail?.lines.map((text, i) => (
+            <div key={`t${i}`} className={`flex px-3 whitespace-pre ${LINE_CLS.ctx} opacity-70`}>
+              <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none" />
+              <span className="dim inline-block w-10 shrink-0 pr-2 text-right tabular-nums select-none">
+                {tail.from + i}
+              </span>
+              {onAddComment ? <span className="mr-1 inline-block w-4 shrink-0" /> : null}
+              <span className="mr-1 inline-block w-3 shrink-0" />
+              <span className="select-none"> </span>
+              <span dangerouslySetInnerHTML={{ __html: highlightLine(text, lang) }} />
+            </div>
+          ))}
+          <button
+            type="button"
+            className={`flex w-full cursor-pointer items-center px-3 ${LINE_CLS.hunk} hover:bg-zinc-200 dark:hover:bg-zinc-700`}
+            onClick={() => void expandTail(lastLine)}
+            title={`Show ${EXPAND_LINES} more lines below`}
+            aria-label="Expand context below"
+          >
+            {expanding === TAIL_KEY ? '…' : '↓'}
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -190,6 +473,11 @@ function Browser({
   onSelect,
   heightCls,
   resizable = false,
+  annotations = [],
+  focusedAnnotationId = null,
+  onFocusAnnotation,
+  onAddComment,
+  onExpandContext,
 }: {
   files: DiffFile[];
   selected: number;
@@ -197,6 +485,11 @@ function Browser({
   heightCls: string;
   /** Full-screen mode: let the user drag the file-list / preview split. */
   resizable?: boolean;
+  annotations?: readonly DiffAnnotation[];
+  focusedAnnotationId?: string | null;
+  onFocusAnnotation?: (id: string) => void;
+  onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
+  onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
 }): JSX.Element {
   const file = files[Math.min(selected, files.length - 1)]!;
   const tree = useMemo(() => buildTree(files), [files]);
@@ -283,12 +576,38 @@ function Browser({
           title="Drag to resize"
         />
       ) : null}
-      <FileLines file={file} />
+      <FileLines
+        file={file}
+        annotations={annotations}
+        focusedAnnotationId={focusedAnnotationId}
+        {...(onFocusAnnotation ? { onFocusAnnotation } : {})}
+        {...(onAddComment ? { onAddComment } : {})}
+        {...(onExpandContext ? { onExpandContext } : {})}
+      />
     </div>
   );
 }
 
-export function DiffView({ diff, className = '' }: { diff: string; className?: string }): JSX.Element {
+export function DiffView({
+  diff,
+  className = '',
+  annotations = [],
+  focusedAnnotationId = null,
+  onFocusAnnotation,
+  onAddComment,
+  onExpandContext,
+}: {
+  diff: string;
+  className?: string;
+  annotations?: readonly DiffAnnotation[];
+  /** Selecting one elsewhere reveals its line here, switching file if needed. */
+  focusedAnnotationId?: string | null;
+  onFocusAnnotation?: (id: string) => void;
+  /** Offer a per-line affordance for starting a comment. */
+  onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
+  /** Fetch lines of the new file so hunks can be expanded beyond their context. */
+  onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
+}): JSX.Element {
   const truncated = diff.length > MAX_DIFF_CHARS;
   const files = useMemo(() => parseDiff(truncated ? diff.slice(0, MAX_DIFF_CHARS) : diff), [diff, truncated]);
   const [selected, setSelected] = useState(0);
@@ -298,6 +617,16 @@ export function DiffView({ diff, className = '' }: { diff: string; className?: s
   useEffect(() => {
     setSelected(0);
   }, [diff]);
+
+  // A focused annotation usually lives in a file that is not on screen, so the
+  // selection follows it before FileLines tries to scroll to the line.
+  useEffect(() => {
+    if (!focusedAnnotationId) return;
+    const target = annotations.find((a) => a.id === focusedAnnotationId);
+    if (!target) return;
+    const index = files.findIndex((f) => f.path === target.path || f.fromPath === target.path);
+    if (index >= 0) setSelected(index);
+  }, [focusedAnnotationId, annotations, files]);
 
   useEffect(() => {
     if (!full) return;
@@ -348,7 +677,17 @@ export function DiffView({ diff, className = '' }: { diff: string; className?: s
     <>
       <div className={`overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 ${className}`}>
         {toolbar}
-        <Browser files={files} selected={sel} onSelect={setSelected} heightCls="max-h-96" />
+        <Browser
+          files={files}
+          selected={sel}
+          onSelect={setSelected}
+          heightCls="max-h-96"
+          annotations={annotations}
+          focusedAnnotationId={focusedAnnotationId}
+          {...(onFocusAnnotation ? { onFocusAnnotation } : {})}
+          {...(onAddComment ? { onAddComment } : {})}
+          {...(onExpandContext ? { onExpandContext } : {})}
+        />
       </div>
       {full
         ? createPortal(
@@ -359,7 +698,18 @@ export function DiffView({ diff, className = '' }: { diff: string; className?: s
               aria-label="Diff full screen"
             >
               {toolbar}
-              <Browser files={files} selected={sel} onSelect={setSelected} heightCls="flex-1" resizable />
+              <Browser
+                files={files}
+                selected={sel}
+                onSelect={setSelected}
+                heightCls="flex-1"
+                resizable
+                annotations={annotations}
+                focusedAnnotationId={focusedAnnotationId}
+                {...(onFocusAnnotation ? { onFocusAnnotation } : {})}
+                {...(onAddComment ? { onAddComment } : {})}
+                {...(onExpandContext ? { onExpandContext } : {})}
+              />
             </div>,
             document.body,
           )

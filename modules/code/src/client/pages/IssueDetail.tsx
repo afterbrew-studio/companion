@@ -6,11 +6,24 @@ import { codeApi as api } from '../api.js';
 import { useIssue } from '../hooks/useIssue.js';
 import { AccountPicker } from '../components/AccountPicker.js';
 import { CommentsSection } from '../components/Comments.js';
+import { PipelineRunList } from '../components/PipelineRunList.js';
 import { GitHubUser } from '../widgets.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
-  const { issue, triage, error, refresh, canAct, triaging, startTriage, fixing, startFix, busy, setIssueState } =
-    useIssue(repo, number);
+  const {
+    issue,
+    triage,
+    pipelineRuns,
+    error,
+    refresh,
+    canAct,
+    triaging,
+    startTriage,
+    fixing,
+    startFix,
+    busy,
+    setIssueState,
+  } = useIssue(repo, number);
   const { confirmDanger, confirmElement } = useConfirm();
 
   const toggleState = async (): Promise<void> => {
@@ -121,12 +134,21 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
 
       <AgentActivity repo={repo} issueNumber={number} />
 
-      {triaging && !triage ? (
+      <PipelineRunList runs={pipelineRuns} />
+
+      {triaging ? (
         <div className="banner-info anim-in">
           <Spinner /> Triage agent is investigating this issue…
+          {triage?.runId ? (
+            <a className="linkish ml-auto text-xs" href={`#/runs/${triage.runId}`}>
+              view run →
+            </a>
+          ) : null}
         </div>
       ) : null}
-      {triage ? <TriageCard triage={triage} canAct={canAct} onChange={refresh} /> : null}
+      {triage && triage.status !== 'running' ? (
+        <TriageCard triage={triage} canAct={canAct} onChange={refresh} />
+      ) : null}
 
       <CommentsSection
         load={() => api.issueComments(repo, number)}

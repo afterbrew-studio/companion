@@ -4,11 +4,12 @@ import { BudgetBar } from './components/BudgetBar.js';
 import { AgentsStatus } from './components/AgentsStatus.js';
 import { CeilingReach } from './components/CeilingReach.js';
 import { RunnerCapacityBanner, RunQueueIndicator } from './components/RunQueue.js';
+import { LanePicker } from './components/LanePicker.js';
 
 /**
  * Contributions rendered INTO other modules' pages and into the app shell. The
  * dashboard (module-code) exposes `dashboard.widgets`; the shell exposes
- * `shell.banner` and `shell.topbar`; module-core exposes
+ * `shell.banner`, `shell.topbar` and `shell.sidebar.footer`; module-core exposes
  * `modules.config.<moduleId>` above a module's own settings form. Attaching
  * here is what lets a build without operate drop all of this without the shell
  * knowing operate exists.
@@ -27,6 +28,15 @@ export const slots = defineSlots([
     order: 0,
     permission: 'runs:read',
     component: RunnerCapacityBanner,
+  },
+  {
+    // Where this person's own actions run. Ambient, so it sits with the
+    // workspace and the profile rather than on a settings page.
+    slot: 'shell.sidebar.footer',
+    key: 'operate-lane',
+    order: 0,
+    permission: 'runs:read',
+    component: LanePicker,
   },
   {
     slot: 'shell.topbar',

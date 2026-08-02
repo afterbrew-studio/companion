@@ -3,7 +3,7 @@ import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
 import { TriageStore } from './triage-store.js';
-import { PrReviewsStore } from './pr-reviews-store.js';
+import { PrReviewFindingsStore, PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
 import { PipelineSecretsStore } from './pipeline-secrets-store.js';
 import { GithubAccountsStore } from './github-accounts-store.js';
@@ -13,10 +13,22 @@ import { GitHubSync } from './github-sync.js';
 import { PrChecks } from './pr-checks.js';
 import { Triage } from './triage.js';
 import { PrReviews } from './pr-reviews.js';
+import { ReviewChat } from './review-chat.js';
 import { Fixes } from './fixes.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
 import { readActiveLocalGhAccount } from './local-gh-account.js';
+import { DEFAULT_MAX_PR_REVIEW_TOKENS } from '../contract/index.js';
+import {
+  buildPrReviewEvaluationPrompt,
+  parseVerdictWithFindings,
+  PR_REVIEW_PROMPT_VERSION,
+} from './pr-reviews.js';
+import {
+  buildTriageEvaluationPrompt,
+  ISSUE_TRIAGE_PROMPT_VERSION,
+  parseVerdict as parseTriageVerdict,
+} from './triage.js';
 
 /**
  * Construct the GitHub/code domain: the sync-cache stores, the narrow store
@@ -36,8 +48,31 @@ export default defineServices((ctx) => {
   operate.registerRunTask({ id: 'code.implement', label: 'Implement runs', placeable: true, hint: 'proposal implementations — worktree goal runs' });
   operate.registerRunTask({ id: 'code.triage', label: 'Issue triage', placeable: false });
   operate.registerRunTask({ id: 'code.pr-review', label: 'PR reviews', placeable: false });
+  // Separate from the review itself so a cheaper model can be pinned to it:
+  // an in-depth review spawns one of these per serious finding.
+  operate.registerRunTask({ id: 'code.review-verify', label: 'Review verification', placeable: false });
+  operate.registerRunTask({ id: 'code.review-chat', label: 'Review discussions', placeable: false });
+  operate.registerRunTask({ id: 'code.review-reply', label: 'Review replies', placeable: false });
   operate.registerRunTask({ id: 'code.ci-analysis', label: 'CI analyses', placeable: false });
   operate.registerRunTask({ id: 'code.pipeline', label: 'Pipeline agents', placeable: false });
+  operate.promptEvaluations.register({
+    id: 'code.pr-review',
+    moduleId: 'code',
+    label: 'Pull request review',
+    task: 'code.pr-review',
+    version: PR_REVIEW_PROMPT_VERSION,
+    buildPrompt: buildPrReviewEvaluationPrompt,
+    parseResponse: parseVerdictWithFindings,
+  });
+  operate.promptEvaluations.register({
+    id: 'code.issue-triage',
+    moduleId: 'code',
+    label: 'Issue triage',
+    task: 'code.triage',
+    version: ISSUE_TRIAGE_PROMPT_VERSION,
+    buildPrompt: buildTriageEvaluationPrompt,
+    parseResponse: parseTriageVerdict,
+  });
 
   // Adopt orphan repos into the oldest workspace — the legacy second half of
   // workspace's ensureDefault(), relocated to the repos owner (our migration
@@ -59,6 +94,7 @@ export default defineServices((ctx) => {
   // Stores, in the legacy store/db.ts construction order.
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);
+  const prReviewFindingsStore = new PrReviewFindingsStore(ctx.db);
   const githubAccountsStore = new GithubAccountsStore(ctx.db);
   const reposStore = new ReposStore(ctx.db, workspace);
   const issuesStore = new IssuesStore(ctx.db, triageStore, githubAccountsStore);
@@ -72,6 +108,7 @@ export default defineServices((ctx) => {
     prs: prsStore,
     triage: triageStore,
     prReviews: prReviewsStore,
+    prReviewFindings: prReviewFindingsStore,
     pipelines: pipelinesStore,
     pipelineSecrets: pipelineSecretsStore,
     githubAccounts: githubAccountsStore,
@@ -151,17 +188,30 @@ export default defineServices((ctx) => {
     store,
     operate.orchestrator,
     operate.checkouts,
+    (runId) => operate.usageForRun(runId),
+    () => {
+      const value = ctx.moduleConfig.get('maxPrReviewTokens');
+      return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.floor(value)
+        : DEFAULT_MAX_PR_REVIEW_TOKENS;
+    },
     (c) => ghAccounts.clientFor('pipelines', c),
     // Merging is a write action: skip accounts that can only read the repo
     // rather than burning a failover round on a guaranteed 403.
     (repo, prNumber, method, c) =>
-      ghAccounts.performForRepo('pipelines', repo, (client) => client.mergePr(repo, prNumber, method), {
-        ...c,
-        need: 'push',
-      }),
+      ghAccounts.performForRepo(
+        'pipelines',
+        repo,
+        async (client) => {
+          const fresh = await client.pull(repo, prNumber);
+          return client.mergePr(repo, prNumber, method, fresh.head.sha);
+        },
+        { ...c, need: 'push' },
+      ),
     prChecks,
     ctx.broadcast,
   );
+  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, ctx.broadcast);
   const fixes = new Fixes(
     store,
     operate.orchestrator,
@@ -217,6 +267,7 @@ export default defineServices((ctx) => {
     sync,
     triage,
     prReviews,
+    reviewChat,
     prChecks,
     fixes,
     pipelines,

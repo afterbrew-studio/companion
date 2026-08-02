@@ -3,7 +3,7 @@ import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { EmptyState, Page, PageHeader } from '@moxxy/companion-sdk/ui';
 import { codeApi as api } from '../api.js';
-import { useWorkspaceRepos } from '../hooks/useWorkspaceRepos.js';
+import { useWorkspaceReposState } from '../hooks/useWorkspaceRepos.js';
 
 /**
  * Everything GitHub-shaped in Companion needs the same two things first: an
@@ -78,7 +78,7 @@ export function RequiresGithubAccount({
 function RepoGate({ children, what }: { children: React.ReactNode; what?: string }): React.ReactNode {
   const { current } = useWorkspace();
   const { can } = useAuth();
-  const repos = useWorkspaceRepos(current?.id);
+  const { repos, loaded } = useWorkspaceReposState(current?.id);
   const subject = what ?? 'This page';
 
   if (!current) {
@@ -90,6 +90,10 @@ function RepoGate({ children, what }: { children: React.ReactNode; what?: string
       />
     );
   }
+  // Same rule as the account probe above: an unanswered list is not an empty
+  // one, and flashing "add a repository" at someone who has twenty is worse
+  // than showing nothing for a beat.
+  if (!loaded) return null;
   if (repos.length > 0) return children;
 
   return (

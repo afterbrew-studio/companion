@@ -334,6 +334,13 @@ function storeFixture() {
       id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, kind TEXT NOT NULL,
       detail_json TEXT NOT NULL, created_at INTEGER NOT NULL
     );
+    CREATE TABLE planner_usage_totals (
+      session_id TEXT PRIMARY KEY, total_runs INTEGER NOT NULL DEFAULT 0,
+      total_input_tokens INTEGER NOT NULL DEFAULT 0,
+      total_output_tokens INTEGER NOT NULL DEFAULT 0,
+      repository_scan_runs INTEGER NOT NULL DEFAULT 0,
+      cached_snapshot_runs INTEGER NOT NULL DEFAULT 0
+    );
   `);
   return { db, store: new PlannerStore(db) };
 }
@@ -1220,6 +1227,71 @@ test('store enforces expectedRevision and leaves a useful 409 payload source', (
     return true;
   });
   assert.equal(store.get('idea-1').title, 'Analytics');
+  db.close();
+});
+
+test('Ideas history is a stable lightweight page instead of full planning sessions', () => {
+  const { db, store } = storeFixture();
+  const base = session();
+  store.insert({
+    ...base,
+    id: 'idea-old',
+    title: 'Older',
+    messages: [{ id: 'large', role: 'assistant', content: 'x'.repeat(100_000), createdAt: 1 }],
+    createdAt: 10,
+    updatedAt: 10,
+  });
+  store.insert({ ...base, id: 'idea-new', title: 'Newer', createdAt: 20, updatedAt: 20 });
+  store.insert({ ...base, id: 'idea-cancelled', status: 'cancelled', createdAt: 30, updatedAt: 30 });
+
+  const first = store.listSummariesByWorkspace('ws-1', 1, 0);
+  const second = store.listSummariesByWorkspace('ws-1', 1, 1);
+
+  assert.equal(first.total, 2);
+  assert.deepEqual(first.sessions.map((entry) => entry.id), ['idea-new']);
+  assert.deepEqual(second.sessions.map((entry) => entry.id), ['idea-old']);
+  assert.deepEqual(Object.keys(first.sessions[0]).sort(), [
+    'id', 'progress', 'repo', 'status', 'title', 'updatedAt', 'workspaceId',
+  ]);
+  assert.equal('messages' in first.sessions[0], false);
+  assert.equal('repositoryContext' in first.sessions[0], false);
+  db.close();
+});
+
+test('planner event retention stays bounded without losing complete usage totals', () => {
+  const { db, store } = storeFixture();
+  store.insert(session());
+  for (let index = 0; index < 620; index += 1) {
+    store.appendEvent('idea-1', 'planner_run_completed', {
+      runId: `run-${index}`,
+      action: 'Discuss the plan',
+      round: null,
+      contextMode: index % 2 === 0 ? 'repository_scan' : 'cached_snapshot',
+      promptChars: 1_000,
+      inputTokens: 10,
+      outputTokens: 2,
+      durationMs: 50,
+    });
+  }
+  const retained = db.prepare(`SELECT COUNT(*) AS n FROM planner_events WHERE session_id = ?`).get('idea-1');
+  assert.equal(retained.n, 500);
+
+  // Simulate rows left by an older build; boot compaction removes only the
+  // excess event detail, while the durable aggregate remains authoritative.
+  const insertLegacy = db.prepare(
+    `INSERT INTO planner_events (session_id, kind, detail_json, created_at) VALUES ('idea-1', 'legacy', '{}', ?)`,
+  );
+  for (let index = 0; index < 75; index += 1) insertLegacy.run(index);
+  assert.equal(store.compactEvents(), 75);
+
+  const usage = store.usage('idea-1');
+  assert.equal(usage.totalRuns, 620);
+  assert.equal(usage.runs.length, 100);
+  assert.equal(usage.runsTruncated, true);
+  assert.equal(usage.totalInputTokens, 6_200);
+  assert.equal(usage.totalOutputTokens, 1_240);
+  assert.equal(usage.repositoryScanRuns, 310);
+  assert.equal(usage.cachedSnapshotRuns, 310);
   db.close();
 });
 

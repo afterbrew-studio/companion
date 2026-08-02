@@ -37,6 +37,14 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
                   on {runnerNames?.get(run.runnerId) ?? run.runnerId}
                 </span>
               ) : null}
+              {/* A machine may have several runtimes installed and a run is
+                  bound to the one it started under, so "which agent ran this"
+                  is a fact about the run, not something to infer from the
+                  machine's current setting. */}
+              <span className="dim" title="Agent runtime this run started under">
+                via {run.harness.label}
+                {run.model ? ` · ${run.model}` : ''}
+              </span>
             </div>
           ) : null}
         </div>

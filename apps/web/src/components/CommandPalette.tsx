@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Permission } from '@moxxy/companion-contracts';
-import type { IssueRecord, PrRecord, RepoRecord } from '@companion/module-code/contract';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { IssueListRecord, PrListRecord, RepoRecord } from '@companion/module-code/contract';
+import type { RunListRecord } from '@companion/module-operate/contract';
 import { SearchIcon } from '@moxxy/companion-ui';
 import { runIntent, useKernel, type Intent } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
@@ -64,9 +64,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
   const { workspaces, current, setCurrent } = useWorkspace();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const [issues, setIssues] = useState<IssueRecord[]>([]);
-  const [prs, setPrs] = useState<PrRecord[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [issues, setIssues] = useState<IssueListRecord[]>([]);
+  const [prs, setPrs] = useState<PrListRecord[]>([]);
+  const [runs, setRuns] = useState<RunListRecord[]>([]);
   const [repos, setRepos] = useState<RepoRecord[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -81,7 +81,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
       grab(codeApi.workspaceIssues(current.id, 'open'), (r) => setIssues(r.issues));
       grab(codeApi.workspacePrs(current.id), (r) => setPrs(r.prs.filter((p) => p.state === 'open')));
     }
-    grab(operateApi.listRuns(), (r) => setRuns(r.runs));
+    grab(operateApi.listRunsPage({ workspace: current?.id, limit: 50 }), (r) => setRuns(r.runs));
     grab(codeApi.listRepos(), (r) => setRepos(r.repos));
     return () => {
       alive = false;
@@ -274,4 +274,3 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     </div>
   );
 }
-

@@ -10,13 +10,33 @@ import type { ModuleManifest } from '../manifest.js';
  */
 
 /** Sidebar groups — a shared, ordered namespace addressed by id (module ≠ group). */
-export type SectionId = 'workspace' | 'plan' | 'code' | 'operate' | 'admin' | (string & {});
+export type SectionId =
+  | 'workspace'
+  | 'plan'
+  | 'code'
+  | 'operate'
+  // Settings-shell groups, all owned by core so a module can attach to one
+  // without depending on whoever else uses it. A typo here is not a type error
+  // (the union stays open), it is an entry that never renders.
+  | 'admin'
+  | 'admin-ai'
+  | 'admin-access'
+  | 'admin-integrations'
+  | (string & {});
 
 export interface NavSection {
   readonly id: SectionId;
   readonly label: string;
   readonly order: number;
   readonly permission?: Permission;
+  /**
+   * Where the group renders. 'settings' takes it out of the sidebar and into the
+   * settings shell's own column, which is where instance configuration belongs:
+   * pages an operator opens once a month must not compete with the daily work
+   * surfaces. Entries and routes are untouched by this: only the chrome around
+   * them changes. Defaults to 'sidebar'.
+   */
+  readonly placement?: 'sidebar' | 'settings';
 }
 
 export interface NavEntry {
@@ -31,6 +51,17 @@ export interface NavEntry {
   readonly order?: number;
   /** Nest under another entry (by its key). */
   readonly parent?: string;
+  /**
+   * Detail pages this entry owns whose path does NOT sit under its own hash,
+   * matched against the path (no `#`, no query).
+   *
+   * A pull request lives at `/repos/:owner/:name/prs/:n`, so prefix matching
+   * alone lights Repositories while the user is looking at a pull request.
+   * Only the entry itself knows which detail pages belong to it, which is why
+   * the claim is declared here rather than guessed by the shell. An explicit
+   * claim beats any incidental prefix.
+   */
+  readonly owns?: readonly RegExp[];
   /** Nav "new activity" badge: a marker string on a matching live message, else null. */
   readonly freshOn?: (msg: SpaServerMessage) => string | null;
   /**
@@ -131,4 +162,5 @@ export * from './links.js';
 export * from './use-bulk-runner.js';
 export * from './nav-icon.js';
 export * from './fresh.js';
+export * from './cached-resource.js';
 export * from './slot.js';

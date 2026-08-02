@@ -407,4 +407,218 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS pipeline_secrets`);
     },
   },
+  {
+    /**
+     * Findings become rows instead of strings inside the verdict JSON, because
+     * each one now carries state a reviewer edits (included/rejected), a
+     * verification verdict, and the id of the GitHub comment it became.
+     *
+     * Anchor columns are nullable on purpose: a finding that could not be tied
+     * to a line of the diff is still worth showing, it just travels in the
+     * review body rather than as an inline comment.
+     */
+    version: 11,
+    name: 'pr_review_findings',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pr_review_findings (
+          id                TEXT PRIMARY KEY,
+          review_id         TEXT NOT NULL,
+          source            TEXT NOT NULL DEFAULT 'native',
+          file              TEXT,
+          side              TEXT,
+          line              INTEGER,
+          start_line        INTEGER,
+          severity          TEXT NOT NULL DEFAULT 'minor',
+          title             TEXT NOT NULL,
+          reason            TEXT NOT NULL DEFAULT '',
+          impact            TEXT NOT NULL DEFAULT '',
+          suggestion        TEXT NOT NULL DEFAULT '',
+          suggested_patch   TEXT,
+          confidence        REAL NOT NULL DEFAULT 0.5,
+          state             TEXT NOT NULL DEFAULT 'proposed',
+          verification      TEXT NOT NULL DEFAULT 'unverified',
+          verification_note TEXT,
+          rejection_reason  TEXT,
+          github_comment_id INTEGER,
+          created_at        INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_prf_review ON pr_review_findings(review_id, state);
+      `);
+      for (const column of [
+        `ALTER TABLE pr_reviews ADD COLUMN head_sha TEXT`,
+        `ALTER TABLE pr_reviews ADD COLUMN depth TEXT NOT NULL DEFAULT 'in-depth'`,
+        `ALTER TABLE pr_reviews ADD COLUMN strictness TEXT NOT NULL DEFAULT 'balanced'`,
+      ]) {
+        try {
+          db.exec(column);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+    },
+    down: (db) => {
+      db.exec(`DROP TABLE IF EXISTS pr_review_findings`);
+    },
+  },
+  {
+    /**
+     * Answering, in thread, when a pull request author replies to one of the
+     * agent's inline comments. Per repository and off by default: unlike every
+     * other switch here it makes an agent speak publicly on someone else's pull
+     * request, so it is opted into deliberately, never inherited.
+     */
+    version: 12,
+    name: 'repos_review_replies',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos ADD COLUMN review_replies INTEGER NOT NULL DEFAULT 0`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: (db) => {
+      try {
+        db.exec(`ALTER TABLE repos DROP COLUMN review_replies`);
+      } catch {
+        // Older SQLite cannot drop a column; it defaults to 0, so leaving it is inert.
+      }
+    },
+  },
+  {
+    /**
+     * A PR review is an aggregate job: a large change fans out into chunk,
+     * verifier, and summary runs. Persist its source, progress, coverage, and
+     * every child run so the UI stays truthful across reconnects and restarts.
+     */
+    version: 13,
+    name: 'pr_review_execution_state',
+    up: (db) => {
+      for (const column of [
+        `ALTER TABLE pr_reviews ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'`,
+        `ALTER TABLE pr_reviews ADD COLUMN run_ids TEXT NOT NULL DEFAULT '[]'`,
+        `ALTER TABLE pr_reviews ADD COLUMN progress TEXT`,
+        `ALTER TABLE pr_reviews ADD COLUMN coverage TEXT`,
+      ]) {
+        try {
+          db.exec(column);
+        } catch (err) {
+          if (!/duplicate column name/i.test(String(err))) throw err;
+        }
+      }
+      // Empty run ids were the legacy marker for a person's own draft.
+      db.exec(`UPDATE pr_reviews SET source = 'human' WHERE run_id = '' AND status <> 'failed'`);
+      db.exec(`UPDATE pr_reviews SET run_ids = json_array(run_id) WHERE run_id <> ''`);
+    },
+    down: () => {
+      // Additive compatibility columns are inert to an older build. Rebuilding
+      // this history table merely to remove them would risk the review record.
+    },
+  },
+  {
+    /** Pipeline definitions are editable/deletable; their run history is not. */
+    version: 14,
+    name: 'pipeline_run_workspace_history',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN workspace_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+      db.exec(`
+        UPDATE pipeline_runs
+           SET workspace_id = (SELECT workspace_id FROM pipelines WHERE pipelines.id = pipeline_runs.pipeline_id)
+         WHERE workspace_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_pipeline_runs_workspace
+          ON pipeline_runs(workspace_id, created_at DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_pipeline_runs_workspace`);
+    },
+  },
+  {
+    /** Hot paths for paged maintainer queues and latest-review decoration. */
+    version: 15,
+    name: 'maintainer_queue_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_latest
+          ON pr_reviews(repo, pr_number, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_prs_repo_state_updated
+          ON prs(repo, state, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_prs_open_head
+          ON prs(repo, head_sha) WHERE state = 'open';
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_pr_reviews_latest;
+        DROP INDEX IF EXISTS idx_prs_repo_state_updated;
+        DROP INDEX IF EXISTS idx_prs_open_head;
+      `);
+    },
+  },
+  {
+    /** Exactly-once admission for webhook-triggered pipeline/head pairs. */
+    version: 16,
+    name: 'pipeline_run_idempotency',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN idempotency_key TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_runs_idempotency
+          ON pipeline_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_pipeline_runs_idempotency`);
+    },
+  },
+  {
+    /** Attribute run control and scope its raw live command stream to its starter. */
+    version: 17,
+    name: 'pipeline_run_owner',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE pipeline_runs ADD COLUMN owner_id TEXT`);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) throw err;
+      }
+    },
+    down: () => {
+      // Additive compatibility column; rebuilding run history to remove it is unsafe.
+    },
+  },
+  {
+    /** Workspace issue queues order within one repository and state. */
+    version: 18,
+    name: 'issue_maintainer_queue_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_issues_repo_state_updated
+          ON issues(repo, state, updated_at DESC, number DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_issues_repo_state_updated`);
+    },
+  },
+  {
+    /** Latest triage decoration is read for only the visible queue window. */
+    version: 19,
+    name: 'triage_latest_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_triage_latest
+          ON triage_results(repo, issue_number, created_at DESC, id DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_triage_latest`);
+    },
+  },
 ]);

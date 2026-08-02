@@ -1,5 +1,5 @@
-import { safeParse, type Database } from '@moxxy/companion-sdk/server';
-import type { ProposalAnalysis, ProposalRecord } from '../contract/index.js';
+import { likeArg, safeParse, type Database } from '@moxxy/companion-sdk/server';
+import type { ProposalAnalysis, ProposalListRecord, ProposalRecord } from '../contract/index.js';
 
 /** Change proposals and their analyze/implement lifecycle. */
 export class ProposalsStore {
@@ -54,6 +54,15 @@ export class ProposalsStore {
     return row ? proposalRowToRecord(row) : undefined;
   }
 
+  getByImplementRunId(
+    runId: string,
+  ): Pick<ProposalRecord, 'id' | 'status'> | undefined {
+    const row = this.db
+      .prepare(`SELECT id, status FROM proposals WHERE implement_run_id = ? LIMIT 1`)
+      .get(runId) as Pick<ProposalRecord, 'id' | 'status'> | undefined;
+    return row;
+  }
+
   list(): ProposalRecord[] {
     const rows = this.db.prepare(`SELECT * FROM proposals ORDER BY created_at DESC`).all() as ProposalRow[];
     return rows.map(proposalRowToRecord);
@@ -66,6 +75,58 @@ export class ProposalsStore {
       )
       .all(workspaceId) as ProposalRow[];
     return rows.map(proposalRowToRecord);
+  }
+
+  listWorkspacePage(
+    workspaceId: string,
+    opts: {
+      readonly q?: string;
+      readonly repo?: string;
+      readonly status?: ProposalRecord['status'];
+      readonly limit?: number;
+      readonly offset?: number;
+    } = {},
+  ): { proposals: ProposalListRecord[]; total: number } {
+    const where = ['workspace_id = ?'];
+    const args: unknown[] = [workspaceId];
+    if (opts.q) {
+      where.push(`(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')`);
+      args.push(likeArg(opts.q), likeArg(opts.q));
+    }
+    if (opts.repo) {
+      where.push('repo = ?');
+      args.push(opts.repo);
+    }
+    if (opts.status) {
+      where.push('status = ?');
+      args.push(opts.status);
+    }
+    const clause = `WHERE ${where.join(' AND ')}`;
+    const total = (this.db
+      .prepare(`SELECT COUNT(*) AS n FROM proposals ${clause}`)
+      .get(...args) as { n: number }).n;
+    const limit = Math.min(Math.max(Number.isSafeInteger(opts.limit) ? opts.limit! : 50, 1), 100);
+    const offset = Math.max(Number.isSafeInteger(opts.offset) ? opts.offset! : 0, 0);
+    const rows = this.db.prepare(`
+      SELECT id, workspace_id, repo, title, SUBSTR(body, 1, 500) AS body_preview,
+             LENGTH(body) AS body_length, status, analysis_run_id, implement_run_id,
+             branch, pr_url,
+             CASE WHEN analysis IS NOT NULL AND json_valid(analysis)
+               THEN json_extract(analysis, '$.feasibility') ELSE NULL END AS analysis_feasibility,
+             created_at, updated_at
+      FROM proposals ${clause}
+      ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as ProposalListRow[];
+    return { proposals: rows.map(proposalListRowToRecord), total };
+  }
+
+  /** Status-only projection for cross-module counters; never materialises body/analysis. */
+  listStatusesByWorkspace(
+    workspaceId: string,
+  ): Array<{ readonly id: string; readonly status: ProposalRecord['status'] }> {
+    return this.db
+      .prepare(`SELECT id, status FROM proposals WHERE workspace_id = ?`)
+      .all(workspaceId) as Array<{ id: string; status: ProposalRecord['status'] }>;
   }
 
   /**
@@ -97,6 +158,23 @@ interface ProposalRow {
   updated_at: number;
 }
 
+interface ProposalListRow {
+  id: string;
+  workspace_id: string;
+  repo: string;
+  title: string;
+  body_preview: string;
+  body_length: number;
+  status: ProposalRecord['status'];
+  analysis_feasibility: unknown;
+  analysis_run_id: string | null;
+  implement_run_id: string | null;
+  branch: string | null;
+  pr_url: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 function proposalRowToRecord(row: ProposalRow): ProposalRecord {
   return {
     id: row.id,
@@ -106,6 +184,29 @@ function proposalRowToRecord(row: ProposalRow): ProposalRecord {
     body: row.body,
     status: row.status,
     analysis: row.analysis ? normalizeProposalAnalysis(safeParse<unknown>(row.analysis, null)) : null,
+    analysisRunId: row.analysis_run_id,
+    implementRunId: row.implement_run_id,
+    branch: row.branch,
+    prUrl: row.pr_url,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function proposalListRowToRecord(row: ProposalListRow): ProposalListRecord {
+  const feasibility = typeof row.analysis_feasibility === 'string'
+    && ['low', 'medium', 'high'].includes(row.analysis_feasibility)
+    ? row.analysis_feasibility as ProposalAnalysis['feasibility']
+    : null;
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    repo: row.repo,
+    title: row.title,
+    bodyPreview: row.body_preview,
+    bodyLength: row.body_length,
+    status: row.status,
+    analysisFeasibility: feasibility,
     analysisRunId: row.analysis_run_id,
     implementRunId: row.implement_run_id,
     branch: row.branch,

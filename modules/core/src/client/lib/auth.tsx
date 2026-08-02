@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { AuthUser, Permission } from '@moxxy/companion-contracts';
 import { connectWs, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
 import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
-import { authApi } from '../api.js';
+import { authApi, coreApi } from '../api.js';
 
 interface AuthState {
   /** undefined = still resolving, null = signed out. */
@@ -12,6 +12,10 @@ interface AuthState {
   readonly permissions: readonly Permission[];
   /** Effective inbox scope (per-user override ?? instance default). */
   readonly notificationScope: NotificationScope;
+  /** Nav entry keys this user hid from their sidebar. Chrome, never access. */
+  readonly hiddenNav: readonly string[];
+  /** Persist the hidden set (optimistic; reverts if the write fails). */
+  readonly setHiddenNav: (keys: readonly string[]) => Promise<void>;
   /** Instance branding (name/logo); available pre-login. */
   readonly branding: InstanceBranding;
   /** Host for user-facing GitHub links; `github.com` unless this instance points at GHES. */
@@ -34,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [needsSetup, setNeedsSetup] = useState(false);
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [notificationScope, setNotificationScope] = useState<NotificationScope>('workspace');
+  const [hiddenNav, setHiddenNavState] = useState<readonly string[]>([]);
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
   const [githubHost, setGithubHost] = useState('github.com');
   const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
@@ -76,6 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setUser(session.user);
       setPermissions(session.permissions);
       setNotificationScope(session.notificationScope);
+      // A daemon older than this SPA has no such field, and the sidebar must not
+      // throw over a menu preference.
+      setHiddenNavState(session.hiddenNav ?? []);
       connectWs();
     } catch {
       // 401 handling in the net core already cleared the token.
@@ -109,6 +117,22 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
   const can = useCallback((p: Permission) => permissions.includes(p), [permissions]);
 
+  // Optimistic: toggling an entry has to feel like flicking a switch, and the
+  // worst case of a lost write is a menu row that comes back on next sign-in.
+  const setHiddenNav = useCallback(
+    async (keys: readonly string[]) => {
+      const previous = hiddenNav;
+      setHiddenNavState(keys);
+      try {
+        await coreApi.updateProfile({ hiddenNav: keys });
+      } catch (err) {
+        setHiddenNavState(previous);
+        throw err;
+      }
+    },
+    [hiddenNav],
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -116,6 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         needsSetup,
         permissions,
         notificationScope,
+        hiddenNav,
+        setHiddenNav,
         branding,
         setBranding,
         githubHost,

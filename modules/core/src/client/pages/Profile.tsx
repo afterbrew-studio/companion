@@ -168,12 +168,25 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
       </form>
 
       <form className="card mt-3 flex flex-col gap-4" onSubmit={(e) => void changePassword(e)}>
+        {/* Password managers associate this otherwise separate form with the
+            signed-in account through the standard autocomplete pair. */}
+        <input
+          className="sr-only"
+          type="text"
+          name="username"
+          autoComplete="username"
+          value={account?.username ?? ''}
+          readOnly
+          tabIndex={-1}
+          aria-label="Username"
+        />
         <div className="text-[13px] font-medium">Change password</div>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Current password">
             <input
               className="input"
               type="password"
+              name="currentPassword"
               autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -183,6 +196,7 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
             <input
               className="input"
               type="password"
+              name="newPassword"
               autoComplete="new-password"
               minLength={8}
               value={newPassword}
@@ -193,6 +207,7 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
             <input
               className="input"
               type="password"
+              name="confirmPassword"
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

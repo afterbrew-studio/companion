@@ -31,10 +31,13 @@ export type GitHubClient = NonNullable<ReturnType<CodeService['githubAccounts'][
 /** Webhook payload object shapes, as the sync cache's apply methods accept them. */
 export type GhIssue = Parameters<GitHubSync['applyIssue']>[1];
 export type GhPull = Parameters<GitHubSync['applyPull']>[1];
+/** The `pull_request_review_comment` slice, as code's reply path accepts it. */
+export type GhReviewComment = Parameters<PrReviews['replyToReviewComment']>[2];
 /** A repos-table row as code's store returns it (snake_case; the legacy shape). */
 export type RepoRow = NonNullable<ReturnType<ReposStore['get']>>;
 
 export type PlanService = ServiceMap['plan'];
+export type Proposals = PlanService['proposals'];
 export type Specs = PlanService['specs'];
 
 /** module-core's Auth service (AI Help mints scoped API tokens through it). */

@@ -1,23 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
+  Dropdown,
   EmptyState,
   ErrorBar,
+  FilterField,
+  FiltersPopover,
   ListCard,
-  ListFilterToolbar,
+  ListFooter,
   Page,
   PageHeader,
+  PageLoading,
+  SearchInput,
   Spinner,
   StatusDot,
-  facet,
   formatTokens,
   timeAgo,
-  useListFilter,
-  type FilterSelectField,
+  useHashFilters,
+  useHashSearch,
 } from '@moxxy/companion-ui';
 import { useWorkspace } from '@companion/module-workspace/client';
-import type { RunKind, RunRecord, RunStatus } from '../../contract/index.js';
+import type { RunKind, RunListRecord, RunStatus } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
-import { useRuns } from '../hooks/useRuns.js';
+import { useRunsPage } from '../hooks/useRuns.js';
 import { useWorkspaceRepos } from '../hooks/useWorkspaceRepos.js';
 
 export function statusBadge(status: RunStatus, live: boolean): string {
@@ -40,7 +44,7 @@ const KIND_OPTIONS: ReadonlyArray<{ value: RunKind; label: string }> = [
 
 /** Coarse status buckets — what you actually filter by when hunting a run. */
 const STATUS_OPTIONS = [
-  { value: 'live', label: 'Live (gateway attached)' },
+  { value: 'active', label: 'Active (including review)' },
   { value: 'review', label: 'Needs review' },
   { value: 'running', label: 'Running' },
   { value: 'completed', label: 'Completed' },
@@ -48,29 +52,22 @@ const STATUS_OPTIONS = [
   { value: 'stopped', label: 'Stopped / abandoned' },
 ] as const;
 
-function matchesStatus(run: RunRecord, bucket: string): boolean {
-  switch (bucket) {
-    case 'live':
-      return run.live;
-    case 'failed':
-      return run.status === 'failed' || run.status === 'interrupted';
-    case 'stopped':
-      return run.status === 'stopped' || run.status === 'abandoned';
-    default:
-      return run.status === bucket;
-  }
-}
-
 export function RunsPage(): JSX.Element {
-  const { runs: allRuns, error, setError } = useRuns();
+  const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['kind', 'status', 'repo'] as const);
+  const { search, setSearch, q } = useHashSearch();
   const { current } = useWorkspace();
   const wsRepos = useWorkspaceRepos(current?.id);
-  // Scope to the active workspace: runs on its repos, plus instance-wide runs
-  // (AI Help, reports, interactive chats) that belong to no workspace.
-  const runs = useMemo(() => {
-    const names = new Set(wsRepos.map((r) => r.fullName));
-    return allRuns.filter((r) => r.repo === null || names.has(r.repo));
-  }, [allRuns, wsRepos]);
+  const selectedKind = KIND_OPTIONS.some((option) => option.value === filters.kind) ? filters.kind : undefined;
+  const selectedStatus = STATUS_OPTIONS.some((option) => option.value === filters.status)
+    ? filters.status
+    : undefined;
+  const { runs, total, loading, hasMore, loadMore, error, setError, refresh } = useRunsPage({
+    workspaceId: current?.id,
+    q: q || undefined,
+    repo: filters.repo === 'all' ? undefined : filters.repo,
+    kind: selectedKind,
+    status: selectedStatus,
+  });
   const [creating, setCreating] = useState(false);
 
   const createRun = async (): Promise<void> => {
@@ -86,63 +83,76 @@ export function RunsPage(): JSX.Element {
     }
   };
 
-  const filterFields: Array<FilterSelectField<RunRecord>> = [
-    {
-      key: 'kind',
-      label: 'Kind',
-      allLabel: 'All kinds',
-      options: KIND_OPTIONS.map((k) => ({ value: k.value, label: k.label })),
-      match: (run, v) => run.kind === v,
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      allLabel: 'Any status',
-      options: STATUS_OPTIONS.map((s) => ({ value: s.value, label: s.label })),
-      match: matchesStatus,
-    },
-    {
-      key: 'repo',
-      label: 'Repository',
-      allLabel: 'All repositories',
-      options: facet(runs, (r) => r.repo).map((r) => ({ value: r, label: r })),
-      match: (run, v) => run.repo === v,
-    },
-  ];
-  const filter = useListFilter(
-    runs,
-    (run, needle) =>
-      run.title.toLowerCase().includes(needle) ||
-      (run.repo ?? '').toLowerCase().includes(needle) ||
-      run.id.includes(needle),
-    filterFields,
-  );
-  const filtered = filter.filtered;
+  if (!current) return <EmptyState title="No workspace selected" />;
 
   return (
     <Page>
       <PageHeader
         title="Agent Runs"
-        subtitle="Every agent session — chats, triage, fixes, reviews, reports"
+        subtitle={`${current.name} · chats, triage, fixes, reviews, and reports`}
         actions={
-          <button className="btn" disabled={creating} onClick={() => void createRun()}>
-            {creating ? 'Starting…' : 'New interactive run'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search runs…  ( / )"
+              ariaLabel="Search title, repository, or run id"
+            />
+            <FiltersPopover active={activeFilters} onClear={clearFilters}>
+              <FilterField label="Kind">
+                <Dropdown
+                  ariaLabel="Filter runs by kind"
+                  value={selectedKind ?? 'all'}
+                  onChange={setFilter('kind')}
+                  options={[
+                    { value: 'all', label: 'All kinds' },
+                    ...KIND_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+                  ]}
+                />
+              </FilterField>
+              <FilterField label="Status">
+                <Dropdown
+                  ariaLabel="Filter runs by status"
+                  value={selectedStatus ?? 'all'}
+                  onChange={setFilter('status')}
+                  options={[
+                    { value: 'all', label: 'Any status' },
+                    ...STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+                  ]}
+                />
+              </FilterField>
+              {wsRepos.length > 0 ? (
+                <FilterField label="Repository">
+                  <Dropdown
+                    ariaLabel="Filter runs by repository"
+                    value={filters.repo}
+                    onChange={setFilter('repo')}
+                    searchable
+                    options={[
+                      { value: 'all', label: 'All repositories' },
+                      ...wsRepos.map((repo) => ({ value: repo.fullName, label: repo.fullName })),
+                    ]}
+                  />
+                </FilterField>
+              ) : null}
+            </FiltersPopover>
+            <button className="btn" disabled={creating} onClick={() => void createRun()}>
+              {creating ? 'Starting…' : 'New interactive run'}
+            </button>
+          </div>
         }
       />
-      <ErrorBar error={error} />
+      <ErrorBar error={error} className="mb-3" />
 
-      {runs.length > 0 ? (
-        <ListFilterToolbar
-          filter={filter}
-          fields={filterFields}
-          total={runs.length}
-          placeholder="Search title, repo, or run id…"
-          searchLabel="Search runs"
+      {runs === null ? (
+        <PageLoading label="Loading agent runs…" />
+      ) : error && runs.length === 0 ? (
+        <EmptyState
+          title="Could not load agent runs"
+          hint="Retry when the service is reachable. Existing runs were not changed."
+          action={<button className="btn" onClick={refresh}>Retry</button>}
         />
-      ) : null}
-
-      {runs.length === 0 ? (
+      ) : runs.length === 0 && activeFilters === 0 && !search.trim() ? (
         <EmptyState
           title="No runs yet"
           hint="Start an interactive run to chat with an agent, or trigger triage/fix/review from an issue or PR."
@@ -152,49 +162,59 @@ export function RunsPage(): JSX.Element {
             </button>
           }
         />
-      ) : filtered.length === 0 ? (
+      ) : runs.length === 0 ? (
         <EmptyState title="No runs match" hint="Loosen the search or clear the filters." />
       ) : (
-        <ListCard>
-          {filtered.map((run) => (
-            <a key={run.id} className="row-link" href={`#/runs/${run.id}`}>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline gap-2">
-                  <span className="truncate font-medium">{run.title}</span>
-                  {run.status === 'review' ? <span className="badge-warn shrink-0">needs review</span> : null}
-                  {run.prUrl ? <span className="badge-ok shrink-0">PR ✓</span> : null}
+        <>
+          <ListCard>
+            {runs.map((run: RunListRecord) => (
+              <a key={run.id} className="row-link" href={`#/runs/${run.id}`}>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline gap-2">
+                    <span className="truncate font-medium">{run.title}</span>
+                    {run.status === 'review' ? <span className="badge-warn shrink-0">needs review</span> : null}
+                    {run.prUrl ? <span className="badge-ok shrink-0">PR ✓</span> : null}
+                  </span>
+                  <span className="dim block truncate text-xs">
+                    {run.live ? 'live' : run.status} · {run.kind}
+                    {run.model ? ` · ${run.model}` : ''}
+                    {run.repo ? ` · ${run.repo}` : ''}
+                    {run.inputTokens + run.outputTokens > 0
+                      ? ` · ${formatTokens(run.inputTokens)} in · ${formatTokens(run.outputTokens)} out`
+                      : ''}
+                  </span>
                 </span>
-                <span className="dim block truncate text-xs">
-                  {run.live ? 'live' : run.status} · {run.kind}
-                  {run.model ? ` · ${run.model}` : ''}
-                  {run.repo ? ` · ${run.repo}` : ''}
-                  {run.inputTokens + run.outputTokens > 0
-                    ? ` · ${formatTokens(run.inputTokens)} in · ${formatTokens(run.outputTokens)} out`
-                    : ''}
+                <span className="dim shrink-0" title={new Date(run.createdAt).toLocaleString()}>
+                  {timeAgo(run.createdAt)}
                 </span>
-              </span>
-              <span className="dim shrink-0" title={new Date(run.createdAt).toLocaleString()}>
-                {timeAgo(run.createdAt)}
-              </span>
-              {run.live ? (
-                <Spinner />
-              ) : (
-                <StatusDot
-                  tone={
-                    run.status === 'failed' || run.status === 'interrupted'
-                      ? 'red'
-                      : run.status === 'review'
-                        ? 'amber'
-                        : run.status === 'completed'
-                          ? 'green'
-                          : 'zinc'
-                  }
-                  title={run.status}
-                />
-              )}
-            </a>
-          ))}
-        </ListCard>
+                {run.live ? (
+                  <Spinner />
+                ) : (
+                  <StatusDot
+                    tone={
+                      run.status === 'failed' || run.status === 'interrupted'
+                        ? 'red'
+                        : run.status === 'review'
+                          ? 'amber'
+                          : run.status === 'completed'
+                            ? 'green'
+                            : 'zinc'
+                    }
+                    title={run.status}
+                  />
+                )}
+              </a>
+            ))}
+          </ListCard>
+          <ListFooter
+            loading={loading}
+            hasMore={hasMore}
+            shown={runs.length}
+            total={total}
+            noun="runs"
+            onVisible={loadMore}
+          />
+        </>
       )}
     </Page>
   );

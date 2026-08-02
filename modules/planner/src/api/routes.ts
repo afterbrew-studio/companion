@@ -46,6 +46,16 @@ const mergeSchema = revisionSchema.extend({
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
 }).strict();
 
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null) return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
 export default defineRoutes((ctx) => {
   const planner = ctx.services.get('planner');
   const workspace = ctx.services.get('workspace');
@@ -81,9 +91,13 @@ export default defineRoutes((ctx) => {
   return [
     route({
       method: 'GET', path: '/api/workspaces/:id/ideas', access: 'planner:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         workspace.requireAccessible(user, params.id);
-        return { sessions: planner.list(params.id), legacyActiveCount: planner.legacyActiveCount(params.id) };
+        const page = planner.listPage(params.id, {
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
+        return { ...page, legacyActiveCount: planner.legacyActiveCount(params.id) };
       },
     }),
     route({

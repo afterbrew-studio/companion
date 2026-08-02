@@ -6,9 +6,11 @@ import type {
   RunQueueSnapshot,
   RunRecord,
   RunTaskDescriptor,
+  RunUsageSnapshot,
   RunVerification,
   TokenUsage,
 } from '../contract/index.js';
+import { estimateUsd } from '../contract/model-pricing.js';
 import type { AgentPolicy } from './agent-policy.js';
 import type { Budgets } from './budgets.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -18,6 +20,7 @@ import type { WebhookTunnel } from './webhook-tunnel.js';
 import type { Skills } from './skills.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
+import { PromptEvaluationCatalog } from './prompt-evaluations.js';
 
 /**
  * The execution-plane bundle other modules resolve via
@@ -33,6 +36,9 @@ export class OperateService {
 
   /** Feature tasks modules registered, keyed by id — feeds the runner filter UI. */
   private readonly runTasks = new Map<string, RunTaskDescriptor>();
+
+  /** Exact production prompt/parser seams registered by their owning modules. */
+  readonly promptEvaluations = new PromptEvaluationCatalog();
 
   constructor(
     readonly orchestrator: Orchestrator,
@@ -64,6 +70,16 @@ export class OperateService {
   /** The parsed pre-review verification for a run; operate owns the encoding. */
   verificationFor(runId: string): RunVerification | null {
     return this.runsStore.get(runId) ? rowToRun(this.runsStore.get(runId)!, false).verification : null;
+  }
+
+  /**
+   * Usage evidence for an aggregate job after one of its children settles.
+   * The runs table and harness declaration are both Operate-owned, as is the
+   * model price table, so downstream modules get one already-normalised answer.
+   */
+  usageForRun(runId: string): RunUsageSnapshot | null {
+    const row = this.runsStore.get(runId);
+    return row ? usageSnapshot(rowToRun(row, false)) : null;
   }
 
   /**
@@ -205,4 +221,21 @@ export class OperateService {
   githubTokens(): GithubTokenSource {
     return this.tokenSource.current;
   }
+}
+
+/** Pure form kept exported so capability/zero-telemetry semantics are testable. */
+export function usageSnapshot(
+  run: Pick<RunRecord, 'model' | 'harness' | 'inputTokens' | 'outputTokens'>,
+): RunUsageSnapshot {
+  const reported = run.inputTokens + run.outputTokens > 0;
+  return {
+    inputTokens: run.inputTokens,
+    outputTokens: run.outputTokens,
+    estimatedCostUsd: reported ? estimateUsd(run.model, run.inputTokens, run.outputTokens) : null,
+    telemetry: reported
+      ? 'reported'
+      : run.harness.capabilities.usage === 'tokens'
+        ? 'missing'
+        : 'unsupported',
+  };
 }

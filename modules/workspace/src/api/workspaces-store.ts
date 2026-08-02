@@ -207,6 +207,19 @@ export class WorkspacesStore {
     return new Set(this.listFor(user).map((w) => w.id));
   }
 
+  /** Published workspace projection for modules that need to scope their own rows by repo. */
+  repoNames(workspaceId: string): string[] {
+    try {
+      return (
+        this.db
+          .prepare(`SELECT full_name FROM v_repos WHERE workspace_id = ? ORDER BY full_name`)
+          .all(workspaceId) as Array<{ full_name: string }>
+      ).map((row) => row.full_name);
+    } catch {
+      return [];
+    }
+  }
+
   /** Counters + weekly open/close velocity for a workspace's dashboard. */
   metrics(workspaceId: string, weeks = 12, repoNames?: readonly string[]): WorkspaceMetrics {
     // issues/prs/repos are code-owned; if module-code is uninstalled the JOINs

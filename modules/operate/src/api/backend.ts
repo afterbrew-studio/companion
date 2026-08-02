@@ -1,4 +1,5 @@
 import type {
+  AgentRunAccess,
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
   AgentVerifyResponse,
@@ -40,7 +41,7 @@ export interface RunnerBackend {
 
   // ---------- gateway lifecycle ----------
   /** Bring up serve+gateway for a run whose working dir is `cwd`. */
-  spawn(runId: string, cwd: string): Promise<void>;
+  spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void>;
   stop(runId: string): Promise<void>;
   isLive(runId: string): boolean;
   liveIds(): string[];
@@ -72,7 +73,7 @@ export interface RunnerBackend {
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
   diffVsBase(cwd: string, baseBranch: string): Promise<string>;
-  commitAll(cwd: string, message: string): Promise<void>;
+  commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void>;
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void>;
 
   /** Enforce daemon-owned retention inside this runner's managed roots. */

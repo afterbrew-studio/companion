@@ -23,6 +23,31 @@ export class TriageStore {
       .run(status, verdict ? JSON.stringify(verdict) : null, error ?? null, id);
   }
 
+  setRun(id: string, runId: string): void {
+    this.db.prepare(`UPDATE triage_results SET run_id = ? WHERE id = ? AND status = 'running'`).run(runId, id);
+  }
+
+  finish(id: string, status: 'pending' | 'failed', verdict: TriageVerdict | null, error: string | null): void {
+    this.db
+      .prepare(`UPDATE triage_results SET status = ?, verdict = ?, error = ? WHERE id = ? AND status = 'running'`)
+      .run(status, verdict ? JSON.stringify(verdict) : null, error, id);
+  }
+
+  /** A process-local agent cannot still be running after this daemon booted. */
+  failInterrupted(): string[] {
+    const repos = this.db
+      .prepare(`SELECT DISTINCT repo FROM triage_results WHERE status = 'running'`)
+      .all() as Array<{ repo: string }>;
+    this.db
+      .prepare(
+        `UPDATE triage_results
+         SET status = 'failed', error = 'triage was interrupted by a daemon restart'
+         WHERE status = 'running'`,
+      )
+      .run();
+    return repos.map((row) => row.repo);
+  }
+
   get(id: string): TriageResult | undefined {
     const row = this.db.prepare(`SELECT * FROM triage_results WHERE id = ?`).get(id) as TriageRow | undefined;
     return row ? triageRowToResult(row) : undefined;
@@ -53,13 +78,18 @@ export class TriageStore {
     );
   }
 
-  latestByIssue(repo: string): Map<number, TriageResult['status']> {
+  latestByIssue(repo: string, issueNumbers?: readonly number[]): Map<number, TriageResult['status']> {
+    if (issueNumbers?.length === 0) return new Map();
+    const numberClause = issueNumbers ? ` AND issue_number IN (${issueNumbers.map(() => '?').join(', ')})` : '';
     const rows = this.db
       .prepare(
-        `SELECT issue_number, status FROM triage_results t1 WHERE repo = ?
-         AND created_at = (SELECT MAX(created_at) FROM triage_results t2 WHERE t2.repo = t1.repo AND t2.issue_number = t1.issue_number)`,
+        `SELECT issue_number, status FROM (
+           SELECT issue_number, status,
+                  ROW_NUMBER() OVER (PARTITION BY issue_number ORDER BY created_at DESC, id DESC) AS row_number
+           FROM triage_results WHERE repo = ?${numberClause}
+         ) WHERE row_number = 1`,
       )
-      .all(repo) as Array<{ issue_number: number; status: TriageResult['status'] }>;
+      .all(repo, ...(issueNumbers ?? [])) as Array<{ issue_number: number; status: TriageResult['status'] }>;
     return new Map(rows.map((r) => [r.issue_number, r.status]));
   }
 }

@@ -19,6 +19,10 @@ export interface FixRunOptions {
   /** Outranks the task's instance pin; gives way like one where the machine the
    *  run lands on cannot serve it. */
   preferredModel?: string | null;
+  /** Internal owning-flow hooks: expose the child before its first prompt. */
+  onCreated?: (runId: string) => void;
+  /** Final cancellation fence after run creation and before every first-turn action. */
+  shouldStart?: (runId: string) => boolean;
 }
 
 /**
@@ -193,7 +197,12 @@ export class Fixes {
   }
 
   /** Agent merges the fresh base into the PR branch and resolves the conflicts. */
-  async startConflictResolve(repo: string, prNumber: number, userId: string | null = null): Promise<RunRecord> {
+  async startConflictResolve(
+    repo: string,
+    prNumber: number,
+    userId: string | null = null,
+    opts: FixRunOptions = {},
+  ): Promise<RunRecord> {
     await this.requirePersonalAccess(repo, userId);
     const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
     // Re-check GitHub live — the sync cache can lag a manual resolution, and a
@@ -209,7 +218,7 @@ export class Fixes {
       pr,
       `Resolve conflicts on PR #${prNumber}: ${pr.title.slice(0, 45)}`,
       conflictObjective(pr),
-      { userId },
+      { ...opts, userId },
     );
   }
 
@@ -279,10 +288,31 @@ export class Fixes {
       task,
       preferredModel: opts.preferredModel,
     });
+    try {
+      opts.onCreated?.(run.id);
+    } catch (err) {
+      await this.orchestrator.stopRun(run.id).catch(() => undefined);
+      throw new Error(`fix-run owner callback failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const mayStart = (): boolean => {
+      try {
+        return opts.shouldStart?.(run.id) !== false;
+      } catch {
+        return false;
+      }
+    };
+    if (!mayStart()) {
+      await this.orchestrator.stopRun(run.id);
+      return this.orchestrator.getRun(run.id)!;
+    }
     // The existing PR is this run's destination; approve() pushes to its
     // branch instead of opening a new one.
     this.store.runs.setPr(run.id, pr.headRef, pr.url);
     await this.orchestrator.setGoalMode(run.id);
+    if (!mayStart()) {
+      await this.orchestrator.stopRun(run.id);
+      return this.orchestrator.getRun(run.id)!;
+    }
     await this.orchestrator.sendPrompt(run.id, objective);
     return this.orchestrator.getRun(run.id)!;
   }
@@ -321,7 +351,15 @@ export class Fixes {
     const client = await this.requirePushAccess(run.repo, credentialOwner);
 
     const backend = this.backendForRun(run.runner_id);
-    await backend.commitAll(run.cwd, opts.title ?? run.title);
+    // Signed as the account whose credential is about to push it, so the commit
+    // attributes to a real GitHub user instead of a local identity nobody can
+    // resolve. Best effort: a failed lookup keeps the previous behaviour rather
+    // than losing work the agent already did.
+    const author = await client
+      .viewer()
+      .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
+      .catch(() => undefined);
+    await backend.commitAll(run.cwd, opts.title ?? run.title, author);
     await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 
     if (run.pr_url) {

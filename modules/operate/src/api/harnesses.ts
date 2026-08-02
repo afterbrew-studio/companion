@@ -1,6 +1,6 @@
 import type { HarnessDescriptor, HarnessOption, RunnerCatalog } from '../contract/index.js';
 import { CLAUDE_CODE_CAPABILITIES, CLAUDE_MODEL_ALIASES } from '../exec/claude-code.js';
-import { CODEX_CAPABILITIES } from '../exec/codex.js';
+import { CODEX_CAPABILITIES, codexModels } from '../exec/codex.js';
 import type { HarnessDetection } from '../exec/harness-detect.js';
 import { MOXXY_CAPABILITIES } from '../exec/gateway-client.js';
 
@@ -32,8 +32,10 @@ export const CLAUDE_CODE_HARNESS: HarnessDescriptor = {
  * current when this build shipped. It answers the question from the machine
  * instead, through `sessionInfo`, which reads the cache Codex keeps.
  */
+const CODEX_HARNESS_ID = 'codex';
+
 export const CODEX_HARNESS: HarnessDescriptor = {
-  id: 'codex',
+  id: CODEX_HARNESS_ID,
   label: 'Codex',
   homepage: 'https://developers.openai.com/codex',
   capabilities: CODEX_CAPABILITIES,
@@ -45,14 +47,20 @@ export const CODEX_HARNESS: HarnessDescriptor = {
  * something that cannot change without a new release of that runtime.
  */
 export function builtinCatalog(harness: HarnessDescriptor): RunnerCatalog | null {
-  if (harness.models === undefined) return null;
+  // Codex carries no fixed list (see its descriptor) but does keep one on disk,
+  // written by the runtime itself. Reading it costs a file read and is the
+  // difference between its models being pinnable and the operator being told,
+  // wrongly, that this runtime reports nothing. Only correct for the local
+  // machine, which is the only kind that runs a non-moxxy runtime today.
+  const models = harness.models ?? (harness.id === CODEX_HARNESS_ID ? codexModels() : undefined);
+  if (models === undefined || models.length === 0) return null;
   return {
     providers: [
       {
         name: harness.id,
         enabled: true,
         ready: true,
-        models: harness.models.map((id) => ({ id, contextWindow: null })),
+        models: models.map((id) => ({ id, contextWindow: null })),
       },
     ],
     defaultModel: null,

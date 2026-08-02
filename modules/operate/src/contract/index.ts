@@ -248,6 +248,25 @@ export interface RunRecord {
   readonly outcome: string | null;
 }
 
+/** Lightweight run-list row; filesystem and terminal evidence stay on detail. */
+export type RunListRecord = Omit<RunRecord, 'cwd' | 'verification' | 'outcome'>;
+
+/**
+ * Final usage evidence for one run as consumed by aggregate jobs in other
+ * modules. Pricing stays owned by Operate: consumers receive its estimate and
+ * never duplicate the model-price table.
+ */
+export interface RunUsageSnapshot {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly estimatedCostUsd: number | null;
+  /**
+   * `missing` means this runtime promises tokens but the run recorded none;
+   * `unsupported` means its declared capability cannot feed the token ledger.
+   */
+  readonly telemetry: 'reported' | 'missing' | 'unsupported';
+}
+
 /**
  * An unattended run waiting for a runner slot. It has no run row yet — it
  * becomes a real run only once it starts — so the queue is its own list the
@@ -996,6 +1015,23 @@ export interface TaskModelPin {
    * run (see the cascade in Orchestrator) and drops it where it cannot be met.
    */
   readonly model: string | null;
+  /**
+   * The pin on the lane being configured, when one is; null means the task
+   * inherits. Kept apart from `model` because they are different layers: this
+   * one governs a person's own work in that lane, `model` governs the
+   * unattended runs nobody is watching.
+   */
+  readonly laneModel?: string | null;
+  /**
+   * What last ran this task, straight off the run rows. The settings above say
+   * what a task would use; this says what it did, which is the only place a
+   * dropped pin or a lane's override becomes visible.
+   */
+  readonly lastRun?: {
+    readonly harness: string;
+    readonly model: string | null;
+    readonly at: number;
+  } | null;
 }
 
 /** The Task models settings payload: what can be pinned, to what, and the fallback. */
@@ -1012,6 +1048,16 @@ export interface TaskModelSnapshot {
   readonly models: ReadonlyArray<CatalogModel>;
   /** Where every unpinned task lands (the daemon's configured model). */
   readonly defaultModel: string;
+  /** The lane these pins belong to; absent means the instance-wide layer. */
+  readonly lane?: RunLane;
+  /** That lane's own default, used by its tasks with no pin of their own. */
+  readonly laneDefaultModel?: string | null;
+  /** Every lane that can be configured, for the picker. */
+  readonly lanes?: ReadonlyArray<{
+    readonly runnerId: string;
+    readonly harness: string;
+    readonly label: string;
+  }>;
 }
 
 /** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
@@ -1030,4 +1076,48 @@ export interface SkillFile {
   readonly name: string;
   readonly content: string;
   readonly updatedAt: number;
+}
+
+// ---------- run lanes ----------------------------------------------------------
+
+/**
+ * Where a person's own actions run: a machine and the agent runtime on it.
+ *
+ * Null on either half means "decide as before": no machine is auto-placement,
+ * no runtime is that machine's own default. A lane is a PREFERENCE over
+ * placement, never over a machine's task policy — it may override what someone
+ * wants, never what a machine refuses.
+ *
+ * It governs attended work only. A webhook or a schedule has nobody's session
+ * to inherit, and silently borrowing whichever runtime a maintainer last picked
+ * would make unattended runs change behaviour when nobody touched them.
+ */
+export interface RunLane {
+  readonly runnerId: string | null;
+  readonly harness: string | null;
+}
+
+/**
+ * Model choices scoped to one lane.
+ *
+ * Scoping is what makes them unambiguous: `opus` means nothing on its own when
+ * two runtimes both offer it, and everything once you know which lane it was
+ * chosen in.
+ */
+export interface LaneModels {
+  /** Used by any task in this lane with no pin of its own. */
+  readonly defaultModel: string | null;
+  /** Task id to model, for the tasks where the default is not the right answer. */
+  readonly pins: Readonly<Record<string, string>>;
+}
+
+/** A lane plus the models set on it, as the settings page reads them. */
+export interface LaneSettings {
+  readonly lane: RunLane;
+  readonly models: LaneModels;
+}
+
+/** Stable key for a lane; `auto` stands in for an unset half. */
+export function laneKey(lane: RunLane): string {
+  return `${lane.runnerId ?? 'auto'}:${lane.harness ?? 'auto'}`;
 }

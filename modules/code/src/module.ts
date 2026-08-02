@@ -1,4 +1,5 @@
 import { defineManifest } from '@moxxy/companion-sdk';
+import { DEFAULT_MAX_PR_REVIEW_TOKENS } from './contract/index.js';
 
 /**
  * module-code — the GitHub-facing domain: repositories + the multi-account
@@ -26,6 +27,16 @@ export default defineManifest({
   ],
   messages: ['repos.changed', 'issues.changed', 'triage.changed', 'prs.changed', 'pipelines.changed', 'pipelineRuns.changed', 'pipelineStep.output'],
   config: [
+    {
+      key: 'maxPrReviewTokens',
+      label: 'Token ceiling per PR review',
+      kind: 'number',
+      default: DEFAULT_MAX_PR_REVIEW_TOKENS,
+      min: 100_000,
+      max: 50_000_000,
+      description:
+        'Aggregate input + output tokens across every review chunk, finding verifier and summary. Work already in flight may overshoot slightly; it is stopped as soon as the ceiling is observed. Reviews also stop if their runtime cannot report usage.',
+    },
     {
       key: 'allowExecutableSteps',
       label: 'Allow executable pipeline steps',

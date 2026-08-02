@@ -22,6 +22,8 @@ interface Pending {
 }
 
 const PENDING_TTL_MS = 10 * 60_000;
+const MAX_PENDING = 1_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 const base64url = (b: Buffer): string => b.toString('base64url');
 
 /**
@@ -57,7 +59,7 @@ export class OidcClient {
   private async discover(): Promise<Discovery> {
     if (this.discovery && Date.now() - this.discovery.at < 3_600_000) return this.discovery.value;
     const url = `${this.issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`OIDC discovery failed: ${url} returned ${res.status}`);
     const value = (await res.json()) as Discovery;
     for (const key of ['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint', 'issuer'] as const) {
@@ -73,6 +75,11 @@ export class OidcClient {
     const state = base64url(randomBytes(24));
     const verifier = base64url(randomBytes(32));
     this.sweep();
+    while (this.pending.size >= MAX_PENDING) {
+      const oldest = this.pending.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.pending.delete(oldest);
+    }
     this.pending.set(state, { verifier, createdAt: Date.now(), returnTo });
     const url = new URL(authorization_endpoint);
     for (const [k, v] of Object.entries({
@@ -111,6 +118,7 @@ export class OidcClient {
         redirect_uri: redirectUri,
         code_verifier: entry.verifier,
       }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!tokenRes.ok) throw new Error(`token exchange failed (${tokenRes.status})`);
     const token = (await tokenRes.json()) as { access_token?: string; id_token?: string };
@@ -120,6 +128,7 @@ export class OidcClient {
 
     const infoRes = await fetch(userinfo_endpoint, {
       headers: { authorization: `Bearer ${token.access_token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!infoRes.ok) throw new Error(`userinfo failed (${infoRes.status})`);
     const claims = (await infoRes.json()) as Record<string, unknown>;
@@ -154,7 +163,8 @@ export class OidcClient {
     if (claims.iss !== issuer) throw new Error('id_token was issued by a different provider');
     const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
     if (!aud.includes(this.clientId)) throw new Error('id_token was issued for a different client');
-    if (typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now()) throw new Error('id_token has expired');
+    if (typeof claims.exp !== 'number') throw new Error('id_token is missing exp or it is not numeric');
+    if (claims.exp * 1000 <= Date.now()) throw new Error('id_token has expired');
   }
 
   /** Single use, constant-time: a `state` is a capability to complete a login. */

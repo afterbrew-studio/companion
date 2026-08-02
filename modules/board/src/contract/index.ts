@@ -126,6 +126,9 @@ export interface TaskRecord {
   readonly finishedAt: number | null;
 }
 
+/** Kanban card projection; long authoring fields are fetched in task detail. */
+export type TaskListRecord = Omit<TaskRecord, 'description' | 'acceptance'>;
+
 /** A prerequisite in the task detail — title redacted when the caller can't see its repo. */
 export interface TaskDependencyView {
   readonly id: string;

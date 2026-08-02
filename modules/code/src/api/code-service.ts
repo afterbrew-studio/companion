@@ -5,6 +5,7 @@ import type { GitHubAccounts } from './github-accounts.js';
 import type { GitHubSync } from './github-sync.js';
 import type { Triage } from './triage.js';
 import type { PrReviews } from './pr-reviews.js';
+import type { ReviewChat } from './review-chat.js';
 import type { PrChecks } from './pr-checks.js';
 import type { Fixes } from './fixes.js';
 import type { Pipelines } from './pipelines.js';
@@ -27,6 +28,7 @@ export class CodeService {
     readonly sync: GitHubSync,
     readonly triage: Triage,
     readonly prReviews: PrReviews,
+    readonly reviewChat: ReviewChat,
     readonly prChecks: PrChecks,
     readonly fixes: Fixes,
     readonly pipelines: Pipelines,

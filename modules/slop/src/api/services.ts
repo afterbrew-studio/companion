@@ -1,6 +1,11 @@
 import { defineServices } from '@moxxy/companion-sdk/server';
 import { SlopStore } from './slop-store.js';
-import { SlopService } from './slop-service.js';
+import {
+  buildSlopEvaluationPrompt,
+  parseSlopEvaluationResponse,
+  SLOP_ASSESSMENT_PROMPT_VERSION,
+  SlopService,
+} from './slop-service.js';
 
 /**
  * Construct the slop domain: the store over the detection/rule tables and the
@@ -13,6 +18,15 @@ export default defineServices((ctx) => {
   const code = ctx.services.get('code');
   const operate = ctx.services.get('operate');
   operate.registerRunTask({ id: 'slop.detect', label: 'Slop detection', placeable: false });
+  operate.promptEvaluations.register({
+    id: 'slop.contribution-quality',
+    moduleId: 'slop',
+    label: 'Contribution quality assessment',
+    task: 'slop.detect',
+    version: SLOP_ASSESSMENT_PROMPT_VERSION,
+    buildPrompt: buildSlopEvaluationPrompt,
+    parseResponse: parseSlopEvaluationResponse,
+  });
   ctx.services.register(
     'slop',
     new SlopService(

@@ -29,6 +29,9 @@ const MAX_CONTEXT_ENTRIES = 5;
 const DECOMPOSE_TIMEOUT_MS = 12 * 60_000;
 const MAX_CACHED_DECOMPOSE_PROMPT_CHARS = 80_000;
 
+/** Frozen-corpus compatibility version for epic decomposition. */
+export const REFINEMENT_DECOMPOSITION_PROMPT_VERSION = 1;
+
 export interface DecomposeRunContext {
   /** Opaque repository knowledge captured by the owning workflow. */
   readonly repositorySnapshot?: string;
@@ -139,6 +142,13 @@ export class RefinementService {
     return this.store.listByWorkspace(workspaceId);
   }
 
+  listPage(
+    workspaceId: string,
+    opts: Parameters<RefinementStore['listWorkspacePage']>[1] = {},
+  ): { refinements: RefinementListEntry[]; total: number } {
+    return this.store.listWorkspacePage(workspaceId, opts);
+  }
+
   get(
     id: string,
   ): { refinement: RefinementRecord; items: RefineItemRecord[]; workspaceId: string | null } | undefined {
@@ -154,14 +164,8 @@ export class RefinementService {
     const refinement = this.store.get(id);
     if (!refinement) throw new Error('refinement not found');
     const workspaceId = refinement.workspaceId;
-    const specs = this.plan.specs
-      .list(workspaceId)
-      .filter((s) => s.repo === refinement.repo && s.status === 'ready')
-      .map((s) => ({ id: s.id, title: s.title }));
-    const docs = this.plan.docs
-      .list(workspaceId)
-      .filter((d) => d.repo === refinement.repo || d.repo === null)
-      .map((d) => ({ id: d.id, title: d.title }));
+    const specs = this.plan.specs.listReadyOptions(workspaceId, refinement.repo);
+    const docs = this.plan.docs.listOptions(workspaceId, refinement.repo);
     return { specs, docs };
   }
 
@@ -385,12 +389,19 @@ export class RefinementService {
   /** The attached ready specs of the refinement's repo, capped and clipped. */
   private specContext(refinement: RefinementRecord, specIds: readonly string[]): Array<{ title: string; content: string }> {
     if (specIds.length === 0) return [];
-    const wanted = new Set(specIds.slice(0, MAX_CONTEXT_ENTRIES));
-    return this.plan.specs
-      .list(refinement.workspaceId)
-      .filter((s) => wanted.has(s.id) && s.repo === refinement.repo && s.status === 'ready')
-      .slice(0, MAX_CONTEXT_ENTRIES)
-      .map((s) => ({ title: s.title, content: s.content }));
+    const specs: Array<{ title: string; content: string }> = [];
+    for (const specId of specIds.slice(0, MAX_CONTEXT_ENTRIES)) {
+      const spec = this.plan.specs.get(specId);
+      if (
+        spec &&
+        spec.workspaceId === refinement.workspaceId &&
+        spec.repo === refinement.repo &&
+        spec.status === 'ready'
+      ) {
+        specs.push({ title: spec.title, content: spec.content });
+      }
+    }
+    return specs;
   }
 
   /** The attached workspace docs, capped and clipped. */
@@ -750,6 +761,43 @@ Reply with ONLY a JSON object (no fence, no prose) of exactly this shape:
     }
   ]
 }`;
+}
+
+const refinementEvaluationFixtureSchema = z
+  .object({
+    title: z.string().min(1).max(200),
+    story: z.string().min(1).max(64_000),
+    branch: z.string().min(1).max(500),
+    methodId: z.string().min(1).max(100),
+    specs: z.array(z.object({ title: z.string().max(200), content: z.string().max(6_000) }).strict()).max(5),
+    docs: z.array(z.object({ title: z.string().max(200), content: z.string().max(6_000) }).strict()).max(5),
+    repositorySnapshot: z.string().min(1).max(40_000),
+  })
+  .strict();
+
+/** Build the same cached-snapshot decomposition prompt production executes. */
+export function buildRefinementEvaluationPrompt(fixture: unknown): string {
+  const parsed = refinementEvaluationFixtureSchema.parse(fixture);
+  const method = BUILTIN_METHODS.find((candidate) => candidate.id === parsed.methodId);
+  if (!method) throw new Error(`unknown built-in refinement method '${parsed.methodId}'`);
+  const refinement: RefinementRecord = {
+    id: 'fixture-refinement',
+    workspaceId: 'fixture-workspace',
+    repo: 'fixture/repository',
+    branch: parsed.branch,
+    title: parsed.title,
+    story: parsed.story,
+    status: 'draft',
+    error: null,
+    methodId: method.id,
+    specIds: [],
+    docIds: [],
+    summary: null,
+    runId: null,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  return decomposePrompt(refinement, method, parsed.specs, parsed.docs, parsed.repositorySnapshot);
 }
 
 function safelyReportDecomposeCompletion(

@@ -12,7 +12,23 @@ import { useKernel } from './modules-provider.js';
  * same way it attaches to another module's page, which is what keeps the shell
  * free of module imports.
  */
-export function Slot({ name, can }: { name: string; can: (p: Permission) => boolean }): ReactNode {
+export function Slot({
+  name,
+  can,
+  props,
+}: {
+  name: string;
+  can: (p: Permission) => boolean;
+  /**
+   * Passed to every contribution. For what the HOST knows and the contributor
+   * cannot, such as the sidebar being collapsed; never for data a module could
+   * fetch itself, which would make the slot a coupling instead of an
+   * extension point.
+   */
+  props?: Record<string, unknown>;
+}): ReactNode {
   const kernel = useKernel();
-  return kernel.slots(name).map((s) => (s.permission && !can(s.permission) ? null : <s.component key={s.key} />));
+  return kernel
+    .slots(name)
+    .map((s) => (s.permission && !can(s.permission) ? null : <s.component key={s.key} {...props} />));
 }

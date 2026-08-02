@@ -122,7 +122,7 @@ export class NotifyService {
         publicUrl: this.publicUrl(),
         secret: target.secret,
       });
-      outcome = await deliver(request);
+      outcome = await deliver(request, fetch, { publicOnly: target.userId !== null });
     } catch (err) {
       // A malformed stored URL throws in buildRequest rather than in fetch.
       outcome = { ok: false, httpStatus: null, error: String(err instanceof Error ? err.message : err), attempts: 0 };

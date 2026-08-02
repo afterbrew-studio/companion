@@ -1,13 +1,11 @@
 {
   "name": "full",
-  "description": "Every OSS module in this repo. The planning cluster (plan, board, refinement, planner), the reactors (automations, slop, playground) and the delivery modules (notify, oidc) land as Available, not enabled: see each manifest's autoInstall.",
+  "description": "Every OSS module in this repo. Slim already carries plan and automations for the digest; this adds the rest of the planning cluster (board, refinement, planner), the reactors (slop, playground) and the delivery modules (notify, oidc). They land as Available, not enabled: see each manifest's autoInstall.",
   "extends": "slim",
   "modules": [
-    "plan",
     "board",
     "refinement",
     "planner",
-    "automations",
     "slop",
     "playground",
     "notify",

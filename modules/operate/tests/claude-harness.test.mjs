@@ -260,7 +260,15 @@ test('a resumed run comes back with its transcript, not a blank page', async (t)
   const harness = new ClaudeCodeHarness({ runId, cwd: '/tmp', cliPath: bin, model: null }, {});
   t.after(() => harness.close());
   await harness.connect(400);
-  const live = await harness.loadHistory(runId, null, 500);
+  // connect proves the process stayed up; it intentionally has no protocol
+  // handshake. Under a busy full-suite run stdout may arrive just after that
+  // settle window, so wait on the event this assertion actually needs instead
+  // of treating scheduler latency as a lost transcript.
+  let live = await harness.loadHistory(runId, null, 500);
+  for (let attempt = 0; attempt < 40 && !live.events.some((e) => e.callId === 'after-resume'); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    live = await harness.loadHistory(runId, null, 500);
+  }
   assert.ok(harness.isOpen, 'the stand-in session should still be up');
   assert.ok(live.events.length > 1, 'a resumed session answered with nothing');
   assert.ok(live.events.some((e) => e.type === 'user_prompt'), 'the replayed prompts are missing');
@@ -435,12 +443,13 @@ test('its models still decide placement, even though providers do not list them'
     store.runners.setCatalog('runner-b', moxxyCatalog);
   });
 
-  // A model only the Claude Code machine lists must place there and nowhere
-  // else: hiding it from the Providers page must not hide it from placement.
+  // A model only one machine can serve must place there and nowhere else:
+  // hiding a built-in runtime from the Providers page must not hide it from
+  // placement. Claude Code's own models come from its descriptor, so `sonnet`
+  // is the local machine's alone and the moxxy machine's `opus` is not.
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'sonnet'), true);
   assert.equal(orchestrator.runners.serves('runner-b', 'sonnet'), false);
   assert.equal(orchestrator.runners.serves('runner-b', 'opus'), true);
-  assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'opus'), false);
 });
 
 test('a machine set to its own models needs no probe to say what it can run', async () => {
@@ -449,9 +458,11 @@ test('a machine set to its own models needs no probe to say what it can run', as
   const { store, orchestrator } = fixture();
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
 
-  const catalog = store.runners.get(LOCAL_RUNNER_ID).catalog;
-  assert.deepEqual(catalog.providers.map((p) => p.name), ['claude-code']);
-  assert.ok(catalog.providers[0].models.some((m) => m.id === 'haiku'));
+  // Asserted through what the machine can run rather than through the stored
+  // catalog: a runtime that ships its own models is merged in on read, because
+  // caching something free only buys a window in which it is wrong.
+  const models = orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'claude-code').map((m) => m.id);
+  assert.deepEqual(models.sort(), ['haiku', 'opus', 'sonnet']);
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'haiku'), true);
 });
 
@@ -496,13 +507,13 @@ test('health follows the runtime a run would take, not moxxy and not the whole s
 test('switching runtimes drops the models the previous one reported', async () => {
   // Kept, the old catalog reads as a credentialed provider the moment the
   // machine is back on moxxy, which is exactly what the switch should end.
-  const { store, orchestrator } = fixture();
+  const { orchestrator } = fixture();
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
-  assert.ok(store.runners.get(LOCAL_RUNNER_ID).catalog.providers.length > 0);
+  assert.ok(orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'claude-code').length > 0);
 
   // Back to moxxy, whose probe cannot succeed here (no CLI in this fixture).
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['moxxy'] });
-  assert.equal(store.runners.get(LOCAL_RUNNER_ID).catalog, null);
+  assert.deepEqual(orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'moxxy'), []);
   assert.equal(orchestrator.runners.catalogSnapshot('opus', null).providers.some((p) => p.name === 'claude-code'), false);
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'haiku'), true, 'an unknown model stays permissive');
 });

@@ -63,6 +63,27 @@ const patchMethodSchema = z.object({
   instructions: z.string().trim().min(8).max(8_000).optional(),
 });
 
+function pageInteger(raw: string | null, fallback: number, min: number, max: number, name: string): number {
+  if (raw === null || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw badRequest(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw badRequest(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function queryText(raw: string | null, max: number, name: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  if (value.length > max) throw badRequest(`${name} must be at most ${max} characters`);
+  return value;
+}
+
+function statusChoice(raw: string | null): 'draft' | 'decomposing' | 'ready' | 'failed' | undefined {
+  return raw === 'draft' || raw === 'decomposing' || raw === 'ready' || raw === 'failed' ? raw : undefined;
+}
+
 export default defineRoutes((ctx) => {
   const refinement = ctx.services.get('refinement');
   const workspace = ctx.services.get('workspace');
@@ -98,9 +119,15 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/workspaces/:id/refinements',
       access: 'refine:read',
-      handler: ({ params, user }) => {
+      handler: ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        return { refinements: refinement.listByWorkspace(params.id) };
+        return refinement.listPage(params.id, {
+          q: queryText(query.get('q'), 200, 'q'),
+          repo: queryText(query.get('repo'), 300, 'repo'),
+          status: statusChoice(query.get('status')),
+          limit: pageInteger(query.get('limit'), 50, 1, 100, 'limit'),
+          offset: pageInteger(query.get('offset'), 0, 0, 1_000_000, 'offset'),
+        });
       },
     }),
 

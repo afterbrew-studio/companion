@@ -69,4 +69,17 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 4,
+    name: 'refinement_paged_list_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_refinements_workspace_updated
+          ON refinements(workspace_id, updated_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_refine_items_status
+          ON refine_items(refinement_id, status);
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

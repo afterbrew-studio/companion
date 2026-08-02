@@ -1,9 +1,10 @@
 import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 /**
- * Operate owns the Operate sidebar group (agent runs, runners, skills) and
- * attaches its provider/model admin pages to core's Admin group. Icons follow
- * the shared stroke style from the legacy modules.tsx registry.
+ * Operate owns the Operate sidebar group (agent runs, skills) and attaches its
+ * provider/model/spend pages to core's AI settings group and runners to its
+ * Instance group: they configure the instance rather than carry daily work.
+ * Icons follow the shared stroke style from the legacy modules.tsx registry.
  *
  * Skills lives in operate's OWN group: the page, route and API are operate's,
  * and module-playground is not installed by default, so hanging the entry off
@@ -63,7 +64,7 @@ export const nav = defineNav([
     hash: '#/providers',
     shortcut: 'v',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 0,
     icon: (
       <NavIcon>
@@ -77,7 +78,7 @@ export const nav = defineNav([
     label: 'Task models',
     hash: '#/task-models',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 5,
     icon: (
       <NavIcon>
@@ -92,7 +93,7 @@ export const nav = defineNav([
     label: 'Spend',
     hash: '#/spend',
     permission: 'settings:manage',
-    section: 'admin',
+    section: 'admin-ai',
     order: 7,
     icon: (
       <NavIcon>
@@ -106,10 +107,12 @@ export const nav = defineNav([
     label: 'Runners',
     hash: '#/runners',
     shortcut: 'n',
-    // Every role can inspect the shared pool and connect private machines.
+    // Configuration, so it sits in settings — but under the OPEN permission
+    // every role already had, not behind `settings:manage`: connecting a
+    // machine is a maintainer's job, and settings is only where it lives.
     permission: 'runners:connect',
-    section: 'operate',
-    order: 10,
+    section: 'admin',
+    order: 45,
     icon: (
       <NavIcon>
         <rect x="3" y="4" width="18" height="7" rx="1.5" />

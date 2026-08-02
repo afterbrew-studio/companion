@@ -211,4 +211,15 @@ export default defineMigrations([
       db.exec(`ALTER TABLE board_tasks DROP COLUMN model`);
     },
   },
+  {
+    version: 10,
+    name: 'board_done_archive_index',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_board_tasks_done_archive
+          ON board_tasks(workspace_id, status, repo, finished_at DESC, updated_at DESC, id DESC)
+      `);
+    },
+    down: () => undefined,
+  },
 ]);

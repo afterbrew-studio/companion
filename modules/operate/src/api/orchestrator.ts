@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@moxxy/companion-types';
+import type { AgentRunAccess, AskRequest, HistorySegment, MoxxyEvent, PromptAttachment } from '@moxxy/companion-types';
 import type { ModuleConfigAccessor } from '@moxxy/companion-core';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
@@ -11,12 +11,17 @@ import type {
   ModelCatalogProvider,
   RunKind,
   RunnerFallback,
+  LaneModels,
+  RunLane,
   RunQueueSnapshot,
+  RunListRecord,
   RunRecord,
 } from '../contract/index.js';
-import { log, paths, type DaemonConfig } from '@moxxy/companion-services';
+import { laneKey } from '../contract/index.js';
+import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
+import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
-import { rowToRun } from './runs-store.js';
+import { rowToRun, rowToRunList } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
@@ -65,10 +70,32 @@ const KIND_PRIORITY: Record<RunKind, number> = {
   assistant: 10,
 };
 
+/** Least privilege for the execution runtime, independent of product labels. */
+export function accessForRunKind(kind: RunKind): AgentRunAccess {
+  if (kind === 'analysis' || kind === 'triage' || kind === 'report') return 'read-only';
+  if (kind === 'assistant') return 'trusted-assistant';
+  return 'workspace-write';
+}
+
 /** Settings key holding a task's instance-wide model pin. */
 function taskPinKey(task: string): string {
   return `modelPin:task:${task}`;
 }
+
+/** The lane a person's own actions run in. Per profile, so two maintainers differ. */
+function userLaneKey(username: string): string {
+  return `lane:user:${username}`;
+}
+
+/** A lane's default model, and its pin for one task. */
+function laneModelKey(lane: RunLane): string {
+  return `lane:model:${laneKey(lane)}`;
+}
+function lanePinKey(lane: RunLane, task: string): string {
+  return `lane:pin:${laneKey(lane)}:${task}`;
+}
+
+const AUTO_LANE: RunLane = { runnerId: null, harness: null };
 
 /**
  * Is the queue stuck rather than merely busy?
@@ -110,6 +137,12 @@ export class Orchestrator implements RunnerEventSink {
   private readonly pendingAsks = new Map<string, Map<string, AskRequest>>();
   /** waitForTurn resolvers, keyed by runId. */
   private readonly turnWaiters = new Map<string, Set<() => void>>();
+  /**
+   * Narrow live-usage hooks for aggregate operations such as a split PR
+   * review. The run row remains the source of truth; observers receive only a
+   * signal to read the already-persisted cumulative snapshot from Operate.
+   */
+  private readonly usageObservers = new Map<string, (runId: string) => void>();
   // Unattended runs schedule against the runners' combined capacity (shared +
   // dedicated): up to that many run at once, the rest wait in a visible queue
   // the user can reorder and cancel.
@@ -227,14 +260,18 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   onAsk(runId: string, ask: AskRequest): void {
-    // Unattended runs must never park on a human. Tools without a declared
-    // allow-policy (e.g. Glob on moxxy 0.26.0) reach the ask path; auto-allow
-    // them — the real fences are the isolated clone/worktree cwd and the
-    // permissions.json deny rules. Attended kinds (interactive chats, the AI
-    // Help assistant) keep the human in the loop: their asks park in the UI.
+    // Unattended runs must never park on a human. Read-only work fails closed:
+    // an unknown tool cannot become a side-effect escape hatch merely because
+    // it was added after Companion's immutable deny list. Writable goal runs
+    // retain their automatic policy; attended chats keep the human in the loop.
     const row = this.store.runs.get(runId);
     const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
     if (row && !attended && ask.kind === 'permission') {
+      if (accessForRunKind(row.kind) === 'read-only') {
+        log.info('denying undeclared tool for read-only run', { runId, tool: ask.tool?.name });
+        void this.respondAsk(runId, ask.requestId, { mode: 'deny' }).catch(() => undefined);
+        return;
+      }
       log.info('auto-allowing ask for unattended run', { runId, tool: ask.tool?.name });
       void this.respondAsk(runId, ask.requestId, { mode: 'allow' }).catch(() => undefined);
       return;
@@ -411,6 +448,18 @@ export class Orchestrator implements RunnerEventSink {
     return this.store.runs.list().map((row) => rowToRun(row, this.isLive(row.id)));
   }
 
+  /** Lightweight, bounded run queue. Filesystem paths and terminal evidence
+   * stay on detail; gateway liveness is attached only for the visible page. */
+  listRunsPage(
+    opts: Parameters<OperateStore['runs']['listPage']>[0],
+  ): { runs: RunListRecord[]; total: number } {
+    const page = this.store.runs.listPage(opts);
+    return {
+      runs: page.rows.map((row) => rowToRunList(row, this.isLive(row.id))),
+      total: page.total,
+    };
+  }
+
   getRun(runId: string): RunRecord | null {
     const row = this.store.runs.get(runId);
     return row ? rowToRun(row, this.isLive(runId)) : null;
@@ -482,6 +531,14 @@ export class Orchestrator implements RunnerEventSink {
     /** Feature-level task id (RunTaskDescriptor) — always server-assigned by
      *  the owning feature, never client input, so filters can't be dodged. */
     task?: string | null;
+    /** Agent runtime to start under; omitted lets the lane or the machine decide. */
+    harness?: string | null;
+    /**
+     * The acting person's lane, captured by a caller that queues work. Read
+     * here only when absent, because by the time a queued job runs the request
+     * that started it is long gone and `currentUser()` answers null.
+     */
+    lane?: RunLane;
   }): Promise<RunRecord> {
     // Before every other check and before any side effect: a run refused for
     // budget must leave no row, no worktree and no queue entry behind.
@@ -530,25 +587,46 @@ export class Orchestrator implements RunnerEventSink {
     // Placement: an explicit runnerId wins; a caller-prepared cwd (a local
     // worktree/clone from a one-shot) pins to the local runner; otherwise pick
     // a ready runner for the repo and let its backend allocate a scratch dir.
-    const runnerId =
-      opts.runnerId !== undefined
-        ? opts.runnerId
-        : opts.cwd !== undefined
+    const lane = opts.lane ?? this.actingLane();
+    // A lane pins a machine by choice, so it skips placement — and with it the
+    // checks placement would have run. They are made here instead: a preference
+    // may outrank another preference, never a machine's own refusal.
+    if (lane.runnerId !== null && opts.runnerId === undefined && opts.cwd === undefined) {
+      const refusal = this.runners.refusalFor(lane.runnerId, {
+        task: opts.task ?? null,
+        repo: opts.repo ?? null,
+        userId: opts.userId ?? null,
+      });
+      if (refusal) throw new Error(`${refusal}. Change where your runs go, or pick Auto.`);
+    }
+    const runnerId = resolveRunner({
+      ...(opts.runnerId !== undefined ? { explicit: opts.runnerId } : {}),
+      hasPreparedCwd: opts.cwd !== undefined,
+      laneRunnerId: lane.runnerId,
+      placed:
+        opts.runnerId !== undefined || opts.cwd !== undefined || lane.runnerId !== null
           ? null
           : this.placeRun(opts.repo ?? null, {
               model: opts.model,
               preferredModel: opts.preferredModel,
               userId: opts.userId,
               task: opts.task,
-            });
-    // Model: explicit override → the unit of work's standing preference → the
-    // task's instance pin, the last two applied only where the machine can
-    // serve them. null falls through to the daemon default at dispatch, and to
-    // the runner's own moxxy default when even that cannot be served there.
-    const model =
-      opts.model ??
-      this.servableHere(runnerId, opts.preferredModel ?? null) ??
-      this.servablePin(runnerId, opts.task ?? null);
+            }),
+    });
+    // Model: a choice just made → the unit of work's standing preference → this
+    // lane's pin for the task → this lane's default → the task's instance pin.
+    // Everything but the explicit choice is narrowed to what the machine can
+    // serve; null falls through to the daemon default at dispatch, and to the
+    // runner's own default when even that cannot be served there.
+    const model = resolveModel({
+      ...(opts.model !== undefined ? { explicit: opts.model } : {}),
+      preferred: this.servableHere(runnerId, opts.preferredModel ?? null),
+      lanePin: isAutoLane(lane)
+        ? null
+        : this.servableHere(runnerId, opts.task ? (this.laneModels(lane, [opts.task]).pins[opts.task] ?? null) : null),
+      laneDefault: isAutoLane(lane) ? null : this.servableHere(runnerId, this.laneModels(lane, []).defaultModel),
+      taskPin: this.servablePin(runnerId, opts.task ?? null),
+    });
     const backend = this.runners.backend(runnerId);
     // Reserve the slot atomically: persist the provisioning row (carrying
     // runner_id) BEFORE the first await, so a concurrent createRun's placement
@@ -569,7 +647,12 @@ export class Orchestrator implements RunnerEventSink {
       runnerId,
       userId: opts.userId ?? null,
       task: opts.task ?? null,
-      harness: this.runners.harnessFor(runnerId).id,
+      harness: resolveHarness({
+        ...(opts.harness !== undefined ? { explicit: opts.harness } : {}),
+        laneHarness: lane.harness,
+        offered: this.runners.harnessIdsOn(runnerId),
+        machineDefault: this.runners.harnessFor(runnerId).id,
+      }),
       verification: null,
       createdAt: now,
       updatedAt: now,
@@ -594,7 +677,7 @@ export class Orchestrator implements RunnerEventSink {
           cwd = await placedBackend.scratchDir(id);
           this.store.runs.setPlacement(id, placedOn, cwd, this.runners.harnessFor(placedOn).id);
         }
-        await placedBackend.spawn(id, cwd!);
+        await placedBackend.spawn(id, cwd!, accessForRunKind(kind));
         this.setStatus(id, 'running');
         // The gateway is up anyway — top up that machine's catalog for free if
         // it has gone stale (never blocks the run).
@@ -655,7 +738,7 @@ export class Orchestrator implements RunnerEventSink {
     if (!row) throw new Error(`unknown run: ${runId}`);
     if (!this.isLive(runId)) {
       try {
-        await this.backend(runId).spawn(runId, row.cwd);
+        await this.backend(runId).spawn(runId, row.cwd, accessForRunKind(row.kind));
       } catch (err) {
         log.warn('resume failed', { runId, err: String(err) });
         throw new Error(`could not resume: ${err instanceof Error ? err.message : String(err)}`);
@@ -743,9 +826,66 @@ export class Orchestrator implements RunnerEventSink {
     return pinned && pinned.trim() !== '' ? pinned : null;
   }
 
+  /** Daemon fallback included in evaluation configuration snapshots. */
+  defaultModelPreference(): string {
+    return this.config.defaultModel;
+  }
+
   /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
   setTaskModelPin(task: string, model: string | null): void {
     this.store.settings.set(taskPinKey(task), model?.trim() ?? '');
+  }
+
+  /** Where this person's own actions run. Unset is auto placement. */
+  userLane(username: string): RunLane {
+    const raw = this.store.settings.get(userLaneKey(username));
+    if (!raw) return AUTO_LANE;
+    try {
+      const parsed = JSON.parse(raw) as Partial<RunLane>;
+      return {
+        runnerId: typeof parsed.runnerId === 'string' && parsed.runnerId ? parsed.runnerId : null,
+        harness: typeof parsed.harness === 'string' && parsed.harness ? parsed.harness : null,
+      };
+    } catch {
+      // A hand-edited or half-written value must not break every run this
+      // person starts; auto is the answer that always works.
+      return AUTO_LANE;
+    }
+  }
+
+  setUserLane(username: string, lane: RunLane): void {
+    this.store.settings.set(userLaneKey(username), JSON.stringify(lane));
+  }
+
+  /** The models set on one lane, as the settings page reads and writes them. */
+  laneModels(lane: RunLane, tasks: readonly string[]): LaneModels {
+    const pins: Record<string, string> = {};
+    for (const task of tasks) {
+      const pinned = this.store.settings.get(lanePinKey(lane, task));
+      if (pinned && pinned.trim() !== '') pins[task] = pinned;
+    }
+    const fallback = this.store.settings.get(laneModelKey(lane));
+    return { defaultModel: fallback && fallback.trim() !== '' ? fallback : null, pins };
+  }
+
+  setLaneDefaultModel(lane: RunLane, model: string | null): void {
+    this.store.settings.set(laneModelKey(lane), model?.trim() ?? '');
+  }
+
+  setLaneTaskPin(lane: RunLane, task: string, model: string | null): void {
+    this.store.settings.set(lanePinKey(lane, task), model?.trim() ?? '');
+  }
+
+  /**
+   * The lane a run should honour: the acting person's, and only when a person
+   * is acting. Work outside an HTTP request (webhooks, schedules, the queue's
+   * own retries) sees no user and therefore no lane, which is the whole point:
+   * unattended runs must not change behaviour because a maintainer switched
+   * their sidebar.
+   */
+  private actingLane(): RunLane {
+    const user = currentUser();
+    return user ? this.userLane(user.username) : AUTO_LANE;
   }
 
   /**
@@ -924,6 +1064,8 @@ export class Orchestrator implements RunnerEventSink {
     issueNumber?: number | null;
     /** Feature-level task id — carried for when one-shots learn to place. */
     task?: string;
+    /** Server-captured lane for work that continues after its HTTP request. */
+    lane?: RunLane;
     prompt: string;
     timeoutMs?: number;
     /**
@@ -936,15 +1078,35 @@ export class Orchestrator implements RunnerEventSink {
     onQueued?: (queueId: string) => void;
     /** Called after the queue item becomes a concrete run. */
     onStarted?: (runId: string) => void;
+    /** Final cancellation gate after run creation and before the first prompt. */
+    shouldStart?: (runId: string) => boolean;
+    /** Called after each non-empty provider usage event is persisted. */
+    onUsage?: (runId: string) => void;
   }): Promise<{ runId: string; finalMessage: string | null }> {
+    // Captured HERE, while the request that asked for this run is still on the
+    // stack. The job below may not start for minutes, by which point there is
+    // no request context left to read it from.
+    const lane = opts.lane ?? this.actingLane();
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
-      const run = await this.createRun(opts);
+      const run = await this.createRun({ ...opts, lane });
+      if (opts.onUsage) this.usageObservers.set(run.id, opts.onUsage);
       try {
         opts.onStarted?.(run.id);
       } catch (err) {
         log.warn('one-shot onStarted callback failed', { runId: run.id, err: String(err) });
       }
+      let shouldStart = true;
       try {
+        shouldStart = opts.shouldStart?.(run.id) !== false;
+      } catch (err) {
+        shouldStart = false;
+        log.warn('one-shot shouldStart callback failed closed', { runId: run.id, err: String(err) });
+      }
+      try {
+        if (!shouldStart) {
+          this.setStatus(run.id, 'stopped', 'cancelled before the first prompt');
+          return { runId: run.id, finalMessage: null };
+        }
         const wait = this.waitForTurn(run.id, opts.timeoutMs ?? 10 * 60_000);
         await this.sendPrompt(run.id, opts.prompt);
         await wait;
@@ -974,6 +1136,7 @@ export class Orchestrator implements RunnerEventSink {
         throw err;
       } finally {
         await this.stopRun(run.id).catch(() => undefined);
+        this.usageObservers.delete(run.id);
       }
     };
     return this.scheduleOneShot(
@@ -1008,7 +1171,14 @@ export class Orchestrator implements RunnerEventSink {
    * concurrent shells on one machine.
    */
   schedule<T>(
-    meta: { kind: RunKind; title: string; repo: string | null; userId: string | null },
+    meta: {
+      kind: RunKind;
+      title: string;
+      repo: string | null;
+      userId: string | null;
+      /** Gives non-run work the same pre-start cancellation handle as one-shots. */
+      onQueued?: (queueId: string) => void;
+    },
     job: () => Promise<T>,
   ): Promise<T> {
     return this.scheduleOneShot({ ...meta, issueNumber: null }, job);
@@ -1244,7 +1414,22 @@ export class Orchestrator implements RunnerEventSink {
     if (event.type === 'provider_response') {
       const input = numberField(event, 'inputTokens');
       const output = numberField(event, 'outputTokens');
-      if (input || output) this.store.runs.addUsage(runId, input, output);
+      if (input || output) {
+        this.store.runs.addUsage(runId, input, output);
+        try {
+          this.usageObservers.get(runId)?.(runId);
+        } catch (err) {
+          // Usage accounting is a safety hook. Keep folding the transcript,
+          // but fail the active turn closed rather than spend with a blind
+          // aggregate after a consumer bug.
+          log.warn('run usage observer failed', { runId, err: String(err) });
+          const row = this.store.runs.get(runId);
+          if (row?.status === 'running') {
+            this.setStatus(runId, row.status, 'aborted: live usage accounting failed');
+            void this.abortTurn(runId).catch(() => undefined);
+          }
+        }
+      }
       // moxxy's goal mode is uncapped (its built-in budgets were removed in
       // #439) — companiond's ceiling is the PRIMARY runaway-cost guard.
       const row = this.store.runs.get(runId);
@@ -1273,11 +1458,17 @@ export class Orchestrator implements RunnerEventSink {
       // check) misread a dead run as "ran and changed nothing".
       const { kind, message } = event as { kind?: string; message?: string };
       if (kind === 'fatal' && message?.trim()) {
+        const row = this.store.runs.get(runId);
+        // It also ENDS an unattended run: leaving it 'running' lets the turn
+        // ending flip it to 'review', which offers a pull request for work the
+        // agent never did. Attended chats stay live so the human can retry.
+        const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
         this.setStatus(
           runId,
-          this.store.runs.get(runId)?.status ?? 'running',
+          attended ? (row?.status ?? 'running') : 'failed',
           `fatal: ${message.trim().slice(0, 400)}`,
         );
+        if (!attended) this.emitRunChanged(runId);
       }
     }
     this.broadcast({ t: 'event', runId, event });

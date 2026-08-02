@@ -9,6 +9,7 @@ import type {
   AreaStorage,
   AreaStorageConfig,
   AreaStorageState,
+  DocListRecord,
   DocRecord,
   DocSearchHit,
   RepoDocFile,
@@ -52,6 +53,20 @@ export class Docs {
 
   list(workspaceId: string): DocRecord[] {
     return this.store.docs.listWorkspace(workspaceId);
+  }
+
+  listPage(
+    workspaceId: string,
+    opts: Parameters<PlanStore['docs']['listWorkspacePage']>[1] = {},
+  ): { docs: DocListRecord[]; total: number } {
+    return this.store.docs.listWorkspacePage(workspaceId, opts);
+  }
+
+  listOptions(
+    workspaceId: string,
+    repo: string,
+  ): Array<{ readonly id: string; readonly title: string }> {
+    return this.store.docs.listOptions(workspaceId, repo);
   }
 
   get(id: string): DocRecord | undefined {

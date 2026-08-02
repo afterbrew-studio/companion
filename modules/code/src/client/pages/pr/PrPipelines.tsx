@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { ChevronDown, Field, FormActions, ListCard, Modal, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
+import { ErrorBar, Field, FormActions, Modal, Spinner } from '@moxxy/companion-sdk/ui';
 import type { PipelineRecord, PipelineRunRecord } from '../../../contract/index.js';
-import { StepRail } from '../../components/StepRail.js';
-import { pipelineStatusBadge } from '../../widgets.js';
+import { PipelineRunList } from '../../components/PipelineRunList.js';
 
 /**
  * Our own pipeline runs against this PR (checks gate → AI review → agent steps).
@@ -11,54 +10,14 @@ import { pipelineStatusBadge } from '../../widgets.js';
  */
 export function PrPipelines({
   runs,
-  repo,
-  number,
 }: {
   runs: PipelineRunRecord[];
-  repo: string;
-  number: number;
 }): JSX.Element | null {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  if (runs.length === 0) return null;
-
-  return (
+  return runs.length > 0 ? (
     <section aria-label="Pipelines">
-      <ListCard subtle>
-        <div className="flex items-center gap-2 px-4 py-2.5">
-          <strong className="text-sm">Pipelines</strong>
-          <span className="dim tabular-nums">
-            {runs.length} run{runs.length === 1 ? '' : 's'}
-          </span>
-        </div>
-
-        {runs.map((r) => (
-          <div key={r.id} className="anim-in">
-            <button
-              className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
-              onClick={() => setExpanded((v) => (v === r.id ? null : r.id))}
-              aria-expanded={expanded === r.id}
-            >
-              {r.status === 'running' ? <Spinner /> : null}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium">{r.pipelineName}</span>
-                <span className="dim mt-0.5 block text-xs">
-                  {r.trigger === 'pr-opened' ? 'auto-run on PR open' : 'manual run'} · {timeAgo(r.createdAt)}
-                </span>
-              </span>
-              <span className={pipelineStatusBadge(r.status)}>{r.status}</span>
-              <ChevronDown open={expanded === r.id} className="dim size-4 shrink-0" />
-            </button>
-            {expanded === r.id ? (
-              <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800/60 dark:bg-zinc-900/40">
-                <StepRail run={r} repo={repo} number={number} />
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </ListCard>
+      <PipelineRunList runs={runs} />
     </section>
-  );
+  ) : null;
 }
 
 /** Pick a pipeline and run it against this PR (reached from the AI menu). */
@@ -73,14 +32,17 @@ export function RunPipelineModal({
 }): JSX.Element {
   const [selected, setSelected] = useState(pipelines[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const run = async (): Promise<void> => {
     if (!selected) return;
     setBusy(true);
+    setError(null);
     try {
       await onRun(selected);
       onClose();
-    } catch {
+    } catch (err) {
+      setError(String(err));
       setBusy(false);
     }
   };
@@ -90,6 +52,7 @@ export function RunPipelineModal({
   return (
     <Modal title="Run pipeline" onClose={onClose}>
       <div className="flex flex-col gap-3">
+        <ErrorBar error={error} />
         <Field label="Pipeline">
           <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)} autoFocus>
             {pipelines.map((p) => (

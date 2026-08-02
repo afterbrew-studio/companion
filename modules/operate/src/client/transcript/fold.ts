@@ -86,10 +86,14 @@ export function foldEvent(state: FoldState, event: MoxxyEvent): FoldState {
     }
     case 'assistant_message': {
       const content = str(event, 'content');
-      const last = state.blocks[state.blocks.length - 1];
-      if (last?.kind === 'assistant' && last.streaming) {
-        last.text = content;
-        last.streaming = false;
+      // Searched for rather than assumed to be last: a tool call can land
+      // between the chunks and the settled message, and matching only the last
+      // block then appended a second copy of text already on screen.
+      const at = openStreamingAt(state.blocks, 'assistant');
+      const open = at === -1 ? null : state.blocks[at];
+      if (open && open.kind === 'assistant') {
+        open.text = content;
+        open.streaming = false;
       } else if (content) {
         state.blocks.push({ kind: 'assistant', key: id, text: content, streaming: false });
       }
@@ -105,13 +109,16 @@ export function foldEvent(state: FoldState, event: MoxxyEvent): FoldState {
     case 'reasoning_message': {
       const redacted = (event as { redacted?: boolean }).redacted === true;
       const content = redacted ? '' : str(event, 'content');
-      const last = state.blocks[state.blocks.length - 1];
-      if (last?.kind === 'reasoning' && last.streaming) {
+      const at = openStreamingAt(state.blocks, 'reasoning');
+      const last = at === -1 ? null : state.blocks[at];
+      if (last && last.kind === 'reasoning') {
         if (content) {
           last.text = content;
           last.streaming = false;
         } else {
-          state.blocks.pop();
+          // Redacted and empty: drop the placeholder, by index because it is
+          // not necessarily the last block any more.
+          state.blocks.splice(at, 1);
         }
       } else if (content) {
         state.blocks.push({ kind: 'reasoning', key: id, text: content, streaming: false });
@@ -203,6 +210,23 @@ export function foldEvent(state: FoldState, event: MoxxyEvent): FoldState {
 export function foldMany(state: FoldState, events: ReadonlyArray<MoxxyEvent>): FoldState {
   for (const event of events) foldEvent(state, event);
   return state;
+}
+
+/**
+ * The still-streaming block of a kind, wherever it ended up.
+ *
+ * A turn can start speaking, call a tool, and only then have its message
+ * settle, which leaves the open block behind whatever the tool pushed. Looking
+ * only at the last block appended a second copy of text already on screen.
+ * Searches backwards because there is at most one open block per kind and it
+ * is the most recent one.
+ */
+function openStreamingAt(blocks: readonly Block[], kind: 'assistant' | 'reasoning'): number {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]!;
+    if (block.kind === kind && block.streaming) return i;
+  }
+  return -1;
 }
 
 function findTool(state: FoldState, callId: string): Extract<Block, { kind: 'tool' }> | undefined {

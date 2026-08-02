@@ -61,6 +61,9 @@ export function useChannels(): ChannelsState {
     [refresh],
   );
 
+  const isPersonal = (id: string): boolean =>
+    channels?.some((channel) => channel.id === id && channel.userId !== null) ?? false;
+
   return {
     channels,
     deliveries,
@@ -69,8 +72,8 @@ export function useChannels(): ChannelsState {
     create: (draft) =>
       // Owning it decides which route, and therefore which permission is checked.
       run('create', () => (draft.userId === undefined || draft.userId === null ? api.create(draft) : api.createMine(draft))),
-    update: (id, fields) => run(id, () => api.update(id, fields)),
-    remove: (id) => run(id, () => api.remove(id)),
-    test: (id) => run(id, () => api.test(id)),
+    update: (id, fields) => run(id, () => (isPersonal(id) ? api.updateMine(id, fields) : api.update(id, fields))),
+    remove: (id) => run(id, () => (isPersonal(id) ? api.removeMine(id) : api.remove(id))),
+    test: (id) => run(id, () => (isPersonal(id) ? api.testMine(id) : api.test(id))),
   };
 }

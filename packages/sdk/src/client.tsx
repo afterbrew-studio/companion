@@ -45,6 +45,10 @@ export type { PageQuery } from '@moxxy/companion-core/client';
 export { useLive, isMessage, onServerMessage, onWsState, registerFreshFilter } from '@moxxy/companion-core/client';
 export type { WsState, FreshFilter } from '@moxxy/companion-core/client';
 
+// ---- read-payload caching: a revisit renders before the network answers ----
+export { useCachedResource, invalidateCached, readCached, writeCached } from '@moxxy/companion-core/client';
+export type { CachedResource } from '@moxxy/companion-core/client';
+
 // ---- host state a module reads ----
 export { useKernel, useModuleEnabled } from '@moxxy/companion-core/client';
 export type { ModuleDescriptor } from '@moxxy/companion-core/client';

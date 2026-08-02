@@ -288,9 +288,12 @@ async function routeRun(
   switch (action) {
     case 'spawn': {
       requireMethod(method, 'POST', action);
-      const { cwd, sessionId } = body as AgentSpawnRequest;
+      const { cwd, sessionId, access } = body as AgentSpawnRequest;
       requireString(cwd, 'cwd');
       requireString(sessionId, 'sessionId');
+      if (access !== 'read-only' && access !== 'workspace-write' && access !== 'trusted-assistant') {
+        throw new HttpError(400, 'access must be read-only, workspace-write, or trusted-assistant');
+      }
       if (!deps.moxxy) throw new HttpError(503, 'moxxy CLI is not installed on this runner');
       // The pool pins MOXXY_SESSION_ID to the run id (sticky resume + history
       // file named after the run); companiond always sends sessionId === runId.
@@ -298,7 +301,7 @@ async function routeRun(
         log.warn('spawn sessionId differs from runId — using runId as the session id', { runId, sessionId });
       }
       mkdirSync(cwd, { recursive: true });
-      await deps.pool.spawn({ runId, cwd, moxxyCliPath: deps.moxxy.path });
+      await deps.pool.spawn({ runId, cwd, moxxyCliPath: deps.moxxy.path, access });
       return { ok: true };
     }
     case 'stop': {

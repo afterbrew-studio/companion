@@ -24,6 +24,7 @@ import { useWorkspace } from '@companion/module-workspace/client';
 import type { SlopAction, SlopDetectionResult } from '../../contract/index.js';
 import { slopApi } from '../api.js';
 import { ContributorProvenance } from '../components/ContributorProvenance.js';
+import { PrQualityAssessment } from '../components/PrQualityAssessment.js';
 import { SlopScore, SlopScoreSkeleton } from '../components/SlopScore.js';
 import { SlopSignals, SlopSignalsSkeleton } from '../components/SlopSignals.js';
 import { ACTION_BUTTON, ACTION_LABEL, STATUS_META } from '../detection-meta.js';
@@ -203,6 +204,8 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
           <ContributorProvenance provenance={d.provenance} />
         </div>
 
+        {verdict ? <PrQualityAssessment verdict={verdict} /> : null}
+
         {d.status === 'failed' ? (
           <p className="error-bar mt-5 text-xs wrap-anywhere">{d.error ?? 'detection failed'}</p>
         ) : null}
@@ -212,6 +215,36 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
             <Section title="Verdict">
               <p className="text-sm leading-relaxed wrap-anywhere">{verdict.summary}</p>
             </Section>
+
+            {verdict.decisionFactors.length > 0 ? (
+              <Section
+                title="Decision factors"
+                description="Positive, negative, and unknown evidence behind the quality classification."
+              >
+                <ul className="well flex flex-col divide-y divide-zinc-200 px-4 dark:divide-zinc-800">
+                  {verdict.decisionFactors.map((factor, i) => (
+                    <li key={i} className="flex gap-3 py-3 text-sm leading-relaxed">
+                      <span
+                        className={
+                          factor.effect === 'positive'
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : factor.effect === 'negative'
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'dim'
+                        }
+                        aria-label={factor.effect}
+                      >
+                        {factor.effect === 'positive' ? '+' : factor.effect === 'negative' ? '−' : '·'}
+                      </span>
+                      <span className="min-w-0 wrap-anywhere">
+                        <strong className="mr-1.5 text-xs uppercase tracking-wide">{factor.dimension}</strong>
+                        {factor.observation}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            ) : null}
 
             {verdict.reviewerHints.length > 0 ? (
               <Section

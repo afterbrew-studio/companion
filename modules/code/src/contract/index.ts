@@ -3,10 +3,13 @@ import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import type { ChecksSnapshot } from './checks.js';
+import type { DiffSide } from './diff-anchors.js';
 import type { CodeService } from '../api/code-service.js';
 
 export * from './checks.js';
 export * from './pipelines.js';
+export * from './diff-anchors.js';
+export * from './review-chunks.js';
 
 /**
  * module-code contract slice — the GitHub-facing domain: repositories + the
@@ -36,14 +39,14 @@ declare module '@moxxy/companion-contracts' {
     'prs.changed': { readonly repo: string };
     'pipelines.changed': Record<never, never>;
     'pipelineRuns.changed': { readonly repo: string };
-    /**
-     * A chunk of a running command's output. Not persisted in full: the run
-     * record keeps a bounded tail, this is the live view while it happens.
-     */
+    /** A chunk of a command's bounded, persisted, secret-scrubbed output. */
     'pipelineStep.output': {
       readonly repo: string;
       readonly runId: string;
+      /** Raw live output is owner-only; other maintainers replay it through authenticated REST. */
+      readonly ownerId: string;
       readonly stepIndex: number;
+      readonly sequence: number;
       readonly chunk: string;
     };
   }
@@ -90,6 +93,12 @@ export interface RepoRecord {
   readonly prGateEnabled: boolean;
   /** Auto-merge open PRs that are green + human-approved + AI-reviewed low risk. */
   readonly autoMergeEnabled: boolean;
+  /**
+   * Answer in thread when a PR author replies to one of the agent's inline
+   * review comments. The only switch here that makes an agent speak publicly on
+   * someone else's pull request, so it is off until a maintainer turns it on.
+   */
+  readonly reviewRepliesEnabled: boolean;
   /** Set once a webhook secret was generated (receiver active). */
   readonly webhookConfigured: boolean;
   /** Profile responsible for unattended repo automation; null means paused/unclaimed. */
@@ -126,6 +135,8 @@ export interface AgentQualityStat {
    * one, and kept separate for exactly that reason.
    */
   readonly failed: number;
+  /** Runs a maintainer deliberately stopped; neither pending nor a reliability failure. */
+  readonly cancelled?: number;
   /** accepted / (accepted + rejected); null until a human has decided anything. */
   readonly acceptanceRate: number | null;
   /**
@@ -245,8 +256,11 @@ export interface IssueRecord {
   readonly updatedAt: number;
   readonly closedAt: number | null;
   /** Latest triage result status for this issue, if any. */
-  readonly triage: 'pending' | 'applied' | 'dismissed' | null;
+  readonly triage: 'running' | 'pending' | 'applied' | 'dismissed' | null;
 }
+
+/** Lightweight maintainer-queue row; the full body is fetched on detail open. */
+export type IssueListRecord = Omit<IssueRecord, 'body'>;
 
 /**
  * GitHub's merge-state vocabulary (REST `mergeable_state`, GraphQL
@@ -285,7 +299,7 @@ export interface PrRecord {
   /** When the PR was closed or merged. */
   readonly closedAt: number | null;
   /** Latest AI review status for this PR, if any. */
-  readonly review: 'pending' | 'applied' | 'dismissed' | null;
+  readonly review: 'running' | 'pending' | 'applied' | 'dismissed' | null;
   /** Risk from the latest AI review verdict — the auto-merge/priority signal. */
   readonly reviewRisk: 'low' | 'medium' | 'high' | null;
   /** Human review decision on GitHub (folded per reviewer, latest wins). */
@@ -303,6 +317,9 @@ export interface PrRecord {
   readonly checks: ChecksSnapshot | null;
 }
 
+/** Lightweight maintainer-queue row; the full body is fetched on detail open. */
+export type PrListRecord = Omit<PrRecord, 'body'>;
+
 /**
  * One changed file in a PR, from GitHub's paginated files API — which, unlike
  * the single `.diff` payload, never 406s on large pull requests. `patch` is the
@@ -317,25 +334,228 @@ export interface PrFileChange {
   readonly patch: string | null;
 }
 
+/**
+ * One server-bounded window of a PR's files for the interactive diff browser.
+ * `hasNextPage` is explicit so an incomplete window can never look like the
+ * complete pull request. Aggregate AI review coverage is tracked separately.
+ */
+export interface PrFileChangesPage {
+  readonly files: ReadonlyArray<PrFileChange>;
+  readonly page: number;
+  readonly pageSize: number;
+  readonly hasNextPage: boolean;
+}
+
 // ---------- PR reviews -----------------------------------------------------------
 
 export interface PrReviewVerdict {
   readonly summary: string;
   readonly risk: 'low' | 'medium' | 'high';
   readonly recommendation: 'approve' | 'request_changes' | 'comment';
+  /**
+   * Finding TITLES only, and a denormalized view at that: the findings
+   * themselves live in their own table, addressed as `PrReviewResult.findings`.
+   * Kept written so consumers predating anchored findings (the board's review
+   * card) keep rendering; new code must read the structured findings instead.
+   */
   readonly findings: ReadonlyArray<string>;
   readonly reviewBody: string;
+}
+
+/** Which part of a potentially multi-run review is currently executing. */
+export type PrReviewPhase = 'queued' | 'planning' | 'reviewing' | 'verifying' | 'summarizing' | 'complete';
+
+/**
+ * Default aggregate token ceiling for one PR review, across chunks,
+ * adversarial verifiers and the final summary. Provider usage is folded while
+ * children run. A review can still overshoot by responses already in flight
+ * when telemetry reaches the ceiling; those children are stopped immediately
+ * and no new turn is admitted.
+ */
+export const DEFAULT_MAX_PR_REVIEW_TOKENS = 2_000_000;
+
+/**
+ * Durable progress for the aggregate review, not for one underlying agent run.
+ * A large PR can create many runs; this is the stable thing the maintainer
+ * follows across navigation, reconnects, and daemon restarts.
+ */
+export interface PrReviewProgress {
+  readonly phase: PrReviewPhase;
+  readonly completed: number;
+  readonly total: number;
+  readonly message: string;
+  readonly updatedAt: number;
+  /** Aggregate limits shared by chunks, verifiers, and the final summary. */
+  readonly budget?: PrReviewBudgetProgress;
+}
+
+/** Durable, user-visible guardrails for one aggregate review operation. */
+export interface PrReviewBudgetProgress {
+  /** Child turns claimed so far; monotonic even when a queued turn is cancelled. */
+  readonly modelCalls: number;
+  readonly maxModelCalls: number;
+  readonly startedAt: number;
+  readonly deadlineAt: number;
+  /**
+   * Added after aggregate reviews shipped, so it is optional for old persisted
+   * rows. Every newly-started review carries it from its first progress event.
+   */
+  readonly tokenUsage?: PrReviewTokenBudgetProgress;
+}
+
+/** Reported usage and estimated spend for every child in one review. */
+export interface PrReviewTokenBudgetProgress {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly maxTokens: number;
+  /** Children observed with usable token telemetry, including active runs. */
+  readonly reportedRuns: number;
+  /** Children that ran without usable telemetry; any such child stops review. */
+  readonly missingRuns: number;
+  /** Sum of list-price estimates for priced children only. */
+  readonly estimatedCostUsd: number;
+  /** True when missing telemetry or an unpriced model makes cost a lower bound. */
+  readonly costPartial: boolean;
+}
+
+/** How much of the requested review was actually read successfully. */
+export interface PrReviewCoverage {
+  readonly state: 'complete' | 'partial' | 'unavailable';
+  readonly reviewedGroups: number;
+  readonly totalGroups: number;
+  readonly reviewedFiles: number;
+  readonly totalFiles: number;
+  /** Bounded, human-readable groups that could not be reviewed. */
+  readonly unread: ReadonlyArray<string>;
+}
+
+/** A terminal review that read anything has partial evidence, never unavailable evidence. */
+export function terminalReviewCoverage(coverage: PrReviewCoverage): PrReviewCoverage {
+  return coverage.state === 'unavailable' && (coverage.reviewedGroups > 0 || coverage.reviewedFiles > 0)
+    ? { ...coverage, state: 'partial' }
+    : coverage;
+}
+
+/** How hard the review agent looks; also decides whether findings are anchored. */
+export type ReviewDepth = 'high-level' | 'in-depth';
+
+/**
+ * How much noise a review is allowed to surface. Applied as a severity floor
+ * when findings are stored — deliberately NOT enforced by prompt wording alone,
+ * which a model routes around by relabelling a nit as a blocker to smuggle it
+ * past the instruction. Everything is kept; the floor only decides what starts
+ * selected, so the reviewer can reveal the rest without a second run.
+ */
+export type ReviewStrictness = 'blockers-only' | 'balanced' | 'pedantic';
+
+export type FindingSeverity = 'blocker' | 'major' | 'minor' | 'nit';
+
+/** Where a finding stands on its way to becoming a GitHub review comment. */
+export type FindingState = 'proposed' | 'included' | 'rejected' | 'posted';
+
+export type FindingVerification = 'unverified' | 'confirmed' | 'refuted';
+
+/** A finding's position in the diff; null on a finding that has none. */
+export interface DiffAnchorRef {
+  readonly file: string;
+  readonly side: DiffSide;
+  readonly line: number;
+  /** Start of a multi-line range; null anchors a single line. */
+  readonly startLine: number | null;
+}
+
+/**
+ * One reviewable point, which becomes at most one GitHub review comment.
+ *
+ * Knows nothing about pull requests: `reviewId` is its only parent, so the same
+ * row shape serves a review of a local branch diff when that lands.
+ */
+export interface ReviewFinding {
+  readonly id: string;
+  readonly reviewId: string;
+  /** Which reviewer produced it. `native` is the built-in agent. */
+  readonly source: string;
+  readonly anchor: DiffAnchorRef | null;
+  readonly severity: FindingSeverity;
+  readonly title: string;
+  readonly reason: string;
+  readonly impact: string;
+  readonly suggestion: string;
+  /** Literal replacement text for the anchored range; null when there is none. */
+  readonly suggestedPatch: string | null;
+  readonly confidence: number;
+  readonly state: FindingState;
+  readonly verification: FindingVerification;
+  readonly verificationNote: string | null;
+  readonly rejectionReason: string | null;
+  readonly githubCommentId: number | null;
+  readonly createdAt: number;
 }
 
 export interface PrReviewResult {
   readonly id: string;
   readonly repo: string;
   readonly prNumber: number;
-  readonly runId: string;
-  readonly status: 'pending' | 'applied' | 'dismissed' | 'failed';
+  /**
+   * The agent run behind this review, or null when a person started the draft
+   * themselves to leave their own comments. Null is also what distinguishes the
+   * two in the UI: a manual draft has no risk or recommendation to show.
+   */
+  readonly runId: string | null;
+  /** Every run used by a split review, verifier, and summary, in start order. */
+  readonly runIds: ReadonlyArray<string>;
+  /** Explicit because a queued agent review has no run id yet. */
+  readonly source: 'agent' | 'human';
+  readonly status: 'running' | 'pending' | 'applied' | 'dismissed' | 'failed' | 'cancelled';
   readonly verdict: PrReviewVerdict | null;
   readonly error: string | null;
+  readonly progress: PrReviewProgress;
+  readonly coverage: PrReviewCoverage;
   readonly createdAt: number;
+  /**
+   * The head commit the review was computed against. Anchors are only valid
+   * against this commit, so publishing checks it against the PR's current head
+   * rather than trusting that nothing was pushed meanwhile. Null on rows that
+   * predate anchoring.
+   */
+  readonly headSha: string | null;
+  readonly depth: ReviewDepth;
+  readonly strictness: ReviewStrictness;
+  /** Empty on list payloads; hydrated for detail views. */
+  readonly findings: ReadonlyArray<ReviewFinding>;
+}
+
+/** Most severe first, so a floor is an index comparison. */
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = ['blocker', 'major', 'minor', 'nit'];
+
+const STRICTNESS_FLOOR: Record<ReviewStrictness, FindingSeverity> = {
+  'blockers-only': 'blocker',
+  balanced: 'minor',
+  pedantic: 'nit',
+};
+
+/** Whether a finding clears the strictness floor, i.e. starts out selected. */
+export function meetsStrictness(severity: FindingSeverity, strictness: ReviewStrictness): boolean {
+  return FINDING_SEVERITIES.indexOf(severity) <= FINDING_SEVERITIES.indexOf(STRICTNESS_FLOOR[strictness]);
+}
+
+/**
+ * How much of a review is published.
+ *
+ * `comments` exists because the per-line remarks are often the whole value and
+ * the write-up above them is noise on somebody else's pull request; `summary`
+ * for the opposite case, where the prose is the point and inline comments would
+ * clutter the diff.
+ */
+export type ReviewPostMode = 'full' | 'comments' | 'summary';
+
+/** What a caller may choose when starting a review. */
+export interface ReviewOptions {
+  readonly depth?: ReviewDepth;
+  readonly strictness?: ReviewStrictness;
+  /** Run the adversarial second pass. Defaults to true for in-depth. */
+  readonly verify?: boolean;
+  readonly context?: string;
 }
 
 // ---------- Triage -------------------------------------------------------------
@@ -355,7 +575,7 @@ export interface TriageResult {
   readonly repo: string;
   readonly issueNumber: number;
   readonly runId: string;
-  readonly status: 'pending' | 'applied' | 'dismissed' | 'failed';
+  readonly status: 'running' | 'pending' | 'applied' | 'dismissed' | 'failed';
   readonly verdict: TriageVerdict | null;
   readonly error: string | null;
   readonly createdAt: number;

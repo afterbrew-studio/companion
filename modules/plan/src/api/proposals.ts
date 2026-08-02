@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
-import type { ProposalAnalysis, ProposalRecord } from '../contract/index.js';
+import type { ProposalAnalysis, ProposalListRecord, ProposalRecord } from '../contract/index.js';
 import type { PlanStore } from './plan-store.js';
 import type { Checkouts, Fixes, Orchestrator } from './cross-types.js';
 
@@ -13,7 +13,7 @@ const analysisList = (limit: number) => z.array(z.string().trim().min(1).max(2_0
   .transform((items) => items.slice(0, limit));
 
 const analysisSchema = z.object({
-  summary: z.string(),
+  summary: z.string().trim().min(1).max(20_000).transform((value) => value.slice(0, 4_000)),
   feasibility: z.enum(['low', 'medium', 'high']),
   steps: analysisList(24).refine((items) => items.length > 0, 'at least one implementation step is required'),
   touchedAreas: analysisList(24),
@@ -98,6 +98,20 @@ export class Proposals {
     return this.store.proposals.listWorkspace(workspaceId);
   }
 
+  listPage(
+    workspaceId: string,
+    opts: Parameters<PlanStore['proposals']['listWorkspacePage']>[1] = {},
+  ): { proposals: ProposalListRecord[]; total: number } {
+    return this.store.proposals.listWorkspacePage(workspaceId, opts);
+  }
+
+  /** Lightweight status view for in-process counters owned by other modules. */
+  listStatuses(
+    workspaceId: string,
+  ): Array<{ readonly id: string; readonly status: ProposalRecord['status'] }> {
+    return this.store.proposals.listStatusesByWorkspace(workspaceId);
+  }
+
   update(id: string, fields: { title?: string; body?: string }): ProposalRecord {
     const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
@@ -114,14 +128,25 @@ export class Proposals {
     return this.store.proposals.get(id)!;
   }
 
+  /** Synchronous checks for fire-and-forget callers. */
+  validateAnalyze(id: string): void {
+    const proposal = this.store.proposals.get(id);
+    if (!proposal) throw new Error('proposal not found');
+    if (proposal.status === 'analyzing') throw new Error('proposal analysis is already running');
+    if (['implementing', 'review', 'implemented', 'rejected'].includes(proposal.status)) {
+      throw new Error(`proposal cannot be analyzed while it is ${proposal.status}`);
+    }
+    if (!this.checkouts.hasClone(proposal.repo)) throw new Error(`repo ${proposal.repo} has no clone yet`);
+  }
+
   /** Kick the analysis run. Resolves when analysis is stored. */
   async analyze(id: string, userId: string, context: ProposalAnalysisContext = {}): Promise<ProposalRecord> {
     const proposal = this.store.proposals.get(id);
     if (!proposal) throw new Error('proposal not found');
     const repositorySnapshot = context.repositorySnapshot?.trim() || null;
-    if (!repositorySnapshot && !this.checkouts.hasClone(proposal.repo)) {
-      throw new Error(`repo ${proposal.repo} has no clone yet`);
-    }
+    if (!repositorySnapshot) this.validateAnalyze(id);
+    const repoRow = repositorySnapshot ? null : this.store.repos.get(proposal.repo);
+    if (!repositorySnapshot && !repoRow) throw new Error(`unknown repo ${proposal.repo}`);
     const prompt = analysisPrompt(proposal, context, repositorySnapshot);
     if (repositorySnapshot && prompt.length > MAX_CACHED_ANALYSIS_PROMPT_CHARS) {
       throw new Error(`cached proposal analysis prompt exceeds ${MAX_CACHED_ANALYSIS_PROMPT_CHARS} characters`);
@@ -132,22 +157,34 @@ export class Proposals {
 
     try {
       const startedAt = Date.now();
-      const { runId, finalMessage } = await this.orchestrator.runOneShot({
-        kind: 'analysis',
-        task: 'plan.analyses',
-        title: `Analyze proposal: ${proposal.title.slice(0, 60)}`,
-        ...(repositorySnapshot ? {} : { cwd: this.checkouts.cloneDir(proposal.repo) }),
-        repo: proposal.repo,
-        userId,
-        prompt,
-        timeoutMs: 10 * 60_000,
-        onQueued: context.onQueued,
-        onStarted: (runId) => {
-          this.store.proposals.update(id, { analysisRunId: runId });
-          context.onStarted?.(runId);
-          this.broadcast({ t: 'proposals.changed' });
-        },
-      });
+      const runAnalysis = (cwd?: string) =>
+        this.orchestrator.runOneShot({
+          kind: 'analysis',
+          task: 'plan.analyses',
+          title: `Analyze proposal: ${proposal.title.slice(0, 60)}`,
+          ...(cwd ? { cwd } : {}),
+          repo: proposal.repo,
+          userId,
+          prompt,
+          timeoutMs: 10 * 60_000,
+          onQueued: context.onQueued,
+          onStarted: (runId) => {
+            this.store.proposals.update(id, { analysisRunId: runId });
+            context.onStarted?.(runId);
+            this.broadcast({ t: 'proposals.changed' });
+          },
+        });
+      const outcome = repositorySnapshot
+        ? await runAnalysis()
+        : await this.checkouts.withBaseWorktree(
+            proposal.repo,
+            `proposal-${id}`,
+            repoRow!.default_branch,
+            runAnalysis,
+            undefined,
+            userId,
+          );
+      const { runId, finalMessage } = outcome;
       safelyReportCompletion(context.onCompleted, {
         runId,
         contextMode: repositorySnapshot ? 'cached_snapshot' : 'repository_scan',
@@ -196,16 +233,25 @@ export class Proposals {
     this.store.proposals.update(id, { status: 'implementing' });
     this.broadcast({ t: 'proposals.changed' });
 
-    const run = await this.fixes.createGoalRun({
-      kind: 'implement',
-      title: `Implement: ${proposal.title.slice(0, 60)}`,
-      repo: proposal.repo,
-      proposalId: id,
-      branchPrefix: `companion/proposal-${id.replace('prop-', '')}`,
-      baseBranch: repoRow.default_branch,
-      objective: implementObjective(proposal),
-      userId,
-    });
+    let run: Awaited<ReturnType<Fixes['createGoalRun']>>;
+    try {
+      run = await this.fixes.createGoalRun({
+        kind: 'implement',
+        title: `Implement: ${proposal.title.slice(0, 60)}`,
+        repo: proposal.repo,
+        proposalId: id,
+        branchPrefix: `companion/proposal-${id.replace('prop-', '')}`,
+        baseBranch: repoRow.default_branch,
+        objective: implementObjective(proposal),
+        userId,
+      });
+    } catch (err) {
+      // No implementation exists yet, so the approved analysis remains a
+      // retryable decision instead of a permanent "implementing" spinner.
+      this.store.proposals.update(id, { status: 'analyzed' });
+      this.broadcast({ t: 'proposals.changed' });
+      throw err;
+    }
     this.store.proposals.update(id, { implementRunId: run.id, branch: run.branch ?? undefined });
     this.broadcast({ t: 'proposals.changed' });
     return this.store.proposals.get(id)!;
@@ -231,11 +277,10 @@ export class Proposals {
 
   /** Called when an implement run lands in review; flip the proposal too. */
   onRunReview(runId: string): void {
-    for (const proposal of this.store.proposals.list()) {
-      if (proposal.implementRunId === runId && proposal.status === 'implementing') {
-        this.store.proposals.update(proposal.id, { status: 'review' });
-        this.broadcast({ t: 'proposals.changed' });
-      }
+    const proposal = this.store.proposals.getByImplementRunId(runId);
+    if (proposal?.status === 'implementing') {
+      this.store.proposals.update(proposal.id, { status: 'review' });
+      this.broadcast({ t: 'proposals.changed' });
     }
   }
 
@@ -245,11 +290,10 @@ export class Proposals {
    * "implementing" forever even though its run is long dead.
    */
   onRunFailed(runId: string): void {
-    for (const proposal of this.store.proposals.list()) {
-      if (proposal.implementRunId === runId && (proposal.status === 'implementing' || proposal.status === 'review')) {
-        this.store.proposals.update(proposal.id, { status: 'failed' });
-        this.broadcast({ t: 'proposals.changed' });
-      }
+    const proposal = this.store.proposals.getByImplementRunId(runId);
+    if (proposal && (proposal.status === 'implementing' || proposal.status === 'review')) {
+      this.store.proposals.update(proposal.id, { status: 'failed' });
+      this.broadcast({ t: 'proposals.changed' });
     }
   }
 }

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { RunRecord } from '@companion/module-operate/contract';
 import type { Block } from '@companion/module-operate/client';
 import { Eyebrow, Page, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { useDigestLive } from '../hooks/useDigestLive.js';
+import { useDigestLive, type DigestRun } from '../hooks/useDigestLive.js';
 
 /**
  * A digest as an agent writes it: the loader view behind "Generate digest" /
@@ -78,7 +77,7 @@ function WorkingStage({
   starting,
 }: {
   repo: string;
-  run: RunRecord | null;
+  run: DigestRun | null;
   blocks: Block[];
   starting: boolean;
 }): JSX.Element {
@@ -231,7 +230,7 @@ function DoneStage({ repo, report }: { repo: string; report: ReportRecord | null
   );
 }
 
-function FailedStage({ run }: { run: RunRecord | null }): JSX.Element {
+function FailedStage({ run }: { run: DigestRun | null }): JSX.Element {
   return (
     <section className="anim-in rounded-2xl border border-red-500/40 p-6">
       <div className="flex items-center gap-2.5">

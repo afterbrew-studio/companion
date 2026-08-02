@@ -151,6 +151,58 @@ export function FlowIcon({ className = 'size-4' }: { className?: string }): JSX.
   );
 }
 
+/** Cog: the way into instance configuration. */
+export function GearIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M13 8c0-.33-.03-.65-.09-.96l1.3-1-1.3-2.26-1.53.62a5 5 0 0 0-1.66-.96L9.46 1.8H6.54l-.26 1.64a5 5 0 0 0-1.66.96l-1.53-.62-1.3 2.26 1.3 1a5 5 0 0 0 0 1.92l-1.3 1 1.3 2.26 1.53-.62c.49.43 1.05.76 1.66.96l.26 1.64h2.92l.26-1.64a5 5 0 0 0 1.66-.96l1.53.62 1.3-2.26-1.3-1c.06-.31.09-.63.09-.96z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Open eye: this entry shows in the sidebar. */
+export function EyeIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="M1.6 8S4 3.9 8 3.9 14.4 8 14.4 8 12 12.1 8 12.1 1.6 8 1.6 8z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="8" cy="8" r="1.9" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
+/** Struck-through eye: this entry is hidden from the sidebar (still reachable). */
+export function EyeOffIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path
+        d="M6.3 4.2A6.4 6.4 0 0 1 8 3.9c4 0 6.4 4.1 6.4 4.1a12 12 0 0 1-2 2.4M4 5.4A11.7 11.7 0 0 0 1.6 8S4 12.1 8 12.1c.75 0 1.44-.14 2.06-.37"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="m2.6 2.6 10.8 10.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Sliders: the sidebar's customize affordance. */
+export function SlidersIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="M2.5 5h7M12.5 5h1M2.5 11h1M6.5 11h7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="11" cy="5" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="5" cy="11" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
 /** Flask — experiments and dry runs (the Playground's mark). */
 export function FlaskIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
   return (

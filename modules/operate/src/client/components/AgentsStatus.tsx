@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StatusDot as Dot } from '@moxxy/companion-ui';
 import { isMessage, onServerMessage, onWsState, type WsState } from '@moxxy/companion-core/client';
+import { useLane } from '../hooks/useLane.js';
 import { useAuth } from '@companion/module-core/client';
 import type { MoxxyStatus } from '../../contract/index.js';
 import { operateApi } from '../api.js';
@@ -31,7 +32,7 @@ export function AgentsStatus(): JSX.Element | null {
     const mineOrAutomation = (userId: string | null): boolean => userId === null || userId === me;
     let alive = true;
     operateApi
-      .listRuns()
+      .listRunsPage({ status: 'active', limit: 100 })
       .then(({ runs }) => {
         if (alive) setLiveIds(new Set(runs.filter((r) => r.live && mineOrAutomation(r.userId)).map((r) => r.id)));
       })
@@ -77,9 +78,14 @@ export function AgentsStatus(): JSX.Element | null {
   }, []);
 
 
+  const { lane } = useLane();
+
   const moxxyOk = Boolean(status && status.cliPath && status.compatible && status.homeReady);
+  // Named for what it is rather than for one implementation of it: a machine
+  // may run Claude Code or Codex, and calling the row "moxxy" made a healthy
+  // instance look misconfigured to anyone not using it.
   const moxxyTitle = !status
-    ? 'moxxy: status unknown'
+    ? 'Runtime: status unknown'
     : !status.cliPath
       ? 'moxxy CLI not found'
       : !status.compatible
@@ -88,10 +94,16 @@ export function AgentsStatus(): JSX.Element | null {
           ? 'moxxy ready — providers not imported yet'
           : `moxxy ${status.cliVersion} ready`;
 
+  // Whether moxxy is healthy only bears on this dot when moxxy is what your
+  // work runs on. Having picked another runtime, a missing or outdated moxxy
+  // CLI is a fact about software you are not using, and colouring the whole
+  // indicator red for it reports an outage that is not happening.
+  const moxxyInUse = lane === null || lane.harness === null || lane.harness === 'moxxy';
+
   // healthy: all green · degraded: soft warnings only · unhealthy: something
   // is down · offline: the daemon itself is unreachable.
-  const anyDown = !moxxyOk || !status?.githubConfigured || ws === 'offline';
-  const anyWarn = !status?.providersImported || ws === 'connecting';
+  const anyDown = (moxxyInUse && !moxxyOk) || !status?.githubConfigured || ws === 'offline';
+  const anyWarn = (moxxyInUse && !status?.providersImported) || ws === 'connecting';
   const overall: 'healthy' | 'degraded' | 'unhealthy' | 'offline' = !status
     ? 'offline'
     : anyDown
@@ -124,7 +136,7 @@ export function AgentsStatus(): JSX.Element | null {
         className="invisible absolute top-full right-0 z-40 mt-1.5 flex w-56 flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 opacity-0 shadow-lg transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900"
       >
         <div className="dim text-[10px] font-medium tracking-widest uppercase">{overall}</div>
-        <StatusDot ok={moxxyOk} degraded={moxxyOk && !status?.providersImported} label="moxxy" title={moxxyTitle} />
+        <StatusDot ok={moxxyOk} degraded={moxxyOk && !status?.providersImported} label="Runtime" title={moxxyTitle} />
         <StatusDot
           ok={Boolean(status?.githubConfigured)}
           label="GitHub"
@@ -135,7 +147,7 @@ export function AgentsStatus(): JSX.Element | null {
         <StatusDot
           ok={ws === 'connected'}
           degraded={ws === 'connecting'}
-          label="live"
+          label="Platform"
           title={ws === 'connected' ? 'Event stream connected' : ws === 'connecting' ? 'Reconnecting…' : 'Event stream offline'}
         />
       </div>

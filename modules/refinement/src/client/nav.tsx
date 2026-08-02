@@ -1,9 +1,10 @@
 import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * One entry in the Board group, below the Task Board (the board module owns
- * the section; board is a hard dependency, so the section always exists when
- * this nav loads). The icon is the decomposition itself: one path in, three out.
+ * One entry in the Plan group, below the Task Board (module-plan and module-board
+ * both declare that section and both are hard dependencies, so it always exists
+ * when this nav loads). The icon is the decomposition itself: one path in, three
+ * out.
  */
 export const nav = defineNav([
   {
@@ -13,8 +14,8 @@ export const nav = defineNav([
     // 'r' is taken by code's Pull Requests chord — 'f' (re-f-ine) is free.
     shortcut: 'f',
     permission: 'refine:read',
-    section: 'board',
-    order: 10,
+    section: 'plan',
+    order: 40,
     freshOn: (msg) => (msg.t === 'refinement.changed' ? 'refinement' : null),
     icon: (
       <NavIcon>

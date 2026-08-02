@@ -285,16 +285,15 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   };
 
   return (
-    // Docked into the shell on md+ (a real sibling column, content shrinks);
-    // an overlay sheet only below md where there is no room to share. Enter/
-    // exit animates: width on desktop (content reflows), slide on mobile.
-    // `visibility` rides the same transition so the closed panel drops out of
-    // the tab order only after the slide-out finishes.
+    // This contribution is mounted inside the top-bar slot, so it must leave
+    // that flex row before taking its width. Keeping the drawer fixed to the
+    // viewport's right edge also gives desktop and mobile the same direction.
+    // `visibility` rides the slide so a closed panel leaves the tab order.
     <aside
-      className={`flex h-full shrink-0 flex-col bg-white transition-[width,transform,visibility] duration-200 ease-in-out motion-reduce:transition-none max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-50 max-md:w-full max-md:shadow-2xl md:static md:overflow-hidden dark:bg-zinc-950 ${
+      className={`fixed inset-y-0 right-0 z-50 flex w-full shrink-0 flex-col overflow-hidden bg-white shadow-2xl transition-[transform,visibility] duration-200 ease-in-out motion-reduce:transition-none sm:w-[26rem] dark:bg-zinc-950 ${
         open
-          ? 'border-l border-zinc-200 max-md:translate-x-0 md:w-[26rem] dark:border-zinc-800'
-          : 'invisible max-md:translate-x-full md:w-0'
+          ? 'visible translate-x-0 border-l border-zinc-200 dark:border-zinc-800'
+          : 'invisible translate-x-full'
       }`}
       role="complementary"
       aria-label="AI Help"

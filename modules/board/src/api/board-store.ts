@@ -264,11 +264,49 @@ export class BoardStore {
     return row ? rowToTask(row) : undefined;
   }
 
-  listTasks(): TaskRecord[] {
+  /** Workspace-scoped board feed; schedulers use the separate status query. */
+  listTasks(workspaceId: string): TaskRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM board_tasks ORDER BY priority, created_at`)
-      .all() as TaskRow[];
+      .prepare(`SELECT * FROM board_tasks WHERE workspace_id = ? ORDER BY priority, created_at`)
+      .all(workspaceId) as TaskRow[];
     return rows.map(rowToTask);
+  }
+
+  /**
+   * Operational board plus a bounded completed archive. Active work is never
+   * hidden; only the append-only Done column is windowed.
+   */
+  listBoardTasks(
+    workspaceId: string,
+    opts: { readonly doneRepo?: string; readonly doneLimit?: number; readonly doneOffset?: number } = {},
+  ): { tasks: TaskRecord[]; doneTotal: number; doneOffset: number; taskRepos: string[] } {
+    const doneLimit = Math.min(Math.max(Number.isSafeInteger(opts.doneLimit) ? opts.doneLimit! : 100, 1), 100);
+    const requestedOffset = Math.max(Number.isSafeInteger(opts.doneOffset) ? opts.doneOffset! : 0, 0);
+    const activeRows = this.db
+      .prepare(
+        `SELECT * FROM board_tasks
+         WHERE workspace_id = ? AND status != 'done'
+         ORDER BY priority, created_at, id`,
+      )
+      .all(workspaceId) as TaskRow[];
+    const doneWhere = `workspace_id = ? AND status = 'done'${opts.doneRepo ? ' AND repo = ?' : ''}`;
+    const doneArgs: unknown[] = opts.doneRepo ? [workspaceId, opts.doneRepo] : [workspaceId];
+    const doneTotal = (this.db
+      .prepare(`SELECT COUNT(*) AS n FROM board_tasks WHERE ${doneWhere}`)
+      .get(...doneArgs) as { n: number }).n;
+    const doneOffset = doneTotal === 0
+      ? 0
+      : Math.min(requestedOffset, Math.floor((doneTotal - 1) / doneLimit) * doneLimit);
+    const doneRows = this.db
+      .prepare(
+        `SELECT * FROM board_tasks WHERE ${doneWhere}
+         ORDER BY COALESCE(finished_at, updated_at) DESC, updated_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...doneArgs, doneLimit, doneOffset) as TaskRow[];
+    const taskRepos = (this.db
+      .prepare(`SELECT DISTINCT repo FROM board_tasks WHERE workspace_id = ? ORDER BY repo`)
+      .all(workspaceId) as Array<{ repo: string }>).map((row) => row.repo);
+    return { tasks: [...activeRows, ...doneRows].map(rowToTask), doneTotal, doneOffset, taskRepos };
   }
 
   listTasksByStatus(status: TaskStatus): TaskRecord[] {

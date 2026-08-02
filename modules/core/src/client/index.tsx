@@ -10,7 +10,7 @@ import { onboarding } from './onboarding.js';
 /**
  * The `/client` barrel — module-core's web surface: the auth provider and the
  * pre-login pages the shell mounts directly, plus the Users/Profile/Modules
- * routes and the Admin sidebar group. Vite reads this as source.
+ * routes and the settings-shell groups. Vite reads this as source.
  */
 
 // The shell (and other modules) reach these by name — everything else is routed.

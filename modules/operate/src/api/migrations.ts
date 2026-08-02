@@ -411,4 +411,26 @@ export default defineMigrations([
       db.exec(`ALTER TABLE runs DROP COLUMN verification`);
     },
   },
+  {
+    /** Stable indexed ordering for the maintainer-facing run queue. The user-leading
+     * variant serves private attended/repository runs; the global variant
+     * serves visible repo-less automation without scanning terminal payloads. */
+    version: 12,
+    name: 'runs_list_paging',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_runs_created_desc
+          ON runs(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_runs_user_created
+          ON runs(user_id, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_runs_status_created
+          ON runs(status, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_runs_repo_created
+          ON runs(repo, created_at DESC, id DESC);
+      `);
+    },
+    down: () => {
+      // Additive migrations are never rolled back destructively in-place.
+    },
+  },
 ]);

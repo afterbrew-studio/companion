@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import type {
+  AgentRunAccess,
   AgentDiffResponse,
   AgentVerifyResponse,
   AgentEventMessage,
@@ -145,8 +146,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   // ---------- gateway lifecycle ----------
 
-  async spawn(runId: string, cwd: string): Promise<void> {
-    await this.call('POST', `/runs/${runId}/spawn`, { cwd, sessionId: runId });
+  async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
+    await this.call('POST', `/runs/${runId}/spawn`, { cwd, sessionId: runId, access });
     this.liveRuns.add(runId);
   }
   async stop(runId: string): Promise<void> {
@@ -253,8 +254,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
   async diffVsBase(cwd: string, baseBranch: string): Promise<string> {
     return (await this.call<AgentDiffResponse>('POST', '/git/diff', { cwd, baseBranch })).diff;
   }
-  async commitAll(cwd: string, message: string): Promise<void> {
-    await this.call('POST', '/git/commit-all', { cwd, message });
+  async commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void> {
+    // The author rides along so a remote runner signs it the same way; an
+    // older runner ignores the extra field and keeps its previous behaviour.
+    await this.call('POST', '/git/commit-all', { cwd, message, ...(author ? { author } : {}) });
   }
   async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
     // Refuse here, on the daemon, rather than trusting a runner to re-derive the
@@ -274,6 +277,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
   }
 
   async exec(cwd: string, command: string, opts: ExecOptions = {}): Promise<AgentVerifyResponse | null> {
+    if (opts.signal) {
+      throw new Error(`runner ${this.id} is remote; cancellable commands run on the local runner only`);
+    }
     // The agent protocol carries no env field, on purpose (see AgentVerifyRequest).
     // Refusing is the whole point: running the command anyway would execute it
     // unauthenticated and report npm's confusing complaint instead of ours.

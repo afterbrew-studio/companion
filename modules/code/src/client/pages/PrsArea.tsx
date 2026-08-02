@@ -17,6 +17,8 @@ import {
   Page,
   PageHeader,
   RowsSkeleton,
+  rowDelay,
+  useSettledFlag,
   SearchInput,
   Tabs,
   timeAgo,
@@ -24,6 +26,7 @@ import {
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
 import { Slot } from '@moxxy/companion-sdk/client';
 import { BulkBar } from '../components/BulkBar.js';
+import { ListLoadFailure, listLoadErrorMessage } from '../components/ListLoadFailure.js';
 import { PrSelectionProvider } from '../pr-selection.js';
 import { RepoUnavailableRow } from '../components/RepoUnavailableRow.js';
 import { SyncFailureBanner } from '../components/SyncFailureBanner.js';
@@ -36,6 +39,8 @@ import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrState
 export function PrsAreaPage(): JSX.Element {
   const { can } = useAuth();
   const s = useWorkspacePrs();
+  // A skeleton that appears and vanishes inside a blink reads as a glitch.
+  const settling = useSettledFlag(s.loading);
   const aiActivity = useAiActivity();
   const {
     current,
@@ -54,6 +59,7 @@ export function PrsAreaPage(): JSX.Element {
     loading,
     hasMore,
     loadMore,
+    retry,
     error,
     unavailableRepos,
     failedRepos,
@@ -81,6 +87,7 @@ export function PrsAreaPage(): JSX.Element {
     repo: repoFilter,
     author: authorFilter,
     assignee: assigneeFilter,
+    label: labelFilter,
     decision: decisionFilter,
     review: reviewFilter,
     draft: draftFilter,
@@ -89,6 +96,7 @@ export function PrsAreaPage(): JSX.Element {
   if (!current) return <EmptyState title="No workspace selected" />;
   const unavailable = unavailableRepos.filter((repo) => repoFilter === 'all' || repoFilter === repo);
   const failed = failedRepos.filter((failure) => repoFilter === 'all' || repoFilter === failure.repo);
+  const loadFailed = !loading && prs.length === 0 && unavailable.length === 0 && error !== null;
 
   return (
     <Page>
@@ -139,6 +147,18 @@ export function PrsAreaPage(): JSX.Element {
                   ]}
                 />
               </FilterField>
+              <FilterField label="Label">
+                <Dropdown
+                  ariaLabel="Filter by label"
+                  value={labelFilter}
+                  onChange={setFilter('label')}
+                  searchable={facets.labels.length > 8}
+                  options={[
+                    { value: 'all', label: 'Any label' },
+                    ...facets.labels.map((l) => ({ value: l, label: l })),
+                  ]}
+                />
+              </FilterField>
               <FilterField label="Review">
                 <Dropdown
                   ariaLabel="Filter by review decision"
@@ -181,17 +201,19 @@ export function PrsAreaPage(): JSX.Element {
           </>
         }
       />
-      <ErrorBar error={error} />
+      <ErrorBar error={!loadFailed && error ? listLoadErrorMessage('pull requests', error) : null} />
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={[
-          { value: 'open', label: 'Open', count: counts.open },
-          { value: 'merged', label: 'Merged', count: counts.merged },
-          { value: 'closed', label: 'Closed', count: counts.closed },
-        ]}
-      />
+      {!loadFailed ? (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'open', label: 'Open', count: settling && prs.length === 0 ? undefined : counts.open },
+            { value: 'merged', label: 'Merged', count: settling && prs.length === 0 ? undefined : counts.merged },
+            { value: 'closed', label: 'Closed', count: settling && prs.length === 0 ? undefined : counts.closed },
+          ]}
+        />
+      ) : null}
 
       {tab === 'open' && (canActPrs || (canRunPipelines && pipelines.length > 0)) && selected.size > 0 ? (
         <BulkBar
@@ -227,18 +249,21 @@ export function PrsAreaPage(): JSX.Element {
       {flash ? <div className="banner-info my-2" role="status">{flash}</div> : null}
       <SyncFailureBanner failures={failed} />
 
-      {prs.length === 0 && unavailable.length === 0 && !loading ? (
+      {loadFailed ? (
+        <ListLoadFailure noun="pull requests" error={error ?? 'unknown error'} onRetry={retry} />
+      ) : prs.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
         />
       ) : (
         <ListCard className="mt-3" ariaLabel="Pull request list">
-          {loading && prs.length === 0 ? <RowsSkeleton rows={6} /> : null}
+          {settling && prs.length === 0 ? <RowsSkeleton rows={6} /> : null}
           {!loading ? unavailable.map((repo) => <RepoUnavailableRow key={repo} repo={repo} />) : null}
-          {prs.map((pr) => (
+          {prs.map((pr, i) => (
             <a
               key={`${pr.repo}#${pr.number}`}
-              className="row-link group/row"
+              style={rowDelay(i)}
+              className="row-link group/row row-in"
               href={`#/repos/${pr.repo}/prs/${pr.number}`}
               onContextMenu={(e) => {
                 e.preventDefault();

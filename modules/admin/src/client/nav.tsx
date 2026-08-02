@@ -1,20 +1,21 @@
 import { defineNav, NavIcon } from '@moxxy/companion-core/client';
 
 /**
- * module-admin contributes the Settings entry to core's Admin sidebar group
- * (core owns the section). Icon follows the shared stroke style from the
- * legacy modules.tsx registry.
+ * module-admin contributes the instance settings entry to core's Instance group
+ * (core owns the section). "General" rather than "Settings" because the group
+ * already renders inside the settings shell. Icon follows the shared stroke
+ * style from the legacy modules.tsx registry.
  */
 
 export const nav = defineNav([
   {
     key: 'settings',
-    label: 'Settings',
+    label: 'General',
     hash: '#/settings',
     shortcut: 's',
     permission: 'settings:manage',
     section: 'admin',
-    order: 30,
+    order: 0,
     icon: (
       <NavIcon>
         <circle cx="12" cy="12" r="3" />

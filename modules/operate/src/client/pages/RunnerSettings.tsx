@@ -142,7 +142,6 @@ function SettingsForm({
   const [harnesses, setHarnesses] = useState<readonly string[]>(runner.harnesses.map((h) => h.id));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [addingProvider, setAddingProvider] = useState(false);
 
   const shared = runner.ownerId === null;
   const delegatedEmpty = scope === 'delegated' && workspaceIds.length === 0;
@@ -348,19 +347,12 @@ function SettingsForm({
               title="Model providers"
               description="Credentials configured on the machine. Which of them agents may use is set under Providers."
             >
-              <span className="flex items-center gap-3">
-                <span className="dim text-sm">
-                  {health.providers === null
-                    ? 'not probed yet'
-                    : health.providers.length > 0
-                      ? health.providers.join(' · ')
-                      : 'none configured'}
-                </span>
-                {/* Not part of the settings document: it runs against the
-                    machine on its own, so it must never submit this form. */}
-                <button type="button" className="btn-ghost" onClick={() => setAddingProvider(true)}>
-                  Add provider
-                </button>
+              <span className="dim text-sm">
+                {health.providers === null
+                  ? 'not probed yet'
+                  : health.providers.length > 0
+                    ? health.providers.join(' · ')
+                    : 'none configured'}
               </span>
             </SettingRow>
             <SettingRow
@@ -377,7 +369,7 @@ function SettingsForm({
 
         <Section
           title="Agent runtimes"
-          description="What agent work here actually runs on. Only runtimes installed on this machine are listed; a run takes the one marked below, and the rest are kept for when it cannot."
+          description="What agent work here actually runs on. Only runtimes installed on this machine are listed. Work runs through the one marked 'runs work here'; tick others to keep them available and use their models."
         >
           <HarnessPicker
             runnerId={runner.id}
@@ -500,16 +492,6 @@ function SettingsForm({
         </Section>
       </form>
 
-      {addingProvider ? (
-        <AddProviderModal
-          runner={runner}
-          onClose={() => setAddingProvider(false)}
-          onAdded={(provider) => {
-            setAddingProvider(false);
-            setNote(`Added ${provider}`);
-          }}
-        />
-      ) : null}
     </Page>
   );
 }
@@ -534,103 +516,6 @@ const PROVIDER_SLUGS = [
  * because moxxy is the authority on what it accepts and this list will age.
  */
 const SUBSCRIPTION_PROVIDERS = new Set(['claude-code', 'openai-codex', 'zai-plan']);
-
-/**
- * Give a machine a model provider without opening a shell on it. The key is
- * sent once and lives nowhere afterwards: Companion forwards it to that
- * machine's moxxy and stores nothing, so there is no "edit key" here: adding
- * the same provider again replaces it on the machine.
- */
-function AddProviderModal({
-  runner,
-  onClose,
-  onAdded,
-}: {
-  runner: RunnerRecord;
-  onClose: () => void;
-  onAdded: (provider: string) => void;
-}): JSX.Element {
-  const [provider, setProvider] = useState('');
-  const [key, setKey] = useState('');
-  const [model, setModel] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const slug = provider.trim().toLowerCase();
-  const subscription = SUBSCRIPTION_PROVIDERS.has(slug);
-
-  const submit = async (e: FormEvent): Promise<void> => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await api.addRunnerProvider(runner.id, {
-        provider: slug,
-        ...(key.trim() ? { key: key.trim() } : {}),
-        ...(model.trim() ? { model: model.trim() } : {}),
-      });
-      onAdded(slug);
-    } catch (err) {
-      setError(String(err));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title={`Add a provider to ${runner.name}`} onClose={onClose}>
-      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Field label="Provider" hint="moxxy's provider name; it rejects one it doesn't know and lists the valid ones.">
-          <input
-            className="input"
-            list="moxxy-provider-slugs"
-            required
-            autoFocus
-            placeholder="anthropic"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-          />
-          <datalist id="moxxy-provider-slugs">
-            {PROVIDER_SLUGS.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </Field>
-        <Field
-          label="API key"
-          hint={
-            subscription ? (
-              <span className="text-amber-600 dark:text-amber-400">
-                {slug} signs in with a subscription, not a key. Run{' '}
-                <code className="code-inline">moxxy login {slug}</code> on the machine itself.
-              </span>
-            ) : (
-              'Sent straight to this machine’s moxxy and stored only there. Companion never keeps a copy.'
-            )
-          }
-        >
-          <input
-            className="input"
-            type="password"
-            autoComplete="off"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-          />
-        </Field>
-        <Field label="Default model" hint="Optional; leave empty to keep the provider's own default.">
-          <input className="input" value={model} onChange={(e) => setModel(e.target.value)} />
-        </Field>
-        <ErrorBar error={error} />
-        <div className="flex justify-end gap-2">
-          <button type="button" className="btn-ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn" type="submit" disabled={busy || slug.length === 0}>
-            {busy ? 'Adding…' : 'Add provider'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 /** The app's all-or-selected reach control: one segmented choice, then the picker. */
 function ReachRow({
@@ -762,8 +647,20 @@ function HarnessPicker({
               )}
               {/* Ticking a second runtime beside the first changes nothing, and
                   two ticked boxes would otherwise look the same whichever one
-                  work actually runs through. */}
-              {option.id === selected[0] ? <span className="chip">runs work here</span> : null}
+                  work actually runs through. The rest are choosable: ticking
+                  one appends it, so without this the only way to change which
+                  runtime runs work was to untick the one in front of it. */}
+              {option.id === selected[0] ? (
+                <span className="chip">runs work here</span>
+              ) : selected.includes(option.id) ? (
+                <button
+                  type="button"
+                  className="linkish text-xs"
+                  onClick={() => onChange([option.id, ...selected.filter((id) => id !== option.id)])}
+                >
+                  run work here
+                </button>
+              ) : null}
             </span>
           }
           description={

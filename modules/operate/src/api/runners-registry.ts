@@ -444,6 +444,24 @@ export class Runners {
     return health.status === 'online';
   }
 
+  /**
+   * Why a machine cannot take this work, or null when it can.
+   *
+   * A lane names a machine BY CHOICE, and a choice that cannot be honoured has
+   * to say so where it was made. Placing elsewhere would make the selection a
+   * lie, and running there anyway would override the machine's own refusal,
+   * which a preference is never allowed to do.
+   */
+  refusalFor(runnerId: string | null, opts: { task?: string | null; repo?: string | null; userId?: string | null } = {}): string | null {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    if (!row) return 'that machine is no longer connected';
+    if (row.enabled !== 1) return `${row.name} is disabled`;
+    if (!this.allows(row, opts.task ?? null)) return `${row.name} does not accept ${opts.task ?? 'this work'}`;
+    if (!this.servesRepo(row, opts.repo ?? null)) return `${row.name} is not cleared for this repository`;
+    if (!this.servesRole(row, opts.userId ?? null)) return `${row.name} is not available to your role`;
+    return null;
+  }
+
   /** True when this machine's task policy accepts the task (null task = always). */
   private allows(row: RunnerRow, task: string | null): boolean {
     return task === null || taskPolicyAllows(taskPolicyOf(row), task);
@@ -805,6 +823,60 @@ export class Runners {
     this.detectedAt = 0;
   }
 
+  /**
+   * Models one lane can actually serve.
+   *
+   * Scoped by runtime, not just by machine: a runtime that signs in on its own
+   * serves ONLY its own models, and one that reads providers serves everything
+   * except those. Offering a lane a model its runtime cannot run is the exact
+   * trap this exists to close, because the pin would be dropped at dispatch and
+   * nobody would be told why.
+   */
+  modelsForLane(runnerId: string | null, harness: string | null): CatalogModel[] {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    if (!row) return [];
+    const policy = policyOf(row);
+    const builtin = new Set(
+      this.harnessesOn(row)
+        .filter((h) => h.capabilities.models === 'builtin')
+        .map((h) => h.id),
+    );
+    const wanted = harness !== null && builtin.has(harness) ? (name: string) => name === harness : (name: string) => !builtin.has(name);
+    const out: CatalogModel[] = [];
+    for (const provider of this.providersOn(row)) {
+      if (!provider.ready || policy.providers.has(provider.name) || !wanted(provider.name)) continue;
+      for (const model of provider.models) {
+        if (!modelAllowed(policy, provider.name, model.id)) continue;
+        out.push({ id: model.id, contextWindow: model.contextWindow, machines: [row.id] });
+      }
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * A machine's providers: the probed ones from its stored catalog, plus what
+   * its built-in runtimes offer, computed now.
+   *
+   * The stored catalog caches what is expensive to learn — asking a
+   * provider-backed runtime which credentials actually work. What a runtime
+   * that ships its own models offers costs a descriptor lookup or a file read,
+   * so caching it bought nothing and cost correctness: such a runtime stayed
+   * invisible until the catalog's six-hour TTL expired, which is how installing
+   * Codex left it with no models for the rest of the afternoon.
+   */
+  private providersOn(row: RunnerRow): RunnerCatalog['providers'] {
+    const builtin = this.harnessesOn(row).flatMap((h) => builtinCatalog(h)?.providers ?? []);
+    if (builtin.length === 0) return row.catalog?.providers ?? [];
+    const fresh = new Set(builtin.map((p) => p.name));
+    return [...(row.catalog?.providers ?? []).filter((p) => !fresh.has(p.name)), ...builtin];
+  }
+
+  /** Runtimes a machine is set up to run, so a lane's choice can be checked. */
+  harnessIdsOn(runnerId: string | null): readonly string[] {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    return row ? this.harnessesOn(row).map((h) => h.id) : [MOXXY_HARNESS.id];
+  }
+
   /** The harness a run placed here starts under: the machine's first choice. */
   harnessFor(runnerId: string | null): HarnessDescriptor {
     const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
@@ -936,9 +1008,21 @@ export class Runners {
       // is not a provider catalog: folding it into the merged set would invent
       // a provider nobody has credentials for and make an instance that runs
       // only such machines read as configured.
-      const fromProviders = servesProviderModels(this.harnessesOn(row));
-      for (const provider of fromProviders ? (row.catalog?.providers ?? []) : []) {
-        const merged = entry(provider.name);
+      //
+      // A machine running BOTH kinds answers the provider question, so its
+      // groups list the built-in runtime's models too (they are real models it
+      // serves) while that runtime still stays out of the merged set, which is
+      // about credentials.
+      const harnesses = this.harnessesOn(row);
+      const fromProviders = servesProviderModels(harnesses);
+      const builtinProviders = new Set(
+        harnesses.filter((h) => h.capabilities.models === 'builtin').map((h) => h.id),
+      );
+      for (const provider of fromProviders ? this.providersOn(row) : []) {
+        // A runtime that carries its own models needs no credential, so it gets
+        // no entry in the merged view — but it is still a real group on this
+        // machine, and its models still count towards what the machine serves.
+        const merged = builtinProviders.has(provider.name) ? null : entry(provider.name);
         const providerEnabled = !policy.providers.has(provider.name);
         const models = provider.models.map((model): CatalogMachineModel => ({
           id: model.id,
@@ -951,13 +1035,14 @@ export class Runners {
         // what made the old page misleading.
         if (!provider.ready) continue;
         if (!providerEnabled) {
-          merged.disabledOn.add(row.id);
+          merged?.disabledOn.add(row.id);
           continue;
         }
-        merged.machines.add(row.id);
+        merged?.machines.add(row.id);
         for (const model of models) {
           if (!model.enabled) continue;
           servable.add(model.id);
+          if (!merged) continue;
           const existing = merged.models.get(model.id);
           merged.models.set(model.id, {
             id: model.id,
@@ -997,8 +1082,15 @@ export class Runners {
 
   /**
    * Every model some enabled SHARED machine is CAPABLE of serving, deduplicated
-   * across providers and machines. Derived from the merged catalog rather than
-   * re-walking the rows, so the ready/policy rules are not restated here.
+   * across providers and machines.
+   *
+   * Read from the machines' own catalogs rather than from the merged provider
+   * view, because those answer different questions. The merged view is about
+   * CREDENTIALS: a runtime that carries its own models is left out of it, or
+   * the Providers page would invent a provider nobody has to configure. This
+   * one is about CAPABILITY, and a machine running Claude Code really can serve
+   * `opus`. Deriving this from that view is why a runtime's own models could
+   * not be pinned to a task at all.
    *
    * This is what an instance-wide task pin may be set to. Capability only: a
    * machine that is offline right now, or blocks the task, still counts, because
@@ -1013,20 +1105,23 @@ export class Runners {
    */
   servableModels(): CatalogModel[] {
     const merged = new Map<string, CatalogModel>();
-    // Only the merged set is read here; reporting the daemon default is the
-    // caller's job, so the snapshot's copy of it goes unused.
-    for (const provider of this.catalogSnapshot('', null).providers) {
-      for (const model of provider.models) {
-        const seen = merged.get(model.id);
-        if (!seen) {
-          merged.set(model.id, model);
-          continue;
+    for (const row of this.visibleTo(null)) {
+      if (row.enabled !== 1) continue;
+      const policy = policyOf(row);
+      for (const provider of this.providersOn(row)) {
+        // The same two rules the merged view applies, restated here because
+        // this walks the rows: an unready provider serves nothing, and a
+        // machine's own policy decides what it will serve.
+        if (!provider.ready || policy.providers.has(provider.name)) continue;
+        for (const model of provider.models) {
+          if (!modelAllowed(policy, provider.name, model.id)) continue;
+          const seen = merged.get(model.id);
+          merged.set(model.id, {
+            id: model.id,
+            contextWindow: model.contextWindow ?? seen?.contextWindow ?? null,
+            machines: [...new Set([...(seen?.machines ?? []), row.id])],
+          });
         }
-        merged.set(model.id, {
-          id: model.id,
-          contextWindow: seen.contextWindow ?? model.contextWindow,
-          machines: [...new Set([...seen.machines, ...model.machines])],
-        });
       }
     }
     return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -1092,18 +1187,29 @@ export class Runners {
   private async probeCatalog(id: string): Promise<RunnerCatalog | null> {
     const backend = this.backends.get(id);
     if (!backend) return null;
-    // A machine whose runtime ships its own models already told us what they
-    // are; starting a process to be told again would be the probe's whole cost
-    // for none of its information.
-    const fixed = builtinCatalog(this.harnessFor(id));
-    if (fixed) {
-      this.storeCatalog(id, fixed);
-      return fixed;
+    const row = this.store.runners.get(id);
+    const harnesses = row ? this.harnessesOn(row) : [this.harnessFor(id)];
+
+    // A machine may be set to run SEVERAL runtimes, and its catalog is the union
+    // of what they serve. Asking only the first one is why a machine running
+    // both moxxy and Claude Code reported moxxy's models and nothing else.
+    //
+    // A runtime that ships its own models already told us what they are, so it
+    // contributes without a process; only the ones that answer from configured
+    // providers are worth the probe.
+    const probed = harnesses.some((harness) => harness.capabilities.models === 'providers');
+    if (!probed) {
+      // Nothing here answers from configured credentials, so there is nothing
+      // to probe. Its models are merged in on read.
+      const catalog: RunnerCatalog = { providers: [], defaultModel: null, fetchedAt: Date.now() };
+      this.storeCatalog(id, catalog);
+      return catalog;
     }
+
     const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
     try {
       const cwd = await backend.scratchDir(probeId);
-      await backend.spawn(probeId, cwd);
+      await backend.spawn(probeId, cwd, 'workspace-write');
       const catalog = parseCatalog((await backend.sessionInfo(probeId)) as SessionInfo);
       this.storeCatalog(id, catalog);
       return catalog;
@@ -1135,7 +1241,7 @@ export class Runners {
     const index = new Map<string, Set<string>>();
     for (const row of this.store.runners.list()) {
       const policy = policyOf(row);
-      for (const provider of row.catalog?.providers ?? []) {
+      for (const provider of this.providersOn(row)) {
         const usable = provider.ready && !policy.providers.has(provider.name);
         for (const model of provider.models) {
           const allowed = usable && modelAllowed(policy, provider.name, model.id);

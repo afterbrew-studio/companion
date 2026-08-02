@@ -62,6 +62,8 @@ export function pipelineStatusBadge(status: PipelineRunStatus | StepResultStatus
     case 'failed':
     case 'error':
       return 'badge-danger';
+    case 'cancelled':
+      return 'badge';
     case 'running':
       return 'badge-accent';
     default:
@@ -161,6 +163,16 @@ const TRIAGE_STATE_SPECS = {
       <>
         <circle cx="8" cy="8" r="6.2" />
         <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      </>
+    ),
+  },
+  running: {
+    label: 'Triage running',
+    cls: 'animate-pulse text-sky-600 dark:text-sky-400',
+    glyph: (
+      <>
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="M8 4.8V8l2.1 1.5" />
       </>
     ),
   },

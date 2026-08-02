@@ -246,6 +246,7 @@ export class Auth implements Authenticator {
       user,
       permissions: this.rbac.permissionsFor(user.role),
       notificationScope: this.settings.resolveNotificationScope(user.username),
+      hiddenNav: this.settings.userHiddenNav(user.username),
     };
   }
 

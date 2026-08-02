@@ -1,11 +1,24 @@
 import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 /**
- * Core owns the Admin sidebar group; users + the Modules toggles live in it.
+ * Core owns every settings group, not just the ones holding its own pages.
+ *
+ * A settings group has to exist whenever ANY module wants to attach a page to
+ * it, and an entry whose section id nobody declared is dropped from the shell
+ * without a word. Only `core` is `required: true`, so only core can make that
+ * promise: module-operate hangs its AI pages here, module-code its GitHub
+ * account, module-notify its forwarder, none of which depend on each other.
+ * Empty groups don't render, so declaring one costs nothing.
+ *
  * Icons follow the shared stroke style from the legacy modules.tsx registry.
  */
 
-export const sections = defineSections([{ id: 'admin', label: 'Admin', order: 50 }]);
+export const sections = defineSections([
+  { id: 'admin', label: 'Instance', order: 50, placement: 'settings' },
+  { id: 'admin-ai', label: 'AI', order: 51, placement: 'settings' },
+  { id: 'admin-access', label: 'Access', order: 52, placement: 'settings' },
+  { id: 'admin-integrations', label: 'Integrations', order: 53, placement: 'settings' },
+]);
 
 export const nav = defineNav([
   {
@@ -14,7 +27,7 @@ export const nav = defineNav([
     hash: '#/users',
     shortcut: 'm',
     permission: 'users:manage',
-    section: 'admin',
+    section: 'admin-access',
     order: 20,
     icon: (
       <NavIcon>
@@ -30,7 +43,7 @@ export const nav = defineNav([
     hash: '#/roles',
     shortcut: 'q',
     permission: 'users:manage',
-    section: 'admin',
+    section: 'admin-access',
     order: 25,
     icon: (
       <NavIcon>

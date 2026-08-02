@@ -52,9 +52,16 @@ export default defineJobs({
     const code = ctx.services.get('code');
     const operate = ctx.services.get('operate');
 
-    // Live command output is repo-private: the hub broadcasts anything no
-    // resolver claims, and this message carries a command's raw stdout.
-    ctx.ws.registerScopeResolver('code.stepOutput', createStepOutputScopeResolver(ctx));
+    // Aggregate review rows are separate from their child operate runs. Mark
+    // the old process's live rows failed before durable queue entries replay as
+    // fresh reviews, otherwise the PR page shows two jobs still running.
+    code.prReviews.recoverInterrupted();
+    code.triage.recoverInterrupted();
+
+    // Live command output is owner-private: the hub broadcasts anything no
+    // resolver claims, and this message carries a command's raw stdout. Team
+    // members replay the scrubbed tail through the authenticated REST route.
+    ctx.ws.registerScopeResolver('code.stepOutput', createStepOutputScopeResolver());
 
     // Git credentials for clones/worktrees/pushes and remote runner agents,
     // resolved per repo and owning profile — and
@@ -99,13 +106,18 @@ export default defineJobs({
     operate.orchestrator.registerResumer('triage', (a) =>
       code.triage.triageIssue(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),
     );
+    // Every option the review ran with is replayed: a resumed review that
+    // silently reverted to the defaults would return a different verdict than
+    // the one the user asked for.
     operate.orchestrator.registerResumer('pr-review', (a) =>
-      code.prReviews.analyzePr(
-        str(a, 'repo'),
-        num(a, 'number'),
-        str(a, 'userId'),
-        typeof a.context === 'string' ? { context: a.context } : undefined,
-      ),
+      code.prReviews.analyzePr(str(a, 'repo'), num(a, 'number'), str(a, 'userId'), {
+        ...(typeof a.context === 'string' ? { context: a.context } : {}),
+        ...(a.depth === 'high-level' || a.depth === 'in-depth' ? { depth: a.depth } : {}),
+        ...(a.strictness === 'blockers-only' || a.strictness === 'balanced' || a.strictness === 'pedantic'
+          ? { strictness: a.strictness }
+          : {}),
+        ...(typeof a.verify === 'boolean' ? { verify: a.verify } : {}),
+      }),
     );
     operate.orchestrator.registerResumer('ci-analysis', (a) =>
       code.prReviews.analyzeFailedChecks(str(a, 'repo'), num(a, 'number'), str(a, 'userId')),
@@ -137,7 +149,10 @@ export default defineJobs({
       .githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
     announceCredentialHealth(ctx, result);
   },
-  onDisable: (ctx) => {
+  onDisable: async (ctx) => {
+    // Persist interrupted pipeline evidence and stop its queued/running
+    // children while the raw-output scope is still installed.
+    await ctx.services.get('code').pipelines.shutdown();
     ctx.ws.unregisterScopeResolver('code.stepOutput');
     offSetupCompleted?.();
     offSetupCompleted = null;

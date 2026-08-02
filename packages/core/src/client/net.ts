@@ -14,6 +14,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** Server guidance for transient failures such as a GitHub rate limit. */
+    readonly retryAfter: number | null = null,
   ) {
     super(message);
   }
@@ -39,6 +41,12 @@ function errorMessage(body: { error?: string; issues?: unknown }, res: Response)
     .join('; ');
   if (detail) return detail;
   return body.error ?? `${res.status} ${res.statusText}`;
+}
+
+function retryAfterSeconds(body: { retryAfter?: unknown }, res: Response): number | null {
+  const raw = body.retryAfter ?? res.headers.get('retry-after');
+  const seconds = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
 }
 
 export function getToken(): string | null {
@@ -85,8 +93,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError('session expired — sign in again', 401);
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown };
-    throw new ApiError(errorMessage(body, res), res.status);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown; retryAfter?: unknown };
+    throw new ApiError(errorMessage(body, res), res.status, retryAfterSeconds(body, res));
   }
   return (await res.json()) as T;
 }
@@ -107,8 +115,8 @@ export async function publicPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const parsed = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown };
-    throw new ApiError(errorMessage(parsed, res), res.status);
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown; retryAfter?: unknown };
+    throw new ApiError(errorMessage(parsed, res), res.status, retryAfterSeconds(parsed, res));
   }
   return (await res.json()) as T;
 }

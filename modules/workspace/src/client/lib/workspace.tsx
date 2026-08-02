@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { onServerMessage } from '@moxxy/companion-sdk/client';
+import { invalidateCached, onServerMessage } from '@moxxy/companion-sdk/client';
 import type { WorkspaceRecord } from '../../contract/index.js';
 import { workspaceApi } from '../api.js';
 
@@ -55,9 +55,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }): JSX.El
 
   const setCurrent = useCallback((id: string, opts?: { navigate?: boolean }) => {
     setCurrentId((prev) => {
-      // Switching workspaces is a context change — land on the new workspace's
-      // Overview so scoped areas (and its inbox) reflect the switch immediately.
-      if (id !== prev && opts?.navigate !== false) location.hash = '#/overview';
+      if (id !== prev) {
+        // Retained page payloads were fetched under the old scope. A repo this
+        // workspace cannot reach must not render from the previous one's copy
+        // while its refetch is still in the air.
+        invalidateCached();
+        // Switching workspaces is a context change — land on the new workspace's
+        // Overview so scoped areas (and its inbox) reflect the switch immediately.
+        if (opts?.navigate !== false) location.hash = '#/overview';
+      }
       return id;
     });
     localStorage.setItem(CURRENT_KEY, id);

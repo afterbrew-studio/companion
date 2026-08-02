@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type {
+  AgentRunAccess,
   AskResponse,
   Harness,
   HarnessCapabilities,
@@ -54,17 +55,17 @@ export const CODEX_CAPABILITIES: HarnessCapabilities = {
 export const CODEX_PROVIDER = 'codex';
 
 /**
- * Companion fences unattended work with the run's own worktree, which holds no
- * push credential: `Checkouts` supplies one per operation and never writes it
- * into the tree. That is the whole fence here.
- *
- * Claude Code additionally gets a `Bash(git push:*)` deny rule as a second
- * layer. Codex has no per-command deny on its command line: its equivalent is
- * an execpolicy `.rules` file, which is read from the operator's own CODEX_HOME
- * or from the repository being worked on. Companion will not edit the first or
- * commit into the second, so the second layer is absent rather than faked.
+ * The assistant is the only profile that needs network access to Companion's
+ * scoped API and therefore keeps Codex's externally-sandboxed mode. Every
+ * other profile uses Codex's own sandbox with approvals disabled: analysis is
+ * filesystem read-only, while implementation may write only its worktree.
  */
 const BYPASS_SANDBOX = '--dangerously-bypass-approvals-and-sandbox';
+
+export function codexAccessArgs(access: AgentRunAccess): string[] {
+  if (access === 'trusted-assistant') return [BYPASS_SANDBOX];
+  return ['--sandbox', access, '--ask-for-approval', 'never'];
+}
 
 export interface CodexOptions {
   readonly runId: string;
@@ -72,6 +73,7 @@ export interface CodexOptions {
   readonly cliPath: string;
   /** `--model`; omitted lets Codex use the account default. */
   readonly model?: string | null;
+  readonly access?: AgentRunAccess;
 }
 
 export interface CodexHandlers {
@@ -199,10 +201,10 @@ export class CodexHarness implements Harness {
     // let a prompt that happens to start with a dash be parsed as a flag, and
     // caps it at the platform's argument length.
     const argv = [
+      ...codexAccessArgs(this.opts.access ?? 'workspace-write'),
       'exec',
       ...(this.threadId ? ['resume'] : []),
       '--json',
-      BYPASS_SANDBOX,
       // A run's working directory is a worktree, but a probe's is scratch space
       // and a repo-less run is legitimate; neither is Codex's business.
       '--skip-git-repo-check',
@@ -290,7 +292,10 @@ export class CodexHarness implements Harness {
         },
       ],
       tools: [],
-      permissionMode: BYPASS_SANDBOX,
+      permissionMode:
+        (this.opts.access ?? 'workspace-write') === 'trusted-assistant'
+          ? BYPASS_SANDBOX
+          : `${this.opts.access ?? 'workspace-write'} (approval never)`,
       slashCommands: [],
     };
   }

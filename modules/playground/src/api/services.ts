@@ -1,11 +1,12 @@
 import { defineServices } from '@moxxy/companion-sdk/server';
+import { PlaygroundService } from './playground-service.js';
 
-/**
- * Registers no service of its own — only the playground's run-task descriptor,
- * so the runner task filter can name its one-shots.
- */
+/** Registers the module-owned stores/orchestrator and its runner task label. */
 export default defineServices((ctx) => {
-  ctx.services
-    .get('operate')
-    .registerRunTask({ id: 'playground.run', label: 'Playground & dry-runs', placeable: false });
+  ctx.services.get('operate').registerRunTask({
+    id: 'playground.run',
+    label: 'Playground & dry-runs',
+    placeable: false,
+  });
+  ctx.services.register('playground', new PlaygroundService(ctx.db, ctx));
 });
