@@ -17,6 +17,8 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
     error,
     refresh,
     canAct,
+    canReadRuns,
+    canUseAgents,
     triaging,
     startTriage,
     fixing,
@@ -88,7 +90,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
         {/* Stable order: AI group first, then the overflow menu, then the
             external GitHub link last. */}
         <div className="flex shrink-0 items-center gap-2" role="toolbar" aria-label="Issue actions">
-          {canAct ? (
+          {canUseAgents ? (
             <AiActionMenu
               label="AI actions"
               busy={triaging || fixing}
@@ -132,14 +134,14 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
         {issue.body ? <Markdown text={issue.body} /> : <span className="dim text-sm">(no description)</span>}
       </article>
 
-      <AgentActivity repo={repo} issueNumber={number} />
+      {canReadRuns ? <AgentActivity repo={repo} issueNumber={number} /> : null}
 
       <PipelineRunList runs={pipelineRuns} />
 
       {triaging ? (
         <div className="banner-info anim-in">
           <Spinner /> Triage agent is investigating this issue…
-          {triage?.runId ? (
+          {canReadRuns && triage?.runId ? (
             <a className="linkish ml-auto text-xs" href={`#/runs/${triage.runId}`}>
               view run →
             </a>
@@ -147,7 +149,7 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
         </div>
       ) : null}
       {triage && triage.status !== 'running' ? (
-        <TriageCard triage={triage} canAct={canAct} onChange={refresh} />
+        <TriageCard triage={triage} canAct={canAct} canReadRuns={canReadRuns} onChange={refresh} />
       ) : null}
 
       <CommentsSection
@@ -162,10 +164,12 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
 function TriageCard({
   triage,
   canAct,
+  canReadRuns,
   onChange,
 }: {
   triage: TriageResult;
   canAct: boolean;
+  canReadRuns: boolean;
   onChange: () => Promise<void>;
 }): JSX.Element {
   const [comment, setComment] = useState(true);
@@ -189,9 +193,11 @@ function TriageCard({
         <strong>AI triage</strong>
         <span className={triage.status === 'applied' ? 'badge-ok' : 'badge-warn'}>{triage.status}</span>
         <span className="flex-1" />
-        <a className="linkish text-xs" href={`#/runs/${triage.runId}`}>
-          view run →
-        </a>
+        {canReadRuns ? (
+          <a className="linkish text-xs" href={`#/runs/${triage.runId}`}>
+            view run →
+          </a>
+        ) : null}
       </div>
       {v ? (
         <>

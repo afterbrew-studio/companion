@@ -49,6 +49,14 @@ export default defineServices((ctx) => {
     plan.proposals,
     plan.specs,
     (repo, username) => code.githubAccounts.clientFor('pipelines', { repo, username }),
+    () => ctx.services.tryGet('board'),
+    (username, permission, repo) => {
+      const role = core.activeUserRole(username);
+      return role !== undefined &&
+        ctx.rbac.has(role, permission) &&
+        (!repo || workspace.canAccessRepo({ username, displayName: username, role }, repo));
+    },
+    (event) => ctx.audit.record({ at: Date.now(), module: 'automations', access: 'automations:manage', ...event }),
     ctx.broadcast,
   );
 

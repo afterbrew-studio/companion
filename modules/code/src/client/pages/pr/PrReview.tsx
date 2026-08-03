@@ -20,6 +20,8 @@ const RISK_CLS: Record<'low' | 'medium' | 'high', string> = {
 export function PrReview({
   review,
   canAct,
+  canReadRuns,
+  canUseAgents,
   busy,
   onApply,
   onCancel,
@@ -31,6 +33,8 @@ export function PrReview({
 }: {
   review: PrReviewResult;
   canAct: boolean;
+  canReadRuns: boolean;
+  canUseAgents: boolean;
   busy: boolean;
   onApply: (accountId?: string, mode?: ReviewPostMode) => void;
   onCancel: () => void;
@@ -43,7 +47,7 @@ export function PrReview({
   const [actAs, setActAs] = useState('');
   const [mode, setMode] = useState<ReviewPostMode>('full');
   if (review.status === 'running') {
-    return <ReviewingStage review={review} canCancel={canAct} busy={busy} onCancel={onCancel} />;
+    return <ReviewingStage review={review} canCancel={canUseAgents} busy={busy} onCancel={onCancel} />;
   }
   const v = review.verdict;
   const pending = review.status === 'pending';
@@ -78,7 +82,7 @@ export function PrReview({
         <span className="dim text-xs">
           {manual ? 'started' : 'reviewed'} {timeAgo(review.createdAt)}
         </span>
-        {review.runId ? (
+        {canReadRuns && review.runId ? (
           <a className="linkish text-xs" href={`#/runs/${review.runId}`}>
             view run →
           </a>
@@ -87,6 +91,9 @@ export function PrReview({
         {review.status === 'applied' ? <span className="badge-ok">posted</span> : null}
         {review.status === 'dismissed' ? <span className="badge">dismissed</span> : null}
         {review.status === 'cancelled' ? <span className="badge">cancelled</span> : null}
+        {review.coverage.state === 'partial' && review.status === 'failed' ? (
+          <span className="badge-warn">guidance only</span>
+        ) : null}
       </div>
 
       {v ? (
@@ -102,6 +109,8 @@ export function PrReview({
               reviewId={review.id}
               findings={review.findings}
               canAct={canAct && pending && !!onUpdateFinding}
+              canReadAgent={canReadRuns}
+              canChat={canUseAgents}
               busy={busy}
               onToggle={(id, include) => onUpdateFinding?.(id, { state: include ? 'included' : 'rejected' })}
               onReject={(id, reason) => onUpdateFinding?.(id, { state: 'rejected', rejectionReason: reason })}
@@ -142,7 +151,8 @@ export function PrReview({
       {review.coverage.state !== 'complete' && !manual ? (
         <div className="banner-warn mt-3 text-xs">
           Coverage {review.coverage.state}: {review.coverage.reviewedFiles}/{review.coverage.totalFiles} changed files
-          reviewed. This result cannot be posted automatically.
+          directly inspected. This result is guidance only and cannot be published as a complete review or used by an
+          automatic merge gate.
         </div>
       ) : null}
 

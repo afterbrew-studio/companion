@@ -20,17 +20,20 @@ test('the OSS preset does not post to GitHub on its own', () => {
   assert.equal(oss.automation.autoMerge, false);
 });
 
-test('the internal preset does gate and merge, which is the difference', () => {
+test('the internal preset has one review path and policy-gated merge', () => {
   const internal = findPreset('internal');
   assert.equal(internal.automation.autoMerge, true);
-  assert.equal(internal.automation.prGate, true);
+  // The pipeline already contains the AI review. Enabling the standalone gate
+  // as well would spend two review runs for every PR and race two publications.
+  assert.equal(internal.automation.prGate, false);
+  assert.ok(internal.pipeline.steps.some((s) => s.kind === 'ai-review'));
   assert.ok(internal.pipeline.steps.some((s) => s.kind === 'checks-gate'));
 });
 
 test('watch-only turns everything off and creates nothing', () => {
   const watch = findPreset('watch');
   assert.equal(watch.pipeline, null);
-  assert.deepEqual(Object.values(watch.automation), [false, false, false, false, false]);
+  assert.equal(Object.values(watch.automation).every((enabled) => enabled === false), true);
 });
 
 test('a preset expands to inline step specs the engine accepts', () => {

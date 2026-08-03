@@ -1,4 +1,5 @@
 import { currentUser, defineServices } from '@moxxy/companion-sdk/server';
+import type { Permission } from '@moxxy/companion-contracts';
 import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
@@ -40,6 +41,7 @@ import {
  */
 export default defineServices((ctx) => {
   const settings = ctx.services.get('settings');
+  const core = ctx.services.get('core');
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
 
@@ -177,11 +179,19 @@ export default defineServices((ctx) => {
   // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
   sync.onSynced = (repo, username) => prChecks.refreshOpenPrs(repo, username);
 
+  const authorized = (username: string, permission: Permission, repo: string): boolean => {
+    const role = core.activeUserRole(username);
+    return role !== undefined &&
+      ctx.rbac.has(role, permission) &&
+      workspace.canAccessRepo({ username, displayName: username, role }, repo);
+  };
+
   const triage = new Triage(
     store,
     operate.orchestrator,
     operate.checkouts,
     (c) => ghAccounts.clientFor('pipelines', c),
+    authorized,
     ctx.broadcast,
   );
   const prReviews = new PrReviews(
@@ -207,11 +217,12 @@ export default defineServices((ctx) => {
           return client.mergePr(repo, prNumber, method, fresh.head.sha);
         },
         { ...c, need: 'push' },
-      ),
+    ),
     prChecks,
+    authorized,
     ctx.broadcast,
   );
-  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, ctx.broadcast);
+  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, ctx.broadcast);
   const fixes = new Fixes(
     store,
     operate.orchestrator,
@@ -227,6 +238,7 @@ export default defineServices((ctx) => {
     async (repo, username) =>
       (await ghAccounts.verifiedClientFor('runs', repo, { username })).client !== null,
     (repo, username) => ghAccounts.verifiedClientFor('runs', repo, { username, need: 'push' }),
+    authorized,
     prChecks,
     ctx.broadcast,
   );
@@ -255,6 +267,12 @@ export default defineServices((ctx) => {
       // backend as the declared secret fields, so a Vault swap carries both.
       secrets: ctx.secrets,
       audit: (event) => ctx.audit.record({ at: Date.now(), module: 'code', ...event }),
+      authorized,
+      canAccessWorkspace: (username, workspaceId) => {
+        const role = core.activeUserRole(username);
+        return role !== undefined &&
+          workspace.canAccessWorkspace({ username, displayName: username, role }, workspaceId);
+      },
     },
     ctx.broadcast,
   );

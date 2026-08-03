@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { log } from '@moxxy/companion-sdk/server';
-import type { SpaServerMessage } from '@moxxy/companion-contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import type { ReviewFinding } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
@@ -38,42 +38,58 @@ export class ReviewChat {
     private readonly store: CodeStore,
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
+    private readonly authorized: (username: string, permission: Permission, repo: string) => boolean,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {
     setInterval(() => this.reapIdle(), 60_000).unref();
   }
 
-  private mapKey(reviewId: string): string {
-    return `review:chat:${reviewId}`;
+  private mapKey(reviewId: string, userId: string): string {
+    return `review:chat:${reviewId}:${userId}`;
   }
 
-  private runIdFor(reviewId: string): string | null {
-    return this.store.settings.get(this.mapKey(reviewId)) || null;
+  private runIdFor(reviewId: string, userId: string): string | null {
+    return this.store.settings.get(this.mapKey(reviewId, userId)) || null;
   }
 
-  /** The conversation's run, if one has been started and still exists. */
-  runFor(reviewId: string): { id: string; live: boolean } | null {
-    const runId = this.runIdFor(reviewId);
+  /** The caller's conversation run, if one has been started and still exists. */
+  runFor(reviewId: string, userId: string): { id: string; live: boolean } | null {
+    this.requireAuthority(reviewId, userId, false);
+    const runId = this.runIdFor(reviewId, userId);
     if (!runId) return null;
     const run = this.orchestrator.getRun(runId);
-    return run ? { id: run.id, live: run.live } : null;
+    return run?.userId === userId ? { id: run.id, live: run.live } : null;
   }
 
-  async history(reviewId: string, before: number | null, limit: number): Promise<HistorySegment> {
-    const runId = this.runIdFor(reviewId);
+  async history(reviewId: string, userId: string, before: number | null, limit: number): Promise<HistorySegment> {
+    const review = this.requireAuthority(reviewId, userId, false);
+    const runId = this.runIdFor(reviewId, userId);
     if (!runId) return { events: [], prevCursor: null };
+    const run = this.orchestrator.getRun(runId);
+    if (!run || run.userId !== userId || run.repo !== review.repo) return { events: [], prevCursor: null };
     return this.orchestrator.loadHistory(runId, before, limit);
   }
 
   /** Whatever the agent is waiting on. An unanswered ask stalls the turn. */
-  pendingAsks(reviewId: string): AskRequest[] {
-    const runId = this.runIdFor(reviewId);
+  pendingAsks(reviewId: string, userId: string): AskRequest[] {
+    this.requireAuthority(reviewId, userId, false);
+    const runId = this.runIdFor(reviewId, userId);
+    const run = runId ? this.orchestrator.getRun(runId) : null;
+    if (run?.userId !== userId) return [];
     return runId ? this.orchestrator.pendingAsksFor(runId) : [];
   }
 
-  async respondAsk(reviewId: string, requestId: string, response: Record<string, unknown>): Promise<void> {
-    const runId = this.runIdFor(reviewId);
+  async respondAsk(
+    reviewId: string,
+    userId: string,
+    requestId: string,
+    response: Record<string, unknown>,
+  ): Promise<void> {
+    this.requireAuthority(reviewId, userId);
+    const runId = this.runIdFor(reviewId, userId);
     if (!runId) throw new Error('no discussion on this review yet');
+    if (this.orchestrator.getRun(runId)?.userId !== userId) throw new Error('review discussion belongs to another profile');
+    this.requireAuthority(reviewId, userId);
     await this.orchestrator.respondAsk(runId, requestId, response);
     this.lastActivity.set(runId, Date.now());
   }
@@ -94,6 +110,7 @@ export class ReviewChat {
     const findings = this.store.prReviewFindings.listForReview(reviewId);
     const finding = findingId ? findings.find((f) => f.id === findingId) : undefined;
     if (findingId && !finding) throw new Error('finding not found on this review');
+    this.requireAuthority(reviewId, userId);
 
     const runId = await this.ensureRun(reviewId, userId);
     const primedKey = `review:chat:primed:${runId}`;
@@ -101,6 +118,7 @@ export class ReviewChat {
     const context = primed ? '' : `${briefing(review.repo, review.prNumber, findings)}\n\n`;
     const prompt = `${context}${CHAT_MARKER}\n${followUpPrompt(finding, text)}`;
 
+    this.requireAuthority(reviewId, userId);
     const result = await this.orchestrator.sendPrompt(runId, prompt);
     if (!primed) this.store.settings.set(primedKey, '1');
     this.lastActivity.set(runId, Date.now());
@@ -115,12 +133,15 @@ export class ReviewChat {
 
   /** Attach to the conversation, creating it (and its checkout) on first use. */
   private async ensureRun(reviewId: string, userId: string): Promise<string> {
-    const existing = this.runIdFor(reviewId);
+    this.requireAuthority(reviewId, userId);
+    const existing = this.runIdFor(reviewId, userId);
     if (existing) {
       const run = this.orchestrator.getRun(existing);
+      if (run && run.userId !== userId) throw new Error('review discussion belongs to another profile');
       if (run && run.status !== 'failed' && run.status !== 'abandoned') {
         if (run.live) return run.id;
         try {
+          this.requireAuthority(reviewId, userId);
           const resumed = await this.orchestrator.resumeRun(run.id);
           return resumed.id;
         } catch (err) {
@@ -149,6 +170,7 @@ export class ReviewChat {
     );
     let run;
     try {
+      this.requireAuthority(reviewId, userId);
       run = await this.orchestrator.createRun({
         kind: 'analysis',
         task: 'code.review-chat',
@@ -163,10 +185,24 @@ export class ReviewChat {
       await this.checkouts.removeWorktree(review.repo, cwd).catch(() => undefined);
       throw err;
     }
-    this.store.settings.set(this.mapKey(reviewId), run.id);
+    this.store.settings.set(this.mapKey(reviewId, userId), run.id);
     this.store.settings.set(`review:chat:primed:${run.id}`, '0');
     this.lastActivity.set(run.id, Date.now());
     return run.id;
+  }
+
+  private requireAuthority(reviewId: string, userId: string, mayAct = true) {
+    const review = this.store.prReviews.get(reviewId);
+    if (!review) throw new Error('review not found');
+    const permissions: readonly Permission[] = mayAct
+      ? ['prs:read', 'prs:act', 'runs:read', 'runs:act']
+      : ['prs:read', 'runs:read'];
+    const missing = permissions
+      .filter((permission) => !this.authorized(userId, permission, review.repo));
+    if (missing.length > 0) {
+      throw new Error(`${userId} is disabled, cannot access ${review.repo}, or no longer holds ${missing.join(', ')}`);
+    }
+    return review;
   }
 
   /**

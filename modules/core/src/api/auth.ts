@@ -241,6 +241,16 @@ export class Auth implements Authenticator {
     return this.users.get(username)?.role;
   }
 
+  /**
+   * Role an unattended job may still act under. Disabled identities are not
+   * automation service accounts: revoking sign-in must revoke their scheduled
+   * and webhook authority at the same moment.
+   */
+  activeUserRole(username: string): Role | undefined {
+    const user = this.users.get(username);
+    return user && !user.disabled ? user.role : undefined;
+  }
+
   sessionInfo(user: AuthUser): SessionInfo {
     return {
       user,

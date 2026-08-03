@@ -121,7 +121,8 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   if (state.loading) return <PageLoading label="Loading idea…" />;
   if (state.missing || !state.detail || !session) return <EmptyState title="Idea not found" hint="It may have been removed or belong to another workspace." />;
 
-  const canManage = can('planner:manage') && session.status !== 'completed' && session.status !== 'cancelled';
+  const canRun = can('runs:read') && can('runs:act');
+  const canManage = can('planner:manage') && canRun && session.status !== 'completed' && session.status !== 'cancelled';
   const conversationWorking = session.activeAction === 'discussing' || session.activeAction === 'revising';
   const planStaysVisible = conversationWorking && isDiscussionAvailable(session);
   const interactionDisabled = !canManage || busy || session.status === 'working';
@@ -312,7 +313,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
                   setMergeIds([]);
                 })}
                 onLaunch={(targetBranch) => act(() => ideasApi.launch(id, session.revision, targetBranch))}
-                canExecute={can('planner:execute')}
+                canExecute={can('planner:execute') && canRun}
                 canManageBoard={can('board:manage')}
               />
             </div>

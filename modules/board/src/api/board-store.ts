@@ -1,6 +1,7 @@
 import type { Database } from '@moxxy/companion-sdk/server';
 import type {
   BoardConfig,
+  TaskAutomationPolicy,
   TaskAttachment,
   TaskEventRecord,
   TaskPriority,
@@ -25,6 +26,8 @@ interface TaskRow {
   workspace_id: string;
   repo: string;
   target_branch: string;
+  source_issue_number: number | null;
+  automation_policy: string | null;
   title: string;
   description: string;
   acceptance: string;
@@ -77,6 +80,8 @@ function rowToTask(row: TaskRow): TaskRecord {
     workspaceId: row.workspace_id,
     repo: row.repo,
     targetBranch: row.target_branch,
+    sourceIssueNumber: row.source_issue_number,
+    automationPolicy: parseAutomationPolicy(row.automation_policy),
     title: row.title,
     description: row.description,
     acceptance: row.acceptance,
@@ -111,6 +116,7 @@ function rowToEvent(row: EventRow): TaskEventRecord {
 
 /** Fields the engine may patch on a task; undefined = leave unchanged. */
 export interface TaskPatch {
+  automationPolicy?: TaskAutomationPolicy | null;
   title?: string;
   description?: string;
   acceptance?: string;
@@ -136,6 +142,7 @@ export interface TaskPatch {
 }
 
 const TASK_PATCH_COLUMNS: ReadonlyArray<[keyof TaskPatch, string]> = [
+  ['automationPolicy', 'automation_policy'],
   ['title', 'title'],
   ['description', 'description'],
   ['acceptance', 'acceptance'],
@@ -218,22 +225,30 @@ export class BoardStore {
 
   // ---------- tasks -----------------------------------------------------------------
 
-  insertTask(t: TaskRecord): void {
-    this.db
+  insertTask(t: TaskRecord): boolean {
+    const result = this.db
       .prepare(
-        `INSERT INTO board_tasks (
-           id, workspace_id, repo, target_branch, title, description, acceptance, spec_id, attachments, depends_on, model, priority, status, stage,
+        `INSERT OR IGNORE INTO board_tasks (
+           id, workspace_id, repo, target_branch, source_issue_number, automation_policy,
+           title, description, acceptance, spec_id, attachments, depends_on, model, priority, status, stage,
            created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
            review_risk, review_recommendation, attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
-           @id, @workspaceId, @repo, @targetBranch, @title, @description, @acceptance, @specId, @attachments, @dependsOn, @model, @priority, @status, @stage,
+           @id, @workspaceId, @repo, @targetBranch, @sourceIssueNumber, @automationPolicy,
+           @title, @description, @acceptance, @specId, @attachments, @dependsOn, @model, @priority, @status, @stage,
            @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
            @reviewRisk, @reviewRecommendation, @attempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt
          )`,
       )
-      .run({ ...t, attachments: JSON.stringify(t.attachments), dependsOn: JSON.stringify(t.dependsOn) });
+      .run({
+        ...t,
+        automationPolicy: t.automationPolicy ? JSON.stringify(t.automationPolicy) : null,
+        attachments: JSON.stringify(t.attachments),
+        dependsOn: JSON.stringify(t.dependsOn),
+      });
+    return result.changes === 1;
   }
 
   updateTask(id: string, patch: TaskPatch): void {
@@ -242,7 +257,9 @@ export class BoardStore {
     for (const [key, column] of TASK_PATCH_COLUMNS) {
       if (patch[key] !== undefined) {
         sets.push(`${column} = @${key}`);
-        params[key] = key === 'attachments' || key === 'dependsOn' ? JSON.stringify(patch[key]) : patch[key];
+        params[key] = key === 'attachments' || key === 'dependsOn' || key === 'automationPolicy'
+          ? (patch[key] === null ? null : JSON.stringify(patch[key]))
+          : patch[key];
       }
     }
     if (sets.length === 0) return;
@@ -259,9 +276,25 @@ export class BoardStore {
     return row ? rowToTask(row) : undefined;
   }
 
+  taskBySourceIssue(repo: string, issueNumber: number): TaskRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM board_tasks
+         WHERE repo = ? AND source_issue_number = ?`,
+      )
+      .get(repo, issueNumber) as TaskRow | undefined;
+    return row ? rowToTask(row) : undefined;
+  }
+
   taskByRunId(runId: string): TaskRecord | undefined {
     const row = this.db.prepare(`SELECT * FROM board_tasks WHERE run_id = ?`).get(runId) as TaskRow | undefined;
     return row ? rowToTask(row) : undefined;
+  }
+
+  ownsPullRequest(repo: string, prNumber: number): boolean {
+    return this.db
+      .prepare(`SELECT 1 FROM board_tasks WHERE repo = ? AND pr_number = ? LIMIT 1`)
+      .get(repo, prNumber) !== undefined;
   }
 
   /** Workspace-scoped board feed; schedulers use the separate status query. */
@@ -313,6 +346,19 @@ export class BoardStore {
     const rows = this.db
       .prepare(`SELECT * FROM board_tasks WHERE status = ? ORDER BY priority, created_at`)
       .all(status) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /** Source-backed tasks whose frozen policy can still affect future work. */
+  listActiveIssueTasks(repo: string): TaskRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM board_tasks
+         WHERE repo = ? AND source_issue_number IS NOT NULL
+           AND automation_policy IS NOT NULL AND status != 'done'
+         ORDER BY created_at, id`,
+      )
+      .all(repo) as TaskRow[];
     return rows.map(rowToTask);
   }
 
@@ -418,4 +464,40 @@ export class BoardStore {
         maxAttempts: config.maxAttempts,
       });
   }
+}
+
+/** A corrupt policy must never fall through to a workspace's more permissive
+ * defaults. Preserve the card, but hold every automated side effect. */
+function parseAutomationPolicy(raw: string | null): TaskAutomationPolicy | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      typeof value.autoReview === 'boolean' &&
+      typeof value.autoMerge === 'boolean' &&
+      (value.mergeMethod === 'merge' || value.mergeMethod === 'squash' || value.mergeMethod === 'rebase') &&
+      typeof value.autoFixCi === 'boolean' &&
+      typeof value.maxAttempts === 'number' &&
+      Number.isSafeInteger(value.maxAttempts) &&
+      value.maxAttempts >= 1 &&
+      value.maxAttempts <= 10
+    ) {
+      return {
+        autoReview: value.autoReview,
+        autoMerge: value.autoMerge,
+        mergeMethod: value.mergeMethod,
+        autoFixCi: value.autoFixCi,
+        maxAttempts: value.maxAttempts,
+      };
+    }
+  } catch {
+    // Conservative fallback below.
+  }
+  return {
+    autoReview: false,
+    autoMerge: false,
+    mergeMethod: 'squash',
+    autoFixCi: false,
+    maxAttempts: 1,
+  };
 }

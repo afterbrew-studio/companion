@@ -11,6 +11,8 @@ import { BoardService } from './board-service.js';
 export default defineServices((ctx) => {
   const store = new BoardStore(ctx.db);
   const operate = ctx.services.get('operate');
+  const core = ctx.services.get('core');
+  const workspace = ctx.services.get('workspace');
   operate.registerRunTask({
     id: 'board.worker',
     label: 'Board workers',
@@ -23,8 +25,14 @@ export default defineServices((ctx) => {
       store,
       ctx.services.get('code'),
       operate,
-      ctx.services.get('workspace'),
+      workspace,
       () => ctx.services.tryGet('plan'),
+      (username, permission, repo) => {
+        const role = core.activeUserRole(username);
+        return role !== undefined &&
+          ctx.rbac.has(role, permission) &&
+          (!repo || workspace.canAccessRepo({ username, displayName: username, role }, repo));
+      },
       ctx.broadcast,
       ctx.notify,
     ),

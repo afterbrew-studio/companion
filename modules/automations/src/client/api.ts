@@ -2,6 +2,15 @@ import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import { del, post, put, request } from '@moxxy/companion-sdk/client';
 import type { BriefingCadence, RepoPreset, RepoPresetId, RepoPresetResult, RepoRecord, WebhookInfo } from '@companion/module-code/contract';
 import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/contract';
+import type {
+  ActionableIssueKind,
+  AutomationAdmissionControl,
+  AutomationDeliveryHealth,
+  ContributorFlowDryRun,
+  ContributorFlowMode,
+  ContributorFlowPolicy,
+  WorkspaceBriefingSchedule,
+} from '../contract/index.js';
 
 /**
  * module-automations' REST surface, carved from the legacy `lib/api.ts`: the
@@ -12,6 +21,49 @@ import type { RunRecord, WebhookTunnelState } from '@companion/module-operate/co
  */
 
 export const automationsApi = {
+  contributorFlows: (workspaceId: string) =>
+    request<{ flows: ContributorFlowPolicy[] }>(`/api/workspaces/${workspaceId}/contributor-flows`),
+  setContributorFlow: (
+    workspaceId: string,
+    fullName: string,
+    input: {
+      mode: ContributorFlowMode;
+      actionableIssueKinds: readonly ActionableIssueKind[];
+      queueIssues: boolean;
+      autoApplyTriage: boolean;
+      mergeMethod: ContributorFlowPolicy['mergeMethod'];
+      maxAttempts: number;
+    },
+  ) =>
+    put<{ flow: ContributorFlowPolicy | null; repo?: RepoRecord }>(
+      `/api/workspaces/${workspaceId}/repos/${fullName}/contributor-flow`,
+      input,
+    ),
+  admissionControls: (workspaceId: string) =>
+    request<{ controls: AutomationAdmissionControl[] }>(`/api/workspaces/${workspaceId}/automation-admission`),
+  setAdmissionControl: (
+    workspaceId: string,
+    fullName: string,
+    input: { paused: boolean; reason?: string | null },
+  ) =>
+    put<{ control: AutomationAdmissionControl }>(
+      `/api/workspaces/${workspaceId}/repos/${fullName}/automation-admission`,
+      input,
+    ),
+  dryRunContributorFlow: (
+    workspaceId: string,
+    fullName: string,
+    input: { mode: 'governed' | 'autonomous'; mergeMethod: ContributorFlowPolicy['mergeMethod'] },
+  ) =>
+    post<{ report: ContributorFlowDryRun }>(
+      `/api/workspaces/${workspaceId}/repos/${fullName}/contributor-flow/dry-run`,
+      input,
+    ),
+  deliveryHealth: (workspaceId: string) =>
+    request<AutomationDeliveryHealth>(`/api/workspaces/${workspaceId}/automation-deliveries`),
+  retryDelivery: (workspaceId: string, deliveryId: string) =>
+    post<{ ok: true }>(`/api/workspaces/${workspaceId}/automation-deliveries/${deliveryId}/retry`),
+
   // per-repo automation switches + webhook receiver
   setAutomation: (
     fullName: string,
@@ -30,7 +82,7 @@ export const automationsApi = {
     post<{ repo: RepoRecord; result: RepoPresetResult }>(`/api/repos/${fullName}/preset`, { preset }),
   enableWebhook: (fullName: string, accountId: string) =>
     post<WebhookInfo>(`/api/repos/${fullName}/webhook`, { accountId }),
-  disableWebhook: (fullName: string) => del<{ ok: true }>(`/api/repos/${fullName}/webhook`),
+  disableWebhook: (fullName: string) => del<{ ok: true; warning: string | null }>(`/api/repos/${fullName}/webhook`),
   /** Read-only: never (re-)enables the receiver. */
   getWebhook: (fullName: string) => request<{ webhook: WebhookInfo | null }>(`/api/repos/${fullName}/webhook`),
   /** Instance-wide tunnel state; configuration remains kernel-owned module config. */
@@ -40,9 +92,9 @@ export const automationsApi = {
   staleNow: (fullName: string) => post<{ ok: true }>(`/api/repos/${fullName}/stale-now`),
 
   // workspace briefing
-  getBriefing: (workspaceId: string) => request<{ cadence: BriefingCadence }>(`/api/workspaces/${workspaceId}/briefing`),
+  getBriefing: (workspaceId: string) => request<WorkspaceBriefingSchedule>(`/api/workspaces/${workspaceId}/briefing`),
   setBriefing: (workspaceId: string, cadence: BriefingCadence) =>
-    put<{ cadence: BriefingCadence }>(`/api/workspaces/${workspaceId}/briefing`, { cadence }),
+    put<WorkspaceBriefingSchedule>(`/api/workspaces/${workspaceId}/briefing`, { cadence }),
   briefingNow: (workspaceId: string) => post<{ ok: true }>(`/api/workspaces/${workspaceId}/briefing-now`),
 
   // AI Help assistant (per-user conversation run)

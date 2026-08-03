@@ -211,6 +211,14 @@ export default defineRoutes((ctx) => {
   const mayExecute = (user: AuthUser | null): boolean =>
     user !== null && ctx.rbac.has(user.role, 'pipelines:execute');
 
+  /** Domain permissions decide what may be changed; launching or controlling an
+   * agent is a second capability and must remain independently revocable. */
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
+
   /**
    * Authoring a command-running step is a strictly higher bar than running one.
    * Running is a routine act on something already reviewed; authoring decides
@@ -289,14 +297,16 @@ export default defineRoutes((ctx) => {
    */
   const repoPermissions = async (user: AuthUser, workspaceId: string): Promise<Map<string, RepoPermission>> => {
     const rows = code.repos.listByWorkspace(workspaceId);
-    const graded = await Promise.all(
-      rows.map(async (row) => {
+    const graded = await mapConcurrent(
+      rows,
+      8,
+      async (row) => {
         const permission = await code.githubAccounts.permissionFor('fetch', row.full_name, {
           username: user.username,
           workspaceId,
         });
         return permission ? ([row.full_name, permission] as const) : null;
-      }),
+      },
     );
     return new Map(graded.filter((entry): entry is readonly [string, RepoPermission] => entry !== null));
   };
@@ -388,11 +398,13 @@ export default defineRoutes((ctx) => {
       : '';
   };
 
-  const oneShot = async (title: string, prompt: string): Promise<string> => {
+  const oneShot = async (user: AuthUser | null, title: string, prompt: string): Promise<string> => {
+    requireAgentRun(user);
     const { finalMessage } = await operate.orchestrator.runOneShot({
       kind: 'analysis',
       title,
       cwd: scratchCwd(),
+      userId: user.username,
       prompt,
       timeoutMs: 4 * 60_000,
     });
@@ -410,9 +422,12 @@ export default defineRoutes((ctx) => {
       handler: async ({ user }) => {
         const accessible = workspace.accessibleIds(user!);
         const rows = code.repos.listAccessible([...accessible]);
+        const openIssueCounts = code.issues.openCounts(rows.map((row) => row.full_name));
         return {
-          repos: await Promise.all(
-            rows.map(async (row) => {
+          repos: await mapConcurrent(
+            rows,
+            8,
+            async (row) => {
               const permission = await code.githubAccounts.permissionFor('fetch', row.full_name, {
                 username: user!.username,
               });
@@ -420,9 +435,9 @@ export default defineRoutes((ctx) => {
                 ...rowToRepo(row),
                 githubAccessible: permission !== null,
                 githubPermission: permission,
-                openIssues: permission ? code.issues.count(row.full_name, 'open') : 0,
+                openIssues: permission ? openIssueCounts.get(row.full_name) ?? 0 : 0,
               };
-            }),
+            },
           ),
         };
       },
@@ -724,7 +739,8 @@ export default defineRoutes((ctx) => {
       access: 'issues:act',
       handler: ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
-        code.triage.validateTriage(fullName, issue.number);
+        requireAgentRun(user);
+        code.triage.validateTriage(fullName, issue.number, user.username);
         // Long-running; kick it and let the UI follow triage.changed.
         void code.triage
           .triageIssue(fullName, issue.number, user!.username)
@@ -739,6 +755,7 @@ export default defineRoutes((ctx) => {
       access: 'issues:act',
       handler: async ({ params, user }) => {
         const { fullName, issue } = requireIssue(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         const run = await code.fixes.startFix(fullName, issue.number, user?.username ?? null);
         return created({ run });
       },
@@ -1068,6 +1085,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         void code.prReviews
           .analyzeFailedChecks(fullName, pr.number, user!.username)
           .catch((err) => log.warn('CI analysis failed', { fullName, number: pr.number, err: String(err) }));
@@ -1082,6 +1100,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         try {
           return { run: await code.fixes.startCheckFix(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
@@ -1097,6 +1116,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         try {
           return { run: await code.fixes.startReviewFix(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
@@ -1112,6 +1132,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: async ({ params, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         try {
           return { run: await code.fixes.startConflictResolve(fullName, pr.number, user?.username ?? null) };
         } catch (err) {
@@ -1128,6 +1149,7 @@ export default defineRoutes((ctx) => {
       body: prAgentSchema,
       handler: async ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         try {
           return { run: await code.fixes.startCustomPrRun(fullName, pr.number, body.instructions, user?.username ?? null) };
         } catch (err) {
@@ -1182,6 +1204,7 @@ export default defineRoutes((ctx) => {
       body: reviewOptionsSchema,
       handler: ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        requireAgentRun(user);
         try {
           code.prReviews.validateAnalyze(fullName, pr.number, user!.username);
         } catch (err) {
@@ -1273,6 +1296,7 @@ export default defineRoutes((ctx) => {
       access: 'prs:act',
       handler: async ({ params, user }) => {
         await requirePrReview(user, params.id);
+        requireAgentRun(user);
         try {
           await code.prReviews.cancel(params.id);
         } catch (err) {
@@ -1362,6 +1386,7 @@ export default defineRoutes((ctx) => {
       body: reviewChatSchema,
       handler: async ({ params, body, user }) => {
         await requirePrReview(user, params.id);
+        requireAgentRun(user);
         return code.reviewChat.ask(params.id, body.findingId ?? null, body.text, user!.username);
       },
     }),
@@ -1374,9 +1399,14 @@ export default defineRoutes((ctx) => {
         await requirePrReview(user, params.id);
         const before = Number(query.get('before'));
         return {
-          run: code.reviewChat.runFor(params.id),
-          pendingAsks: code.reviewChat.pendingAsks(params.id),
-          history: await code.reviewChat.history(params.id, Number.isFinite(before) && before > 0 ? before : null, 100),
+          run: code.reviewChat.runFor(params.id, user!.username),
+          pendingAsks: code.reviewChat.pendingAsks(params.id, user!.username),
+          history: await code.reviewChat.history(
+            params.id,
+            user!.username,
+            Number.isFinite(before) && before > 0 ? before : null,
+            100,
+          ),
         };
       },
     }),
@@ -1388,7 +1418,8 @@ export default defineRoutes((ctx) => {
       body: chatAskSchema,
       handler: async ({ params, body, user }) => {
         await requirePrReview(user, params.id);
-        await code.reviewChat.respondAsk(params.id, body.requestId, body.response);
+        requireAgentRun(user);
+        await code.reviewChat.respondAsk(params.id, user!.username, body.requestId, body.response);
         return { ok: true };
       },
     }),
@@ -1630,6 +1661,7 @@ export default defineRoutes((ctx) => {
         requireWorkspace(user, params.id);
         const rows = code.repos.listByWorkspace(params.id);
         const permissions = await repoPermissions(user!, params.id);
+        const openIssueCounts = code.issues.openCounts(rows.map((row) => row.full_name));
         return {
           repos: rows.map((row) => {
             const permission = permissions.get(row.full_name) ?? null;
@@ -1637,7 +1669,7 @@ export default defineRoutes((ctx) => {
               ...rowToRepo(row),
               githubAccessible: permission !== null,
               githubPermission: permission,
-              openIssues: permission ? code.issues.count(row.full_name, 'open') : 0,
+              openIssues: permission ? openIssueCounts.get(row.full_name) ?? 0 : 0,
             };
           }),
         };
@@ -1827,6 +1859,7 @@ export default defineRoutes((ctx) => {
       body: genSchema,
       handler: async ({ body, user }) => {
         const reply = await oneShot(
+          user,
           'Generate skill',
           `You are drafting an agent skill for Companion — a markdown file injected into every agent run (triage, code review, fixes) to teach conventions or domain knowledge. Do not modify any files.
 
@@ -1853,6 +1886,7 @@ Reply with ONLY a fenced json block:
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
         const reply = await oneShot(
+          user,
           'Generate custom step',
           `You are drafting one reusable pipeline step for Companion's PR pipelines. Do not modify any files.
 
@@ -1883,6 +1917,7 @@ Reply with ONLY a fenced json block matching:
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
         const reply = await oneShot(
+          user,
           'Generate pipeline',
           `You are drafting a pipeline for Companion: an ordered set of steps with a type that decides its payload. Types: "pr" (runs against pull requests; all step kinds allowed), "issue" (runs against issues; only agent/label/comment steps), "platform" (runs against the repo itself; agent steps only). Pick the type that fits the request. Do not modify any files.
 
@@ -1967,4 +2002,21 @@ Reply with ONLY a fenced json block matching:
 
 function pick<T extends string>(value: string | null, allowed: readonly T[]): T | undefined {
   return allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
+  return results;
 }

@@ -290,7 +290,7 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
     // viewport's right edge also gives desktop and mobile the same direction.
     // `visibility` rides the slide so a closed panel leaves the tab order.
     <aside
-      className={`fixed inset-y-0 right-0 z-50 flex w-full shrink-0 flex-col overflow-hidden bg-white shadow-2xl transition-[transform,visibility] duration-200 ease-in-out motion-reduce:transition-none sm:w-[26rem] dark:bg-zinc-950 ${
+      className={`fixed inset-y-0 right-0 z-50 flex w-full shrink-0 flex-col overflow-hidden bg-white shadow-2xl transition-[transform,translate,visibility] duration-200 ease-in-out motion-reduce:transition-none sm:w-[26rem] dark:bg-zinc-950 ${
         open
           ? 'visible translate-x-0 border-l border-zinc-200 dark:border-zinc-800'
           : 'invisible translate-x-full'

@@ -138,3 +138,23 @@ test('late sibling usage updates terminal budget without reviving its progress p
   assert.equal(stored.progress.message, 'Review stopped at its aggregate token limit');
   assert.equal(stored.progress.budget.tokenUsage.reportedRuns, 2);
 });
+
+test('latest review decoration batches a repository beyond SQLite parameter ceilings', () => {
+  const store = fixture();
+  const base = runningReview();
+  const numbers = Array.from({ length: 1_205 }, (_, index) => index + 1);
+  for (const number of numbers) {
+    store.insert({
+      ...base,
+      id: `prr-${number}`,
+      prNumber: number,
+      status: 'pending',
+      createdAt: number,
+    });
+  }
+
+  const latest = store.latestByNumber('acme/app', numbers);
+  assert.equal(latest.size, numbers.length);
+  assert.equal(latest.get(1).status, 'pending');
+  assert.equal(latest.get(1_205).status, 'pending');
+});

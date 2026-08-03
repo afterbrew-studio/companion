@@ -7,7 +7,7 @@ export default defineManifest({
   // Hard deps: tasks live on repos (code), execute as agent runs (operate),
   // and scope through workspaces. plan is a SOFT dep (spec attachment via
   // tryGet) so the board works with planning disabled.
-  dependsOn: ['workspace', 'code', 'operate'],
+  dependsOn: ['core', 'workspace', 'code', 'operate'],
   required: false,
   autoInstall: false,
   permissions: ['board:read', 'board:manage'],

@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '@moxxy/companion-services';
-import { readRawBody, type HttpMethod, type PathParams } from './router.js';
+import { readRawBody, StatusError, type HttpMethod, type PathParams } from './router.js';
 
 /**
  * Raw-body routes: the escape hatch for endpoints that must NOT go through the
@@ -147,9 +147,17 @@ export class RawRouter {
       if (r.method !== method) continue;
       const match = r.regex.exec(path)!;
       const params: Record<string, string> = {};
-      r.keys.forEach((key, i) => {
-        params[key] = decodeURIComponent(match[i + 1] ?? '');
-      });
+      try {
+        r.keys.forEach((key, i) => {
+          params[key] = decodeURIComponent(match[i + 1] ?? '');
+        });
+      } catch {
+        // This surface is unauthenticated and internet-facing. A malformed
+        // percent escape is a bad path, not an unhandled promise rejection.
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('malformed path parameter');
+        return true;
+      }
       try {
         const body = await readRawBody(req, r.maxBytes);
         const reply = await r.run(params, url.searchParams, req.headers, body);
@@ -157,8 +165,12 @@ export class RawRouter {
         res.end(reply.body);
       } catch (err) {
         this.log.warn('raw route failed', { method, path, err: String(err) });
-        res.writeHead(400, { 'content-type': 'text/plain' });
-        res.end(err instanceof Error ? err.message : String(err));
+        // Preserve deliberate framework statuses (notably the body reader's
+        // 413), but never reflect an arbitrary handler/SQLite error to an
+        // unauthenticated webhook caller.
+        const status = err instanceof StatusError ? err.status : 500;
+        res.writeHead(status, { 'content-type': 'text/plain' });
+        res.end(err instanceof StatusError ? err.message : 'raw route failed');
       }
       return true;
     }

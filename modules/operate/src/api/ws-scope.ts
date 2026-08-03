@@ -32,7 +32,7 @@ export function createRunScopeResolver(ctx: ModuleContext): ScopeResolver {
   // Delegates to the single owner of run visibility (OperateService.canSeeRun);
   // only the username→role lift is local to the socket path.
   const canSee = (username: string, info: RunVisibility): boolean => {
-    const role = ctx.services.get('core').userRole(username);
+    const role = ctx.services.get('core').activeUserRole(username);
     if (!role) return false;
     return ctx.services.get('operate').canSeeRun({ username, displayName: username, role }, info);
   };

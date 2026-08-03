@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { accepted, badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import { accepted, badRequest, created, defineRoutes, forbidden, notFound, route } from '@moxxy/companion-sdk/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import '../contract/index.js';
 
@@ -63,6 +63,18 @@ export default defineRoutes((ctx) => {
     workspace.requireAccessible(user, id);
   };
 
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
+
+  const requirePrWrite: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'prs:read') || !ctx.rbac.has(user.role, 'prs:act')) {
+      throw forbidden('applying a contribution verdict also requires prs:read and prs:act');
+    }
+  };
+
   const requireRepo = async (user: AuthUser | null, repo: string): Promise<void> => {
     if (!user || !workspace.canAccessRepo(user, repo)) throw notFound(`repo ${repo} not connected`);
     const { client } = await code.githubAccounts.verifiedClientFor('fetch', repo, { username: user.username });
@@ -108,7 +120,7 @@ export default defineRoutes((ctx) => {
           since,
           stat: {
             surface: 'slop',
-            label: 'Slop detection',
+            label: 'Contribution quality',
             accepted: counts.accepted,
             rejected: counts.rejected,
             pending: counts.pending,
@@ -128,8 +140,10 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, query, user }) => {
         requireWorkspace(user, params.id);
         const repoRows = code.repos.listByWorkspace(params.id);
-        const visible = await Promise.all(
-          repoRows.map((repo) => requireRepo(user, repo.full_name).then(() => repo.full_name).catch(() => null)),
+        const visible = await mapConcurrent(
+          repoRows,
+          8,
+          (repo) => requireRepo(user, repo.full_name).then(() => repo.full_name).catch(() => null),
         );
         return slop.listByWorkspacePage(params.id, {
           q: queryText(query.get('q'), 200, 'q'),
@@ -176,8 +190,9 @@ export default defineRoutes((ctx) => {
       body: generateRuleSchema,
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
+        requireAgentRun(user);
         try {
-          return { draft: await slop.generateRule(body.prompt) };
+          return { draft: await slop.generateRule(body.prompt, user.username) };
         } catch (err) {
           throw badRequest(
             err instanceof z.ZodError
@@ -246,6 +261,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         const repo = `${params.owner}/${params.name}`;
         await requireRepo(user, repo);
+        requireAgentRun(user);
         const prNumber = Number(params.number);
         try {
           slop.validateDetect(repo, prNumber, user!.username);
@@ -282,6 +298,7 @@ export default defineRoutes((ctx) => {
       body: applySchema,
       handler: async ({ params, body, user }) => {
         await requireDetection(user, params.id);
+        requirePrWrite(user);
         try {
           return await slop.apply(params.id, { ...body, userId: user!.username });
         } catch (err) {
@@ -321,3 +338,20 @@ export default defineRoutes((ctx) => {
     }),
   ];
 });
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
+  return results;
+}

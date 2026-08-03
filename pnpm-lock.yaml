@@ -276,6 +276,9 @@ importers:
 
   modules/automations:
     dependencies:
+      '@companion/module-board':
+        specifier: workspace:*
+        version: link:../board
       '@companion/module-code':
         specifier: workspace:*
         version: link:../code
@@ -301,6 +304,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0

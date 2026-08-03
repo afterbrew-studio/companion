@@ -18,18 +18,18 @@ The module set of a build is named in `profiles/*.json` and nowhere else:
 
 | Profile | Contains |
 |---|---|
-| `slim` | `core`, `workspace`, `operate`, `code`, `admin` |
-| `full` | `slim` + `plan`, `board`, `refinement`, `planner`, `automations`, `slop`, `playground`, `oidc` |
+| `slim` | `core`, `workspace`, `operate`, `code`, `admin`, `plan`, `board`, `automations` |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `notify`, `oidc` |
 
 ```sh
 pnpm gen:modules --profile slim
 pnpm build
 ```
 
-Deploy `slim` unless you want the planning and automation surfaces. It is a
-smaller artifact (about a third off the server bundle and half the SPA chunks),
-and every module absent from a build is a module you never have to review,
-audit or explain.
+Deploy `slim` for repository operations and the governed contributor lifecycle.
+Use `full` when you also want refinement, idea planning, slop scoring,
+experimentation and delivery integrations. Every module absent from a build is
+a module you never have to review, audit or explain.
 
 Being in the build is not the same as being on: optional modules land as
 **Available**, and an admin installs them per instance. So one artifact can

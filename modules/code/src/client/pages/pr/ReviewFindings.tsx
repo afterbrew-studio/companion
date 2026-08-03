@@ -78,6 +78,8 @@ export function ReviewFindings({
   reviewId,
   findings,
   canAct,
+  canReadAgent,
+  canChat,
   busy,
   onToggle,
   onReject,
@@ -87,6 +89,8 @@ export function ReviewFindings({
   reviewId: string;
   findings: readonly ReviewFinding[];
   canAct: boolean;
+  canReadAgent: boolean;
+  canChat: boolean;
   busy: boolean;
   onToggle: (id: string, include: boolean) => void;
   onReject: (id: string, reason: string) => void;
@@ -184,6 +188,8 @@ export function ReviewFindings({
             finding={finding}
             focused={i === cursor || finding.id === focusedFinding}
             canAct={canAct}
+            canReadAgent={canReadAgent}
+            canChat={canChat}
             busy={busy}
             onFocus={() => {
               setCursor(i);
@@ -216,6 +222,8 @@ function FindingCard({
   finding,
   focused,
   canAct,
+  canReadAgent,
+  canChat,
   busy,
   onFocus,
   onToggle,
@@ -225,6 +233,8 @@ function FindingCard({
   finding: ReviewFinding;
   focused: boolean;
   canAct: boolean;
+  canReadAgent: boolean;
+  canChat: boolean;
   busy: boolean;
   onFocus: () => void;
   onToggle: (id: string, include: boolean) => void;
@@ -306,7 +316,7 @@ function FindingCard({
       ) : null}
       {finding.rejectionReason ? <p className="dim mt-1.5 text-xs">Dropped: {finding.rejectionReason}</p> : null}
 
-      {canAct && !posted ? (
+      {(canAct && !posted) || (canReadAgent && finding.source !== 'human') ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
           {rejecting ? (
             <>
@@ -334,30 +344,34 @@ function FindingCard({
             </>
           ) : (
             <>
-              <label className="flex cursor-pointer items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={included}
-                  disabled={busy}
-                  onChange={(e) => onToggle(finding.id, e.target.checked)}
-                />
-                Post this comment
-              </label>
+              {canAct && !posted ? (
+                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={included}
+                    disabled={busy}
+                    onChange={(e) => onToggle(finding.id, e.target.checked)}
+                  />
+                  Post this comment
+                </label>
+              ) : null}
               <span className="flex-1" />
-              {finding.source === 'human' ? null : (
+              {canReadAgent && finding.source !== 'human' ? (
                 <button className="btn-ghost text-xs" onClick={() => setDiscussing((v) => !v)}>
                   {discussing ? 'Hide discussion' : 'Discuss'}
                 </button>
-              )}
-              <button className="btn-ghost text-xs" disabled={busy} onClick={() => setRejecting(true)}>
-                Drop with reason
-              </button>
+              ) : null}
+              {canAct && !posted ? (
+                <button className="btn-ghost text-xs" disabled={busy} onClick={() => setRejecting(true)}>
+                  Drop with reason
+                </button>
+              ) : null}
             </>
           )}
         </div>
       ) : null}
 
-      {discussing ? <FindingChat reviewId={reviewId} finding={finding} canAct={canAct} /> : null}
+      {discussing ? <FindingChat reviewId={reviewId} finding={finding} canChat={canChat} /> : null}
     </li>
   );
 }

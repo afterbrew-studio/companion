@@ -138,7 +138,9 @@ export function PipelineRunList({
                   <span className="dim mt-0.5 block truncate text-xs">
                     {record.trigger === 'manual'
                       ? 'manual run'
-                      : `auto-run on ${record.trigger === 'issue-opened' ? 'issue' : 'PR'} open`}
+                      : record.trigger === 'pr-updated'
+                        ? 'auto-run on new PR commit'
+                        : `auto-run on ${record.trigger === 'issue-opened' ? 'issue' : 'PR'} open`}
                     {showTarget ? ` · ${targetLabel(record)}` : ''}
                     {record.ownerId ? ` · by ${record.ownerId}` : ''} · {timeAgo(record.createdAt)}
                   </span>

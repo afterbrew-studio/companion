@@ -49,6 +49,21 @@ export class IssuesStore {
     return row.n;
   }
 
+  /** Repository cards need all badges together; one grouped query avoids an
+   * N+1 count for every repo in a large workspace. */
+  openCounts(repos: readonly string[]): Map<string, number> {
+    const unique = [...new Set(repos)];
+    if (unique.length === 0) return new Map();
+    const rows = this.db
+      .prepare(
+        `SELECT repo, COUNT(*) AS n FROM issues
+         WHERE state = 'open' AND repo IN (SELECT value FROM json_each(?))
+         GROUP BY repo`,
+      )
+      .all(JSON.stringify(unique)) as Array<{ repo: string; n: number }>;
+    return new Map(rows.map((row) => [row.repo, row.n]));
+  }
+
   get(repo: string, number: number): IssueRecord | undefined {
     const row = this.db.prepare(`SELECT * FROM issues WHERE repo = ? AND number = ?`).get(repo, number) as
       | IssueRow
@@ -127,9 +142,12 @@ export class IssuesStore {
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
+    const accessibleReposJson = opts.accessibleRepos?.length
+      ? JSON.stringify([...new Set(opts.accessibleRepos)])
+      : null;
     if (opts.accessibleRepos) {
-      where.push(opts.accessibleRepos.length > 0 ? `i.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})` : '1 = 0');
-      args.push(...opts.accessibleRepos);
+      where.push(accessibleReposJson ? `i.repo IN (SELECT value FROM json_each(?))` : '1 = 0');
+      if (accessibleReposJson) args.push(accessibleReposJson);
     }
     if (opts.repo) {
       where.push('i.repo = ?');
@@ -209,12 +227,12 @@ export class IssuesStore {
     });
     const total = state ? counts[state] : counts.open + counts.closed;
     const facetAccess = opts.accessibleRepos
-      ? opts.accessibleRepos.length > 0
-        ? ` AND i.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})`
+      ? accessibleReposJson
+        ? ` AND i.repo IN (SELECT value FROM json_each(?))`
         : ' AND 1 = 0'
       : '';
     const facetBase = `FROM issues i JOIN v_repos r ON r.full_name = i.repo WHERE r.workspace_id = ?${facetAccess}`;
-    const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
+    const facetArgs = accessibleReposJson ? [workspaceId, accessibleReposJson] : [workspaceId];
     const facets = opts.includeFacets === false
       ? { authors: [], assignees: [], labels: [] }
       : {

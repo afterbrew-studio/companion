@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { accepted, badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import { accepted, badRequest, created, defineRoutes, forbidden, notFound, route } from '@moxxy/companion-sdk/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RefineMethodRecord } from '../contract/index.js';
 import '../contract/index.js';
@@ -103,6 +103,12 @@ export default defineRoutes((ctx) => {
     workspace.requireAccessible(user, id);
   };
 
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
+
   // Custom methods are workspace-owned: mutating one you can't reach reads as
   // "not found". Built-in ids fall through — the service rejects those edits
   // with the clearer built-in message.
@@ -191,6 +197,7 @@ export default defineRoutes((ctx) => {
       body: decomposeSchema,
       handler: ({ params, body, user }) => {
         requireRefinement(user, params.id);
+        requireAgentRun(user);
         let method: RefineMethodRecord;
         try {
           method = refinement.startDecompose(params.id, body);
@@ -347,8 +354,9 @@ export default defineRoutes((ctx) => {
       body: generateMethodSchema,
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
+        requireAgentRun(user);
         try {
-          return { draft: await refinement.generateMethod(body.prompt) };
+          return { draft: await refinement.generateMethod(body.prompt, user.username) };
         } catch (err) {
           throw badRequest(
             err instanceof z.ZodError

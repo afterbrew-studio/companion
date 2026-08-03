@@ -90,6 +90,12 @@ export default defineRoutes((ctx) => {
   const evaluations = ctx.services.get('playground').evaluations;
   const activeEvaluations = new Set<string>();
 
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
+
   const requireCase = (id: string, user: AuthUser): PlaygroundEvaluationCaseRecord => {
     const record = evaluations.getCase(id);
     const accessible = record
@@ -296,6 +302,7 @@ export default defineRoutes((ctx) => {
       path: '/api/playground/evaluation-cases/:id/run',
       access: 'playground:run',
       handler: async ({ params, user }): Promise<{ evaluationRun: PlaygroundEvaluationRun }> => {
+        requireAgentRun(user);
         const evaluationCase = requireCase(params.id, user!);
         if (activeEvaluations.has(evaluationCase.id)) {
           throw new HttpError(409, 'this evaluation case is already running');

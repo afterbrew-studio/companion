@@ -57,11 +57,12 @@ export default function Slop(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canAct = can('slop:act');
+  const canAssess = canAct && can('runs:read') && can('runs:act');
 
   const detectButton = (
     <button className="btn gap-1.5" onClick={() => setDetecting(true)}>
       <SparkleIcon className="size-3.5" />
-      Detect
+      Assess
     </button>
   );
 
@@ -124,7 +125,7 @@ export default function Slop(): JSX.Element {
             </FiltersPopover>
             {can('slop:manage') ? (
               <IconButton
-                label="Detection rules"
+                label="Quality rules"
                 className="flex size-9 items-center justify-center"
                 onClick={() => (window.location.hash = '/slop/rules')}
               >
@@ -135,14 +136,14 @@ export default function Slop(): JSX.Element {
                 </NavIcon>
               </IconButton>
             ) : null}
-            {canAct ? detectButton : null}
+            {canAssess ? detectButton : null}
           </div>
         }
       />
       <ErrorBar error={error} className="mb-3" />
 
       {detections === null ? (
-        <PageLoading label="Loading detections…" />
+        <PageLoading label="Loading assessments…" />
       ) : error && all.length === 0 ? (
         <EmptyState
           title="Could not load contribution assessments"
@@ -151,9 +152,9 @@ export default function Slop(): JSX.Element {
         />
       ) : all.length === 0 && activeFilters === 0 && !search.trim() ? (
         <EmptyState
-          title="No detections yet"
+          title="No assessments yet"
           hint="Point the assessor at a pull request. It separates contribution quality from authorship, then leaves every action for human review."
-          action={canAct ? detectButton : undefined}
+          action={canAssess ? detectButton : undefined}
         />
       ) : all.length === 0 ? (
         <EmptyState title="No assessments match" hint="Loosen the search or clear the filters." />
@@ -271,7 +272,7 @@ function DetectModal({
   };
 
   return (
-    <Modal title="Run detection" onClose={onClose}>
+    <Modal title="Assess contribution" onClose={onClose}>
       <div className="flex flex-col gap-4">
         <Field label="Repository">
           <Dropdown
@@ -284,7 +285,7 @@ function DetectModal({
         </Field>
         <Field
           label="Open pull request"
-          hint="The agent reads the diff and the checkout, then scores it against the enabled rules. The detection appears in the list immediately and settles when the run finishes."
+          hint="The agent reads the diff and checkout, then assesses value, evidence, risk and the enabled signals. The assessment appears immediately and settles when the run finishes."
         >
           {prs.length === 0 ? (
             <p className="dim text-sm">No open PRs in this repository.</p>
@@ -304,7 +305,7 @@ function DetectModal({
           </button>
           <button className="btn gap-1.5" disabled={busy || !effectiveRepo || !effectivePr} onClick={() => void submit()}>
             <SparkleIcon className="size-3.5" />
-            {busy ? 'Queuing…' : 'Run detection'}
+            {busy ? 'Queuing…' : 'Run assessment'}
           </button>
         </FormActions>
       </div>

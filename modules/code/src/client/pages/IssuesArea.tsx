@@ -59,6 +59,7 @@ export function IssuesAreaPage(): JSX.Element {
     unavailableRepos,
     failedRepos,
     canActIssues,
+    canRunAiActions,
     canRunPipelines,
     pipelines,
     selected,
@@ -186,7 +187,7 @@ export function IssuesAreaPage(): JSX.Element {
           busy={bulkRunning !== null}
           running={bulkRunning}
           canAct={canActIssues}
-          ai={canActIssues ? { label: 'AI triage', onRun: bulkAiTriage } : null}
+          ai={canRunAiActions ? { label: 'AI triage', onRun: bulkAiTriage } : null}
           pipelines={canRunPipelines ? pipelines : []}
           onRunPipeline={bulkRunPipeline}
           onLabel={bulkLabel}

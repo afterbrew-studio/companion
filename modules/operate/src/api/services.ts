@@ -101,15 +101,20 @@ export default defineServices(async (ctx) => {
     broadcast,
     githubTokenFor,
     ctx.moduleConfig,
-    (username) => auth.userRole(username) ?? null,
+    (username) => auth.activeUserRole(username) ?? null,
     (userId) => budgets.check(userId),
     // Instance-wide, like the budget alert: a machine going offline is not one
     // workspace's problem, and scoping it to one would hide it from the rest.
     (kind, title, body) => ctx.notify.emit({ workspaceId: null, kind, title, body, href: '#/runners' }),
     agentPolicy,
   );
+  orchestrator.setRunAuthorityResolver((username) => {
+    const role = auth.activeUserRole(username);
+    return role !== undefined && ctx.rbac.has(role, 'runs:read') && ctx.rbac.has(role, 'runs:act');
+  });
   const webhookTunnel = new WebhookTunnel(
     () => ctx.moduleConfig.get('webhookTunnel') === true,
+    () => String(ctx.moduleConfig.get('webhookPublicUrl') ?? ''),
     ctx.config.port,
     () => ctx.broadcast({ t: 'modules.changed' }),
   );

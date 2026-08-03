@@ -57,6 +57,7 @@ export interface UseWorkspacePrs {
   readonly failedRepos: readonly RepoSyncFailure[];
 
   readonly canActPrs: boolean;
+  readonly canRunAiReview: boolean;
   readonly canRunPipelines: boolean;
   readonly pipelines: PipelineRecord[];
 
@@ -87,6 +88,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { can } = useAuth();
   const canRunPipelines = can('pipelines:run');
   const canActPrs = can('prs:act');
+  const canRunAiReview = canActPrs && can('runs:read') && can('runs:act');
 
   const [tab, setTab] = useHashTab(TABS, 'open', 'companion.tab:#/prs');
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(FILTER_KEYS);
@@ -145,6 +147,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const visiblePrs = prs.filter((pr) => !unavailable.has(pr.repo));
 
   const bulkAiReview = (): void => {
+    if (!canRunAiReview) return;
     const targets = visiblePrs.filter((pr) => selection.has(prKey(pr)));
     void runBulk(targets, (pr) => api.analyzePr(pr.repo, pr.number), {
       label: (pr) => `#${pr.number}`,
@@ -221,7 +224,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     }
   };
   const rowActions = (pr: PrListRecord): MenuAction[] => [
-    ...(canActPrs && pr.state === 'open'
+    ...(canRunAiReview && pr.state === 'open'
       ? [
           {
             label: 'Run AI review',
@@ -264,6 +267,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
     unavailableRepos: refresh.unavailableRepos,
     failedRepos: refresh.failedRepos,
     canActPrs,
+    canRunAiReview,
     canRunPipelines,
     pipelines,
     selected: selection.selected,

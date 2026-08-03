@@ -404,6 +404,8 @@ export interface PipelineRecord {
    * webhook). Always false for platform pipelines.
    */
   readonly autoRunOnPrOpen: boolean;
+  /** Re-run a PR pipeline when GitHub reports a new head commit. */
+  readonly autoRunOnPrUpdate: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -486,7 +488,7 @@ export interface StepRemedy {
   readonly label: string;
 }
 
-export type PipelineTrigger = 'manual' | 'pr-opened' | 'issue-opened';
+export type PipelineTrigger = 'manual' | 'pr-opened' | 'pr-updated' | 'issue-opened';
 
 export interface PipelineRunRecord {
   readonly id: string;
@@ -531,6 +533,7 @@ export interface PipelineExport {
     readonly description: string;
     readonly steps: ReadonlyArray<PipelineStep>;
     readonly autoRunOnPrOpen: boolean;
+    readonly autoRunOnPrUpdate: boolean;
   };
 }
 
@@ -565,6 +568,7 @@ export interface SavePipelineRequest {
   readonly description?: string;
   readonly steps: ReadonlyArray<PipelineStepSpec>;
   readonly autoRunOnPrOpen?: boolean;
+  readonly autoRunOnPrUpdate?: boolean;
 }
 
 export interface SaveStepDefinitionRequest {

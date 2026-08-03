@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OPTIONAL_MODULES, modulesFor, profileFromEnv, requires, withDependencies } from '../dist/profile.js';
 
-test('slim includes the daily digest dependencies, full starts with every optional module', () => {
-  assert.deepEqual(modulesFor('slim'), ['plan', 'automations']);
+test('slim includes durable contributor-flow dependencies, full starts with every optional module', () => {
+  assert.deepEqual(modulesFor('slim'), ['plan', 'board', 'automations']);
   assert.deepEqual(modulesFor('full'), OPTIONAL_MODULES.map((m) => m.id));
 });
 
@@ -28,7 +28,7 @@ test('a custom pick pulls in what it depends on', () => {
   // Ideas alone would fail at install with "enable dependency first", and the
   // answer is always the same, so it is added rather than reported.
   assert.deepEqual(withDependencies(['planner']), ['plan', 'board', 'refinement', 'planner']);
-  assert.deepEqual(withDependencies(['automations']), ['plan', 'automations']);
+  assert.deepEqual(withDependencies(['automations']), ['plan', 'board', 'automations']);
 });
 
 test('the closure is in install order, not selection order', () => {
@@ -48,7 +48,7 @@ test('a module names what ticking it drags in, and the plain ones name nothing',
   // Shown against the choice itself: inquirer only reveals a description while
   // its row is highlighted, so a cost that lives there is found out too late.
   assert.deepEqual(requires('planner'), ['Plan', 'Task board', 'Product refinement']);
-  assert.deepEqual(requires('automations'), ['Plan']);
+  assert.deepEqual(requires('automations'), ['Plan', 'Task board']);
   assert.deepEqual(requires('plan'), []);
   assert.deepEqual(requires('slop'), []);
 });

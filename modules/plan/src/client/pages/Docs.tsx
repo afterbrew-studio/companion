@@ -60,6 +60,7 @@ export function DocsPage(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('docs:manage');
+  const canGenerate = canManage && can('runs:read') && can('runs:act');
   const needsSetup = storage !== null && storage.config === null;
   const configDir = storage?.config?.dir ?? null;
 
@@ -74,9 +75,11 @@ export function DocsPage(): JSX.Element {
               <button className="btn-ghost" onClick={() => setModal('import')}>
                 Import from repo
               </button>
-              <button className="btn-ghost" onClick={() => setModal('generate')}>
-                ✦ Generate
-              </button>
+              {canGenerate ? (
+                <button className="btn-ghost" onClick={() => setModal('generate')}>
+                  ✦ Generate
+                </button>
+              ) : null}
               <button className="btn" onClick={() => setModal('write')}>
                 New doc
               </button>

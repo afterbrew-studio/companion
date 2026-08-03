@@ -16,4 +16,5 @@ export default defineManifest({
   dependsOn: ['plan', 'code', 'operate', 'workspace', 'core'],
   autoInstall: false,
   permissions: ['automations:manage'],
+  messages: ['automations.changed'],
 });

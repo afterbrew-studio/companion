@@ -22,11 +22,11 @@ export type ProfileId = 'slim' | 'full' | 'custom';
  */
 export const OPTIONAL_MODULES: ReadonlyArray<{ id: string; label: string; hint: string }> = [
   { id: 'plan', label: 'Plan', hint: 'Specifications and documentation, drafted by agents.' },
-  { id: 'board', label: 'Task board', hint: 'Work items with an agent lifecycle.' },
+  { id: 'board', label: 'Task board', hint: 'Durable issue-to-fix work with an agent lifecycle.' },
   { id: 'refinement', label: 'Product refinement', hint: 'Turn rough ideas into shaped work.' },
   { id: 'planner', label: 'Ideas', hint: 'Guided planning sessions across the board.' },
   { id: 'automations', label: 'Automations', hint: 'Scheduled and reactive agent work.' },
-  { id: 'slop', label: 'Slop detection', hint: 'Flags low-quality agent output.' },
+  { id: 'slop', label: 'Contribution quality', hint: 'Scores value, evidence, risk and reviewability.' },
   { id: 'playground', label: 'Playground', hint: 'A bench for testing agents, skills and pipelines.' },
 ];
 
@@ -34,12 +34,12 @@ export const PROFILE_CHOICES: ReadonlyArray<{ value: ProfileId; name: string; de
   {
     value: 'slim',
     name: 'Slim (recommended)',
-    description: 'Repositories, agent runs, the daily digest and administration. Everything else stays one click away.',
+    description: 'Repositories, agent runs, contributor workflows, the daily digest and administration.',
   },
   {
     value: 'full',
     name: 'Full',
-    description: 'Adds the task board, refinement, ideas, slop detection and the playground.',
+    description: 'Adds refinement, ideas, contribution-quality analysis, the playground, notifications and OIDC.',
   },
   { value: 'custom', name: 'Custom', description: 'Pick the optional modules yourself.' },
 ];
@@ -59,7 +59,10 @@ export function profileFromEnv(): ProfileId | null {
 const NEEDS: Readonly<Record<string, readonly string[]>> = {
   refinement: ['plan', 'board'],
   planner: ['plan', 'board', 'refinement'],
-  automations: ['plan'],
+  // The digest itself only needs Plan; the product's primary repository flow
+  // additionally needs Board. Treating that as an install dependency keeps a
+  // fresh personal instance from presenting a one-click flow it cannot run.
+  automations: ['plan', 'board'],
 };
 
 /**
@@ -95,9 +98,9 @@ export function requires(id: string): readonly string[] {
 }
 
 /**
- * Slim is not "nothing optional": the daily digest is what makes an instance
- * tell you about itself without being opened, and it ships in automations.
- * `withDependencies` drags Plan in behind it, which is the price of the digest.
+ * Slim is not "nothing optional": Automations makes an instance tell you about
+ * itself without being opened and Board makes its issue-to-fix flow durable.
+ * `withDependencies` brings both foundations into the recommended install.
  */
 const SLIM_MODULES = withDependencies(['automations']);
 

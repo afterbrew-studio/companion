@@ -14,11 +14,13 @@ export function ProductionEvaluationSuite({
   loading,
   refresh,
   reportError,
+  canRun,
 }: {
   readonly snapshot: PlaygroundProductionEvaluationSnapshot | null;
   readonly loading: boolean;
   readonly refresh: () => Promise<void>;
   readonly reportError: (message: string | null) => void;
+  readonly canRun: boolean;
 }): JSX.Element {
   const [startingSuite, setStartingSuite] = useState(false);
   const [cancellingSuite, setCancellingSuite] = useState(false);
@@ -125,14 +127,19 @@ export function ProductionEvaluationSuite({
                 </span>
                 <button
                   className="btn-danger-ghost"
-                  disabled={cancellingSuite}
+                  disabled={!canRun || cancellingSuite}
                   onClick={() => void cancelSuite()}
                 >
                   {cancellingSuite ? 'Cancelling…' : 'Cancel release gate'}
                 </button>
               </>
             ) : (
-              <button className="btn" disabled={cases.length === 0 || busy} onClick={() => void runSuite()}>
+              <button
+                className="btn"
+                disabled={!canRun || cases.length === 0 || busy}
+                title={canRun ? undefined : 'Requires runs:read and runs:act'}
+                onClick={() => void runSuite()}
+              >
                 {startingSuite ? 'Starting…' : `Run release gate (${plannedRuns} runs)`}
               </button>
             )}
@@ -207,7 +214,7 @@ export function ProductionEvaluationSuite({
                 latest={latestByCase.get(record.id) ?? null}
                 gate={gate}
                 active={active}
-                disabled={busy}
+                disabled={!canRun || busy}
                 onRun={() => void runCase(record)}
                 onCancel={() => void (activeSuite ? cancelSuite() : cancelCase(record.id))}
               />

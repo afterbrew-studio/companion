@@ -50,12 +50,12 @@ function SlopRadarWidget(): JSX.Element | null {
         <>
           Actionable PR assessments, ranked by technical risk and missing evidence — not by who or what authored them.{' '}
           <a className="linkish" href="#/slop">
-            View all detections
+            View all assessments
           </a>
         </>
       }
     >
-      <ListCard ariaLabel="Slop detections awaiting review">
+      <ListCard ariaLabel="Contribution assessments awaiting review">
         {hot.map((d) => (
           <a key={d.id} className="row-link" href={`#/slop/${d.id}`}>
             <span className="min-w-0 flex-1">
@@ -147,7 +147,7 @@ function BulkSlopCheck(): JSX.Element | null {
   return (
     <>
       <button className="btn-ghost" disabled={busy || selection.busy} onClick={run}>
-        {busy ? 'Screening…' : `Slop check ${count}`}
+        {busy ? 'Assessing…' : `Assess quality ${count}`}
       </button>
       {error ? <span className="text-xs text-red-500">{error}</span> : null}
     </>

@@ -14,8 +14,11 @@ function fixture() {
       auto_triage INTEGER NOT NULL DEFAULT 0, digest_enabled INTEGER NOT NULL DEFAULT 0,
       stale_enabled INTEGER NOT NULL DEFAULT 0, pr_gate INTEGER NOT NULL DEFAULT 0,
       auto_merge INTEGER NOT NULL DEFAULT 0, review_replies INTEGER NOT NULL DEFAULT 0,
+      verify_command TEXT,
       webhook_secret TEXT,
-      webhook_owner_id TEXT, webhook_account_id TEXT, automation_owner_id TEXT
+      webhook_owner_id TEXT, webhook_account_id TEXT,
+      webhook_remote_id INTEGER, webhook_remote_error TEXT,
+      automation_owner_id TEXT
     );
     CREATE TABLE repo_workspaces (
       repo TEXT NOT NULL, workspace_id TEXT NOT NULL, created_at INTEGER NOT NULL,
@@ -94,7 +97,12 @@ test('webhook registration has one personal owner and disconnecting its account 
     secret: 'secret',
     ownerId: 'alice',
     accountId: 'gha-alice',
+    remoteId: null,
+    remoteError: null,
   });
+
+  repos.setWebhookRemote('acme/private', 987, null);
+  assert.equal(repos.getWebhookRegistration('acme/private').remoteId, 987);
 
   repos.orphanWebhookRegistrationsForAccount('gha-alice');
   assert.equal(repos.getWebhookRegistration('acme/private'), null);

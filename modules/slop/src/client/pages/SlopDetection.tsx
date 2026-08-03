@@ -59,23 +59,23 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
   useLive(refresh, (msg) => msg.t === 'slop.changed');
 
   const crumbs = (label: string): JSX.Element => (
-    <Breadcrumb items={[{ label: 'Slop Detection', href: '#/slop' }, { label }]} />
+    <Breadcrumb items={[{ label: 'Contribution Quality', href: '#/slop' }, { label }]} />
   );
 
   if (detection === undefined) {
     return (
       <Page>
-        {crumbs('Detection')}
-        <PageLoading label="Loading detection…" />
+        {crumbs('Assessment')}
+        <PageLoading label="Loading assessment…" />
       </Page>
     );
   }
   if (detection === null) {
     return (
       <Page>
-        {crumbs('Detection')}
+        {crumbs('Assessment')}
         <EmptyState
-          title="Detection not found"
+          title="Assessment not found"
           hint="It may have been removed, or it lives in a workspace you can't access."
         />
       </Page>
@@ -86,6 +86,7 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
   const verdict = d.verdict;
   const meta = STATUS_META[d.status];
   const canAct = can('slop:act');
+  const canWritePr = canAct && can('prs:read') && can('prs:act');
   const canRefine = can('refine:manage');
 
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
@@ -123,16 +124,18 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
       <div className="flex items-center gap-2">
         {busy ? <Spinner /> : null}
         <ActionMenu
-          label="Other outcomes for this detection"
+          label="Other outcomes for this assessment"
           actions={[
-            ...(['label', 'comment', 'request_changes', 'close'] as const)
-              .filter((a) => a !== verdict.recommendedAction)
-              .map((action) => ({
-                label: ACTION_BUTTON[action],
-                danger: action === 'close',
-                disabled: busy,
-                onSelect: () => void applyAction(action),
-              })),
+            ...(canWritePr
+              ? (['label', 'comment', 'request_changes', 'close'] as const)
+                  .filter((a) => a !== verdict.recommendedAction)
+                  .map((action) => ({
+                    label: ACTION_BUTTON[action],
+                    danger: action === 'close',
+                    disabled: busy,
+                    onSelect: () => void applyAction(action),
+                  }))
+              : []),
             ...(canRefine && current
               ? [
                   {
@@ -146,17 +149,19 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
                   } satisfies MenuAction,
                 ]
               : []),
-            { label: 'Dismiss detection', disabled: busy, onSelect: dismiss },
+            { label: 'Dismiss assessment', disabled: busy, onSelect: dismiss },
           ]}
         />
-        <button
-          className="btn"
-          disabled={busy}
-          title={`The action the agent recommended: ${ACTION_LABEL[verdict.recommendedAction]}`}
-          onClick={() => void applyAction(verdict.recommendedAction)}
-        >
-          {ACTION_BUTTON[verdict.recommendedAction]}
-        </button>
+        {canWritePr ? (
+          <button
+            className="btn"
+            disabled={busy}
+            title={`The action the agent recommended: ${ACTION_LABEL[verdict.recommendedAction]}`}
+            onClick={() => void applyAction(verdict.recommendedAction)}
+          >
+            {ACTION_BUTTON[verdict.recommendedAction]}
+          </button>
+        ) : null}
       </div>
     ) : canAct && d.status === 'failed' ? (
       <div className="flex items-center gap-2">
@@ -207,7 +212,7 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
         {verdict ? <PrQualityAssessment verdict={verdict} /> : null}
 
         {d.status === 'failed' ? (
-          <p className="error-bar mt-5 text-xs wrap-anywhere">{d.error ?? 'detection failed'}</p>
+          <p className="error-bar mt-5 text-xs wrap-anywhere">{d.error ?? 'assessment failed'}</p>
         ) : null}
 
         {verdict ? (

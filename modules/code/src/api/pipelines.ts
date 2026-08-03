@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy/companion-contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type {
   ImportedExecutableStep,
   ImportPreview,
@@ -213,6 +213,7 @@ export const pipelineExportSchema = z.object({
     description: z.string().max(2_000).default(''),
     steps: z.array(pipelineStepSchema).min(1).max(30),
     autoRunOnPrOpen: z.boolean().default(false),
+    autoRunOnPrUpdate: z.boolean().default(false),
   }),
 });
 
@@ -237,6 +238,7 @@ export const savePipelineSchema = z
     description: z.string().max(500).default(''),
     steps: z.array(stepSpecSchema).min(1).max(20),
     autoRunOnPrOpen: z.boolean().default(false),
+    autoRunOnPrUpdate: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
     // Inline steps must fit the pipeline type's payload; library refs are
@@ -256,6 +258,13 @@ export const savePipelineSchema = z
         code: z.ZodIssueCode.custom,
         path: ['autoRunOnPrOpen'],
         message: 'platform pipelines run manually',
+      });
+    }
+    if (v.type !== 'pr' && v.autoRunOnPrUpdate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['autoRunOnPrUpdate'],
+        message: 'only PR pipelines can run when a head commit changes',
       });
     }
   });
@@ -322,6 +331,10 @@ interface EngineDeps {
     keys(): readonly string[];
   };
   readonly audit: (event: { action: string; access: string; status: number; detail: string; actor: string }) => void;
+  /** Live identity checks for work that may outlive the request that started it. */
+  readonly authorized: (username: string, permission: Permission, repo: string) => boolean;
+  /** A shared repo can belong to several workspaces; pipeline secrets/policy do not cross them. */
+  readonly canAccessWorkspace: (username: string, workspaceId: string) => boolean;
 }
 
 interface StepContext {
@@ -355,6 +368,8 @@ interface StepContext {
   readonly updateSummary: (summary: string) => void;
   /** Append one already-scrubbed chunk and return its persisted sequence. */
   readonly appendOutput: (chunk: string) => PipelineStepLog;
+  /** Re-check immediately before a delayed or irreversible action. */
+  readonly requirePermission: (permission: Permission, action: string) => void;
 }
 
 /**
@@ -383,16 +398,10 @@ function targetOf(ctx: StepContext): { number: number; title: string; author: st
   return null;
 }
 
-/**
- * Re-check immediately before an external mutation.
- *
- * A handler may have spent seconds awaiting read-only evidence after the run was
- * cancelled. The execution loop will ignore its eventual result, but without
- * this fence it could still post, label, enqueue a repair or merge after the
- * maintainer pressed Stop.
- */
-function requireActiveRun(ctx: StepContext): void {
-  if (ctx.signal.aborted) throw new Error('pipeline was cancelled before the external action started');
+function targetReadPermission(type: PipelineType): Permission {
+  if (type === 'pr') return 'prs:read';
+  if (type === 'issue') return 'issues:read';
+  return 'repos:read';
 }
 
 /** Lazy on purpose: step names are free text, so `node 22.x gate` has to resolve.
@@ -509,6 +518,8 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
 
     'ai-review': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
+      ctx.requirePermission('runs:read', 'observe the AI review run');
+      ctx.requirePermission('runs:act', 'run the AI review');
       let reviewId: string | null = null;
       const cancelReview = async (): Promise<void> => {
         if (!reviewId) return;
@@ -547,7 +558,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       let posted = '';
       if (step.config.post) {
         try {
-          requireActiveRun(ctx);
+          ctx.requirePermission('prs:act', 'publish the AI review');
           await deps.reviews.apply(result.id, {
             userId: ctx.userId,
             ...(step.config.postMode ? { mode: step.config.postMode } : {}),
@@ -577,6 +588,8 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
     },
 
     agent: async (step, ctx) => {
+      ctx.requirePermission('runs:read', 'observe the pipeline agent');
+      ctx.requirePermission('runs:act', 'run the pipeline agent');
       if (!deps.checkouts.hasClone(ctx.repo)) {
         return { status: 'error', summary: `repo ${ctx.repo} has no clone yet` };
       }
@@ -681,7 +694,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       if (!target) return { status: 'error', summary: 'label steps need a PR or issue target' };
       const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
-      requireActiveRun(ctx);
+      ctx.requirePermission(ctx.pr ? 'prs:act' : 'issues:act', 'apply GitHub labels');
       await client.addLabels(ctx.repo, target.number, [...step.config.labels]);
       return { status: 'passed', summary: `added ${step.config.labels.join(', ')}` };
     },
@@ -691,18 +704,25 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       if (!target) return { status: 'error', summary: 'comment steps need a PR or issue target' };
       const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
-      requireActiveRun(ctx);
+      ctx.requirePermission(ctx.pr ? 'prs:act' : 'issues:act', 'post a GitHub comment');
       await client.comment(ctx.repo, target.number, interpolate(step.config.body, ctx));
       return { status: 'passed', summary: 'comment posted' };
     },
 
     'slop-check': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'slop check only applies to PR pipelines' };
+      // `slop` is a reverse-direction soft dependency (it depends on code), so
+      // its permission ids cannot augment this package's standalone registry at
+      // compile time. Runtime RBAC still owns them and must gate the cross-module
+      // action just like the generic run capability below.
+      ctx.requirePermission('slop:read' as Permission, 'read contribution-quality assessments');
+      ctx.requirePermission('slop:act' as Permission, 'run the contribution-quality assessment');
+      ctx.requirePermission('runs:read', 'observe the contribution-quality assessment');
+      ctx.requirePermission('runs:act', 'run the contribution-quality assessment');
       const slop = deps.slop();
       if (!slop) return { status: 'error', summary: 'the AI Slop Detection module is not enabled' };
       // Runs a fresh detection; the verdict also lands as a pending result on
       // the slop page, so a failing gate arrives with its evidence attached.
-      requireActiveRun(ctx);
       const verdict = await slop.detectForGate(ctx.repo, ctx.pr.number, ctx.userId);
       const reasons = [
         ...(verdict.aiLikelihood >= step.config.threshold
@@ -745,6 +765,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       if (!ctx.allowExecutable) {
         return { status: 'error', summary: 'executable steps require the pipelines:execute permission' };
       }
+      ctx.requirePermission('pipelines:execute', 'run an executable pipeline step');
 
       const { command, workdir, timeoutMs } = step.config;
       const env: Record<string, string> = {};
@@ -895,6 +916,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       if (!ctx.allowExecutable) {
         return { status: 'error', summary: 'npm bootstrap requires the pipelines:execute permission' };
       }
+      ctx.requirePermission('pipelines:execute', 'run the npm bootstrap step');
       if (!deps.checkouts.hasClone(ctx.repo)) {
         return { status: 'error', summary: `repo ${ctx.repo} has no clone yet` };
       }
@@ -1173,6 +1195,16 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
 
     'pr-action': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'PR actions only apply to PR pipelines' };
+      ctx.requirePermission('prs:act', 'run the pull-request action');
+      if (
+        step.config.action === 'pr.fix-checks' ||
+        step.config.action === 'pr.resolve-conflicts' ||
+        step.config.action === 'pr.address-reviews' ||
+        step.config.action === 'pr.analyze-checks'
+      ) {
+        ctx.requirePermission('runs:read', 'observe the pull-request action agent');
+        ctx.requirePermission('runs:act', 'run the pull-request action agent');
+      }
       const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
       const { pr, repo, userId } = ctx;
@@ -1194,7 +1226,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       };
       const offCancel = ctx.onCancel(stopChild);
       const run = async (): Promise<string> => {
-        requireActiveRun(ctx);
+        ctx.requirePermission('prs:act', 'write the pull-request action to GitHub');
         switch (step.config.action) {
           case 'pr.rerun-failed':
           case 'pr.rerun-all': {
@@ -1265,7 +1297,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
         }
       }
 
-      requireActiveRun(ctx);
+      ctx.requirePermission('prs:act', 'merge the pull request');
       const result = await client.mergePr(
         ctx.repo,
         ctx.pr.number,
@@ -1563,6 +1595,7 @@ export class Pipelines {
   }
 
   create(workspaceId: string, input: z.infer<typeof savePipelineSchema>, author: string): PipelineRecord {
+    this.assertAutoRunSafe(input.type, input.steps, input.autoRunOnPrOpen, input.autoRunOnPrUpdate);
     const now = Date.now();
     const record: PipelineRecord = {
       id: `pl-${randomUUID().slice(0, 12)}`,
@@ -1572,6 +1605,7 @@ export class Pipelines {
       description: input.description,
       steps: this.stashAll(input.steps as PipelineStepSpec[], workspaceId, author),
       autoRunOnPrOpen: input.autoRunOnPrOpen,
+      autoRunOnPrUpdate: input.autoRunOnPrUpdate,
       createdAt: now,
       updatedAt: now,
     };
@@ -1584,12 +1618,19 @@ export class Pipelines {
   update(id: string, input: Partial<z.infer<typeof savePipelineSchema>>, author: string): PipelineRecord {
     const existing = this.deps.store.pipelines.get(id);
     if (!existing) throw new Error(`unknown pipeline ${id}`);
+    this.assertAutoRunSafe(
+      input.type ?? existing.type,
+      input.steps ?? existing.steps,
+      input.autoRunOnPrOpen ?? existing.autoRunOnPrOpen,
+      input.autoRunOnPrUpdate ?? existing.autoRunOnPrUpdate,
+    );
     this.deps.store.pipelines.update(id, {
       type: input.type,
       name: input.name,
       description: input.description,
       steps: input.steps ? this.stashAll(input.steps as PipelineStepSpec[], existing.workspaceId, author) : undefined,
       autoRunOnPrOpen: input.autoRunOnPrOpen,
+      autoRunOnPrUpdate: input.autoRunOnPrUpdate,
     });
     this.collectSecrets();
     this.broadcast({ t: 'pipelines.changed' });
@@ -1600,6 +1641,23 @@ export class Pipelines {
     this.deps.store.pipelines.delete(id);
     this.collectSecrets();
     this.broadcast({ t: 'pipelines.changed' });
+  }
+
+  private assertAutoRunSafe(
+    type: PipelineType,
+    specs: ReadonlyArray<PipelineStepSpec>,
+    autoRunOnOpen: boolean,
+    autoRunOnUpdate: boolean,
+  ): void {
+    if (!autoRunOnOpen && !autoRunOnUpdate) return;
+    const unsafe = this.resolveSteps(specs, type).find(
+      (entry) => entry.ok && (entry.step.kind === 'executable' || entry.step.kind === 'npm-bootstrap'),
+    );
+    if (unsafe?.ok) {
+      throw new Error(
+        `pipeline step "${unsafe.step.name}" runs privileged host-side code and therefore cannot be webhook-triggered`,
+      );
+    }
   }
 
   // ---------- step library CRUD ----------------------------------------------------
@@ -1636,6 +1694,20 @@ export class Pipelines {
   ): StepDefinitionRecord {
     const existing = this.deps.store.pipelines.getStepDefinition(id);
     if (!existing) throw new Error(`unknown step definition ${id}`);
+    if (input.step?.kind === 'executable' || input.step?.kind === 'npm-bootstrap') {
+      const autoReference = this.deps.store.pipelines
+        .list(existing.workspaceId)
+        .find(
+          (pipeline) =>
+            (pipeline.autoRunOnPrOpen || pipeline.autoRunOnPrUpdate) &&
+            pipeline.steps.some((spec) => spec.type === 'ref' && spec.stepDefinitionId === id),
+        );
+      if (autoReference) {
+        throw new Error(
+          `step definition is used by webhook-triggered pipeline "${autoReference.name}" and cannot become privileged`,
+        );
+      }
+    }
     this.deps.store.pipelines.updateStepDefinition(id, {
       name: input.name,
       description: input.description,
@@ -1783,6 +1855,7 @@ export class Pipelines {
         description: pipeline.description,
         steps: resolved.map((r) => stripSecretKeys((r as Extract<ResolvedStep, { ok: true }>).step)),
         autoRunOnPrOpen: pipeline.autoRunOnPrOpen,
+        autoRunOnPrUpdate: pipeline.autoRunOnPrUpdate,
       },
     };
   }
@@ -1850,6 +1923,7 @@ export class Pipelines {
       description: doc.pipeline.description,
       steps: doc.pipeline.steps.map((step) => ({ type: 'inline' as const, step })),
       autoRunOnPrOpen: doc.pipeline.autoRunOnPrOpen,
+      autoRunOnPrUpdate: doc.pipeline.autoRunOnPrUpdate,
       },
       author,
     );
@@ -1872,6 +1946,17 @@ export class Pipelines {
   ): PipelineRunRecord {
     const pipeline = this.deps.store.pipelines.get(pipelineId);
     if (!pipeline) throw new Error(`unknown pipeline ${pipelineId}`);
+    if (!this.deps.store.repos.inWorkspace(repo, pipeline.workspaceId)) {
+      throw new Error(`repo ${repo} does not belong to pipeline workspace ${pipeline.workspaceId}`);
+    }
+    this.assertAuthority(userId, repo, pipeline.workspaceId, 'pipelines:run', 'start the pipeline');
+    this.assertAuthority(
+      userId,
+      repo,
+      pipeline.workspaceId,
+      targetReadPermission(pipeline.type),
+      `read the ${pipeline.type} pipeline target`,
+    );
     // The pipeline's type decides the payload it needs.
     let pr: PrRecord | null = null;
     let issue: IssueRecord | null = null;
@@ -1886,6 +1971,22 @@ export class Pipelines {
     }
 
     const resolved = this.resolveSteps(pipeline.steps, pipeline.type);
+    if (
+      !allowExecutable &&
+      resolved.some(
+        (entry) => entry.ok && (entry.step.kind === 'executable' || entry.step.kind === 'npm-bootstrap'),
+      )
+    ) {
+      throw new Error('automatic and non-executable pipeline invocations may not run shell or publish steps');
+    }
+    // Validate the complete bundle before recording a run. Without this, an
+    // early label/comment could mutate GitHub and a later agent/merge step could
+    // then discover its capability was absent, leaving a partially applied
+    // workflow. The same checks run again at every delayed step so revocation
+    // after admission still wins.
+    for (const entry of resolved) {
+      if (entry.ok) this.assertStepAuthority(entry.step, { userId, repo, workspaceId: pipeline.workspaceId, type: pipeline.type });
+    }
     const run: PipelineRunRecord = {
       id: `plr-${randomUUID().slice(0, 12)}`,
       pipelineId: pipeline.id,
@@ -1953,29 +2054,60 @@ export class Pipelines {
   }
 
   /** Webhook hook: run every auto-run PR pipeline of the repo's workspace. */
-  autoRunForPr(repo: string, prNumber: number, userId: string): void {
-    this.autoRun(repo, prNumber, 'pr', 'pr-opened', userId);
+  autoRunForPr(
+    repo: string,
+    prNumber: number,
+    userId: string,
+    trigger: Extract<PipelineTrigger, 'pr-opened' | 'pr-updated'> = 'pr-opened',
+  ): { started: number; includesReview: boolean; failures: readonly string[] } {
+    return this.autoRun(repo, prNumber, 'pr', trigger, userId);
   }
 
   /** Webhook hook: run every auto-run issue pipeline of the repo's workspace. */
-  autoRunForIssue(repo: string, issueNumber: number, userId: string): void {
-    this.autoRun(repo, issueNumber, 'issue', 'issue-opened', userId);
+  autoRunForIssue(
+    repo: string,
+    issueNumber: number,
+    userId: string,
+  ): { started: number; includesReview: boolean; failures: readonly string[] } {
+    return this.autoRun(repo, issueNumber, 'issue', 'issue-opened', userId);
   }
 
   /** Never passes allowExecutable: a GitHub push must not reach a shell. */
-  private autoRun(repo: string, number: number, type: PipelineType, trigger: PipelineTrigger, userId: string): void {
+  private autoRun(
+    repo: string,
+    number: number,
+    type: PipelineType,
+    trigger: PipelineTrigger,
+    userId: string,
+  ): { started: number; includesReview: boolean; failures: readonly string[] } {
     const auto = this.deps.store.repos
       .workspaceIds(repo)
       .flatMap((workspaceId) => this.deps.store.pipelines.list(workspaceId))
-      .filter((p) => p.autoRunOnPrOpen && p.type === type);
+      .filter((p) => {
+        if (p.type !== type) return false;
+        return trigger === 'pr-updated' ? p.autoRunOnPrUpdate : p.autoRunOnPrOpen;
+      });
+    let started = 0;
+    let includesReview = false;
+    const failures: string[] = [];
     for (const pipeline of auto) {
       try {
         this.start(pipeline.id, repo, number, trigger, userId);
+        started += 1;
+        if (
+          this.resolveSteps(pipeline.steps, pipeline.type)
+            .some((resolved) => resolved.ok && resolved.step.kind === 'ai-review')
+        ) {
+          includesReview = true;
+        }
         log.info('auto-run pipeline started', { pipeline: pipeline.name, repo, number });
       } catch (err) {
-        log.warn('auto-run pipeline failed to start', { pipeline: pipeline.name, err: String(err) });
+        const reason = String(err).slice(0, 500);
+        failures.push(`${pipeline.name}: ${reason}`);
+        log.warn('auto-run pipeline failed to start', { pipeline: pipeline.name, err: reason });
       }
     }
+    return { started, includesReview, failures };
   }
 
   /** Public (not just for start()): module-playground's zero-side-effect
@@ -2054,7 +2186,14 @@ export class Pipelines {
     resolved: ResolvedStep[],
     ctx: Omit<
       StepContext,
-      'completed' | 'runId' | 'stepIndex' | 'signal' | 'onCancel' | 'updateSummary' | 'appendOutput'
+      | 'completed'
+      | 'runId'
+      | 'stepIndex'
+      | 'signal'
+      | 'onCancel'
+      | 'updateSummary'
+      | 'appendOutput'
+      | 'requirePermission'
     >,
     execution: PipelineExecution,
   ): Promise<void> {
@@ -2131,6 +2270,20 @@ export class Pipelines {
           continue;
         }
 
+        try {
+          this.assertStepAuthority(step, ctx);
+        } catch (err) {
+          steps[i] = {
+            ...steps[i]!,
+            status: 'error',
+            summary: String(err),
+            finishedAt: Date.now(),
+          };
+          if (!persist(true)) return;
+          halted = true;
+          continue;
+        }
+
         if (step.requiresApproval) {
           steps[i] = {
             ...steps[i]!,
@@ -2171,6 +2324,12 @@ export class Pipelines {
             onCancel: (effect) => execution.onCancel(effect),
             updateSummary: (summary) => updateSummary(i, summary),
             appendOutput: (chunk) => appendOutput(i, chunk),
+            requirePermission: (permission, action) => {
+              if (execution.signal.aborted) {
+                throw new Error('pipeline was cancelled before the external action started');
+              }
+              this.assertAuthority(ctx.userId, ctx.repo, ctx.workspaceId, permission, action);
+            },
           });
         } catch (err) {
           outcome = { status: 'error', summary: String(err) };
@@ -2242,7 +2401,64 @@ export class Pipelines {
     return true;
   }
 
+  private assertAuthority(
+    userId: string,
+    repo: string,
+    workspaceId: string,
+    permission: Permission,
+    action: string,
+  ): void {
+    if (!this.deps.canAccessWorkspace(userId, workspaceId)) {
+      throw new Error(`${userId} is disabled or no longer has access to pipeline workspace ${workspaceId}; cannot ${action}`);
+    }
+    if (!this.deps.authorized(userId, permission, repo)) {
+      throw new Error(`${userId} is disabled, cannot access ${repo}, or no longer holds ${permission}; cannot ${action}`);
+    }
+  }
+
+  /**
+   * Pipelines may wait for capacity or approval for hours. Re-evaluate the
+   * complete capability bundle before every step, not only at HTTP admission.
+   */
+  private assertStepAuthority(
+    step: PipelineStep,
+    ctx: Pick<StepContext, 'userId' | 'repo' | 'workspaceId' | 'type'>,
+  ): void {
+    const permissions = new Set<Permission>(['pipelines:run', targetReadPermission(ctx.type)]);
+    if (step.kind === 'ai-review' || step.kind === 'agent' || step.kind === 'slop-check') {
+      permissions.add('runs:read');
+      permissions.add('runs:act');
+    }
+    if (step.kind === 'slop-check') {
+      permissions.add('slop:read' as Permission);
+      permissions.add('slop:act' as Permission);
+    }
+    if (step.kind === 'ai-review' && step.config.post) permissions.add('prs:act');
+    if (step.kind === 'label' || step.kind === 'comment') {
+      if (ctx.type === 'pr') permissions.add('prs:act');
+      if (ctx.type === 'issue') permissions.add('issues:act');
+    }
+    if (step.kind === 'executable' || step.kind === 'npm-bootstrap') permissions.add('pipelines:execute');
+    if (step.kind === 'pr-action' || step.kind === 'merge') permissions.add('prs:act');
+    if (
+      step.kind === 'pr-action' &&
+      (
+        step.config.action === 'pr.fix-checks' ||
+        step.config.action === 'pr.resolve-conflicts' ||
+        step.config.action === 'pr.address-reviews' ||
+        step.config.action === 'pr.analyze-checks'
+      )
+    ) {
+      permissions.add('runs:read');
+      permissions.add('runs:act');
+    }
+    for (const permission of permissions) {
+      this.assertAuthority(ctx.userId, ctx.repo, ctx.workspaceId, permission, `run step "${step.name}"`);
+    }
+  }
+
   private runStep(step: PipelineStep, ctx: StepContext): Promise<StepOutcome> {
+    this.assertStepAuthority(step, ctx);
     const handler = this.registry[step.kind] as (s: PipelineStep, c: StepContext) => Promise<StepOutcome>;
     return handler(step, ctx);
   }

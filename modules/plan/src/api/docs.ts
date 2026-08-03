@@ -313,7 +313,9 @@ export class Docs {
       // The orchestrator mkdirs whatever cwd it gets.
       cwd: cwd ?? join(paths.scratch(), 'docs'),
       repo: opts.repo ?? null,
-      userId: opts.repo ? userId : null,
+      // Scratch generation is still a person's action. Keeping the owner on
+      // the run makes live RBAC revocation and transcript visibility uniform.
+      userId,
       prompt: generatePrompt(opts.instructions, Boolean(cwd)),
       timeoutMs: 8 * 60_000,
     });

@@ -219,20 +219,31 @@ export class PrReviewsStore {
   latestByNumber(repo: string, only?: readonly number[]): Map<number, LatestReviewSignal> {
     const numbers = only ? [...new Set(only)] : null;
     if (numbers?.length === 0) return new Map();
-    const restricted = numbers ? ` AND t1.pr_number IN (${numbers.map(() => '?').join(', ')})` : '';
-    const rows = this.db
-      .prepare(
-        `SELECT pr_number, status, verdict FROM pr_reviews t1 WHERE repo = ?${restricted}
-         AND id = (SELECT id FROM pr_reviews t2
-                    WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number
-                    ORDER BY created_at DESC, id DESC LIMIT 1)`,
-      )
-      .all(repo, ...(numbers ?? [])) as Array<{
+    const read = (batch: readonly number[] | null): Array<{
       pr_number: number;
       status: PrReviewResult['status'];
       verdict: string | null;
-    }>;
-    return new Map(rows.map((r) => [r.pr_number, toSignal(r.status, r.verdict)]));
+    }> => {
+      const restricted = batch ? ` AND t1.pr_number IN (${batch.map(() => '?').join(', ')})` : '';
+      return this.db
+        .prepare(
+          `SELECT pr_number, status, verdict FROM pr_reviews t1 WHERE repo = ?${restricted}
+           AND id = (SELECT id FROM pr_reviews t2
+                      WHERE t2.repo = t1.repo AND t2.pr_number = t1.pr_number
+                      ORDER BY created_at DESC, id DESC LIMIT 1)`,
+        )
+        .all(repo, ...(batch ?? [])) as Array<{
+        pr_number: number;
+        status: PrReviewResult['status'];
+        verdict: string | null;
+      }>;
+    };
+    const rows = numbers === null
+      ? read(null)
+      : Array.from({ length: Math.ceil(numbers.length / 400) }, (_, index) =>
+          read(numbers.slice(index * 400, (index + 1) * 400)),
+        ).flat();
+    return new Map(rows.map((row) => [row.pr_number, toSignal(row.status, row.verdict)]));
   }
 }
 

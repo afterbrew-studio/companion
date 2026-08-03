@@ -61,6 +61,7 @@ function fixture(childState) {
     repos: {
       get: () => ({ full_name: 'acme/app', default_branch: 'main' }),
       workspaceIds: () => ['ws-1'],
+      inWorkspace: () => true,
     },
   };
   const engine = new Pipelines(
@@ -76,6 +77,8 @@ function fixture(childState) {
       moduleConfig: { get: () => null },
       secrets: { get: () => null, set: () => undefined, delete: () => undefined, keys: () => [] },
       audit: () => undefined,
+      authorized: () => true,
+      canAccessWorkspace: () => true,
     },
     () => undefined,
   );
@@ -201,7 +204,7 @@ test('cancelling while review evidence is finishing prevents a later GitHub post
             baseRef: 'main',
           }),
         },
-        repos: { get: () => null, workspaceIds: () => ['ws-1'] },
+        repos: { get: () => null, workspaceIds: () => ['ws-1'], inWorkspace: () => true },
       },
       orchestrator: { runners: { backend: () => ({}) } },
       checkouts: {},
@@ -213,6 +216,8 @@ test('cancelling while review evidence is finishing prevents a later GitHub post
       moduleConfig: { get: () => null },
       secrets: { get: () => null, set: () => undefined, delete: () => undefined, keys: () => [] },
       audit: () => undefined,
+      authorized: () => true,
+      canAccessWorkspace: () => true,
     },
     () => undefined,
   );
@@ -277,7 +282,7 @@ test('cancelling a PR repair action stops the child run it created', async () =>
             baseRef: 'main',
           }),
         },
-        repos: { get: () => null, workspaceIds: () => ['ws-1'] },
+        repos: { get: () => null, workspaceIds: () => ['ws-1'], inWorkspace: () => true },
       },
       orchestrator: {
         stopRun: async (id) => {
@@ -295,6 +300,8 @@ test('cancelling a PR repair action stops the child run it created', async () =>
       moduleConfig: { get: () => null },
       secrets: { get: () => null, set: () => undefined, delete: () => undefined, keys: () => [] },
       audit: () => undefined,
+      authorized: () => true,
+      canAccessWorkspace: () => true,
     },
     () => undefined,
   );
