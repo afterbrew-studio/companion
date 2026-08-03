@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
+import type { Permission } from '@moxxy/companion-contracts';
 import type {
   BriefingCadence,
   GitHubAccountRecord,
@@ -9,11 +10,20 @@ import type {
   RepoRecord,
   WebhookInfo,
 } from '@companion/module-code/contract';
+import type {
+  ActionableIssueKind,
+  AutomationAdmissionControl,
+  AutomationDeliveryHealth,
+  ContributorFlowDryRun,
+  ContributorFlowMode,
+  ContributorFlowPolicy,
+  WorkspaceBriefingSchedule,
+} from '../../contract/index.js';
 import { codeApi, RepoUnavailableRow } from '@companion/module-code/client';
 import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { CopyText, EmptyState, ErrorBar, Eyebrow, ListCard, MetaSignal, Page, PageHeader, Section, SettingRow, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
+import { CopyText, EmptyState, ErrorBar, Eyebrow, ListCard, MetaSignal, Modal, Page, PageHeader, Section, SettingRow, Skeleton, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';
@@ -21,6 +31,35 @@ import { ReportCard } from '../components/ReportCard.js';
 /** Per-repo automation switches + the report feed they produce, workspace-scoped. */
 export function AutomationsPage(): JSX.Element {
   const { current, repos, reports, error, setError, refresh } = useAutomations();
+  const { can } = useAuth();
+  const [flows, setFlows] = useState<ContributorFlowPolicy[]>([]);
+  const [controls, setControls] = useState<AutomationAdmissionControl[]>([]);
+
+  const refreshFlows = useCallback(async (): Promise<void> => {
+    if (!current) {
+      setFlows([]);
+      setControls([]);
+      return;
+    }
+    try {
+      const [flowResult, controlResult] = await Promise.all([
+        api.contributorFlows(current.id),
+        api.admissionControls(current.id),
+      ]);
+      setFlows(flowResult.flows);
+      setControls(controlResult.controls);
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [current, setError]);
+
+  useEffect(() => {
+    void refreshFlows();
+  }, [refreshFlows]);
+  useLive(
+    refreshFlows,
+    (msg) => msg.t === 'automations.changed' && (msg.area === 'flows' || msg.area === 'controls'),
+  );
 
   if (!current) {
     return (
@@ -56,10 +95,27 @@ export function AutomationsPage(): JSX.Element {
 
       <WebhookTunnelCard />
 
+      <DeliveryHealthCard workspaceId={current.id} />
+
       <div className="mt-3 flex flex-col gap-3">
         {repos.map((repo) => (
-          repo.githubAccessible ? (
-            <RepoAutomation key={repo.fullName} repo={repo} onChange={refresh} onError={setError} />
+          repo.githubAccessible || can('users:manage') ? (
+            <RepoAutomation
+              key={repo.fullName}
+              workspaceId={current.id}
+              repo={repo}
+              flow={flows.find((candidate) => candidate.repo === repo.fullName) ?? null}
+              admission={controls.find((candidate) => candidate.repo === repo.fullName) ?? {
+                repo: repo.fullName,
+                paused: false,
+                reason: null,
+                pausedBy: null,
+                pausedAt: null,
+              }}
+              onFlowChange={refreshFlows}
+              onChange={refresh}
+              onError={setError}
+            />
           ) : (
             <article key={repo.fullName} className="card overflow-hidden p-0 opacity-70">
               <RepoUnavailableRow repo={repo.fullName} />
@@ -120,30 +176,42 @@ function WorkspaceBriefingCard({
   onError: (e: string) => void;
   onSent: () => Promise<void>;
 }): JSX.Element {
-  const [cadence, setCadence] = useState<BriefingCadence | null>(null);
+  const { can, user } = useAuth();
+  const [schedule, setSchedule] = useState<WorkspaceBriefingSchedule | null>(null);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
 
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      setSchedule(await api.getBriefing(workspaceId));
+    } catch (err) {
+      setSchedule(null);
+      onError(String(err));
+    }
+  }, [workspaceId, onError]);
+
   useEffect(() => {
-    setCadence(null);
-    api
-      .getBriefing(workspaceId)
-      .then((r) => setCadence(r.cadence))
-      .catch((err) => {
-        setCadence('off');
-        onError(String(err));
-      });
-    // onError is a stable setState — reloading on workspace switch is what matters.
-  }, [workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSchedule(null);
+    void refresh();
+  }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'automations.changed' && msg.area === 'briefing');
+
+  const required: readonly Permission[] = ['issues:read', 'prs:read', 'reports:read'];
+  const missing = required.filter((permission) => !can(permission));
+  const canRun = missing.length === 0;
+  const foreignOwner = schedule?.ownerId && schedule.ownerId !== user?.username ? schedule.ownerId : null;
+  const canBreakGlass = can('users:manage');
+  const canEditSchedule = !foreignOwner || canBreakGlass;
 
   const save = async (next: BriefingCadence): Promise<void> => {
-    const prev = cadence;
-    setCadence(next);
+    const previous = schedule;
+    if (!previous) return;
+    setSchedule({ cadence: next, ownerId: next === 'off' ? null : (user?.username ?? previous.ownerId) });
     setBusy(true);
     try {
-      await api.setBriefing(workspaceId, next);
+      setSchedule(await api.setBriefing(workspaceId, next));
     } catch (err) {
-      setCadence(prev);
+      setSchedule(previous);
       onError(String(err));
     } finally {
       setBusy(false);
@@ -168,21 +236,56 @@ function WorkspaceBriefingCard({
         title="Workspace briefing"
         description="Everything that needs you, agent activity, CI health, hot issues, and velocity — in one report."
       >
+        {schedule?.cadence === 'off' ? (
+          <MetaSignal tone="zinc" label="off" />
+        ) : schedule?.ownerId === user?.username ? (
+          <MetaSignal tone="green" label="runs as you" />
+        ) : foreignOwner ? (
+          <MetaSignal
+            tone={canBreakGlass ? 'amber' : 'zinc'}
+            label={canBreakGlass ? 'admin takeover available' : `managed by @${foreignOwner}`}
+            title={`The schedule runs only with @${foreignOwner}'s live permissions. Personal GitHub credentials are never shared.`}
+          />
+        ) : schedule ? (
+          <MetaSignal tone="red" label="owner required" title="Re-save or disable this legacy schedule." />
+        ) : (
+          <MetaSignal tone="zinc" label="loading" pulse />
+        )}
         <select
           className="input input-sm"
           aria-label="Briefing cadence"
-          value={cadence ?? 'off'}
-          disabled={cadence === null || busy}
+          title={
+            !canEditSchedule
+              ? `Managed by @${foreignOwner}`
+              : missing.length > 0
+                ? `Enabling requires ${missing.join(', ')}; turning it off remains available.`
+                : undefined
+          }
+          value={schedule?.cadence ?? 'off'}
+          disabled={schedule === null || busy || !canEditSchedule}
           onChange={(e) => void save(e.target.value as BriefingCadence)}
         >
           <option value="off">Off</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
+          <option value="daily" disabled={!canRun}>Daily</option>
+          <option value="weekly" disabled={!canRun}>Weekly</option>
         </select>
-        <button className="btn-ghost" disabled={sending} onClick={() => void sendNow()}>
+        <button
+          className="btn-ghost"
+          disabled={sending || schedule === null || !canRun}
+          title={missing.length > 0 ? `Requires ${missing.join(', ')}` : undefined}
+          onClick={() => void sendNow()}
+        >
           {sending ? 'Sending…' : 'Send now'}
         </button>
       </SettingRow>
+      {foreignOwner && canBreakGlass ? (
+        <div className="banner-warn mb-0 mt-3 text-xs" role="status">
+          Break-glass administration: Off stops the schedule without borrowing credentials. Choosing a cadence
+          validates your own access to every repository before assigning the schedule to you.
+        </div>
+      ) : missing.length > 0 ? (
+        <p className="dim mt-2 text-xs">Your role is missing {missing.join(', ')}. You can still turn off a schedule you own.</p>
+      ) : null}
     </article>
   );
 }
@@ -236,12 +339,12 @@ function WebhookTunnelCard(): JSX.Element | null {
 
   const signal =
     tunnel.status === 'connected'
-      ? { tone: 'green' as const, label: 'connected' }
+      ? { tone: 'green' as const, label: tunnel.source === 'external' ? 'self-managed' : 'connected' }
       : tunnel.status === 'error'
         ? { tone: 'red' as const, label: 'connection error' }
         : tunnel.status === 'connecting'
           ? { tone: 'amber' as const, label: 'connecting' }
-          : { tone: 'zinc' as const, label: 'off' };
+      : { tone: 'zinc' as const, label: 'off' };
 
   return (
     <article className="card mt-3" aria-label="Public webhook delivery">
@@ -252,15 +355,21 @@ function WebhookTunnelCard(): JSX.Element | null {
             <MetaSignal tone={signal.tone} label={signal.label} pulse={tunnel.status === 'connecting'} />
           </span>
         }
-        description="Routes GitHub deliveries through the moxxy proxy — no tunnel or port-forward of your own needed. The URL is stable across restarts."
+        description={
+          tunnel.source === 'external'
+            ? 'Uses the self-managed public URL configured for Operate; webhook secrets stay server-side.'
+            : 'Routes GitHub deliveries through the moxxy proxy — no tunnel or port-forward of your own needed. The URL is stable across restarts.'
+        }
       >
-        {can('settings:manage') ? (
+        {can('settings:manage') && tunnel.source !== 'external' ? (
           <Switch
             checked={tunnel.enabled}
             disabled={busy}
             label="Public webhook delivery"
             onChange={(enabled) => void configure(enabled)}
           />
+        ) : tunnel.source === 'external' ? (
+          <a className="btn-ghost" href="#/settings/modules">Configure</a>
         ) : null}
       </SettingRow>
       <ErrorBar error={actionError} className="mt-2.5" />
@@ -293,41 +402,143 @@ function WebhookTunnelCard(): JSX.Element | null {
   );
 }
 
+/** Durable webhook work, including the stage a long triage/review is in. */
+function DeliveryHealthCard({ workspaceId }: { workspaceId: string }): JSX.Element {
+  const [health, setHealth] = useState<AutomationDeliveryHealth | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      setHealth(await api.deliveryHealth(workspaceId));
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [workspaceId]);
+  useEffect(() => {
+    setHealth(null);
+    void refresh();
+  }, [refresh]);
+  useLive(refresh, (msg) => msg.t === 'automations.changed' && msg.area === 'deliveries');
+
+  const active = (health?.queued ?? 0) + (health?.processing ?? 0) + (health?.retrying ?? 0);
+  const retry = async (id: string): Promise<void> => {
+    setRetrying(id);
+    try {
+      await api.retryDelivery(workspaceId, id);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRetrying(null);
+    }
+  };
+
+  return (
+    <article className="card mt-3" aria-label="Webhook work queue">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <strong className="text-sm">Webhook work queue</strong>
+          <p className="dim mt-0.5 text-xs">Durable across restarts; long issue and PR work reports its current stage here.</p>
+        </div>
+        {health === null ? (
+          <MetaSignal tone="zinc" label="loading" pulse />
+        ) : active > 0 ? (
+          <MetaSignal tone="blue" label={`${active} active`} pulse={health.processing > 0} />
+        ) : health.failed > 0 ? (
+          <MetaSignal tone="red" label={`${health.failed} need attention`} />
+        ) : (
+          <MetaSignal tone="green" label="healthy" />
+        )}
+      </div>
+      <ErrorBar error={error} className="mt-2.5" />
+      {health && (health.recent.length > 0 || active > 0 || health.failed > 0) ? (
+        <details className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800" open={active > 0 || health.failed > 0}>
+          <summary className="cursor-pointer text-xs font-medium select-none">
+            {health.processing} processing · {health.queued} queued · {health.retrying} retrying · {health.failed} failed
+          </summary>
+          <div className="mt-2 flex flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
+            {health.recent.slice(0, 20).map((delivery) => (
+              <div key={delivery.id} className="flex min-w-0 items-center gap-2 py-2 text-xs">
+                <MetaSignal
+                  tone={
+                    delivery.status === 'failed'
+                      ? 'red'
+                      : delivery.status === 'completed'
+                        ? 'green'
+                        : delivery.status === 'retrying'
+                          ? 'amber'
+                          : 'blue'
+                  }
+                  label={delivery.status}
+                  pulse={delivery.status === 'processing'}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">
+                    {delivery.repo} · {delivery.event}{delivery.action ? `.${delivery.action}` : ''}
+                  </span>
+                  <span className="dim block truncate" title={delivery.lastError ?? delivery.stage}>
+                    {delivery.lastError ?? delivery.stage} · attempt {delivery.attempts}
+                    {delivery.nextAttemptAt ? ` · next ${new Date(delivery.nextAttemptAt).toLocaleTimeString()}` : ''}
+                    {' · '}{timeAgo(delivery.receivedAt)}
+                  </span>
+                </span>
+                {delivery.status === 'failed' ? (
+                  <button className="btn-ghost" disabled={retrying !== null} onClick={() => void retry(delivery.id)}>
+                    {retrying === delivery.id ? 'Retrying…' : 'Retry'}
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </article>
+  );
+}
+
 const AUTOMATIONS: ReadonlyArray<{
   field: 'autoTriage' | 'digest' | 'staleSweep' | 'prGate' | 'autoMerge' | 'reviewReplies';
   isOn: (r: RepoRecord) => boolean;
   label: string;
   description: string;
+  requires: readonly Permission[];
 }> = [
   {
     field: 'autoTriage',
     isOn: (r) => r.autoTriage,
     label: 'Auto-triage new issues',
     description: 'An agent labels, de-duplicates, and summarizes every new issue as it syncs.',
+    requires: ['issues:read', 'issues:act', 'runs:read', 'runs:act'],
   },
   {
     field: 'digest',
     isOn: (r) => r.digestEnabled,
     label: 'Daily digest',
     description: 'A scheduled report of new issues with a prioritized what-matters summary.',
+    requires: ['issues:read', 'prs:read', 'runs:read', 'runs:act'],
   },
   {
     field: 'staleSweep',
     isOn: (r) => r.staleSweepEnabled,
     label: 'Stale sweep',
-    description: 'Flags issues and pull requests that have gone quiet for too long.',
+    description: 'Reports open issues that have gone quiet for too long.',
+    requires: ['issues:read'],
   },
   {
     field: 'prGate',
     isOn: (r) => r.prGateEnabled,
     label: 'PR gate',
     description: 'Auto AI review on newly opened PRs (CI-aware); posts to GitHub when confident.',
+    requires: ['prs:read', 'prs:act', 'runs:read', 'runs:act'],
   },
   {
     field: 'autoMerge',
     isOn: (r) => r.autoMergeEnabled,
     label: 'Auto-merge',
     description: 'Squash-merges PRs that are CI-green, human-approved, and AI-reviewed low risk.',
+    requires: ['prs:read', 'prs:act'],
   },
   {
     field: 'reviewReplies',
@@ -335,23 +546,38 @@ const AUTOMATIONS: ReadonlyArray<{
     label: 'Reply to review threads',
     description:
       'When an author answers one of the agent’s inline comments, it re-reads the code and replies in the thread, publicly on GitHub. At most three replies per thread.',
+    requires: ['prs:read', 'prs:act', 'runs:read', 'runs:act'],
   },
 ];
 
 function RepoAutomation({
+  workspaceId,
   repo,
+  flow,
+  admission,
+  onFlowChange,
   onChange,
   onError,
 }: {
+  workspaceId: string;
   repo: RepoRecord;
+  flow: ContributorFlowPolicy | null;
+  admission: AutomationAdmissionControl;
+  onFlowChange: () => Promise<void>;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const boardEnabled = useModuleEnabled('board');
   const [webhook, setWebhook] = useState<WebhookInfo | null>(null);
   const [accounts, setAccounts] = useState<readonly GitHubAccountRecord[]>([]);
   const [accountId, setAccountId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [admissionBusy, setAdmissionBusy] = useState(false);
+  const [pauseReason, setPauseReason] = useState('Operational pause while the repository is inspected');
+  const [visibleAdmission, setVisibleAdmission] = useState(admission);
+
+  useEffect(() => setVisibleAdmission(admission), [admission]);
 
   useEffect(() => {
     void codeApi
@@ -370,7 +596,26 @@ function RepoAutomation({
     }
   }, [repo.fullName, repo.webhookConfigured]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const automationsManagedByYou = repo.automationOwnerId === null || repo.automationOwnerId === user?.username;
+  const foreignAutomationOwners = [repo.automationOwnerId, flow?.ownerId]
+    .filter((owner): owner is string => Boolean(owner) && owner !== user?.username)
+    .filter((owner, index, owners) => owners.indexOf(owner) === index);
+  const automationsManagedByYou = foreignAutomationOwners.length === 0;
+  const canBreakGlass = can('users:manage');
+  const canManageAutomations = automationsManagedByYou || canBreakGlass;
+  const flowPermissions: readonly Permission[] = [
+    'issues:read',
+    'issues:act',
+    'prs:read',
+    'prs:act',
+    'runs:read',
+    'runs:act',
+    'board:manage',
+  ];
+  const missingFlowPermissions = flowPermissions.filter((permission) => !can(permission));
+  const canRunDigest = ['issues:read', 'prs:read', 'runs:read', 'runs:act'].every((permission) =>
+    can(permission as Permission),
+  );
+  const canRunStale = can('issues:read');
 
   const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
     setBusy(true);
@@ -388,12 +633,15 @@ function RepoAutomation({
     setBusy(true);
     try {
       if (on) {
-        // Enabling surfaces the URL + secret right away.
-        if (!accountId) throw new Error('Connect one of your GitHub accounts and enable it for webhooks first.');
-        setWebhook(await api.enableWebhook(repo.fullName, accountId));
+        // Enabling reconciles the GitHub-side hook when a public URL exists,
+        // and surfaces manual setup state otherwise.
+        const selectedAccount = webhook?.accountId ?? accountId;
+        if (!selectedAccount) throw new Error('Connect one of your GitHub accounts and enable it for webhooks first.');
+        setWebhook(await api.enableWebhook(repo.fullName, selectedAccount));
       } else {
-        await api.disableWebhook(repo.fullName);
+        const result = await api.disableWebhook(repo.fullName);
         setWebhook(null);
+        if (result.warning) onError(result.warning);
       }
       await onChange();
     } catch (err) {
@@ -403,30 +651,137 @@ function RepoAutomation({
     }
   };
 
+  const changeAdmission = async (paused: boolean): Promise<void> => {
+    const reason = pauseReason.trim();
+    if (paused && reason.length < 3) {
+      onError('Record a short reason before pausing new background work.');
+      return;
+    }
+    const previous = visibleAdmission;
+    setAdmissionBusy(true);
+    setVisibleAdmission(paused
+      ? {
+          repo: repo.fullName,
+          paused: true,
+          reason,
+          pausedBy: user?.username ?? null,
+          pausedAt: Date.now(),
+        }
+      : { repo: repo.fullName, paused: false, reason: null, pausedBy: null, pausedAt: null });
+    try {
+      const { control } = await api.setAdmissionControl(workspaceId, repo.fullName, {
+        paused,
+        reason: paused ? reason : null,
+      });
+      setVisibleAdmission(control);
+      await onFlowChange();
+    } catch (err) {
+      setVisibleAdmission(previous);
+      onError(String(err));
+    } finally {
+      setAdmissionBusy(false);
+    }
+  };
+
   return (
     <article className="card" aria-label={repo.fullName}>
       <div className="flex flex-wrap items-center gap-2.5">
         <strong className="text-sm">{repo.fullName}</strong>
         {repo.webhookConfigured ? (
-          <MetaSignal tone="green" label="webhook active" title="Receiving GitHub deliveries for this repo" />
+          webhook?.remoteId ? (
+            <MetaSignal tone="green" label="GitHub webhook installed" title={`Managed GitHub webhook #${webhook.remoteId}`} />
+          ) : (
+            <MetaSignal tone="amber" label="webhook receiver ready" title="Confirm or repair delivery from GitHub" />
+          )
         ) : null}
-        {repo.automationOwnerId && !automationsManagedByYou ? (
+        {!automationsManagedByYou ? (
           <MetaSignal
-            tone="zinc"
-            label="automations unavailable"
-            title={`Managed by ${repo.automationOwnerId}; their personal GitHub credentials are never shared.`}
+            tone={canBreakGlass ? 'amber' : 'zinc'}
+            label={canBreakGlass ? 'admin takeover available' : 'automations unavailable'}
+            title={`Managed by ${foreignAutomationOwners.join(', ')}; personal GitHub credentials are never shared.${canBreakGlass ? ' Save the full flow to revalidate and take ownership, or safely turn work off.' : ''}`}
           />
         ) : null}
+        {visibleAdmission.paused ? <MetaSignal tone="red" label="intake paused" /> : null}
       </div>
 
-      {automationsManagedByYou ? (
-        <PresetPicker
-          repo={repo.fullName}
-          busy={busy}
-          onApplied={onChange}
-          onError={onError}
-          setBusy={setBusy}
-        />
+      <div className={`mt-3 rounded-lg border p-3 ${visibleAdmission.paused ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40'}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium">
+              {visibleAdmission.paused ? 'New background admissions are paused' : 'Background admission circuit breaker'}
+            </div>
+            <p className="dim mt-0.5 text-[11px] leading-relaxed">
+              {visibleAdmission.paused
+                ? `New signed webhooks receive a retryable 503 and automatic schedules do not start. Already-durable work keeps draining.${visibleAdmission.pausedBy ? ` Paused by ${visibleAdmission.pausedBy}${visibleAdmission.pausedAt ? ` ${timeAgo(visibleAdmission.pausedAt)}` : ''}.` : ''}`
+                : 'Pause intake during a forge, runner, model, or database incident without deleting this repository’s configured lifecycle.'}
+            </p>
+            {visibleAdmission.paused && visibleAdmission.reason ? (
+              <p className="mt-1.5 text-xs"><span className="dim">Reason:</span> {visibleAdmission.reason}</p>
+            ) : null}
+          </div>
+          {visibleAdmission.paused ? (
+            <button
+              className="btn"
+              disabled={busy || admissionBusy || !canManageAutomations}
+              title={canManageAutomations ? undefined : 'Only the automation owner or a break-glass administrator may resume foreign work.'}
+              onClick={() => void changeAdmission(false)}
+            >
+              {admissionBusy ? 'Resuming…' : 'Resume intake'}
+            </button>
+          ) : (
+            <div className="flex min-w-[16rem] flex-1 flex-wrap items-center justify-end gap-2 sm:flex-initial">
+              <input
+                className="input input-sm min-w-0 flex-1 sm:w-72"
+                value={pauseReason}
+                maxLength={500}
+                aria-label={`Reason for pausing ${repo.fullName}`}
+                onChange={(event) => setPauseReason(event.target.value)}
+              />
+              <button className="btn-ghost" disabled={busy || admissionBusy || pauseReason.trim().length < 3} onClick={() => void changeAdmission(true)}>
+                {admissionBusy ? 'Pausing…' : 'Pause intake'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {!automationsManagedByYou && canBreakGlass ? (
+        <div className="banner-warn mb-0 mt-3 text-xs" role="status">
+          Break-glass administration: disabling is immediate and preserves ownership of unrelated work. Enabling or
+          saving an active lifecycle validates your own role and GitHub accounts before ownership moves to you.
+        </div>
+      ) : null}
+
+      {canManageAutomations ? (
+        <>
+          <ContributorFlowEditor
+            workspaceId={workspaceId}
+            repo={repo}
+            flow={flow}
+            boardEnabled={boardEnabled}
+            webhook={webhook}
+            webhookAccountId={webhook?.accountId ?? accountId}
+            onWebhookChange={setWebhook}
+            busy={busy}
+            setBusy={setBusy}
+            onChanged={async () => {
+              await Promise.all([onChange(), onFlowChange()]);
+            }}
+            onError={onError}
+            missingPermissions={missingFlowPermissions}
+            githubAccessible={repo.githubAccessible}
+          />
+          {flow === null ? (
+            <PresetPicker
+              repo={repo.fullName}
+              busy={busy}
+              canEnable={repo.githubAccessible}
+              onApplied={onChange}
+              onError={onError}
+              setBusy={setBusy}
+            />
+          ) : null}
+        </>
       ) : null}
 
       <ListCard subtle className="mt-3">
@@ -455,15 +810,15 @@ function RepoAutomation({
         <SettingRow
           className="px-3.5 py-2.5"
           title="GitHub webhook"
-          description="Receive deliveries for this repo — events sync instantly and trigger the automations below."
+          description="Install a signed GitHub hook — events sync instantly and enter the durable work queue."
         >
           <Switch
             label={`GitHub webhook for ${repo.fullName}`}
             checked={repo.webhookConfigured}
             disabled={
               busy ||
-              (!repo.webhookConfigured && !accountId) ||
-              (repo.webhookConfigured && webhook?.managedByYou !== true)
+              (!repo.webhookConfigured && (!accountId || !repo.githubAccessible)) ||
+              (repo.webhookConfigured && webhook?.managedByYou !== true && !canBreakGlass)
             }
             onChange={(v) => void toggleWebhook(v)}
           />
@@ -472,15 +827,23 @@ function RepoAutomation({
           <SettingRow key={a.field} className="px-3.5 py-2.5" title={a.label} description={a.description}>
             <span
               title={
-                automationsManagedByYou
-                  ? undefined
-                  : `Managed by ${repo.automationOwnerId}; their personal GitHub credentials are never shared.`
+                canManageAutomations
+                  ? a.isOn(repo) || repo.githubAccessible
+                    ? a.requires.every(can)
+                      ? undefined
+                      : `Your role is missing ${a.requires.filter((permission) => !can(permission)).join(', ')}`
+                    : 'Connect one of your GitHub accounts before enabling this automation.'
+                  : `Managed by ${foreignAutomationOwners.join(', ')}; personal GitHub credentials are never shared.`
               }
             >
               <Switch
                 label={`${a.label} for ${repo.fullName}`}
                 checked={a.isOn(repo)}
-                disabled={busy || !automationsManagedByYou}
+                disabled={
+                  busy ||
+                  !canManageAutomations ||
+                  (!a.isOn(repo) && (!repo.githubAccessible || !a.requires.every(can)))
+                }
                 onChange={(v) => void act(() => api.setAutomation(repo.fullName, { [a.field]: v }))()}
               />
             </span>
@@ -489,10 +852,20 @@ function RepoAutomation({
       </ListCard>
 
       <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-        <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.digestNow(repo.fullName))()}>
+        <button
+          className="btn-ghost"
+          disabled={busy || !repo.githubAccessible || !canRunDigest}
+          title={canRunDigest ? undefined : 'Requires issues:read, prs:read, runs:read and runs:act'}
+          onClick={() => void act(() => api.digestNow(repo.fullName))()}
+        >
           Digest now
         </button>
-        <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.staleNow(repo.fullName))()}>
+        <button
+          className="btn-ghost"
+          disabled={busy || !repo.githubAccessible || !canRunStale}
+          title={canRunStale ? undefined : 'Requires issues:read'}
+          onClick={() => void act(() => api.staleNow(repo.fullName))()}
+        >
           Stale sweep now
         </button>
         <span className="flex-1" />
@@ -518,40 +891,447 @@ function RepoAutomation({
 
       {webhook ? (
         <div className="banner-info mb-0 flex-col items-start gap-1.5">
-          <div>
-            Point a GitHub webhook (content type <code>application/json</code>, events: issues, pull requests,
-            pull request review comments, check runs, check suites, statuses) at:
-          </div>
+          {webhook.remoteId ? (
+            <div>
+              Companion installed and owns GitHub webhook <strong>#{webhook.remoteId}</strong>. It will reconcile the
+              URL, event list, and secret when repaired.
+            </div>
+          ) : (
+            <div>
+              Automatic GitHub installation is not confirmed. Repair the hook after public delivery is connected;
+              its HMAC secret remains write-only on the server.
+            </div>
+          )}
+          {webhook.remoteError ? <ErrorBar error={webhook.remoteError} /> : null}
           {webhook.url ? (
             <CopyText value={webhook.url} title="Copy webhook URL">
               <code className="code-inline break-all">{webhook.url}</code>
             </CopyText>
           ) : (
-            <>
-              <CopyText value={webhook.path} title="Copy webhook path">
-                <code className="code-inline break-all">http://&lt;your-tunnel&gt;{webhook.path}</code>
-              </CopyText>
-              <div className="dim">Enable public webhook delivery above to get a ready-to-paste URL.</div>
-            </>
-          )}
-          {webhook.secret ? (
-            <div className="flex items-center gap-1.5">
-              Secret:
-              <CopyText value={webhook.secret} title="Copy webhook secret">
-                <code className="code-inline break-all">{webhook.secret}</code>
-              </CopyText>
+            <div className="dim">
+              Configure the relay above or a self-managed public URL in Operate settings, then repair this hook.
             </div>
-          ) : (
-            <div className="dim">Managed by another Companion profile. Its secret and credentials stay private.</div>
           )}
+          <div className="dim">The signing secret is stored only by Companion and GitHub; it is never returned to a browser.</div>
+          {!webhook.remoteId && webhook.url && webhook.managedByYou ? (
+            <button className="btn-ghost mt-1" disabled={busy} onClick={() => void toggleWebhook(true)}>
+              {busy ? 'Repairing…' : 'Install or repair on GitHub'}
+            </button>
+          ) : null}
           <div className="dim mt-1 w-full border-t border-zinc-300/60 pt-2 dark:border-zinc-700">
-            Turning the webhook off rejects future deliveries here; also delete the webhook on GitHub to stop them at
-            the source.
+            Turning this off rejects deliveries immediately and removes the GitHub hook when Companion installed it.
+            A manually created hook must still be removed at the source.
           </div>
         </div>
       ) : null}
     </article>
   );
+}
+
+const DEFAULT_ACTIONABLE_KINDS: readonly ActionableIssueKind[] = ['bug', 'docs', 'chore'];
+
+/** One coherent issue → PR lifecycle, with advanced choices kept secondary. */
+function ContributorFlowEditor({
+  workspaceId,
+  repo,
+  flow,
+  boardEnabled,
+  webhook,
+  webhookAccountId,
+  onWebhookChange,
+  busy,
+  setBusy,
+  onChanged,
+  onError,
+  missingPermissions,
+  githubAccessible,
+}: {
+  workspaceId: string;
+  repo: RepoRecord;
+  flow: ContributorFlowPolicy | null;
+  boardEnabled: boolean;
+  webhook: WebhookInfo | null;
+  webhookAccountId: string;
+  onWebhookChange: (webhook: WebhookInfo) => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  onChanged: () => Promise<void>;
+  onError: (message: string) => void;
+  missingPermissions: readonly Permission[];
+  githubAccessible: boolean;
+}): JSX.Element {
+  const [mode, setMode] = useState<ContributorFlowMode>(flow?.mode ?? 'off');
+  const [kinds, setKinds] = useState<ActionableIssueKind[]>([...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)]);
+  const [queueIssues, setQueueIssues] = useState(flow?.queueIssues ?? true);
+  const [autoApplyTriage, setAutoApplyTriage] = useState(flow?.autoApplyTriage ?? true);
+  const [mergeMethod, setMergeMethod] = useState<ContributorFlowPolicy['mergeMethod']>(flow?.mergeMethod ?? 'squash');
+  const [maxAttempts, setMaxAttempts] = useState(flow?.maxAttempts ?? 3);
+  const [dryRunOpen, setDryRunOpen] = useState(false);
+  const [dryRunBusy, setDryRunBusy] = useState(false);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
+  const [dryRun, setDryRun] = useState<ContributorFlowDryRun | null>(null);
+
+  useEffect(() => {
+    setMode(flow?.mode ?? 'off');
+    setKinds([...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)]);
+    setQueueIssues(flow?.queueIssues ?? true);
+    setAutoApplyTriage(flow?.autoApplyTriage ?? true);
+    setMergeMethod(flow?.mergeMethod ?? 'squash');
+    setMaxAttempts(flow?.maxAttempts ?? 3);
+  }, [flow]);
+
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      if (mode !== 'off' && !repo.webhookConfigured) {
+        if (!webhookAccountId) {
+          throw new Error('Connect a GitHub account with webhook access before enabling the contributor flow.');
+        }
+        onWebhookChange(await api.enableWebhook(repo.fullName, webhookAccountId));
+      }
+      await api.setContributorFlow(workspaceId, repo.fullName, {
+        mode,
+        actionableIssueKinds: kinds,
+        queueIssues,
+        autoApplyTriage,
+        mergeMethod,
+        maxAttempts,
+      });
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleKind = (kind: ActionableIssueKind): void => {
+    setKinds((current) => current.includes(kind) ? current.filter((item) => item !== kind) : [...current, kind]);
+  };
+
+  const preview = async (): Promise<void> => {
+    if (mode === 'off') return;
+    setDryRunOpen(true);
+    setDryRunBusy(true);
+    setDryRunError(null);
+    try {
+      const result = await api.dryRunContributorFlow(workspaceId, repo.fullName, { mode, mergeMethod });
+      setDryRun(result.report);
+    } catch (err) {
+      setDryRunError(String(err));
+    } finally {
+      setDryRunBusy(false);
+    }
+  };
+
+  const dirty =
+    mode !== (flow?.mode ?? 'off') ||
+    queueIssues !== (flow?.queueIssues ?? true) ||
+    autoApplyTriage !== (flow?.autoApplyTriage ?? true) ||
+    mergeMethod !== (flow?.mergeMethod ?? 'squash') ||
+    maxAttempts !== (flow?.maxAttempts ?? 3) ||
+    [...kinds].sort().join(',') !== [...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)].sort().join(',');
+
+  return (
+    <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.035] p-3.5">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <Eyebrow>Contributor lifecycle</Eyebrow>
+          <p className="mt-1 text-sm font-medium">Issue → implementation → review → CI repair → merge</p>
+          <p className="dim mt-1 text-xs leading-relaxed">
+            Uses durable webhook work and the Task Board reconciler. Every agent change is isolated, verified, reviewed
+            at its exact head, and bounded by the attempt and instance budget ceilings.
+          </p>
+        </div>
+        <select
+          className="input input-sm"
+          value={mode}
+          disabled={busy}
+          aria-label={`Contributor flow mode for ${repo.fullName}`}
+          onChange={(event) => setMode(event.target.value as ContributorFlowMode)}
+        >
+          <option value="off">Off</option>
+          <option value="governed" disabled={!boardEnabled}>Governed · human merge</option>
+          <option value="autonomous" disabled={!boardEnabled}>Autonomous · policy merge</option>
+        </select>
+      </div>
+
+      {!boardEnabled ? (
+        <div className="banner-warn mb-0 mt-3 text-xs">
+          The Task Board module is disabled, so end-to-end contributor work is paused. Enable it from{' '}
+          <a className="link" href="#/modules">Modules</a>; triage and standalone pipelines remain available.
+        </div>
+      ) : null}
+
+      {missingPermissions.length > 0 && mode !== 'off' ? (
+        <div className="banner-warn mb-0 mt-3 text-xs">
+          This flow is paused for your profile because its role is missing {missingPermissions.join(', ')}. You can
+          still turn it off; an administrator must restore the complete bundle before it can be saved active.
+        </div>
+      ) : null}
+
+      {!githubAccessible && mode !== 'off' ? (
+        <div className="banner-warn mb-0 mt-3 text-xs">
+          Connect one of your own GitHub accounts with repository access before taking over or enabling this flow.
+        </div>
+      ) : null}
+
+      {mode !== 'off' ? (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px]" aria-label="Contributor flow stages">
+            {['Triage', queueIssues ? 'Queue' : 'Backlog', 'Build', 'Auto-review', 'Repair CI', mode === 'autonomous' ? 'Merge' : 'Human decision'].map((stage, index) => (
+              <span key={stage} className="contents">
+                {index > 0 ? <span className="dim">→</span> : null}
+                <span className="badge normal-case">{stage}</span>
+              </span>
+            ))}
+          </div>
+          {!repo.webhookConfigured ? (
+            <div className="banner-warn mb-0 mt-3 text-xs">
+              Enable the GitHub webhook below before relying on this flow; polling alone cannot guarantee immediate admission.
+            </div>
+          ) : null}
+          {repo.webhookConfigured && webhook && !webhook.remoteId ? (
+            <div className="banner-warn mb-0 mt-3 text-xs">
+              The local receiver is ready, but Companion has not confirmed a GitHub-side hook. Repair it below or
+              finish the manual setup before relying on immediate admission.
+            </div>
+          ) : null}
+          <details className="mt-3 border-t border-emerald-500/15 pt-3">
+            <summary className="cursor-pointer text-xs font-medium select-none">Policy details</summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <div>
+                <div className="text-xs font-medium">Issue kinds admitted to implementation</div>
+                <p className="dim mt-0.5 text-[11px]">Duplicates, questions, invalid reports, and reports needing information always stop after triage.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(['bug', 'feature', 'docs', 'chore'] as const).map((kind) => (
+                    <label key={kind} className="flex items-center gap-1.5 text-xs">
+                      <input type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} />
+                      {kind}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <SettingRow title="Start implementation immediately" description="Off creates a reviewed board backlog item instead of spending a runner slot.">
+                <Switch checked={queueIssues} label="Queue actionable issues" onChange={setQueueIssues} />
+              </SettingRow>
+              <SettingRow title="Apply triage labels" description="Applies labels only; draft prose stays pending for a maintainer.">
+                <Switch checked={autoApplyTriage} label="Apply triage labels" onChange={setAutoApplyTriage} />
+              </SettingRow>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-xs">
+                  <span className="font-medium">Merge method</span>
+                  <select className="input input-sm" value={mergeMethod} onChange={(event) => setMergeMethod(event.target.value as ContributorFlowPolicy['mergeMethod'])}>
+                    <option value="squash">Squash</option>
+                    <option value="merge">Merge commit</option>
+                    <option value="rebase">Rebase</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs">
+                  <span className="font-medium">Remediation ceiling</span>
+                  <input className="input input-sm" type="number" min={1} max={10} value={maxAttempts} onChange={(event) => setMaxAttempts(Math.min(10, Math.max(1, Number(event.target.value) || 1)))} />
+                </label>
+              </div>
+            </div>
+          </details>
+        </>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-emerald-500/15 pt-3">
+        <button
+          className="btn-ghost"
+          disabled={
+            busy ||
+            dryRunBusy ||
+            mode === 'off' ||
+            !githubAccessible ||
+            missingPermissions.includes('issues:read') ||
+            missingPermissions.includes('prs:read')
+          }
+          title={mode === 'off' ? 'Choose Governed or Autonomous to simulate that policy.' : 'Read-only: starts no agents and writes nothing to GitHub.'}
+          onClick={() => void preview()}
+        >
+          {dryRunBusy ? 'Inspecting live backlog…' : 'Dry-run current backlog'}
+        </button>
+        <button
+          className="btn"
+          disabled={
+            busy ||
+            !dirty ||
+            (mode !== 'off' && (!boardEnabled || !githubAccessible || missingPermissions.length > 0))
+          }
+          onClick={() => void save()}
+        >
+          {busy ? 'Saving…' : mode === 'off' ? 'Disable flow' : 'Save contributor flow'}
+        </button>
+      </div>
+
+      {dryRunOpen ? (
+        <ContributorFlowDryRunModal
+          report={dryRun}
+          loading={dryRunBusy}
+          error={dryRunError}
+          onRetry={() => void preview()}
+          onClose={() => setDryRunOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ContributorFlowDryRunModal({
+  report,
+  loading,
+  error,
+  onRetry,
+  onClose,
+}: {
+  report: ContributorFlowDryRun | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <Modal title="Contributor lifecycle dry run" onClose={onClose} xl>
+      {loading && report === null ? (
+        <div className="flex flex-col gap-3" aria-label="Inspecting repository backlog">
+          <div className="banner-info mb-0 text-xs">Reading live GitHub metadata, branch protection and a bounded PR workload. No agent or pipeline is running.</div>
+          <Skeleton className="block h-20 w-full" />
+          <Skeleton className="block h-36 w-full" />
+          <Skeleton className="block h-48 w-full" />
+        </div>
+      ) : null}
+      <ErrorBar error={error} />
+      {error && !loading ? (
+        <button className="btn mt-3" onClick={onRetry}>Retry dry run</button>
+      ) : null}
+      {report ? (
+        <div className={loading ? 'opacity-60' : ''} aria-busy={loading}>
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <strong>{report.repo}</strong>
+                <MetaSignal
+                  tone={report.status === 'ready' ? 'green' : report.status === 'attention' ? 'amber' : 'red'}
+                  label={report.status}
+                />
+                <MetaSignal tone="blue" label={`${report.mode} simulation`} />
+              </div>
+              <p className="dim mt-1 text-xs">
+                Observed {timeAgo(report.observedAt)} · exactly {report.githubMutations} GitHub writes · exactly {report.agentRuns} agent runs
+              </p>
+            </div>
+            <button className="btn-ghost" disabled={loading} onClick={onRetry}>
+              {loading ? 'Refreshing…' : 'Refresh live evidence'}
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <DryRunMetric label="Open PRs" value={report.workload.openPulls} detail={`${report.workload.drafts} drafts`} />
+            <DryRunMetric label="Known changed lines" value={report.workload.knownChangedLines} detail={`median ${report.workload.medianChangedLines?.toLocaleString() ?? 'unknown'}`} />
+            <DryRunMetric label="Large review" value={report.workload.atLeastOneThousandLines} detail={`${report.workload.atLeastFiftyFiles} touch 50+ files`} />
+            <DryRunMetric label="Open issues" value={report.workload.openIssues} detail={`${report.workload.unlabelledIssues} unlabelled`} />
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <section>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Readiness evidence</div>
+              <ListCard>
+                {report.checks.map((item) => (
+                  <div key={item.id} className="flex items-start gap-2.5 px-3.5 py-2.5">
+                    <MetaSignal
+                      tone={item.status === 'pass' ? 'green' : item.status === 'warning' ? 'amber' : 'red'}
+                      label={item.status}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium">{item.label}</div>
+                      <p className="dim mt-0.5 text-[11px] leading-relaxed">{item.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </ListCard>
+            </section>
+            <section>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Proposed admission lanes</div>
+              <ListCard>
+                {([
+                  ['Wait for author', report.workload.lanes.waitForAuthor, 'Drafts spend no reviewer capacity.'],
+                  ['Repair first', report.workload.lanes.repairFirst, 'Resolve conflicts or failing CI before review.'],
+                  ['Map and split', report.workload.lanes.mapAndSplit, 'Guidance only until bounded slices cover the change.'],
+                  ['Bounded review', report.workload.lanes.boundedReview, 'Review independent slices with explicit coverage.'],
+                  ['Standard review', report.workload.lanes.standardReview, 'Normal head-pinned review path.'],
+                  ['Final evidence gate', report.workload.lanes.evidenceGate, 'Revalidate complete evidence immediately before merge.'],
+                ] as const).map(([label, count, detail]) => (
+                  <div key={label} className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className="w-8 text-right font-mono text-sm tabular-nums">{count}</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium">{label}</div>
+                      <p className="dim mt-0.5 text-[11px]">{detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </ListCard>
+              <div className="banner-info mb-0 mt-3 text-[11px] leading-relaxed">
+                {report.workload.agentAuthored} PR(s) disclose <code className="code-inline">agent-authored</code> provenance. This count never selects a lane or quality verdict.
+              </div>
+              {report.rateLimit ? (
+                <p className="dim mt-2 text-[11px]">
+                  GitHub {report.rateLimit.resource ?? 'API'} budget: {report.rateLimit.remaining ?? 'unknown'}{report.rateLimit.limit === null ? '' : ` / ${report.rateLimit.limit}`} remaining.
+                </p>
+              ) : null}
+            </section>
+          </div>
+
+          <details className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <summary className="cursor-pointer px-3.5 py-3 text-xs font-medium select-none">
+              Inspect {report.pulls.length} measured PR decision(s)
+            </summary>
+            <div className="max-h-[28rem] overflow-y-auto border-t border-zinc-200 dark:border-zinc-800">
+              {report.pulls.map((pull) => (
+                <div key={pull.number} className="flex flex-wrap items-start gap-2 border-b border-zinc-200 px-3.5 py-2.5 last:border-b-0 dark:border-zinc-800">
+                  <span className="badge">#{pull.number}</span>
+                  <div className="min-w-0 flex-1">
+                    <a className="link text-xs font-medium" href={pull.url} target="_blank" rel="noreferrer">{pull.title}</a>
+                    <p className="dim mt-0.5 text-[11px]">
+                      {pull.author} · {pull.changedLines?.toLocaleString() ?? 'unknown'} lines · {pull.changedFiles ?? 'unknown'} files · {pull.reasons.join(' · ')}
+                    </p>
+                  </div>
+                  <MetaSignal tone={pull.lane === 'repair-first' || pull.lane === 'map-and-split' ? 'amber' : 'zinc'} label={dryRunLaneLabel(pull.lane)} />
+                </div>
+              ))}
+            </div>
+          </details>
+          {!report.source.pullListComplete || !report.source.issueListComplete || !report.source.pullDetailsComplete ? (
+            <div className="banner-warn mb-0 mt-3 text-xs">
+              Measurement is incomplete. Companion reports this dry run as blocked and will not turn partial evidence into an autonomous decision.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
+function DryRunMetric({ label, value, detail }: { label: string; value: number; detail: string }): JSX.Element {
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="dim text-[11px]">{label}</div>
+      <div className="mt-1 font-mono text-lg tabular-nums">{value.toLocaleString()}</div>
+      <div className="dim mt-0.5 text-[11px]">{detail}</div>
+    </div>
+  );
+}
+
+function dryRunLaneLabel(lane: ContributorFlowDryRun['pulls'][number]['lane']): string {
+  switch (lane) {
+    case 'wait-for-author': return 'wait';
+    case 'repair-first': return 'repair';
+    case 'map-and-split': return 'map/split';
+    case 'bounded-review': return 'bounded review';
+    case 'standard-review': return 'review';
+    case 'evidence-gate': return 'evidence gate';
+  }
 }
 
 /**
@@ -569,12 +1349,14 @@ function RepoAutomation({
 function PresetPicker({
   repo,
   busy,
+  canEnable,
   onApplied,
   onError,
   setBusy,
 }: {
   repo: string;
   busy: boolean;
+  canEnable: boolean;
   onApplied: () => Promise<void> | void;
   onError: (message: string) => void;
   setBusy: (busy: boolean) => void;
@@ -616,7 +1398,8 @@ function PresetPicker({
           <button
             key={preset.id}
             className="rounded-lg border border-zinc-200 px-3 py-2 text-left transition-colors hover:border-zinc-400 disabled:opacity-60 dark:border-zinc-800 dark:hover:border-zinc-600"
-            disabled={busy}
+            disabled={busy || (preset.id !== 'watch' && !canEnable)}
+            title={preset.id !== 'watch' && !canEnable ? 'Connect one of your GitHub accounts before enabling this preset.' : undefined}
             onClick={() => void apply(preset.id)}
           >
             <span className="text-[13px] font-medium">{preset.label}</span>
@@ -640,6 +1423,9 @@ function PresetOutcome({ result }: { result: RepoPresetResult }): JSX.Element {
   }
   if (result.pipelineSkipped === 'no-steps-left') {
     notes.push('No pipeline was created: every step this preset defines needs a module that is not enabled here.');
+  }
+  if (result.pipelineSkipped === 'account-unavailable') {
+    notes.push('No pipeline was created: connect one of your GitHub accounts for pipeline work on this repository.');
   }
   return (
     <div className="banner-info mt-2 text-xs" role="status">

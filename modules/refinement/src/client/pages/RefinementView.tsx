@@ -59,6 +59,7 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
 
   const { refinement, items } = detail;
   const canManage = can('refine:manage');
+  const canRun = can('runs:read') && can('runs:act');
   const decomposing = refinement.status === 'decomposing';
   const proposed = items.filter((i) => i.status === 'proposed');
 
@@ -109,6 +110,7 @@ export default function RefinementView({ id }: { id: string }): JSX.Element {
             specs={context?.specs ?? []}
             docs={context?.docs ?? []}
             decomposing={decomposing}
+            canRun={canRun}
             onDecompose={actions.decompose}
             onSaveMethod={actions.saveMethod}
             onUpdateMethod={actions.updateMethod}
@@ -225,6 +227,7 @@ function DecomposePanel({
   specs,
   docs,
   decomposing,
+  canRun,
   onDecompose,
   onSaveMethod,
   onUpdateMethod,
@@ -236,6 +239,7 @@ function DecomposePanel({
   specs: ReadonlyArray<{ readonly id: string; readonly title: string }>;
   docs: ReadonlyArray<{ readonly id: string; readonly title: string }>;
   decomposing: boolean;
+  canRun: boolean;
   onDecompose: (methodId: string, specIds: string[], docIds: string[]) => Promise<void>;
   onSaveMethod: (fields: { name: string; description: string; instructions: string }) => Promise<void>;
   onUpdateMethod: (id: string, fields: { name?: string; description?: string; instructions?: string }) => Promise<void>;
@@ -290,7 +294,8 @@ function DecomposePanel({
         <div className="flex flex-wrap items-center gap-2">
           <button
             className="btn"
-            disabled={decomposing || !effectiveMethodId}
+            disabled={decomposing || !effectiveMethodId || !canRun}
+            title={canRun ? undefined : 'Requires runs:read and runs:act'}
             onClick={() => {
               if (effectiveMethodId) void onDecompose(effectiveMethodId, specIds, docIds);
             }}
@@ -310,6 +315,7 @@ function DecomposePanel({
           onUpdate={onUpdateMethod}
           onDelete={onDeleteMethod}
           onGenerate={onGenerateMethod}
+          canGenerate={canRun}
         />
       ) : null}
     </section>
@@ -570,6 +576,7 @@ function MethodsModal({
   onUpdate,
   onDelete,
   onGenerate,
+  canGenerate,
 }: {
   methods: RefineMethodRecord[];
   onClose: () => void;
@@ -577,6 +584,7 @@ function MethodsModal({
   onUpdate: (id: string, fields: { name?: string; description?: string; instructions?: string }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onGenerate: (prompt: string) => Promise<RefineMethodDraft>;
+  canGenerate: boolean;
 }): JSX.Element {
   const custom = methods.filter((m) => !m.builtin);
   const builtins = methods.filter((m) => m.builtin);
@@ -641,7 +649,7 @@ function MethodsModal({
       <div className="flex flex-col gap-4">
         {editing ? (
           <div className="flex flex-col gap-3">
-            <div className="border-b border-zinc-200 pb-3 dark:border-zinc-800">
+            {canGenerate ? <div className="border-b border-zinc-200 pb-3 dark:border-zinc-800">
               <Field
                 label="Generate with AI"
                 hint='Name a methodology (e.g. "BMAD") or describe how to split — the draft fills the fields below for review.'
@@ -667,7 +675,7 @@ function MethodsModal({
                 </div>
               </Field>
               <ErrorBar error={genError} className="mt-2" />
-            </div>
+            </div> : null}
             <Field label="Name">
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
             </Field>

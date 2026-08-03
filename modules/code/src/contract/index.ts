@@ -176,12 +176,14 @@ export interface RepoPreset {
     readonly staleSweep: boolean;
     readonly prGate: boolean;
     readonly autoMerge: boolean;
+    readonly reviewReplies: boolean;
   };
   /** null for a preset that turns everything off and creates nothing. */
   readonly pipeline: {
     readonly name: string;
     readonly description: string;
     readonly autoRunOnPrOpen: boolean;
+    readonly autoRunOnPrUpdate: boolean;
     readonly steps: ReadonlyArray<PresetStepShorthand>;
   } | null;
 }
@@ -207,7 +209,7 @@ export interface RepoPresetResult {
    * Why the preset's pipeline was not created, when it defines one. null means
    * it was created (or the preset defines none).
    */
-  readonly pipelineSkipped: 'not-permitted' | 'no-steps-left' | null;
+  readonly pipelineSkipped: 'not-permitted' | 'account-unavailable' | 'no-steps-left' | null;
 }
 
 /** A repository a reachable GitHub account can see — the add-repo picker feed. */
@@ -683,16 +685,18 @@ export interface CommentRecord {
 }
 
 export interface WebhookInfo {
-  /** Deliveries POST here (behind the public tunnel / the user's port-forward). */
+  /** Deliveries POST here behind the configured public ingress. */
   readonly path: string;
-  /** Only returned to the profile that owns the registration. */
-  readonly secret: string | null;
-  /** Absolute delivery URL when the moxxy-proxy tunnel is up; null otherwise. */
+  /** Absolute delivery URL when public ingress is available; null otherwise. */
   readonly url: string | null;
   readonly ownerId: string | null;
   readonly accountId: string | null;
   readonly accountLogin: string | null;
   readonly managedByYou: boolean;
+  /** GitHub hook id when Companion installed/reconciled it automatically. */
+  readonly remoteId: number | null;
+  /** Last GitHub-side setup failure; never contains the HMAC secret. */
+  readonly remoteError: string | null;
 }
 
 /** How often a workspace's briefing report is generated. */

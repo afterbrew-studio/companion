@@ -44,6 +44,15 @@ export class GitHubError extends Error {
 /** github.com; a GitHub Enterprise Server instance serves the same paths under `/api/v3`. */
 export const DEFAULT_API = 'https://api.github.com';
 
+/** Last primary-rate-limit observation for this credential. No token or URL is exposed. */
+export interface GitHubRateLimitSnapshot {
+  readonly limit: number | null;
+  readonly remaining: number | null;
+  readonly resetAt: number | null;
+  readonly resource: string | null;
+  readonly observedAt: number;
+}
+
 /**
  * Ceiling on the per-client ETag cache. Generous enough that the hot paths (one
  * repo's PR list, each open PR's checks) all stay resident, small enough that a
@@ -55,6 +64,7 @@ export class GitHubClient {
   private readonly etags = new Map<string, { etag: string; body: unknown }>();
   private readonly branchCache = new Map<string, { at: number; branches: GhBranch[] }>();
   private readonly branchInflight = new Map<string, Promise<GhBranch[]>>();
+  private readonly rateLimits = new Map<string, GitHubRateLimitSnapshot>();
 
   constructor(
     private readonly token: string,
@@ -87,6 +97,7 @@ export class GitHubClient {
         ...(cached ? { 'if-none-match': cached.etag } : {}),
       },
     });
+    this.observeRateLimit(res);
     if (res.status === 304 && cached) {
       // Re-insert to move it to the young end: a path still being polled must
       // not be evicted just because it was first seen long ago.
@@ -122,8 +133,19 @@ export class GitHubClient {
    */
   private async getUncached<T>(path: string): Promise<T> {
     const res = await fetch(`${this.api}${path}`, { headers: this.headers() });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, path);
     return (await res.json()) as T;
+  }
+
+  /** Operational telemetry only; callers cannot recover credential material from it. */
+  rateLimitSnapshot(): GitHubRateLimitSnapshot | null {
+    const snapshots = [...this.rateLimits.values()];
+    if (snapshots.length === 0) return null;
+    // Report the most constrained resource, not whichever concurrent request
+    // happened to finish last (REST core and GraphQL have separate budgets).
+    snapshots.sort((a, b) => rateLimitPressure(b) - rateLimitPressure(a));
+    return { ...snapshots[0]! };
   }
 
   async post<T>(path: string, payload: unknown): Promise<T> {
@@ -162,8 +184,155 @@ export class GitHubClient {
     name: string;
     /** What THIS token may do here — absent only on unauthenticated reads. */
     permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean; pull?: boolean };
+    allow_merge_commit?: boolean;
+    allow_squash_merge?: boolean;
+    allow_rebase_merge?: boolean;
+    allow_auto_merge?: boolean;
   }> {
     return this.get(`/repos/${fullName}`);
+  }
+
+  /**
+   * Body-free, read-only workload snapshot for autonomy planning. GitHub's REST
+   * pull list omits changed-line/file counts, and fetching one detail endpoint
+   * per PR costs O(queue) requests. GraphQL returns the reviewability signals,
+   * aggregate CI state and exact total counts in bounded pages instead.
+   *
+   * The query text is constant and contains no mutation field. `pullLimit` is
+   * deliberately lower than `issueLimit`: every PR row is rendered/explained,
+   * while issue rows contribute only intake counts.
+   */
+  async repositoryAutonomyQueue(
+    fullName: string,
+    opts: { pullLimit?: number; issueLimit?: number } = {},
+  ): Promise<GhRepositoryAutonomyQueue> {
+    const separator = fullName.indexOf('/');
+    if (separator <= 0 || separator === fullName.length - 1) throw new Error(`invalid repository ${fullName}`);
+    const owner = fullName.slice(0, separator);
+    const name = fullName.slice(separator + 1);
+    const pullLimit = Math.min(Math.max(Math.trunc(opts.pullLimit ?? 100), 1), 1_000);
+    const issueLimit = Math.min(Math.max(Math.trunc(opts.issueLimit ?? 1_000), 1), 1_000);
+    const [pullResult, issueResult] = await Promise.all([
+      this.autonomyPulls(owner, name, pullLimit),
+      this.autonomyIssues(owner, name, issueLimit),
+    ]);
+    return {
+      pulls: pullResult.rows,
+      openPullCount: pullResult.total,
+      pullsComplete: pullResult.rows.length >= pullResult.total,
+      issues: issueResult.rows,
+      openIssueCount: issueResult.total,
+      issuesComplete: issueResult.rows.length >= issueResult.total,
+    };
+  }
+
+  private async autonomyPulls(
+    owner: string,
+    name: string,
+    limit: number,
+  ): Promise<{ rows: GhPull[]; total: number }> {
+    const rows: GhPull[] = [];
+    let total = 0;
+    let cursor: string | null = null;
+    while (rows.length < limit) {
+      const page: GhAutonomyPullQuery = await this.graphql<GhAutonomyPullQuery>(AUTONOMY_PULL_QUERY, {
+        owner,
+        name,
+        cursor,
+        first: Math.min(100, limit - rows.length),
+      });
+      if (!page.repository) throw new Error(`GitHub repository ${owner}/${name} is unavailable`);
+      const connection: GhAutonomyPullConnection = page.repository.pullRequests;
+      total = connection.totalCount;
+      rows.push(...connection.nodes.filter((node): node is GhAutonomyPullNode => node !== null).map(mapAutonomyPull));
+      if (!connection.pageInfo.hasNextPage || !connection.pageInfo.endCursor) break;
+      cursor = connection.pageInfo.endCursor;
+    }
+    return { rows, total };
+  }
+
+  private async autonomyIssues(
+    owner: string,
+    name: string,
+    limit: number,
+  ): Promise<{ rows: GhIssue[]; total: number }> {
+    const rows: GhIssue[] = [];
+    let total = 0;
+    let cursor: string | null = null;
+    while (rows.length < limit) {
+      const page: GhAutonomyIssueQuery = await this.graphql<GhAutonomyIssueQuery>(AUTONOMY_ISSUE_QUERY, {
+        owner,
+        name,
+        cursor,
+        first: Math.min(100, limit - rows.length),
+      });
+      if (!page.repository) throw new Error(`GitHub repository ${owner}/${name} is unavailable`);
+      const connection: GhAutonomyIssueConnection = page.repository.issues;
+      total = connection.totalCount;
+      rows.push(...connection.nodes.filter((node): node is GhAutonomyIssueNode => node !== null).map(mapAutonomyIssue));
+      if (!connection.pageInfo.hasNextPage || !connection.pageInfo.endCursor) break;
+      cursor = connection.pageInfo.endCursor;
+    }
+    return { rows, total };
+  }
+
+  /**
+   * Install or reconcile Companion's repository webhook without creating a
+   * duplicate after a timeout/crash. GitHub never returns a hook's secret, so
+   * matching by the stable delivery URL and PATCHing rotates it back to the
+   * local receiver's current secret.
+   */
+  async ensureRepoWebhook(
+    fullName: string,
+    url: string,
+    secret: string,
+    knownId: number | null = null,
+  ): Promise<number> {
+    const payload = {
+      name: 'web',
+      active: true,
+      events: ['issues', 'pull_request', 'pull_request_review_comment', 'check_run', 'check_suite', 'status'],
+      config: { url, content_type: 'json', insecure_ssl: '0', secret },
+    };
+    if (knownId !== null) {
+      try {
+        const known = await this.patch<GhRepoHook>(`/repos/${fullName}/hooks/${knownId}`, payload);
+        if (!Number.isSafeInteger(known.id) || known.id <= 0) {
+          throw new Error('GitHub returned an invalid repository webhook id');
+        }
+        return known.id;
+      } catch (err) {
+        // A maintainer may have deleted the remembered hook in GitHub. Only a
+        // confirmed 404 falls back to discovery/creation; auth and rate-limit
+        // failures must stay visible instead of creating a likely duplicate.
+        if (!(err instanceof GitHubError) || err.status !== 404) throw err;
+      }
+    }
+
+    let existing: GhRepoHook | undefined;
+    for (let page = 1; page <= 10 && !existing; page++) {
+      const hooks = await this.getUncached<GhRepoHook[]>(
+        `/repos/${fullName}/hooks?per_page=100&page=${page}`,
+      );
+      existing = hooks.find((hook) => hook.name === 'web' && hook.config.url === url);
+      if (hooks.length < 100) break;
+    }
+    const hook = existing
+      ? await this.patch<GhRepoHook>(`/repos/${fullName}/hooks/${existing.id}`, payload)
+      : await this.post<GhRepoHook>(`/repos/${fullName}/hooks`, payload);
+    if (!Number.isSafeInteger(hook.id) || hook.id <= 0) {
+      throw new Error('GitHub returned an invalid repository webhook id');
+    }
+    return hook.id;
+  }
+
+  /** Delete is idempotent: a hook removed in GitHub's UI is already off. */
+  async deleteRepoWebhook(fullName: string, id: number): Promise<void> {
+    this.assertWrite(`DELETE /repos/${fullName}/hooks/${id}`);
+    const path = `/repos/${fullName}/hooks/${id}`;
+    const res = await fetch(`${this.api}${path}`, { method: 'DELETE', headers: this.headers() });
+    this.observeRateLimit(res);
+    if (!res.ok && res.status !== 404) throw await this.error(res, path);
   }
 
   /** Existing remote branches, paged and bounded to protect the GitHub budget. */
@@ -193,14 +362,14 @@ export class GitHubClient {
   /** All issues (open+closed, no PRs) sorted by updated, paged. */
   async issues(
     fullName: string,
-    opts: { since?: string; maxPages?: number } = {},
+    opts: { since?: string; maxPages?: number; state?: 'open' | 'closed' | 'all' } = {},
   ): Promise<GhIssue[]> {
     const collected: GhIssue[] = [];
     const maxPages = opts.maxPages ?? 10;
     for (let page = 1; page <= maxPages; page++) {
       const since = opts.since ? `&since=${encodeURIComponent(opts.since)}` : '';
       const batch = await this.get<GhIssue[]>(
-        `/repos/${fullName}/issues?state=all&per_page=100&sort=updated&direction=desc&page=${page}${since}`,
+        `/repos/${fullName}/issues?state=${opts.state ?? 'all'}&per_page=100&sort=updated&direction=desc&page=${page}${since}`,
       );
       // The issues endpoint interleaves PRs (they carry `pull_request`) —
       // keep them: the sync harvests PR comment counts from these rows.
@@ -210,11 +379,15 @@ export class GitHubClient {
     return collected;
   }
 
-  async pulls(fullName: string, maxPages = 5): Promise<GhPull[]> {
+  async pulls(
+    fullName: string,
+    maxPages = 5,
+    state: 'open' | 'closed' | 'all' = 'all',
+  ): Promise<GhPull[]> {
     const collected: GhPull[] = [];
     for (let page = 1; page <= maxPages; page++) {
       const batch = await this.get<GhPull[]>(
-        `/repos/${fullName}/pulls?state=all&per_page=100&sort=updated&direction=desc&page=${page}`,
+        `/repos/${fullName}/pulls?state=${state}&per_page=100&sort=updated&direction=desc&page=${page}`,
       );
       collected.push(...batch);
       if (batch.length < 100) break;
@@ -312,6 +485,7 @@ export class GitHubClient {
     }
     const path = `/repos/${fullName}/pulls/${number}/files`;
     const res = await fetch(`${this.api}${path}?per_page=${pageSize}&page=${page}`, { headers: this.headers() });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, path);
     const files = (await res.json()) as GhPrFile[];
     const link = res.headers.get('link');
@@ -404,16 +578,37 @@ export class GitHubClient {
   async branchProtection(
     fullName: string,
     branch: string,
-  ): Promise<{ strict: boolean; enforceAdmins: boolean; requiredContexts: string[] } | null> {
+  ): Promise<{
+    strict: boolean;
+    enforceAdmins: boolean;
+    requiredContexts: string[];
+    requiredApprovingReviews: number;
+    dismissStaleReviews: boolean;
+    requireCodeOwnerReviews: boolean;
+    requireConversationResolution: boolean;
+    allowForcePushes: boolean;
+  } | null> {
     try {
       const res = await this.get<{
         required_status_checks?: { strict?: boolean; contexts?: string[] } | null;
         enforce_admins?: { enabled?: boolean } | null;
+        required_pull_request_reviews?: {
+          required_approving_review_count?: number;
+          dismiss_stale_reviews?: boolean;
+          require_code_owner_reviews?: boolean;
+        } | null;
+        required_conversation_resolution?: { enabled?: boolean } | null;
+        allow_force_pushes?: { enabled?: boolean } | null;
       }>(`/repos/${fullName}/branches/${encodeURIComponent(branch)}/protection`);
       return {
         strict: res.required_status_checks?.strict === true,
         enforceAdmins: res.enforce_admins?.enabled === true,
         requiredContexts: res.required_status_checks?.contexts ?? [],
+        requiredApprovingReviews: res.required_pull_request_reviews?.required_approving_review_count ?? 0,
+        dismissStaleReviews: res.required_pull_request_reviews?.dismiss_stale_reviews === true,
+        requireCodeOwnerReviews: res.required_pull_request_reviews?.require_code_owner_reviews === true,
+        requireConversationResolution: res.required_conversation_resolution?.enabled === true,
+        allowForcePushes: res.allow_force_pushes?.enabled === true,
       };
     } catch {
       return null;
@@ -443,6 +638,7 @@ export class GitHubClient {
     for (const run of targets) {
       const path = `/repos/${fullName}/actions/runs/${run.id}/${scope === 'all' ? 'rerun' : 'rerun-failed-jobs'}`;
       const res = await fetch(`${this.api}${path}`, { method: 'POST', headers: this.headers() });
+      this.observeRateLimit(res);
       // 403 here usually means "this run is too old to re-run", which is not an
       // error worth failing the whole request over when others succeeded.
       if (res.ok) restarted++;
@@ -486,6 +682,7 @@ export class GitHubClient {
   private async jobLog(fullName: string, jobId: number, maxChars: number): Promise<string | null> {
     const path = `/repos/${fullName}/actions/jobs/${jobId}/logs`;
     const res = await fetch(`${this.api}${path}`, { headers: this.headers(), redirect: 'manual' });
+    this.observeRateLimit(res);
     const location = res.headers.get('location');
     if (res.status >= 300 && res.status < 400 && location) {
       // GitHub redirects to a signed blob URL where the signature IS the
@@ -511,6 +708,24 @@ export class GitHubClient {
     return `${this.api.replace(/\/v3$/, '')}/graphql`;
   }
 
+  /** Constant read queries only; mutations keep their explicit write-gated methods. */
+  private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await fetch(this.graphqlUrl(), {
+      method: 'POST',
+      headers: { ...this.headers(), 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    });
+    this.observeRateLimit(res);
+    if (!res.ok) throw await this.error(res, '/graphql');
+    const body = (await res.json()) as { data?: T; errors?: Array<{ message?: string }> };
+    if (body.errors?.length) {
+      const message = body.errors.map((error) => error.message ?? 'unknown GraphQL error').join('; ');
+      throw new Error(`GitHub GraphQL: ${message.slice(0, 1_000)}`);
+    }
+    if (!body.data) throw new Error('GitHub GraphQL returned no data');
+    return body.data;
+  }
+
   /** Take a pull request out of draft. */
   async markReadyForReview(fullName: string, number: number): Promise<void> {
     this.assertWrite(`PATCH /repos/${fullName}/pulls/${number} (ready)`);
@@ -525,6 +740,7 @@ export class GitHubClient {
         variables: { id: (pr as unknown as { node_id: string }).node_id },
       }),
     });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, '/graphql markPullRequestReadyForReview');
     const body = (await res.json()) as { errors?: Array<{ message: string }> };
     if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join('; '));
@@ -535,6 +751,7 @@ export class GitHubClient {
     this.assertWrite(`PUT /repos/${fullName}/pulls/${number}/update-branch`);
     const path = `/repos/${fullName}/pulls/${number}/update-branch`;
     const res = await fetch(`${this.api}${path}`, { method: 'PUT', headers: this.headers() });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, path);
   }
 
@@ -544,6 +761,10 @@ export class GitHubClient {
     method: 'merge' | 'squash' | 'rebase' = 'squash',
     expectedHeadSha?: string,
   ): Promise<{ merged: boolean; message: string }> {
+    // Merge is the most consequential forge write. It uses PUT instead of the
+    // shared POST/PATCH transport, so it must enter the same instance policy
+    // choke point explicitly before any network I/O.
+    this.assertWrite(`PUT /repos/${fullName}/pulls/${number}/merge`);
     const res = await fetch(`${this.api}/repos/${fullName}/pulls/${number}/merge`, {
       method: 'PUT',
       headers: { ...this.headers(), 'content-type': 'application/json' },
@@ -551,6 +772,7 @@ export class GitHubClient {
       // Without `sha`, a race merges a commit nobody reviewed or tested.
       body: JSON.stringify({ merge_method: method, ...(expectedHeadSha ? { sha: expectedHeadSha } : {}) }),
     });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, `/repos/${fullName}/pulls/${number}/merge`);
     return (await res.json()) as { merged: boolean; message: string };
   }
@@ -574,9 +796,26 @@ export class GitHubClient {
       method: 'DELETE',
       headers: this.headers(),
     });
+    this.observeRateLimit(res);
     // 422 = ref already gone (raced GitHub's own auto-delete) — that's success.
     if (!res.ok && res.status !== 422) throw await this.error(res, `/repos/${fullName}/git/refs/heads/${pr.head.ref}`);
     return true;
+  }
+
+  private observeRateLimit(res: Response): void {
+    const limit = finiteHeader(res.headers.get('x-ratelimit-limit'));
+    const remaining = finiteHeader(res.headers.get('x-ratelimit-remaining'));
+    const resetSeconds = finiteHeader(res.headers.get('x-ratelimit-reset'));
+    const resource = res.headers.get('x-ratelimit-resource');
+    if (limit === null && remaining === null && resetSeconds === null && resource === null) return;
+    const snapshot = {
+      limit,
+      remaining,
+      resetAt: resetSeconds === null ? null : resetSeconds * 1_000,
+      resource,
+      observedAt: Date.now(),
+    };
+    this.rateLimits.set(resource ?? 'unknown', snapshot);
   }
 
   private headers(): Record<string, string> {
@@ -597,6 +836,7 @@ export class GitHubClient {
       headers: { ...this.headers(), 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, path);
     return (await res.json()) as T;
   }
@@ -620,9 +860,183 @@ export class GitHubClient {
   }
 }
 
+const AUTONOMY_PULL_QUERY = `
+  query CompanionAutonomyPulls($owner: String!, $name: String!, $cursor: String, $first: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequests(states: OPEN, first: $first, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          number
+          title
+          url
+          createdAt
+          updatedAt
+          isDraft
+          additions
+          deletions
+          changedFiles
+          mergeable
+          mergeStateStatus
+          headRefName
+          headRefOid
+          baseRefName
+          reviewDecision
+          author { login }
+          labels(first: 100) { nodes { name } }
+        }
+      }
+    }
+  }
+`;
+
+const AUTONOMY_ISSUE_QUERY = `
+  query CompanionAutonomyIssues($owner: String!, $name: String!, $cursor: String, $first: Int!) {
+    repository(owner: $owner, name: $name) {
+      issues(states: OPEN, first: $first, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          number
+          title
+          url
+          createdAt
+          updatedAt
+          author { login }
+          comments { totalCount }
+          labels(first: 1) { totalCount }
+          assignees(first: 1) { totalCount }
+        }
+      }
+    }
+  }
+`;
+
+interface GhPageInfo {
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+interface GhAutonomyPullNode {
+  number: number;
+  title: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+  mergeStateStatus: string;
+  headRefName: string;
+  headRefOid: string;
+  baseRefName: string;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  author: { login: string } | null;
+  labels: { nodes: Array<{ name: string } | null> };
+}
+
+interface GhAutonomyPullQuery {
+  repository: {
+    pullRequests: {
+      totalCount: number;
+      pageInfo: GhPageInfo;
+      nodes: Array<GhAutonomyPullNode | null>;
+    };
+  } | null;
+}
+
+type GhAutonomyPullConnection = NonNullable<GhAutonomyPullQuery['repository']>['pullRequests'];
+
+interface GhAutonomyIssueNode {
+  number: number;
+  title: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  author: { login: string } | null;
+  comments: { totalCount: number };
+  labels: { totalCount: number };
+  assignees: { totalCount: number };
+}
+
+interface GhAutonomyIssueQuery {
+  repository: {
+    issues: {
+      totalCount: number;
+      pageInfo: GhPageInfo;
+      nodes: Array<GhAutonomyIssueNode | null>;
+    };
+  } | null;
+}
+
+type GhAutonomyIssueConnection = NonNullable<GhAutonomyIssueQuery['repository']>['issues'];
+
+function mapAutonomyPull(node: GhAutonomyPullNode): GhPull {
+  return {
+    number: node.number,
+    title: node.title,
+    body: null,
+    state: 'open',
+    merged_at: null,
+    closed_at: null,
+    draft: node.isDraft,
+    labels: node.labels.nodes.filter((label): label is { name: string } => label !== null),
+    assignees: [],
+    head: { ref: node.headRefName, sha: node.headRefOid },
+    base: { ref: node.baseRefName },
+    mergeable: node.mergeable === 'MERGEABLE' ? true : node.mergeable === 'CONFLICTING' ? false : undefined,
+    mergeable_state: node.mergeStateStatus.toLowerCase(),
+    user: node.author,
+    additions: node.additions,
+    deletions: node.deletions,
+    changed_files: node.changedFiles,
+    review_decision: node.reviewDecision === 'APPROVED'
+      ? 'approved'
+      : node.reviewDecision === 'CHANGES_REQUESTED'
+        ? 'changes_requested'
+        : null,
+    html_url: node.url,
+    created_at: node.createdAt,
+    updated_at: node.updatedAt,
+  };
+}
+
+function mapAutonomyIssue(node: GhAutonomyIssueNode): GhIssue {
+  return {
+    number: node.number,
+    title: node.title,
+    body: null,
+    state: 'open',
+    // The dry-run only needs labelled/unlabelled and assigned/unassigned
+    // counts. A bounded sentinel avoids downloading names it never returns.
+    labels: node.labels.totalCount > 0 ? ['__present__'] : [],
+    user: node.author,
+    assignees: node.assignees.totalCount > 0 ? [{ login: '__present__' }] : [],
+    comments: node.comments.totalCount,
+    html_url: node.url,
+    created_at: node.createdAt,
+    updated_at: node.updatedAt,
+    closed_at: null,
+  };
+}
+
 /** Primary budget spent: the remaining count is 0. Secondary: GitHub sends `retry-after`. */
 function rateLimited(res: Response): boolean {
   return res.status === 429 || res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after');
+}
+
+function finiteHeader(value: string | null): number | null {
+  if (value === null || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function rateLimitPressure(snapshot: GitHubRateLimitSnapshot): number {
+  if (snapshot.remaining === 0) return Number.POSITIVE_INFINITY;
+  if (snapshot.remaining === null || snapshot.limit === null || snapshot.limit === 0) return 0;
+  return 1 - snapshot.remaining / snapshot.limit;
 }
 
 /** Read one relation from GitHub's comma-separated RFC 8288 Link header. */
@@ -641,6 +1055,13 @@ export interface GhRepoSummary {
   description: string | null;
   pushed_at: string | null;
   archived: boolean;
+}
+
+interface GhRepoHook {
+  id: number;
+  name: string;
+  active: boolean;
+  config: { url?: string };
 }
 
 export interface GhBranch {
@@ -692,9 +1113,25 @@ export interface GhPull {
    * FIRST_TIMER / MANNEQUIN / NONE. Absent on some webhook payload shapes.
    */
   author_association?: string;
+  /** Aggregate size fields are present on the single-PR endpoint, not lists. */
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+  /** Body-free autonomy GraphQL projection; absent on REST payloads. */
+  review_decision?: 'approved' | 'changes_requested' | null;
   html_url: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Exact queue totals plus bounded body-free rows for read-only planning. */
+export interface GhRepositoryAutonomyQueue {
+  readonly pulls: ReadonlyArray<GhPull>;
+  readonly openPullCount: number;
+  readonly pullsComplete: boolean;
+  readonly issues: ReadonlyArray<GhIssue>;
+  readonly openIssueCount: number;
+  readonly issuesComplete: boolean;
 }
 
 /** A public account profile (`GET /users/:login`). */

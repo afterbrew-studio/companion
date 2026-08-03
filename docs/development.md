@@ -59,8 +59,8 @@ The set of modules a build **contains** is named in exactly one place,
 
 | Profile | Modules | Used for |
 |---|---|---|
-| `slim` (default) | `core`, `workspace`, `operate`, `code`, `admin` | the published npx package and the OSS image |
-| `full` | `slim` + `plan`, `board`, `refinement`, `planner`, `automations`, `slop`, `playground`, `oidc` | everything in this repo |
+| `slim` (default) | `core`, `workspace`, `operate`, `code`, `admin`, `plan`, `board`, `automations` | the published npx package and the OSS image |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `notify`, `oidc` | everything in this repo |
 | `minimal` | `core`, `workspace` | the guard that the app shell depends on no optional module |
 
 ```sh

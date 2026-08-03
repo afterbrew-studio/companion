@@ -80,6 +80,16 @@ export class PrsStore {
     return rows.map((r) => prRowToRecord(r, reviews.get(r.number) ?? null));
   }
 
+  /** Scheduler hot path: closed history is irrelevant to merge admission and
+   * may contain years of rows. Decorate only the currently open window. */
+  listOpen(repo: string): PrRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM prs WHERE repo = ? AND state = 'open' ORDER BY updated_at DESC, number DESC`)
+      .all(repo) as PrRow[];
+    const reviews = this.prReviews.latestByNumber(repo, rows.map((row) => row.number));
+    return rows.map((row) => prRowToRecord(row, reviews.get(row.number) ?? null));
+  }
+
   /**
    * Open PRs whose head is this commit. A check_run/status webhook names a SHA,
    * not a PR, so this is how a CI event finds what it invalidates. Open only:
@@ -101,20 +111,25 @@ export class PrsStore {
     return prRowToRecord(row, reviewSignal(this.prReviews.latest(repo, number)));
   }
 
-  listWorkspace(workspaceId: string): PrRecord[] {
+  listWorkspace(workspaceId: string, state?: PrRecord['state']): PrRecord[] {
     const rows = this.db
       .prepare(
         `SELECT p.* FROM prs p JOIN v_repos r ON r.full_name = p.repo
-         WHERE r.workspace_id = ? ORDER BY p.updated_at DESC`,
+         WHERE r.workspace_id = ?${state ? ' AND p.state = ?' : ''} ORDER BY p.updated_at DESC`,
       )
-      .all(workspaceId) as PrRow[];
+      .all(...(state ? [workspaceId, state] : [workspaceId])) as PrRow[];
+    const numbersByRepo = new Map<string, number[]>();
+    for (const row of rows) {
+      const numbers = numbersByRepo.get(row.repo) ?? [];
+      numbers.push(row.number);
+      numbersByRepo.set(row.repo, numbers);
+    }
     const reviewsByRepo = new Map<string, Map<number, LatestReviewSignal>>();
+    for (const [repo, numbers] of numbersByRepo) {
+      reviewsByRepo.set(repo, this.prReviews.latestByNumber(repo, numbers));
+    }
     return rows.map((row) => {
-      let map = reviewsByRepo.get(row.repo);
-      if (!map) {
-        map = this.prReviews.latestByNumber(row.repo);
-        reviewsByRepo.set(row.repo, map);
-      }
+      const map = reviewsByRepo.get(row.repo)!;
       return prRowToRecord(row, map.get(row.number) ?? null);
     });
   }
@@ -147,9 +162,12 @@ export class PrsStore {
   } {
     const where: string[] = ['r.workspace_id = ?'];
     const args: unknown[] = [workspaceId];
+    const accessibleReposJson = opts.accessibleRepos?.length
+      ? JSON.stringify([...new Set(opts.accessibleRepos)])
+      : null;
     if (opts.accessibleRepos) {
-      where.push(opts.accessibleRepos.length > 0 ? `p.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})` : '1 = 0');
-      args.push(...opts.accessibleRepos);
+      where.push(accessibleReposJson ? `p.repo IN (SELECT value FROM json_each(?))` : '1 = 0');
+      if (accessibleReposJson) args.push(accessibleReposJson);
     }
     if (opts.repo) {
       where.push('p.repo = ?');
@@ -238,12 +256,12 @@ export class PrsStore {
     });
     const total = state ? counts[state] : counts.open + counts.merged + counts.closed;
     const facetAccess = opts.accessibleRepos
-      ? opts.accessibleRepos.length > 0
-        ? ` AND p.repo IN (${opts.accessibleRepos.map(() => '?').join(', ')})`
+      ? accessibleReposJson
+        ? ` AND p.repo IN (SELECT value FROM json_each(?))`
         : ' AND 1 = 0'
       : '';
     const facetBase = `FROM prs p JOIN v_repos r ON r.full_name = p.repo WHERE r.workspace_id = ?${facetAccess}`;
-    const facetArgs = [workspaceId, ...(opts.accessibleRepos ?? [])];
+    const facetArgs = accessibleReposJson ? [workspaceId, accessibleReposJson] : [workspaceId];
     const facets = opts.includeFacets === false
       ? { authors: [], assignees: [], labels: [] }
       : {

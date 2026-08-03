@@ -101,7 +101,7 @@ export default function Ideas(): JSX.Element {
                 />
               </div>
 
-              {can('planner:manage') ? (
+              {can('planner:manage') && can('runs:read') && can('runs:act') ? (
                 <button
                   type="submit"
                   className="inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-emerald-600 px-5 text-[13px] font-semibold text-white shadow-sm transition-[background-color,transform] hover:bg-emerald-500 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 disabled:active:translate-y-0 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400 dark:focus-visible:ring-offset-zinc-950 sm:w-auto"

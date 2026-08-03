@@ -25,6 +25,10 @@ export function fixture({
   runRows = {},
   /** What the finished run left in its worktree; empty diff by default. */
   diff = async () => ({ diff: '' }),
+  discard = async () => undefined,
+  performForRepo,
+  trySummary = async () => null,
+  authorized = () => true,
 } = {}) {
   const db = new Database(':memory:');
   db.exec(`
@@ -35,6 +39,7 @@ export function fixture({
     CREATE TABLE board_tasks (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL,
       target_branch TEXT NOT NULL DEFAULT 'main',
+      source_issue_number INTEGER, automation_policy TEXT,
       description TEXT NOT NULL DEFAULT '', acceptance TEXT NOT NULL DEFAULT '', spec_id TEXT,
       attachments TEXT NOT NULL DEFAULT '[]', depends_on TEXT NOT NULL DEFAULT '[]', model TEXT,
       priority INTEGER NOT NULL, status TEXT NOT NULL, stage TEXT, created_by TEXT,
@@ -43,6 +48,9 @@ export function fixture({
       attempts INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER
     );
+    CREATE UNIQUE INDEX idx_board_tasks_source_issue
+      ON board_tasks(repo, source_issue_number)
+      WHERE source_issue_number IS NOT NULL;
     CREATE TABLE board_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, at INTEGER NOT NULL,
       kind TEXT NOT NULL, detail TEXT NOT NULL DEFAULT ''
@@ -78,8 +86,10 @@ export function fixture({
     },
     prs: { get: () => pr },
     prReviews: { listForPr: () => [], latestWithFindings: () => latestReview },
+    prChecks: { trySummary },
+    sync: { syncRepo: async () => undefined },
     fixes: {
-      discard: async () => undefined,
+      discard,
       diff,
       createGoalRun:
         createGoalRun ??
@@ -90,7 +100,12 @@ export function fixture({
     // The board is the pusher-of-record, so a task is held until its owner has
     // an account that can push. These tests are about what happens AFTER that
     // gate, so grant it.
-    githubAccounts: { verifiedClientFor: async () => ({ client: {}, tried: [] }) },
+    githubAccounts: {
+      verifiedClientFor: async () => ({ client: {}, tried: [] }),
+      performForRepo:
+        performForRepo ??
+        (async () => ({ result: null, client: null, tried: [] })),
+    },
   };
   const makeService = () => new BoardService(
     store,
@@ -102,6 +117,7 @@ export function fixture({
     },
     { canAccessRepo: () => true },
     () => undefined,
+    authorized,
     () => undefined,
     { emit: (notification) => notifications.push(notification) },
   );
@@ -126,6 +142,8 @@ export function insertTask(store, overrides = {}) {
     workspaceId: 'ws-1',
     repo: 'owner/repo',
     targetBranch: 'main',
+    sourceIssueNumber: null,
+    automationPolicy: null,
     title: 'Lifecycle test',
     description: '',
     acceptance: '',

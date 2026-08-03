@@ -44,6 +44,15 @@ export default defineManifest({
       default: false,
     },
     {
+      key: 'webhookPublicUrl',
+      label: 'Self-managed webhook URL',
+      kind: 'text',
+      description:
+        'Optional public HTTPS base URL that forwards to companion-api (for example https://companion.example.com). HTTP is accepted only on loopback for local development. It takes precedence over the moxxy relay and keeps enterprise delivery on your own infrastructure.',
+      default: '',
+      max: 500,
+    },
+    {
       key: 'worktreeRetentionDays',
       label: 'Finished worktree retention',
       kind: 'number',

@@ -32,22 +32,45 @@ export class WebhookTunnel {
 
   constructor(
     /** The `webhookTunnel` module-config flag (live read). */
-    readonly enabled: () => boolean,
+    private readonly relayEnabled: () => boolean,
+    /** Optional operator-owned ingress, preferred over the hosted relay. */
+    private readonly externalUrl: () => string,
     private readonly port: number,
     private readonly stateChanged: () => void = () => undefined,
     private readonly createTunnel: ProxyTunnelFactory = createProxyTunnel,
   ) {}
 
+  /** Whether public delivery is validly configured right now. */
+  enabled(): boolean {
+    const external = this.externalIngress();
+    if (external.configured) return external.url !== null;
+    return this.relayEnabled();
+  }
+
   state(): WebhookTunnelState {
-    if (!this.enabled()) return { enabled: false, status: 'off', url: null, error: null };
-    if (this.handle) return { enabled: true, status: 'connected', url: this.handle.url, error: null };
-    if (this.opening) return { enabled: true, status: 'connecting', url: null, error: null };
-    if (this.lastError) return { enabled: true, status: 'error', url: null, error: this.lastError };
-    return { enabled: true, status: 'connecting', url: null, error: null };
+    const external = this.externalIngress();
+    if (external.configured) {
+      return external.url
+        ? { enabled: true, source: 'external', status: 'connected', url: external.url, error: null }
+        : { enabled: true, source: 'external', status: 'error', url: null, error: external.error };
+    }
+    if (!this.relayEnabled()) {
+      return { enabled: false, source: 'off', status: 'off', url: null, error: null };
+    }
+    if (this.handle) {
+      return { enabled: true, source: 'relay', status: 'connected', url: this.handle.url, error: null };
+    }
+    if (this.opening) return { enabled: true, source: 'relay', status: 'connecting', url: null, error: null };
+    if (this.lastError) {
+      return { enabled: true, source: 'relay', status: 'error', url: null, error: this.lastError };
+    }
+    return { enabled: true, source: 'relay', status: 'connecting', url: null, error: null };
   }
 
   /** Public base URL when the tunnel is up (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
   url(): string | null {
+    const external = this.externalIngress();
+    if (external.configured) return external.url;
     return this.handle?.url ?? null;
   }
 
@@ -59,6 +82,21 @@ export class WebhookTunnel {
 
   async start(): Promise<string> {
     this.suspended = false;
+    const external = this.externalIngress();
+    if (external.configured) {
+      this.clearRetry();
+      if (!external.url) throw new Error(external.error ?? 'invalid self-managed webhook URL');
+      // A self-managed ingress takes precedence. Close a relay left open by a
+      // live config edit so two public endpoints do not remain valid silently.
+      if (this.opening) await this.opening.catch(() => undefined);
+      const previous = this.handle;
+      this.handle = null;
+      if (previous) await previous.close();
+      this.lastError = null;
+      this.stateChanged();
+      return external.url;
+    }
+    if (!this.relayEnabled()) throw new Error('public webhook delivery is not configured');
     if (this.handle) return this.handle.url;
     if (this.opening) return this.opening;
     this.clearRetry();
@@ -110,7 +148,10 @@ export class WebhookTunnel {
   /** Re-open on boot when the user had it enabled (the URL is key-stable). */
   restore(): void {
     this.suspended = false;
-    if (!this.enabled()) return;
+    if (!this.enabled()) {
+      this.stateChanged();
+      return;
+    }
     void this.start().catch((err) => log.warn('webhook tunnel restore failed', { err: String(err) }));
   }
 
@@ -128,12 +169,12 @@ export class WebhookTunnel {
   }
 
   private scheduleRetry(): void {
-    if (this.suspended || !this.enabled() || this.retryTimer) return;
+    if (this.suspended || !this.relayEnabled() || this.externalIngress().configured || this.retryTimer) return;
     const delay = this.retryMs;
     this.retryMs = Math.min(this.retryMs * 2, RETRY_MAX_MS);
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      if (this.suspended || !this.enabled()) return;
+      if (this.suspended || !this.relayEnabled() || this.externalIngress().configured) return;
       void this.start().catch((err) => log.warn('webhook tunnel retry failed', { err: String(err) }));
     }, delay);
     this.retryTimer.unref();
@@ -143,6 +184,32 @@ export class WebhookTunnel {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
   }
+
+  private externalIngress(): { configured: boolean; url: string | null; error: string | null } {
+    return normalizeExternalUrl(this.externalUrl());
+  }
+}
+
+function normalizeExternalUrl(rawValue: string): { configured: boolean; url: string | null; error: string | null } {
+  const raw = rawValue.trim();
+  if (!raw) return { configured: false, url: null, error: null };
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('protocol');
+    if (parsed.protocol === 'http:' && !isLoopback(parsed.hostname)) throw new Error('insecure');
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('components');
+    return { configured: true, url: parsed.toString().replace(/\/+$/, ''), error: null };
+  } catch {
+    return {
+      configured: true,
+      url: null,
+      error: 'The self-managed webhook URL must use HTTPS (HTTP is allowed only on loopback) and have no credentials, query, or fragment.',
+    };
+  }
+}
+
+function isLoopback(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
 /** Public diagnostics stay useful without exposing relay internals or local paths. */

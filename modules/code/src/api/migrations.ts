@@ -621,4 +621,36 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_triage_latest`);
     },
   },
+  {
+    /** Opt-in re-evaluation when a pull request receives a new head commit. */
+    version: 20,
+    name: 'pipeline_pr_head_updates',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(pipelines)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'auto_update')) {
+        db.exec(`ALTER TABLE pipelines ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+    down: () => {
+      // Additive and inert to an older build; rebuilding definitions is unsafe.
+    },
+  },
+  {
+    /** GitHub-side webhook ownership, so enable/repair/disable is one flow. */
+    version: 21,
+    name: 'managed_repository_webhooks',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(repos)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'webhook_remote_id')) {
+        db.exec(`ALTER TABLE repos ADD COLUMN webhook_remote_id INTEGER`);
+      }
+      if (!columns.some((column) => column.name === 'webhook_remote_error')) {
+        db.exec(`ALTER TABLE repos ADD COLUMN webhook_remote_error TEXT`);
+      }
+    },
+    down: () => {
+      // Additive receiver metadata is harmless to an older build. Rebuilding
+      // repos would risk the authoritative account and workspace bindings.
+    },
+  },
 ]);

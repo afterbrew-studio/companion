@@ -430,7 +430,7 @@
     },
     "slop:act": {
       "owner": "slop",
-      "title": "Run detections and apply/dismiss verdicts",
+      "title": "Run assessments and apply/dismiss verdicts",
       "grants": [
         "admin",
         "maintainer"
@@ -438,7 +438,7 @@
     },
     "slop:manage": {
       "owner": "slop",
-      "title": "Create and edit detection rules",
+      "title": "Create and edit quality rules",
       "grants": [
         "admin",
         "maintainer"
@@ -446,7 +446,7 @@
     },
     "slop:read": {
       "owner": "slop",
-      "title": "View AI slop detections and rules",
+      "title": "View contribution quality assessments and rules",
       "grants": [
         "admin",
         "maintainer",

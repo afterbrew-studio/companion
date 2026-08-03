@@ -40,5 +40,8 @@ export type PlanService = ServiceMap['plan'];
 export type Proposals = PlanService['proposals'];
 export type Specs = PlanService['specs'];
 
+/** Optional autonomous task reconciler. Contributor flows resolve it lazily. */
+export type BoardService = ServiceMap['board'];
+
 /** module-core's Auth service (AI Help mints scoped API tokens through it). */
 export type Auth = ServiceMap['core'];

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineRoutes, route, created, accepted, badRequest, notFound } from '@moxxy/companion-sdk/server';
+import { defineRoutes, route, created, accepted, badRequest, forbidden, notFound } from '@moxxy/companion-sdk/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log } from '@moxxy/companion-sdk/server';
@@ -153,6 +153,18 @@ export default defineRoutes((ctx) => {
   // isn't in reads as "not found" — same helper as module-workspace's routes.
   const requireWorkspace = (user: AuthUser | null, id: string): WorkspaceRecord =>
     workspace.requireAccessible(user, id);
+
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
+
+  const requirePrWrite: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'prs:read') || !ctx.rbac.has(user.role, 'prs:act')) {
+      throw forbidden('publishing an implementation also requires prs:read and prs:act');
+    }
+  };
   return [
     // ---------- proposals ----------------------------------------------------------
 
@@ -176,15 +188,15 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    // Analysis is read-only and part of filing a proposal, so it rides
-    // proposals:create — business users see feasibility before a maintainer
-    // ever gets involved.
+    // Domain permission and compute permission remain independent: a governed
+    // role may file proposals without being allowed to spend agent capacity.
     route({
       method: 'POST',
       path: '/api/proposals/:id/analyze',
       access: 'proposals:create',
       handler: ({ params, user }) => {
         requireProposal(user, params.id);
+        requireAgentRun(user);
         try {
           plan.proposals.validateAnalyze(params.id);
         } catch (err) {
@@ -232,6 +244,7 @@ export default defineRoutes((ctx) => {
       access: 'proposals:act',
       handler: async ({ params, user }) => {
         requireProposal(user, params.id);
+        requireAgentRun(user);
         return { proposal: await plan.proposals.approve(params.id, user!.username) };
       },
     }),
@@ -242,6 +255,8 @@ export default defineRoutes((ctx) => {
       access: 'proposals:act',
       handler: async ({ params, user }) => {
         requireProposal(user, params.id);
+        requireAgentRun(user);
+        requirePrWrite(user);
         return { proposal: await plan.proposals.finishImplementation(params.id, user!.username) };
       },
     }),
@@ -382,6 +397,7 @@ export default defineRoutes((ctx) => {
       body: generateSpecSchema,
       handler: ({ body, user }) => {
         requireRepo(user, body.workspaceId, body.repo);
+        requireAgentRun(user);
         void plan.specs
           .generate(body.workspaceId, body.repo, body.instructions, body.storage, user!.username)
           .catch((err) => log.warn('spec generation failed', { repo: body.repo, err: String(err) }));
@@ -408,6 +424,7 @@ export default defineRoutes((ctx) => {
       access: 'specs:manage',
       handler: ({ params, user }) => {
         const proposal = requireProposal(user, params.id);
+        requireAgentRun(user);
         if (proposal.status !== 'implemented') throw badRequest(`proposal is ${proposal.status}, not implemented`);
         void plan.specs
           .generate(
@@ -568,6 +585,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, body, user }) => {
         requireWorkspace(user, params.id);
         if (body.repo) requireRepo(user, params.id, body.repo);
+        requireAgentRun(user);
         try {
           return created({ doc: await plan.docs.generate(params.id, body, user!.username) });
         } catch (err) {

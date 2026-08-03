@@ -126,6 +126,7 @@ export function PipelinesPage(): JSX.Element {
   const fileInput = useRef<HTMLInputElement>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const canManage = can('pipelines:manage');
+  const canUseAgents = can('runs:read') && can('runs:act');
 
   if (!current) return <EmptyState title="No workspace selected" />;
 
@@ -137,9 +138,11 @@ export function PipelinesPage(): JSX.Element {
         actions={
           canManage ? (
             <>
-              <button className="btn-ghost" onClick={() => setGenerating(true)}>
-                ✦ Generate with AI
-              </button>
+              {canUseAgents ? (
+                <button className="btn-ghost" onClick={() => setGenerating(true)}>
+                  ✦ Generate with AI
+                </button>
+              ) : null}
               <ActionMenu
                 trigger="Import"
                 label="Import a pipeline"
@@ -197,6 +200,7 @@ export function PipelinesPage(): JSX.Element {
                   auto-run on {p.type === 'issue' ? 'issue' : 'PR'} open
                 </span>
               ) : null}
+              {p.autoRunOnPrUpdate ? <span className="badge shrink-0">re-run on new commits</span> : null}
             </div>
             <ol className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={`${p.name} steps`}>
               {p.steps.map((spec, i) => {
@@ -570,6 +574,7 @@ function PipelineEditor({
   const [description, setDescription] = useState(pipeline?.description ?? '');
   const [type, setType] = useState<PipelineType>(pipeline?.type ?? 'pr');
   const [autoRun, setAutoRun] = useState(pipeline?.autoRunOnPrOpen ?? false);
+  const [autoUpdate, setAutoUpdate] = useState(pipeline?.autoRunOnPrUpdate ?? false);
   const [steps, setSteps] = useState<PipelineStepSpec[]>([...(pipeline?.steps ?? [])]);
   const allowedKinds = PIPELINE_TYPE_STEPS[type];
   const [busy, setBusy] = useState(false);
@@ -585,6 +590,7 @@ function PipelineEditor({
         description: description.trim(),
         steps,
         autoRunOnPrOpen: type === 'platform' ? false : autoRun,
+        autoRunOnPrUpdate: type === 'pr' ? autoUpdate : false,
       };
       if (pipeline) await api.updatePipeline(pipeline.id, body);
       else await api.createPipeline(workspaceId, body);
@@ -612,6 +618,15 @@ function PipelineEditor({
     name.trim().length > 0 &&
     steps.length > 0 &&
     steps.every((s) => (s.type === 'inline' ? stepIsValid(s.step) : true));
+  const unsafeAutoRun =
+    (autoRun || autoUpdate) &&
+    steps.some((spec) => {
+      const kind =
+        spec.type === 'inline'
+          ? spec.step.kind
+          : stepDefs.find((definition) => definition.id === spec.stepDefinitionId)?.step.kind;
+      return kind === 'executable' || kind === 'npm-bootstrap';
+    });
 
   return (
     <Modal title={pipeline ? `Edit pipeline — ${pipeline.name}` : 'New pipeline'} onClose={onClose} wide>
@@ -641,6 +656,7 @@ function PipelineEditor({
                 prev.filter((sp) => sp.type !== 'inline' || PIPELINE_TYPE_STEPS[next].includes(sp.step.kind)),
               );
               if (next === 'platform') setAutoRun(false);
+              if (next !== 'pr') setAutoUpdate(false);
             }}
           >
             {(Object.keys(TYPE_META) as PipelineType[]).map((t) => (
@@ -655,6 +671,18 @@ function PipelineEditor({
             <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
             {TYPE_META[type].autoRun}
           </label>
+        ) : null}
+        {type === 'pr' ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={autoUpdate} onChange={(e) => setAutoUpdate(e.target.checked)} />
+            Re-run automatically when a PR receives a new head commit
+          </label>
+        ) : null}
+        {unsafeAutoRun ? (
+          <div className="banner-warn mb-0 text-xs">
+            Command and publishing steps can run only when a person starts the pipeline. Turn off webhook auto-run or
+            remove the privileged step.
+          </div>
         ) : null}
 
         <div>
@@ -740,7 +768,7 @@ function PipelineEditor({
           <button className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" disabled={busy || !valid} onClick={() => void save()}>
+          <button className="btn" disabled={busy || !valid || unsafeAutoRun} onClick={() => void save()}>
             {busy ? 'Saving…' : 'Save pipeline'}
           </button>
         </FormActions>

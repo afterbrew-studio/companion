@@ -19,11 +19,19 @@ export const REPO_PRESETS: readonly RepoPreset[] = [
     label: 'Open-source project',
     description:
       'Screen incoming pull requests for low-oversight AI output, triage new issues, and get a daily digest. Nothing is posted to GitHub without you.',
-    automation: { autoTriage: true, digest: true, staleSweep: true, prGate: false, autoMerge: false },
+    automation: {
+      autoTriage: true,
+      digest: true,
+      staleSweep: true,
+      prGate: false,
+      autoMerge: false,
+      reviewReplies: false,
+    },
     pipeline: {
       name: 'Incoming pull request',
       description: 'Slop screen plus an AI review, both landing in Companion for a maintainer to act on.',
       autoRunOnPrOpen: true,
+      autoRunOnPrUpdate: true,
       steps: [
         // Cheapest signal first: a throwaway PR should not spend a review.
         { kind: 'slop-check', threshold: 70 },
@@ -39,11 +47,21 @@ export const REPO_PRESETS: readonly RepoPreset[] = [
     label: 'Internal service',
     description:
       'Gate pull requests on CI and an AI review, triage new issues, and auto-merge what is green and approved.',
-    automation: { autoTriage: true, digest: true, staleSweep: false, prGate: true, autoMerge: true },
+    // The pipeline already owns the AI review. Enabling the separate PR gate
+    // would launch a second full review for the same head.
+    automation: {
+      autoTriage: true,
+      digest: true,
+      staleSweep: false,
+      prGate: false,
+      autoMerge: true,
+      reviewReplies: true,
+    },
     pipeline: {
       name: 'Merge gate',
       description: 'PR quality, CI, and an evidence-backed AI review must all clear before the change can progress.',
       autoRunOnPrOpen: true,
+      autoRunOnPrUpdate: true,
       steps: [
         { kind: 'slop-check', threshold: 70 },
         { kind: 'checks-gate', allowPending: false },
@@ -55,7 +73,14 @@ export const REPO_PRESETS: readonly RepoPreset[] = [
     id: 'watch',
     label: 'Watch only',
     description: 'Sync issues and pull requests, run nothing automatically. Everything stays manual.',
-    automation: { autoTriage: false, digest: false, staleSweep: false, prGate: false, autoMerge: false },
+    automation: {
+      autoTriage: false,
+      digest: false,
+      staleSweep: false,
+      prGate: false,
+      autoMerge: false,
+      reviewReplies: false,
+    },
     pipeline: null,
   },
 ];

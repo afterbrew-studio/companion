@@ -32,6 +32,9 @@ export interface UsePr {
   readonly setError: (e: string | null) => void;
   readonly refresh: () => Promise<void>;
   readonly canAct: boolean;
+  readonly canReadRuns: boolean;
+  readonly canUseAgents: boolean;
+  readonly canRunPipelines: boolean;
 
   /** AI review agent. */
   readonly analyzing: boolean;
@@ -71,6 +74,9 @@ export function usePr(repo: string, number: number): UsePr {
   const { can } = useAuth();
   const { current } = useWorkspace();
   const canAct = can('prs:act');
+  const canReadRuns = can('runs:read');
+  const canUseAgents = canAct && canReadRuns && can('runs:act');
+  const canRunPipelines = can('pipelines:run');
 
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -188,6 +194,9 @@ export function usePr(repo: string, number: number): UsePr {
     setError,
     refresh,
     canAct,
+    canReadRuns,
+    canUseAgents,
+    canRunPipelines,
     analyzing,
     analyze,
     applyReview: (accountId, mode) => withBusy(() => api.applyPrReview(review!.id, accountId, mode ? { mode } : {})),

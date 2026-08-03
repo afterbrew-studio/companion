@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
-import { GitHubAccounts } from '../dist/api/github-accounts.js';
+import { GitHubAccounts, gradeRepoPermissions } from '../dist/api/github-accounts.js';
 
 function fixture({ repoWorkspace = 'ws-existing' } = {}) {
   const accounts = [
@@ -42,6 +43,13 @@ test('unowned legacy accounts are invisible and never resolve', () => {
   assert.deepEqual(accounts.list(), []);
   assert.equal(accounts.tokenFor('fetch', { repo: 'acme/private', username: 'admin' }), null);
   assert.equal(accounts.tokenFor('fetch', { repo: 'acme/private', username: null }), null);
+});
+
+test('missing repository permission evidence can never manufacture write authority', () => {
+  assert.equal(gradeRepoPermissions(undefined), 'pull');
+  assert.equal(gradeRepoPermissions({ pull: true }), 'pull');
+  assert.equal(gradeRepoPermissions({ push: true }), 'push');
+  assert.equal(gradeRepoPermissions({ admin: true }), 'admin');
 });
 
 test('add-repo resolution uses the requested workspace for a maintainer account', async () => {
@@ -105,4 +113,42 @@ test('a workspace-scoped account still counts as GitHub being configured', () =>
   // health indicator asks. Answering it with resolution is what made scoping
   // look like an outage.
   assert.equal(accounts.list().length, 1);
+});
+
+test('concurrent purpose checks share one account/repository permission probe', async () => {
+  let probes = 0;
+  const server = createServer((_req, res) => {
+    probes += 1;
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ permissions: { admin: true } }));
+    }, 10);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const account = {
+    id: 'gha-all', login: 'maintainer', token: 'tok',
+    purposes: ['fetch', 'runs', 'pipelines', 'webhooks'],
+    scope: 'all', workspaceIds: [], ownerId: 'maintainer', createdAt: 1,
+  };
+  const store = {
+    githubAccounts: { list: () => [account], binding: () => null, bindingsFor: () => ({}) },
+    repos: { workspaceIds: () => ['ws-1'] },
+  };
+  const accounts = new GitHubAccounts(store, `http://127.0.0.1:${port}`);
+  try {
+    const results = await Promise.all(
+      ['fetch', 'runs', 'pipelines', 'webhooks'].map((purpose) =>
+        accounts.verifiedClientFor(purpose, 'acme/app', {
+          username: 'maintainer',
+          workspaceId: 'ws-1',
+          need: purpose === 'webhooks' ? 'admin' : purpose === 'fetch' ? 'pull' : 'push',
+        }),
+      ),
+    );
+    assert.ok(results.every((result) => result.client !== null));
+    assert.equal(probes, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

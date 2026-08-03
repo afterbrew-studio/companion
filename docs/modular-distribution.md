@@ -150,8 +150,8 @@ tiers, not eleven.
 
 | Profile | Modules | Artifact |
 |---|---|---|
-| `slim` | core, workspace, operate, code, admin | `@moxxy/companion` (npx), `companion:oss` image |
-| `full` | slim + plan, board, refinement, planner, automations, slop, playground | `@moxxy/companion-full`, `companion:full` image |
+| `slim` | core, workspace, operate, code, admin, plan, board, automations | `@moxxy/companion` (npx), `companion:oss` image |
+| `full` | slim + refinement, planner, slop, playground, notify, oidc | `@moxxy/companion-full`, `companion:full` image |
 | `enterprise` | slim + enterprise modules | `companion:enterprise` image only |
 
 The `slim` set is exactly the shell's hard-import closure (Finding 1), which is
@@ -164,7 +164,7 @@ why it compiles today and the others would not without §5.
 Replace the two hand-maintained files with generated ones.
 
 ```
-profiles/slim.json         { "name": "slim", "modules": ["core","workspace","operate","code","admin"] }
+profiles/slim.json         { "name": "slim", "modules": ["core","workspace","operate","code","admin","plan","board","automations"] }
 profiles/full.json
 profiles/enterprise.json   (lives in the private repo, or is composed from an env var)
 

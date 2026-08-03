@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { z } from 'zod';
-import { badRequest, defineRoutes, notFound, paths, route } from '@moxxy/companion-sdk/server';
+import type { AuthUser } from '@moxxy/companion-contracts';
+import { badRequest, defineRoutes, forbidden, notFound, paths, route } from '@moxxy/companion-sdk/server';
 import type { PipelinePreview, PipelinePreviewStep, PlaygroundRunResult } from '../contract/index.js';
 import evaluationRoutes from './evaluation-routes.js';
 import productionEvaluationRoutes from './production-evaluation-routes.js';
@@ -36,6 +37,11 @@ const runSchema = z
 export default defineRoutes((ctx) => {
   const op = ctx.services.get('operate');
   const workspace = ctx.services.get('workspace');
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
 
   return [
     route({
@@ -44,6 +50,7 @@ export default defineRoutes((ctx) => {
       access: 'playground:run',
       body: runSchema,
       handler: async ({ body, user }): Promise<PlaygroundRunResult> => {
+        requireAgentRun(user);
         let cwd: string;
         if (body.repo) {
           // Private-workspace repos read as "not found" to outsiders.
@@ -157,6 +164,7 @@ export default defineRoutes((ctx) => {
             description: pipeline.description,
             type: pipeline.type,
             autoRunOnPrOpen: pipeline.autoRunOnPrOpen,
+            autoRunOnPrUpdate: pipeline.autoRunOnPrUpdate,
           },
           target: { repo, prNumber, title: pr.title, author: pr.author },
           steps,

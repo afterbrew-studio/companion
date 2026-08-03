@@ -96,7 +96,6 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
           {review ? (
             <ReviewLead
               pr={pr}
-              canAct={pr.canAct}
               onRun={(opts) => void pr.analyze(opts)}
               focusedFinding={focusedFinding}
               onFocusFinding={setFocusedFinding}
@@ -115,6 +114,8 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
                 <PrReview
                   review={pr.review}
                   canAct={pr.canAct}
+                  canReadRuns={pr.canReadRuns}
+                  canUseAgents={pr.canUseAgents}
                   busy={pr.busy}
                   onApply={(acct) => void pr.applyReview(acct)}
                   onCancel={() => void pr.cancelReview()}
@@ -147,11 +148,11 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
             number={number}
             canAct={pr.canAct}
             ciAnalysis={pr.ciAnalysis}
-            onFixChecks={pr.canAct && p.state === 'open' ? () => void pr.fixChecks() : null}
+            onFixChecks={pr.canUseAgents && p.state === 'open' ? () => void pr.fixChecks() : null}
           />
 
           {!review ? <PrPipelines runs={pr.pipelineRuns} /> : null}
-          {!review ? <AgentActivity repo={repo} issueNumber={number} /> : null}
+          {!review && pr.canReadRuns ? <AgentActivity repo={repo} issueNumber={number} /> : null}
 
           <CommentsSection
             load={() => api.prComments(repo, number)}
@@ -201,13 +202,11 @@ function ReviewLauncher({ onRun, busy = false }: { onRun: (opts: ReviewOptions) 
 /** In review mode the AI verdict is the hero — reviewing / verdict / empty. */
 function ReviewLead({
   pr,
-  canAct,
   onRun,
   focusedFinding,
   onFocusFinding,
 }: {
   pr: UsePr;
-  canAct: boolean;
   onRun: (opts?: ReviewOptions) => void;
   focusedFinding: string | null;
   onFocusFinding: (id: string | null) => void;
@@ -218,7 +217,9 @@ function ReviewLead({
     const card = (
       <PrReview
         review={pr.review}
-        canAct={canAct}
+        canAct={pr.canAct}
+        canReadRuns={pr.canReadRuns}
+        canUseAgents={pr.canUseAgents}
         busy={pr.busy}
         emphasis="hero"
         onApply={(acct) => void pr.applyReview(acct)}
@@ -233,7 +234,7 @@ function ReviewLead({
       return pr.review.status === 'failed' || pr.review.status === 'cancelled' ? (
         <div className="flex flex-col gap-4">
           {card}
-          {canAct ? <ReviewLauncher onRun={onRun} /> : null}
+          {pr.canUseAgents ? <ReviewLauncher onRun={onRun} /> : null}
         </div>
       ) : (
         card
@@ -245,7 +246,7 @@ function ReviewLead({
     return (
       <div className="flex flex-col gap-4">
         {card}
-        {pr.analyzing ? <ReviewingStage /> : canAct ? <ReviewLauncher onRun={onRun} busy={pr.analyzing} /> : null}
+        {pr.analyzing ? <ReviewingStage /> : pr.canUseAgents ? <ReviewLauncher onRun={onRun} busy={pr.analyzing} /> : null}
       </div>
     );
   }
@@ -254,7 +255,7 @@ function ReviewLead({
     <EmptyState
       title="No AI review yet"
       hint="An agent reads the diff and CI status, then proposes findings anchored to the lines they concern. You choose which ones get posted to GitHub."
-      action={canAct ? <ReviewLauncher onRun={onRun} /> : undefined}
+      action={pr.canUseAgents ? <ReviewLauncher onRun={onRun} /> : undefined}
     />
   );
 }
@@ -266,7 +267,7 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
   const review = mode === 'review';
 
   const aiActions: MenuAction[] = [];
-  if (data.canAct) {
+  if (data.canUseAgents) {
     aiActions.push({
       label: data.analyzing ? 'Reviewing…' : data.review ? 'Re-run AI review' : 'AI review',
       disabled: data.analyzing,
@@ -298,7 +299,7 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
       aiActions.push({ label: 'Run agent on branch…', disabled: data.agentBusy !== null, onSelect: () => setRunningAgent(true) });
     }
   }
-  if (!review && data.canAct && pr.state === 'open' && data.pipelines.length > 0) {
+  if (!review && data.canRunPipelines && pr.state === 'open' && data.pipelines.length > 0) {
     aiActions.push({ label: 'Run pipeline…', onSelect: () => setRunningPipeline(true) });
   }
 

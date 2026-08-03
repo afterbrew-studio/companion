@@ -54,6 +54,7 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PlaygroundRunResult | null>(null);
+  const canRun = can('runs:read') && can('runs:act');
 
   useEffect(() => {
     if (codeEnabled && can('repos:read')) {
@@ -151,7 +152,8 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
           <button
             className={`flex h-9 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors disabled:cursor-default disabled:opacity-50 ${aiAccentClass(false)}`}
             type="submit"
-            disabled={busy || prompt.trim().length < 4}
+            disabled={!canRun || busy || prompt.trim().length < 4}
+            title={canRun ? undefined : 'Requires runs:read and runs:act'}
           >
             <SparkleIcon />
             {busy ? 'Running…' : skill ? 'Dry-run skill' : 'Run'}

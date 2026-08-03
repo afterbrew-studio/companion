@@ -222,4 +222,47 @@ export default defineMigrations([
     },
     down: () => undefined,
   },
+  {
+    version: 11,
+    name: 'board_issue_flow_provenance',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(board_tasks)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'source_issue_number')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN source_issue_number INTEGER`);
+      }
+      if (!columns.some((column) => column.name === 'automation_policy')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN automation_policy TEXT`);
+      }
+      // One GitHub issue may admit at most one task, even if the repository is
+      // later moved to another workspace. The partial index leaves every
+      // hand-authored card (NULL source) untouched.
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_board_tasks_source_issue
+          ON board_tasks(repo, source_issue_number)
+          WHERE source_issue_number IS NOT NULL
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_board_tasks_source_issue`);
+      // Additive provenance columns are safe for an older build to ignore;
+      // rebuilding a live task table merely to remove them is not.
+    },
+  },
+  {
+    version: 12,
+    name: 'board_pull_request_ownership_index',
+    up: (db) => {
+      // Automations consults this ownership boundary before admitting a PR to
+      // a second review/merge engine. The partial index keeps that lookup
+      // constant-time without indexing the much larger set of pre-PR cards.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_board_tasks_pull_request
+          ON board_tasks(repo, pr_number)
+          WHERE pr_number IS NOT NULL
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_board_tasks_pull_request`);
+    },
+  },
 ]);

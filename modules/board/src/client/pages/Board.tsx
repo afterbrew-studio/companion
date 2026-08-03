@@ -82,7 +82,7 @@ function needsDecision(task: TaskListRecord, autoMerge: boolean): boolean {
   return (
     task.status === 'in_review' &&
     task.stage === 'awaiting_merge' &&
-    !(autoMerge && task.reviewRecommendation === 'approve')
+    !(autoMerge && task.reviewRecommendation === 'approve' && task.reviewRisk === 'low')
   );
 }
 
@@ -110,7 +110,9 @@ function stageLabel(task: TaskListRecord): string | null {
     case 'awaiting_merge':
       // A 'comment' verdict neither approves nor blocks — the human decides.
       return task.reviewRecommendation === 'approve'
-        ? 'ready to merge'
+        ? task.reviewRisk === 'low'
+          ? 'ready to merge'
+          : `${task.reviewRisk ?? 'unknown'} risk · needs decision`
         : task.reviewRecommendation === 'comment'
           ? 'needs a merge decision'
           : 'awaiting merge';
@@ -391,7 +393,10 @@ export default function Board({ query }: RouteProps): JSX.Element {
   const autoMerge = config?.autoMerge ?? true;
   const byColumn = useMemo(() => {
     const map = new Map<ColumnKey, TaskListRecord[]>(COLUMNS.map((c) => [c.key, []]));
-    for (const t of visibleTasks) map.get(needsDecision(t, autoMerge) ? 'needs_decision' : t.status)?.push(t);
+    for (const t of visibleTasks) {
+      const taskAutoMerge = t.automationPolicy?.autoMerge ?? autoMerge;
+      map.get(needsDecision(t, taskAutoMerge) ? 'needs_decision' : t.status)?.push(t);
+    }
     return map;
   }, [visibleTasks, autoMerge]);
 
@@ -693,6 +698,7 @@ function TaskCard({
 }): JSX.Element {
   const signal = cardSignal(task, attention ?? false);
   const hasChips =
+    task.sourceIssueNumber != null ||
     task.prUrl != null ||
     task.reviewRecommendation != null ||
     task.attempts > 0 ||
@@ -753,6 +759,15 @@ function TaskCard({
       ) : null}
       {hasChips ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2 dark:border-zinc-800/60">
+          {task.sourceIssueNumber != null ? (
+            <a
+              href={`#/repos/${task.repo}/issues/${task.sourceIssueNumber}`}
+              className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:underline dark:text-blue-400"
+              onClick={(e) => e.stopPropagation()}
+            >
+              issue #{task.sourceIssueNumber}
+            </a>
+          ) : null}
           {task.prUrl ? (
             <a
               href={task.prUrl}
@@ -1308,6 +1323,17 @@ function TaskDetailDrawer({
               <span className="font-mono">{task.targetBranch}</span>
             </CopyText>
           </DetailRow>
+          {task.sourceIssueNumber != null ? (
+            <DetailRow label="Source issue">
+              <a
+                className="font-medium hover:underline"
+                href={`#/repos/${task.repo}/issues/${task.sourceIssueNumber}`}
+                onClick={onClose}
+              >
+                {task.repo}#{task.sourceIssueNumber}
+              </a>
+            </DetailRow>
+          ) : null}
           {task.branch ? (
             <DetailRow label="Working branch">
               <CopyText value={task.branch}>
@@ -1362,6 +1388,14 @@ function TaskDetailDrawer({
             </DetailRow>
           ) : null}
           <DetailRow label="Author">{task.createdBy ?? '—'}</DetailRow>
+          {task.automationPolicy ? (
+            <DetailRow label="Flow policy">
+              <span>
+                {task.automationPolicy.autoMerge ? 'autonomous merge' : 'human merge'} · auto-review · CI repair ·{' '}
+                {task.automationPolicy.maxAttempts} attempts
+              </span>
+            </DetailRow>
+          ) : null}
           <DetailRow label="Worker">
             {task.firstWorker ?? currentWorker ?? 'not picked up yet'}
             {currentWorker && task.firstWorker && currentWorker !== task.firstWorker ? (

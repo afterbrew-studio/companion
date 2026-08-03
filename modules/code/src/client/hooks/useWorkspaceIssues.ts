@@ -57,6 +57,7 @@ export interface UseWorkspaceIssues {
   readonly failedRepos: readonly RepoSyncFailure[];
 
   readonly canActIssues: boolean;
+  readonly canRunAiActions: boolean;
   readonly canRunPipelines: boolean;
   readonly pipelines: PipelineRecord[];
 
@@ -86,6 +87,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   const { can } = useAuth();
   const canRunPipelines = can('pipelines:run');
   const canActIssues = can('issues:act');
+  const canRunAiActions = canActIssues && can('runs:read') && can('runs:act');
 
   const [tab, setTab] = useHashTab(TABS, 'open', 'companion.tab:#/issues');
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(FILTER_KEYS);
@@ -181,6 +183,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     );
 
   const bulkAiTriage = (): void => {
+    if (!canRunAiActions) return;
     const targets = visibleIssues.filter((i) => selection.has(issueKey(i)));
     void runBulk(targets, (i) => api.triageIssue(i.repo, i.number), {
       label: (i) => `#${i.number}`,
@@ -214,7 +217,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     }
   };
   const rowActions = (issue: IssueListRecord): MenuAction[] => [
-    ...(canActIssues && issue.state === 'open'
+    ...(canRunAiActions && issue.state === 'open'
       ? [
           {
             label: 'Run AI triage',
@@ -262,6 +265,7 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
     unavailableRepos: refresh.unavailableRepos,
     failedRepos: refresh.failedRepos,
     canActIssues,
+    canRunAiActions,
     canRunPipelines,
     pipelines,
     selected: selection.selected,

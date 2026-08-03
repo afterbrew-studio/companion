@@ -1,4 +1,4 @@
-import type { SpaServerMessage } from '@moxxy/companion-contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { PrRecord } from '../contract/index.js';
@@ -49,6 +49,7 @@ export class Fixes {
       repo: string,
       username: string,
     ) => Promise<{ client: GitHubClient | null; tried: string[] }>,
+    private readonly authorized: (username: string, permission: Permission, repo: string) => boolean,
     private readonly checks: PrChecks,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
@@ -97,7 +98,10 @@ export class Fixes {
     /** See FixRunOptions; `task` defaults by kind when omitted. */
     task?: string;
     preferredModel?: string | null;
+    onCreated?: (runId: string) => void;
+    shouldStart?: (runId: string) => boolean;
   }): Promise<RunRecord> {
+    this.requireRunAuthority(opts.repo, opts.userId);
     await this.requirePersonalAccess(opts.repo, opts.userId);
     const suffix = Date.now().toString(36).slice(-4);
     const branch = `${opts.branchPrefix}-${suffix}`;
@@ -131,7 +135,29 @@ export class Fixes {
       preferredModel: opts.preferredModel,
     });
 
+    try {
+      opts.onCreated?.(run.id);
+    } catch (err) {
+      await this.orchestrator.stopRun(run.id).catch(() => undefined);
+      throw new Error(`goal-run owner callback failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const mayStart = (): boolean => {
+      try {
+        return this.hasRunAuthority(opts.userId, opts.repo) && opts.shouldStart?.(run.id) !== false;
+      } catch {
+        return false;
+      }
+    };
+    if (!mayStart()) {
+      await this.orchestrator.stopRun(run.id);
+      return this.orchestrator.getRun(run.id)!;
+    }
+
     await this.orchestrator.setGoalMode(run.id);
+    if (!mayStart()) {
+      await this.orchestrator.stopRun(run.id);
+      return this.orchestrator.getRun(run.id)!;
+    }
     await this.orchestrator.sendPrompt(run.id, opts.objective, undefined, opts.attachments);
     return this.orchestrator.getRun(run.id)!;
   }
@@ -253,6 +279,7 @@ export class Fixes {
     objective: string,
     opts: FixRunOptions & { userId?: string | null } = {},
   ): Promise<RunRecord> {
+    this.requireRunAuthority(pr.repo, opts.userId);
     await this.requirePersonalAccess(pr.repo, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
@@ -296,7 +323,7 @@ export class Fixes {
     }
     const mayStart = (): boolean => {
       try {
-        return opts.shouldStart?.(run.id) !== false;
+        return this.hasRunAuthority(opts.userId, pr.repo) && opts.shouldStart?.(run.id) !== false;
       } catch {
         return false;
       }
@@ -334,7 +361,7 @@ export class Fixes {
    */
   async approve(
     runId: string,
-    opts: { title?: string; body?: string; baseBranch?: string } = {},
+    opts: { title?: string; body?: string; baseBranch?: string; beforeWrite?: () => void } = {},
     actorUsername?: string | null,
   ): Promise<{ prUrl: string }> {
     const run = this.store.runs.get(runId);
@@ -359,7 +386,9 @@ export class Fixes {
       .viewer()
       .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
       .catch(() => undefined);
+    opts.beforeWrite?.();
     await backend.commitAll(run.cwd, opts.title ?? run.title, author);
+    opts.beforeWrite?.();
     await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 
     if (run.pr_url) {
@@ -370,6 +399,7 @@ export class Fixes {
       return { prUrl: run.pr_url };
     }
 
+    opts.beforeWrite?.();
     const pr = await client.createPr(run.repo, {
       title: opts.title ?? run.title,
       head: run.branch,
@@ -402,6 +432,20 @@ export class Fixes {
   private async requirePersonalAccess(repo: string, username?: string | null): Promise<void> {
     if (!username || !(await this.verifyGithub(repo, username))) {
       throw new Error(`your GitHub accounts cannot access ${repo} — ask the repository owner to grant access`);
+    }
+  }
+
+  private hasRunAuthority(username: string | null | undefined, repo: string): boolean {
+    return Boolean(
+      username &&
+      this.authorized(username, 'runs:read', repo) &&
+      this.authorized(username, 'runs:act', repo),
+    );
+  }
+
+  private requireRunAuthority(repo: string, username?: string | null): void {
+    if (!this.hasRunAuthority(username, repo)) {
+      throw new Error(`${username ?? 'this profile'} is disabled, cannot access ${repo}, or no longer holds runs:read and runs:act`);
     }
   }
 

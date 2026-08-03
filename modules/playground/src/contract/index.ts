@@ -314,6 +314,7 @@ export interface PipelinePreview {
     readonly description: string;
     readonly type: PipelineType;
     readonly autoRunOnPrOpen: boolean;
+    readonly autoRunOnPrUpdate: boolean;
   };
   readonly target: {
     readonly repo: string;

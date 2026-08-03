@@ -53,6 +53,7 @@ export function ProposalsPage(): JSX.Element {
   const [creating, setCreating] = useState(false);
 
   if (!current) return <EmptyState title="No workspace selected" />;
+  const canRun = can('runs:read') && can('runs:act');
 
   return (
     <Page>
@@ -138,6 +139,7 @@ export function ProposalsPage(): JSX.Element {
         <CreateProposalModal
           workspaceId={current.id}
           repos={repos}
+          autoAnalyze={canRun}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
@@ -152,11 +154,13 @@ export function ProposalsPage(): JSX.Element {
 function CreateProposalModal({
   workspaceId,
   repos,
+  autoAnalyze,
   onClose,
   onCreated,
 }: {
   workspaceId: string;
   repos: RepoRecord[];
+  autoAnalyze: boolean;
   onClose: () => void;
   onCreated: () => void;
 }): JSX.Element {
@@ -172,8 +176,9 @@ function CreateProposalModal({
     setError(null);
     try {
       const { proposal } = await api.createProposal(workspaceId, repo, title.trim(), body.trim());
-      // Fire the feasibility analysis right away; the card streams its state.
-      void api.analyzeProposal(proposal.id).catch(() => undefined);
+      // Compute is an independently governed capability. Without it the
+      // proposal remains a useful draft for a maintainer to analyze later.
+      if (autoAnalyze) void api.analyzeProposal(proposal.id).catch(() => undefined);
       onCreated();
     } catch (err) {
       setError(String(err));
@@ -220,7 +225,7 @@ function CreateProposalModal({
             Cancel
           </button>
           <button className="btn" type="submit" disabled={busy || !repo || !title.trim() || !body.trim()}>
-            {busy ? 'Creating…' : 'Create & analyze'}
+            {busy ? 'Creating…' : autoAnalyze ? 'Create & analyze' : 'Create proposal'}
           </button>
         </FormActions>
       </form>
@@ -270,6 +275,10 @@ function ProposalCard({
   const [error, setError] = useState<string | null>(null);
   const detailSeq = useRef(0);
   const canAct = can('proposals:act');
+  const canRun = can('runs:read') && can('runs:act');
+  const canAnalyze = can('proposals:create') && canRun;
+  const canImplement = canAct && canRun;
+  const canPublish = canImplement && can('prs:read') && can('prs:act');
 
   useEffect(() => {
     detailSeq.current += 1;
@@ -385,7 +394,7 @@ function ProposalCard({
       <ErrorBar error={error} />
 
       <CardActions>
-        {proposal.status === 'draft' || proposal.status === 'failed' ? (
+        {(proposal.status === 'draft' || proposal.status === 'failed') && canAnalyze ? (
           <button
             className="btn-ghost"
             disabled={busy}
@@ -394,7 +403,7 @@ function ProposalCard({
             {proposal.status === 'failed' ? 'Retry analysis' : 'Analyze'}
           </button>
         ) : null}
-        {proposal.status === 'analyzed' && canAct ? (
+        {proposal.status === 'analyzed' && canImplement ? (
           <button
             className="btn"
             disabled={busy}
@@ -409,7 +418,7 @@ function ProposalCard({
             Approve & implement
           </button>
         ) : null}
-        {proposal.status === 'review' && canAct ? (
+        {proposal.status === 'review' && canPublish ? (
           <>
             {proposal.implementRunId ? (
               <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}/preview`}>
@@ -421,12 +430,12 @@ function ProposalCard({
             </button>
           </>
         ) : null}
-        {proposal.status === 'implementing' && proposal.implementRunId ? (
+        {proposal.status === 'implementing' && proposal.implementRunId && can('runs:read') ? (
           <a className="btn-ghost" href={`#/runs/${proposal.implementRunId}/preview`}>
             Watch implementation
           </a>
         ) : null}
-        {proposal.status === 'implemented' && can('specs:manage') ? (
+        {proposal.status === 'implemented' && can('specs:manage') && canRun ? (
           captured ? (
             <span className="dim text-[13px]">
               Spec drafting — see{' '}

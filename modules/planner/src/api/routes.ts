@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AuthUser } from '@moxxy/companion-contracts';
-import { HttpError, badRequest, created, defineRoutes, notFound, route } from '@moxxy/companion-sdk/server';
+import { HttpError, badRequest, created, defineRoutes, forbidden, notFound, route } from '@moxxy/companion-sdk/server';
 import { PLANNER_DISCUSSION_CONTEXTS } from '../contract/index.js';
 import { artifactBundleSchema, featureBriefSchema } from './prompts.js';
 import { PlannerQuestionSetConflict, PlannerRevisionConflict } from './planner-store.js';
@@ -67,6 +67,11 @@ export default defineRoutes((ctx) => {
     }
     return session;
   };
+  const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
+    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+      throw forbidden('this action also requires runs:read and runs:act');
+    }
+  };
   const action = <T>(fn: () => T): T => {
     try {
       return fn();
@@ -104,6 +109,7 @@ export default defineRoutes((ctx) => {
       method: 'POST', path: '/api/ideas', access: 'planner:manage', body: createSchema,
       handler: ({ body, user }) => {
         workspace.requireAccessible(user, body.workspaceId);
+        requireAgentRun(user);
         const session = action(() => planner.create(body, user!.username));
         const started = action(() => planner.startClarification(session.id, session.revision, user!.username));
         return created({ session: started });
@@ -117,29 +123,29 @@ export default defineRoutes((ctx) => {
       },
     }),
     route({ method: 'POST', path: '/api/ideas/:id/clarify', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.startClarification(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.startClarification(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/answers', access: 'planner:manage', body: answerSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.answer(params.id, body.expectedRevision, body, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.answer(params.id, body.expectedRevision, body, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/confirm-brief', access: 'planner:manage', body: confirmBriefSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.confirmBrief(params.id, body.expectedRevision, body.brief, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.confirmBrief(params.id, body.expectedRevision, body.brief, user.username)) }; } }),
     route({ method: 'PUT', path: '/api/ideas/:id/artifacts', access: 'planner:manage', body: artifactsSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.saveArtifacts(params.id, body.expectedRevision, body.artifacts)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/create-artifacts', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.createArtifacts(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.createArtifacts(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/analyze', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.retryAnalysis(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.retryAnalysis(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/retry', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.retry(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.retry(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/revision', access: 'planner:manage', body: revisionRequestSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.requestRevision(params.id, body.expectedRevision, body.instruction, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.requestRevision(params.id, body.expectedRevision, body.instruction, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/discuss', access: 'planner:manage', body: discussionRequestSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.discuss(params.id, body.expectedRevision, body.message, body.context, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.discuss(params.id, body.expectedRevision, body.message, body.context, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/apply-revision', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.applyRevision(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.applyRevision(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/discard-revision', access: 'planner:manage', body: revisionSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.discardRevision(params.id, body.expectedRevision)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/prepare-tasks', access: 'planner:manage', body: revisionSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.prepareTasks(params.id, body.expectedRevision, user!.username)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.prepareTasks(params.id, body.expectedRevision, user.username)) }; } }),
     route({ method: 'PATCH', path: '/api/ideas/:id/items/:itemId', access: 'planner:manage', body: patchItemSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); const { expectedRevision, ...fields } = body; return { session: action(() => planner.updateRefinementItem(params.id, expectedRevision, params.itemId, fields)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/items/:itemId/move', access: 'planner:manage', body: moveItemSchema,
@@ -149,10 +155,10 @@ export default defineRoutes((ctx) => {
     route({ method: 'POST', path: '/api/ideas/:id/items/merge', access: 'planner:manage', body: mergeSchema,
       handler: ({ params, body, user }) => { requireSession(user, params.id); const { expectedRevision, itemIds, ...fields } = body; return { session: action(() => planner.mergeRefinementItems(params.id, expectedRevision, itemIds, fields)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/launch', access: 'planner:execute', body: launchSchema,
-      handler: ({ params, body, user }) => { requireSession(user, params.id); return { session: action(() => planner.launch(params.id, body.expectedRevision, user!.username, body.targetBranch)) }; } }),
+      handler: ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: action(() => planner.launch(params.id, body.expectedRevision, user.username, body.targetBranch)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/stop', access: 'planner:manage', body: revisionSchema,
-      handler: async ({ params, body, user }) => { requireSession(user, params.id); return { session: await asyncAction(() => planner.stop(params.id, body.expectedRevision)) }; } }),
+      handler: async ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: await asyncAction(() => planner.stop(params.id, body.expectedRevision)) }; } }),
     route({ method: 'POST', path: '/api/ideas/:id/cancel', access: 'planner:manage', body: revisionSchema,
-      handler: async ({ params, body, user }) => { requireSession(user, params.id); return { session: await asyncAction(() => planner.cancel(params.id, body.expectedRevision)) }; } }),
+      handler: async ({ params, body, user }) => { requireSession(user, params.id); requireAgentRun(user); return { session: await asyncAction(() => planner.cancel(params.id, body.expectedRevision)) }; } }),
   ];
 });

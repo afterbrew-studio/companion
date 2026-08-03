@@ -18,8 +18,8 @@ export class PipelinesStore {
   insert(p: PipelineRecord): void {
     this.db
       .prepare(
-        `INSERT INTO pipelines (id, workspace_id, type, name, description, steps, auto_run, created_at, updated_at)
-         VALUES (@id, @workspaceId, @type, @name, @description, @steps, @autoRun, @createdAt, @updatedAt)`,
+        `INSERT INTO pipelines (id, workspace_id, type, name, description, steps, auto_run, auto_update, created_at, updated_at)
+         VALUES (@id, @workspaceId, @type, @name, @description, @steps, @autoRun, @autoUpdate, @createdAt, @updatedAt)`,
       )
       .run({
         id: p.id,
@@ -29,6 +29,7 @@ export class PipelinesStore {
         description: p.description,
         steps: JSON.stringify(p.steps),
         autoRun: p.autoRunOnPrOpen ? 1 : 0,
+        autoUpdate: p.autoRunOnPrUpdate ? 1 : 0,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
       });
@@ -42,6 +43,7 @@ export class PipelinesStore {
       description?: string;
       steps?: ReadonlyArray<PipelineStepSpec>;
       autoRunOnPrOpen?: boolean;
+      autoRunOnPrUpdate?: boolean;
     },
   ): void {
     this.db
@@ -52,6 +54,7 @@ export class PipelinesStore {
            description = COALESCE(@description, description),
            steps = COALESCE(@steps, steps),
            auto_run = COALESCE(@autoRun, auto_run),
+           auto_update = COALESCE(@autoUpdate, auto_update),
            updated_at = @updatedAt
          WHERE id = @id`,
       )
@@ -62,6 +65,7 @@ export class PipelinesStore {
         description: fields.description ?? null,
         steps: fields.steps ? JSON.stringify(fields.steps) : null,
         autoRun: fields.autoRunOnPrOpen === undefined ? null : fields.autoRunOnPrOpen ? 1 : 0,
+        autoUpdate: fields.autoRunOnPrUpdate === undefined ? null : fields.autoRunOnPrUpdate ? 1 : 0,
         updatedAt: Date.now(),
       });
   }
@@ -331,6 +335,7 @@ interface PipelineRow {
   description: string;
   steps: string;
   auto_run: number;
+  auto_update: number;
   created_at: number;
   updated_at: number;
 }
@@ -370,6 +375,7 @@ function pipelineRowToRecord(row: PipelineRow): PipelineRecord {
     description: row.description,
     steps: safeParse<PipelineStepSpec[]>(row.steps, []),
     autoRunOnPrOpen: row.auto_run === 1,
+    autoRunOnPrUpdate: row.auto_update === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

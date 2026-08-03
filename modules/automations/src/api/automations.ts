@@ -1,10 +1,20 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { BriefingCadence, WebhookInfo } from '@companion/module-code/contract';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
+import type { BriefingCadence, TriageResult, WebhookInfo } from '@companion/module-code/contract';
+import type { TaskAutomationPolicy, TaskPriority } from '@companion/module-board/contract';
 import type { NotificationKind } from '@companion/module-workspace/contract';
 import { log } from '@moxxy/companion-sdk/server';
-import type { AutomationsStore } from './automations-store.js';
 import type {
+  ActionableIssueKind,
+  AutomationAdmissionControl,
+  AutomationDeliveryHealth,
+  ContributorFlowDryRun,
+  ContributorFlowPolicy,
+  WorkspaceBriefingSchedule,
+} from '../contract/index.js';
+import type { AutomationDeliveryJob, AutomationsStore } from './automations-store.js';
+import type {
+  BoardService,
   Checkouts,
   GhIssue,
   GhPull,
@@ -20,6 +30,32 @@ import type {
   Triage,
   WebhookTunnel,
 } from './cross-types.js';
+import { buildContributorFlowDryRun, type ContributorFlowDryRunContext } from './readiness.js';
+
+const DELIVERY_CONCURRENCY = 4;
+const DELIVERY_POLL_MS = 5_000;
+const DELIVERY_MAX_ATTEMPTS = 8;
+const DELIVERY_TITLE_CHARS = 500;
+const DELIVERY_BODY_CHARS = 64_000;
+const DELIVERY_COMMENT_CHARS = 32_000;
+const DELIVERY_LIST_ITEMS = 100;
+const AUTO_MERGE_REPO_CONCURRENCY = 4;
+const AUTO_MERGE_CANDIDATES_PER_TICK = 20;
+const DIGEST_PERMISSIONS = ['automations:manage', 'issues:read', 'prs:read', 'runs:read', 'runs:act'] as const;
+const STALE_PERMISSIONS = ['automations:manage', 'issues:read'] as const;
+const AUTO_MERGE_PERMISSIONS = ['automations:manage', 'prs:read', 'prs:act'] as const;
+const BRIEFING_PERMISSIONS = ['automations:manage', 'issues:read', 'prs:read', 'reports:read'] as const;
+
+interface DeliveryPayload {
+  readonly action: string;
+  readonly issue?: GhIssue;
+  readonly pullRequest?: GhPull;
+  readonly comment?: GhReviewComment;
+  readonly sha?: string;
+  /** Identity snapshots captured only after HMAC verification. */
+  readonly webhookOwnerId: string | null;
+  readonly automationOwnerId: string | null;
+}
 
 /**
  * Automations: a GitHub webhook receiver (HMAC-verified, raw body) and a slow
@@ -29,6 +65,11 @@ import type {
  */
 export class Automations {
   private timer: NodeJS.Timeout | null = null;
+  private deliveryTimer: NodeJS.Timeout | null = null;
+  private deliveriesRunning = false;
+  private readonly deliveryInFlight = new Set<string>();
+  private readonly deliveryOrderingKeysInFlight = new Set<string>();
+  private readonly saturationReportedAt = new Map<string, number>();
   private tickInFlight: Promise<void> | null = null;
 
   constructor(
@@ -44,6 +85,11 @@ export class Automations {
     private readonly proposals: Proposals,
     private readonly specs: Specs,
     private readonly github: (repo: string, username: string) => GitHubClient | null,
+    /** Soft dependency; resolved after every module's services have registered. */
+    private readonly board: () => BoardService | undefined,
+    /** Live role/disabled-account check for long-lived automation identities. */
+    private readonly authorized: (username: string, permission: Permission, repo?: string) => boolean,
+    private readonly audit: (event: { actor: string | null; action: string; status: number; detail: string }) => void,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -51,18 +97,21 @@ export class Automations {
    * Re-read CI for every open PR at this commit and refresh the cached
    * snapshot, which broadcasts prs.changed as a side effect.
    *
-   * Fire-and-forget: a webhook must answer GitHub promptly, and a CI refresh
-   * that fails is recovered by the next event or the next pull. `fetchSummary`
-   * de-dupes in flight, so a burst of twenty check_run deliveries for one
-   * commit collapses into one GitHub round trip per PR.
+   * The delivery worker awaits this: GitHub was already answered from the
+   * durable inbox, so a failed refresh can be retried without holding its HTTP
+   * request. `fetchSummary` de-dupes bursts for the same PR in flight.
    */
-  private async refreshChecksForSha(repo: string, sha: string, username: string): Promise<void> {
+  private async refreshChecksForSha(
+    repo: string,
+    sha: string,
+    username: string,
+    publishGate: boolean,
+  ): Promise<void> {
     for (const pr of this.store.prs.openByHeadSha(repo, sha)) {
-      try {
-        await this.prChecks.fetchSummary(repo, pr.number, username);
-      } catch (err) {
-        log.warn('webhook CI refresh failed', { repo, pr: pr.number, err: String(err) });
-      }
+      await this.prChecks.fetchSummary(repo, pr.number, username);
+      // A gate often finishes before CI. Reuse its pinned evidence now rather
+      // than launching another expensive review or leaving it pending forever.
+      if (publishGate) await this.prReviews.publishPendingGate(repo, pr.number, username);
     }
   }
 
@@ -80,12 +129,66 @@ export class Automations {
     return this.webhookInfo(repo, ownerId, accountLogin)!;
   }
 
-  /** Disable the receiver for a repo: deliveries 401/404 until re-enabled. */
-  disableWebhook(repo: string, ownerId: string): void {
+  /**
+   * Reconcile the local HMAC receiver with GitHub. Failure leaves a usable
+   * local/manual receiver and is returned as visible state, so a transient
+   * forge outage cannot strand an invisible half-registration.
+   */
+  async installWebhook(
+    repo: string,
+    ownerId: string,
+    accountId: string,
+    accountLogin: string,
+    client: GitHubClient,
+  ): Promise<WebhookInfo> {
+    if (!this.webhookTunnel.deliveryUrl(`/webhooks/github/${repo}`)) {
+      throw new Error(
+        'configure Public webhook delivery or a Self-managed webhook URL in Operate before installing a repository webhook',
+      );
+    }
+    let info = this.ensureWebhook(repo, ownerId, accountId, accountLogin);
     const registration = this.store.repos.getWebhookRegistration(repo);
-    if (registration?.ownerId !== ownerId) throw new Error('only the webhook owner can disable it');
+    if (!info.url || !registration) return info;
+    try {
+      const remoteId = await client.ensureRepoWebhook(repo, info.url, registration.secret, info.remoteId);
+      this.store.repos.setWebhookRemote(repo, remoteId, null);
+    } catch (err) {
+      // The secret is deliberately absent from every error string and log.
+      const message = String(err instanceof Error ? err.message : err).slice(0, 500);
+      this.store.repos.setWebhookRemote(repo, info.remoteId, message);
+      log.warn('could not install repository webhook on GitHub', { repo, err: message });
+    }
+    this.broadcast({ t: 'repos.changed' });
+    info = this.webhookInfo(repo, ownerId, accountLogin)!;
+    return info;
+  }
+
+  /**
+   * Disable locally first, then remove the GitHub hook when Companion owns it.
+   * Local rejection is the safety boundary and must succeed even while GitHub
+   * is unavailable; a cleanup warning tells the maintainer what remains.
+   */
+  async disableWebhook(
+    repo: string,
+    ownerId: string,
+    client: GitHubClient | null,
+    force = false,
+  ): Promise<string | null> {
+    const registration = this.store.repos.getWebhookRegistration(repo);
+    if (!registration) return null;
+    if (registration.ownerId !== ownerId && !force) throw new Error('only the webhook owner can disable it');
     this.store.repos.clearWebhookRegistration(repo);
     this.broadcast({ t: 'repos.changed' });
+    if (registration.remoteId === null) return null;
+    if (!client) {
+      return `Receiver disabled locally. Delete GitHub webhook #${registration.remoteId} manually because its account is unavailable.`;
+    }
+    try {
+      await client.deleteRepoWebhook(repo, registration.remoteId);
+      return null;
+    } catch (err) {
+      return `Receiver disabled locally, but GitHub webhook #${registration.remoteId} still needs removal: ${String(err)}`.slice(0, 700);
+    }
   }
 
   /** Current receiver info WITHOUT enabling — null while disabled. */
@@ -96,12 +199,15 @@ export class Automations {
     const managedByYou = registration.ownerId === viewerId;
     return {
       path,
-      secret: managedByYou ? registration.secret : null,
       url: this.webhookTunnel.deliveryUrl(path),
       ownerId: registration.ownerId,
-      accountId: registration.accountId,
+      // Account ids are profile-local routing metadata. Another profile may
+      // see who owns the hook for governance, but cannot address that account.
+      accountId: managedByYou ? registration.accountId : null,
       accountLogin,
       managedByYou,
+      remoteId: managedByYou ? registration.remoteId : null,
+      remoteError: managedByYou ? registration.remoteError : null,
     };
   }
 
@@ -141,121 +247,443 @@ export class Automations {
     if (!/^[A-Za-z0-9-]{1,200}$/.test(deliveryId)) {
       return { status: 400, body: 'missing or invalid delivery id' };
     }
-    if (!this.store.claimDelivery(deliveryId, repo, eventName)) {
-      return { status: 202, body: 'duplicate ignored' };
-    }
-
-    // The delivery carries the full changed object — apply it to the cache
-    // right away. Automation below must never wait on (or race) the slower
-    // REST sync: before this, triage fired against an issue that wasn't in
-    // the store yet and died on "unknown issue".
     const action = String(payload.action ?? '');
     const repoRow = this.store.repos.get(repo);
-    const automationOwnerId = repoRow?.automation_owner_id ?? null;
-    if (eventName === 'issues') {
-      const issue = payload.issue as GhIssue | undefined;
-      if (issue?.number && !issue.pull_request) {
-        this.sync.applyIssue(repo, issue);
-        if (action === 'opened') {
-          const number = issue.number;
-          if (automationOwnerId && repoRow?.auto_triage === 1) {
-            log.info('webhook: auto-triage queued', { repo, issue: number });
-            void this.triage
-              .triageIssue(repo, number, automationOwnerId)
-              .catch((err) =>
-                this.automationFailed(repo, `Auto-triage failed for ${repo}#${number}`, err, `#/repos/${repo}/issues/${number}`),
-              );
-          }
-          // Issue-type pipelines flagged auto-run fire for every opened issue
-          // (failures per pipeline are caught + logged inside autoRun).
-          if (ownerId) this.pipelines.autoRunForIssue(repo, number, ownerId);
-        }
-      }
-    }
-    if (eventName === 'pull_request') {
-      const pr = payload.pull_request as GhPull | undefined;
-      if (pr?.number) {
-        this.sync.applyPull(repo, pr);
-        // A merge is when specs can silently rot — check them against the diff.
-        if (ownerId && action === 'closed' && pr.merged_at) {
-          const number = pr.number;
-          void this.specs
-            .checkDriftForMergedPr(repo, number, ownerId)
-            .catch((err) =>
-              this.automationFailed(repo, `Spec drift check failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
-            );
-        }
-        if ((action === 'opened' || action === 'ready_for_review') && pr.draft !== true) {
-          const number = pr.number;
-          if (automationOwnerId && repoRow?.pr_gate === 1) {
-            log.info('webhook: PR gate queued', { repo, pr: number });
-            void this.prReviews
-              .gate(repo, number, automationOwnerId)
-              .catch((err) =>
-                this.automationFailed(repo, `PR gate failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
-              );
-          }
-          // User-defined pipelines flagged auto-run fire for every opened PR
-          // (failures per pipeline are caught + logged inside autoRun).
-          if (ownerId) this.pipelines.autoRunForPr(repo, number, ownerId);
-        }
-      }
-    }
-    // The agent's own replies arrive as this same event. Every rule that stops
-    // it answering itself (our own logins, replies only, our own threads only,
-    // a per-thread cap) lives in the reply path, which holds the data to apply
-    // them; this branch only decides that the repo opted in.
-    if (eventName === 'pull_request_review_comment' && action === 'created') {
-      const pr = payload.pull_request as GhPull | undefined;
-      const comment = payload.comment as GhReviewComment | undefined;
-      if (pr?.number && comment && automationOwnerId && repoRow?.review_replies === 1) {
-        const number = pr.number;
-        void this.prReviews
-          .replyToReviewComment(repo, number, comment, automationOwnerId)
-          .catch((err) =>
-            this.automationFailed(repo, `Review reply failed for ${repo}#${number}`, err, `#/repos/${repo}/prs/${number}`),
-          );
-      }
-    }
-    // CI is the fastest-moving thing on a PR and the only one that used to
-    // reach the cache by a 60s-throttled pull. These three events name a commit
-    // rather than a PR, so the head SHA is what maps them back.
-    if (eventName === 'check_run' || eventName === 'check_suite' || eventName === 'status') {
-      const sha = checkEventSha(eventName, payload);
-      if (sha && ownerId) void this.refreshChecksForSha(repo, sha, ownerId);
-    }
-
-    // Background reconcile for whatever the payload didn't carry (comment
-    // counts, anything else that changed since the last poll).
-
-    this.store.reports.insert({
-      issueNumber: null,
-      id: `rep-${randomUUID().slice(0, 12)}`,
-      workspaceId: null,
-      repo,
-      kind: 'webhook',
-      title: `${eventName}${action ? `.${action}` : ''}`,
-      body: `Delivery accepted for ${repo}.`,
-      createdAt: Date.now(),
+    const projected = projectDelivery(eventName, payload, {
+      action,
+      webhookOwnerId: ownerId,
+      automationOwnerId: repoRow?.automation_owner_id ?? null,
     });
-    this.broadcast({ t: 'reports.changed' });
-    this.store.completeDelivery(deliveryId);
-    return { status: 202, body: 'accepted' };
+    const admission = this.store.enqueueDelivery({
+      id: deliveryId,
+      repo,
+      event: eventName,
+      action,
+      payload: JSON.stringify(projected),
+      orderingKey: deliveryOrderingKey(repo, eventName, projected),
+    });
+    if (admission === 'duplicate') return { status: 202, body: 'duplicate ignored' };
+    if (admission === 'paused') {
+      return { status: 503, body: 'automation admission paused; retry later' };
+    }
+    if (admission === 'saturated') {
+      this.reportDeliverySaturation(repo, ownerId);
+      return { status: 503, body: 'delivery queue at capacity; retry later' };
+    }
+
+    // The cache update is cheap and makes a just-opened item visible before the
+    // first background worker turn. It is repeated idempotently by the durable
+    // job, so a crash in this window loses nothing.
+    try {
+      this.applyDeliveryCache(repo, eventName, projected);
+    } catch (err) {
+      // The durable job repeats this projection. A transient SQLite/cache
+      // failure must not turn an already-persisted delivery into an HTTP 500
+      // and invite a needless GitHub redelivery storm.
+      log.warn('webhook cache fast-path failed; durable worker will retry it', {
+        repo,
+        event: eventName,
+        deliveryId,
+        err: String(err),
+      });
+    }
+    this.broadcast({ t: 'automations.changed', area: 'deliveries' });
+    this.pumpDeliveries();
+    return { status: 202, body: 'accepted and queued' };
+  }
+
+  deliveryHealth(repos: readonly string[]): AutomationDeliveryHealth {
+    return this.store.deliveryHealth(repos);
+  }
+
+  retryDelivery(id: string, repos: readonly string[]): ReturnType<AutomationsStore['retryDelivery']> {
+    const result = this.store.retryDelivery(id, repos);
+    if (result === 'retried') {
+      this.broadcast({ t: 'automations.changed', area: 'deliveries' });
+      this.pumpDeliveries();
+    }
+    return result;
+  }
+
+  admissionControl(repo: string): AutomationAdmissionControl {
+    return this.store.admissionControl(repo);
+  }
+
+  admissionControls(repos: readonly string[]): AutomationAdmissionControl[] {
+    return this.store.admissionControls(repos);
+  }
+
+  setAdmissionControl(repo: string, paused: boolean, actor: string, reason: string): AutomationAdmissionControl {
+    const control = this.store.setAdmissionControl(repo, paused, actor, reason);
+    this.broadcast({ t: 'automations.changed', area: 'controls' });
+    return control;
+  }
+
+  dryRunContributorFlow(
+    context: Omit<ContributorFlowDryRunContext, 'cachedPulls'>,
+  ): Promise<ContributorFlowDryRun> {
+    return buildContributorFlowDryRun({
+      ...context,
+      cachedPulls: this.store.prs.listOpen(context.repo),
+    });
+  }
+
+  contributorFlow(repo: string): ContributorFlowPolicy | null {
+    return this.store.contributorFlow(repo);
+  }
+
+  listContributorFlows(workspaceId: string): ContributorFlowPolicy[] {
+    return this.store.listContributorFlows(workspaceId);
+  }
+
+  setContributorFlow(policy: ContributorFlowPolicy): ContributorFlowPolicy {
+    const board = this.board();
+    if (!board) throw new Error('enable the Task Board module before enabling a contributor flow');
+    if (!this.store.repos.inWorkspace(policy.repo, policy.workspaceId)) {
+      throw new Error(`${policy.repo} does not belong to contributor-flow workspace ${policy.workspaceId}`);
+    }
+    if (!this.store.repos.getWebhookRegistration(policy.repo)) {
+      throw new Error('configure the repository webhook before enabling a contributor flow');
+    }
+    board.ensureAutomationWorkers(policy.workspaceId);
+    board.tightenIssueAutomation(policy.repo, {
+      allowAutoMerge: policy.mode === 'autonomous',
+      maxAttempts: policy.maxAttempts,
+    });
+    this.store.setContributorFlow(policy);
+    this.broadcast({ t: 'automations.changed', area: 'flows' });
+    return policy;
+  }
+
+  removeContributorFlow(repo: string): void {
+    this.board()?.tightenIssueAutomation(repo, { allowAutoMerge: false });
+    this.store.removeContributorFlow(repo);
+    this.broadcast({ t: 'automations.changed', area: 'flows' });
+  }
+
+  private applyDeliveryCache(repo: string, eventName: string, payload: DeliveryPayload): void {
+    if (eventName === 'issues' && payload.issue?.number && !payload.issue.pull_request) {
+      this.sync.applyIssue(repo, payload.issue);
+    }
+    if (eventName === 'pull_request' && payload.pullRequest?.number) {
+      this.sync.applyPull(repo, payload.pullRequest);
+    }
+  }
+
+  /** Fill available worker slots; each job owns its retry/terminal transition. */
+  private pumpDeliveries(): void {
+    if (!this.deliveriesRunning) return;
+    const available = DELIVERY_CONCURRENCY - this.deliveryInFlight.size;
+    if (available <= 0) return;
+    const jobs = this.store.claimDueDeliveries(available, Date.now(), [...this.deliveryOrderingKeysInFlight]);
+    if (jobs.length === 0) return;
+    this.broadcast({ t: 'automations.changed', area: 'deliveries' });
+    for (const job of jobs) {
+      this.deliveryInFlight.add(job.id);
+      this.deliveryOrderingKeysInFlight.add(job.orderingKey);
+      void this.runDelivery(job).finally(() => {
+        this.deliveryInFlight.delete(job.id);
+        this.deliveryOrderingKeysInFlight.delete(job.orderingKey);
+        this.pumpDeliveries();
+      });
+    }
+  }
+
+  private async runDelivery(job: AutomationDeliveryJob): Promise<void> {
+    try {
+      const payload = parseDeliveryPayload(job.payload);
+      this.stage(job.id, `Applying ${job.event}${job.action ? `.${job.action}` : ''}`);
+      this.applyDeliveryCache(job.repo, job.event, payload);
+      await this.processDelivery(job, payload);
+      this.store.completeDelivery(job.id);
+      this.audit({
+        actor: payload.automationOwnerId ?? payload.webhookOwnerId,
+        action: 'webhook.delivery.completed',
+        status: 202,
+        detail: `${job.repo} ${job.event}${job.action ? `.${job.action}` : ''} delivery=${job.id}`,
+      });
+    } catch (err) {
+      const status = this.store.failDelivery(job.id, String(err), DELIVERY_MAX_ATTEMPTS);
+      log.warn('webhook delivery work failed', {
+        deliveryId: job.id,
+        repo: job.repo,
+        event: job.event,
+        status,
+        err: String(err),
+      });
+      if (status === 'failed') {
+        this.audit({
+          actor: null,
+          action: 'webhook.delivery.failed',
+          status: 500,
+          detail: `${job.repo} ${job.event}.${job.action} delivery=${job.id}: ${String(err).slice(0, 500)}`,
+        });
+        this.automationFailed(
+          job.repo,
+          `Webhook work needs attention for ${job.repo}`,
+          err,
+          '#/automations',
+        );
+      }
+    } finally {
+      if (this.deliveriesRunning) this.broadcast({ t: 'automations.changed', area: 'deliveries' });
+    }
+  }
+
+  private async processDelivery(job: AutomationDeliveryJob, payload: DeliveryPayload): Promise<void> {
+    if (job.event === 'issues' && payload.issue?.number && !payload.issue.pull_request) {
+      await this.processIssueDelivery(job, payload);
+      return;
+    }
+    if (job.event === 'pull_request' && payload.pullRequest?.number) {
+      await this.processPrDelivery(job, payload);
+      return;
+    }
+    if (job.event === 'pull_request_review_comment' && payload.action === 'created') {
+      const pr = payload.pullRequest;
+      const owner = this.store.repos.get(job.repo)?.automation_owner_id ?? null;
+      if (pr?.number && payload.comment && owner && this.store.repos.get(job.repo)?.review_replies === 1) {
+        this.requireAuthorized(owner, 'prs:read', 'read review threads', job.repo);
+        this.requireAuthorized(owner, 'prs:act', 'reply to review comments', job.repo);
+        this.requireAuthorized(owner, 'runs:read', 'observe the review-reply agent', job.repo);
+        this.requireAuthorized(owner, 'runs:act', 'run the review-reply agent', job.repo);
+        this.stage(job.id, `Replying in PR #${pr.number}`);
+        await this.prReviews.replyToReviewComment(job.repo, pr.number, payload.comment, owner);
+      }
+      return;
+    }
+    if (job.event === 'check_run' || job.event === 'check_suite' || job.event === 'status') {
+      // Publish a pending gate with the identity that owns that gate. The
+      // webhook installer may be a different profile and must not lend its
+      // credential or authority to another user's automation.
+      const repoRow = this.store.repos.get(job.repo);
+      const owner = repoRow?.automation_owner_id ?? null;
+      if (payload.sha && owner) {
+        this.requireAuthorized(owner, 'prs:read', 'refresh CI state', job.repo);
+        this.stage(job.id, `Refreshing CI for ${payload.sha.slice(0, 8)}`);
+        await this.refreshChecksForSha(job.repo, payload.sha, owner, repoRow?.pr_gate === 1);
+      }
+    }
+  }
+
+  private async processIssueDelivery(job: AutomationDeliveryJob, payload: DeliveryPayload): Promise<void> {
+    const issue = payload.issue!;
+    if (payload.action !== 'opened') return;
+    const repoRow = this.store.repos.get(job.repo);
+    const automationOwner = repoRow?.automation_owner_id ?? null;
+    if (automationOwner && this.authorized(automationOwner, 'pipelines:run', job.repo)) {
+      // Optional side reaction. A role may deliberately allow triage while
+      // revoking pipeline execution; that must not poison the primary issue
+      // flow and retry the same delivery eight times.
+      const admission = this.pipelines.autoRunForIssue(job.repo, issue.number, automationOwner);
+      this.reportPipelineAdmissionFailures(job.repo, `issue #${issue.number}`, automationOwner, admission.failures);
+    }
+
+    const flow = this.store.contributorFlow(job.repo);
+    const owner = flow?.ownerId ?? automationOwner;
+    const shouldTriage = repoRow?.auto_triage === 1 || (flow !== null && flow.mode !== 'off');
+    if (!shouldTriage) return;
+    if (!owner) throw new Error('auto-triage has no active automation owner');
+    this.requireAuthorized(owner, 'automations:manage', 'operate this repository flow', job.repo);
+    this.requireAuthorized(owner, 'issues:read', 'read issues for triage', job.repo);
+    this.requireAuthorized(owner, 'issues:act', 'triage issues', job.repo);
+    this.requireAuthorized(owner, 'runs:read', 'observe the triage agent', job.repo);
+    this.requireAuthorized(owner, 'runs:act', 'run the triage agent', job.repo);
+    this.stage(job.id, `Triaging issue #${issue.number}`);
+    const result = await this.triage.triageIssueOnce(job.repo, issue.number, owner);
+    if (result.status === 'failed' || !result.verdict) {
+      throw new Error(result.error ?? `triage produced no verdict for ${job.repo}#${issue.number}`);
+    }
+    if (result.status === 'dismissed') {
+      this.stage(job.id, `Triage for #${issue.number} was dismissed; no work admitted`);
+      return;
+    }
+    if (!flow || flow.mode === 'off') return;
+    await this.continueIssueFlow(job, flow, result, issue, owner);
+  }
+
+  private async continueIssueFlow(
+    job: AutomationDeliveryJob,
+    flow: ContributorFlowPolicy,
+    result: TriageResult,
+    issue: GhIssue,
+    owner: string,
+  ): Promise<void> {
+    const verdict = result.verdict!;
+    if (flow.autoApplyTriage && result.status === 'pending') {
+      this.stage(job.id, `Applying labels to issue #${issue.number}`);
+      try {
+        await this.triage.apply(result.id, { comment: false, userId: owner });
+      } catch (err) {
+        // A governed instance may deliberately allow continuous analysis while
+        // requiring a click for every public write. The task can still proceed;
+        // the pending verdict remains visible for that click.
+        this.notify(
+          job.repo,
+          'action_required',
+          `Triage labels await approval for ${job.repo}#${issue.number}`,
+          String(err),
+          `#/repos/${job.repo}/issues/${issue.number}`,
+          flow.workspaceId,
+        );
+      }
+    }
+
+    const kind = verdict.kind as ActionableIssueKind;
+    const actionable =
+      flow.actionableIssueKinds.includes(kind) &&
+      verdict.kind !== 'invalid' &&
+      verdict.kind !== 'question' &&
+      verdict.duplicateOf === null &&
+      !verdict.needsInfo;
+    if (!actionable) {
+      this.stage(job.id, `Triaged #${issue.number}; waiting for a maintainer`);
+      return;
+    }
+
+    this.requireAuthorized(owner, 'board:manage', 'admit issue work to the board', job.repo);
+    this.requireAuthorized(owner, 'prs:read', 'review resulting pull requests', job.repo);
+    this.requireAuthorized(owner, 'prs:act', 'review and merge resulting pull requests', job.repo);
+    this.requireAuthorized(owner, 'runs:read', 'observe contributor agents', job.repo);
+    this.requireAuthorized(owner, 'runs:act', 'run contributor agents', job.repo);
+    const board = this.board();
+    if (!board) throw new Error('the Task Board module is disabled');
+    board.ensureAutomationWorkers(flow.workspaceId);
+    const automationPolicy: TaskAutomationPolicy = {
+      autoReview: true,
+      autoMerge: flow.mode === 'autonomous',
+      mergeMethod: flow.mergeMethod,
+      autoFixCi: true,
+      maxAttempts: flow.maxAttempts,
+    };
+    this.stage(job.id, `${flow.queueIssues ? 'Queueing' : 'Adding'} issue #${issue.number} on the board`);
+    const admitted = board.createIssueTask({
+      workspaceId: flow.workspaceId,
+      repo: job.repo,
+      targetBranch: this.store.repos.get(job.repo)?.default_branch ?? 'main',
+      issueNumber: issue.number,
+      title: issue.title,
+      body: issue.body ?? '',
+      triageSummary: verdict.summary,
+      priority: priorityFor(verdict.severity),
+      queue: flow.queueIssues,
+      createdBy: owner,
+      automationPolicy,
+    });
+    if (admitted.created) {
+      this.audit({
+        actor: owner,
+        action: 'contributor-flow.issue-admitted',
+        status: 202,
+        detail: `${job.repo}#${issue.number} -> ${admitted.task.id} (${flow.mode})`,
+      });
+      this.notify(
+        job.repo,
+        'info',
+        `${job.repo}#${issue.number} entered the contributor flow`,
+        flow.queueIssues
+          ? `Task ${admitted.task.id} is queued for implementation, review, CI repair, and ${flow.mode === 'autonomous' ? 'policy-gated merge' : 'a maintainer merge decision'}.`
+          : `Task ${admitted.task.id} is in the board backlog for a maintainer to queue.`,
+        `#/board?task=${admitted.task.id}`,
+        flow.workspaceId,
+      );
+    }
+  }
+
+  private async processPrDelivery(job: AutomationDeliveryJob, payload: DeliveryPayload): Promise<void> {
+    const pr = payload.pullRequest!;
+    const repoRow = this.store.repos.get(job.repo);
+    const automationOwner = repoRow?.automation_owner_id ?? null;
+
+    if (
+      payload.action === 'closed' &&
+      pr.merged_at &&
+      automationOwner &&
+      this.authorized(automationOwner, 'specs:manage', job.repo)
+    ) {
+      this.stage(job.id, `Checking spec drift after PR #${pr.number}`);
+      await this.specs.checkDriftForMergedPr(job.repo, pr.number, automationOwner);
+      return;
+    }
+
+    const opened = payload.action === 'opened' || payload.action === 'ready_for_review' || payload.action === 'reopened';
+    const updated = payload.action === 'synchronize';
+    if ((!opened && !updated) || pr.draft === true) return;
+    // A Board-created PR already has a head-pinned review, remediation and
+    // merge lifecycle. Running the generic repository pipeline as well would
+    // duplicate model spend and let two independent mergers race.
+    if (this.board()?.managesPr(job.repo, pr.number)) {
+      this.stage(job.id, `PR #${pr.number} remains owned by its Board task`);
+      return;
+    }
+    // Admission is synchronous and execution is backgrounded by the pipeline
+    // engine, so start it before awaiting a potentially long standalone gate.
+    let pipelineIncludesReview = false;
+    if (automationOwner && this.authorized(automationOwner, 'pipelines:run', job.repo)) {
+      const admission = this.pipelines.autoRunForPr(
+        job.repo,
+        pr.number,
+        automationOwner,
+        updated ? 'pr-updated' : 'pr-opened',
+      );
+      pipelineIncludesReview = admission.includesReview;
+      this.reportPipelineAdmissionFailures(job.repo, `pull request #${pr.number}`, automationOwner, admission.failures);
+    }
+    if (automationOwner && repoRow?.pr_gate === 1 && !pipelineIncludesReview) {
+      this.requireAuthorized(automationOwner, 'prs:read', 'read the pull request for review', job.repo);
+      this.requireAuthorized(automationOwner, 'prs:act', 'run the PR review gate', job.repo);
+      this.requireAuthorized(automationOwner, 'runs:read', 'observe the PR review agent', job.repo);
+      this.requireAuthorized(automationOwner, 'runs:act', 'run the PR review agent', job.repo);
+      this.stage(job.id, `Reviewing PR #${pr.number}${updated ? ' at its new head' : ''}`);
+      await this.prReviews.gate(job.repo, pr.number, automationOwner);
+    } else if (pipelineIncludesReview) {
+      this.stage(job.id, `PR #${pr.number} admitted to its review pipeline`);
+    }
+  }
+
+  private requireAuthorized(username: string, permission: Permission, action: string, repo?: string): void {
+    if (this.authorized(username, permission, repo)) return;
+    throw new Error(
+      `${username} is disabled, cannot access${repo ? ` ${repo},` : ''} or no longer holds ${permission}; cannot ${action}`,
+    );
+  }
+
+  private stage(id: string, stage: string): void {
+    this.store.updateDeliveryStage(id, stage);
+    this.broadcast({ t: 'automations.changed', area: 'deliveries' });
   }
 
   // ---------- schedules -----------------------------------------------------------
 
   start(intervalMs = 60_000): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => {
-      void this.tick().catch((err) => log.warn('automation tick failed', { err: String(err) }));
-    }, intervalMs);
-    this.timer.unref();
+    // Services for all enabled modules have been registered before lifecycle
+    // hooks run, so this makes stale workspace/module policy safe at boot rather
+    // than leaving an invalid autonomous flow live until the first minute tick.
+    this.reconcileContributorFlows();
+    if (!this.timer) {
+      this.timer = setInterval(() => {
+        void this.tick().catch((err) => log.warn('automation tick failed', { err: String(err) }));
+      }, intervalMs);
+      this.timer.unref();
+    }
+    if (!this.deliveryTimer) {
+      // A fresh process owns no live leases; release anything the previous one
+      // left behind. A disable/enable in this same process keeps its in-flight
+      // promises and therefore must not duplicate them.
+      if (this.deliveryInFlight.size === 0) this.store.recoverDeliveries();
+      this.deliveriesRunning = true;
+      this.deliveryTimer = setInterval(() => this.pumpDeliveries(), DELIVERY_POLL_MS);
+      this.deliveryTimer.unref();
+      this.pumpDeliveries();
+    }
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.deliveryTimer) clearInterval(this.deliveryTimer);
+    this.deliveryTimer = null;
+    this.deliveriesRunning = false;
   }
 
   /** Run due schedules. Digest/stale/briefing run per period; auto-merge every tick. */
@@ -269,31 +697,136 @@ export class Automations {
   }
 
   private async runTick(now: number): Promise<void> {
+    this.reconcileContributorFlows();
+    const autoMergeJobs: Array<{ repo: string; ownerId: string }> = [];
     for (const repo of this.store.repos.list()) {
+      // The circuit breaker stops NEW scheduled work while already-durable
+      // webhook/Board/pipeline work drains through its own state machine.
+      if (this.store.isAdmissionPaused(repo.full_name)) continue;
       const ownerId = repo.automation_owner_id ?? null;
       if (ownerId && repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
-        // Fire-and-forget: startDigest's in-flight set prevents overlap while
-        // the durable schedule cursor advances only after a report lands.
-        this.startDigest(repo.full_name, ownerId);
+        const missing = this.missingAuthority(ownerId, DIGEST_PERMISSIONS, repo.full_name);
+        if (missing.length === 0) {
+          // Fire-and-forget: startDigest's in-flight set prevents overlap while
+          // the durable schedule cursor advances only after a report lands.
+          this.startDigest(repo.full_name, ownerId);
+        } else {
+          this.authorityPaused(repo.full_name, ownerId, 'daily digest', missing, now);
+        }
       }
       if (repo.stale_enabled === 1 && this.due(`stale:${repo.full_name}`, now)) {
-        this.runStaleSweep(repo.full_name);
+        if (!ownerId) {
+          this.runtimePaused(repo.full_name, null, 'stale-sweep', 'no owning Companion profile');
+        } else {
+          const missing = this.missingAuthority(ownerId, STALE_PERMISSIONS, repo.full_name);
+          if (missing.length === 0) this.runStaleSweep(repo.full_name);
+          else this.authorityPaused(repo.full_name, ownerId, 'stale sweep', missing, now);
+        }
       }
       if (ownerId && repo.auto_merge === 1) {
-        await this.autoMergeSweep(repo.full_name, ownerId).catch((err) =>
-          log.warn('auto-merge sweep failed', { repo: repo.full_name, err: String(err) }),
-        );
+        const missing = this.missingAuthority(ownerId, AUTO_MERGE_PERMISSIONS, repo.full_name);
+        if (missing.length === 0) {
+          autoMergeJobs.push({ repo: repo.full_name, ownerId });
+        } else {
+          this.authorityPaused(repo.full_name, ownerId, 'auto-merge', missing, now);
+        }
       }
     }
+    let nextAutoMerge = 0;
+    const autoMergeWorker = async (): Promise<void> => {
+      while (nextAutoMerge < autoMergeJobs.length) {
+        const job = autoMergeJobs[nextAutoMerge++];
+        if (!job) return;
+        await this.autoMergeSweep(job.repo, job.ownerId).catch((err) =>
+          log.warn('auto-merge sweep failed', { repo: job.repo, err: String(err) }),
+        );
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(AUTO_MERGE_REPO_CONCURRENCY, autoMergeJobs.length) },
+        autoMergeWorker,
+      ),
+    );
     for (const ws of this.store.workspaces.list()) {
-      const cadence = this.briefingCadence(ws.id);
-      if (cadence === 'off') continue;
-      const period = cadence === 'weekly' ? 7 * 24 * 60 * 60_000 : 24 * 60 * 60_000;
+      const schedule = this.briefingSchedule(ws.id);
+      if (schedule.cadence === 'off') continue;
+      const ownerId = schedule.ownerId;
+      if (!ownerId) {
+        this.briefingPaused(ws.id, null, 'no owning Companion profile', now);
+        continue;
+      }
+      const missing = BRIEFING_PERMISSIONS.filter((permission) => !this.authorized(ownerId, permission));
+      if (missing.length > 0) {
+        this.briefingPaused(ws.id, ownerId, `missing ${missing.join(', ')}`, now);
+        continue;
+      }
+      if (ws.visibility === 'private' && !this.store.workspaces.isMember(ws.id, ownerId)) {
+        this.briefingPaused(ws.id, ownerId, 'the owner is no longer a member of this private workspace', now);
+        continue;
+      }
+      const period = schedule.cadence === 'weekly' ? 7 * 24 * 60 * 60_000 : 24 * 60 * 60_000;
       if (this.due(`briefing:${ws.id}`, now, period)) {
         await this.runBriefing(ws.id).catch((err) =>
           log.warn('briefing failed', { workspace: ws.id, err: String(err) }),
         );
       }
+    }
+  }
+
+  /**
+   * Repository/workspace membership is mutable while a flow is long-lived.
+   * Never silently move authority to another workspace: disable the stale
+   * policy and tighten already-admitted work to a human merge decision.
+   */
+  private reconcileContributorFlows(): void {
+    const board = this.board();
+    for (const flow of this.store.listAllContributorFlows()) {
+      const boardUnavailable = !board;
+      const workspaceDetached = !this.store.repos.inWorkspace(flow.repo, flow.workspaceId);
+      const webhookUnavailable = !this.store.repos.getWebhookRegistration(flow.repo);
+      if (!boardUnavailable && !workspaceDetached && !webhookUnavailable) continue;
+      board?.tightenIssueAutomation(flow.repo, { allowAutoMerge: false });
+      this.store.removeContributorFlow(flow.repo);
+      const repo = this.store.repos.get(flow.repo);
+      if (repo) {
+        this.store.repos.setAutomation(flow.repo, 'auto_merge', false);
+        const anyEnabled =
+          repo.auto_triage === 1 ||
+          repo.digest_enabled === 1 ||
+          repo.stale_enabled === 1 ||
+          repo.pr_gate === 1 ||
+          repo.review_replies === 1;
+        this.store.repos.setAutomationOwner(flow.repo, anyEnabled ? repo.automation_owner_id ?? flow.ownerId : null);
+      }
+      this.notify(
+        flow.repo,
+        'action_required',
+        `Contributor flow disabled because its runtime is unavailable — ${flow.repo}`,
+        boardUnavailable
+          ? 'The Task Board module is disabled. Companion removed the end-to-end flow and disabled automatic merging; enable Task Board and configure the flow again deliberately.'
+          : workspaceDetached
+            ? `The repository no longer belongs to workspace ${flow.workspaceId}. Companion removed its end-to-end flow and disabled automatic merging; choose a new workspace deliberately if work should continue.`
+            : 'The repository webhook receiver is no longer configured. Companion removed the end-to-end flow and disabled automatic merging; restore delivery before enabling it again.',
+        '#/automations',
+        flow.workspaceId,
+      );
+      this.audit({
+        actor: flow.ownerId,
+        action: boardUnavailable
+          ? 'contributor-flow.runtime-disabled'
+          : workspaceDetached
+            ? 'contributor-flow.workspace-detached'
+            : 'contributor-flow.webhook-disabled',
+        status: 409,
+        detail: boardUnavailable
+          ? `${flow.repo}: Task Board unavailable; flow removed and auto-merge disabled`
+          : workspaceDetached
+            ? `${flow.repo} no longer belongs to ${flow.workspaceId}; flow removed and auto-merge disabled`
+            : `${flow.repo}: webhook unavailable; flow removed and auto-merge disabled`,
+      });
+      this.broadcast({ t: 'automations.changed', area: 'flows' });
+      if (repo) this.broadcast({ t: 'repos.changed' });
     }
   }
 
@@ -306,10 +839,21 @@ export class Automations {
    * nominates, GitHub confirms. A failed merge backs off for 6 hours.
    */
   async autoMergeSweep(repo: string, userId: string): Promise<void> {
+    for (const permission of AUTO_MERGE_PERMISSIONS) {
+      this.requireAuthorized(userId, permission, 'run auto-merge', repo);
+    }
     const client = this.github(repo, userId);
-    if (!client) return;
-    const candidates = this.store.prs
-      .list(repo)
+    if (!client) {
+      this.runtimePaused(
+        repo,
+        userId,
+        'auto-merge',
+        'no active pipelines GitHub account with access to this repository',
+      );
+      return;
+    }
+    const eligible = this.store.prs
+      .listOpen(repo)
       .filter(
         (pr) =>
           pr.state === 'open' &&
@@ -317,8 +861,17 @@ export class Automations {
           pr.reviewDecision === 'approved' &&
           pr.reviewRisk === 'low' &&
           pr.checks?.state === 'passing',
+      );
+    const cursorKey = `autoMergeCursor:${repo}`;
+    const cursor = Number(this.store.settings.get(cursorKey) ?? 0);
+    const { selected: candidates, nextCursor } = boundedRoundRobin(
+      eligible,
+      cursor,
+      AUTO_MERGE_CANDIDATES_PER_TICK,
     );
+    if (eligible.length > 0) this.store.settings.set(cursorKey, String(nextCursor));
     for (const pr of candidates) {
+      if (this.board()?.managesPr(repo, pr.number)) continue;
       const guard = `automerge:${repo}#${pr.number}`;
       if (!this.due(guard, Date.now(), 6 * 60 * 60_000)) continue;
       // Pin every later proof to the head GitHub has NOW. If the cache names an
@@ -339,6 +892,11 @@ export class Automations {
       const fresh = await this.prChecks.trySummary(repo, pr.number, userId);
       const row = this.store.prs.get(repo, pr.number);
       const review = this.prReviews.latestWithFindings(repo, pr.number);
+      const hasMaterialFinding = review?.findings?.some(
+        (finding) =>
+          (finding.severity === 'blocker' || finding.severity === 'major') &&
+          finding.verification !== 'refuted',
+      ) ?? false;
       if (
         !fresh ||
         fresh.state !== 'passing' ||
@@ -352,7 +910,8 @@ export class Automations {
         review.verdict.risk !== 'low' ||
         review.headSha !== expectedHead ||
         review.error !== null ||
-        review.coverage.state !== 'complete'
+        review.coverage.state !== 'complete' ||
+        hasMaterialFinding
       ) {
         continue;
       }
@@ -361,6 +920,11 @@ export class Automations {
       // tick, not hidden for six hours as though GitHub had rejected a merge.
       this.store.settings.set(`lastRun:${guard}`, String(Date.now()));
       try {
+        // The preflight has multiple network awaits. Revalidate immediately
+        // before the irreversible write so a mid-sweep role revocation wins.
+        for (const permission of AUTO_MERGE_PERMISSIONS) {
+          this.requireAuthorized(userId, permission, 'merge the pull request', repo);
+        }
         const merged = await client.mergePr(repo, pr.number, 'squash', expectedHead);
         if (!merged.merged) throw new Error(merged.message || 'GitHub refused the merge');
         await client
@@ -381,8 +945,16 @@ export class Automations {
     return raw === 'daily' || raw === 'weekly' ? raw : 'off';
   }
 
-  setBriefingCadence(workspaceId: string, cadence: BriefingCadence): void {
+  briefingSchedule(workspaceId: string): WorkspaceBriefingSchedule {
+    const ownerId = this.store.settings.get(`briefingOwner:${workspaceId}`)?.trim() || null;
+    return { cadence: this.briefingCadence(workspaceId), ownerId };
+  }
+
+  setBriefingCadence(workspaceId: string, cadence: BriefingCadence, ownerId: string): WorkspaceBriefingSchedule {
     this.store.settings.set(`briefing:${workspaceId}`, cadence);
+    this.store.settings.set(`briefingOwner:${workspaceId}`, cadence === 'off' ? '' : ownerId);
+    this.broadcast({ t: 'automations.changed', area: 'briefing' });
+    return this.briefingSchedule(workspaceId);
   }
 
   /**
@@ -393,11 +965,12 @@ export class Automations {
   async runBriefing(workspaceId: string): Promise<void> {
     const ws = this.store.workspaces.get(workspaceId);
     if (!ws) throw new Error(`unknown workspace ${workspaceId}`);
-    const repoNames = new Set(this.store.repos.listByWorkspace(workspaceId).map((r) => r.full_name));
+    const repos = this.store.repos.listByWorkspace(workspaceId);
+    const repoNames = new Set(repos.map((repo) => repo.full_name));
     const dayAgo = Date.now() - 24 * 60 * 60_000;
 
     const sections: string[] = [];
-    const openPrs = this.store.prs.listWorkspace(workspaceId).filter((pr) => pr.state === 'open');
+    const openPrs = this.store.prs.listWorkspace(workspaceId, 'open');
     const openIssues = this.store.issues.listWorkspace(workspaceId, 'open');
 
     // What needs a human, right now — mirrors the Overview "Needs attention" queue.
@@ -415,6 +988,20 @@ export class Automations {
       ...pendingProposals.map((p) => `- Legacy proposal ${p.status === 'review' ? 'ready for review' : 'awaiting approval'}: [${p.title}](#/legacy-proposals)`),
     ];
     sections.push(`## Needs you (${needsYou.length})\n${needsYou.length ? needsYou.join('\n') : 'Inbox zero — nothing is waiting on you.'}`);
+
+    // Cached GitHub state is useful only with visible provenance. A revoked or
+    // failing fetch account must not turn an old snapshot into a confident
+    // daily status report merely because the scheduler itself can still read
+    // SQLite.
+    const staleRepos = repos.filter((repo) => !repo.last_sync_at || repo.last_sync_at < dayAgo);
+    sections.push(
+      staleRepos.length === 0
+        ? `## Data freshness\nAll ${repos.length} repository cache(s) synced within the last 24 hours.`
+        : `## Data freshness\n⚠ ${staleRepos.length} of ${repos.length} repository cache(s) have not synced within 24 hours. Treat their issue, PR and CI counts as stale.\n${staleRepos
+            .slice(0, 10)
+            .map((repo) => `- ${repo.full_name}: ${repo.last_sync_at ? `last synced ${new Date(repo.last_sync_at).toISOString()}` : 'never synced'}`)
+            .join('\n')}${staleRepos.length > 10 ? `\n- …and ${staleRepos.length - 10} more` : ''}`,
+    );
 
     // What the agents did while you were away.
     const recent = this.store.runs.list(500).filter((r) => r.created_at >= dayAgo && r.repo && repoNames.has(r.repo));
@@ -487,6 +1074,11 @@ export class Automations {
    * via `reports.changed`. Returns false when one is already running.
    */
   startDigest(repo: string, userId?: string): boolean {
+    if (userId) {
+      for (const permission of DIGEST_PERMISSIONS) {
+        this.requireAuthorized(userId, permission, 'create the repository digest', repo);
+      }
+    }
     if (this.digestsInFlight.has(repo)) return false;
     this.digestsInFlight.add(repo);
     void this.runDigest(repo, userId)
@@ -503,6 +1095,11 @@ export class Automations {
    * agent (or the clone) is unavailable, so the report always lands.
    */
   async runDigest(repo: string, userId?: string): Promise<void> {
+    if (userId) {
+      for (const permission of DIGEST_PERMISSIONS) {
+        this.requireAuthorized(userId, permission, 'create the repository digest', repo);
+      }
+    }
     const since = Number(this.store.settings.get(`lastRun:digest:${repo}`) ?? 0) || Date.now() - 86_400_000;
 
     const freshIssues = this.store.issues.listSince(repo, since);
@@ -556,10 +1153,18 @@ export class Automations {
 
     let body = quiet ? 'Quiet since the last digest — nothing shipped, failed, or arrived.' : facts.join('\n\n');
     const repoRow = this.store.repos.get(repo);
-    if (!quiet && userId && repoRow && this.checkouts.hasClone(repo)) {
+    if (
+      !quiet &&
+      userId &&
+      repoRow &&
+      this.authorized(userId, 'runs:act', repo) &&
+      this.checkouts.hasClone(repo)
+    ) {
       try {
         // Refresh the checkout before allowing bounded, read-only source inspection.
         await this.checkouts.fetch(repo, undefined, userId).catch(() => undefined);
+        this.requireAuthorized(userId, 'automations:manage', 'run the digest agent', repo);
+        this.requireAuthorized(userId, 'runs:act', 'run the digest agent', repo);
         const { finalMessage } = await this.checkouts.withBaseWorktree(
           repo,
           `digest-${randomUUID().slice(0, 12)}`,
@@ -646,10 +1251,98 @@ export class Automations {
     return now - last >= periodMs;
   }
 
-  private notify(repo: string, kind: NotificationKind, title: string, body: string, href: string | null): void {
+  private missingAuthority(
+    username: string,
+    permissions: readonly Permission[],
+    repo: string,
+  ): Permission[] {
+    return permissions.filter((permission) => !this.authorized(username, permission, repo));
+  }
+
+  /** Surface a revoked schedule once per day instead of silently skipping or
+   * flooding logs every minute. Restoring the role resumes on the next tick. */
+  private authorityPaused(
+    repo: string,
+    username: string,
+    action: string,
+    missing: readonly Permission[],
+    now: number,
+  ): void {
+    const key = `authority:${action}:${repo}`;
+    if (!this.due(key, now)) return;
+    this.store.settings.set(`lastRun:${key}`, String(now));
+    this.notify(
+      repo,
+      'action_required',
+      `${action} paused by access policy — ${repo}`,
+      `${username} is disabled or no longer holds ${missing.join(', ')}. Restore the permissions or assign the automation deliberately.`,
+      '#/automations',
+    );
+    this.audit({
+      actor: username,
+      action: `automation.${action.replaceAll(' ', '-')}.paused`,
+      status: 403,
+      detail: `${repo}: missing ${missing.join(', ')}`,
+    });
+  }
+
+  private runtimePaused(repo: string, username: string | null, action: string, reason: string): void {
+    const now = Date.now();
+    const key = `runtime:${action}:${repo}`;
+    if (!this.due(key, now)) return;
+    this.store.settings.set(`lastRun:${key}`, String(now));
+    this.notify(
+      repo,
+      'action_required',
+      `${action} paused by runtime configuration — ${repo}`,
+      `${username ?? 'Unassigned automation'}: ${reason}. Connect or reassign the required account, then the next schedule tick will resume.`,
+      '#/automations',
+    );
+    this.audit({
+      actor: username,
+      action: `automation.${action}.runtime-paused`,
+      status: 409,
+      detail: `${repo}: ${reason}`,
+    });
+  }
+
+  /** Workspace schedules have no repository row to carry their notification
+   * scope. Keep their pause signal workspace-local and rate-limit it exactly
+   * like repository schedule failures. */
+  private briefingPaused(workspaceId: string, username: string | null, reason: string, now: number): void {
+    const key = `runtime:workspace-briefing:${workspaceId}`;
+    if (!this.due(key, now)) return;
+    this.store.settings.set(`lastRun:${key}`, String(now));
+    const workspace = this.store.workspaces.get(workspaceId);
     this.store.notifications.insert({
       id: `ntf-${randomUUID().slice(0, 12)}`,
-      workspaceId: this.store.repos.get(repo)?.workspace_id ?? null,
+      workspaceId,
+      repo: null,
+      kind: 'action_required',
+      title: `Workspace briefing paused${workspace ? ` — ${workspace.name}` : ''}`,
+      body: `${username ?? 'Unassigned automation'}: ${reason}. Reassign the schedule deliberately to resume it.`,
+      href: '#/automations',
+      createdAt: now,
+    });
+    this.audit({
+      actor: username,
+      action: 'automation.workspace-briefing.paused',
+      status: username ? 403 : 409,
+      detail: `${workspaceId}: ${reason}`,
+    });
+  }
+
+  private notify(
+    repo: string,
+    kind: NotificationKind,
+    title: string,
+    body: string,
+    href: string | null,
+    workspaceId?: string,
+  ): void {
+    this.store.notifications.insert({
+      id: `ntf-${randomUUID().slice(0, 12)}`,
+      workspaceId: workspaceId ?? this.store.repos.get(repo)?.workspace_id ?? null,
       repo,
       kind,
       title,
@@ -673,6 +1366,247 @@ export class Automations {
       createdAt: Date.now(),
     });
   }
+
+  /** One alert per repository/hour keeps an outage visible without turning a
+   * webhook storm into a notification/log storm of its own. */
+  private reportDeliverySaturation(repo: string, ownerId: string | null): void {
+    const now = Date.now();
+    if (now - (this.saturationReportedAt.get(repo) ?? 0) < 60 * 60_000) return;
+    this.saturationReportedAt.set(repo, now);
+    log.warn('webhook delivery queue reached its admission ceiling', { repo });
+    try {
+      this.notify(
+        repo,
+        'action_required',
+        `Webhook queue is saturated — ${repo}`,
+        'Companion is returning retryable errors instead of accepting work it cannot durably process. Pause noisy hooks or restore runner/database capacity; delivery health shows the active backlog.',
+        '#/automations',
+      );
+      this.audit({
+        actor: ownerId,
+        action: 'webhook.delivery.saturated',
+        status: 503,
+        detail: `${repo}: active delivery admission ceiling reached`,
+      });
+    } catch (err) {
+      // Backpressure remains effective even if the same storage outage that
+      // caused it prevents the secondary operator signal.
+      log.warn('could not persist webhook saturation notification', { repo, err: String(err) });
+    }
+  }
+
+  /** Optional pipelines must not poison the primary webhook delivery, but a
+   * refused definition also must not disappear into daemon logs. */
+  private reportPipelineAdmissionFailures(
+    repo: string,
+    subject: string,
+    ownerId: string,
+    failures: readonly string[],
+  ): void {
+    if (failures.length === 0) return;
+    const detail = failures.slice(0, 5).join('\n').slice(0, 2_000);
+    this.notify(
+      repo,
+      'action_required',
+      `Automatic pipeline needs attention — ${repo} ${subject}`,
+      detail,
+      '#/pipelines',
+    );
+    this.audit({
+      actor: ownerId,
+      action: 'pipeline.auto-admission.partial',
+      status: 409,
+      detail: `${repo} ${subject}: ${detail}`,
+    });
+  }
+}
+
+/** Pick a bounded fair window so one noisy repository cannot consume a whole
+ * scheduler tick and candidates after a transiently failing PR still advance. */
+export function boundedRoundRobin<T>(
+  items: readonly T[],
+  rawCursor: number,
+  limit: number,
+): { selected: T[]; nextCursor: number } {
+  if (items.length === 0 || !Number.isSafeInteger(limit) || limit <= 0) {
+    return { selected: [], nextCursor: 0 };
+  }
+  const cursor = Number.isSafeInteger(rawCursor) && rawCursor >= 0 ? rawCursor % items.length : 0;
+  const count = Math.min(items.length, limit);
+  const selected = Array.from(
+    { length: count },
+    (_, offset) => items[(cursor + offset) % items.length]!,
+  );
+  return { selected, nextCursor: (cursor + count) % items.length };
+}
+
+function projectDelivery(
+  eventName: string,
+  payload: Record<string, unknown>,
+  identity: Pick<DeliveryPayload, 'action' | 'webhookOwnerId' | 'automationOwnerId'>,
+): DeliveryPayload {
+  return {
+    ...identity,
+    action: clip(identity.action, 100),
+    ...(eventName === 'issues' ? { issue: projectIssue(payload.issue) } : {}),
+    ...(eventName === 'pull_request' || eventName === 'pull_request_review_comment'
+      ? { pullRequest: projectPull(payload.pull_request) }
+      : {}),
+    ...(eventName === 'pull_request_review_comment'
+      ? { comment: projectReviewComment(payload.comment) }
+      : {}),
+    ...(eventName === 'check_run' || eventName === 'check_suite' || eventName === 'status'
+      ? { sha: clip(checkEventSha(eventName, payload), 128) || undefined }
+      : {}),
+  };
+}
+
+/** Serialize causally related events, not an entire high-volume repository. */
+function deliveryOrderingKey(repo: string, eventName: string, payload: DeliveryPayload): string {
+  if (payload.issue?.number) return `${repo}:issue:${payload.issue.number}`;
+  if (payload.pullRequest?.number) return `${repo}:pr:${payload.pullRequest.number}`;
+  if (payload.sha) return `${repo}:sha:${payload.sha}`;
+  return `${repo}:event:${clip(eventName, 100) || 'unknown'}`;
+}
+
+/**
+ * Persist only fields consumed by Companion and cap every user-controlled
+ * collection/string. The raw, HMAC-verified request may be several MiB; a
+ * burst of issue bodies or review hunks must not turn the durable inbox into
+ * an unbounded SQLite/memory queue.
+ */
+function projectIssue(value: unknown): GhIssue | undefined {
+  const issue = record(value);
+  if (!issue) return undefined;
+  return {
+    number: integer(issue.number),
+    title: clip(issue.title, DELIVERY_TITLE_CHARS),
+    body: nullableClip(issue.body, DELIVERY_BODY_CHARS),
+    state: issue.state === 'closed' ? 'closed' : 'open',
+    labels: labels(issue.labels),
+    user: user(issue.user),
+    assignees: users(issue.assignees),
+    comments: nonnegativeInteger(issue.comments),
+    html_url: clip(issue.html_url, 2_000),
+    created_at: clip(issue.created_at, 100),
+    updated_at: clip(issue.updated_at, 100),
+    closed_at: nullableClip(issue.closed_at, 100),
+    ...(issue.pull_request === undefined ? {} : { pull_request: true }),
+  };
+}
+
+function projectPull(value: unknown): GhPull | undefined {
+  const pull = record(value);
+  if (!pull) return undefined;
+  const head = record(pull.head);
+  const base = record(pull.base);
+  const headRepo = record(head?.repo);
+  const mergeable = pull.mergeable === null || typeof pull.mergeable === 'boolean'
+    ? pull.mergeable
+    : undefined;
+  return {
+    number: integer(pull.number),
+    title: clip(pull.title, DELIVERY_TITLE_CHARS),
+    body: nullableClip(pull.body, DELIVERY_BODY_CHARS),
+    state: pull.state === 'closed' ? 'closed' : 'open',
+    merged_at: nullableClip(pull.merged_at, 100),
+    closed_at: nullableClip(pull.closed_at, 100),
+    draft: pull.draft === true,
+    labels: labels(pull.labels),
+    assignees: users(pull.assignees),
+    head: {
+      ref: clip(head?.ref, 500),
+      sha: clip(head?.sha, 128),
+      ...(headRepo ? { repo: { full_name: clip(headRepo.full_name, 300) } } : {}),
+    },
+    base: { ref: clip(base?.ref, 500) },
+    mergeable,
+    mergeable_state: clip(pull.mergeable_state, 100) || undefined,
+    user: user(pull.user),
+    author_association: clip(pull.author_association, 100) || undefined,
+    html_url: clip(pull.html_url, 2_000),
+    created_at: clip(pull.created_at, 100),
+    updated_at: clip(pull.updated_at, 100),
+  };
+}
+
+function projectReviewComment(value: unknown): GhReviewComment | undefined {
+  const comment = record(value);
+  if (!comment) return undefined;
+  return {
+    ...(typeof comment.id === 'number' ? { id: integer(comment.id) } : {}),
+    user: user(comment.user),
+    body: clip(comment.body, DELIVERY_COMMENT_CHARS),
+    ...(comment.in_reply_to_id === undefined
+      ? {}
+      : { in_reply_to_id: nullableInteger(comment.in_reply_to_id) }),
+  };
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function clip(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.slice(0, max) : '';
+}
+
+function nullableClip(value: unknown, max: number): string | null {
+  return value === null || value === undefined ? null : clip(value, max);
+}
+
+function integer(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : 0;
+}
+
+function nonnegativeInteger(value: unknown): number {
+  return Math.max(0, integer(value));
+}
+
+function nullableInteger(value: unknown): number | null {
+  return value === null || value === undefined ? null : integer(value);
+}
+
+function user(value: unknown): { login: string } | null {
+  const candidate = record(value);
+  return candidate ? { login: clip(candidate.login, 100) } : null;
+}
+
+function users(value: unknown): Array<{ login: string }> {
+  return Array.isArray(value)
+    ? value.slice(0, DELIVERY_LIST_ITEMS).map(user).filter((item): item is { login: string } => item !== null)
+    : [];
+}
+
+function labels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, DELIVERY_LIST_ITEMS)
+    .map((item) => typeof item === 'string' ? clip(item, 256) : clip(record(item)?.name, 256))
+    .filter(Boolean);
+}
+
+function parseDeliveryPayload(raw: string): DeliveryPayload {
+  const value = JSON.parse(raw) as unknown;
+  if (!value || typeof value !== 'object') throw new Error('stored webhook payload is not an object');
+  const candidate = value as Partial<DeliveryPayload>;
+  if (typeof candidate.action !== 'string') throw new Error('stored webhook payload has no action');
+  if (candidate.webhookOwnerId !== null && typeof candidate.webhookOwnerId !== 'string') {
+    throw new Error('stored webhook payload has an invalid webhook owner');
+  }
+  if (candidate.automationOwnerId !== null && typeof candidate.automationOwnerId !== 'string') {
+    throw new Error('stored webhook payload has an invalid automation owner');
+  }
+  return candidate as DeliveryPayload;
+}
+
+function priorityFor(severity: 'critical' | 'high' | 'medium' | 'low' | 'trivial'): TaskPriority {
+  if (severity === 'critical') return 0;
+  if (severity === 'high') return 1;
+  if (severity === 'medium') return 2;
+  return 3;
 }
 
 /**

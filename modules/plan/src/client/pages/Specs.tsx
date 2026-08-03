@@ -58,6 +58,7 @@ export function SpecsPage(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('specs:manage');
+  const canGenerate = canManage && can('runs:read') && can('runs:act');
   const needsSetup = storage !== null && storage.config === null;
   const configDir = storage?.config?.dir ?? null;
 
@@ -69,9 +70,11 @@ export function SpecsPage(): JSX.Element {
         actions={
           canManage && storage?.config ? (
             <div className="flex gap-2">
-              <button className="btn-ghost" onClick={() => setCreating('generate')}>
-                ✦ Generate from repo
-              </button>
+              {canGenerate ? (
+                <button className="btn-ghost" onClick={() => setCreating('generate')}>
+                  ✦ Generate from repo
+                </button>
+              ) : null}
               <button className="btn" onClick={() => setCreating('write')}>
                 New spec
               </button>
@@ -169,8 +172,8 @@ export function SpecsPage(): JSX.Element {
           hint="A spec pins down how something should behave — agents implement against it instead of guessing. Write one, or let an agent draft it from the codebase."
           action={
             canManage ? (
-              <button className="btn" onClick={() => setCreating('generate')}>
-                Generate the first spec
+              <button className="btn" onClick={() => setCreating(canGenerate ? 'generate' : 'write')}>
+                {canGenerate ? 'Generate the first spec' : 'Write the first spec'}
               </button>
             ) : undefined
           }
@@ -210,6 +213,7 @@ function SpecStateIcon({ status, drifted }: { status: SpecListRecord['status']; 
 
 function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Promise<void> }): JSX.Element {
   const { can } = useAuth();
+  const canReadRuns = can('runs:read');
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [filing, setFiling] = useState(false);
@@ -330,7 +334,7 @@ function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Pr
 
       {(spec.status === 'ready' && can('proposals:create')) ||
       (can('specs:manage') && spec.status !== 'generating') ||
-      spec.generateRunId ? (
+      (spec.generateRunId && canReadRuns) ? (
         <CardActions>
           {spec.status === 'ready' && can('proposals:create') ? (
             <button className="btn" disabled={detailIntent !== null} onClick={() => void startFiling()}>
@@ -342,7 +346,7 @@ function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Pr
               {detailIntent === 'edit' ? 'Loading…' : spec.status === 'failed' ? 'Write by hand' : 'Edit'}
             </button>
           ) : null}
-          {spec.generateRunId ? (
+          {spec.generateRunId && canReadRuns ? (
             <a className="btn-ghost" href={`#/runs/${spec.generateRunId}`}>
               Drafting run
             </a>

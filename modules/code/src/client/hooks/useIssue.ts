@@ -17,6 +17,8 @@ export interface UseIssue {
   readonly error: string | null;
   readonly refresh: () => Promise<void>;
   readonly canAct: boolean;
+  readonly canReadRuns: boolean;
+  readonly canUseAgents: boolean;
   readonly triaging: boolean;
   readonly startTriage: () => Promise<void>;
   readonly fixing: boolean;
@@ -29,6 +31,8 @@ export function useIssue(repo: string, number: number): UseIssue {
   const targetKey = `${repo}#${number}`;
   const { can } = useAuth();
   const canAct = can('issues:act');
+  const canReadRuns = can('runs:read');
+  const canUseAgents = canAct && canReadRuns && can('runs:act');
   const canReadPipelines = can('pipelines:read');
   const [issue, setIssue] = useState<IssueRecord | null>(null);
   const [triage, setTriage] = useState<TriageResult | null>(null);
@@ -153,6 +157,8 @@ export function useIssue(repo: string, number: number): UseIssue {
     error: errorTarget === targetKey ? error : null,
     refresh,
     canAct,
+    canReadRuns,
+    canUseAgents,
     triaging: inCurrentTarget && triaging,
     startTriage,
     fixing: inCurrentTarget && fixing,

@@ -3,12 +3,12 @@ import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 /**
  * One entry in the Code group, after Pipelines (code owns the section; code is
  * a hard dependency, so the section always exists when this nav loads). The
- * icon is a droplet of goo with a sparkle: detected AI slop.
+ * icon is a signal droplet with a sparkle: contribution evidence under review.
  */
 export const nav = defineNav([
   {
     key: 'slop',
-    label: 'Slop Detection',
+    label: 'Contribution Quality',
     hash: '#/slop',
     // 's' is taken (workspace chord), so 't' (de-t-ect) it is.
     shortcut: 't',

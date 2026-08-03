@@ -37,13 +37,12 @@ type ResolveCtx = {
 
 /**
  * Grade GitHub's per-token `permissions` block onto the ladder. A payload
- * without one cannot be judged — assume full rights so an unfamiliar response
- * shape degrades to attempting the action rather than locking the user out.
+ * without one cannot prove write authority, so it degrades to read-only.
  */
 export function gradeRepoPermissions(
   perms: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean; pull?: boolean } | undefined,
 ): RepoPermission {
-  if (!perms) return 'admin';
+  if (!perms) return 'pull';
   if (perms.admin) return 'admin';
   if (perms.maintain) return 'maintain';
   if (perms.push) return 'push';
@@ -68,6 +67,11 @@ export class GitHubAccounts {
   private readonly clients = new Map<string, GitHubClient>();
   /** `${accountId}:${repo}` → probed repo reach (TTL'd, cleared on account changes). */
   private readonly repoAccess = new Map<string, RepoReach>();
+  /** Concurrent purpose resolution often reaches the same account/repo. Share
+   * that network probe instead of spending one GitHub request per purpose. */
+  private readonly repoAccessInflight = new Map<string, Promise<RepoPermission | null>>();
+  /** Prevent a probe started with replaced credentials from repopulating the cache. */
+  private readonly repoAccessEpoch = new Map<string, number>();
 
   constructor(
     private readonly store: CodeStore,
@@ -309,6 +313,7 @@ export class GitHubAccounts {
 
   /** A changed token/removal invalidates what we learned about the account's reach. */
   private clearAccessCache(accountId: string): void {
+    this.repoAccessEpoch.set(accountId, (this.repoAccessEpoch.get(accountId) ?? 0) + 1);
     for (const key of this.repoAccess.keys()) {
       if (key.startsWith(`${accountId}:`)) this.repoAccess.delete(key);
     }
@@ -534,24 +539,40 @@ export class GitHubAccounts {
    * The permission this account holds on the repo, or null if it cannot see it.
    * Probes `GET /repos/:fullName`, TTL-cached: the response's `permissions`
    * block is evaluated for THIS token, which is what makes a read-only
-   * collaborator distinguishable from one that may actually push.
+   * collaborator distinguishable from one that may actually push. Missing
+   * permission evidence permits reads only; it can never manufacture admin.
    */
   private async grantedOn(row: GithubAccountRow, fullName: string): Promise<RepoPermission | null> {
     const key = `${row.id}:${fullName}`;
     const cached = this.repoAccess.get(key);
     if (cached && Date.now() - cached.at < ACCESS_TTL_MS) return cached.granted;
+    const epoch = this.repoAccessEpoch.get(row.id) ?? 0;
+    const inflightKey = `${key}:${epoch}`;
+    const pending = this.repoAccessInflight.get(inflightKey);
+    if (pending) return pending;
+    const probe = (async (): Promise<RepoPermission | null> => {
+      try {
+        const granted = gradeRepoPermissions((await this.clientOf(row).repo(fullName)).permissions);
+        if ((this.repoAccessEpoch.get(row.id) ?? 0) !== epoch) return null;
+        this.repoAccess.set(key, { granted, at: Date.now() });
+        return granted;
+      } catch (err) {
+        // Authorization gates fail closed: an outage must not expose a cache
+        // populated by someone else. Cache only definitive credential failures;
+        // transient errors are retried on the next request.
+        const definitive =
+          err instanceof GitHubError && [401, 403, 404].includes(err.status) && !/rate limit/i.test(err.message);
+        if (definitive && (this.repoAccessEpoch.get(row.id) ?? 0) === epoch) {
+          this.repoAccess.set(key, { granted: null, at: Date.now() });
+        }
+        return null;
+      }
+    })();
+    this.repoAccessInflight.set(inflightKey, probe);
     try {
-      const granted = gradeRepoPermissions((await this.clientOf(row).repo(fullName)).permissions);
-      this.repoAccess.set(key, { granted, at: Date.now() });
-      return granted;
-    } catch (err) {
-      // Authorization gates fail closed: an outage must not expose a cache
-      // populated by someone else. Cache only definitive credential failures;
-      // transient errors are retried on the next request.
-      const definitive =
-        err instanceof GitHubError && [401, 403, 404].includes(err.status) && !/rate limit/i.test(err.message);
-      if (definitive) this.repoAccess.set(key, { granted: null, at: Date.now() });
-      return null;
+      return await probe;
+    } finally {
+      if (this.repoAccessInflight.get(inflightKey) === probe) this.repoAccessInflight.delete(inflightKey);
     }
   }
 

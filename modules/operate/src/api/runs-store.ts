@@ -229,6 +229,18 @@ export class RunsStore {
       .all(runnerId) as RunRow[];
   }
 
+  /** Owned rows that can still hold compute or a runner slot. Used by the
+   * live-authority reconciler; terminal history is deliberately untouched. */
+  activeOwned(): RunRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM runs
+         WHERE user_id IS NOT NULL
+           AND status IN ('queued', 'provisioning', 'running', 'idle', 'review')`,
+      )
+      .all() as RunRow[];
+  }
+
   /**
    * Live attended chats (interactive + AI Help) holding a slot of the pool the
    * given user schedules against: shared runners (runner_id null = local) plus

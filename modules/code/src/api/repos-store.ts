@@ -79,7 +79,7 @@ export class ReposStore {
     return this.db
       .prepare(
         `SELECT r.full_name, r.owner, r.name, rw.workspace_id, r.github_account_id, r.runner_id,
-                r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage,
+                r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage, r.verify_command,
                 r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.review_replies,
                 r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
@@ -92,7 +92,7 @@ export class ReposStore {
     return this.db
       .prepare(
         `SELECT r.full_name, r.owner, r.name, rw.workspace_id, r.github_account_id, r.runner_id,
-                r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage,
+                r.default_branch, r.private, r.clone_ready, r.last_sync_at, r.auto_triage, r.verify_command,
                 r.digest_enabled, r.stale_enabled, r.pr_gate, r.auto_merge, r.review_replies,
                 r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
@@ -147,11 +147,20 @@ export class ReposStore {
       .run(secret, ownerId, accountId, fullName);
   }
 
+  setWebhookRemote(fullName: string, remoteId: number | null, error: string | null): void {
+    this.db
+      .prepare(
+        `UPDATE repos SET webhook_remote_id = ?, webhook_remote_error = ? WHERE full_name = ?`,
+      )
+      .run(remoteId, error?.slice(0, 500) ?? null, fullName);
+  }
+
   clearWebhookRegistration(fullName: string): void {
     this.db
       .prepare(
         `UPDATE repos
-         SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL
+         SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL,
+             webhook_remote_id = NULL, webhook_remote_error = NULL
          WHERE full_name = ?`,
       )
       .run(fullName);
@@ -162,7 +171,8 @@ export class ReposStore {
   orphanWebhookRegistrationsForAccount(accountId: string): void {
     this.db
       .prepare(
-        `UPDATE repos SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL
+        `UPDATE repos SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL,
+                          webhook_remote_id = NULL, webhook_remote_error = NULL
          WHERE webhook_account_id = ?`,
       )
       .run(accountId);
@@ -172,14 +182,31 @@ export class ReposStore {
     secret: string;
     ownerId: string | null;
     accountId: string | null;
+    remoteId: number | null;
+    remoteError: string | null;
   } | null {
     const row = this.db
       .prepare(
-        `SELECT webhook_secret AS secret, webhook_owner_id AS ownerId, webhook_account_id AS accountId
+        `SELECT webhook_secret AS secret, webhook_owner_id AS ownerId, webhook_account_id AS accountId,
+                webhook_remote_id AS remoteId, webhook_remote_error AS remoteError
          FROM repos WHERE full_name = ?`,
       )
-      .get(fullName) as { secret: string | null; ownerId: string | null; accountId: string | null } | undefined;
-    return row?.secret ? { secret: row.secret, ownerId: row.ownerId, accountId: row.accountId } : null;
+      .get(fullName) as {
+        secret: string | null;
+        ownerId: string | null;
+        accountId: string | null;
+        remoteId: number | null;
+        remoteError: string | null;
+      } | undefined;
+    return row?.secret
+      ? {
+          secret: row.secret,
+          ownerId: row.ownerId,
+          accountId: row.accountId,
+          remoteId: row.remoteId,
+          remoteError: row.remoteError,
+        }
+      : null;
   }
 
   getWebhookSecret(fullName: string): string | null {
@@ -220,7 +247,7 @@ export class ReposStore {
       .prepare(
         `SELECT r.full_name, r.owner, r.name, MIN(rw.workspace_id) AS workspace_id,
                 r.github_account_id, r.runner_id, r.default_branch, r.private, r.clone_ready,
-                r.last_sync_at, r.auto_triage, r.digest_enabled, r.stale_enabled, r.pr_gate,
+                r.last_sync_at, r.auto_triage, r.verify_command, r.digest_enabled, r.stale_enabled, r.pr_gate,
                 r.auto_merge, r.review_replies, r.webhook_secret, r.automation_owner_id
          FROM repos r JOIN repo_workspaces rw ON rw.repo = r.full_name
          WHERE rw.workspace_id IN (${placeholders})
@@ -269,6 +296,8 @@ export interface RepoRow {
   webhook_secret: string | null;
   webhook_owner_id?: string | null;
   webhook_account_id?: string | null;
+  webhook_remote_id?: number | null;
+  webhook_remote_error?: string | null;
   automation_owner_id?: string | null;
 }
 

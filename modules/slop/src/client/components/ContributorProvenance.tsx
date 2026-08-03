@@ -28,7 +28,7 @@ export function ContributorProvenance({ provenance }: { provenance: SlopProvenan
       <div className="card">
         <Eyebrow>Contributor</Eyebrow>
         <p className="dim mt-2.5 text-xs leading-relaxed">
-          This detection carried no contributor facts, because GitHub was unreachable or the detection predates
+          This assessment carried no contributor facts, because GitHub was unreachable or the assessment predates
           provenance capture. Where facts were missing the agent was told to report no provenance signal rather than
           infer one.
         </p>

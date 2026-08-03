@@ -20,6 +20,51 @@ class GitCommandError extends Error {
   }
 }
 
+class GitOutputLimitError extends GitCommandError {}
+
+export interface DiffFileSize {
+  readonly path: string;
+  readonly changed: number;
+}
+
+/**
+ * Parse `git diff --numstat -z`. With `-z`, a rename is encoded as an empty
+ * pathname in the count record followed by the old and new path as separate
+ * NUL records. Splitting on lines would corrupt valid repository paths and
+ * make the review planner omit part of the change.
+ */
+export function parseDiffNumstat(output: string): DiffFileSize[] {
+  const records = output.split('\0');
+  const files: DiffFileSize[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record) continue;
+    const firstTab = record.indexOf('\t');
+    const secondTab = firstTab < 0 ? -1 : record.indexOf('\t', firstTab + 1);
+    if (firstTab < 1 || secondTab < 0) throw new Error('git numstat returned a malformed record');
+    const additions = record.slice(0, firstTab);
+    const deletions = record.slice(firstTab + 1, secondTab);
+    let path = record.slice(secondTab + 1);
+    if (!path) {
+      // The pre-image is useful only to consume the format. Review the new path,
+      // which is what `git diff ... -- <path>` accepts at the PR head.
+      i += 1;
+      const previousPath = records[i] ?? '';
+      i += 1;
+      path = records[i] ?? previousPath;
+    }
+    if (!path) throw new Error('git numstat returned a record without a path');
+    const added = additions === '-' ? 0 : Number(additions);
+    const removed = deletions === '-' ? 0 : Number(deletions);
+    if (!Number.isSafeInteger(added) || added < 0 || !Number.isSafeInteger(removed) || removed < 0) {
+      throw new Error('git numstat returned invalid line counts');
+    }
+    // A binary, mode-only or pure-rename change still needs a review group.
+    files.push({ path, changed: Math.max(1, added + removed) });
+  }
+  return files;
+}
+
 /**
  * execFile's message is `Command failed: <the entire argv>` — which for network
  * operations means the ephemeral credential helper ends up quoted in every
@@ -338,6 +383,31 @@ export class Checkouts {
     return [committed.stdout, uncommitted.stdout, untracked].filter(Boolean).join('\n');
   }
 
+  /**
+   * A committed PR diff up to a caller-owned byte ceiling. `null` means the
+   * patch crossed the ceiling; the child is stopped there, so a minified or
+   * generated file cannot allocate the normal 32 MiB git buffer merely so the
+   * reviewer can decide not to place it in a prompt.
+   *
+   * PR review worktrees are detached, clean synthetic heads, so unlike
+   * `diffVsBase` this intentionally has no uncommitted/untracked component.
+   */
+  async diffVsBaseBounded(worktree: string, baseBranch: string, maxBytes: number): Promise<string | null> {
+    const ceiling = Math.min(Math.max(Math.trunc(maxBytes), 1), 32 * 1024 * 1024);
+    try {
+      return (await this.git(['diff', `origin/${baseBranch}...HEAD`], worktree, undefined, ceiling)).stdout;
+    } catch (err) {
+      if (err instanceof GitOutputLimitError) return null;
+      throw err;
+    }
+  }
+
+  /** Lightweight PR-review plan: bounded by filenames, not the diff body. */
+  async diffFileSizes(worktree: string, baseBranch: string): Promise<DiffFileSize[]> {
+    const { stdout } = await this.git(['diff', '--numstat', '-z', '-M', `origin/${baseBranch}...HEAD`], worktree);
+    return parseDiffNumstat(stdout);
+  }
+
   /** A server-controlled diff slice for a read-only agent prompt. */
   async diffPaths(worktree: string, baseBranch: string, paths: readonly string[]): Promise<string> {
     if (paths.length === 0) return '';
@@ -434,6 +504,7 @@ export class Checkouts {
     cwd: string | undefined,
     /** Already-resolved credential (network operations only — see creds()). */
     token?: string | null,
+    maxBuffer = 32 * 1024 * 1024,
   ): Promise<{ stdout: string; stderr: string }> {
     // Ephemeral credential helper: git asks it for credentials; it answers with
     // the PAT from env. Nothing token-shaped touches disk or process args.
@@ -451,7 +522,7 @@ export class Checkouts {
     try {
       return await execFileP('git', [...cred, ...args], {
         cwd,
-        maxBuffer: 32 * 1024 * 1024,
+        maxBuffer,
         env: {
           ...process.env,
           ...(token ? { COMPANION_GH_TOKEN: token } : {}),
@@ -459,6 +530,10 @@ export class Checkouts {
         },
       });
     } catch (err) {
+      if ((err as { code?: unknown }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+        const failure = gitFailure(args, err);
+        throw new GitOutputLimitError(failure.message, failure.stdout, failure.stderr);
+      }
       throw gitFailure(args, err);
     }
   }

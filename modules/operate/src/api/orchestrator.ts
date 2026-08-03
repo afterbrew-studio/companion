@@ -97,6 +97,10 @@ function lanePinKey(lane: RunLane, task: string): string {
 
 const AUTO_LANE: RunLane = { runnerId: null, harness: null };
 
+/** A distinct failure so createRun never mistakes revoked authority for a
+ * transient runner failure and retries the same work on another machine. */
+class RunAuthorityError extends Error {}
+
 /**
  * Is the queue stuck rather than merely busy?
  *
@@ -158,6 +162,13 @@ export class Orchestrator implements RunnerEventSink {
   private pendingResume = new Map<string, { priority: number; enqueuedAt: number }>();
   /** Whether the queue-stall alert is currently raised, so it fires on transition. */
   private queueStalled = false;
+  /**
+   * Live identity/RBAC admission for every owned run. The permissive default
+   * keeps this execution primitive constructible in isolation; production
+   * installs module-core's active-user + runs permission check immediately
+   * after construction.
+   */
+  private runAuthority: (username: string) => boolean = () => true;
 
   constructor(
     private readonly store: OperateStore,
@@ -222,6 +233,11 @@ export class Orchestrator implements RunnerEventSink {
     this.verifyCommandFor = resolve;
   }
 
+  /** Registered by the composition root once module-core is available. */
+  setRunAuthorityResolver(resolve: (username: string) => boolean): void {
+    this.runAuthority = resolve;
+  }
+
   /** Where work no machine's policy accepts goes (module config, read live). */
   private unplacedWork(): RunnerFallback {
     const value = this.moduleConfig.get('unplacedWork');
@@ -246,6 +262,10 @@ export class Orchestrator implements RunnerEventSink {
     // attended chats (interactive / AI Help) go idle — the gateway stays live
     // but nothing is in flight, so they must not read as "running".
     const row = this.store.runs.get(runId);
+    if (row && !this.isOwnerAuthorized(row.user_id)) {
+      this.revokeRun(row, 'turn completed after its owner lost run authority');
+      return;
+    }
     if (row && (row.kind === 'fix' || row.kind === 'implement') && row.status === 'running') {
       this.setStatus(runId, 'review');
       this.emitRunChanged(runId);
@@ -265,6 +285,13 @@ export class Orchestrator implements RunnerEventSink {
     // it was added after Companion's immutable deny list. Writable goal runs
     // retain their automatic policy; attended chats keep the human in the loop.
     const row = this.store.runs.get(runId);
+    if (row && !this.isOwnerAuthorized(row.user_id)) {
+      // Never leave a revoked unattended run parked on an approval, and never
+      // auto-allow one more tool after its owner lost authority.
+      void this.backend(runId).respondAsk(runId, ask.requestId, { mode: 'deny' }).catch(() => undefined);
+      this.revokeRun(row, 'approval requested after its owner lost run authority');
+      return;
+    }
     const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
     if (row && !attended && ask.kind === 'permission') {
       if (accessForRunKind(row.kind) === 'read-only') {
@@ -540,8 +567,10 @@ export class Orchestrator implements RunnerEventSink {
      */
     lane?: RunLane;
   }): Promise<RunRecord> {
-    // Before every other check and before any side effect: a run refused for
-    // budget must leave no row, no worktree and no queue entry behind.
+    // Before every other check and before any side effect: a run whose owner
+    // has lost authority must leave no row, worktree or queue entry behind.
+    this.assertOwnerAuthorized(opts.userId ?? null);
+    // Budget refusal is likewise side-effect free.
     this.budgetGate(opts.userId ?? null);
     if (opts.repo) {
       if (!opts.userId) {
@@ -552,6 +581,7 @@ export class Orchestrator implements RunnerEventSink {
           `your GitHub accounts cannot access ${opts.repo} — ask the repository owner to grant access`,
         );
       }
+      this.assertOwnerAuthorized(opts.userId);
     }
     // Refuse a model no machine may run rather than start the run on something
     // else: output from a model the caller did not choose is the worse answer.
@@ -673,17 +703,25 @@ export class Orchestrator implements RunnerEventSink {
     let cwd = opts.cwd;
     for (;;) {
       try {
+        this.assertOwnerAuthorized(opts.userId ?? null);
         if (opts.cwd === undefined) {
           cwd = await placedBackend.scratchDir(id);
+          this.assertOwnerAuthorized(opts.userId ?? null);
           this.store.runs.setPlacement(id, placedOn, cwd, this.runners.harnessFor(placedOn).id);
         }
         await placedBackend.spawn(id, cwd!, accessForRunKind(kind));
+        this.assertOwnerAuthorized(opts.userId ?? null);
         this.setStatus(id, 'running');
         // The gateway is up anyway — top up that machine's catalog for free if
         // it has gone stale (never blocks the run).
         this.runners.noteLiveSession(placedOn, id);
         break;
       } catch (err) {
+        if (err instanceof RunAuthorityError) {
+          const row = this.store.runs.get(id);
+          if (row) this.revokeRun(row, 'authority revoked while the run was provisioning');
+          throw err;
+        }
         this.runners.recheckHealth(placedOn);
         // A refusal here means the remaining machines' policies won't take the
         // run: there is nowhere to fail over TO, and the spawn failure that got
@@ -729,6 +767,7 @@ export class Orchestrator implements RunnerEventSink {
   async writeRunFile(runId: string, relPath: string, content: string): Promise<void> {
     const run = this.store.runs.get(runId);
     if (!run) throw new Error(`run ${runId} not found`);
+    this.assertRunAuthorized(run);
     await this.runners.backendForRun(run.runner_id ?? null).writeFile(run.cwd, relPath, content);
   }
 
@@ -736,6 +775,7 @@ export class Orchestrator implements RunnerEventSink {
   async resumeRun(runId: string): Promise<RunRecord> {
     const row = this.store.runs.get(runId);
     if (!row) throw new Error(`unknown run: ${runId}`);
+    this.assertRunAuthorized(row);
     if (!this.isLive(runId)) {
       try {
         await this.backend(runId).spawn(runId, row.cwd, accessForRunKind(row.kind));
@@ -743,6 +783,7 @@ export class Orchestrator implements RunnerEventSink {
         log.warn('resume failed', { runId, err: String(err) });
         throw new Error(`could not resume: ${err instanceof Error ? err.message : String(err)}`);
       }
+      this.assertRunAuthorized(row);
     }
     // A fix/implement run awaiting human review keeps its review status —
     // resuming just re-attaches the transcript/chat, it doesn't "un-review".
@@ -771,8 +812,10 @@ export class Orchestrator implements RunnerEventSink {
   // ---------- interaction -----------------------------------------------------------
 
   async sendPrompt(runId: string, prompt: string, model?: string, attachments?: readonly PromptAttachment[]): Promise<{ turnId: string }> {
-    const backend = this.requireLive(runId);
     const row = this.store.runs.get(runId);
+    if (!row) throw new Error(`unknown run: ${runId}`);
+    this.assertRunAuthorized(row);
+    const backend = this.requireLive(runId);
     // A new turn on an idle attended chat: it's working again.
     if (row?.status === 'idle') {
       this.setStatus(runId, 'running');
@@ -810,6 +853,8 @@ export class Orchestrator implements RunnerEventSink {
    */
   async setGoalMode(runId: string): Promise<void> {
     const run = this.store.runs.get(runId);
+    if (!run) throw new Error(`unknown run: ${runId}`);
+    this.assertRunAuthorized(run);
     if (!describeHarness(run?.harness ?? MOXXY_HARNESS.id).capabilities.sessionControls.mode) return;
     await this.requireLive(runId).setMode(runId, 'goal');
   }
@@ -984,6 +1029,7 @@ export class Orchestrator implements RunnerEventSink {
   async setRunModel(runId: string, model: string | null, provider?: string): Promise<RunRecord> {
     const row = this.store.runs.get(runId);
     if (!row) throw new Error(`unknown run: ${runId}`);
+    this.assertRunAuthorized(row);
     // Refuse the selection here rather than let the next turn fail: this run
     // can only execute on the machine it is placed on.
     if (model !== null && !this.runners.serves(row.runner_id ?? null, model)) {
@@ -1019,6 +1065,9 @@ export class Orchestrator implements RunnerEventSink {
     requestId: string,
     response: { mode?: 'allow' | 'allow_session' | 'allow_always' | 'deny'; optionId?: string; text?: string },
   ): Promise<void> {
+    const row = this.store.runs.get(runId);
+    if (!row) throw new Error(`unknown run: ${runId}`);
+    this.assertRunAuthorized(row);
     await this.requireLive(runId).respondAsk(runId, requestId, response);
     this.asksFor(runId).delete(requestId);
   }
@@ -1253,7 +1302,12 @@ export class Orchestrator implements RunnerEventSink {
     const capacity = Math.max(1, this.runners.totalCapacity());
     const nonQueue = this.store.runs.activeNonQueueCount();
     while (this.oneShotQueue.length > 0 && this.oneShotActive + nonQueue < capacity) {
-      this.oneShotQueue.shift()!.start();
+      const item = this.oneShotQueue.shift()!;
+      if (!this.isOwnerAuthorized(item.userId)) {
+        item.cancel();
+      } else {
+        item.start();
+      }
       started = true;
     }
     if (started) this.broadcastQueue();
@@ -1411,6 +1465,23 @@ export class Orchestrator implements RunnerEventSink {
   // ---------- internals -----------------------------------------------------------
 
   onEvent(runId: string, event: MoxxyEvent): void {
+    const active = this.store.runs.get(runId);
+    if (
+      active &&
+      (active.status === 'provisioning' || active.status === 'running' || active.status === 'idle') &&
+      !this.isOwnerAuthorized(active.user_id)
+    ) {
+      // The provider has already spent these tokens. Revocation stops the next
+      // action, but accounting must still reflect the cost that actually landed.
+      if (event.type === 'provider_response') {
+        const input = numberField(event, 'inputTokens');
+        const output = numberField(event, 'outputTokens');
+        if (input || output) this.store.runs.addUsage(runId, input, output);
+      }
+      this.revokeRun(active, 'agent emitted work after its owner lost run authority');
+      this.broadcast({ t: 'event', runId, event });
+      return;
+    }
     if (event.type === 'provider_response') {
       const input = numberField(event, 'inputTokens');
       const output = numberField(event, 'outputTokens');
@@ -1481,6 +1552,74 @@ export class Orchestrator implements RunnerEventSink {
       throw new Error(`run ${runId} has no live gateway (resume it first)`);
     }
     return backend;
+  }
+
+  /** Null-owned scratch work is instance automation; personal work is always
+   * checked against the current account state and current RBAC grid. */
+  private isOwnerAuthorized(userId: string | null): boolean {
+    if (userId === null) return true;
+    try {
+      return this.runAuthority(userId);
+    } catch (err) {
+      log.warn('run authority resolver failed closed', { userId, err: String(err) });
+      return false;
+    }
+  }
+
+  private assertOwnerAuthorized(userId: string | null): void {
+    if (!this.isOwnerAuthorized(userId)) {
+      throw new RunAuthorityError('run owner is disabled or no longer has runs:read and runs:act');
+    }
+  }
+
+  private assertRunAuthorized(row: { id: string; user_id: string | null }): void {
+    try {
+      this.assertOwnerAuthorized(row.user_id);
+    } catch (err) {
+      this.revokeRun(row, 'run action refused because its owner lost run authority');
+      throw err;
+    }
+  }
+
+  /** Fail closed and release the runner slot. Safe to call repeatedly. */
+  private revokeRun(row: { id: string; user_id: string | null }, reason: string): void {
+    const current = this.store.runs.get(row.id);
+    if (!current) return;
+    const active =
+      current.status === 'queued' ||
+      current.status === 'provisioning' ||
+      current.status === 'running' ||
+      current.status === 'idle' ||
+      current.status === 'review';
+    if (!active) return;
+    log.warn('revoking agent run', { runId: current.id, userId: current.user_id, reason });
+    this.pendingAsks.delete(current.id);
+    this.setStatus(current.id, 'failed', `authority revoked: ${reason}`);
+    this.emitRunChanged(current.id);
+    void this.backend(current.id).stop(current.id).catch(() => undefined);
+  }
+
+  /** Periodic backstop for idle/review runs and queued work, which may emit no
+   * event after an administrator disables their owner. */
+  reapUnauthorizedRuns(): number {
+    let reaped = 0;
+    for (const row of this.store.runs.activeOwned()) {
+      if (this.isOwnerAuthorized(row.user_id)) continue;
+      this.revokeRun(row, 'periodic authority reconciliation');
+      reaped++;
+    }
+    for (let i = this.oneShotQueue.length - 1; i >= 0; i--) {
+      const item = this.oneShotQueue[i]!;
+      if (this.isOwnerAuthorized(item.userId)) continue;
+      this.oneShotQueue.splice(i, 1);
+      item.cancel();
+      reaped++;
+    }
+    if (reaped > 0) {
+      this.pumpQueue();
+      this.broadcastQueue();
+    }
+    return reaped;
   }
 
   private asksFor(runId: string): Map<string, AskRequest> {

@@ -64,6 +64,7 @@ export function PrsAreaPage(): JSX.Element {
     unavailableRepos,
     failedRepos,
     canActPrs,
+    canRunAiReview,
     canRunPipelines,
     pipelines,
     selected,
@@ -222,7 +223,7 @@ export function PrsAreaPage(): JSX.Element {
           busy={bulkRunning !== null}
           running={bulkRunning}
           canAct={canActPrs}
-          ai={canActPrs ? { label: 'AI review', onRun: bulkAiReview } : null}
+          ai={canRunAiReview ? { label: 'AI review', onRun: bulkAiReview } : null}
           pipelines={canRunPipelines ? pipelines : []}
           onRunPipeline={bulkRunPipeline}
           onLabel={bulkLabel}

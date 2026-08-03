@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SpaServerMessage } from '@moxxy/companion-contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { IssueRecord, TriageResult, TriageVerdict } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
@@ -50,6 +50,7 @@ export class Triage {
     private readonly orchestrator: Orchestrator,
     private readonly checkouts: Checkouts,
     private readonly github: (ctx?: { repo?: string; accountId?: string; username?: string | null }) => GitHubClient | null,
+    private readonly authorized: (username: string, permission: Permission, repo: string) => boolean,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -58,8 +59,27 @@ export class Triage {
     return this.store.triage.outcomes(workspaceId, since);
   }
 
+  latest(repo: string, issueNumber: number): TriageResult | undefined {
+    return this.store.triage.latest(repo, issueNumber);
+  }
+
+  /**
+   * Idempotent admission for a durable external event. A delivery retry after
+   * the verdict was stored must reuse that evidence rather than spend another
+   * model run; an interrupted/failed attempt may be tried again.
+   */
+  async triageIssueOnce(repo: string, issueNumber: number, userId: string): Promise<TriageResult> {
+    const latest = this.store.triage.latest(repo, issueNumber);
+    if (latest?.status === 'running') throw new Error(`triage is already running for ${repo}#${issueNumber}`);
+    if (latest && latest.status !== 'failed') return latest;
+    return this.triageIssue(repo, issueNumber, userId);
+  }
+
   /** Synchronous preflight so a fire-and-forget route can return a useful 4xx. */
-  validateTriage(repo: string, issueNumber: number): void {
+  validateTriage(repo: string, issueNumber: number, userId: string): void {
+    if (!this.hasTriageAuthority(userId, repo)) {
+      throw new Error(`${userId} is disabled, cannot access ${repo}, or no longer holds triage-run permissions`);
+    }
     if (!this.store.issues.get(repo, issueNumber)) throw new Error(`unknown issue ${repo}#${issueNumber}`);
     if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     if (this.store.triage.latest(repo, issueNumber)?.status === 'running') {
@@ -76,7 +96,7 @@ export class Triage {
 
   /** Queue a triage run for one issue. Resolves when the verdict is stored. */
   async triageIssue(repo: string, issueNumber: number, userId: string): Promise<TriageResult> {
-    this.validateTriage(repo, issueNumber);
+    this.validateTriage(repo, issueNumber, userId);
     const issue = this.store.issues.get(repo, issueNumber)!;
 
     const openIssues = this.store.issues
@@ -121,11 +141,20 @@ export class Triage {
               this.store.triage.setRun(triageId, startedRunId);
               this.broadcast({ t: 'triage.changed', repo });
             },
+            shouldStart: () => this.hasTriageAuthority(userId, repo),
+            onUsage: (activeRunId) => {
+              if (!this.hasTriageAuthority(userId, repo)) {
+                void this.orchestrator.stopRun(activeRunId).catch(() => undefined);
+              }
+            },
           }),
         undefined,
         userId,
       );
       this.store.triage.setRun(triageId, runId);
+      if (!this.hasTriageAuthority(userId, repo)) {
+        throw new Error('triage owner authority was revoked while the agent was running');
+      }
       const verdict = parseVerdict(finalMessage ?? '');
       this.store.triage.finish(triageId, 'pending', verdict, null);
     } catch (err) {
@@ -147,19 +176,24 @@ export class Triage {
     const result = this.findTriage(id);
     if (!result || !result.verdict) throw new Error('triage result not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`triage is ${result.status}, not pending`);
+    this.requireAuthority(opts.userId, 'issues:act', result.repo, 'apply the triage verdict');
     const client = this.github({ repo: result.repo, accountId: opts.accountId, username: opts.userId });
     if (!client) throw new Error('GitHub is not configured');
 
     const labels = [...result.verdict.labels];
     if (result.verdict.duplicateOf) labels.push('duplicate');
     if (result.verdict.needsInfo) labels.push('needs-info');
-    if (labels.length > 0) await client.addLabels(result.repo, result.issueNumber, dedupe(labels));
+    if (labels.length > 0) {
+      this.requireAuthority(opts.userId, 'issues:act', result.repo, 'apply triage labels');
+      await client.addLabels(result.repo, result.issueNumber, dedupe(labels));
+    }
 
     let reply = result.verdict.draftReply.trim();
     if (result.verdict.duplicateOf) {
       reply = reply || `This looks like a duplicate of #${result.verdict.duplicateOf}.`;
     }
     if (opts.comment && reply) {
+      this.requireAuthority(opts.userId, 'issues:act', result.repo, 'post the triage reply');
       await client.comment(result.repo, result.issueNumber, reply);
     }
 
@@ -177,6 +211,17 @@ export class Triage {
 
   private findTriage(id: string): TriageResult | undefined {
     return this.store.triage.get(id);
+  }
+
+  private hasTriageAuthority(userId: string, repo: string): boolean {
+    return (['issues:read', 'issues:act', 'runs:read', 'runs:act'] as const)
+      .every((permission) => this.authorized(userId, permission, repo));
+  }
+
+  private requireAuthority(userId: string, permission: Permission, repo: string, action: string): void {
+    if (!this.authorized(userId, permission, repo)) {
+      throw new Error(`${userId} is disabled, cannot access ${repo}, or no longer holds ${permission}; cannot ${action}`);
+    }
   }
 }
 

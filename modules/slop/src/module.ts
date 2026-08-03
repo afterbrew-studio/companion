@@ -1,14 +1,14 @@
 import { defineManifest } from '@moxxy/companion-sdk';
 
 /**
- * module-slop — AI Slop Detection: a one-shot agent scores a pull request
+ * module-slop — Contribution Quality: a one-shot agent assesses a pull request
  * against the workspace's detection rules (built-in + user-defined) and
  * proposes an action (label / comment / request changes / close). Review-
  * then-apply: nothing touches GitHub until a human applies the verdict.
  */
 export default defineManifest({
   id: 'slop',
-  title: 'Slop Detection',
+  title: 'Contribution Quality',
   version: '0.1.0',
   // Hard deps: PRs come from code's sync cache and actions go through its
   // GitHub client registry; the detection agent runs through operate; rules
@@ -24,11 +24,11 @@ export default defineManifest({
   config: [
     {
       key: 'label',
-      label: 'Slop label',
+      label: 'Quality-review label',
       kind: 'text',
-      default: 'ai-slop',
+      default: 'needs-evidence',
       max: 50,
-      placeholder: 'ai-slop',
+      placeholder: 'needs-evidence',
     },
   ],
 });

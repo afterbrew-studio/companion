@@ -83,6 +83,13 @@ export interface TaskRecord {
   readonly repo: string;
   /** Branch the worker starts from and the resulting PR targets. */
   readonly targetBranch: string;
+  /** GitHub issue that admitted this task, or null for a hand-authored card. */
+  readonly sourceIssueNumber: number | null;
+  /**
+   * Frozen repository-flow policy. null means use the workspace's live board
+   * configuration, which preserves the existing behaviour for manual cards.
+   */
+  readonly automationPolicy: TaskAutomationPolicy | null;
   readonly title: string;
   readonly description: string;
   /** Definition of done: acceptance criteria the build must satisfy. */
@@ -165,6 +172,23 @@ export interface BoardConfig {
   /** Failing checks on a task's PR send it back to its worker. */
   readonly autoFixCi: boolean;
   /** Remediation ceiling before the task drops into the Failed column. */
+  readonly maxAttempts: number;
+}
+
+/**
+ * Automation rules frozen onto one task when an external flow creates it.
+ *
+ * Workspace board settings remain the default for hand-authored cards. A
+ * webhook-created issue, however, must keep the governance decision that was
+ * approved when it entered the system: changing a repository from governed to
+ * autonomous tomorrow must not silently grant today's in-flight task permission
+ * to merge itself.
+ */
+export interface TaskAutomationPolicy {
+  readonly autoReview: boolean;
+  readonly autoMerge: boolean;
+  readonly mergeMethod: BoardConfig['mergeMethod'];
+  readonly autoFixCi: boolean;
   readonly maxAttempts: number;
 }
 

@@ -39,6 +39,7 @@ export function EvaluationsPage(): JSX.Element {
   const stopSuite = useRef(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const codeEnabled = kernel.descriptors.some((descriptor) => descriptor.id === 'code' && descriptor.enabled);
+  const canRun = can('runs:read') && can('runs:act');
 
   useEffect(() => {
     if (codeEnabled && can('repos:read')) {
@@ -138,6 +139,7 @@ export function EvaluationsPage(): JSX.Element {
         loading={loading}
         refresh={refresh}
         reportError={setError}
+        canRun={canRun}
       />
 
       <div className="mb-3">
@@ -187,7 +189,8 @@ export function EvaluationsPage(): JSX.Element {
             ) : (
               <button
                 className="btn"
-                disabled={cases.length === 0 || runningIds.size > 0}
+                disabled={!canRun || cases.length === 0 || runningIds.size > 0}
+                title={canRun ? undefined : 'Requires runs:read and runs:act'}
                 onClick={() => void runSuite()}
               >
                 Run all sequentially
@@ -227,7 +230,7 @@ export function EvaluationsPage(): JSX.Element {
               record={record}
               latest={latestByCase.get(record.id) ?? null}
               running={runningIds.has(record.id)}
-              disabled={runningIds.size > 0 && !runningIds.has(record.id)}
+              disabled={!canRun || (runningIds.size > 0 && !runningIds.has(record.id))}
               onRun={() => void runCase(record)}
               onEdit={() => setEditing(record)}
               onDelete={() => void remove(record)}

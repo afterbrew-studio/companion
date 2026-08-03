@@ -12,6 +12,10 @@ function fixture(decisions) {
       calls.push('worktree');
       return '/tmp/repair-1';
     },
+    addWorktree: async () => {
+      calls.push('goal-worktree');
+      return '/tmp/goal-1';
+    },
   };
   const orchestrator = {
     runners: { backend: () => backend },
@@ -45,6 +49,7 @@ function fixture(decisions) {
     () => ({ pull: async () => ({ mergeable: undefined }) }),
     async () => true,
     async () => ({ client: null, tried: [] }),
+    () => true,
     {},
     () => undefined,
   );
@@ -70,4 +75,21 @@ test('a cancellation after goal-mode setup still prevents the first prompt', asy
   await fixes.startConflictResolve('acme/app', 7, 'alice', options);
 
   assert.deepEqual(calls, ['clone', 'fetch', 'worktree', 'create', 'owner:repair-1', 'link', 'goal', 'stop']);
+});
+
+test('a fresh goal run also exposes ownership before its first prompt', async () => {
+  const { fixes, calls, options } = fixture([false]);
+
+  await fixes.createGoalRun({
+    kind: 'implement',
+    title: 'Implement task',
+    repo: 'acme/app',
+    branchPrefix: 'companion/task-1',
+    baseBranch: 'main',
+    objective: 'Implement the bounded task.',
+    userId: 'alice',
+    ...options,
+  });
+
+  assert.deepEqual(calls, ['clone', 'goal-worktree', 'create', 'owner:repair-1', 'stop']);
 });

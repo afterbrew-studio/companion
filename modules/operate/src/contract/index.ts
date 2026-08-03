@@ -1060,13 +1060,15 @@ export interface TaskModelSnapshot {
   }>;
 }
 
-/** State of the instance-wide webhook tunnel (public delivery via moxxy proxy). */
+/** State of instance-wide public webhook delivery. */
 export interface WebhookTunnelState {
   readonly enabled: boolean;
   readonly status: 'off' | 'connecting' | 'connected' | 'error';
-  /** Public base URL while up (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
+  /** Which ingress owns the public URL. */
+  readonly source: 'off' | 'relay' | 'external';
+  /** Public base URL while available (e.g. https://<uuid>.proxy.moxxy.ai/gh). */
   readonly url: string | null;
-  /** Sanitized operator-facing failure; relay internals stay in server logs. */
+  /** Sanitized operator-facing failure; ingress internals stay in server logs. */
   readonly error: string | null;
 }
 

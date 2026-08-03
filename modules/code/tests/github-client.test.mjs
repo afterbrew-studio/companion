@@ -57,6 +57,155 @@ test('an upstream credential rejection cannot masquerade as an expired Companion
   assert.equal(unauthorized.clientStatus, 502);
 });
 
+test('read-only queue calls expose bounded rate telemetry and explicit open-state URLs', async () => {
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push(req.url);
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'x-ratelimit-limit': '5000',
+      'x-ratelimit-remaining': '4321',
+      'x-ratelimit-reset': '1800000000',
+      'x-ratelimit-resource': 'core',
+    });
+    res.end('[]');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`);
+  try {
+    await client.pulls('acme/app', 1, 'open');
+    await client.issues('acme/app', { maxPages: 1, state: 'open' });
+    assert.deepEqual(seen, [
+      '/repos/acme/app/pulls?state=open&per_page=100&sort=updated&direction=desc&page=1',
+      '/repos/acme/app/issues?state=open&per_page=100&sort=updated&direction=desc&page=1',
+    ]);
+    assert.deepEqual(client.rateLimitSnapshot(), {
+      limit: 5000,
+      remaining: 4321,
+      resetAt: 1_800_000_000_000,
+      resource: 'core',
+      observedAt: client.rateLimitSnapshot().observedAt,
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('autonomy queue uses body-free GraphQL metadata instead of one REST detail call per PR', async () => {
+  const requests = [];
+  const writes = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw);
+    requests.push({ method: req.method, url: req.url, query: body.query, variables: body.variables });
+    const isPulls = body.query.includes('CompanionAutonomyPulls');
+    res.writeHead(200, { 'content-type': 'application/json', 'x-ratelimit-remaining': '4990' });
+    res.end(JSON.stringify({
+      data: {
+        repository: isPulls
+          ? {
+              pullRequests: {
+                totalCount: 1,
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [{
+                  number: 7,
+                  title: 'Large contribution',
+                  url: 'https://github.test/acme/app/pull/7',
+                  createdAt: '2026-08-02T00:00:00Z',
+                  updatedAt: '2026-08-02T01:00:00Z',
+                  isDraft: false,
+                  additions: 900,
+                  deletions: 200,
+                  changedFiles: 51,
+                  mergeable: 'CONFLICTING',
+                  mergeStateStatus: 'DIRTY',
+                  headRefName: 'feature',
+                  headRefOid: 'abc123',
+                  baseRefName: 'main',
+                  reviewDecision: 'CHANGES_REQUESTED',
+                  author: { login: 'contributor' },
+                  labels: { nodes: [{ name: 'agent-authored' }] },
+                }],
+              },
+            }
+          : {
+              issues: {
+                totalCount: 1,
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [{
+                  number: 9,
+                  title: 'Bug report',
+                  url: 'https://github.test/acme/app/issues/9',
+                  createdAt: '2026-08-02T00:00:00Z',
+                  updatedAt: '2026-08-02T01:00:00Z',
+                  author: { login: 'reporter' },
+                  comments: { totalCount: 2 },
+                  labels: { totalCount: 0 },
+                  assignees: { totalCount: 0 },
+                }],
+              },
+            },
+      },
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`, (what) => writes.push(what));
+  try {
+    const queue = await client.repositoryAutonomyQueue('acme/app');
+    assert.equal(requests.length, 2);
+    assert.ok(requests.every((request) => request.method === 'POST' && request.url === '/graphql'));
+    assert.equal(writes.length, 0, 'a constant GraphQL query is not a forge mutation');
+    assert.deepEqual(
+      {
+        pullCount: queue.openPullCount,
+        issueCount: queue.openIssueCount,
+        lines: queue.pulls[0].additions + queue.pulls[0].deletions,
+        files: queue.pulls[0].changed_files,
+        mergeable: queue.pulls[0].mergeable,
+        review: queue.pulls[0].review_decision,
+        body: queue.pulls[0].body,
+      },
+      {
+        pullCount: 1,
+        issueCount: 1,
+        lines: 1100,
+        files: 51,
+        mergeable: false,
+        review: 'changes_requested',
+        body: null,
+      },
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('merge enters the instance write-policy choke point before network I/O', async () => {
+  let requests = 0;
+  const server = createServer((_req, res) => {
+    requests += 1;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ merged: true, message: 'merged' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`, (what) => {
+    throw new Error(`write refused: ${what}`);
+  });
+  try {
+    await assert.rejects(
+      client.mergePr('acme/app', 7, 'squash', 'abc123'),
+      /write refused: PUT \/repos\/acme\/app\/pulls\/7\/merge/,
+    );
+    assert.equal(requests, 0, 'policy refusal happens before contacting GitHub');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('a changed-file page follows GitHub Link navigation instead of guessing from its length', async () => {
   const seen = [];
   const server = createServer((req, res) => {
@@ -136,6 +285,59 @@ test('changed-file page bounds reject accidental unbounded requests before netwo
 
   await assert.rejects(() => client.prFilesPage('acme/app', 7, 0), /positive integer/);
   await assert.rejects(() => client.prFilesPage('acme/app', 7, 1, 101), /between 1 and 100/);
+});
+
+test('managed repository webhooks install once, reconcile, and delete idempotently', async () => {
+  const requests = [];
+  let installed = false;
+  const server = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    requests.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(installed ? [{ id: 42, name: 'web', active: true, config: { url: 'https://hooks.test/x' } }] : []));
+      return;
+    }
+    if (req.method === 'POST') installed = true;
+    if (req.method === 'DELETE') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 42, name: 'web', active: true, config: { url: 'https://hooks.test/x' } }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const writes = [];
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`, (what) => writes.push(what));
+  try {
+    assert.equal(await client.ensureRepoWebhook('acme/app', 'https://hooks.test/x', 'secret-one'), 42);
+    assert.equal(await client.ensureRepoWebhook('acme/app', 'https://hooks.test/x', 'secret-two', 42), 42);
+    await client.deleteRepoWebhook('acme/app', 42);
+
+    assert.deepEqual(requests.map(({ method, url }) => `${method} ${url}`), [
+      'GET /repos/acme/app/hooks?per_page=100&page=1',
+      'POST /repos/acme/app/hooks',
+      'PATCH /repos/acme/app/hooks/42',
+      'DELETE /repos/acme/app/hooks/42',
+    ]);
+    assert.deepEqual(requests[1].body.events, [
+      'issues',
+      'pull_request',
+      'pull_request_review_comment',
+      'check_run',
+      'check_suite',
+      'status',
+    ]);
+    assert.equal(requests[1].body.config.content_type, 'json');
+    assert.equal(requests[2].body.config.secret, 'secret-two');
+    assert.deepEqual(writes.map((what) => what.split(' ')[0]), ['POST', 'PATCH', 'DELETE']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 function ghFile(filename) {

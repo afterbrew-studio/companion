@@ -169,8 +169,9 @@ export default defineRoutes((ctx) => {
       access: 'board:manage',
       handler: async ({ params, user }) => {
         if (!board.getTask(user!, params.id)) throw notFound('task not found');
+        if (!ctx.rbac.has(user!.role, 'prs:act')) throw forbidden('requires prs:act to merge a pull request');
         try {
-          return { task: await board.mergeNow(params.id) };
+          return { task: await board.mergeNow(params.id, user!.username) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }

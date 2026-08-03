@@ -10,7 +10,7 @@ function fixture() {
   const db = new Database(':memory:');
   for (const migration of migrations) migration.up(db);
   const prs = new PrsStore(db, new PrReviewsStore(db), { logins: () => [] });
-  return { prs, sync: new GitHubSync({ prs }, () => null, () => undefined) };
+  return { db, prs, sync: new GitHubSync({ prs }, () => null, () => undefined) };
 }
 
 /** A pull request as the list feed and the webhook delivery both carry it. */
@@ -78,4 +78,40 @@ test('re-syncing the same pull request updates it in place', () => {
   assert.equal(prs.list('acme/app').length, 1);
   assert.equal(prs.get('acme/app', 7).draft, false);
   assert.equal(prs.get('acme/app', 7).title, 'Add the widget, properly');
+});
+
+test('the scheduler view decorates only open pull requests', () => {
+  const { prs, sync } = fixture();
+  sync.applyPull('acme/app', { ...pull, number: 7, draft: false });
+  sync.applyPull('acme/app', {
+    ...pull,
+    number: 8,
+    state: 'closed',
+    draft: false,
+    closed_at: '2026-07-03T10:00:00Z',
+  });
+
+  assert.deepEqual(prs.listOpen('acme/app').map((pr) => pr.number), [7]);
+});
+
+test('a workspace scheduler query excludes closed history in SQL', () => {
+  const { db, prs, sync } = fixture();
+  db.prepare(
+    `INSERT INTO repos (full_name, owner, name, default_branch, private, workspace_id)
+     VALUES (?, ?, ?, 'main', 0, ?)`,
+  ).run('acme/app', 'acme', 'app', 'ws-1');
+  db.prepare(`INSERT INTO repo_workspaces (repo, workspace_id, created_at) VALUES (?, ?, 0)`).run(
+    'acme/app',
+    'ws-1',
+  );
+  sync.applyPull('acme/app', { ...pull, number: 7, draft: false });
+  sync.applyPull('acme/app', {
+    ...pull,
+    number: 8,
+    state: 'closed',
+    draft: false,
+    closed_at: '2026-07-03T10:00:00Z',
+  });
+
+  assert.deepEqual(prs.listWorkspace('ws-1', 'open').map((pr) => pr.number), [7]);
 });

@@ -89,6 +89,7 @@ test('maintainer queues are bounded, scoped, counted, and body-free', () => {
   assert.equal(issuePage.issues[0].triage, 'pending');
   assert.equal(Object.hasOwn(issuePage.issues[0], 'body'), false);
   assert.equal(issues.count('acme/app', 'open'), 125);
+  assert.deepEqual([...issues.openCounts(['missing/repo', 'acme/app', 'acme/app'])], [['acme/app', 125]]);
   assert.deepEqual([...triage.latestByIssue('acme/app', [125])], [[125, 'pending']]);
 
   const prPage = prs.listWorkspacePaged('ws-1', 'open', { limit: 10_000, offset: -1 });
@@ -98,5 +99,19 @@ test('maintainer queues are bounded, scoped, counted, and body-free', () => {
   assert.equal(Object.hasOwn(prPage.prs[0], 'body'), false);
   assert.ok(issuePage.issues.every((issue) => issue.repo === 'acme/app'));
   assert.ok(prPage.prs.every((pr) => pr.repo === 'acme/app'));
+
+  const wideAccess = [
+    ...Array.from({ length: 1_205 }, (_, index) => `org/repo-${index}`),
+    'acme/app',
+    'acme/app',
+  ];
+  assert.equal(
+    issues.listWorkspacePaged('ws-1', 'open', { accessibleRepos: wideAccess, limit: 10 }).total,
+    125,
+  );
+  assert.equal(
+    prs.listWorkspacePaged('ws-1', 'open', { accessibleRepos: wideAccess, limit: 10 }).total,
+    125,
+  );
   db.close();
 });

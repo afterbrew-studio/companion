@@ -221,13 +221,14 @@ export class RefinementService {
    * one-shot agent — no repo context, methodology knowledge only. Returns the
    * draft for review; the caller saves it (or not) through {@link saveMethod}.
    */
-  async generateMethod(prompt: string): Promise<RefineMethodDraft> {
+  async generateMethod(prompt: string, userId: string): Promise<RefineMethodDraft> {
     const { finalMessage } = await this.orchestrator.runOneShot({
       kind: 'analysis',
       task: 'refinement.analyses',
       title: `Draft method: ${prompt.replace(/\s+/g, ' ').slice(0, 60)}`,
       // No repo to ground in — the orchestrator mkdirs whatever cwd it gets.
       cwd: join(paths.scratch(), 'refine-methods'),
+      userId,
       prompt: generateMethodPrompt(prompt),
       timeoutMs: GENERATE_METHOD_TIMEOUT_MS,
     });

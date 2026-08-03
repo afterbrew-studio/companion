@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { defineSlots } from '@moxxy/companion-sdk/client';
+import { useAuth } from '@companion/module-core/client';
 import { AssistantButton, AssistantPanel } from './components/Assistant.js';
 
 /**
@@ -9,6 +10,7 @@ import { AssistantButton, AssistantPanel } from './components/Assistant.js';
  * module is being lifted out of.
  */
 function Assistant(): JSX.Element {
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   // Mounted on first open and kept alive afterwards, so the conversation and
   // the exit slide survive closing the panel.
@@ -20,6 +22,7 @@ function Assistant(): JSX.Element {
     requestAnimationFrame(() => requestAnimationFrame(() => setOpen(true)));
   };
 
+  if (!can('runs:read')) return <></>;
   return (
     <>
       <AssistantButton open={open} onClick={toggle} />
@@ -33,7 +36,7 @@ export const slots = defineSlots([
     slot: 'shell.topbar',
     key: 'automations-assistant',
     order: 40,
-    permission: 'automations:manage',
+    permission: 'runs:act',
     component: Assistant,
   },
 ]);

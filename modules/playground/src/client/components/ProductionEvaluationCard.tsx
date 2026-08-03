@@ -56,7 +56,7 @@ export function ProductionEvaluationCard({
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {active ? (
-            <button className="btn-danger-ghost" onClick={onCancel}>
+            <button className="btn-danger-ghost" disabled={disabled} onClick={onCancel}>
               Cancel {active.phase}
             </button>
           ) : (

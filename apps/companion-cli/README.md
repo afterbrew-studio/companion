@@ -38,10 +38,11 @@ First run walks through three things and takes under a minute:
 
 1. **An admin account.** Accept the recommended local defaults and a random
    password is generated and shown once, or enter your own.
-2. **A module set.** *Slim* is the recommendation: repositories, agent runs and
-   administration. *Full* adds planning, a task board, refinement, ideas,
-   automations and the playground. *Custom* lets you pick. Nothing is permanent,
-   and everything is one click away later on the Modules page.
+2. **A module set.** *Slim* is the recommendation: repositories, agent runs,
+   durable contributor workflows, planning, automations and administration.
+   *Full* adds refinement, ideas, contribution-quality analysis, the playground and delivery
+   integrations. *Custom* lets you pick. Nothing is permanent, and everything
+   is one click away later on the Modules page.
 3. **A GitHub identity**, if `gh` is already signed in. The token is read from
    `gh` only after you confirm, goes straight to the local API, and is never
    printed or written to a setup file.

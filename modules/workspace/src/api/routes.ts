@@ -51,8 +51,10 @@ export default defineRoutes((ctx) => {
     const code = codeAccess();
     if (!code) return [];
     const rows = code.repos.listByWorkspace(workspaceId);
-    const access = await Promise.all(
-      rows.map(async ({ full_name }) => {
+    const access = await mapConcurrent(
+      rows,
+      8,
+      async ({ full_name }) => {
         try {
           const { client } = await code.githubAccounts.verifiedClientFor('fetch', full_name, {
             username,
@@ -62,7 +64,7 @@ export default defineRoutes((ctx) => {
         } catch {
           return null;
         }
-      }),
+      },
     );
     return access.filter((repo): repo is string => repo !== null);
   };
@@ -102,8 +104,10 @@ export default defineRoutes((ctx) => {
     const code = codeAccess();
     if (!code) return items.filter((item) => item.repo === null);
     const checks = new Map<string, Promise<boolean>>();
-    const visible = await Promise.all(
-      items.map(async (item) => {
+    const visible = await mapConcurrent(
+      items,
+      8,
+      async (item) => {
         if (!item.repo) return true;
         let check = checks.get(item.repo);
         if (!check) {
@@ -114,7 +118,7 @@ export default defineRoutes((ctx) => {
           checks.set(item.repo, check);
         }
         return check;
-      }),
+      },
     );
     return items.filter((_, index) => visible[index]);
   };
@@ -362,19 +366,23 @@ export default defineRoutes((ctx) => {
           }
           return check;
         };
-        const visible = await Promise.all(
-          scoped.map(async (report) => {
+        const visible = await mapConcurrent(
+          scoped,
+          4,
+          async (report) => {
             if (report.repo) return canAccessRepo(report.repo, report.workspaceId ?? undefined);
             if (!report.workspaceId) return true;
             // A workspace briefing may contain titles and activity from every
             // connected repo. Do not return a partially redacted cached body:
             // hide it unless the current profile can see every source repo.
             const repos = code.repos.listByWorkspace(report.workspaceId);
-            const access = await Promise.all(
-              repos.map((repo) => canAccessRepo(repo.full_name, report.workspaceId ?? undefined)),
+            const access = await mapConcurrent(
+              repos,
+              8,
+              (repo) => canAccessRepo(repo.full_name, report.workspaceId ?? undefined),
             );
             return access.every(Boolean);
-          }),
+          },
         );
         return { reports: scoped.filter((_, index) => visible[index]) };
       },
@@ -389,4 +397,21 @@ function slugify(name: string, fallback: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
   return slug || fallback;
+}
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
+  return results;
 }

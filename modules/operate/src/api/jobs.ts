@@ -20,7 +20,10 @@ export default defineJobs({
     // WebhookTunnel broadcasts each transition itself so clients see
     // connecting, failure/retry, and the eventual public URL.
     offConfigChanged = ctx.bus.on('module-config.changed', ({ moduleId, keys }) => {
-      if (moduleId !== 'operate' || !keys.includes('webhookTunnel')) return;
+      if (
+        moduleId !== 'operate' ||
+        (!keys.includes('webhookTunnel') && !keys.includes('webhookPublicUrl'))
+      ) return;
       const tunnel = ctx.services.get('operate').webhookTunnel;
       void (async () => {
         if (tunnel.enabled()) await tunnel.start();
@@ -28,6 +31,7 @@ export default defineJobs({
       })().catch((err) => ctx.log.warn('webhook tunnel reconcile failed', { err: String(err) }));
     });
     op.orchestrator.recover();
+    op.orchestrator.reapUnauthorizedRuns();
     op.orchestrator.start();
   },
   /**
@@ -41,6 +45,14 @@ export default defineJobs({
       everyMs: 5 * 60_000,
       run: (ctx) => {
         ctx.services.get('operate').orchestrator.checkQueueStall(30 * 60_000);
+      },
+    },
+    {
+      id: 'operate.run-authority',
+      everyMs: 60_000,
+      run: (ctx) => {
+        const count = ctx.services.get('operate').orchestrator.reapUnauthorizedRuns();
+        if (count > 0) ctx.log.warn(`reaped ${count} run(s) or queued job(s) whose owner lost authority`);
       },
     },
   ],

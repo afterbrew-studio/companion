@@ -58,11 +58,11 @@ function foldEvents(events: readonly MoxxyEvent[]): ChatItem[] {
 export function FindingChat({
   reviewId,
   finding,
-  canAct,
+  canChat,
 }: {
   reviewId: string;
   finding: ReviewFinding;
-  canAct: boolean;
+  canChat: boolean;
 }): JSX.Element {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [draft, setDraft] = useState('');
@@ -140,6 +140,7 @@ export function FindingChat({
   }, [items]);
 
   const send = useCallback(async (): Promise<void> => {
+    if (!canChat) return;
     const text = draft.trim();
     if (!text) return;
     setDraft('');
@@ -153,7 +154,7 @@ export function FindingChat({
       setThinking(false);
       setError(String(err));
     }
-  }, [draft, reviewId, finding.id]);
+  }, [canChat, draft, reviewId, finding.id]);
 
   return (
     <div className="mt-3 border-t border-zinc-200/80 pt-3 dark:border-zinc-800">
@@ -188,17 +189,21 @@ export function FindingChat({
               </div>
             ),
           )}
-          {asks.map((ask) => (
-            <AskSheet
-              key={ask.requestId}
-              ask={ask}
-              onRespond={(response) => {
-                setAsks((prev) => prev.filter((a) => a.requestId !== ask.requestId));
-                setThinking(true);
-                void api.answerReviewChatAsk(reviewId, ask.requestId, response).catch((err) => setError(String(err)));
-              }}
-            />
-          ))}
+          {canChat
+            ? asks.map((ask) => (
+                <AskSheet
+                  key={ask.requestId}
+                  ask={ask}
+                  onRespond={(response) => {
+                    setAsks((prev) => prev.filter((a) => a.requestId !== ask.requestId));
+                    setThinking(true);
+                    void api.answerReviewChatAsk(reviewId, ask.requestId, response).catch((err) => setError(String(err)));
+                  }}
+                />
+              ))
+            : asks.length > 0
+              ? <p className="dim text-xs">The agent is waiting for a reviewer with run-control access.</p>
+              : null}
           {thinking ? (
             <div className="dim flex items-center gap-2 text-xs">
               <Spinner /> Checking the code…
@@ -210,7 +215,7 @@ export function FindingChat({
 
       <ErrorBar error={error} />
 
-      {canAct ? (
+      {canChat ? (
         <div className="mt-2 flex items-end gap-2">
           <textarea
             className="input min-h-9 flex-1 text-[13px]"

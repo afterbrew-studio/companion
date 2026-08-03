@@ -32,6 +32,7 @@ export default function SlopRules(): JSX.Element {
 
   if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('slop:manage');
+  const canGenerate = can('runs:read') && can('runs:act');
 
   const toggle = async (rule: SlopRuleRecord, enabled: boolean): Promise<void> => {
     try {
@@ -45,7 +46,7 @@ export default function SlopRules(): JSX.Element {
   const remove = async (rule: SlopRuleRecord): Promise<void> => {
     const ok = await confirmDanger({
       title: 'Delete rule',
-      message: `Delete the rule "${rule.name}"? Future detections will run without it; past verdicts keep their signals.`,
+      message: `Delete the rule "${rule.name}"? Future assessments will run without it; past verdicts keep their signals.`,
     });
     if (!ok) return;
     try {
@@ -58,9 +59,9 @@ export default function SlopRules(): JSX.Element {
 
   return (
     <Page>
-      <Breadcrumb items={[{ label: 'Slop Detection', href: '#/slop' }, { label: 'Rules' }]} />
+      <Breadcrumb items={[{ label: 'Contribution Quality', href: '#/slop' }, { label: 'Rules' }]} />
       <PageHeader
-        title="Detection Rules"
+        title="Quality Rules"
         subtitle={current.name}
         actions={
           canManage ? (
@@ -120,6 +121,7 @@ export default function SlopRules(): JSX.Element {
         <RuleEditor
           workspaceId={current.id}
           rule={editing === 'new' ? null : editing}
+          canGenerate={canGenerate}
           onClose={() => setEditing(null)}
           onError={setError}
         />
@@ -132,11 +134,13 @@ export default function SlopRules(): JSX.Element {
 function RuleEditor({
   workspaceId,
   rule,
+  canGenerate,
   onClose,
   onError,
 }: {
   workspaceId: string;
   rule: SlopRuleRecord | null;
+  canGenerate: boolean;
   onClose: () => void;
   onError: (e: string | null) => void;
 }): JSX.Element {
@@ -180,9 +184,9 @@ function RuleEditor({
   };
 
   return (
-    <Modal title={rule ? `Edit rule: ${rule.name}` : 'New detection rule'} onClose={onClose} wide>
+    <Modal title={rule ? `Edit rule: ${rule.name}` : 'New quality rule'} onClose={onClose} wide>
       <div className="flex flex-col gap-4">
-        {!rule ? (
+        {!rule && canGenerate ? (
           <div className="border-b border-zinc-200 pb-4 dark:border-zinc-800">
             <Field
               label="Generate with AI"
@@ -233,7 +237,7 @@ function RuleEditor({
         </div>
         <Field
           label="Instructions"
-          hint="Fed verbatim to the detection agent. Describe the tell, what evidence to look for, and how strongly to weigh it."
+          hint="Fed verbatim to the assessment agent. Describe the signal, what evidence to look for, and how strongly to weigh it."
         >
           <textarea
             className="input min-h-40"

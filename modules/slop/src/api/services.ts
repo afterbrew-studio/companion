@@ -17,7 +17,7 @@ export default defineServices((ctx) => {
   const store = new SlopStore(ctx.db);
   const code = ctx.services.get('code');
   const operate = ctx.services.get('operate');
-  operate.registerRunTask({ id: 'slop.detect', label: 'Slop detection', placeable: false });
+  operate.registerRunTask({ id: 'slop.detect', label: 'Contribution quality', placeable: false });
   operate.promptEvaluations.register({
     id: 'slop.contribution-quality',
     moduleId: 'slop',
@@ -38,7 +38,7 @@ export default defineServices((ctx) => {
       () => ctx.services.tryGet('refinement'),
       () => {
         const label = ctx.moduleConfig.get('label');
-        return typeof label === 'string' && label.trim() ? label.trim() : 'ai-slop';
+        return typeof label === 'string' && label.trim() ? label.trim() : 'needs-evidence';
       },
       ctx.broadcast,
       ctx.bus.emit.bind(ctx.bus),
