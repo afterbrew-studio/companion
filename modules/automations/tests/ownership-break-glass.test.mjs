@@ -116,11 +116,15 @@ function fixture({
       canAccessRepo: () => true,
     },
   };
+  const hasPermission = (role, permission) =>
+    !deniedPermissions.includes(permission) && (role === 'admin' || permission !== 'users:manage');
   const routes = routeFactory({
     services: { get: (id) => services[id] },
     rbac: {
-      has: (role, permission) =>
-        !deniedPermissions.includes(permission) && (role === 'admin' || permission !== 'users:manage'),
+      has: hasPermission,
+      allows: (user, permission) =>
+        hasPermission(user.role, permission)
+        && (user.permissionScope === undefined || user.permissionScope.includes(permission)),
     },
     audit: { record: (event) => audits.push(event) },
     broadcast() {},

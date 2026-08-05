@@ -35,6 +35,7 @@ import {
   harnessChoices,
   NOTHING_INSTALLED,
   readHarnessOptions,
+  recommendedHarnesses,
   saveHarnesses,
 } from './harnesses.js';
 import { withTerminal } from './terminal.js';
@@ -517,9 +518,9 @@ async function settleRepo(url: string, options: CliOptions): Promise<void> {
  *
  * Silent when the daemon does not answer: an instance without the execution
  * module has no such question, and saying nothing is better than explaining an
- * absence. Non-interactive runs keep the default, which is moxxy, because a
- * scripted install must not have its execution plane changed by whatever
- * happens to be on the box.
+ * absence. Interactive and non-interactive setup share the same detected
+ * default, so `--yes` cannot silently select historical moxxy on a machine
+ * whose only usable runtime is Codex or Claude Code.
  */
 async function settleHarnesses(url: string, options: CliOptions): Promise<void> {
   const token = await waitForToken();
@@ -530,15 +531,16 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
     process.stdout.write(`\n${NOTHING_INSTALLED}\n`);
     return;
   }
-  if (options.yes || !process.stdin.isTTY) return;
-
-  const { checkbox } = await import('@inquirer/prompts');
-  const picked = await withTerminal(() =>
-    checkbox<string>({
-      message: 'Which agent runtimes should this machine use?',
-      choices: harnessChoices(answer.options).map((c) => ({ ...c })),
-    }),
-  );
+  let picked: readonly string[] = recommendedHarnesses(answer.options);
+  if (!options.yes && process.stdin.isTTY) {
+    const { checkbox } = await import('@inquirer/prompts');
+    picked = await withTerminal(() =>
+      checkbox<string>({
+        message: 'Which agent runtimes should this machine use?',
+        choices: harnessChoices(answer.options).map((c) => ({ ...c })),
+      }),
+    );
+  }
   if (picked.length === 0) {
     process.stdout.write('Nothing ticked, so this machine keeps its current runtime.\n');
     return;
