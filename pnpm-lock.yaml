@@ -49,6 +49,9 @@ importers:
       '@companion/module-slop':
         specifier: workspace:*
         version: link:../../modules/slop
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../../modules/workbench
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
@@ -90,6 +93,9 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../../modules/workbench
       '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -187,6 +193,9 @@ importers:
       '@companion/module-slop':
         specifier: workspace:*
         version: link:../../modules/slop
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../../modules/workbench
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../../modules/workspace
@@ -291,6 +300,9 @@ importers:
       '@companion/module-plan':
         specifier: workspace:*
         version: link:../plan
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../workbench
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -737,6 +749,52 @@ importers:
       '@companion/module-refinement':
         specifier: workspace:*
         version: link:../refinement
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/workbench:
+    dependencies:
+      '@companion/module-board':
+        specifier: workspace:*
+        version: link:../board
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../operate
+      '@companion/module-plan':
+        specifier: workspace:*
+        version: link:../plan
       '@companion/module-workspace':
         specifier: workspace:*
         version: link:../workspace

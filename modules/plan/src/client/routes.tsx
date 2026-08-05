@@ -1,4 +1,15 @@
-import { defineClientRoutes, page } from '@moxxy/companion-sdk/client';
+import { RequiresRepo } from '@companion/module-code/client';
+import { defineClientRoutes, lazyView, page, type RouteProps } from '@moxxy/companion-sdk/client';
+
+const SpecsPage = lazyView(async () => {
+  const { SpecsPage: Inner } = await import('./pages/Specs.js');
+  const GatedSpecs = (_props: RouteProps): JSX.Element => (
+    <RequiresRepo what="Specifications">
+      <Inner />
+    </RequiresRepo>
+  );
+  return { default: GatedSpecs };
+});
 
 export const routes = defineClientRoutes([
   {
@@ -9,7 +20,7 @@ export const routes = defineClientRoutes([
   {
     match: { prefix: '/specs' },
     permission: 'specs:read',
-    component: page(() => import('./pages/Specs.js').then((m) => m.SpecsPage)),
+    component: SpecsPage,
   },
   {
     match: { prefix: '/docs' },

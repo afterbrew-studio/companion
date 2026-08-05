@@ -164,6 +164,9 @@ function scanUsage(mods) {
       for (const [, p] of src.matchAll(/\baccess:\s*'([^']+)'/g)) {
         if (p !== 'public' && p !== 'any') add(p, 'route');
       }
+      for (const [, body] of src.matchAll(/\baccess:\s*\[([^\]]+)\]/g)) {
+        for (const [, p] of body.matchAll(/'([^']+)'/g)) add(p, 'route');
+      }
       for (const [, p] of src.matchAll(/\bpermission:\s*'([^']+)'/g)) add(p, 'ui');
       for (const [, p] of src.matchAll(/\.has\([^,)]+,\s*'([^']+)'\)/g)) add(p, 'rbac-check');
       for (const [, p] of src.matchAll(/\bcan\('([^']+)'\)/g)) add(p, 'can');

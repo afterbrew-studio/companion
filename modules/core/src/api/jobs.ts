@@ -74,7 +74,7 @@ export default defineJobs({
     const admin = auth.primaryAdminUsername();
     // First-boot onboarding has not created an account yet; the next start writes it.
     if (!admin) return;
-    const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS);
+    const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS, 'full');
     writeFileSync(file, `${token}\n`, { mode: 0o600 });
     ctx.log.info(`CLI token for '${admin}' written to ${file}`);
   },

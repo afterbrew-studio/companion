@@ -97,6 +97,33 @@ export const PR_REVIEW_PROMPT_VERSION = 1;
 
 type ReviewOneShotOptions = Parameters<Orchestrator['runOneShot']>[0];
 
+/** Internal orchestration hooks; HTTP callers still receive review-then-apply. */
+interface ReviewLifecycle {
+  readonly onCreated?: (reviewId: string) => void;
+  /**
+   * A pipeline with `post` enabled has already declared its GitHub write
+   * intent. Large reviews may therefore publish ready evidence as each shard
+   * settles, while the final verdict remains a single end-of-review action.
+   */
+  readonly progressivePost?: {
+    readonly mode?: ReviewPostMode;
+  };
+}
+
+interface ProgressiveReviewStage {
+  readonly kind: 'chunk' | 'verification';
+  readonly completed: number;
+  readonly total: number;
+}
+
+interface ProgressiveReviewPublisher {
+  readonly publish: (
+    findings: readonly ReviewFinding[],
+    stage: ProgressiveReviewStage,
+  ) => Promise<void>;
+  readonly flush: () => Promise<void>;
+}
+
 /** A group reports findings only; the verdict is judged over all of them later. */
 const chunkSchema = z.object({
   // Required, not defaulted. `extractModelJson` takes the first balanced object
@@ -258,6 +285,136 @@ export class PrReviews {
     return attached;
   }
 
+  /** Make partial evidence durable and visible before the aggregate job ends. */
+  private persistFindings(reviewId: string, findings: readonly ReviewFinding[]): void {
+    if (findings.length === 0) return;
+    this.store.prReviewFindings.insertMany(findings);
+    const repo = this.store.prReviews.get(reviewId)?.repo;
+    if (repo) this.broadcast({ t: 'prs.changed', repo });
+  }
+
+  /**
+   * Publish only evidence that is ready, serially, from an explicitly-posting
+   * pipeline. Diff evidence and existing comments are fetched once for the
+   * whole aggregate rather than once per shard.
+   */
+  private createProgressivePublisher(
+    result: PrReviewResult,
+    userId: string,
+    mode: ReviewPostMode,
+    verify: boolean,
+  ): ProgressiveReviewPublisher | null {
+    if (mode === 'summary') return null;
+    const client = this.github({ repo: result.repo, username: userId });
+    if (!client) return null;
+
+    let evidencePromise:
+      | Promise<{
+          index: ReturnType<typeof buildAnchorIndex>;
+          alreadySaid: Set<string>;
+        }>
+      | null = null;
+    let tail: Promise<void> = Promise.resolve();
+    const evidence = (): Promise<{
+      index: ReturnType<typeof buildAnchorIndex>;
+      alreadySaid: Set<string>;
+    }> => {
+      evidencePromise ??= Promise.all([
+        client.prFiles(result.repo, result.prNumber),
+        client.prReviewComments(result.repo, result.prNumber).catch(() => []),
+      ]).then(([filesResult, existing]) => ({
+        index: buildAnchorIndex(unifiedDiffFromPatches(filesResult.files.map(toFileChange))),
+        alreadySaid: new Set(existing.map((comment) => dedupeKey(comment.path, comment.line, comment.body))),
+      }));
+      return evidencePromise;
+    };
+
+    return {
+      publish: (reported, stage) => {
+        tail = tail
+          .then(async () => {
+            const selected = reported
+              .map((finding) => this.store.prReviewFindings.get(finding.id) ?? finding)
+              .filter((finding) => progressiveFindingReady(finding, verify));
+            if (selected.length === 0) return;
+
+            const cached = await evidence();
+            const { comments, unanchored } = this.buildCommentsFromEvidence(
+              result,
+              selected,
+              cached.index,
+              cached.alreadySaid,
+            );
+            // Progressive publication is intentionally inline-only. If GitHub
+            // cannot validate an anchor (or this stage hits its inline cap),
+            // the finding waits for the final body where cross-cutting context
+            // is available. Findings absent from both arrays are exact GitHub
+            // duplicates and may safely close their local lifecycle now.
+            const withheld = new Set(unanchored.map((finding) => finding.id));
+            const published = selected.filter((finding) => !withheld.has(finding.id));
+            if (comments.length === 0) {
+              for (const finding of published) this.store.prReviewFindings.markPosted(finding.id, null);
+              if (published.length > 0) this.broadcast({ t: 'prs.changed', repo: result.repo });
+              return;
+            }
+
+            await this.assertLivePublication(client, result, userId);
+            const review = await client.createPrReview(result.repo, result.prNumber, {
+              body: progressiveReviewBody(stage),
+              event: 'COMMENT',
+              ...(result.headSha ? { commitId: result.headSha } : {}),
+              comments,
+            });
+            await this.recordPostedComments(client, result, review.id, comments, published);
+            for (const comment of comments) {
+              cached.alreadySaid.add(dedupeKey(comment.path, comment.line, comment.body));
+            }
+            this.broadcast({ t: 'prs.changed', repo: result.repo });
+          })
+          .catch((err) => {
+            // Progressive publication is an acceleration, not a new failure
+            // mode. The final apply retries every still-included finding and
+            // remains the pipeline's required write boundary.
+            log.warn('progressive review publication failed; final publish will retry', {
+              reviewId: result.id,
+              repo: result.repo,
+              prNumber: result.prNumber,
+              err: String(err),
+            });
+          });
+        // GitHub latency must not hold an agent worker idle. Publications stay
+        // ordered in `tail`; the aggregate flushes them before final apply.
+        return Promise.resolve();
+      },
+      flush: () => tail,
+    };
+  }
+
+  /** Re-check authority and the authoritative PR head immediately before a staged write. */
+  private async assertLivePublication(client: GitHubClient, result: PrReviewResult, userId: string): Promise<void> {
+    const liveReview = this.store.prReviews.get(result.id);
+    if (!liveReview || liveReview.status !== 'running') {
+      throw new Error('the aggregate review is no longer running — refusing a late progressive publication');
+    }
+    const currentPr = this.store.prs.get(result.repo, result.prNumber);
+    if (!currentPr || currentPr.state !== 'open' || currentPr.draft) {
+      throw new Error('this pull request is closed or draft — refusing progressive review publication');
+    }
+    const livePr = await client.pull(result.repo, result.prNumber);
+    if (result.headSha && livePr.head.sha !== result.headSha) {
+      throw new Error('this pull request received new commits during review');
+    }
+    if (livePr.state !== 'open' || livePr.draft) {
+      throw new Error('this pull request is closed or draft — refusing progressive review publication');
+    }
+    if (!this.authorized(userId, 'prs:act', result.repo)) {
+      throw new Error(`${userId} no longer holds prs:act; refusing progressive review publication`);
+    }
+    if (this.store.prReviews.get(result.id)?.status !== 'running') {
+      throw new Error('the aggregate review stopped while publication was being prepared');
+    }
+  }
+
   /** Queue one child turn under the aggregate call/time budget. */
   private runReviewTurn(
     reviewId: string,
@@ -394,8 +551,8 @@ export class PrReviews {
     prNumber: number,
     userId: string,
     opts?: ReviewOptions,
-    /** Internal lifecycle hook for an owning pipeline that may need to cancel this aggregate. */
-    onCreated?: (reviewId: string) => void,
+    /** Internal hooks for an owning pipeline; never populated by the HTTP route. */
+    lifecycle?: ReviewLifecycle,
   ): Promise<PrReviewResult> {
     this.validateAnalyze(repo, prNumber, userId);
     const pr = this.store.prs.get(repo, prNumber)!;
@@ -443,10 +600,19 @@ export class PrReviews {
     this.store.prReviews.insert(placeholder);
     this.activeReviews.set(reviewId, execution);
     try {
-      onCreated?.(reviewId);
+      lifecycle?.onCreated?.(reviewId);
     } catch (err) {
       log.warn('PR review onCreated callback failed', { reviewId, err: String(err) });
     }
+    const progressivePublisher =
+      lifecycle?.progressivePost && (lifecycle.progressivePost.mode ?? 'full') !== 'summary'
+        ? this.createProgressivePublisher(
+            placeholder,
+            userId,
+            lifecycle.progressivePost.mode ?? 'full',
+            verify,
+          )
+        : null;
     const deadlineTimer = setTimeout(() => {
       void this.terminateReview(
         reviewId,
@@ -511,6 +677,7 @@ export class PrReviews {
               execution,
               strictness,
               verify,
+              progressivePublisher,
             );
           }
 
@@ -597,6 +764,7 @@ export class PrReviews {
           try {
             const parsed = parseVerdictWithFindings(finalMessage);
             findings = toFindings(reviewId, parsed.findings, index, strictness);
+            this.persistFindings(reviewId, findings);
             verdict = { ...parsed, findings: findings.map((f) => f.title) };
           } catch (err) {
             error = `could not parse review verdict: ${String(err)}`;
@@ -645,7 +813,9 @@ export class PrReviews {
       if (!this.store.prReviews.finish(result)) {
         return this.getWithFindings(reviewId) ?? result;
       }
-      this.store.prReviewFindings.insertMany(outcome.findings);
+      // Chunked and verified paths persist as evidence arrives. The insert is
+      // idempotent so single-pass/change-map results share the same final seam.
+      this.store.prReviewFindings.insertMissing(outcome.findings);
 
       // A draft the reviewer already started stays open otherwise, invisible
       // behind this newer review and taking their comments with it. Only a
@@ -837,6 +1007,7 @@ export class PrReviews {
     execution: ReviewExecution,
     strictness: ReviewStrictness,
     verify: boolean,
+    progressivePublisher: ProgressiveReviewPublisher | null,
   ): Promise<{
     verdict: PrReviewVerdict | null;
     error: string | null;
@@ -847,6 +1018,7 @@ export class PrReviews {
     const failed: string[] = [];
     let reviewedFiles = 0;
     let completed = 0;
+    const seen = new Set<string>();
     const totalFiles = chunks.reduce((n, chunk) => n + chunk.paths.length, 0);
     const coverage = (): PrReviewCoverage => ({
       state: failed.length > 0 ? 'partial' : completed === chunks.length ? 'complete' : 'unavailable',
@@ -885,8 +1057,25 @@ export class PrReviews {
           // Validate anchors while this group's bounded patch is in memory.
           // Retaining every patch just to build one aggregate index would put
           // the full-PR memory problem back into the chunked path.
-          findings.push(...toFindings(reviewId, parsed.findings, buildAnchorIndex(chunkDiff), strictness));
+          const chunkFindings = toFindings(
+            reviewId,
+            parsed.findings,
+            buildAnchorIndex(chunkDiff),
+            strictness,
+          ).filter((finding) => {
+            const key = findingIdentity(finding);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          findings.push(...chunkFindings);
+          this.persistFindings(reviewId, chunkFindings);
           reviewedFiles += chunk.paths.length;
+          await progressivePublisher?.publish(chunkFindings, {
+            kind: 'chunk',
+            completed: at + 1,
+            total: chunks.length,
+          });
         } catch (err) {
           // One group failing must not lose the others: the reviewer is told
           // what went unread rather than shown a verdict that silently covers
@@ -932,6 +1121,14 @@ export class PrReviews {
         reviewId,
         execution,
         1,
+        progressivePublisher
+          ? (finding, verified, total) =>
+              progressivePublisher.publish([finding], {
+                kind: 'verification',
+                completed: verified,
+                total,
+              })
+          : undefined,
       );
     }
     const summary = await this.summarise(
@@ -945,6 +1142,7 @@ export class PrReviews {
       reviewId,
       execution,
     );
+    await progressivePublisher?.flush();
     return {
       verdict: summary,
       error: failed.length > 0 ? `${failed.length} of ${chunks.length} groups could not be reviewed` : null,
@@ -1018,6 +1216,7 @@ export class PrReviews {
     reviewId: string,
     execution: ReviewExecution,
     reserveCalls: number,
+    onVerified?: (finding: ReviewFinding, completed: number, total: number) => Promise<void>,
   ): Promise<ReviewFinding[]> {
     const worth = (f: ReviewFinding): boolean =>
       VERIFY_SEVERITIES.has(f.severity) || f.confidence < VERIFY_CONFIDENCE_FLOOR;
@@ -1034,6 +1233,7 @@ export class PrReviews {
     const worker = async (): Promise<void> => {
       while (!execution.stopped && cursor < queue.length) {
         const finding = queue[cursor++]!;
+        let updated: ReviewFinding | null = null;
         try {
           const diffEvidence = finding.anchor
             ? await this.checkouts.diffPaths(cwd, baseRef, [finding.anchor.file])
@@ -1050,10 +1250,16 @@ export class PrReviews {
             timeoutMs: 6 * 60_000,
           }, reserveCalls);
           const parsed = verificationSchema.parse(extractModelJson(finalMessage ?? ''));
-          verdicts.set(finding.id, {
-            verification: parsed.verdict === 'inconclusive' ? 'unverified' : parsed.verdict,
-            note: parsed.reason.slice(0, 2000),
-          });
+          const verification = parsed.verdict === 'inconclusive' ? 'unverified' : parsed.verdict;
+          const note = parsed.reason.slice(0, 2000);
+          verdicts.set(finding.id, { verification, note });
+          updated = {
+            ...finding,
+            verification,
+            verificationNote: note,
+            state: verification === 'refuted' ? 'proposed' : finding.state,
+          };
+          this.store.prReviewFindings.setVerification(finding.id, verification, note);
         } catch (err) {
           // An unverifiable finding stays unverified. Treating a failed
           // verifier as a refutation would silently delete real findings
@@ -1068,6 +1274,16 @@ export class PrReviews {
             queue.length,
             `Verified ${completed} of ${queue.length} serious finding(s)`,
           );
+          if (updated && onVerified) {
+            await onVerified(updated, completed, queue.length).catch((err) => {
+              log.warn('progressive verified finding publication failed', {
+                repo,
+                prNumber,
+                finding: updated?.id,
+                err: String(err),
+              });
+            });
+          }
         }
       }
     };
@@ -1254,6 +1470,8 @@ export class PrReviews {
       mode?: ReviewPostMode;
       /** Unattended callers may publish advice, never impersonate approval. */
       eventOverride?: 'COMMENT';
+      /** Pipeline comment-only mode need not create an empty "Reviewed" event. */
+      skipEmpty?: boolean;
     } = {},
   ): Promise<{ repo: string; number: number }> {
     const result = this.store.prReviews.get(id);
@@ -1287,6 +1505,19 @@ export class PrReviews {
       mode === 'summary'
         ? { comments: [] as GhReviewCommentInput[], unanchored: selected }
         : await this.buildComments(client, result, selected);
+
+    if (opts.skipEmpty && mode === 'comments' && comments.length === 0 && unanchored.length === 0) {
+      // Existing GitHub comments may have deduplicated the selected findings.
+      // They are public evidence already, so close their local lifecycle but
+      // do not add a content-free review event beside them.
+      for (const finding of selected) this.store.prReviewFindings.markPosted(finding.id, null);
+      const open = this.store.prReviewFindings
+        .listForReview(id)
+        .some((finding) => finding.state === 'included' || finding.state === 'proposed');
+      if (!open) this.store.prReviews.update(id, 'applied');
+      this.broadcast({ t: 'prs.changed', repo: result.repo });
+      return { repo: result.repo, number: result.prNumber };
+    }
 
     const event =
       opts.eventOverride ??
@@ -1389,6 +1620,16 @@ export class PrReviews {
       .catch(() => [] as Array<{ path: string; line: number | null; body: string }>);
     const alreadySaid = new Set(existing.map((c) => dedupeKey(c.path, c.line, c.body)));
 
+    return this.buildCommentsFromEvidence(result, findings, index, alreadySaid);
+  }
+
+  /** Pure comment construction over one cached, server-validated PR diff. */
+  private buildCommentsFromEvidence(
+    result: PrReviewResult,
+    findings: readonly ReviewFinding[],
+    index: ReturnType<typeof buildAnchorIndex>,
+    alreadySaid: ReadonlySet<string>,
+  ): { comments: GhReviewCommentInput[]; unanchored: ReviewFinding[] } {
     const comments: GhReviewCommentInput[] = [];
     const unanchored: ReviewFinding[] = [];
     for (const finding of findings) {
@@ -2369,6 +2610,40 @@ function toFileChange(file: GhPrFile): { filename: string; previousFilename: str
 /** Same file, same line, same opening sentence — said already, do not repeat. */
 function dedupeKey(path: string, line: number | null, body: string): string {
   return `${path}:${line ?? ''}:${body.replace(/\s+/g, ' ').trim().slice(0, 120).toLowerCase()}`;
+}
+
+/** Cross-shard duplicate guard before findings reach storage or GitHub. */
+function findingIdentity(finding: ReviewFinding): string {
+  const where = finding.anchor
+    ? `${finding.anchor.file}:${finding.anchor.side}:${finding.anchor.startLine ?? ''}:${finding.anchor.line}`
+    : 'unanchored';
+  const claim = `${finding.title} ${finding.reason}`.replace(/\s+/g, ' ').trim().slice(0, 360).toLowerCase();
+  return `${where}:${claim}`;
+}
+
+/** Serious or shaky claims wait for their independent verifier when enabled. */
+function progressiveFindingReady(finding: ReviewFinding, verify: boolean): boolean {
+  // Body-only claims need the cross-cutting context of the final summary.
+  // Progressive writes are deliberately limited to concrete diff threads.
+  if (!finding.anchor || finding.state !== 'included' || finding.verification === 'refuted') return false;
+  if (!verify) return true;
+  const needsVerification =
+    VERIFY_SEVERITIES.has(finding.severity) || finding.confidence < VERIFY_CONFIDENCE_FLOOR;
+  return !needsVerification || finding.verification === 'confirmed';
+}
+
+/** Small factual framing; the model-written verdict is deliberately final-only. */
+function progressiveReviewBody(stage: ProgressiveReviewStage): string {
+  if (stage.kind === 'chunk') {
+    return (
+      `Companion completed review group ${stage.completed} of ${stage.total}. ` +
+      'Ready findings are posted now; the final verdict follows after every group and verification pass finishes.'
+    );
+  }
+  return (
+    `Companion verification ${stage.completed} of ${stage.total} confirmed the finding below. ` +
+    'The final verdict follows when the complete review finishes.'
+  );
 }
 
 /**

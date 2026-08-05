@@ -1,5 +1,10 @@
 import type { Role } from '@moxxy/companion-types';
-import type { AuthUser, Permission } from '@moxxy/companion-contracts';
+import type {
+  AuthUser,
+  NavigationPageOverride,
+  NavigationPerspective,
+  Permission,
+} from '@moxxy/companion-contracts';
 import type { ModuleArtifact, ModuleProvenance } from '@moxxy/companion-core/server';
 import type { Supervisor } from '@moxxy/companion-services';
 import type { Auth } from '../api/auth.js';
@@ -235,17 +240,20 @@ export interface SessionInfo {
   readonly user: AuthUser;
   readonly permissions: readonly Permission[];
   readonly notificationScope: NotificationScope;
-  /** Nav entry keys this user hid from their sidebar; the shell needs them on
-   *  the first paint, so they ride the session rather than a second fetch. */
-  readonly hiddenNav: readonly string[];
+  /** Per-preset menu customisations ride the session to avoid a second fetch. */
+  readonly navOverrides: readonly NavigationPageOverride[];
+  /** Selected sidebar preset; cosmetic only and independent of RBAC. */
+  readonly navPerspective: NavigationPerspective;
 }
 
 /** A user's own editable settings, distinct from the admin-managed account. */
 export interface UserProfile {
   /** Inbox scope override; null = inherit the instance default. */
   readonly notificationScope: NotificationScope | null;
-  /** Sidebar entries this user hid. Cosmetic only: the pages stay reachable. */
-  readonly hiddenNav: readonly string[];
+  /** Personal deviations from each menu view's defaults. */
+  readonly navOverrides: readonly NavigationPageOverride[];
+  /** Selected sidebar preset; cosmetic only and independent of RBAC. */
+  readonly navPerspective: NavigationPerspective;
 }
 
 /** GET /api/profile — the user's overrides plus the defaults a null falls back to. */
@@ -256,7 +264,8 @@ export interface ProfileResponse {
 
 export interface UpdateProfileRequest {
   readonly notificationScope?: NotificationScope | null;
-  readonly hiddenNav?: readonly string[];
+  readonly navOverrides?: readonly NavigationPageOverride[];
+  readonly navPerspective?: NavigationPerspective;
 }
 
 /** The signed-in user's own account, as shown on their profile page. */

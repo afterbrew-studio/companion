@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIntent } from '@moxxy/companion-sdk/client';
+import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace, useWorkspaceMembers, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
@@ -35,19 +35,30 @@ import { useReposAdmin } from '../hooks/useReposAdmin.js';
 export function ReposPage(): JSX.Element {
   const { can, user } = useAuth();
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
-  // Admins manage any workspace; an owner manages their own (public or private).
-  const canManageCurrent = can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username);
+  const canManageRepos = can('repos:manage');
+  // Readers inspect the workspace foundation. Mutations additionally require
+  // repos:manage; workspace metadata is limited to an admin or its owner.
+  const canManageCurrent =
+    canManageRepos && (can('workspaces:manage') || (!!current?.ownerId && current.ownerId === user?.username));
   const { repos, loaded, runners, error, setError, refresh } = useReposAdmin();
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
 
-  // ⌘K → "Connect repository" lands here and opens the add-repo modal.
-  useIntent('connect-repo', () => setAdding(true));
+  // New / command search → "Connect repository" lands here and opens the form.
+  useIntent('connect-repo', () => canManageRepos && setAdding(true));
 
   if (!current) {
     return (
       <Page>
-        <EmptyState title="No workspace yet" hint="Create a workspace from the sidebar switcher first." />
+        <EmptyState
+          title="No workspace yet"
+          hint="Create a workspace first; this repository form will stay ready for the next step."
+          action={
+            can('workspaces:create') ? (
+              <button className="btn" onClick={() => runIntent('new-workspace')}>Create workspace</button>
+            ) : undefined
+          }
+        />
       </Page>
     );
   }
@@ -69,9 +80,11 @@ export function ReposPage(): JSX.Element {
                 Workspace settings
               </button>
             ) : null}
-            <button className="btn" onClick={() => setAdding(true)}>
-              Connect repo
-            </button>
+            {canManageRepos ? (
+              <button className="btn" onClick={() => setAdding(true)}>
+                Connect repo
+              </button>
+            ) : null}
           </>
         }
       />
@@ -84,22 +97,30 @@ export function ReposPage(): JSX.Element {
       ) : repos.length > 0 ? (
         <div className="flex flex-col gap-3">
           {repos.map((repo) => (
-            <RepoCard key={repo.fullName} repo={repo} workspaces={workspaces} runners={runners} onChange={refresh} onError={setError} />
+            <RepoCard
+              key={repo.fullName}
+              repo={repo}
+              workspaces={workspaces}
+              runners={runners}
+              canManage={canManageRepos}
+              onChange={refresh}
+              onError={setError}
+            />
           ))}
         </div>
       ) : (
         <EmptyState
           title="No repositories in this workspace"
           hint="Connect a GitHub repository to start syncing issues and pull requests."
-          action={
+          action={canManageRepos ? (
             <button className="btn" onClick={() => setAdding(true)}>
               Connect the first repo
             </button>
-          }
+          ) : undefined}
         />
       )}
 
-      {adding ? (
+      {adding && canManageRepos ? (
         <AddRepoModal
           workspace={current}
           existing={repos}
@@ -133,12 +154,14 @@ function RepoCard({
   repo,
   workspaces,
   runners,
+  canManage,
   onChange,
   onError,
 }: {
   repo: RepoRecord;
   workspaces: readonly WorkspaceRecord[];
   runners: readonly RunnerRecord[];
+  canManage: boolean;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
@@ -186,9 +209,11 @@ function RepoCard({
         </div>
         <CardActions>
           <span className="dim mr-auto text-xs">GitHub actions are unavailable for this repository.</span>
-          <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
-            {busy ? 'Working…' : 'Remove from workspace'}
-          </button>
+          {canManage ? (
+            <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
+              {busy ? 'Working…' : 'Remove from workspace'}
+            </button>
+          ) : null}
         </CardActions>
         {confirmElement}
       </article>
@@ -261,64 +286,64 @@ function RepoCard({
       {/* What proves an agent's diff builds here, before anybody reads it. Blank
           means nothing is checked, which the review card reports as such rather
           than as a pass. */}
-      <label className="mt-3 flex flex-col gap-1 text-xs">
-        <span className="dim">Verification command</span>
-        <input
-          className="input font-mono text-[12px]"
-          defaultValue={repo.verifyCommand ?? ''}
-          disabled={busy}
-          placeholder="pnpm -s typecheck"
-          aria-label={`Verification command for ${repo.fullName}`}
-          onBlur={(e) => {
-            const next = e.target.value.trim();
-            if (next === (repo.verifyCommand ?? '')) return;
-            void act(() => api.setVerifyCommand(repo.fullName, next))();
-          }}
-        />
-      </label>
+      {canManage ? (
+        <>
+          <label className="mt-3 flex flex-col gap-1 text-xs">
+            <span className="dim">Verification command</span>
+            <input
+              className="input font-mono text-[12px]"
+              defaultValue={repo.verifyCommand ?? ''}
+              disabled={busy}
+              placeholder="pnpm -s typecheck"
+              aria-label={`Verification command for ${repo.fullName}`}
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                if (next === (repo.verifyCommand ?? '')) return;
+                void act(() => api.setVerifyCommand(repo.fullName, next))();
+              }}
+            />
+          </label>
 
-      <CardActions>
-        <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
-          {busy ? 'Working…' : 'Sync now'}
-        </button>
-        <button className="btn-ghost" disabled={busy || workspaces.length < 2} title={workspaces.length < 2 ? 'Create another workspace to transfer' : undefined} onClick={() => setTransferring(true)}>
-          Transfer…
-        </button>
-        {/* Which of the viewer's own credentials acts here. Renders nothing
-            when they have only one — then there is no decision to make. */}
-        <RepoAccountPicker repo={repo.fullName} className="w-44" />
-        {/* A pin is pointless while only the local runner exists — hide it. */}
-        {runners.length > 1 ? (
-          <select
-            className="input"
-            value={repo.runnerId ?? ''}
-            disabled={busy}
-            aria-label={`Runner executing agent work for ${repo.fullName}`}
-            title="Agent runs for this repo execute on this machine"
-            onChange={(e) => void act(() => api.setRepoRunner(repo.fullName, e.target.value || null))()}
-          >
-            <optgroup label="Runs on — agent runs for this repo execute on this machine">
-              <option value="">auto (place among eligible)</option>
-              {runners.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </optgroup>
-          </select>
-        ) : null}
-        <span className="action-sep" aria-hidden />
-        <button
-          className="btn-danger-ghost"
-          disabled={busy}
-          onClick={() => void disconnect()}
-        >
-          Remove
-        </button>
-      </CardActions>
+          <CardActions>
+            <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
+              {busy ? 'Working…' : 'Sync now'}
+            </button>
+            <button className="btn-ghost" disabled={busy || workspaces.length < 2} title={workspaces.length < 2 ? 'Create another workspace to transfer' : undefined} onClick={() => setTransferring(true)}>
+              Transfer…
+            </button>
+            {/* Which of the viewer's own credentials acts here. Renders nothing
+                when they have only one — then there is no decision to make. */}
+            <RepoAccountPicker repo={repo.fullName} className="w-44" />
+            {/* A pin is pointless while only the local runner exists — hide it. */}
+            {runners.length > 1 ? (
+              <select
+                className="input"
+                value={repo.runnerId ?? ''}
+                disabled={busy}
+                aria-label={`Runner executing agent work for ${repo.fullName}`}
+                title="Agent runs for this repo execute on this machine"
+                onChange={(e) => void act(() => api.setRepoRunner(repo.fullName, e.target.value || null))()}
+              >
+                <optgroup label="Runs on — agent runs for this repo execute on this machine">
+                  <option value="">auto (place among eligible)</option>
+                  {runners.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            ) : null}
+            <span className="action-sep" aria-hidden />
+            <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
+              Remove
+            </button>
+          </CardActions>
+        </>
+      ) : null}
       {confirmElement}
 
-      {transferring ? (
+      {transferring && canManage ? (
         <TransferRepoModal
           repo={repo}
           workspaces={workspaces}

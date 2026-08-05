@@ -163,4 +163,18 @@ export default defineMigrations([
       // bug in the first place.
     },
   },
+  {
+    version: 5,
+    name: 'delegated_session_access',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE sessions ADD COLUMN access TEXT NOT NULL DEFAULT 'full'`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => {
+      // Additive by design; older daemons ignore the extra column.
+    },
+  },
 ]);

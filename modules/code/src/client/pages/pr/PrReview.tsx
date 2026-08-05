@@ -47,7 +47,36 @@ export function PrReview({
   const [actAs, setActAs] = useState('');
   const [mode, setMode] = useState<ReviewPostMode>('full');
   if (review.status === 'running') {
-    return <ReviewingStage review={review} canCancel={canUseAgents} busy={busy} onCancel={onCancel} />;
+    return (
+      <div className="flex flex-col gap-4">
+        <ReviewingStage review={review} canCancel={canUseAgents} busy={busy} onCancel={onCancel} />
+        {review.findings.length > 0 ? (
+          <section className="card anim-in" aria-label="Findings available so far">
+            <div className="flex flex-wrap items-center gap-2">
+              <strong className="text-sm">Available so far</strong>
+              <span className="badge">{review.findings.length}</span>
+            </div>
+            <p className="dim mt-1 text-xs">
+              Findings appear as each review group finishes. Serious claims can still be confirmed or refuted by the
+              independent verifier; anything already published by a posting pipeline is marked below.
+            </p>
+            <ReviewFindings
+              reviewId={review.id}
+              findings={review.findings}
+              canAct={false}
+              canReadAgent={false}
+              canChat={false}
+              busy={busy}
+              live
+              onToggle={() => undefined}
+              onReject={() => undefined}
+              focusedFinding={focusedFinding}
+              {...(onFocusFinding ? { onFocusFinding } : {})}
+            />
+          </section>
+        ) : null}
+      </div>
+    );
   }
   const v = review.verdict;
   const pending = review.status === 'pending';

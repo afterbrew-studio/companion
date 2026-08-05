@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
 import {
+  AiActionMenu,
   CardActions,
   EmptyState,
   ErrorBar,
@@ -13,7 +15,6 @@ import {
   Modal,
   Page,
   PageHeader,
-  SearchInput,
   Spinner,
   StatusGlyph,
   Tooltip,
@@ -26,6 +27,7 @@ import type { AreaStorage, SpecListRecord, SpecRecord } from '../../contract/ind
 import { planApi as api } from '../api.js';
 import { useSpecs } from '../hooks/useSpecs.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
+import { KnowledgeToolbar } from '../components/KnowledgeToolbar.js';
 
 /**
  * Specifications for the active workspace: living markdown documents that pin
@@ -55,11 +57,29 @@ export function SpecsPage(): JSX.Element {
   const { can } = useAuth();
   const [configuring, setConfiguring] = useState(false);
   const [creating, setCreating] = useState<'write' | 'generate' | null>(null);
-
-  if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('specs:manage');
+
+  useIntent('new-spec', () => {
+    if (canManage) setCreating('write');
+  });
+
+  if (!current) {
+    return (
+      <Page>
+        <PageHeader title="Specifications" subtitle="Reviewed behavior and requirements" />
+        <EmptyState
+          title="Create a workspace first"
+          hint="Specifications stay with a workspace so agents and maintainers share the same scope."
+          action={
+            can('workspaces:create') ? (
+              <button className="btn" onClick={() => runIntent('new-workspace')}>Create workspace</button>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
   const canGenerate = canManage && can('runs:read') && can('runs:act');
-  const needsSetup = storage !== null && storage.config === null;
   const configDir = storage?.config?.dir ?? null;
 
   return (
@@ -68,12 +88,13 @@ export function SpecsPage(): JSX.Element {
         title="Specifications"
         subtitle={current.name}
         actions={
-          canManage && storage?.config ? (
+          canManage ? (
             <div className="flex gap-2">
               {canGenerate ? (
-                <button className="btn-ghost" onClick={() => setCreating('generate')}>
-                  ✦ Generate from repo
-                </button>
+                <AiActionMenu
+                  label="Draft a specification with AI"
+                  actions={[{ label: 'Generate from repository with AI', onSelect: () => setCreating('generate') }]}
+                />
               ) : null}
               <button className="btn" onClick={() => setCreating('write')}>
                 New spec
@@ -84,7 +105,7 @@ export function SpecsPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {storage !== null && ((needsSetup && canManage) || configuring) ? (
+      {storage !== null && configuring ? (
         <AreaStorageSetup
           area="specifications"
           defaultDir="specs"
@@ -96,18 +117,18 @@ export function SpecsPage(): JSX.Element {
           }}
           onCancel={configuring ? () => setConfiguring(false) : undefined}
         />
-      ) : storage?.config ? (
-        <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
       ) : null}
 
-      <div className="flex items-center justify-end gap-2">
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search title or content…  ( / )"
-          ariaLabel="Search specifications by title or content"
-          className="w-full sm:w-72"
-        />
+      <KnowledgeToolbar
+        search={search}
+        onSearch={setSearch}
+        ariaLabel="Search specifications by title or content"
+        leading={
+          storage !== null ? (
+            <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
+          ) : undefined
+        }
+      >
         <FiltersPopover active={activeFilters} onClear={clearFilters}>
           <FilterField label="Repository">
             <select className="input" value={filters.repo} onChange={(event) => setFilter('repo')(event.target.value)}>
@@ -144,7 +165,7 @@ export function SpecsPage(): JSX.Element {
             </select>
           </FilterField>
         </FiltersPopover>
-      </div>
+      </KnowledgeToolbar>
 
       {specs === null ? (
         <InlineLoading label="Loading specifications…" />
@@ -170,13 +191,6 @@ export function SpecsPage(): JSX.Element {
         <EmptyState
           title="No specifications yet"
           hint="A spec pins down how something should behave — agents implement against it instead of guessing. Write one, or let an agent draft it from the codebase."
-          action={
-            canManage ? (
-              <button className="btn" onClick={() => setCreating(canGenerate ? 'generate' : 'write')}>
-                {canGenerate ? 'Generate the first spec' : 'Write the first spec'}
-              </button>
-            ) : undefined
-          }
         />
       ) : null}
 

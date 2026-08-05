@@ -17,7 +17,7 @@ import {
   removeModule,
 } from '@moxxy/companion-core/server';
 import { paths, planRestart, restartDaemon } from '@moxxy/companion-services';
-import type { Permission } from '@moxxy/companion-contracts';
+import { NAV_AUDIENCES, NAV_PERSPECTIVES, type Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
   AccountInfo,
@@ -88,11 +88,17 @@ const addModuleSchema = z.object({
   force: z.boolean().optional(),
 });
 const scopeEnum = z.enum(['workspace', 'global']);
+const navigationPageOverrideSchema = z.object({
+  perspective: z.enum(NAV_AUDIENCES),
+  key: z.string().min(1).max(64),
+  visible: z.boolean(),
+});
 const updateProfileSchema = z.object({
   notificationScope: scopeEnum.nullable().optional(),
-  // Bounded so a client cannot grow one settings row without limit; the keys are
-  // module-owned strings the server never resolves, so anything else is ignored.
-  hiddenNav: z.array(z.string().min(1).max(64)).max(200).optional(),
+  // Three presets × at most 200 module-owned entry keys. The server persists
+  // these cosmetic deviations but never treats them as access control.
+  navOverrides: z.array(navigationPageOverrideSchema).max(600).optional(),
+  navPerspective: z.enum(NAV_PERSPECTIVES).optional(),
 });
 const updateAccountSchema = z
   .object({
@@ -126,7 +132,8 @@ export default defineRoutes((ctx) => {
   const profileResponse = (username: string): ProfileResponse => ({
     profile: {
       notificationScope: settings.userNotificationScope(username),
-      hiddenNav: settings.userHiddenNav(username),
+      navOverrides: settings.userNavOverrides(username),
+      navPerspective: settings.userNavPerspective(username),
     },
     defaults: { notificationScope: settings.notificationDefaultScope() },
   });
@@ -566,7 +573,8 @@ export default defineRoutes((ctx) => {
       handler: ({ user, body }): ProfileResponse => {
         if (!user) throw new AuthError('authentication required', 401);
         if ('notificationScope' in body) settings.setUserNotificationScope(user.username, body.notificationScope ?? null);
-        if (body.hiddenNav) settings.setUserHiddenNav(user.username, body.hiddenNav);
+        if (body.navOverrides) settings.setUserNavOverrides(user.username, body.navOverrides);
+        if (body.navPerspective) settings.setUserNavPerspective(user.username, body.navPerspective);
         return profileResponse(user.username);
       },
     }),

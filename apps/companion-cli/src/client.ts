@@ -22,8 +22,9 @@ export function readToken(): string {
 
 export type ApiClient = <T>(method: string, path: string, body?: unknown) => Promise<T>;
 
-export function apiClient(baseUrl: string): ApiClient {
-  const token = readToken();
+export function apiClient(baseUrl: string, explicitToken?: string, timeoutMs?: number): ApiClient {
+  const providedToken = explicitToken?.trim();
+  const token = providedToken || readToken();
   return async <T>(method: string, path: string, body?: unknown): Promise<T> => {
     let response: Response;
     try {
@@ -31,16 +32,34 @@ export function apiClient(baseUrl: string): ApiClient {
         method,
         headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new Error(`Companion request timed out after ${timeoutMs} ms.`);
+      }
       throw new Error(`Companion is not reachable at ${baseUrl}. Start it, or pass --host/--port.`);
     }
     const text = await response.text();
-    const parsed = text ? (JSON.parse(text) as unknown) : {};
+    let parsed: unknown = {};
+    if (text) {
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        parsed = text;
+      }
+    }
     if (response.ok) return parsed as T;
-    const message = (parsed as { error?: string }).error ?? `HTTP ${response.status}`;
+    const message =
+      typeof parsed === 'object' && parsed !== null && typeof (parsed as { error?: unknown }).error === 'string'
+        ? (parsed as { error: string }).error
+        : `HTTP ${response.status}`;
     if (response.status === 401) {
-      throw new Error(`${message}. The token in ${paths.cliToken()} is stale. Delete it and restart Companion.`);
+      throw new Error(
+        providedToken
+          ? `${message}. COMPANION_TOKEN was rejected.`
+          : `${message}. The token in ${paths.cliToken()} is stale. Delete it and restart Companion.`,
+      );
     }
     throw new Error(message);
   };

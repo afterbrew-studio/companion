@@ -10,7 +10,16 @@ export interface PermissionRegistry {}
 export type Permission = keyof PermissionRegistry & string;
 
 /** UI directives the server can push to one user's browser(s). */
-export type ClientIntent = 'new-workspace' | 'connect-repo' | 'connect-github';
+export type ClientIntent =
+  | 'ask-ai'
+  | 'new-workspace'
+  | 'connect-repo'
+  | 'connect-github'
+  | 'new-spec'
+  | 'new-doc'
+  | 'new-task'
+  | 'new-idea'
+  | 'new-agent-run';
 
 /**
  * Server→browser WebSocket messages keyed by the `t` discriminator; the value

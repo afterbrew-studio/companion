@@ -115,7 +115,7 @@ export function fixture({
       runners: { hasFreeCapacity, servableModels },
       orchestrator: { taskModelPin },
     },
-    { canAccessRepo: () => true },
+    { canAccessRepo: () => true, requireAccessible: () => undefined },
     () => undefined,
     authorized,
     () => undefined,

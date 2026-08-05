@@ -5,7 +5,7 @@ import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log, paths } from '@moxxy/companion-sdk/server';
-import type { CommentRecord, PrFileChange, PrFileChangesPage, RepoPermission } from '../contract/index.js';
+import type { CommentRecord, PrFileChange, PrFileChangesPage } from '../contract/index.js';
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
@@ -289,31 +289,10 @@ export default defineRoutes((ctx) => {
     }
   };
 
-  /**
-   * The permission the caller's own accounts hold on each repo of a workspace.
-   * One probe per repo (TTL-cached alongside credential resolution), so every
-   * consumer — pickers, the board, automations — gates on the same graded truth
-   * instead of re-deriving "can I?" per action.
-   */
-  const repoPermissions = async (user: AuthUser, workspaceId: string): Promise<Map<string, RepoPermission>> => {
-    const rows = code.repos.listByWorkspace(workspaceId);
-    const graded = await mapConcurrent(
-      rows,
-      8,
-      async (row) => {
-        const permission = await code.githubAccounts.permissionFor('fetch', row.full_name, {
-          username: user.username,
-          workspaceId,
-        });
-        return permission ? ([row.full_name, permission] as const) : null;
-      },
-    );
-    return new Map(graded.filter((entry): entry is readonly [string, RepoPermission] => entry !== null));
-  };
-
-  const accessibleRepoNames = async (user: AuthUser, workspaceId: string): Promise<string[]> => [
-    ...(await repoPermissions(user, workspaceId)).keys(),
-  ];
+  // CodeService owns the personal-account visibility rule so other modules can
+  // compose these feeds without copying (and eventually drifting from) it.
+  const accessibleRepoNames = (user: AuthUser, workspaceId: string): Promise<string[]> =>
+    code.accessibleRepoNames(user.username, workspaceId);
 
   // Access gate for the workspace feeds: a private workspace the user isn't in
   // reads as "not found" — same helper as module-workspace's routes.
@@ -1660,7 +1639,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
         const rows = code.repos.listByWorkspace(params.id);
-        const permissions = await repoPermissions(user!, params.id);
+        const permissions = await code.repoPermissions(user!.username, params.id);
         const openIssueCounts = code.issues.openCounts(rows.map((row) => row.full_name));
         return {
           repos: rows.map((row) => {

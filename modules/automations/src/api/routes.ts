@@ -70,7 +70,19 @@ const uiSchema = z
       .max(300)
       .regex(/^#\//, 'hash must start with #/')
       .optional(),
-    intent: z.enum(['new-workspace', 'connect-repo', 'connect-github']).optional(),
+    intent: z
+      .enum([
+        'ask-ai',
+        'new-workspace',
+        'connect-repo',
+        'connect-github',
+        'new-spec',
+        'new-doc',
+        'new-task',
+        'new-idea',
+        'new-agent-run',
+      ])
+      .optional(),
   })
   .refine((v) => v.hash || v.intent, 'provide a hash to navigate or an intent to open');
 
@@ -1055,10 +1067,10 @@ export default defineRoutes((ctx) => {
     route({
       method: 'POST',
       path: '/api/assistant/ui',
-      access: 'any',
+      access: ['runs:read', 'runs:act'],
+      allowDelegatedWrite: true,
       body: uiSchema,
       handler: ({ user, body }) => {
-        requireRunAct(user);
         ctx.pushToUser(user!.username, { t: 'client.intent', hash: body.hash, intent: body.intent });
         return { ok: true };
       },

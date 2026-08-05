@@ -1,16 +1,20 @@
 import { useState } from 'react';
+import { runIntent, useIntent } from '@moxxy/companion-core/client';
+import { useAuth } from '@companion/module-core/client';
 import {
   Dropdown,
   EmptyState,
   ErrorBar,
   FilterField,
   FiltersPopover,
+  FormActions,
   ListCard,
   ListFooter,
   Page,
   PageHeader,
   PageLoading,
   SearchInput,
+  Modal,
   Spinner,
   StatusDot,
   formatTokens,
@@ -53,6 +57,7 @@ const STATUS_OPTIONS = [
 ] as const;
 
 export function RunsPage(): JSX.Element {
+  const { can } = useAuth();
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['kind', 'status', 'repo'] as const);
   const { search, setSearch, q } = useHashSearch();
   const { current } = useWorkspace();
@@ -69,6 +74,8 @@ export function RunsPage(): JSX.Element {
     status: selectedStatus,
   });
   const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const canStart = can('runs:act');
 
   const createRun = async (): Promise<void> => {
     setCreating(true);
@@ -83,13 +90,32 @@ export function RunsPage(): JSX.Element {
     }
   };
 
-  if (!current) return <EmptyState title="No workspace selected" />;
+  useIntent('new-agent-run', () => {
+    if (canStart) setShowCreate(true);
+  });
+
+  if (!current) {
+    return (
+      <Page>
+        <PageHeader title="Agent activity" subtitle="Every conversation, review, fix, and implementation in one history" />
+        <EmptyState
+          title="Create a workspace first"
+          hint="Agent work always belongs to a workspace, so its context and decisions stay together."
+          action={
+            can('workspaces:create') ? (
+              <button className="btn" onClick={() => runIntent('new-workspace')}>Create workspace</button>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
 
   return (
     <Page>
       <PageHeader
-        title="Agent Runs"
-        subtitle={`${current.name} · chats, triage, fixes, reviews, and reports`}
+        title="Agent activity"
+        subtitle={`${current.name} · every conversation, review, fix, and implementation in one history`}
         actions={
           <div className="flex items-center gap-1.5">
             <SearchInput
@@ -136,9 +162,11 @@ export function RunsPage(): JSX.Element {
                 </FilterField>
               ) : null}
             </FiltersPopover>
-            <button className="btn" disabled={creating} onClick={() => void createRun()}>
-              {creating ? 'Starting…' : 'New interactive run'}
-            </button>
+            {canStart ? (
+              <button className="btn" disabled={creating} onClick={() => setShowCreate(true)}>
+                Start agent task
+              </button>
+            ) : null}
           </div>
         }
       />
@@ -154,12 +182,14 @@ export function RunsPage(): JSX.Element {
         />
       ) : runs.length === 0 && activeFilters === 0 && !search.trim() ? (
         <EmptyState
-          title="No runs yet"
-          hint="Start an interactive run to chat with an agent, or trigger triage/fix/review from an issue or PR."
+          title="No agent work yet"
+          hint="Start a task here, or ask for triage, a fix, or a review from the issue or pull request where the work belongs."
           action={
-            <button className="btn" disabled={creating} onClick={() => void createRun()}>
-              Start the first run
-            </button>
+            canStart ? (
+              <button className="btn" disabled={creating} onClick={() => setShowCreate(true)}>
+                Start the first agent task
+              </button>
+            ) : undefined
           }
         />
       ) : runs.length === 0 ? (
@@ -216,6 +246,20 @@ export function RunsPage(): JSX.Element {
           />
         </>
       )}
+      {showCreate ? (
+        <Modal title="Start agent task" onClose={() => setShowCreate(false)}>
+          <p className="dim text-sm leading-6">
+            Start a blank conversation, then choose the repository and describe the outcome on the next screen.
+            Any proposed code change still waits for your review.
+          </p>
+          <FormActions>
+            <button className="btn-ghost" type="button" onClick={() => setShowCreate(false)}>Cancel</button>
+            <button className="btn" type="button" disabled={creating} onClick={() => void createRun()}>
+              {creating ? 'Starting…' : 'Continue'}
+            </button>
+          </FormActions>
+        </Modal>
+      ) : null}
     </Page>
   );
 }

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Authenticator, AuthUser, Permission } from '@moxxy/companion-contracts';
+import type { Authenticator, AuthUser, Permission, SessionAccess } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { StatusError, type RbacReader } from '@moxxy/companion-core/server';
 import type { AccountInfo, AuthProvider, SessionInfo, UserRecord } from '../contract/index.js';
@@ -188,17 +188,18 @@ export class Auth implements Authenticator {
     this.sessions.delete(hashToken(token));
   }
 
-  /** Mint a session for a trusted internal consumer (AI Help acting as the user). */
-  mintSession(username: string, ttlMs: number): { token: string; expiresAt: number } {
+  /** Mint for a trusted internal consumer; access is explicit to avoid an accidental full delegate. */
+  mintSession(username: string, ttlMs: number, access: SessionAccess): { token: string; expiresAt: number } {
     const account = this.users.get(username);
     if (!account || account.disabled) throw new AuthError('unknown or disabled account', 403);
-    const { token, expiresAt } = this.startSession(account, ttlMs);
+    const { token, expiresAt } = this.startSession(account, ttlMs, access);
     return { token, expiresAt };
   }
 
   private startSession(
     account: UserRecord,
     ttlMs: number,
+    access: SessionAccess = 'full',
   ): { token: string; user: AuthUser; expiresAt: number } {
     const token = randomBytes(32).toString('hex');
     const expiresAt = Date.now() + ttlMs;
@@ -206,10 +207,20 @@ export class Auth implements Authenticator {
       tokenHash: hashToken(token),
       username: account.username,
       role: account.role,
+      access,
       createdAt: Date.now(),
       expiresAt,
     });
-    return { token, user: { username: account.username, displayName: account.displayName, role: account.role }, expiresAt };
+    return {
+      token,
+      user: {
+        username: account.username,
+        displayName: account.displayName,
+        role: account.role,
+        ...(access === 'read-only' ? { sessionAccess: access } : {}),
+      },
+      expiresAt,
+    };
   }
 
   /** Resolve a bearer token to its user, or null. Role reads live from the account. */
@@ -226,7 +237,12 @@ export class Auth implements Authenticator {
       this.sessions.delete(session.tokenHash);
       return null;
     }
-    return { username: account.username, displayName: account.displayName, role: account.role };
+    return {
+      username: account.username,
+      displayName: account.displayName,
+      role: account.role,
+      ...(session.access === 'read-only' ? { sessionAccess: session.access } : {}),
+    };
   }
 
   /** Throw 401/403 unless the user holds the permission (against the live grid). */
@@ -256,7 +272,8 @@ export class Auth implements Authenticator {
       user,
       permissions: this.rbac.permissionsFor(user.role),
       notificationScope: this.settings.resolveNotificationScope(user.username),
-      hiddenNav: this.settings.userHiddenNav(user.username),
+      navOverrides: this.settings.userNavOverrides(user.username),
+      navPerspective: this.settings.userNavPerspective(user.username),
     };
   }
 

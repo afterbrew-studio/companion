@@ -1,6 +1,12 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
+import type {
+  NavigationAudience,
+  NavigationPageOverride,
+  Permission,
+  SpaServerMessage,
+} from '@moxxy/companion-contracts';
 import type { ModuleManifest } from '../manifest.js';
+import type { QuickAction } from './quick-actions.js';
 
 /**
  * `@moxxy/companion-core/client` — the client-side registrant API a module's `/client`
@@ -12,9 +18,11 @@ import type { ModuleManifest } from '../manifest.js';
 /** Sidebar groups — a shared, ordered namespace addressed by id (module ≠ group). */
 export type SectionId =
   | 'workspace'
+  | 'workspace-manage'
   | 'plan'
   | 'code'
   | 'operate'
+  | 'more'
   // Settings-shell groups, all owned by core so a module can attach to one
   // without depending on whoever else uses it. A typo here is not a type error
   // (the union stays open), it is an entry that never renders.
@@ -30,13 +38,21 @@ export interface NavSection {
   readonly order: number;
   readonly permission?: Permission;
   /**
-   * Where the group renders. 'settings' takes it out of the sidebar and into the
-   * settings shell's own column, which is where instance configuration belongs:
-   * pages an operator opens once a month must not compete with the daily work
-   * surfaces. Entries and routes are untouched by this: only the chrome around
-   * them changes. Defaults to 'sidebar'.
+   * Where the group renders. 'settings' moves instance configuration into the
+   * settings shell; 'catalog' keeps specialist tools searchable without giving
+   * them permanent sidebar rows. Entries and routes are untouched by this:
+   * only the chrome around them changes. Defaults to 'sidebar'.
    */
-  readonly placement?: 'sidebar' | 'settings';
+  readonly placement?: 'sidebar' | 'settings' | 'catalog';
+  /** Progressive disclosure for secondary surfaces; an active route still unfolds it. */
+  readonly defaultCollapsed?: boolean;
+  /**
+   * Menu presets that include this group. Omit for a shared group shown in
+   * every preset. This is presentation only: RBAC still decides access, Search
+   * still exposes every permitted route, and Admin intentionally includes all
+   * permitted sidebar groups.
+   */
+  readonly audiences?: readonly NavigationAudience[];
 }
 
 export interface NavEntry {
@@ -49,6 +65,12 @@ export interface NavEntry {
   /** `g` + this key jumps to the entry. */
   readonly shortcut?: string;
   readonly order?: number;
+  /**
+   * Optional refinement inside an included sidebar group. Omit for a page
+   * shared by every menu view. Admin always includes every permitted entry.
+   * This never affects routes, Search, shortcuts, or authorization.
+   */
+  readonly audiences?: readonly NavigationAudience[];
   /** Nest under another entry (by its key). */
   readonly parent?: string;
   /**
@@ -71,6 +93,23 @@ export interface NavEntry {
    * makes every narrower profile land on a 404.
    */
   readonly home?: number;
+}
+
+/** Resolve one sidebar row from the selected preset plus that user's explicit
+ * per-preset deviation. This is shared by the shell and Profile so the switches
+ * always describe exactly what the sidebar will render. */
+export function navigationEntryVisible(
+  entry: NavEntry,
+  section: NavSection | undefined,
+  perspective: NavigationAudience,
+  overrides: readonly NavigationPageOverride[],
+): boolean {
+  if (!section) return false;
+  const sectionMatches = section.audiences === undefined || section.audiences.includes(perspective);
+  const entryMatches = entry.audiences === undefined || entry.audiences.includes(perspective);
+  const presetVisible = perspective === 'admin' || (sectionMatches && entryMatches);
+  return overrides.find((override) => override.perspective === perspective && override.key === entry.key)?.visible
+    ?? presetVisible;
 }
 
 /** Whole-segment route matching — no manual ordering (kills the /runners-vs-/runs hazard). */
@@ -129,6 +168,8 @@ export interface WebModule {
   readonly routes?: readonly ClientRoute[];
   readonly slots?: readonly SlotContribution[];
   readonly onboarding?: readonly OnboardingStep[];
+  /** Outcome-oriented actions shown in the global New menu and command palette. */
+  readonly quickActions?: readonly QuickAction[];
 }
 
 // ---- registrants ----
@@ -164,3 +205,4 @@ export * from './nav-icon.js';
 export * from './fresh.js';
 export * from './cached-resource.js';
 export * from './slot.js';
+export * from './quick-actions.js';

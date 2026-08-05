@@ -52,17 +52,25 @@ Everything is scoped to a **workspace**, a named group of repositories.
 
 ![The workspace overview: open issues, open pull requests, failing CI and live agents, with velocity and token spend underneath.](docs/media/overview.png)
 
+- **Today** is the front door: one ordered queue of agent changes, AI reviews,
+  triage results, failures and merge gates that genuinely need a person.
+- **AI Help** reads across the platform, answers in context, drafts complete
+  requirements or documentation, and prepares exact actions for your approval.
 - **Issues** sync from GitHub, with triage and fix agents on tap.
-- **Pull requests** review with CI context, conflict state and review decisions.
+- **Pull requests** review with CI context, conflict state and review decisions;
+  large reviews surface findings shard by shard instead of waiting for the
+  whole agent batch.
 - **Pipelines** compose typed steps: CI gates, AI review, custom agent runs,
   labels, comments.
-- **Proposals** capture a business request, analyse it, and turn an approved one
-  into an implementation run.
+- **Ideas, specifications and documentation** turn plain-language needs into
+  reviewed planning artifacts and searchable project knowledge.
 - **Agent runs** show every run and its lifecycle, live, whichever harness it
   landed on, under a monthly spend ceiling that refuses work rather than
   surprising you.
 - **Automations** react to webhooks and schedules, and the inbox can be
   forwarded to Slack, Discord, ntfy or a signed webhook of your own.
+- **MCP** exposes the same reads and typed action-preparation catalog to IDE
+  agents, while the browser retains final execution authority.
 
 Each of those is a surface you work in rather than a feed you read: an issue
 carries its triage verdict, a pull request its CI, its AI review and the
@@ -75,8 +83,19 @@ Auth and RBAC are built in. Every REST route declares the permission it requires
 the SPA hides what your role cannot use, and roles are instance data rather than
 a closed union: see [`docs/permissions.md`](docs/permissions.md).
 
-`g` plus a module key jumps between modules, `/` focuses search, `?` opens the
-shortcuts cheatsheet.
+The menu has five predictable homes: **Home**, **Workspace**, **Plan & build**,
+**Code & review**, and **Agents**. The **Business**, **Developer**, and **Admin**
+menu views in **Your profile → Navigation** select the relevant homes, while
+Admin starts with every area allowed by RBAC. Per-page switches mirror the
+selected view and let each person add or remove shortcuts independently in
+Business, Developer, and Admin. None of this changes permissions: Search (`⌘K`)
+and direct links still reach every permitted page and the few specialist labs.
+Enabled modules contribute outcomes to the global **New** menu instead of adding
+arbitrary top-level groups. `g` plus a page key jumps directly, `/` focuses
+search, and `?` opens optional shortcuts and the product tour.
+
+See [Today, AI Help, and MCP](docs/ai-help-and-mcp.md) for the daily flow, safety
+boundary, supported actions, and MCP client configuration.
 
 ## How it is built
 
@@ -107,6 +126,7 @@ provider-capable machine, preparing its git worktree there.
 | [Install and deploy](docs/install.md) | npx, Docker, Coolify, pm2 |
 | [Configuration](docs/configuration.md) | environment, GitHub Enterprise, proxies |
 | [Runners](docs/runners.md) | multi-machine execution |
+| [Today, AI Help, and MCP](docs/ai-help-and-mcp.md) | the daily flow and programmatic interface |
 | [Operating modules](docs/operating-modules.md) | the module CLI, out-of-tree modules |
 | [Permissions and roles](docs/permissions.md) | the RBAC model and its CLI |
 | [Development](docs/development.md) | local setup, commands, build profiles |

@@ -165,8 +165,8 @@ test('cancelling while review evidence is finishing prevents a later GitHub post
   let posts = 0;
   let cancelled = 0;
   const reviews = {
-    analyzePr: (_repo, _number, _userId, _options, onCreated) => {
-      onCreated?.('review-1');
+    analyzePr: (_repo, _number, _userId, _options, lifecycle) => {
+      lifecycle?.onCreated?.('review-1');
       return new Promise((resolve) => {
         finishReview = () =>
           resolve({

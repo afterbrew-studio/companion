@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import { useLive, type RouteProps } from '@moxxy/companion-sdk/client';
+import { useIntent, useLive, type RouteProps } from '@moxxy/companion-sdk/client';
 import {
+  ActionMenu,
   CopyText,
   DetailGrid,
   DetailRow,
@@ -10,7 +11,6 @@ import {
   EmptyState,
   ErrorBar,
   Field,
-  FlowIcon,
   FormActions,
   IconButton,
   Markdown,
@@ -24,7 +24,6 @@ import {
   StatusGlyph,
   Switch,
   Tooltip,
-  WorkersIcon,
   timeAgo,
   useConfirm,
   type StatusTone,
@@ -288,33 +287,8 @@ function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachmen
   );
 }
 
-/** One segment of the header's settings cluster: glyph, optional live count, tooltip. */
-function HeaderChip({
-  label,
-  tip,
-  onClick,
-  children,
-}: {
-  label: string;
-  tip: string;
-  onClick: () => void;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <Tooltip content={tip}>
-      <button
-        type="button"
-        aria-label={label}
-        onClick={onClick}
-        className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-      >
-        {children}
-      </button>
-    </Tooltip>
-  );
-}
-
 export default function Board({ query }: RouteProps): JSX.Element {
+  const { can } = useAuth();
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
   // The persisted repository scope also scopes the paged Done archive. Active
@@ -344,6 +318,11 @@ export default function Board({ query }: RouteProps): JSX.Element {
   const [configuring, setConfiguring] = useState(false);
   const [dragging, setDragging] = useState<TaskListRecord | null>(null);
   const [dropTarget, setDropTarget] = useState<ColumnKey | null>(null);
+  const canManage = can('board:manage');
+
+  useIntent('new-task', () => {
+    if (canManage) setCreating(true);
+  });
 
   // Notification deep link (#/board?task=…) opens the task's detail view.
   useEffect(() => {
@@ -462,6 +441,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
 
   const busyCount = workers.filter((w) => w.busy).length;
   const capacity = workers.filter((w) => w.enabled).length;
+  const developerCount = workers.filter((w) => w.enabled && w.role === 'developer').length;
   const inFlight = visibleTasks.filter((t) => t.status === 'in_progress' || t.status === 'in_review').length;
   const decisions = byColumn.get('needs_decision')?.length ?? 0;
 
@@ -498,32 +478,31 @@ export default function Board({ query }: RouteProps): JSX.Element {
             {/* Which of my credentials acts on the scoped repo. Hidden unless
                 several of my accounts are eligible — nothing to decide then. */}
             {scopedRepo ? <RepoAccountPicker repo={scopedRepo} className="w-44" /> : null}
-            {/* Board settings sit in one segmented cluster so the only filled
-                button in the header is the action people actually came for.
-                h-9 pins the cluster to the shared control height. */}
-            <div className="flex h-9 items-center gap-0.5 rounded-lg border border-zinc-200 px-0.5 dark:border-zinc-700">
-              <HeaderChip
-                label={`Workers — ${busyCount} of ${capacity} busy`}
-                tip={
-                  capacity === 0
-                    ? 'No workers yet — add one to start building'
-                    : `${busyCount} of ${capacity} worker${capacity === 1 ? '' : 's'} busy`
-                }
-                onClick={() => setManagingWorkers(true)}
-              >
-                <WorkersIcon className="size-4" />
-                <span className="text-[13px] tabular-nums">
-                  {busyCount}/{capacity}
-                </span>
-              </HeaderChip>
-              <HeaderChip label="Flow" tip="Flow — review, merge and retry rules" onClick={() => setConfiguring(true)}>
-                <FlowIcon className="size-4" />
-              </HeaderChip>
-            </div>
-            <button className="btn" onClick={() => setCreating(true)}>
-              <PlusIcon className="size-3.5" />
-              New task
-            </button>
+            {canManage ? (
+              <>
+                <ActionMenu
+                  label="Board settings"
+                  trigger="Settings"
+                  actions={[
+                    {
+                      label:
+                        capacity === 0
+                          ? 'Add workers'
+                          : `Workers (${busyCount}/${capacity} busy)`,
+                      onSelect: () => setManagingWorkers(true),
+                    },
+                    {
+                      label: 'Review, merge, and retry rules',
+                      onSelect: () => setConfiguring(true),
+                    },
+                  ]}
+                />
+                <button className="btn" onClick={() => setCreating(true)}>
+                  <PlusIcon className="size-3.5" />
+                  New task
+                </button>
+              </>
+            ) : null}
           </>
         }
       />
@@ -536,19 +515,39 @@ export default function Board({ query }: RouteProps): JSX.Element {
               `Existing cards stay put; grant write access and they start on their own.`}
         </div>
       ) : null}
-      {workers.filter((w) => w.enabled && w.role === 'developer').length === 0 ? (
+      {developerCount === 0 && visibleTasks.length > 0 ? (
+        <div className="banner-warn mb-3 flex flex-wrap items-center justify-between gap-2">
+          <span>Tasks are visible, but none can start until a developer worker is available.</span>
+          {canManage ? <button className="btn-ghost" onClick={() => setManagingWorkers(true)}>Add worker</button> : null}
+        </div>
+      ) : null}
+      {developerCount === 0 && visibleTasks.length === 0 ? (
         <div className="mb-4">
           <EmptyState
             title="No developer workers yet"
-            hint="Tasks queue up but nothing builds until you add a worker."
+            hint="Add one worker once; after that, new tasks can move from description to pull request without more setup."
             action={
-              <button className="btn" onClick={() => setManagingWorkers(true)}>
-                Add a worker
-              </button>
+              canManage ? (
+                <button className="btn" onClick={() => setManagingWorkers(true)}>Add a worker</button>
+              ) : undefined
             }
           />
         </div>
-      ) : null}
+      ) : visibleTasks.length === 0 ? (
+        <EmptyState
+          title={scopedRepo ? `No tasks for ${repoLabel(scopedRepo)} yet` : 'No implementation tasks yet'}
+          hint="Describe the outcome and acceptance criteria. Companion handles the execution stages on this board."
+          action={
+            canManage ? (
+              <button className="btn" onClick={() => setCreating(true)}>
+                <PlusIcon className="size-3.5" />
+                Create the first task
+              </button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
 
       {/* Horizontal kanban rail: columns keep a readable width and the board
           scrolls sideways instead of squeezing seven columns into the viewport. */}
@@ -639,6 +638,8 @@ export default function Board({ query }: RouteProps): JSX.Element {
         })}
         </div>
       </div>
+        </>
+      )}
 
       {creating && current ? (
         <NewTaskModal

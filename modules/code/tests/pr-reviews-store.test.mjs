@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
-import { PrReviewsStore } from '../dist/api/pr-reviews-store.js';
+import { PrReviewFindingsStore, PrReviewsStore } from '../dist/api/pr-reviews-store.js';
 
 function fixture() {
   const db = new Database(':memory:');
@@ -157,4 +157,42 @@ test('latest review decoration batches a repository beyond SQLite parameter ceil
   assert.equal(latest.size, numbers.length);
   assert.equal(latest.get(1).status, 'pending');
   assert.equal(latest.get(1_205).status, 'pending');
+});
+
+test('streamed findings are idempotent and a refuting verifier disarms them', () => {
+  const db = new Database(':memory:');
+  for (const migration of migrations) migration.up(db);
+  const reviews = new PrReviewsStore(db);
+  const findings = new PrReviewFindingsStore(db);
+  const review = runningReview();
+  reviews.insert(review);
+  const finding = {
+    id: 'prf-streamed',
+    reviewId: review.id,
+    source: 'native',
+    anchor: { file: 'src/example.ts', side: 'RIGHT', line: 4, startLine: null },
+    severity: 'major',
+    title: 'Incorrect fallback',
+    reason: 'The fallback returns the wrong value.',
+    impact: 'Callers receive invalid state.',
+    suggestion: 'Use the validated value.',
+    suggestedPatch: null,
+    confidence: 0.8,
+    state: 'included',
+    verification: 'unverified',
+    verificationNote: null,
+    rejectionReason: null,
+    githubCommentId: null,
+    createdAt: 100,
+  };
+
+  findings.insertMany([finding]);
+  findings.insertMissing([finding]);
+  assert.equal(findings.listForReview(review.id).length, 1);
+
+  findings.setVerification(finding.id, 'refuted', 'The caller already validates this branch.');
+  const stored = findings.get(finding.id);
+  assert.equal(stored.verification, 'refuted');
+  assert.equal(stored.state, 'proposed');
+  assert.equal(stored.verificationNote, 'The caller already validates this branch.');
 });

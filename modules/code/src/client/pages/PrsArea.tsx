@@ -24,7 +24,7 @@ import {
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import { useWorkspacePrs } from '../hooks/useWorkspacePrs.js';
-import { Slot } from '@moxxy/companion-sdk/client';
+import { runIntent, Slot } from '@moxxy/companion-sdk/client';
 import { BulkBar } from '../components/BulkBar.js';
 import { ListLoadFailure, listLoadErrorMessage } from '../components/ListLoadFailure.js';
 import { PrSelectionProvider } from '../pr-selection.js';
@@ -255,6 +255,16 @@ export function PrsAreaPage(): JSX.Element {
       ) : prs.length === 0 && unavailable.length === 0 && !loading ? (
         <EmptyState
           title={search.trim() || repoFilter !== 'all' ? 'No pull requests match the filters' : `No ${tab} pull requests`}
+          hint={
+            current.repoCount === 0
+              ? 'Connect a repository to this workspace to start syncing pull requests.'
+              : undefined
+          }
+          action={
+            current.repoCount === 0 && can('repos:manage') ? (
+              <button className="btn" onClick={() => runIntent('connect-repo')}>Connect repository</button>
+            ) : undefined
+          }
         />
       ) : (
         <ListCard className="mt-3" ariaLabel="Pull request list">

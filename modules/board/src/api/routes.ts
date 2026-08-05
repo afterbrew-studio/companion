@@ -166,10 +166,9 @@ export default defineRoutes((ctx) => {
     route({
       method: 'POST',
       path: '/api/board/tasks/:id/merge',
-      access: 'board:manage',
+      access: ['board:read', 'board:manage', 'prs:read', 'prs:act'],
       handler: async ({ params, user }) => {
         if (!board.getTask(user!, params.id)) throw notFound('task not found');
-        if (!ctx.rbac.has(user!.role, 'prs:act')) throw forbidden('requires prs:act to merge a pull request');
         try {
           return { task: await board.mergeNow(params.id, user!.username) };
         } catch (err) {

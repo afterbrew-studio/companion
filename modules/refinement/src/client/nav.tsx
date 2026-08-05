@@ -1,10 +1,8 @@
 import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * One entry in the Plan group, below the Task Board (module-plan and module-board
- * both declare that section and both are hard dependencies, so it always exists
- * when this nav loads). The icon is the decomposition itself: one path in, three
- * out.
+ * Refinement is the codebase-to-tasks stage of planning, so it stays beside
+ * ideas, specifications and the task board instead of becoming search-only.
  */
 export const nav = defineNav([
   {
@@ -15,7 +13,8 @@ export const nav = defineNav([
     shortcut: 'f',
     permission: 'refine:read',
     section: 'plan',
-    order: 40,
+    order: 30,
+    audiences: ['developer'],
     freshOn: (msg) => (msg.t === 'refinement.changed' ? 'refinement' : null),
     icon: (
       <NavIcon>

@@ -1,4 +1,6 @@
 import { useAiActivity } from '@companion/module-operate/client';
+import { useAuth } from '@companion/module-core/client';
+import { runIntent } from '@moxxy/companion-sdk/client';
 import {
   AiActivityChip,
   Checkbox,
@@ -33,6 +35,7 @@ import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, Triag
  * visible window is loaded; search and filters run in the database.
  */
 export function IssuesAreaPage(): JSX.Element {
+  const { can } = useAuth();
   const s = useWorkspaceIssues();
   // A skeleton that appears and vanishes inside a blink reads as a glitch.
   const settling = useSettledFlag(s.loading);
@@ -214,6 +217,11 @@ export function IssuesAreaPage(): JSX.Element {
                   ? 'There are no open issues in the connected repositories.'
                   : 'Closed issues will appear here after the next repository sync.'
               : undefined
+          }
+          action={
+            current.repoCount === 0 && can('repos:manage') ? (
+              <button className="btn" onClick={() => runIntent('connect-repo')}>Connect repository</button>
+            ) : undefined
           }
         />
       ) : (

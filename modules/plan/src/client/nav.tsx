@@ -1,8 +1,8 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
+import { defineNav, defineQuickActions, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * module-plan's sidebar contributions: the Plan group with its proposals /
- * specifications / documentation entries. module-board declares the SAME section
+ * module-plan's sidebar contributions: the Plan & build group with its
+ * specifications and documentation entries. module-board declares the SAME section
  * (id dedupes, first declaration wins) because it does not depend on this module,
  * so keep the two declarations identical. Icons copied exactly from the legacy
  * modules.tsx registry.
@@ -29,7 +29,9 @@ const icons = {
   ),
 };
 
-export const sections = defineSections([{ id: 'plan', label: 'Plan', order: 20 }]);
+export const sections = defineSections([
+  { id: 'plan', label: 'Plan & build', order: 30, audiences: ['business', 'developer'] },
+]);
 
 export const nav = defineNav([
   {
@@ -40,6 +42,7 @@ export const nav = defineNav([
     permission: 'specs:read',
     section: 'plan',
     order: 10,
+    audiences: ['business', 'developer'],
     freshOn: (msg) => (msg.t === 'specs.changed' ? 'specs' : null),
     icon: icons.specs,
   },
@@ -51,7 +54,29 @@ export const nav = defineNav([
     permission: 'docs:read',
     section: 'plan',
     order: 20,
+    audiences: ['business', 'developer'],
     freshOn: (msg) => (msg.t === 'docs.changed' ? 'docs' : null),
     icon: icons.docs,
+  },
+]);
+
+export const actions = defineQuickActions([
+  {
+    key: 'new-spec',
+    label: 'Write specification',
+    group: 'Create',
+    access: ['specs:read', 'specs:manage'],
+    keywords: 'requirements requirement spec feature behavior',
+    order: 20,
+    intent: 'new-spec',
+  },
+  {
+    key: 'new-doc',
+    label: 'Write documentation',
+    group: 'Create',
+    access: ['docs:read', 'docs:manage'],
+    keywords: 'knowledge document runbook architecture content',
+    order: 30,
+    intent: 'new-doc',
   },
 ]);

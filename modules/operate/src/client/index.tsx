@@ -3,7 +3,7 @@ import { defineClientModule } from '@moxxy/companion-core/client';
 // into every compilation that loads the client slice.
 import '../contract/index.js';
 import manifest from '../module.js';
-import { nav, sections } from './nav.js';
+import { actions, nav, sections } from './nav.js';
 import { routes } from './routes.js';
 import { slots } from './slots.js';
 import { onboarding } from './onboarding.js';
@@ -42,4 +42,5 @@ export default defineClientModule({
   routes,
   slots,
   onboarding,
+  quickActions: actions,
 });

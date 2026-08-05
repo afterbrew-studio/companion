@@ -128,6 +128,22 @@ export function PipelinesPage(): JSX.Element {
   const canManage = can('pipelines:manage');
   const canUseAgents = can('runs:read') && can('runs:act');
 
+  const removePipeline = async (pipeline: PipelineRecord): Promise<void> => {
+    const ok = await confirmDanger({
+      title: `Delete pipeline ${pipeline.name}`,
+      message: `"${pipeline.name}" stops running against new targets. Its run history is kept.`,
+    });
+    if (ok) await api.deletePipeline(pipeline.id).then(refresh).catch((e) => setError(String(e)));
+  };
+
+  const removeStepDefinition = async (definition: StepDefinitionRecord): Promise<void> => {
+    const ok = await confirmDanger({
+      title: `Delete step ${definition.name}`,
+      message: `Pipelines referencing "${definition.name}" will fail to resolve it until they are edited.`,
+    });
+    if (ok) await api.deleteStepDefinition(definition.id).then(refresh).catch((e) => setError(String(e)));
+  };
+
   if (!current) return <EmptyState title="No workspace selected" />;
 
   return (
@@ -138,17 +154,15 @@ export function PipelinesPage(): JSX.Element {
         actions={
           canManage ? (
             <>
-              {canUseAgents ? (
-                <button className="btn-ghost" onClick={() => setGenerating(true)}>
-                  ✦ Generate with AI
-                </button>
-              ) : null}
               <ActionMenu
-                trigger="Import"
-                label="Import a pipeline"
+                trigger="Options"
+                label="Other ways to create a pipeline"
                 actions={[
-                  { label: 'From a file…', onSelect: () => fileInput.current?.click() },
-                  { label: 'Paste JSON…', onSelect: () => setImporting({ text: '' }) },
+                  ...(canUseAgents
+                    ? [{ label: 'Generate with AI…', onSelect: () => setGenerating(true) }]
+                    : []),
+                  { label: 'Import from file…', onSelect: () => fileInput.current?.click() },
+                  { label: 'Import pasted JSON…', onSelect: () => setImporting({ text: '' }) },
                 ]}
               />
               <button className="btn" onClick={() => setEditing('new')}>
@@ -187,22 +201,24 @@ export function PipelinesPage(): JSX.Element {
         ) : null}
         {pipelines.map((p, i) => (
           <article key={p.id} style={rowDelay(i, 6)} className="card card-in" aria-label={p.name}>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{p.name}</div>
-                <p className="dim mt-0.5 truncate text-xs">
-                  {TYPE_META[p.type].label}
-                  {p.description ? ` · ${p.description}` : ''}
+                <div className="dim text-[10px] font-medium tracking-widest uppercase">{TYPE_META[p.type].label}</div>
+                <h2 className="mt-1 truncate text-base font-semibold">{p.name}</h2>
+                <p className="dim mt-1 line-clamp-2 text-[13px]">
+                  {p.description || TYPE_META[p.type].hint}
                 </p>
               </div>
-              {p.autoRunOnPrOpen ? (
-                <span className="badge-accent shrink-0">
-                  auto-run on {p.type === 'issue' ? 'issue' : 'PR'} open
-                </span>
-              ) : null}
-              {p.autoRunOnPrUpdate ? <span className="badge shrink-0">re-run on new commits</span> : null}
+              <div className="flex flex-wrap justify-end gap-1.5">
+                {p.autoRunOnPrOpen ? (
+                  <span className="badge-accent shrink-0">
+                    auto-run on {p.type === 'issue' ? 'issue' : 'PR'} open
+                  </span>
+                ) : null}
+                {p.autoRunOnPrUpdate ? <span className="badge shrink-0">re-run on new commits</span> : null}
+              </div>
             </div>
-            <ol className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={`${p.name} steps`}>
+            <ol className="mt-4 flex items-center overflow-x-auto pb-1" aria-label={`${p.name} steps`}>
               {p.steps.map((spec, i) => {
                 const label =
                   spec.type === 'inline'
@@ -212,10 +228,23 @@ export function PipelinesPage(): JSX.Element {
                       'missing step');
                 const isRef = spec.type === 'ref';
                 return (
-                  <li key={i} className="flex items-center gap-1.5">
-                    {i > 0 ? <span className="dim">→</span> : null}
-                    <span className={isRef ? 'badge-accent normal-case' : 'badge normal-case'} title={isRef ? 'from step library' : undefined}>
-                      {label}
+                  <li key={i} className="flex shrink-0 items-center">
+                    {i > 0 ? (
+                      <span className="mx-1.5 flex w-5 items-center" aria-hidden>
+                        <span className="h-px flex-1 bg-zinc-300 dark:bg-zinc-700" />
+                        <span className="dim -ml-0.5 text-xs">›</span>
+                      </span>
+                    ) : null}
+                    <span
+                      className={`inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-xs ${
+                        isRef
+                          ? 'border-accent-300 bg-accent-50 text-accent-800 dark:border-accent-700 dark:bg-accent-950/30 dark:text-accent-300'
+                          : 'border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900'
+                      }`}
+                      title={isRef ? 'Shared step from the library' : undefined}
+                    >
+                      <span className="dim font-mono text-[10px] tabular-nums">{i + 1}</span>
+                      <span className="max-w-56 truncate">{label}</span>
                     </span>
                   </li>
                 );
@@ -223,30 +252,19 @@ export function PipelinesPage(): JSX.Element {
             </ol>
             {canManage ? (
               <CardActions>
-                <button className="btn-ghost" onClick={() => setEditing(p)}>
-                  Edit
-                </button>
-                {p.type === 'platform' && can('pipelines:run') ? (
-                  <PlatformRunButton pipeline={p} onError={setError} />
-                ) : null}
-                <button className="btn-ghost" onClick={() => void exportPipeline(p, setError)}>
-                  Export
-                </button>
-                <span className="action-sep" aria-hidden />
-                <button
-                  className="btn-danger-ghost"
-                  onClick={() =>
-                    void (async () => {
-                      const ok = await confirmDanger({
-                        title: `Delete pipeline ${p.name}`,
-                        message: `"${p.name}" stops running against pull requests. Its run history is kept.`,
-                      });
-                      if (ok) await api.deletePipeline(p.id).then(refresh).catch((e) => setError(String(e)));
-                    })()
-                  }
-                >
-                  Delete
-                </button>
+                <span className="dim mr-auto text-xs">
+                  {p.steps.length} {p.steps.length === 1 ? 'step' : 'steps'}
+                </span>
+                {p.type === 'platform' && can('pipelines:run') ? <PlatformRunButton pipeline={p} onError={setError} /> : null}
+                <button className="btn-ghost" onClick={() => setEditing(p)}>Edit</button>
+                <ActionMenu
+                  trigger="Actions"
+                  label={`Actions for ${p.name}`}
+                  actions={[
+                    { label: 'Export JSON', onSelect: () => void exportPipeline(p, setError) },
+                    { label: 'Delete pipeline', danger: true, onSelect: () => void removePipeline(p) },
+                  ]}
+                />
               </CardActions>
             ) : null}
           </article>
@@ -256,13 +274,6 @@ export function PipelinesPage(): JSX.Element {
         <EmptyState
           title="No pipelines yet"
           hint="A pipeline is an ordered set of steps — CI gate, AI review, custom agents, labels, comments — that you run against pull requests."
-          action={
-            canManage ? (
-              <button className="btn" onClick={() => setEditing('new')}>
-                Create the first pipeline
-              </button>
-            ) : undefined
-          }
         />
       ) : null}
 
@@ -317,24 +328,12 @@ export function PipelinesPage(): JSX.Element {
                 {d.description ? <p className="dim mt-2 line-clamp-2 text-[13px]">{d.description}</p> : null}
                 {canManage ? (
                   <CardActions>
-                    <button className="btn-ghost" onClick={() => setEditingDef(d)}>
-                      Edit
-                    </button>
-                    <span className="action-sep" aria-hidden />
-                    <button
-                      className="btn-danger-ghost"
-                      onClick={() =>
-                        void (async () => {
-                          const ok = await confirmDanger({
-                            title: `Delete step ${d.name}`,
-                            message: `Pipelines referencing "${d.name}" will fail to resolve it until they are edited.`,
-                          });
-                          if (ok) await api.deleteStepDefinition(d.id).then(refresh).catch((e) => setError(String(e)));
-                        })()
-                      }
-                    >
-                      Delete
-                    </button>
+                    <button className="btn-ghost" onClick={() => setEditingDef(d)}>Edit</button>
+                    <ActionMenu
+                      trigger="Actions"
+                      label={`Actions for ${d.name}`}
+                      actions={[{ label: 'Delete custom step', danger: true, onSelect: () => void removeStepDefinition(d) }]}
+                    />
                   </CardActions>
                 ) : null}
               </article>
@@ -548,7 +547,7 @@ function PlatformRunButton({
           ))}
         </select>
       ) : null}
-      <button className="btn-ghost" disabled={busy || !repo} onClick={() => void run()}>
+      <button className="btn" disabled={busy || !repo} onClick={() => void run()}>
         {busy ? 'Starting…' : 'Run now'}
       </button>
     </span>
@@ -975,32 +974,44 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
       );
     case 'ai-review':
       return (
-        <div className="flex flex-wrap items-center gap-4 text-sm">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={step.config.post}
-              onChange={(e) => onChange({ ...step, config: { ...step.config, post: e.target.checked } })}
-            />
-            Post the review to GitHub
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="dim">Fail when</span>
-            <select
-              className="input input-sm"
-              value={step.config.failOn}
-              onChange={(e) =>
-                onChange({
-                  ...step,
-                  config: { ...step.config, failOn: e.target.value as 'request_changes' | 'high_risk' | 'never' },
-                })
-              }
-            >
-              <option value="high_risk">risk is high</option>
-              <option value="request_changes">changes are requested</option>
-              <option value="never">never (informational)</option>
-            </select>
-          </label>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={step.config.post}
+                onChange={(e) => onChange({ ...step, config: { ...step.config, post: e.target.checked } })}
+              />
+              Publish findings and the final verdict to GitHub
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="dim">Fail when</span>
+              <select
+                className="input input-sm"
+                value={step.config.failOn}
+                onChange={(e) =>
+                  onChange({
+                    ...step,
+                    config: {
+                      ...step.config,
+                      failOn: e.target.value as 'request_changes' | 'high_risk' | 'blocker' | 'never',
+                    },
+                  })
+                }
+              >
+                <option value="high_risk">risk is high</option>
+                <option value="request_changes">changes are requested</option>
+                <option value="blocker">a confirmed blocker is found</option>
+                <option value="never">never (informational)</option>
+              </select>
+            </label>
+          </div>
+          {step.config.post ? (
+            <p className="dim text-xs">
+              On large pull requests, ready inline findings are published as each review group finishes. Serious or
+              uncertain claims wait for verification; one final verdict follows after complete coverage.
+            </p>
+          ) : null}
         </div>
       );
     case 'agent':

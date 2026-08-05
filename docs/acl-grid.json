@@ -46,6 +46,7 @@
       "specs:manage",
       "specs:read",
       "users:manage",
+      "workbench:read",
       "workspaces:create",
       "workspaces:manage",
       "workspaces:read"
@@ -88,6 +89,7 @@
       "slop:read",
       "specs:manage",
       "specs:read",
+      "workbench:read",
       "workspaces:create",
       "workspaces:read"
     ],
@@ -107,6 +109,7 @@
       "slop:read",
       "specs:manage",
       "specs:read",
+      "workbench:read",
       "workspaces:read"
     ]
   },
@@ -476,6 +479,15 @@
       "title": "Create and manage user accounts",
       "grants": [
         "admin"
+      ]
+    },
+    "workbench:read": {
+      "owner": "workbench",
+      "title": "View the unified decision queue",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
       ]
     },
     "workspaces:create": {

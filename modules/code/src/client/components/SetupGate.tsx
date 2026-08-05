@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { runIntent, type Intent } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { EmptyState, Page, PageHeader } from '@moxxy/companion-sdk/ui';
+import { EmptyState, Page, PageHeader, PageLoading } from '@moxxy/companion-sdk/ui';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceReposState } from '../hooks/useWorkspaceRepos.js';
 
@@ -12,9 +13,8 @@ import { useWorkspaceReposState } from '../hooks/useWorkspaceRepos.js';
  * looks like a state you can wait out.
  *
  * So the pages that cannot work state the prerequisite instead of rendering,
- * and point at the one screen that fixes it. The order matters and is the order
- * a person hits it: connecting a repository requires an account to see it with,
- * so an instance with no accounts is sent there first.
+ * and point at the one action that fixes it. The order follows the user's
+ * mental model: choose a workspace, connect an identity, then connect a repo.
  *
  * Exported from module-code because code owns both concepts; `plan`, `board`,
  * `refinement`, `planner`, `automations` and `slop` all depend on code and wrap
@@ -22,9 +22,34 @@ import { useWorkspaceReposState } from '../hooks/useWorkspaceRepos.js';
  */
 export function RequiresRepo({ children, what }: { children: React.ReactNode; what?: string }): React.ReactNode {
   return (
-    <RequiresGithubAccount what={what}>
-      <RepoGate what={what}>{children}</RepoGate>
-    </RequiresGithubAccount>
+    <RequiresWorkspace what={what}>
+      <RequiresGithubAccount what={what}>
+        <RepoGate what={what}>{children}</RepoGate>
+      </RequiresGithubAccount>
+    </RequiresWorkspace>
+  );
+}
+
+/** The first contextual prerequisite: every operating surface needs a scope. */
+export function RequiresWorkspace({
+  children,
+  what,
+}: {
+  children: React.ReactNode;
+  what?: string;
+}): React.ReactNode {
+  const { current } = useWorkspace();
+  const { can } = useAuth();
+  if (current) return children;
+  const subject = what ?? 'This page';
+  return (
+    <Gate
+      heading={subject}
+      title="Create a workspace first"
+      hint={`${subject} works inside a workspace. Create one now; Companion will keep the next prerequisite in context.`}
+      intent="new-workspace"
+      cta={can('workspaces:create') ? 'Create workspace' : undefined}
+    />
   );
 }
 
@@ -57,9 +82,9 @@ export function RequiresGithubAccount({
 
   const subject = what ?? 'This page';
 
-  // Null while the probe is in flight: flashing "connect an account" at someone
-  // who has one is worse than showing nothing for a beat.
-  if (hasAccount === null) return null;
+  // Null while the probe is in flight: name the check instead of briefly
+  // claiming that an already-connected profile still needs setup.
+  if (hasAccount === null) return <GateLoading heading={subject} label="Checking GitHub access…" />;
   if (hasAccount) return children;
 
   return (
@@ -67,10 +92,10 @@ export function RequiresGithubAccount({
       heading={subject}
       title="Connect a GitHub account first"
       hint={`${subject} needs a GitHub credential to read and act on your repositories. Connect one, then add a repository.`}
-      href="#/github"
+      intent="connect-github"
       // Connecting is an admin-shaped act; a viewer is told what is missing
       // rather than sent to a page they cannot use.
-      cta={can('github:connect') ? 'Go to GitHub accounts' : undefined}
+      cta={can('github:connect') ? 'Connect GitHub account' : undefined}
     />
   );
 }
@@ -82,18 +107,11 @@ function RepoGate({ children, what }: { children: React.ReactNode; what?: string
   const subject = what ?? 'This page';
 
   if (!current) {
-    return (
-      <Gate
-        heading={subject}
-        title="No workspace yet"
-        hint={`${subject} works inside a workspace. Create one from the sidebar switcher.`}
-      />
-    );
+    return <RequiresWorkspace what={subject}>{children}</RequiresWorkspace>;
   }
   // Same rule as the account probe above: an unanswered list is not an empty
-  // one, and flashing "add a repository" at someone who has twenty is worse
-  // than showing nothing for a beat.
-  if (!loaded) return null;
+  // one, so show the check instead of a false setup instruction.
+  if (!loaded) return <GateLoading heading={subject} label="Checking workspace repositories…" />;
   if (repos.length > 0) return children;
 
   return (
@@ -101,9 +119,18 @@ function RepoGate({ children, what }: { children: React.ReactNode; what?: string
       heading={subject}
       title="Add a repository to get started"
       hint={`${subject} works on the repositories connected to this workspace. There are none yet.`}
-      href="#/repos"
-      cta={can('repos:manage') ? 'Go to Repositories' : undefined}
+      intent="connect-repo"
+      cta={can('repos:manage') ? 'Connect repository' : undefined}
     />
+  );
+}
+
+function GateLoading({ heading, label }: { heading: string; label: string }): JSX.Element {
+  return (
+    <Page>
+      <PageHeader title={heading} />
+      <PageLoading label={label} />
+    </Page>
   );
 }
 
@@ -111,13 +138,13 @@ function Gate({
   heading,
   title,
   hint,
-  href,
+  intent,
   cta,
 }: {
   heading: string;
   title: string;
   hint: string;
-  href?: string;
+  intent?: Intent;
   cta?: string;
 }): JSX.Element {
   return (
@@ -129,10 +156,8 @@ function Gate({
         title={title}
         hint={hint}
         action={
-          href && cta ? (
-            <a className="btn" href={href}>
-              {cta}
-            </a>
+          intent && cta ? (
+            <button className="btn" onClick={() => runIntent(intent)}>{cta}</button>
           ) : undefined
         }
       />

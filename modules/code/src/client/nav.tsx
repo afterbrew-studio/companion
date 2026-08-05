@@ -1,10 +1,9 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
+import { defineNav, defineQuickActions, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * module-code's sidebar contributions. It owns the Code group; overview attaches
- * to the workspace section and the GitHub account to core's Integrations
- * settings group, which is configuration rather than a work surface (module ≠
- * group: the sidebar is a shared, ordered namespace).
+ * module-code owns the workspace foundation and daily Code & review group.
+ * Overview is shared Home context, while GitHub identity stays in Settings.
+ * A module is not a nav group.
  * Icons copied exactly from the legacy modules.tsx registry.
  */
 
@@ -57,7 +56,10 @@ const icons = {
   ),
 };
 
-export const sections = defineSections([{ id: 'code', label: 'Code', order: 30 }]);
+export const sections = defineSections([
+  { id: 'workspace-manage', label: 'Workspace', order: 20 },
+  { id: 'code', label: 'Code & review', order: 40, audiences: ['developer'] },
+]);
 
 export const nav = defineNav([
   {
@@ -67,9 +69,9 @@ export const nav = defineNav([
     shortcut: 'o',
     permission: 'issues:read',
     section: 'workspace',
-    order: 0,
-    // The front page when code is in the build and the viewer may see issues;
-    // otherwise the shell falls back to the first entry their role can reach.
+    order: -10,
+    // Fallback home when the viewer cannot access Today; the shell otherwise
+    // prefers Workbench's lower home order.
     home: 0,
     icon: icons.overview,
   },
@@ -80,10 +82,9 @@ export const nav = defineNav([
     // No shortcut: a-y are all claimed, and a meaningless letter is worse than
     // reaching this from the sidebar or the command palette.
     permission: 'issues:read',
-    section: 'workspace',
-    // Below Daily Digest (order 10, module-automations): the digest is the
-    // daily read, this is what it points at. The gap tolerates a module that
-    // is not in the build — the shell just closes it up.
+    section: 'more',
+    // Specialist triage view: Today and Daily Digest point here when the
+    // aggregate is not enough.
     order: 15,
     icon: icons.needsAttention,
   },
@@ -95,6 +96,7 @@ export const nav = defineNav([
     permission: 'issues:read',
     section: 'code',
     order: 0,
+    audiences: ['developer'],
     // One issue lives under its repository's path, not under /issues.
     owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/issues\/\d+/],
     icon: icons.issues,
@@ -107,6 +109,7 @@ export const nav = defineNav([
     permission: 'prs:read',
     section: 'code',
     order: 10,
+    audiences: ['developer'],
     // Both the detail view and its /review sibling.
     owns: [/^\/repos\/[\w.-]+\/[\w.-]+\/prs\/\d+/],
     icon: icons.prs,
@@ -119,6 +122,7 @@ export const nav = defineNav([
     permission: 'pipelines:read',
     section: 'code',
     order: 20,
+    audiences: ['developer'],
     icon: icons.pipelines,
   },
   {
@@ -126,11 +130,11 @@ export const nav = defineNav([
     label: 'Repositories',
     hash: '#/repos',
     shortcut: 'e',
-    permission: 'repos:manage',
-    // Under Workspace, not Code: what a workspace CONTAINS, alongside its
-    // overview and digest — the Code group is the work happening inside it.
-    section: 'workspace',
-    order: 20,
+    permission: 'repos:read',
+    // Repositories define the active workspace and remain visible to readers;
+    // mutation controls still require repos:manage.
+    section: 'workspace-manage',
+    order: 0,
     icon: icons.repos,
   },
   {
@@ -148,13 +152,35 @@ export const nav = defineNav([
     label: 'Agent quality',
     hash: '#/agent-quality',
     permission: 'repos:read',
-    section: 'code',
-    order: 60,
+    section: 'operate',
+    order: 20,
+    audiences: ['developer'],
     icon: (
       <NavIcon>
         <path d="M4 19V5M4 19h16" />
         <path d="M8 19v-6M13 19V9M18 19v-4" />
       </NavIcon>
     ),
+  },
+]);
+
+export const actions = defineQuickActions([
+  {
+    key: 'connect-repo',
+    label: 'Connect repository',
+    group: 'Connect',
+    access: ['repos:manage'],
+    keywords: 'add import github repository repo',
+    order: 10,
+    intent: 'connect-repo',
+  },
+  {
+    key: 'connect-github',
+    label: 'Connect GitHub account',
+    group: 'Connect',
+    access: ['github:connect'],
+    keywords: 'add github account token pat',
+    order: 20,
+    intent: 'connect-github',
   },
 ]);

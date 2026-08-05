@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import type { ModuleConfigField } from '../module-config.js';
 import { request, onServerMessage } from './net.js';
 import { compileRoutes } from './router.js';
-import type { ClientRoute, NavEntry, NavSection, OnboardingStep, SlotContribution, WebModule } from './index.js';
+import type { ClientRoute, NavEntry, NavSection, OnboardingStep, QuickAction, SlotContribution, WebModule } from './index.js';
 
 /**
  * The web module host. Fetches the installed-module catalog, dynamic-imports
@@ -77,6 +77,8 @@ export interface KernelState {
   slots(name: string): readonly SlotContribution[];
   /** Welcome-tour steps from all enabled modules, ordered into one narrative. */
   readonly onboarding: readonly OnboardingStep[];
+  /** Natural cross-platform actions contributed by their owning modules. */
+  readonly quickActions: readonly QuickAction[];
 }
 
 const KernelContext = createContext<KernelState | null>(null);
@@ -148,12 +150,14 @@ export function ModulesProvider(props: {
     const routes: ClientRoute[] = [];
     const slotMap = new Map<string, SlotContribution[]>();
     const onboarding: OnboardingStep[] = [];
+    const quickActions: QuickAction[] = [];
     const byOrder = <T extends { readonly order?: number }>(a: T, b: T): number => (a.order ?? 0) - (b.order ?? 0);
     for (const mod of modules) {
       for (const s of mod.sections ?? []) if (!sections.has(s.id)) sections.set(s.id, s);
       nav.push(...(mod.nav ?? []));
       routes.push(...(mod.routes ?? []));
       onboarding.push(...(mod.onboarding ?? []));
+      quickActions.push(...(mod.quickActions ?? []));
       for (const s of mod.slots ?? []) {
         const list = slotMap.get(s.slot) ?? [];
         list.push(s);
@@ -171,6 +175,7 @@ export function ModulesProvider(props: {
       routes: compileRoutes(routes),
       slots: (name) => slotMap.get(name) ?? [],
       onboarding: [...onboarding].sort((a, b) => a.order - b.order),
+      quickActions: [...quickActions].sort(byOrder),
     };
   }, [descriptors, modules, ready]);
 

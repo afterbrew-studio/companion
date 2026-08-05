@@ -1,12 +1,11 @@
 import { defineNav, defineSections, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * The Playground sidebar group. module-operate declares the SAME section (id
- * dedupes, first declaration wins) so its Skills entry keeps a home when this
- * module is disabled — keep the two declarations identical.
+ * Labs are deliberately secondary surfaces. They live in the searchable tool
+ * catalog instead of adding a permanent top-level navigation cluster.
  */
 
-export const sections = defineSections([{ id: 'playground', label: 'Playground', order: 45 }]);
+export const sections = defineSections([{ id: 'more', label: 'Tools', order: 90, placement: 'catalog' }]);
 
 export const nav = defineNav([
   {
@@ -15,7 +14,7 @@ export const nav = defineNav([
     hash: '#/playground',
     shortcut: 'y',
     permission: 'playground:run',
-    section: 'playground',
+    section: 'more',
     order: 0,
     // Flask — experiments happen here.
     icon: (
@@ -30,7 +29,7 @@ export const nav = defineNav([
     label: 'Evaluations',
     hash: '#/playground/evaluations',
     permission: 'playground:run',
-    section: 'playground',
+    section: 'more',
     order: 10,
     icon: (
       <NavIcon>
@@ -45,7 +44,7 @@ export const nav = defineNav([
     hash: '#/playground/pipelines',
     shortcut: 'j',
     permission: 'playground:run',
-    section: 'playground',
+    section: 'more',
     order: 20,
     icon: (
       <NavIcon>

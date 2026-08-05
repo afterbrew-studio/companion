@@ -3,12 +3,12 @@ import { defineClientModule } from '@moxxy/companion-sdk/client';
 // into every compilation that loads the client slice.
 import '../contract/index.js';
 import manifest from '../module.js';
-import { nav, sections } from './nav.js';
+import { actions, nav, sections } from './nav.js';
 import { routes } from './routes.js';
 import { onboarding } from './onboarding.js';
 
 /**
- * The `/client` barrel — module-plan's web surface: the Plan sidebar group +
+ * The `/client` barrel — module-plan's web surface: the Plan & build group +
  * proposals/specs/docs routes, plus the api and data hooks downstream modules
  * (automations' Digest relocation) reach by name.
  */
@@ -24,4 +24,5 @@ export default defineClientModule({
   nav,
   routes,
   onboarding,
+  quickActions: actions,
 });

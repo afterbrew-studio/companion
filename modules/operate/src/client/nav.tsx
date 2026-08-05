@@ -1,23 +1,23 @@
-import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
+import { defineNav, defineQuickActions, defineSections, NavIcon } from '@moxxy/companion-core/client';
 
 /**
- * Operate owns the Operate sidebar group (agent runs, skills) and attaches its
+ * Operate owns the Agents sidebar group (daily activity) and attaches its
  * provider/model/spend pages to core's AI settings group and runners to its
  * Instance group: they configure the instance rather than carry daily work.
  * Icons follow the shared stroke style from the legacy modules.tsx registry.
  *
- * Skills lives in operate's OWN group: the page, route and API are operate's,
- * and module-playground is not installed by default, so hanging the entry off
- * the Playground group would leave a group containing nothing else on a fresh
- * instance.
+ * Queue and quality are operating views beside activity. Skills configure the
+ * AI runtime, so they live in Settings rather than in a search-only catalog.
  */
 
-export const sections = defineSections([{ id: 'operate', label: 'Operate', order: 40 }]);
+export const sections = defineSections([
+  { id: 'operate', label: 'Agents', order: 50, audiences: ['developer'] },
+]);
 
 export const nav = defineNav([
   {
     key: 'runs',
-    label: 'Agent Runs',
+    label: 'Agent activity',
     hash: '#/runs',
     shortcut: 'a',
     permission: 'runs:read',
@@ -49,8 +49,8 @@ export const nav = defineNav([
     hash: '#/skills',
     shortcut: 'k',
     permission: 'skills:manage',
-    section: 'operate',
-    order: 40,
+    section: 'admin-ai',
+    order: 10,
     icon: (
       <NavIcon>
         <path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4L12 3z" />
@@ -120,5 +120,17 @@ export const nav = defineNav([
         <path d="M6.5 7.5h.01M6.5 16.5h.01" />
       </NavIcon>
     ),
+  },
+]);
+
+export const actions = defineQuickActions([
+  {
+    key: 'new-agent-run',
+    label: 'Start agent task',
+    group: 'Create',
+    access: ['runs:read', 'runs:act'],
+    keywords: 'agent run chat task ask implement analyze',
+    order: 50,
+    intent: 'new-agent-run',
   },
 ]);

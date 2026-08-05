@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Permission } from '@moxxy/companion-contracts';
 import type { IssueListRecord, PrListRecord, RepoRecord } from '@companion/module-code/contract';
 import type { RunListRecord } from '@companion/module-operate/contract';
 import { SearchIcon } from '@moxxy/companion-ui';
-import { runIntent, useKernel, type Intent } from '@moxxy/companion-core/client';
+import { canUseQuickAction, runQuickAction, useKernel } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { codeApi } from '@companion/module-code/client';
@@ -24,39 +23,8 @@ interface Entry {
 }
 
 const MAX_PER_GROUP = 6;
-
-/**
- * "Do something" commands. Each opens a modal owned elsewhere via a one-shot
- * intent (navigating to its page first when needed). `keywords` widen the
- * fuzzy match so "add repo" / "new workspace" land too.
- */
-interface Command {
-  readonly intent: Intent;
-  readonly label: string;
-  readonly need: Permission;
-  readonly keywords: string;
-}
-
-const COMMANDS: readonly Command[] = [
-  {
-    intent: 'new-workspace',
-    label: 'Create workspace',
-    need: 'workspaces:create',
-    keywords: 'new add create workspace group private public',
-  },
-  {
-    intent: 'connect-repo',
-    label: 'Connect repository',
-    need: 'repos:manage',
-    keywords: 'add new connect repository repo import github',
-  },
-  {
-    intent: 'connect-github',
-    label: 'Connect GitHub account',
-    need: 'settings:manage',
-    keywords: 'add new connect github account token pat',
-  },
-];
+const MAX_PAGES = 24;
+const ACTION_GROUPS = ['Create', 'Connect', 'Help'] as const;
 
 export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Element {
   const { can } = useAuth();
@@ -98,30 +66,45 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     const match = (...hay: Array<string | number | null | undefined>): boolean =>
       !q || hay.filter(Boolean).join(' ').toLowerCase().includes(q);
     const cap = <T,>(arr: T[]): T[] => arr.slice(0, MAX_PER_GROUP);
-
-    return [
-      ...cap(
-        COMMANDS.filter((c) => can(c.need) && match(c.label, c.keywords)).map((c) => ({
-          id: `cmd-${c.intent}`,
-          group: 'Actions',
-          label: c.label,
-          run: () => {
-            runIntent(c.intent);
-            onClose();
-          },
-        })),
-      ),
-      ...cap(
-        kernel.nav
-          .filter((m) => can(m.permission) && match(m.label))
-          .map((m) => ({
-            id: `page-${m.key}`,
-            group: 'Pages',
-            label: m.label,
-            hint: m.shortcut ? `g${m.shortcut}` : undefined,
-            run: () => go(m.hash),
+    const sectionById = new Map(kernel.sections.map((section) => [section.id, section]));
+    const actionEntries = ACTION_GROUPS.flatMap((group) =>
+      cap(
+        kernel.quickActions
+          .filter(
+            (action) =>
+              action.group === group && canUseQuickAction(action, can) && match(action.label, action.keywords),
+          )
+          .map((action) => ({
+            id: `action-${action.key}`,
+            group: action.group,
+            label: action.label,
+            run: () => {
+              runQuickAction(action);
+              onClose();
+            },
           })),
       ),
+    );
+
+    return [
+      ...actionEntries,
+      ...kernel.nav
+        .filter((m) => {
+          const section = sectionById.get(m.section);
+          return can(m.permission) && match(m.label, section?.label, section?.placement === 'catalog' ? 'tool' : 'page');
+        })
+        .slice(0, MAX_PAGES)
+        .map((m) => {
+          const section = sectionById.get(m.section);
+          const context = section?.placement === 'catalog' ? 'Tool' : section?.label;
+          return {
+            id: `page-${m.key}`,
+            group: 'Tools & pages',
+            label: m.label,
+            hint: [context, m.shortcut ? `g${m.shortcut}` : null].filter(Boolean).join(' · ') || undefined,
+            run: () => go(m.hash),
+          };
+        }),
       ...cap(
         workspaces
           .filter((w) => w.id !== current?.id && match(w.name, 'workspace'))
@@ -182,7 +165,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
       ),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, can, kernel.nav, workspaces, current, repos, issues, prs, runs]);
+  }, [query, can, kernel.nav, kernel.sections, kernel.quickActions, workspaces, current, repos, issues, prs, runs]);
 
   useEffect(() => {
     setActive(0);
@@ -231,7 +214,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
             ref={inputRef}
             type="search"
             className="flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-zinc-400"
-            placeholder="Search actions, pages, issues, PRs…"
+            placeholder="Search tools, actions, issues, PRs…"
             aria-label="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

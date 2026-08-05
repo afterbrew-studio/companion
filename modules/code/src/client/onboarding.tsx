@@ -20,9 +20,9 @@ export const onboarding = defineOnboarding([
     key: 'code',
     order: 40,
     permission: 'prs:read',
-    title: 'Code: issues, PRs & pipelines',
-    body: 'Triage issues, review pull requests with CI context, and let agents fix failing checks or address review feedback right on the branch. Compose pipelines from typed steps to automate it all.',
-    chips: ['Issues', 'Pull Requests', 'Pipelines'],
+    title: 'Review issues and pull requests',
+    body: 'The Review group keeps daily issue and pull-request decisions together. Pipelines and quality tools stay in Search when you need to configure or investigate them.',
+    chips: ['Review → Issues', 'Review → Pull Requests', 'Search → Pipelines'],
     art: (playing) => <CodeArt playing={playing} />,
   },
 ]);

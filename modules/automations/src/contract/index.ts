@@ -5,6 +5,7 @@ import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
 import '@companion/module-code/contract';
 import '@companion/module-plan/contract';
+import '@companion/module-workbench/contract';
 // Soft runtime dependency: contributor flows use the board when it is enabled,
 // while digests/webhooks keep working on installations that omit it.
 import '@companion/module-board/contract';

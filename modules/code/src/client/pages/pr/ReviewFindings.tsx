@@ -83,6 +83,7 @@ export function ReviewFindings({
   busy,
   onToggle,
   onReject,
+  live = false,
   focusedFinding = null,
   onFocusFinding,
 }: {
@@ -94,6 +95,8 @@ export function ReviewFindings({
   busy: boolean;
   onToggle: (id: string, include: boolean) => void;
   onReject: (id: string, reason: string) => void;
+  /** Findings are still arriving; no maintainer selection is implied yet. */
+  live?: boolean;
   /** Shared with the diff viewer; both surfaces point at the same finding. */
   focusedFinding?: string | null;
   onFocusFinding?: (id: string | null) => void;
@@ -117,6 +120,7 @@ export function ReviewFindings({
   );
   const rendered = available.slice(0, renderLimit);
   const included = available.filter((f) => f.state === 'included' || f.state === 'posted').length;
+  const posted = available.filter((f) => f.state === 'posted').length;
 
   useEffect(() => {
     setRenderLimit(INITIAL_FINDINGS);
@@ -169,7 +173,9 @@ export function ReviewFindings({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <strong className="text-sm">Findings</strong>
         <span className="dim text-xs tabular-nums">
-          {included} of {available.length} selected
+          {live
+            ? `${available.length} found${posted > 0 ? ` · ${posted} posted` : ''}`
+            : `${included} of ${available.length} selected`}
         </span>
         <span className="flex-1" />
         {refuted.length > 0 ? (

@@ -17,8 +17,9 @@ import { paths } from '@moxxy/companion-services';
 export type ProfileId = 'slim' | 'full' | 'custom';
 
 /**
- * Modules beyond the always-on five. Ordered so `dependsOn` is satisfied by
- * installing top to bottom: refinement and planner need plan and board.
+ * Modules beyond the always-on core, workspace, execution, code, Today and
+ * admin surfaces. Ordered so `dependsOn` is satisfied by installing top to
+ * bottom: refinement and planner need plan and board.
  */
 export const OPTIONAL_MODULES: ReadonlyArray<{ id: string; label: string; hint: string }> = [
   { id: 'plan', label: 'Plan', hint: 'Specifications and documentation, drafted by agents.' },
@@ -34,7 +35,7 @@ export const PROFILE_CHOICES: ReadonlyArray<{ value: ProfileId; name: string; de
   {
     value: 'slim',
     name: 'Slim (recommended)',
-    description: 'Repositories, agent runs, contributor workflows, the daily digest and administration.',
+    description: 'Today, repositories, agent runs, contributor workflows, the daily digest and administration.',
   },
   {
     value: 'full',
@@ -54,7 +55,7 @@ export function profileFromEnv(): ProfileId | null {
 
 /**
  * What each optional module needs from the other optional ones. The always-on
- * five are omitted: they are installed before any of this runs.
+ * surfaces are omitted: they are installed before any of this runs.
  */
 const NEEDS: Readonly<Record<string, readonly string[]>> = {
   refinement: ['plan', 'board'],

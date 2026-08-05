@@ -342,6 +342,68 @@ export class BoardStore {
     return { tasks: [...activeRows, ...doneRows].map(rowToTask), doneTotal, doneOffset, taskRepos };
   }
 
+  /**
+   * Bounded context for cross-module decision feeds. The first query returns
+   * only cards that can need a human decision; the second keeps ownership
+   * deduplication exact for the already-bounded run/PR source pages.
+   */
+  listDecisionTasks(
+    workspaceId: string,
+    references: {
+      readonly runIds: readonly string[];
+      readonly pullRequests: ReadonlyArray<{ readonly repo: string; readonly number: number }>;
+    },
+    limit = 200,
+  ): { tasks: TaskRecord[]; hasMore: boolean } {
+    const boundedLimit = Math.min(Math.max(Number.isSafeInteger(limit) ? limit : 200, 1), 200);
+    const attentionRows = this.db
+      .prepare(
+        `SELECT * FROM board_tasks
+         WHERE workspace_id = ? AND status != 'done'
+           AND (status = 'failed' OR (status = 'in_review' AND stage = 'awaiting_merge'))
+         ORDER BY CASE WHEN status = 'failed' THEN 0 ELSE 1 END, updated_at, id
+         LIMIT ?`,
+      )
+      .all(workspaceId, boundedLimit + 1) as TaskRow[];
+
+    const runIds = [...new Set(references.runIds)].slice(0, 100);
+    const pullRequests = [
+      ...new Map(
+        references.pullRequests
+          .slice(0, 100)
+          .map((pr) => [`${pr.repo}\u0000${pr.number}`, pr] as const),
+      ).values(),
+    ];
+    const clauses: string[] = [];
+    const args: unknown[] = [workspaceId];
+    if (runIds.length > 0) {
+      clauses.push(`run_id IN (${runIds.map(() => '?').join(', ')})`);
+      args.push(...runIds);
+    }
+    if (pullRequests.length > 0) {
+      clauses.push(`(${pullRequests.map(() => '(repo = ? AND pr_number = ?)').join(' OR ')})`);
+      for (const pr of pullRequests) args.push(pr.repo, pr.number);
+    }
+    const referenceLimit = Math.min(runIds.length + pullRequests.length, 200);
+    const linkedRows = clauses.length === 0
+      ? []
+      : this.db
+          .prepare(
+            `SELECT * FROM board_tasks
+             WHERE workspace_id = ? AND status != 'done' AND (${clauses.join(' OR ')})
+             ORDER BY updated_at, id LIMIT ?`,
+          )
+          .all(...args, referenceLimit + 1) as TaskRow[];
+
+    const tasks = new Map<string, TaskRow>();
+    for (const row of attentionRows.slice(0, boundedLimit)) tasks.set(row.id, row);
+    for (const row of linkedRows.slice(0, referenceLimit)) tasks.set(row.id, row);
+    return {
+      tasks: [...tasks.values()].map(rowToTask),
+      hasMore: attentionRows.length > boundedLimit || linkedRows.length > referenceLimit,
+    };
+  }
+
   listTasksByStatus(status: TaskStatus): TaskRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM board_tasks WHERE status = ? ORDER BY priority, created_at`)

@@ -192,6 +192,7 @@ export function LanePicker({ rail }: { rail?: boolean }): JSX.Element | null {
                 whole and the machine name is what gets cut. A label truncated
                 to "MacBook-Air-Michal.loc…" answers the less useful half. */}
             <span className={`flex min-w-0 flex-1 items-baseline gap-1 text-left text-[12px] ${chosen ? '' : 'dim'}`}>
+              <span className="shrink-0">Runs:</span>
               <span className="min-w-0 truncate">{machine?.name ?? label}</span>
               {harness ? <span className="dim shrink-0">· {harness.label}</span> : null}
             </span>

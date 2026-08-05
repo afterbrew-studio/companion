@@ -3,14 +3,14 @@ import { defineClientModule } from '@moxxy/companion-sdk/client';
 // into every compilation that loads the client slice.
 import '../contract/index.js';
 import manifest from '../module.js';
-import { nav, sections } from './nav.js';
+import { actions, nav, sections } from './nav.js';
 import { routes } from './routes.js';
 import { onboarding } from './onboarding.js';
 
 /**
  * The `/client` barrel — module-workspace's web surface: the workspace provider
  * the shell wraps the app in, the header inbox bell, plus the Inbox route and
- * the Workspace sidebar group. Vite reads this as source.
+ * the Home group and specialist-tool catalog. Vite reads this as source.
  */
 
 // The shell (and other modules) reach these by name — everything else is routed.
@@ -27,4 +27,5 @@ export default defineClientModule({
   nav,
   routes,
   onboarding,
+  quickActions: actions,
 });

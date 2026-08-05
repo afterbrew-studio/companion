@@ -1,5 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AuthUser, Permission } from '@moxxy/companion-contracts';
+import type {
+  AuthUser,
+  NavigationAudience,
+  NavigationPageOverride,
+  NavigationPerspective,
+  Permission,
+} from '@moxxy/companion-contracts';
 import { connectWs, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
 import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
 import { authApi, coreApi } from '../api.js';
@@ -12,10 +18,16 @@ interface AuthState {
   readonly permissions: readonly Permission[];
   /** Effective inbox scope (per-user override ?? instance default). */
   readonly notificationScope: NotificationScope;
-  /** Nav entry keys this user hid from their sidebar. Chrome, never access. */
-  readonly hiddenNav: readonly string[];
-  /** Persist the hidden set (optimistic; reverts if the write fails). */
-  readonly setHiddenNav: (keys: readonly string[]) => Promise<void>;
+  /** Personal page deviations, kept independently for each resolved menu view. */
+  readonly navOverrides: readonly NavigationPageOverride[];
+  /** Persist the menu deviations (optimistic; reverts if the write fails). */
+  readonly setNavOverrides: (overrides: readonly NavigationPageOverride[]) => Promise<void>;
+  /** Cosmetic sidebar preset; `auto` follows the user's role/capabilities. */
+  readonly navPerspective: NavigationPerspective;
+  /** Concrete preset after resolving `auto`. */
+  readonly navigationAudience: NavigationAudience;
+  /** Persist a new sidebar preset (optimistic; reverts if the write fails). */
+  readonly setNavPerspective: (perspective: NavigationPerspective) => Promise<void>;
   /** Instance branding (name/logo); available pre-login. */
   readonly branding: InstanceBranding;
   /** Host for user-facing GitHub links; `github.com` unless this instance points at GHES. */
@@ -38,7 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [needsSetup, setNeedsSetup] = useState(false);
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [notificationScope, setNotificationScope] = useState<NotificationScope>('workspace');
-  const [hiddenNav, setHiddenNavState] = useState<readonly string[]>([]);
+  const [navOverrides, setNavOverridesState] = useState<readonly NavigationPageOverride[]>([]);
+  const [navPerspective, setNavPerspectiveState] = useState<NavigationPerspective>('auto');
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
   const [githubHost, setGithubHost] = useState('github.com');
   const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
@@ -83,7 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setNotificationScope(session.notificationScope);
       // A daemon older than this SPA has no such field, and the sidebar must not
       // throw over a menu preference.
-      setHiddenNavState(session.hiddenNav ?? []);
+      setNavOverridesState(session.navOverrides ?? []);
+      setNavPerspectiveState(session.navPerspective ?? 'auto');
       connectWs();
     } catch {
       // 401 handling in the net core already cleared the token.
@@ -116,21 +130,36 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, []);
 
   const can = useCallback((p: Permission) => permissions.includes(p), [permissions]);
+  const navigationAudience = resolveNavigationAudience(user, permissions, navPerspective);
 
-  // Optimistic: toggling an entry has to feel like flicking a switch, and the
-  // worst case of a lost write is a menu row that comes back on next sign-in.
-  const setHiddenNav = useCallback(
-    async (keys: readonly string[]) => {
-      const previous = hiddenNav;
-      setHiddenNavState(keys);
+  // Optimistic: toggling an entry has to feel like flicking a switch, and a
+  // failed write restores the complete per-view customisation atomically.
+  const setNavOverrides = useCallback(
+    async (overrides: readonly NavigationPageOverride[]) => {
+      const previous = navOverrides;
+      setNavOverridesState(overrides);
       try {
-        await coreApi.updateProfile({ hiddenNav: keys });
+        await coreApi.updateProfile({ navOverrides: overrides });
       } catch (err) {
-        setHiddenNavState(previous);
+        setNavOverridesState(previous);
         throw err;
       }
     },
-    [hiddenNav],
+    [navOverrides],
+  );
+
+  const setNavPerspective = useCallback(
+    async (perspective: NavigationPerspective) => {
+      const previous = navPerspective;
+      setNavPerspectiveState(perspective);
+      try {
+        await coreApi.updateProfile({ navPerspective: perspective });
+      } catch (err) {
+        setNavPerspectiveState(previous);
+        throw err;
+      }
+    },
+    [navPerspective],
   );
 
   return (
@@ -140,8 +169,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         needsSetup,
         permissions,
         notificationScope,
-        hiddenNav,
-        setHiddenNav,
+        navOverrides,
+        setNavOverrides,
+        navPerspective,
+        navigationAudience,
+        setNavPerspective,
         branding,
         setBranding,
         githubHost,
@@ -161,4 +193,22 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth outside AuthProvider');
   return ctx;
+}
+
+function resolveNavigationAudience(
+  user: AuthUser | null | undefined,
+  permissions: readonly Permission[],
+  perspective: NavigationPerspective,
+): NavigationAudience {
+  if (perspective !== 'auto') return perspective;
+  if (user?.role === 'business') return 'business';
+  if (user?.role === 'maintainer') return 'developer';
+  if (user?.role === 'admin') return 'admin';
+  // Custom roles are instance data. The required core module cannot import the
+  // optional code/operate contract slices, so this cosmetic inference inspects
+  // their runtime ids as strings; it neither grants nor checks access.
+  const permissionIds: readonly string[] = permissions;
+  if (permissionIds.includes('users:manage') || permissionIds.includes('modules:manage')) return 'admin';
+  if (permissionIds.includes('prs:read') || permissionIds.includes('runs:read')) return 'developer';
+  return 'business';
 }

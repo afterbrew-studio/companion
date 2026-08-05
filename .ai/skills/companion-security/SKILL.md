@@ -39,11 +39,16 @@ rules; violating one is a security bug even if it typechecks.
   the user's sessions. Don't cache authorization off the token; re-resolve it.
 - Invariants enforced in `Auth`: always keep **one enabled admin**
   (`guardLastAdmin`); nobody changes their own role or deletes their own account.
+- Agent-facing sessions use `sessionAccess: 'read-only'`, persisted with the
+  session rather than trusted to a prompt. The router rejects every non-GET by
+  default. `allowDelegatedWrite` is reserved for proposal preparation and a
+  same-user UI intent; never put it on a direct domain or external mutation.
 
 ## Authorization is central (never re-rolled)
 
-RBAC is enforced once, in `Router.dispatch`, from each route's `access`. Handlers
-must not re-check *or skip* auth. Private-workspace membership is a **second**
+RBAC is enforced once, in `Router.dispatch`, from each route's `access`; a
+permission tuple means the caller must hold every entry. Handlers must not
+re-check *or skip* auth. Private-workspace membership is a **second**
 gate (`canAccessRepo`) on top of role — role says what kind of action, membership
 says which workspaces' data. Keep both; don't conflate them. Full mechanics:
 `companion-contract-and-rbac`.
@@ -93,6 +98,8 @@ re-justify against them.
 - [ ] No secret/token/hash in any client-bound record, log line, or error.
 - [ ] New credential stored server-side; exposed only as a derived flag.
 - [ ] Auth enforced by route `access` only — not re-checked/skipped in a handler.
+- [ ] Delegated writes only prepare reviewed work or a same-user UI intent;
+      direct mutations remain blocked by the router.
 - [ ] External input (HTTP/webhook/moxxy/GitHub/model) validated & size-bounded
       before use; HMAC verified on raw bytes.
 - [ ] Unattended agent paths keep the four fences above.
