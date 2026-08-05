@@ -30,10 +30,10 @@ export default defineServices((ctx) => {
       code,
       board,
       (user) => ({
-        board: ctx.rbac.has(user.role, 'board:read') && ctx.rbac.has(user.role, 'board:manage'),
-        runs: ctx.rbac.has(user.role, 'runs:read') && ctx.rbac.has(user.role, 'runs:act'),
-        prs: ctx.rbac.has(user.role, 'prs:read') && ctx.rbac.has(user.role, 'prs:act'),
-        issues: ctx.rbac.has(user.role, 'issues:read') && ctx.rbac.has(user.role, 'issues:act'),
+        board: ctx.rbac.allows(user, 'board:read') && ctx.rbac.allows(user, 'board:manage'),
+        runs: ctx.rbac.allows(user, 'runs:read') && ctx.rbac.allows(user, 'runs:act'),
+        prs: ctx.rbac.allows(user, 'prs:read') && ctx.rbac.allows(user, 'prs:act'),
+        issues: ctx.rbac.allows(user, 'issues:read') && ctx.rbac.allows(user, 'issues:act'),
       }),
     ),
   );

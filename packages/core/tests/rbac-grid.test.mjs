@@ -34,6 +34,21 @@ test('with no overrides the grid is exactly what the modules grant', () => {
   assert.deepEqual(grid.permissionsFor('business'), []);
 });
 
+test('credential scope is a ceiling on the live role permissions', () => {
+  const grid = gridWith([widgets]);
+  const user = {
+    username: 'admin',
+    displayName: 'Admin',
+    role: 'admin',
+    permissionScope: ['widgets:read'],
+  };
+
+  assert.equal(grid.allows(user, 'widgets:read'), true);
+  assert.equal(grid.allows(user, 'widgets:manage'), false);
+  assert.equal(grid.allows({ ...user, permissionScope: [] }, 'widgets:read'), false);
+  assert.equal(grid.allows({ ...user, permissionScope: undefined }, 'widgets:manage'), true);
+});
+
 test('an instance revoke beats a module grant', () => {
   const grid = gridWith([widgets], {
     roles: ['admin', 'maintainer', 'business'],

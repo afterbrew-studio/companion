@@ -209,12 +209,12 @@ export default defineRoutes((ctx) => {
    * the rule that keeps a GitHub push away from a shell.
    */
   const mayExecute = (user: AuthUser | null): boolean =>
-    user !== null && ctx.rbac.has(user.role, 'pipelines:execute');
+    user !== null && ctx.rbac.allows(user, 'pipelines:execute');
 
   /** Domain permissions decide what may be changed; launching or controlling an
    * agent is a second capability and must remain independently revocable. */
   const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+    if (!user || !ctx.rbac.allows(user, 'runs:read') || !ctx.rbac.allows(user, 'runs:act')) {
       throw forbidden('this action also requires runs:read and runs:act');
     }
   };
@@ -240,7 +240,7 @@ export default defineRoutes((ctx) => {
   const assertMayAuthorExecutable = (user: AuthUser | null, steps: readonly { kind: string }[]): void => {
     const unsafe = steps.filter((s) => s.kind === 'executable' || s.kind === 'npm-bootstrap');
     if (unsafe.length === 0) return;
-    if (!user || !ctx.rbac.has(user.role, 'pipelines:author-execute')) {
+    if (!user || !ctx.rbac.allows(user, 'pipelines:author-execute')) {
       throw forbidden(
         `creating or editing "${unsafe[0]!.kind}" steps needs the pipelines:author-execute permission`,
       );

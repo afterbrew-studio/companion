@@ -37,9 +37,10 @@ export const MCP_HELP = `companion mcp: expose Companion to an MCP client over s
 Usage:
   companion mcp [--home <path>] [--host <host>] [--port <port>]
 
-The local daemon address and its owner-only CLI token are used by default.
-For a remote instance, set both COMPANION_URL and COMPANION_TOKEN in the MCP
-server environment. Never put the token in command-line arguments.
+The local daemon address and its bootstrap CLI token are used by default.
+For a remote instance, create a scoped credential under Settings → API tokens,
+then set COMPANION_URL and COMPANION_TOKEN in the MCP server environment. Never
+put the token in command-line arguments.
 
 The server exposes bounded GET access under the token's RBAC plus tools that
 PREPARE review, GitHub, Board, specification and documentation actions. It has

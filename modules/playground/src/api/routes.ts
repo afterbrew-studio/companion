@@ -38,7 +38,7 @@ export default defineRoutes((ctx) => {
   const op = ctx.services.get('operate');
   const workspace = ctx.services.get('workspace');
   const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+    if (!user || !ctx.rbac.allows(user, 'runs:read') || !ctx.rbac.allows(user, 'runs:act')) {
       throw forbidden('this action also requires runs:read and runs:act');
     }
   };

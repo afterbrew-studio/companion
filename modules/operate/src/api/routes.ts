@@ -284,7 +284,7 @@ export default defineRoutes((ctx) => {
   const requireManageableRunner = (user: AuthUser | null, id: string): void => {
     const runner = op.runners.get(id);
     if (!runner) throw notFound(`runner ${id} not found`);
-    const canManageShared = !!user && runner.ownerId === null && ctx.rbac.has(user.role, 'runners:manage');
+    const canManageShared = !!user && runner.ownerId === null && ctx.rbac.allows(user, 'runners:manage');
     if (!user || (runner.ownerId !== user.username && !canManageShared)) throw notFound(`runner ${id} not found`);
   };
 
@@ -616,7 +616,7 @@ export default defineRoutes((ctx) => {
         }
         if (body.scope === 'delegated') requireAccessibleWorkspaceIds(user, body.workspaceIds ?? []);
         // A shared instance runner is admin-only; everyone else's is private.
-        const ownerId = ctx.rbac.has(user!.role, 'runners:manage') && body.shared ? null : user!.username;
+        const ownerId = ctx.rbac.allows(user!, 'runners:manage') && body.shared ? null : user!.username;
         return created({ runner: await op.runners.create(body, ownerId) });
       },
     }),
@@ -831,6 +831,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/status',
       access: 'any',
+      allowScopedToken: true,
       handler: async (): Promise<MoxxyStatus> => {
         const home = homeStatus();
         const tokens = op.githubTokens();

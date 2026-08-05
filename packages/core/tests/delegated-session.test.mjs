@@ -21,6 +21,12 @@ async function harness(t) {
       role: 'maintainer',
       sessionAccess: 'read-only',
     },
+    scoped: {
+      username: 'maintainer',
+      displayName: 'Maintainer',
+      role: 'maintainer',
+      permissionScope: ['first:read'],
+    },
   };
   const router = new DynamicRouter(
     {
@@ -52,6 +58,13 @@ async function harness(t) {
       access: ['first:read', 'second:act'],
       allowDelegatedWrite: true,
       handler: () => (calls.push('prepare'), { ok: true }),
+    }),
+    route({
+      method: 'GET',
+      path: '/scoped-bootstrap',
+      access: 'any',
+      allowScopedToken: true,
+      handler: () => (calls.push('scoped-bootstrap'), { ok: true }),
     }),
   ]);
 
@@ -94,6 +107,16 @@ test('a normal human session keeps the existing write behavior', async (t) => {
 
   assert.equal((await h.call('POST', '/write', 'human')).status, 200);
   assert.deepEqual(h.calls, ['write']);
+});
+
+test('scoped API tokens cannot reach an unscoped route without an explicit exception', async (t) => {
+  const h = await harness(t);
+
+  const denied = await h.call('GET', '/read', 'scoped');
+  assert.equal(denied.status, 403);
+  assert.match(denied.body.error, /unscoped route/);
+  assert.equal((await h.call('GET', '/scoped-bootstrap', 'scoped')).status, 200);
+  assert.deepEqual(h.calls, ['scoped-bootstrap']);
 });
 
 test('permission arrays are an AND enforced centrally before the handler', async (t) => {

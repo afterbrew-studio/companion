@@ -1,10 +1,19 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Authenticator, AuthUser, Permission, SessionAccess } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { StatusError, type RbacReader } from '@moxxy/companion-core/server';
-import type { AccountInfo, AuthProvider, SessionInfo, UserRecord } from '../contract/index.js';
+import type {
+  AccountInfo,
+  ApiTokenCapability,
+  ApiTokenRecord,
+  AuthProvider,
+  CreateApiTokenResponse,
+  SessionInfo,
+  UserRecord,
+} from '../contract/index.js';
 import type { UsersStore } from './users-store.js';
 import type { SessionsStore } from './sessions-store.js';
+import type { ApiTokensStore } from './api-tokens-store.js';
 import type { SettingsStore } from './settings-store.js';
 import type { RolesService } from './roles-service.js';
 import { hashPassword, verifyPassword } from './passwords.js';
@@ -14,6 +23,10 @@ const MANAGE_USERS = 'users:manage' as Permission;
 
 /** Sliding session lifetime. */
 const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+const API_TOKEN_TOUCH_INTERVAL_MS = 5 * 60_000;
+const MAX_API_TOKENS_PER_USER = 50;
+const TOKEN_MANAGEMENT_PERMISSIONS = new Set<Permission>(['tokens:manage', 'tokens:admin']);
 
 /** A legacy `.env` account, seeded once into an empty user store. */
 export interface SeedUser {
@@ -46,11 +59,13 @@ export class Auth implements Authenticator {
   constructor(
     private readonly users: UsersStore,
     private readonly sessions: SessionsStore,
+    private readonly apiTokens: ApiTokensStore,
     private readonly settings: SettingsStore,
     private readonly rbac: RbacReader,
     private readonly roles: RolesService,
   ) {
     this.sessions.pruneExpired();
+    this.apiTokens.pruneExpired();
   }
 
   // ---------- external identity providers ----------
@@ -196,6 +211,75 @@ export class Auth implements Authenticator {
     return { token, expiresAt };
   }
 
+  // ---------- managed API tokens ---------------------------------------------
+
+  /** Capabilities this account can safely delegate right now. */
+  apiTokenCapabilities(user: AuthUser): ApiTokenCapability[] {
+    const held = new Set(this.rbac.permissionsFor(user.role));
+    return this.rbac
+      .catalog()
+      .filter((capability) => held.has(capability.id) && !TOKEN_MANAGEMENT_PERMISSIONS.has(capability.id))
+      .map(({ id, title, owner }) => ({ id, title, owner }))
+      .sort((a, b) => a.owner.localeCompare(b.owner) || a.title.localeCompare(b.title));
+  }
+
+  listApiTokens(username: string): ApiTokenRecord[] {
+    return this.apiTokens.listForUser(username);
+  }
+
+  listAllApiTokens(opts: { readonly limit: number; readonly offset: number }): {
+    readonly tokens: ApiTokenRecord[];
+    readonly total: number;
+  } {
+    return this.apiTokens.listAll(opts);
+  }
+
+  pruneExpiredApiTokens(): number {
+    return this.apiTokens.pruneExpired();
+  }
+
+  createApiToken(
+    user: AuthUser,
+    input: { readonly name: string; readonly permissions: readonly Permission[]; readonly expiresInDays: number },
+  ): CreateApiTokenResponse {
+    this.apiTokens.pruneExpired();
+    if (this.apiTokens.countForUser(user.username) >= MAX_API_TOKENS_PER_USER) {
+      throw new StatusError(409, `at most ${MAX_API_TOKENS_PER_USER} active API tokens are allowed per user`);
+    }
+    const available = new Set(this.apiTokenCapabilities(user).map((capability) => capability.id));
+    const permissions = [...new Set(input.permissions)];
+    const unavailable = permissions.find((permission) => !available.has(permission));
+    if (unavailable) throw new AuthError(`cannot delegate ${unavailable}`, 403);
+
+    const now = Date.now();
+    const secret = `cmp_${randomBytes(32).toString('base64url')}`;
+    const record: ApiTokenRecord = {
+      id: `tok-${randomUUID().slice(0, 12)}`,
+      username: user.username,
+      name: input.name.trim(),
+      permissions,
+      createdAt: now,
+      expiresAt: now + input.expiresInDays * DAY_MS,
+      lastUsedAt: null,
+    };
+    this.apiTokens.insert({ ...record, tokenHash: hashToken(secret) });
+    return { token: secret, record };
+  }
+
+  revokeOwnApiToken(username: string, id: string): ApiTokenRecord | null {
+    const record = this.apiTokens.get(id);
+    if (!record || record.username !== username) return null;
+    this.apiTokens.delete(id);
+    return record;
+  }
+
+  revokeApiToken(id: string): ApiTokenRecord | null {
+    const record = this.apiTokens.get(id);
+    if (!record) return null;
+    this.apiTokens.delete(id);
+    return record;
+  }
+
   private startSession(
     account: UserRecord,
     ttlMs: number,
@@ -226,29 +310,41 @@ export class Auth implements Authenticator {
   /** Resolve a bearer token to its user, or null. Role reads live from the account. */
   verify(token: string | null): AuthUser | null {
     if (!token) return null;
-    const session = this.sessions.get(hashToken(token));
-    if (!session) return null;
-    if (session.expiresAt <= Date.now()) {
+    const tokenHash = hashToken(token);
+    const session = this.sessions.get(tokenHash);
+    if (session && session.expiresAt <= Date.now()) {
       this.sessions.delete(session.tokenHash);
       return null;
     }
-    const account = this.users.get(session.username);
-    if (!account || account.disabled) {
-      this.sessions.delete(session.tokenHash);
+    const apiToken = session ? null : this.apiTokens.getByHash(tokenHash);
+    if (!session && !apiToken) return null;
+    if (apiToken && apiToken.expiresAt <= Date.now()) {
+      this.apiTokens.deleteByHash(tokenHash);
       return null;
+    }
+    const username = session?.username ?? apiToken!.username;
+    const account = this.users.get(username);
+    if (!account || account.disabled) {
+      if (session) this.sessions.delete(session.tokenHash);
+      else this.apiTokens.deleteByHash(tokenHash);
+      return null;
+    }
+    if (apiToken && (apiToken.lastUsedAt === null || apiToken.lastUsedAt < Date.now() - API_TOKEN_TOUCH_INTERVAL_MS)) {
+      this.apiTokens.touch(tokenHash, Date.now());
     }
     return {
       username: account.username,
       displayName: account.displayName,
       role: account.role,
-      ...(session.access === 'read-only' ? { sessionAccess: session.access } : {}),
+      ...(session?.access === 'read-only' ? { sessionAccess: session.access } : {}),
+      ...(apiToken ? { permissionScope: apiToken.permissions } : {}),
     };
   }
 
   /** Throw 401/403 unless the user holds the permission (against the live grid). */
   require(user: AuthUser | null, permission: Permission): AuthUser {
     if (!user) throw new AuthError('authentication required', 401);
-    if (!this.rbac.has(user.role, permission)) throw new AuthError(`requires ${permission}`, 403);
+    if (!this.rbac.allows(user, permission)) throw new AuthError(`requires ${permission}`, 403);
     return user;
   }
 
@@ -268,9 +364,13 @@ export class Auth implements Authenticator {
   }
 
   sessionInfo(user: AuthUser): SessionInfo {
+    const rolePermissions = this.rbac.permissionsFor(user.role);
+    const permissionScope = user.permissionScope;
     return {
       user,
-      permissions: this.rbac.permissionsFor(user.role),
+      permissions: permissionScope === undefined
+        ? rolePermissions
+        : rolePermissions.filter((permission) => permissionScope.includes(permission)),
       notificationScope: this.settings.resolveNotificationScope(user.username),
       navOverrides: this.settings.userNavOverrides(user.username),
       navPerspective: this.settings.userNavPerspective(user.username),
@@ -301,6 +401,10 @@ export class Auth implements Authenticator {
       email: fields.email,
       passwordHash: fields.newPassword ? hashPassword(fields.newPassword) : undefined,
     });
+    if (fields.newPassword !== undefined) {
+      this.sessions.deleteForUser(username);
+      this.apiTokens.deleteForUser(username);
+    }
     // The advertised credential is no longer the real one; showing it after this
     // would be worse than never showing it.
     if (fields.newPassword && username === LOCAL_ADMIN) this.clearLocalSeed();
@@ -348,6 +452,7 @@ export class Auth implements Authenticator {
     });
     if (fields.role !== undefined || fields.disabled === true || fields.password !== undefined) {
       this.sessions.deleteForUser(username);
+      this.apiTokens.deleteForUser(username);
     }
     return sanitize(this.users.get(username)!);
   }
@@ -358,6 +463,7 @@ export class Auth implements Authenticator {
     if (actor.username === username) throw new AuthError('you cannot delete your own account', 403);
     this.guardLastAdmin(existing, undefined, true);
     this.users.delete(username);
+    this.apiTokens.deleteForUser(username);
   }
 
   /**

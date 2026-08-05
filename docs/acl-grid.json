@@ -45,6 +45,8 @@
       "slop:read",
       "specs:manage",
       "specs:read",
+      "tokens:admin",
+      "tokens:manage",
       "users:manage",
       "workbench:read",
       "workspaces:create",
@@ -89,6 +91,7 @@
       "slop:read",
       "specs:manage",
       "specs:read",
+      "tokens:manage",
       "workbench:read",
       "workspaces:create",
       "workspaces:read"
@@ -109,6 +112,7 @@
       "slop:read",
       "specs:manage",
       "specs:read",
+      "tokens:manage",
       "workbench:read",
       "workspaces:read"
     ]
@@ -468,6 +472,22 @@
     "specs:read": {
       "owner": "plan",
       "title": "View specifications",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "tokens:admin": {
+      "owner": "core",
+      "title": "View and revoke API tokens across the instance",
+      "grants": [
+        "admin"
+      ]
+    },
+    "tokens:manage": {
+      "owner": "core",
+      "title": "Create and revoke personal API tokens",
       "grants": [
         "admin",
         "maintainer",

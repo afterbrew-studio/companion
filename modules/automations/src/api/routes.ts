@@ -124,11 +124,11 @@ export default defineRoutes((ctx) => {
   };
 
   const requireRunRead: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'runs:read')) throw forbidden('requires runs:read');
+    if (!user || !ctx.rbac.allows(user, 'runs:read')) throw forbidden('requires runs:read');
   };
   const requireRunAct: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
     requireRunRead(user);
-    if (!ctx.rbac.has(user.role, 'runs:act')) throw forbidden('requires runs:act');
+    if (!ctx.rbac.allows(user, 'runs:act')) throw forbidden('requires runs:act');
   };
 
   /**
@@ -142,7 +142,7 @@ export default defineRoutes((ctx) => {
 
   const requireOwnerOrBreakGlass = (user: AuthUser, owners: readonly string[]): void => {
     if (owners.length === 0) return;
-    if (!ctx.rbac.has(user.role, 'users:manage')) {
+    if (!ctx.rbac.allows(user, 'users:manage')) {
       throw forbidden('this automation is managed by another Companion profile');
     }
   };
@@ -199,7 +199,7 @@ export default defineRoutes((ctx) => {
       required.add('prs:act');
     }
     for (const permission of required) {
-      if (!ctx.rbac.has(user.role, permission)) {
+      if (!ctx.rbac.allows(user, permission)) {
         throw forbidden(`this automation also requires ${permission}`);
       }
     }
@@ -236,7 +236,7 @@ export default defineRoutes((ctx) => {
 
   const requireBriefingCapabilities = (user: AuthUser): void => {
     for (const permission of BRIEFING_PERMISSIONS) {
-      if (!ctx.rbac.has(user.role, permission)) {
+      if (!ctx.rbac.allows(user, permission)) {
         throw forbidden(`workspace briefings also require ${permission}`);
       }
     }
@@ -335,7 +335,7 @@ export default defineRoutes((ctx) => {
         const { fullName, row } = requireRepo(user, params.owner, params.name);
         if (!code.repos.inWorkspace(fullName, params.id)) throw notFound(`repo ${fullName} not connected here`);
         for (const permission of ['issues:read', 'prs:read'] as const) {
-          if (!ctx.rbac.has(user!.role, permission)) throw forbidden(`dry-run also requires ${permission}`);
+          if (!ctx.rbac.allows(user!, permission)) throw forbidden(`dry-run also requires ${permission}`);
         }
         const requiredPermissions = [
           'issues:read',
@@ -377,7 +377,7 @@ export default defineRoutes((ctx) => {
           mergeMethod: body.mergeMethod,
           client: fetchAccount.client,
           admission: automations.admissionControl(fullName),
-          missingPermissions: requiredPermissions.filter((permission) => !ctx.rbac.has(user!.role, permission)),
+          missingPermissions: requiredPermissions.filter((permission) => !ctx.rbac.allows(user!, permission)),
           accounts: {
             fetch: fetchAccount.client !== null,
             runs: runsAccount.client !== null,
@@ -445,7 +445,7 @@ export default defineRoutes((ctx) => {
           'runs:act',
           'board:manage',
         ] as const) {
-          if (!ctx.rbac.has(user!.role, permission)) {
+          if (!ctx.rbac.allows(user!, permission)) {
             throw badRequest(`your role needs ${permission} to enable an end-to-end contributor flow`);
           }
         }
@@ -742,7 +742,7 @@ export default defineRoutes((ctx) => {
           }
           if (
             user === null ||
-            [...pipelinePermissions].some((permission) => !ctx.rbac.has(user.role, permission))
+            [...pipelinePermissions].some((permission) => !ctx.rbac.allows(user, permission))
           ) {
             pipelineSkipped = 'not-permitted';
           } else if (steps.length === 0) {
@@ -904,7 +904,7 @@ export default defineRoutes((ctx) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
         await requirePersonalRepoAccess(user, fullName);
         for (const permission of ['issues:read', 'prs:read', 'runs:read', 'runs:act'] as const) {
-          if (!ctx.rbac.has(user!.role, permission)) {
+          if (!ctx.rbac.allows(user!, permission)) {
             throw forbidden(`requires ${permission} to build a repository digest`);
           }
         }
@@ -922,7 +922,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         const { fullName } = requireRepo(user, params.owner, params.name);
         await requirePersonalRepoAccess(user, fullName);
-        if (!ctx.rbac.has(user!.role, 'issues:read')) throw forbidden('requires issues:read to scan stale issues');
+        if (!ctx.rbac.allows(user!, 'issues:read')) throw forbidden('requires issues:read to scan stale issues');
         automations.runStaleSweep(fullName);
         return { ok: true };
       },

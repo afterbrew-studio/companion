@@ -94,7 +94,9 @@ export default defineRoutes((ctx) => {
       handler: ({ user }) => ({
         actions: workbench.actions
           .catalog()
-          .filter((definition) => definition.access.every((permission) => ctx.rbac.has(user!.role, permission))),
+          .filter((definition) =>
+            definition.access.every((permission) => ctx.rbac.allows(user!, permission)),
+          ),
       }),
     }),
     route({

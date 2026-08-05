@@ -29,6 +29,11 @@ declare module '@moxxy/companion-contracts' {
     'modules:manage': true;
     'modules:deploy': true;
     'audit:read': true;
+    'tokens:manage': true;
+    'tokens:admin': true;
+  }
+  interface ServerMessageRegistry {
+    'tokens.changed': Record<never, never>;
   }
   interface ServiceMap {
     core: Auth;
@@ -155,6 +160,30 @@ export interface UserRecord {
   readonly role: Role;
   readonly disabled: boolean;
   readonly createdAt: number;
+}
+
+/** Metadata for one API credential. The bearer secret is never part of this record. */
+export interface ApiTokenRecord {
+  readonly id: string;
+  readonly username: string;
+  readonly name: string;
+  readonly permissions: readonly Permission[];
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly lastUsedAt: number | null;
+}
+
+/** One capability the current account may delegate to a new API token. */
+export interface ApiTokenCapability {
+  readonly id: Permission;
+  readonly title: string;
+  readonly owner: string;
+}
+
+/** The only response that carries a raw API token; the client must discard it after display. */
+export interface CreateApiTokenResponse {
+  readonly token: string;
+  readonly record: ApiTokenRecord;
 }
 
 /** Instance branding shown pre-login and in the shell chrome. */

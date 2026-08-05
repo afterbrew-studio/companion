@@ -57,9 +57,11 @@ Then gate the capability everywhere it is exercised:
 1. **Route**: `access: 'widgets:manage'` on each `route({...})`. The router
    calls `require(user, access)` centrally; never check inside a handler.
 2. **Nav entry** and **client route**: the `permission:` field.
-3. **Programmatic checks**: `ctx.rbac.has(role, perm)` on the server,
-   `can(perm)` on the client, for decisions finer than a whole route (operate
-   uses `runners:manage` this way to separate shared runners from personal ones).
+3. **Programmatic checks**: `ctx.rbac.allows(user, perm)` when deciding what an
+   authenticated caller may do, `ctx.rbac.has(role, perm)` only for role policy
+   or background identities, and `can(perm)` on the client. `allows` intersects
+   the live role grid with a managed API token's permission scope; checking only
+   `user.role` would let a scoped token escape its ceiling.
 
 Route `access` also takes `'public'` (no auth) and `'any'` (any signed-in user).
 
@@ -95,8 +97,9 @@ absent.
 ## RBAC facts worth remembering
 
 - `verify()` re-reads role and `disabled` from the account on **every** request,
-  so a demotion takes effect immediately and no token can outrank its account.
-  Role, disable and password changes delete that user's sessions.
+  so a demotion takes effect immediately and no credential can outrank its
+  account. Role, disable and password changes delete that user's sessions and
+  managed API tokens.
 - A permission leaves the grid the moment its owning module is disabled: routes
   503, `can()` goes false, and any UI gated on it must degrade rather than break.
   If you gate on a permission you do not own, declare it in the manifest's

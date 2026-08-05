@@ -53,6 +53,20 @@ export const nav = defineNav([
     ),
   },
   {
+    key: 'tokens',
+    label: 'API tokens',
+    hash: '#/tokens',
+    permission: 'tokens:manage',
+    section: 'admin-access',
+    order: 30,
+    icon: (
+      <NavIcon>
+        <circle cx="8" cy="12" r="4" />
+        <path d="M12 12h9M17 12v3M20 12v2" />
+      </NavIcon>
+    ),
+  },
+  {
     key: 'modules',
     label: 'Modules',
     hash: '#/modules',

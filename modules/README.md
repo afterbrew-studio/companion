@@ -296,7 +296,7 @@ the old god-object. The pieces you get:
 | `notify` | the shared notification emitter (`ctx.notify.emit({...})`). |
 | `settings` | namespaced key/value over the core-owned `settings` table. |
 | `moduleConfig` | THIS module's declared config (§4): `get(key)` / `values()`, read-only, live, defaults merged. |
-| `rbac` | the live effective RBAC grid reader (`ctx.rbac.has(role, perm)`, `roles()`, `catalog()`, `explain()`). Read-only. |
+| `rbac` | the live effective RBAC grid reader (`ctx.rbac.allows(user, perm)` for a caller, `has(role, perm)` for role policy/background identities, plus `roles()`, `catalog()`, `explain()`). Read-only. |
 | `setRoles` | publish this instance's role definitions + grant overrides into the grid. Owned by the module that STORES roles (module-core); nobody else calls it. |
 | `ws` | the WS scope-resolver registry — register per-message visibility in `onEnable`. |
 | `modules` / `isEnabled` | kernel lifecycle control + enabled-checks. |

@@ -16,8 +16,16 @@ export default defineAcl({
     // away again, and restarts the daemon to load it.
     { id: 'modules:deploy', title: 'Add and remove out-of-tree module code on this host' },
     { id: 'audit:read', title: 'Read and export the audit trail' },
+    { id: 'tokens:manage', title: 'Create and revoke personal API tokens' },
+    {
+      id: 'tokens:admin',
+      title: 'View and revoke API tokens across the instance',
+      implies: ['tokens:manage'],
+    },
   ],
   grants: {
+    business: ['tokens:manage'],
+    maintainer: ['tokens:manage'],
     admin: '*',
   },
 });

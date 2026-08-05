@@ -64,13 +64,13 @@ export default defineRoutes((ctx) => {
   };
 
   const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+    if (!user || !ctx.rbac.allows(user, 'runs:read') || !ctx.rbac.allows(user, 'runs:act')) {
       throw forbidden('this action also requires runs:read and runs:act');
     }
   };
 
   const requirePrWrite: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'prs:read') || !ctx.rbac.has(user.role, 'prs:act')) {
+    if (!user || !ctx.rbac.allows(user, 'prs:read') || !ctx.rbac.allows(user, 'prs:act')) {
       throw forbidden('applying a contribution verdict also requires prs:read and prs:act');
     }
   };

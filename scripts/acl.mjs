@@ -147,9 +147,9 @@ async function loadModules() {
  * Every site that gates on a permission:
  *  - `access:` on a route,
  *  - `permission:` on nav / client routes / slots,
- *  - `rbac.has(role, 'x')` and `can('x')`, the PROGRAMMATIC checks. Missing
- *    these is what made the checker call `runners:manage` dead when it is in
- *    fact what separates a shared runner from a personal one,
+ *  - `rbac.has(role, 'x')`, `rbac.allows(user, 'x')`, and `can('x')`, the
+ *    PROGRAMMATIC checks. `allows` is the caller-aware form that also applies
+ *    managed API-token scope,
  *  - `need:` in onboarding files ONLY: the GitHub client resolver uses the same
  *    key for a repo permission (pull/push/admin), so matching it everywhere
  *    would report GitHub scopes as Companion permissions.
@@ -168,7 +168,7 @@ function scanUsage(mods) {
         for (const [, p] of body.matchAll(/'([^']+)'/g)) add(p, 'route');
       }
       for (const [, p] of src.matchAll(/\bpermission:\s*'([^']+)'/g)) add(p, 'ui');
-      for (const [, p] of src.matchAll(/\.has\([^,)]+,\s*'([^']+)'\)/g)) add(p, 'rbac-check');
+      for (const [, p] of src.matchAll(/\.(?:has|allows)\([^,)]+,\s*'([^']+)'\)/g)) add(p, 'rbac-check');
       for (const [, p] of src.matchAll(/\bcan\('([^']+)'\)/g)) add(p, 'can');
       if (/onboarding/.test(rel)) for (const [, p] of src.matchAll(/\bneed:\s*'([^']+)'/g)) add(p, 'onboarding');
     }

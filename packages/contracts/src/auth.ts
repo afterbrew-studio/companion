@@ -31,6 +31,12 @@ export interface AuthUser {
   readonly role: Role;
   /** Internal delegated sessions may inspect state but cannot mutate routes by default. */
   readonly sessionAccess?: SessionAccess;
+  /**
+   * API credentials carry an explicit capability ceiling. Absence means an
+   * ordinary interactive/internal session; an empty array means authenticated
+   * but permitted to reach no permission-gated route.
+   */
+  readonly permissionScope?: readonly Permission[];
 }
 
 /**

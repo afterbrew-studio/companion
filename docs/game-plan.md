@@ -125,13 +125,12 @@ capability worth deciding on separately).
    admin form accept the same input. Errors surface the kernel's own message and
    exit non-zero.
 
-**Correction to the earlier plan:** the token is **admin-equivalent**, not
-scoped to `modules:manage`. `require()` checks `rbac.has(user.role, permission)`
-and there is no per-token scope, so scoping it would mean a new branch in the
-central enforcement path, which P3 then makes redundant (a `cli` role holding
-only `modules:manage` becomes expressible). `$COMPANION_HOME` already holds the
-database, so a 0600 file there does not widen that directory's blast radius.
-Revisit when roles open.
+**Correction to the earlier plan:** this local bootstrap token remains
+**admin-equivalent**, not scoped to `modules:manage`. `$COMPANION_HOME` already
+holds the database, so a 0600 file there does not widen that directory's blast
+radius. Remote and least-privilege CLI/MCP clients now use separately managed,
+expiring API tokens; their selected scope is enforced through
+`rbac.allows(user, permission)`.
 
 **Verified** against a throwaway daemon on an isolated `COMPANION_HOME`: the
 full install/config/disable/enable/uninstall cycle, config wiped by uninstall,
@@ -230,9 +229,9 @@ capability.
 - The dead-permission rule was **wrong**. It only scanned `access:` and
   `permission:`, so it called `operate: 'runners:manage'` dead. It is not: every
   mutating runner route calls `requireManageableRunner`, and creating a *shared*
-  runner checks `ctx.rbac.has(user.role, 'runners:manage')` directly. Fixing the
-  scanner to see `rbac.has(...)` and `can(...)` mattered more than "fixing" the
-  permission would have.
+  runner checks `ctx.rbac.allows(user, 'runners:manage')` directly. Fixing the
+  scanner to see `rbac.has(...)`, `rbac.allows(...)`, and `can(...)` mattered
+  more than "fixing" the permission would have.
 - With the wider scan, two genuine undeclared couplings appeared: `playground`
   gates on `code`'s `repos:read` and `slop` on `refinement`'s `refine:manage`,
   neither with a `dependsOn` edge. Both are **correct** soft uses that degrade

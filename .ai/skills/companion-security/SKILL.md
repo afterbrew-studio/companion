@@ -33,12 +33,21 @@ rules; violating one is a security bug even if it typechecks.
   constant-time verify, never a plain `===`.
 - A session **token** is 32 random bytes; the DB stores only its **SHA-256**
   (`hashToken`). Sessions have a sliding TTL and are pruned.
+- A managed API token starts with `cmp_`, is shown only in the create response,
+  and is also stored only as a SHA-256 digest. Its selected permissions are a
+  ceiling intersected with the account's live role through
+  `ctx.rbac.allows(user, permission)`. Token-management permissions are never
+  delegable. Scoped tokens are REST-only: WebSocket upgrades and ordinary
+  `access: 'any'` routes fail unless the route explicitly opts in with
+  `allowScopedToken`.
 - **`verify()` re-reads role and `disabled` from the account on every request** —
   so a demotion, disable, or password change takes effect immediately and no
-  token can outrank or outlive its account. Role/disable/password changes delete
-  the user's sessions. Don't cache authorization off the token; re-resolve it.
-- Invariants enforced in `Auth`: always keep **one enabled admin**
-  (`guardLastAdmin`); nobody changes their own role or deletes their own account.
+  credential can outrank or outlive its account. Role/disable/password changes
+  delete the user's sessions and API tokens. Don't cache authorization off the
+  token; re-resolve it.
+- Invariants enforced in `Auth`: always keep **one enabled account holding
+  `users:manage`** (`guardLastAdmin`); nobody changes their own role or deletes
+  their own account.
 - Agent-facing sessions use `sessionAccess: 'read-only'`, persisted with the
   session rather than trusted to a prompt. The router rejects every non-GET by
   default. `allowDelegatedWrite` is reserved for proposal preparation and a
