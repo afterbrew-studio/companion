@@ -16,6 +16,7 @@ import { Triage } from './triage.js';
 import { PrReviews } from './pr-reviews.js';
 import { ReviewChat } from './review-chat.js';
 import { Fixes } from './fixes.js';
+import { RepoAgentContextScanner } from './repo-agent-context.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
 import { readActiveLocalGhAccount } from './local-gh-account.js';
@@ -223,6 +224,7 @@ export default defineServices((ctx) => {
     ctx.broadcast,
   );
   const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, ctx.broadcast);
+  const agentContext = new RepoAgentContextScanner();
   const fixes = new Fixes(
     store,
     operate.orchestrator,
@@ -240,6 +242,7 @@ export default defineServices((ctx) => {
     (repo, username) => ghAccounts.verifiedClientFor('runs', repo, { username, need: 'push' }),
     authorized,
     prChecks,
+    agentContext,
     ctx.broadcast,
   );
   const pipelines = new Pipelines(
@@ -287,6 +290,7 @@ export default defineServices((ctx) => {
     prReviews,
     reviewChat,
     prChecks,
+    agentContext,
     fixes,
     pipelines,
     importActiveLocalGh,

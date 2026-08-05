@@ -431,10 +431,15 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       return { diff: await checkouts.diffVsBase(cwd, baseBranch) } satisfies AgentDiffResponse;
     }
     case 'commit-all': {
-      const { cwd, message } = body as AgentCommitRequest;
+      const { cwd, message, author, baseBranch } = body as AgentCommitRequest;
       requireString(cwd, 'cwd');
       requireString(message, 'message');
-      await checkouts.commitAll(cwd, message);
+      if (author) {
+        requireString(author.name, 'author.name');
+        requireString(author.email, 'author.email');
+      }
+      if (baseBranch !== undefined) requireString(baseBranch, 'baseBranch');
+      await checkouts.commitAll(cwd, message, author, baseBranch);
       return { ok: true };
     }
     case 'push': {

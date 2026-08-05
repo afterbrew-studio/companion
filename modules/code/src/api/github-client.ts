@@ -53,6 +53,15 @@ export interface GitHubRateLimitSnapshot {
   readonly observedAt: number;
 }
 
+/** One entry from GitHub's recursive git-tree endpoint. */
+export interface GhTreeEntry {
+  readonly path: string;
+  readonly mode: string;
+  readonly type: 'blob' | 'tree' | 'commit';
+  readonly sha: string;
+  readonly size?: number;
+}
+
 /**
  * Ceiling on the per-client ETag cache. Generous enough that the hot paths (one
  * repo's PR list, each open PR's checks) all stay resident, small enough that a
@@ -190,6 +199,70 @@ export class GitHubClient {
     allow_auto_merge?: boolean;
   }> {
     return this.get(`/repos/${fullName}`);
+  }
+
+  /**
+   * One bounded request inventories repository-owned agent guidance. The ref is
+   * supplied by Companion (normally the connected repo's default/base branch),
+   * never accepted from an untrusted pull-request head.
+   */
+  async repoTree(fullName: string, ref: string): Promise<{ tree: readonly GhTreeEntry[]; truncated: boolean }> {
+    const body = await this.get<{ tree?: GhTreeEntry[]; truncated?: boolean }>(
+      `/repos/${fullName}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    );
+    return { tree: body.tree ?? [], truncated: body.truncated === true };
+  }
+
+  /** Read a text blob selected from repoTree without a second path/ref lookup. */
+  async repoTextBlob(fullName: string, sha: string): Promise<string> {
+    const blob = await this.get<{ content?: string; encoding?: string }>(
+      `/repos/${fullName}/git/blobs/${encodeURIComponent(sha)}`,
+    );
+    if (blob.encoding !== 'base64' || typeof blob.content !== 'string') {
+      throw new Error(`GitHub returned a non-text blob for ${fullName}@${sha.slice(0, 12)}`);
+    }
+    return Buffer.from(blob.content.replace(/\s/g, ''), 'base64').toString('utf8');
+  }
+
+  /**
+   * Read a bounded set of repository text files in one GraphQL round trip.
+   * The aliases are generated locally while every ref/path remains a variable,
+   * so filenames can never alter the query document.
+   */
+  async repoTextFiles(fullName: string, ref: string, paths: readonly string[]): Promise<Map<string, string>> {
+    if (paths.length > 48) throw new Error('repository context file batch exceeds 48');
+    const separator = fullName.indexOf('/');
+    if (separator <= 0 || separator === fullName.length - 1) throw new Error(`invalid repository ${fullName}`);
+    if (paths.length === 0) return new Map();
+    const owner = fullName.slice(0, separator);
+    const name = fullName.slice(separator + 1);
+    const declarations = paths.map((_, index) => `$expression${index}: String!`).join(', ');
+    const fields = paths
+      .map(
+        (_, index) =>
+          `f${index}: object(expression: $expression${index}) { ... on Blob { text isBinary byteSize } }`,
+      )
+      .join('\n');
+    const variables: Record<string, unknown> = { owner, name };
+    paths.forEach((path, index) => {
+      variables[`expression${index}`] = `${ref}:${path}`;
+    });
+    const data = await this.graphql<{
+      repository: Record<string, { text: string | null; isBinary: boolean; byteSize: number } | null> | null;
+    }>(
+      `query CompanionRepositoryAgentContext($owner: String!, $name: String!, ${declarations}) {
+        repository(owner: $owner, name: $name) {
+          ${fields}
+        }
+      }`,
+      variables,
+    );
+    const result = new Map<string, string>();
+    paths.forEach((path, index) => {
+      const blob = data.repository?.[`f${index}`];
+      if (blob && !blob.isBinary && typeof blob.text === 'string') result.set(path, blob.text);
+    });
+    return result;
   }
 
   /**
@@ -433,7 +506,7 @@ export class GitHubClient {
 
   async createPr(
     fullName: string,
-    args: { title: string; head: string; base: string; body: string },
+    args: { title: string; head: string; base: string; body: string; draft?: boolean },
   ): Promise<{ html_url: string; number: number }> {
     return this.post(`/repos/${fullName}/pulls`, args);
   }
@@ -708,7 +781,7 @@ export class GitHubClient {
     return `${this.api.replace(/\/v3$/, '')}/graphql`;
   }
 
-  /** Constant read queries only; mutations keep their explicit write-gated methods. */
+  /** Structurally server-authored read queries only; mutations keep their explicit write-gated methods. */
   private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     const res = await fetch(this.graphqlUrl(), {
       method: 'POST',

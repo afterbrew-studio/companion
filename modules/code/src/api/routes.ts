@@ -422,6 +422,34 @@ export default defineRoutes((ctx) => {
       },
     }),
 
+    /**
+     * The same trusted base-branch context fix runs consume: surfacing it here
+     * makes the automatic behaviour inspectable instead of magical.
+     */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/agent-context',
+      access: 'repos:read',
+      handler: async ({ params, query, user }) => {
+        const { fullName, row } = requireRepo(user, params.owner, params.name);
+        const { client, tried } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
+          username: user!.username,
+        });
+        if (!client) {
+          throw forbidden(
+            tried.length > 0
+              ? `none of your connected GitHub accounts (${tried.join(', ')}) can scan ${fullName}`
+              : `your connected GitHub accounts cannot access ${fullName}`,
+          );
+        }
+        return {
+          context: await code.agentContext.scan(client, fullName, row.default_branch, {
+            refresh: query.get('refresh') === '1',
+          }),
+        };
+      },
+    }),
+
     /** Existing remote branches for searchable branch pickers. */
     route({
       method: 'GET',

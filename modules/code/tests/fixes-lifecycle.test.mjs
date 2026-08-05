@@ -2,7 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Fixes } from '../dist/api/fixes.js';
 
-function fixture(decisions) {
+function fixture(
+  decisions,
+  scan = async (_client, repo, ref) => ({
+    repo,
+    ref,
+    scannedAt: Date.now(),
+    files: [],
+    truncated: false,
+    policies: {
+      noAiAttribution: true,
+      pullRequestDraft: false,
+      conventionalPrTitle: false,
+      agentProvenance: false,
+      branchPrefixes: [],
+    },
+  }),
+) {
   const calls = [];
   const run = { id: 'repair-1', status: 'running' };
   const backend = {
@@ -37,6 +53,7 @@ function fixture(decisions) {
         title: 'Change',
         state: 'open',
         headRef: 'feature',
+        baseRef: 'main',
         url: 'https://github.com/acme/app/pull/7',
       }),
       setMergeable: () => undefined,
@@ -51,6 +68,7 @@ function fixture(decisions) {
     async () => ({ client: null, tried: [] }),
     () => true,
     {},
+    { scan },
     () => undefined,
   );
   let check = 0;
@@ -92,4 +110,38 @@ test('a fresh goal run also exposes ownership before its first prompt', async ()
   });
 
   assert.deepEqual(calls, ['clone', 'goal-worktree', 'create', 'owner:repair-1', 'stop']);
+});
+
+test('a fresh run stops before creating a worktree when trusted repository guidance cannot be loaded', async () => {
+  const { fixes, calls } = fixture([true], async () => {
+    throw new Error('repository guidance unavailable');
+  });
+
+  await assert.rejects(
+    fixes.createGoalRun({
+      kind: 'implement',
+      title: 'Implement task',
+      repo: 'acme/app',
+      branchPrefix: 'companion/task-1',
+      baseBranch: 'main',
+      objective: 'Implement the bounded task.',
+      userId: 'alice',
+    }),
+    /repository guidance unavailable/,
+  );
+
+  assert.deepEqual(calls, []);
+});
+
+test('a PR repair also stops before creating a worktree when trusted guidance cannot be loaded', async () => {
+  const { fixes, calls } = fixture([true], async () => {
+    throw new Error('repository guidance unavailable');
+  });
+
+  await assert.rejects(
+    fixes.startCustomPrRun('acme/app', 7, 'Apply the requested cleanup.', 'alice'),
+    /repository guidance unavailable/,
+  );
+
+  assert.deepEqual(calls, []);
 });

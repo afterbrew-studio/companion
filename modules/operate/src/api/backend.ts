@@ -73,7 +73,12 @@ export interface RunnerBackend {
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
   diffVsBase(cwd: string, baseBranch: string): Promise<string>;
-  commitAll(cwd: string, message: string, author?: { name: string; email: string }): Promise<void>;
+  commitAll(
+    cwd: string,
+    message: string,
+    author?: { name: string; email: string },
+    baseBranch?: string,
+  ): Promise<void>;
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void>;
 
   /** Enforce daemon-owned retention inside this runner's managed roots. */

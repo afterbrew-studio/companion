@@ -19,11 +19,17 @@ import {
   PageHeader,
   RowsSkeleton,
   Spinner,
+  Tabs,
   timeAgo,
   useConfirm,
   useDebounced,
 } from '@moxxy/companion-sdk/ui';
-import type { RepoCandidate, RepoRecord } from '../../contract/index.js';
+import type {
+  RepoAgentContext,
+  RepoAgentContextFile,
+  RepoCandidate,
+  RepoRecord,
+} from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { RepoAccountPicker } from '../components/RepoAccountPicker.js';
 import { useReposAdmin } from '../hooks/useReposAdmin.js';
@@ -168,6 +174,7 @@ function RepoCard({
   const { githubHost } = useAuth();
   const [busy, setBusy] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
 
   const act = (fn: () => Promise<unknown>) => async (): Promise<void> => {
@@ -287,24 +294,29 @@ function RepoCard({
           means nothing is checked, which the review card reports as such rather
           than as a pass. */}
       {canManage ? (
-        <>
-          <label className="mt-3 flex flex-col gap-1 text-xs">
-            <span className="dim">Verification command</span>
-            <input
-              className="input font-mono text-[12px]"
-              defaultValue={repo.verifyCommand ?? ''}
-              disabled={busy}
-              placeholder="pnpm -s typecheck"
-              aria-label={`Verification command for ${repo.fullName}`}
-              onBlur={(e) => {
-                const next = e.target.value.trim();
-                if (next === (repo.verifyCommand ?? '')) return;
-                void act(() => api.setVerifyCommand(repo.fullName, next))();
-              }}
-            />
-          </label>
+        <label className="mt-3 flex flex-col gap-1 text-xs">
+          <span className="dim">Verification command</span>
+          <input
+            className="input font-mono text-[12px]"
+            defaultValue={repo.verifyCommand ?? ''}
+            disabled={busy}
+            placeholder="pnpm -s typecheck"
+            aria-label={`Verification command for ${repo.fullName}`}
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (next === (repo.verifyCommand ?? '')) return;
+              void act(() => api.setVerifyCommand(repo.fullName, next))();
+            }}
+          />
+        </label>
+      ) : null}
 
-          <CardActions>
+      <CardActions>
+        <button className="btn-ghost mr-auto" onClick={() => setContextOpen(true)}>
+          Agent context
+        </button>
+        {canManage ? (
+          <>
             <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>
               {busy ? 'Working…' : 'Sync now'}
             </button>
@@ -338,10 +350,12 @@ function RepoCard({
             <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
               Remove
             </button>
-          </CardActions>
-        </>
-      ) : null}
+          </>
+        ) : null}
+      </CardActions>
       {confirmElement}
+
+      {contextOpen ? <AgentContextModal repo={repo} onClose={() => setContextOpen(false)} /> : null}
 
       {transferring && canManage ? (
         <TransferRepoModal
@@ -356,6 +370,143 @@ function RepoCard({
         />
       ) : null}
     </article>
+  );
+}
+
+type AgentContextTab = 'rules' | 'skills' | 'template';
+
+/** Inspect the exact base-branch guidance Companion applies to this repo. */
+function AgentContextModal({ repo, onClose }: { repo: RepoRecord; onClose: () => void }): JSX.Element {
+  const [context, setContext] = useState<RepoAgentContext | null>(null);
+  const [tab, setTab] = useState<AgentContextTab>('rules');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async (refresh = false): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.repoAgentContext(repo.fullName, refresh);
+      setContext(result.context);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [repo.fullName]);
+
+  const rules = context?.files.filter((file) => file.kind === 'instructions') ?? [];
+  const skills = context?.files.filter((file) => file.kind === 'skill') ?? [];
+  const templates = context?.files.filter((file) => file.kind === 'pull-request-template') ?? [];
+  const primaryTemplate = templates.find((file) => file.primary);
+  const templateApplied = Boolean(primaryTemplate?.content.trim());
+  const shown = tab === 'rules' ? rules : tab === 'skills' ? skills : templates;
+
+  return (
+    <Modal title={`Agent context · ${repo.fullName}`} onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-xl text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+            Companion scans the trusted base branch and uses this same bounded context pipeline for implementation,
+            PR-repair and publishing flows. Repository code, hooks, plugins and MCP servers are never executed by this
+            scan.
+          </div>
+          <button className="btn-ghost shrink-0" disabled={loading} onClick={() => void load(true)}>
+            {loading && context ? <Spinner /> : null} Rescan
+          </button>
+        </div>
+
+        <ErrorBar error={error} />
+        {loading && !context ? (
+          <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-zinc-500">
+            <Spinner /> Scanning {repo.defaultBranch}…
+          </div>
+        ) : context ? (
+          <>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="badge-ok normal-case">✓ trusted origin/{context.ref}</span>
+                <span className="badge-ok normal-case">✓ no AI attribution</span>
+                <span className={templateApplied ? 'badge-ok normal-case' : 'badge normal-case'}>
+                  {templateApplied
+                    ? '✓ PR template applied'
+                    : primaryTemplate
+                      ? '○ PR template exceeds scan limit'
+                      : '○ no PR template'}
+                </span>
+                {context.policies.pullRequestDraft ? <span className="badge-ok normal-case">✓ opens as draft</span> : null}
+                {context.policies.conventionalPrTitle ? <span className="badge-ok normal-case">✓ conventional PR title</span> : null}
+                {context.policies.agentProvenance ? <span className="badge-ok normal-case">✓ repo provenance kept</span> : null}
+              </div>
+              <p className="dim mt-2 text-xs">
+                A bounded rules excerpt is injected automatically into code-changing runs. The agent receives the skill
+                catalogue and loads relevant skills from this ref. Scanned {timeAgo(context.scannedAt)}.
+              </p>
+            </div>
+
+            {context.truncated ? (
+              <div className="banner-info mb-0 text-xs">
+                The repository exceeded a scan limit. Detected resources are still applied; oversized or extra files are
+                left out instead of growing every agent prompt without bound.
+              </div>
+            ) : null}
+
+            <Tabs<AgentContextTab>
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: 'rules', label: 'Rules', count: rules.length },
+                { value: 'skills', label: 'Skills', count: skills.length },
+                { value: 'template', label: 'PR template', count: templates.length },
+              ]}
+            />
+
+            {shown.length > 0 ? (
+              <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                {shown.map((file) => <AgentContextResource key={file.path} file={file} />)}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+                {tab === 'rules'
+                  ? 'No AGENTS.md, tool instructions or contributing guide was detected.'
+                  : tab === 'skills'
+                    ? 'No repository-local SKILL.md files were detected.'
+                    : 'No pull request template was detected in a conventional location.'}
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+function AgentContextResource({ file }: { file: RepoAgentContextFile }): JSX.Element {
+  return (
+    <details className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
+      <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-3 outline-none hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 dark:hover:bg-zinc-950/40 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{file.name}</span>
+            {file.primary && file.content.trim() ? <span className="badge-ok normal-case">applied</span> : null}
+            {file.kind === 'instructions' ? (
+              <span className="badge normal-case">{file.content.trim() ? 'auto-injected' : 'detected only'}</span>
+            ) : null}
+            {file.kind === 'skill' ? <span className="badge normal-case">available to agent</span> : null}
+          </span>
+          <span className="mt-0.5 block truncate font-mono text-[11px] text-zinc-500">{file.path}</span>
+          {file.description ? <span className="dim mt-1 block text-xs">{file.description}</span> : null}
+        </span>
+        <span className="dim shrink-0 text-xs">{file.truncated ? 'partial' : `${Math.max(1, Math.ceil(file.size / 1024))} KB`}</span>
+      </summary>
+      <pre className="max-h-80 overflow-auto border-t border-zinc-200 bg-zinc-950 p-4 text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200 dark:border-zinc-800">
+        {file.content || 'Content was not included because the file exceeded the safe scan limit.'}
+      </pre>
+    </details>
   );
 }
 

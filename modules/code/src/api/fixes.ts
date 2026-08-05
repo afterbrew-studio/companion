@@ -1,11 +1,20 @@
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
-import type { PrRecord } from '../contract/index.js';
+import type { PrRecord, RepoAgentContext } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, RunnerBackend } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
 import type { PrChecks } from './pr-checks.js';
+import {
+  mergePullRequestBody,
+  primaryPullRequestTemplate,
+  pullRequestSummary,
+  pullRequestTitle,
+  repositoryBranchPrefix,
+  repositoryGuidancePrompt,
+  type RepoAgentContextScanner,
+} from './repo-agent-context.js';
 
 /**
  * Dispatch context a caller attaches to a fix run: which registered unit of
@@ -51,6 +60,7 @@ export class Fixes {
     ) => Promise<{ client: GitHubClient | null; tried: string[] }>,
     private readonly authorized: (username: string, permission: Permission, repo: string) => boolean,
     private readonly checks: PrChecks,
+    private readonly agentContext: RepoAgentContextScanner,
     private readonly broadcast: (msg: SpaServerMessage) => void,
   ) {}
 
@@ -103,8 +113,10 @@ export class Fixes {
   }): Promise<RunRecord> {
     this.requireRunAuthority(opts.repo, opts.userId);
     await this.requirePersonalAccess(opts.repo, opts.userId);
+    const context = await this.loadAgentContext(opts.repo, opts.baseBranch, opts.userId);
     const suffix = Date.now().toString(36).slice(-4);
-    const branch = `${opts.branchPrefix}-${suffix}`;
+    const branchPrefix = repositoryBranchPrefix(opts.branchPrefix, opts.title, opts.kind, context);
+    const branch = `${branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
     const runnerId = this.orchestrator.placeRun(opts.repo, {
       userId: opts.userId,
@@ -158,7 +170,12 @@ export class Fixes {
       await this.orchestrator.stopRun(run.id);
       return this.orchestrator.getRun(run.id)!;
     }
-    await this.orchestrator.sendPrompt(run.id, opts.objective, undefined, opts.attachments);
+    await this.orchestrator.sendPrompt(
+      run.id,
+      `${opts.objective}\n\n${repositoryGuidancePrompt(context)}`,
+      undefined,
+      opts.attachments,
+    );
     return this.orchestrator.getRun(run.id)!;
   }
 
@@ -281,6 +298,7 @@ export class Fixes {
   ): Promise<RunRecord> {
     this.requireRunAuthority(pr.repo, opts.userId);
     await this.requirePersonalAccess(pr.repo, opts.userId);
+    const context = await this.loadAgentContext(pr.repo, pr.baseRef, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
     const runnerId = this.orchestrator.placeRun(pr.repo, {
@@ -340,7 +358,7 @@ export class Fixes {
       await this.orchestrator.stopRun(run.id);
       return this.orchestrator.getRun(run.id)!;
     }
-    await this.orchestrator.sendPrompt(run.id, objective);
+    await this.orchestrator.sendPrompt(run.id, `${objective}\n\n${repositoryGuidancePrompt(context)}`);
     return this.orchestrator.getRun(run.id)!;
   }
 
@@ -386,8 +404,19 @@ export class Fixes {
       .viewer()
       .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
       .catch(() => undefined);
+    const baseBranch = opts.baseBranch ?? repoRow.default_branch;
+    const context = await this.loadAgentContext(run.repo, baseBranch, credentialOwner);
+    const title = pullRequestTitle(
+      run.title,
+      run.outcome,
+      opts.title,
+      context.policies.conventionalPrTitle,
+    );
     opts.beforeWrite?.();
-    await backend.commitAll(run.cwd, opts.title ?? run.title, author);
+    // Fresh PRs are collapsed onto their trusted base before Companion creates
+    // one clean commit. This removes any attribution trailer even if a harness
+    // ignored the no-commit prompt. Existing PR repairs retain their topology.
+    await backend.commitAll(run.cwd, title, author, run.pr_url ? undefined : baseBranch);
     opts.beforeWrite?.();
     await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 
@@ -400,13 +429,15 @@ export class Fixes {
     }
 
     opts.beforeWrite?.();
+    const generatedBody =
+      opts.body ??
+      `${pullRequestSummary(run.outcome)}\n\n${run.issue_number ? `Closes #${run.issue_number}.` : ''}`.trim();
     const pr = await client.createPr(run.repo, {
-      title: opts.title ?? run.title,
+      title,
       head: run.branch,
-      base: opts.baseBranch ?? repoRow.default_branch,
-      body:
-        opts.body ??
-        `${run.outcome ?? ''}\n\n${run.issue_number ? `Closes #${run.issue_number}.` : ''}`.trim(),
+      base: baseBranch,
+      body: mergePullRequestBody(primaryPullRequestTemplate(context), generatedBody),
+      draft: context.policies.pullRequestDraft,
     });
 
     this.store.runs.setPr(runId, run.branch, pr.html_url);
@@ -433,6 +464,16 @@ export class Fixes {
     if (!username || !(await this.verifyGithub(repo, username))) {
       throw new Error(`your GitHub accounts cannot access ${repo} — ask the repository owner to grant access`);
     }
+  }
+
+  private async loadAgentContext(
+    repo: string,
+    ref: string,
+    username?: string | null,
+  ): Promise<RepoAgentContext> {
+    const client = this.github(repo, username);
+    if (!client) throw new Error(`GitHub is not configured for ${repo}; repository guidance cannot be verified`);
+    return this.agentContext.scan(client, repo, ref);
   }
 
   private hasRunAuthority(username: string | null | undefined, repo: string): boolean {
@@ -489,7 +530,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Work ONLY inside this worktree, on this branch.
 - Start from the job logs above when they are present: they usually name the failure outright. Reproduce locally where they are absent or inconclusive (run the linter/build/test suite the failing check corresponds to), fix the causes minimally, and re-run to verify.
 - Respect the PR's intent — repair it, don't rewrite it.
-- Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - Finish with a short summary: cause of each failure, what you changed, and how you verified it.`;
 }
 
@@ -508,7 +549,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Work ONLY inside this worktree, on this branch.
 - Address every piece of feedback; where a comment is ambiguous, pick the reading most consistent with the codebase and note the choice in your summary.
 - Verify your changes (run relevant tests/builds where possible).
-- Commit with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - Finish with a summary mapping each review comment to what you did about it.`;
 }
 
@@ -520,7 +561,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 ## Rules
 - Work ONLY inside this worktree, on this branch. All origin refs were fetched just now — do NOT fetch or pull.
 - Run \`git merge origin/${pr.baseRef}\` and resolve every conflict by hand, preserving the intent of BOTH sides: keep what ${pr.baseRef} changed AND what this PR changes. Never resolve by wholesale taking one side.
-- After resolving, verify the result compiles/passes (run the build or test suite where practical), then complete the merge commit (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- After resolving, stage the resolved files and verify the result compiles/passes (run the build or test suite where practical), but leave the merge uncommitted and do not push — Companion completes it only after approval.
 - Finish with a short summary: which files conflicted, how you resolved each, and how you verified the result.`;
 }
 
@@ -536,7 +577,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Work ONLY inside this worktree, on this branch.
 - Respect the PR's intent unless the task explicitly says otherwise.
 - Verify your changes (run relevant tests/builds where possible).
-- Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the delta and pushes after approval.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - Finish with a short summary of what you did and how you verified it.`;
 }
 
@@ -559,6 +600,6 @@ ${body || '(no description)'}
 ## Rules
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement a minimal correct fix, and verify it (run existing tests or a quick check where possible).
-- Commit your work with clear messages (git add + git commit). Do NOT push — the maintainer reviews the diff and pushes after approval.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the fix is complete and verified, finish with a short summary of what you changed and how you verified it.`;
 }

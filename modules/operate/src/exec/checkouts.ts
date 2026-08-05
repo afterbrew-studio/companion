@@ -436,8 +436,17 @@ export class Checkouts {
     worktree: string,
     message: string,
     author?: { name: string; email: string },
+    baseBranch?: string,
   ): Promise<void> {
     await this.git(['add', '-A'], worktree);
+    if (baseBranch) {
+      // Agents are asked to leave changes uncommitted, but a harness can still
+      // ignore that instruction. A fresh PR has no history worth preserving,
+      // so move HEAD back to the server-selected base while retaining the
+      // final reviewed tree in the index. The commit below is then guaranteed
+      // to have Companion's message/author and no model attribution trailer.
+      await this.git(['reset', '--soft', `origin/${baseBranch}`], worktree);
+    }
     const status = await this.git(['status', '--porcelain'], worktree);
     if (!status.stdout.trim()) return;
 

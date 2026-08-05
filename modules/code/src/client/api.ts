@@ -28,6 +28,7 @@ import type {
   RepoAccountOption,
   RepoCandidate,
   RepoBranchRecord,
+  RepoAgentContext,
   RepoRecord,
   SavePipelineRequest,
   SaveStepDefinitionRequest,
@@ -50,6 +51,10 @@ export const codeApi = {
     request<AgentQuality>(`/api/workspaces/${workspaceId}/agent-quality?days=${days}`),
   // repos
   listRepos: () => request<{ repos: RepoRecord[] }>('/api/repos'),
+  repoAgentContext: (fullName: string, refresh = false) =>
+    request<{ context: RepoAgentContext }>(
+      `/api/repos/${fullName}/agent-context${refresh ? '?refresh=1' : ''}`,
+    ),
   repoBranches: (fullName: string, workspaceId: string) =>
     request<{ branches: RepoBranchRecord[]; defaultBranch: string }>(
       `/api/repos/${fullName}/branches?workspaceId=${encodeURIComponent(workspaceId)}`,

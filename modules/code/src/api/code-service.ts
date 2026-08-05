@@ -9,6 +9,7 @@ import type { ReviewChat } from './review-chat.js';
 import type { PrChecks } from './pr-checks.js';
 import type { Fixes } from './fixes.js';
 import type { Pipelines } from './pipelines.js';
+import type { RepoAgentContextScanner } from './repo-agent-context.js';
 import type { RepoPermission } from '../contract/index.js';
 
 /**
@@ -31,6 +32,7 @@ export class CodeService {
     readonly prReviews: PrReviews,
     readonly reviewChat: ReviewChat,
     readonly prChecks: PrChecks,
+    readonly agentContext: RepoAgentContextScanner,
     readonly fixes: Fixes,
     readonly pipelines: Pipelines,
     private readonly importActiveLocalGh: () => Promise<boolean>,

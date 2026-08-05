@@ -1054,7 +1054,7 @@ ${acceptance}${previous}${specSection}
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
-- Commit your work with clear messages (git add + git commit). Do NOT push — the board reviews and pushes on your behalf.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the work is complete and verified, finish with a short summary of what you changed and how you verified it.`;
   }
 
