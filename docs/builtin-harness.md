@@ -117,18 +117,26 @@ Two events that only this harness can emit honestly: `tool_call_approved` /
 
 ### Where the code lives
 
-A package, `packages/agent` (`@moxxy/companion-agent`), not a module. Two
-bundles must run it, `companion` and `companion-runner`, and the runner loads no
-modules. It exports the parent half (`CompanionHarness implements Harness`) and
-the child half (`runAgent()`), and each bundle wires a hidden subcommand to the
-second. Registering the descriptor in `HARNESSES`
-(`modules/operate/src/api/harnesses.ts`) stays a small operate change; making
-that table open is phase 7 of `harness-abstraction.md` and is a separate piece
-of work that this one should not smuggle in.
+A module **and** a package, and it has to be both.
+`packages/runtime` (`@moxxy/companion-runtime`) holds the loop, the tools and
+the AI SDK providers, because two bundles must run it and `companion-runner`
+loads no modules. `modules/runtime` holds the provider records, their secrets,
+the routes, the RBAC and the page, because those are module things. It is not in
+the slim build. [`cloud-runtime.md`](cloud-runtime.md) is that whole story:
+the split, the profiles, and how the child is located in each delivery vehicle.
 
-New dependencies: `ai`, plus one `@ai-sdk/*` per provider family. That is a real
-cost against the dependency discipline this repo keeps, and it is the point of
-the exercise rather than a side effect.
+One consequence for sequencing: phase 7 of `harness-abstraction.md` (an open
+harness registry a module can register into) stops being an optional later
+cleanup and becomes the **prerequisite**, because `HARNESSES` in
+`modules/operate/src/api/harnesses.ts` is a constant array that names its
+implementations by import. Land it first, as its own provably no-op change, with
+the three existing harnesses moved onto it.
+
+New dependencies: `ai`, plus the AI SDK provider packages named in
+[`model-providers.md`](model-providers.md). That is a real cost against the
+dependency discipline this repo keeps, and it lands in an optional module rather
+than in the build every npx user gets, which is most of why the module split is
+worth its own package boundary.
 
 ### Detection cannot say "absent"
 
@@ -189,18 +197,15 @@ today "model credentials belong to the machine, and Companion stores no copy"
 (`apps/companion-runner/README.md`). A built-in harness declares
 `capabilities.models: 'providers'` and the operator supplies keys to Companion.
 
-Store them as `kind: 'secret'` module configuration on operate. That is not a
-convenience: secret config already routes through the `SecretStore` seam
-(`ENTERPRISE.md` §6), so an organisation that keeps keys in Vault gets that for
-free the day somebody writes the backend, and the read API returns only a
-set/unset flag rather than the value. A new bespoke credential table would be
-outside that seam on day one.
-
-The catalog is then "the models of every configured provider", which is what the
-Providers page already renders for a runtime. Model ids are declared per provider
-family with a free-text escape for an OpenAI-compatible gateway, since a fixed
-list is a snapshot of the release it was written in, the same reason Codex
-carries no `models` array.
+The contract for that (records, model catalog, pricing, extension, config as
+code, and where the credential is stored) is [`model-providers.md`](model-providers.md).
+Two things from it matter to the harness itself. The runtime is handed a fully
+resolved spec at spawn and **carries no provider names and no defaults**, so a
+missing spec is a failed turn rather than a silent fallback to whatever
+environment variable happened to be set. And no capability axis changes:
+`capabilities.models: 'providers'` already means "the operator supplies
+credentials per provider", and only their storage location moves from a machine
+to Companion.
 
 **Who holds the key at runtime** is a real decision, not a detail:
 
@@ -233,9 +238,12 @@ The AI SDK reports token usage per step, so `capabilities.usage` is `tokens` and
 the spend ceiling prices it from `modules/operate/src/contract/model-pricing.ts`
 exactly as Codex does. That table carries Anthropic list prices, so a run on any
 other provider contributes zero to the ceiling and says so on the budget card.
-If the built-in harness is going to be the default for one-shots, that table
-needs the other families or the ceiling quietly stops describing most of the
-spend. Adding prices is cheap; discovering the gap in production is not.
+Under BYOK that becomes the common case rather than the exception, which is why
+the price is snapshotted onto the run row at creation from the model record and
+the built-in table is the fallback: see the pricing sections of
+[`model-providers.md`](model-providers.md) and [`cloud-runtime.md`](cloud-runtime.md).
+A ceiling that quietly stops describing most of the spend is worse than no
+ceiling, and that is the failure mode here.
 
 `maxRunOutputTokens` already exists as a per-run ceiling. Add a per-turn step
 ceiling and a tool-output cap, because an agent loop with neither is an
@@ -330,23 +338,29 @@ concentrate work; make the built-in harness's readiness visible per runner.
 
 Each is shippable on its own and leaves the tree working.
 
-**1. The child and the wire.** `packages/agent` with `runAgent()`, three
-read-only tools, NDJSON `HarnessEvent` on stdout, one turn per stdin line. Prove
-it against `fold.ts` and against the existing playground evaluations, on a
-prompt set moxxy has already answered. No production wiring. If the answers are
-not usable at this stage, the rest of the plan is wrong and it cost a week.
+**0. Open the harness registry.** Phase 7 of `harness-abstraction.md`, done
+first and alone, with moxxy, Claude Code and Codex moved onto it and no
+behaviour change. Everything after this is a module rather than an operate edit.
 
-**2. The parent.** `CompanionHarness implements Harness`, registered in
-`HARNESSES`, spawned by `LocalRunnerBackend`, detection that can never say
-absent. Local runner only.
+**1. The child and its stream.** `packages/runtime` with the child entry, three
+read-only tools, NDJSON `HarnessEvent` on stdout, one turn per stdin line, one
+provider hard-coded for the moment. Prove it against `fold.ts` and against the
+existing playground evaluations, on a prompt set moxxy has already answered. No
+production wiring. If the answers are not usable at this stage, the rest of the
+plan is wrong and it cost a week.
 
-**3. Credentials and catalog.** Provider keys as operate secret config, models
-reported through `sessionInfo`, Providers page shows them, `models: 'providers'`.
-At this point an instance with an API key and no CLI can run a one-shot.
+**2. The parent.** `modules/runtime` registering the harness, spawning the child
+from `LocalRunnerBackend`, detection that can never say absent, the child
+located correctly in a checkout and in the bundle. Local runner only.
+
+**3. Providers.** The records, the secret store, the routes and the page, the
+catalog through `sessionInfo`, `models: 'providers'`, the price snapshot on the
+run row. At this point an instance with an API key and no CLI can run a one-shot,
+against any of the four kinds.
 
 **4. One-shots in production.** Make it selectable per runner and per task for
-`runOneShot` work. Measure against moxxy on the saved evaluations before
-changing any default. Add the missing pricing rows.
+`runOneShot` work. Measure against moxxy on the saved evaluations before changing
+any default. Ship the `cloud` profile once this is the measured answer.
 
 **5. Write tools and coding runs.** `write_file`, `edit_file`, `run`, the push
 refusal, output caps, context compaction. Coding runs opt-in per runner.
@@ -389,8 +403,8 @@ and is what this document assumes. `builtin` collides confusingly with
 default should move only on a measured comparison, and only for the workload
 that was measured.
 
-**Whether phase 7 of `harness-abstraction.md` lands first.** Registering a
-harness from a module is the cleaner home for this, and doing that refactor and
-this implementation in one change would make both harder to review. This plan
-assumes it lands after, and that the static table takes a fourth row in the
-meantime.
+**Whether the module is OSS or entitled.** The runtime is what makes Companion
+work without an external CLI, so gating it makes the free product worse where
+people evaluate it. The argument and the recommended split are in
+[`cloud-runtime.md`](cloud-runtime.md); it is a commercial decision, not a
+technical one.
