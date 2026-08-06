@@ -94,8 +94,15 @@ export function gatewayConfigYaml(
 
 interface Child {
   readonly proc: ChildProcess;
-  readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  readonly exited: Promise<ChildExit>;
   stderrTail(): string;
+}
+
+interface ChildExit {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  /** Present when Node could not spawn the process at all (for example ENOENT). */
+  readonly error: Error | null;
 }
 
 export class GatewayPool {
@@ -277,21 +284,27 @@ function watchChild(proc: ChildProcess): Child {
   proc.stderr?.on('data', (chunk: Buffer) => {
     tail = (tail + chunk.toString()).slice(-4000);
   });
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
-    proc.once('exit', (code, signal) => resolve({ code, signal })),
-  );
+  const exited = new Promise<ChildExit>((resolve) => {
+    proc.once('exit', (code, signal) => resolve({ code, signal, error: null }));
+    // `spawn` reports a missing/unexecutable binary through `error`, not a
+    // rejected call or a guaranteed `exit` event. Leaving this unhandled takes
+    // down the daemon precisely when an optional runtime is not installed.
+    proc.once('error', (error) => resolve({ code: null, signal: null, error }));
+  });
   return { proc, exited, stderrTail: () => tail };
 }
 
 /** Wait until the runner's unix socket accepts a connection. */
 async function waitForUnixSocket(socketPath: string, child: Child, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  let dead = false;
-  void child.exited.then(() => (dead = true));
+  const state: { exit: ChildExit | null } = { exit: null };
+  void child.exited.then((result) => (state.exit = result));
   while (Date.now() < deadline) {
-    if (dead) {
+    const exit = state.exit;
+    if (exit) {
+      if (exit.error) throw new Error(`moxxy serve could not start: ${exit.error.message}`);
       throw new Error(
-        `moxxy serve exited during boot (code=${child.proc.exitCode}): ${child.stderrTail().slice(-500)}`,
+        `moxxy serve exited during boot (code=${exit.code}, signal=${exit.signal}): ${child.stderrTail().slice(-500)}`,
       );
     }
     const ok = await new Promise<boolean>((resolve) => {
@@ -314,12 +327,14 @@ async function waitForUnixSocket(socketPath: string, child: Child, timeoutMs: nu
 async function waitForGateway(client: GatewayClient, child: Child, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown = null;
-  let dead = false;
-  void child.exited.then(() => (dead = true));
+  const state: { exit: ChildExit | null } = { exit: null };
+  void child.exited.then((result) => (state.exit = result));
   while (Date.now() < deadline) {
-    if (dead) {
+    const exit = state.exit;
+    if (exit) {
+      if (exit.error) throw new Error(`moxxy gateway could not start: ${exit.error.message}`);
       throw new Error(
-        `moxxy gateway exited during boot (code=${child.proc.exitCode}): ${child.stderrTail().slice(-500)}`,
+        `moxxy gateway exited during boot (code=${exit.code}, signal=${exit.signal}): ${child.stderrTail().slice(-500)}`,
       );
     }
     try {

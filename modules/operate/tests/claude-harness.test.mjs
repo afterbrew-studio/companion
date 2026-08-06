@@ -46,7 +46,7 @@ const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3 };
  * because the registry builds its model index there: seeding after would leave
  * the index describing a fleet that no longer exists.
  */
-function fixture(seed = () => undefined) {
+function fixture(seed = () => undefined, moxxyCli = null) {
   const db = new Database(':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   for (const m of migrations) m.up(db);
@@ -55,7 +55,7 @@ function fixture(seed = () => undefined) {
     set: (key, value) => db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`).run(key, value),
   });
   seed(store);
-  return { db, store, orchestrator: new Orchestrator(store, CONFIG, {}, null, () => {}) };
+  return { db, store, orchestrator: new Orchestrator(store, CONFIG, {}, moxxyCli, () => {}) };
 }
 
 /**
@@ -544,7 +544,8 @@ test('health follows the runtime a run would take, not moxxy and not the whole s
 test('switching runtimes drops the models the previous one reported', async () => {
   // Kept, the old catalog reads as a credentialed provider the moment the
   // machine is back on moxxy, which is exactly what the switch should end.
-  const { orchestrator } = fixture();
+  const missingMoxxy = { path: 'companion-test-moxxy-no-such-binary', version: '0.26.0', compatible: true };
+  const { orchestrator } = fixture(() => undefined, missingMoxxy);
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
   assert.ok(orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'claude-code').length > 0);
 
