@@ -12,6 +12,7 @@ export interface ProvidersState {
   update(id: string, fields: Partial<CreateProviderRequest>): Promise<void>;
   remove(id: string): Promise<void>;
   probe(id: string, model: string): Promise<ProbeResult | null>;
+  discover(id: string): Promise<string[] | null>;
 }
 
 export function useProviders(): ProvidersState {
@@ -54,6 +55,17 @@ export function useProviders(): ProvidersState {
     create: (draft) => guard(() => runtimeApi.create(draft)),
     update: (id, fields) => guard(() => runtimeApi.update(id, fields)),
     remove: (id) => guard(() => runtimeApi.remove(id)),
+    discover: async (id) => {
+      setBusy(true);
+      try {
+        return (await runtimeApi.availableModels(id)).models;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
     probe: async (id, model) => {
       setBusy(true);
       try {

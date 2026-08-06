@@ -22,6 +22,8 @@ export const PROVIDER_HELP = `Usage: companion provider <command> [options]
                              or openai-compatible. Repeat --model per model id
                              (on azure these are deployment names).
   remove <id> [--yes]        Delete a provider and its stored credential
+  models <id>                Ask the endpoint which models it serves, and adopt
+                             the ones this instance does not have yet
   test <id> --model <id>     One real round trip: does it answer, and can it
                              call a tool? Records what it observed.
 
@@ -36,7 +38,7 @@ Requires the runtime module: companion module install runtime
 `;
 
 export interface ProviderCommand {
-  readonly action: 'list' | 'add' | 'remove' | 'test';
+  readonly action: 'list' | 'add' | 'remove' | 'test' | 'models';
   readonly id?: string;
   readonly kind?: string;
   readonly url?: string;
@@ -64,7 +66,7 @@ interface ProviderRow {
   readonly models: readonly ModelRow[];
 }
 
-const ACTIONS = ['list', 'add', 'remove', 'test'] as const;
+const ACTIONS = ['list', 'add', 'remove', 'test', 'models'] as const;
 
 export function parseProviderCommand(argv: readonly string[]): ProviderCommand {
   const action = ACTIONS.find((a) => a === argv[0]);
@@ -166,6 +168,30 @@ export async function runProviderCommand(command: ProviderCommand, baseUrl: stri
       }
       await api<{ ok: true }>('DELETE', `/api/model-providers/${encodeURIComponent(command.id)}`);
       return out(`removed ${command.id}`);
+    }
+
+    case 'models': {
+      if (!command.id) throw new Error('Which provider? Usage: companion provider models <id>');
+      const { models: found } = await api<{ models: string[] }>(
+        'GET',
+        `/api/model-providers/${encodeURIComponent(command.id)}/available-models`,
+      );
+      if (command.json) return out(JSON.stringify(found, null, 2));
+      const { providers } = await api<{ providers: ProviderRow[] }>('GET', '/api/model-providers');
+      const current = providers.find((p) => p.id === command.id);
+      if (!current) throw new Error('provider not found');
+      const known = new Set(current.models.map((m) => m.id));
+      const fresh = found.filter((id) => !known.has(id));
+      if (fresh.length === 0) return out(`${found.length} model(s) offered, all already configured`);
+      // Adopted rather than merely printed: an id nobody added is an id nothing
+      // can run, and the operator still disables what they do not want.
+      await api('PATCH', `/api/model-providers/${encodeURIComponent(command.id)}`, {
+        models: [
+          ...current.models,
+          ...fresh.map((id) => ({ id, label: null, contextWindow: null, inputPerMTok: null, outputPerMTok: null, probed: null, options: null })),
+        ],
+      });
+      return out(`added ${fresh.length} model(s):\n    ${fresh.join('\n    ')}`);
     }
 
     case 'test': {

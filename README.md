@@ -263,6 +263,12 @@ COMPANION_RUNNER_MODEL=claude-sonnet-5 \
   companion-runner --background
 ```
 
+Or as a container, built from this same tree:
+
+```sh
+docker build --target runner -t companion-runner .
+```
+
 Register the endpoint and token under **Runners** and the machine advertises
 what it can actually run, exactly as a machine with moxxy or Claude Code
 installed does. Placement, task policy, repository clearance, role fences and

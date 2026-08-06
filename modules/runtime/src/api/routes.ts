@@ -97,6 +97,20 @@ export default defineRoutes((ctx) => {
     }),
 
     /**
+     * What the endpoint says it serves. The answer is a suggestion: the
+     * operator still ticks which of them this instance may spend on.
+     */
+    route({
+      method: 'GET',
+      path: '/api/model-providers/:id/available-models',
+      access: 'runtime:manage',
+      handler: async ({ params }) => {
+        if (!runtime.get(params.id)) throw notFound('provider not found');
+        return { models: await runtime.discover(params.id) };
+      },
+    }),
+
+    /**
      * What a probe observed, rather than what the operator hoped. An endpoint
      * that advertises a model it cannot tool-call is common enough that being
      * told on the first real run is the wrong place to find out.

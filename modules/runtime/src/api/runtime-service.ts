@@ -190,6 +190,43 @@ export class RuntimeService {
     if (declared.length > 0) this.broadcast();
   }
 
+  // ---------- discovery -------------------------------------------------------
+
+  /**
+   * The models an endpoint says it serves.
+   *
+   * Discovery is a CONVENIENCE; the ticked subset is policy. An operator who
+   * fetches a list still chooses what this instance may run, because "the
+   * gateway offers it" is not the same as "we permit spending on it".
+   *
+   * Azure is the one kind that cannot answer: its deployments live behind the
+   * management API rather than the inference endpoint, so it says so instead of
+   * returning an empty list that would read as "none".
+   */
+  async discover(providerId: string): Promise<readonly string[]> {
+    const provider = this.get(providerId);
+    if (!provider) throw new Error('provider not found');
+    if (provider.kind === 'azure') {
+      throw new Error('Azure lists deployments through its management API, not the endpoint: enter the names instead');
+    }
+    const key = this.secrets.get(keyOf(providerId));
+    const base = (provider.baseUrl ?? DEFAULT_ENDPOINTS[provider.kind] ?? '').replace(/\/+$/, '');
+    if (!base) throw new Error(`no endpoint to ask: set one on ${provider.label}`);
+    const response = await fetch(`${base}/models`, {
+      headers: {
+        ...provider.headers,
+        ...(key ? authHeader(provider.kind, key) : {}),
+      },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) throw new Error(`${provider.label} answered ${response.status} when asked for its models`);
+    const body = (await response.json()) as { data?: readonly { id?: unknown }[] };
+    return (body.data ?? [])
+      .map((entry) => entry.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .sort();
+  }
+
   // ---------- probing ---------------------------------------------------------
 
   /**
@@ -231,6 +268,18 @@ export class RuntimeService {
       factoryOptions: provider.factoryOptions,
     };
   }
+}
+
+/** Where a kind asks when the operator did not name an endpoint. */
+const DEFAULT_ENDPOINTS: Readonly<Record<string, string>> = {
+  anthropic: 'https://api.anthropic.com/v1',
+  openai: 'https://api.openai.com/v1',
+};
+
+/** How each kind carries its credential, which is the one thing they differ on here. */
+function authHeader(kind: string, key: string): Record<string, string> {
+  if (kind === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
+  return { authorization: `Bearer ${key}` };
 }
 
 function keyOf(providerId: string): string {

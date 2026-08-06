@@ -37,7 +37,7 @@ const KIND_OPTIONS: ReadonlyArray<{ value: ProviderKind; label: string; hint: st
  */
 export function ProvidersPage(): JSX.Element {
   const { can } = useAuth();
-  const { providers, ready, error, busy, create, update, remove, probe } = useProviders();
+  const { providers, ready, error, busy, create, update, remove, probe, discover } = useProviders();
   const [adding, setAdding] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const manage = can('runtime:manage');
@@ -91,6 +91,29 @@ export function ProvidersPage(): JSX.Element {
                 busy={busy}
                 onToggle={() => void update(provider.id, { enabled: !provider.enabled })}
                 onProbe={(model) => void probe(provider.id, model)}
+                onDiscover={async () => {
+                  const found = await discover(provider.id);
+                  if (!found) return;
+                  // Discovery suggests; the operator still decides. Anything
+                  // already configured keeps its price and probe result.
+                  const known = new Set(provider.models.map((m) => m.id));
+                  await update(provider.id, {
+                    models: [
+                      ...provider.models,
+                      ...found
+                        .filter((id) => !known.has(id))
+                        .map((id) => ({
+                          id,
+                          label: null,
+                          contextWindow: null,
+                          inputPerMTok: null,
+                          outputPerMTok: null,
+                          probed: null,
+                          options: null,
+                        })),
+                    ],
+                  });
+                }}
                 onRemove={async () => {
                   const ok = await confirmDanger({
                     title: `Remove "${provider.label}"?`,
@@ -116,6 +139,7 @@ function ProviderRow({
   busy,
   onToggle,
   onProbe,
+  onDiscover,
   onRemove,
 }: {
   provider: ModelProviderRecord;
@@ -123,6 +147,7 @@ function ProviderRow({
   busy: boolean;
   onToggle: () => void;
   onProbe: (model: string) => void;
+  onDiscover: () => void;
   onRemove: () => void;
 }): JSX.Element {
   return (
@@ -145,6 +170,9 @@ function ProviderRow({
         </div>
         {manage && (
           <div className="flex gap-2">
+            <button className="btn btn-ghost" disabled={busy} onClick={onDiscover}>
+              Fetch models
+            </button>
             <button className="btn btn-ghost" disabled={busy} onClick={onToggle}>
               {provider.enabled ? 'Disable' : 'Enable'}
             </button>

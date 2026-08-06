@@ -8,6 +8,7 @@ export const runtimeApi = {
   update: (id: string, fields: Partial<CreateProviderRequest>) =>
     patch<{ provider: ModelProviderRecord }>(`/api/model-providers/${id}`, fields),
   remove: (id: string) => del<{ ok: true }>(`/api/model-providers/${id}`),
+  availableModels: (id: string) => request<{ models: string[] }>(`/api/model-providers/${id}/available-models`),
   probe: (id: string, model: string) =>
     post<{ result: ProbeResult }>(`/api/model-providers/${id}/probe`, { model }),
 };

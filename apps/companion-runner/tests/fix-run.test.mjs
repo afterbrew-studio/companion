@@ -213,7 +213,23 @@ test('a remote runner performs a fix run: prepared worktree, agent change, diff,
     'a directory outside the managed root is refused',
   );
 
-  // 7. The run is released, as the orchestrator does when it enters review.
+  // 7. The reviewed branch is published. This is the last step of a fix run and
+  //    the only one that reaches a remote: `Checkouts.push` sends `HEAD` to
+  //    `origin`, carrying whatever credential the daemon resolved for it. The
+  //    origin here is local, so what is proven is the mechanics rather than
+  //    GitHub's acceptance of a token.
+  // Without a credential the machine REFUSES rather than trying: the fence is
+  // fail-closed, and this is the message an operator would see.
+  await assert.rejects(
+    () => call('POST', '/git/push', { repo: 'acme/app', cwd, branch: 'fix/paging' }),
+    /no personal GitHub credential/,
+    'a push with no credential is refused, not attempted',
+  );
+  await call('POST', '/git/push', { repo: 'acme/app', cwd, branch: 'fix/paging', githubToken: 'test-token' });
+  const published = git(['log', '-1', '--pretty=%s', 'fix/paging'], origin);
+  assert.match(published, /Fix off-by-one in pagination cursor/, 'the branch reached the origin');
+
+  // 8. The run is released, as the orchestrator does when it enters review.
   await call('POST', `/runs/${runId}/stop`);
   const health = await call('GET', '/health');
   assert.equal(health.liveRuns, 0, 'the slot is free again');
