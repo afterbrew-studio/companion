@@ -351,3 +351,37 @@ test('a failed database update restores the previous secret value', () => {
   assert.equal(values.get(`connection:${atomic.id}:token`), 'atomic-secret');
   db.close();
 });
+
+test('a multiselect field registers and stores only the values it offered', () => {
+  const { db, service } = fixture();
+  const base = provider();
+  service.registerProvider({
+    ...base,
+    descriptor: {
+      ...base.descriptor,
+      fields: [
+        ...base.descriptor.fields,
+        {
+          key: 'kinds',
+          label: 'Kinds',
+          kind: 'multiselect',
+          options: [
+            { value: 'run.failed', label: 'Failed' },
+            { value: 'run.finished', label: 'Finished' },
+          ],
+        },
+      ],
+    },
+  });
+
+  const record = connection(service, 'kinds', { kind: 'instance' }, {
+    config: { region: 'eu', token: 'kinds-secret', kinds: 'run.failed,run.finished' },
+  });
+  assert.equal(record.config.kinds, 'run.failed,run.finished');
+  assert.equal(service.updateConnection(record.id, { config: { kinds: '' } }).config.kinds, '');
+  assert.throws(
+    () => service.updateConnection(record.id, { config: { kinds: 'run.invented' } }),
+    /unsupported value/,
+  );
+  db.close();
+});
