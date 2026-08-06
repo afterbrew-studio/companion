@@ -160,3 +160,44 @@ test('the shell refuses the git commands that would invalidate the run', async (
     );
   }
 });
+
+/**
+ * Trimming has one rule that matters: a tool result may never outlive its call.
+ * Cutting anywhere but a user-message boundary produces a conversation the
+ * provider rejects for a reason that reads nothing like "too long".
+ */
+test('compaction drops whole exchanges and never orphans a tool result', async () => {
+  const { compactMessages, estimateTokens } = await import('../dist/child/compaction.js');
+  const round = (n) => [
+    { role: 'user', content: `question ${n} ${'x'.repeat(400)}` },
+    { role: 'assistant', content: [{ type: 'tool-call', toolCallId: `c${n}`, toolName: 'read_file', input: {} }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: `c${n}`, toolName: 'read_file', output: 'y'.repeat(400) }] },
+    { role: 'assistant', content: `answer ${n}` },
+  ];
+  const messages = [...round(1), ...round(2), ...round(3)];
+
+  assert.equal(
+    compactMessages(messages, estimateTokens(messages) + 10).droppedMessages,
+    0,
+    'a conversation that fits is untouched',
+  );
+
+  const trimmed = compactMessages(messages, estimateTokens([...round(2), ...round(3)]));
+  assert.ok(trimmed.droppedMessages > 0, 'something was dropped');
+  assert.equal(trimmed.messages[0].role, 'user', 'the kept conversation starts at an exchange boundary');
+
+  const calls = new Set();
+  for (const message of trimmed.messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === 'tool-call') calls.add(part.toolCallId);
+      if (part.type === 'tool-result') assert.ok(calls.has(part.toolCallId), `${part.toolCallId} kept its call`);
+    }
+  }
+
+  assert.equal(
+    compactMessages(messages, 1).droppedMessages,
+    0,
+    'one oversized exchange is left for the provider to refuse, not silently mutilated',
+  );
+});

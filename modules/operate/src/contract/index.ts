@@ -5,6 +5,7 @@ import type { AskRequest, HarnessCapabilities, MoxxyEvent } from '@moxxy/compani
 import type { OperateService } from '../api/operate-service.js';
 
 export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pricing.js';
+import type { ModelPricing } from './model-pricing.js';
 
 /**
  * module-operate contract slice — the execution plane: agent runs + the run
@@ -214,6 +215,13 @@ export interface RunRecord {
   readonly prUrl: string | null;
   /** Per-run model override; null lets the selected runtime decide. */
   readonly model: string | null;
+  /**
+   * What this run's model cost when it started, USD per million tokens. Null
+   * means price it from the built-in table: nobody can price an arbitrary
+   * endpoint, and re-reading a provider record later would reprice a run that
+   * already happened.
+   */
+  readonly price: ModelPricing | null;
   /** Runner (machine) this run executes on; null = the built-in local runner. */
   readonly runnerId: string | null;
   /**

@@ -84,6 +84,7 @@ function localProvider(): ResolvedModelSpec | null {
     headers: {},
     query: {},
     model,
+    contextWindow: numberFrom(process.env.COMPANION_RUNNER_CONTEXT_WINDOW) ?? null,
     apiVersion: process.env.COMPANION_RUNNER_PROVIDER_API_VERSION?.trim() || null,
     sampling: {},
     providerOptions: {},

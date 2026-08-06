@@ -379,11 +379,11 @@ takes it back out on disable, `LocalRunnerBackend` spawns it, detection reports
 package in a checkout and through `dist/agent.js` in the bundle. Local runner
 only.
 
-**3. Providers (done, minus the price snapshot).** The `model_providers` table,
-the credential in the kernel's secret store, the routes, the page, the probe,
-config-as-code adoption at enable, and `models: 'providers'`. The run-row price
-snapshot is the piece still outstanding, so a BYOK model outside the built-in
-table still prices as unknown.
+**3. Providers (done).** The `model_providers` table, the credential in the
+kernel's secret store, the routes, the page, the probe, config-as-code adoption
+at enable, and `models: 'providers'`. The price a run executed at is snapshotted
+onto its row and the spend aggregation groups by it, so correcting a provider
+record never reprices money already spent.
 
 **4. One-shots in production (mechanism done).** `runOneShot` takes a
 `resultSchema` and it reaches the harness on both the local and the remote path;
@@ -392,8 +392,10 @@ change on its own. What remains is per-caller: the nine modules that parse JSON
 out of a final message have to start declaring their shape. Measure against
 moxxy on the saved evaluations before changing any default.
 
-**5. Write tools and coding runs.** `write_file`, `edit_file`, `run`, the push
-refusal, output caps, context compaction. Coding runs opt-in per runner.
+**5. Write tools and coding runs (done).** `write_file`, `edit_file`, `run`, the
+typed local git tools, the refusals that protect what Companion recorded, output
+caps, and context compaction at exchange boundaries so a long run trims instead
+of failing. Coding runs opt-in per runner.
 
 **6. Interactive approvals.** `approvals: 'interactive'`, ask over the pipe,
 per-tool policy. The dark UI lights up.

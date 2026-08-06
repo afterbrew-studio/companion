@@ -87,7 +87,9 @@ export class OperateService {
     const row = this.runsStore.get(runId);
     if (!row) return null;
     const run = rowToRun(row, false);
-    return usageSnapshot(run, this.priceOverride(run.model));
+    // The run's own snapshot first: a report of what was spent must not move
+    // when somebody corrects a provider record afterwards.
+    return usageSnapshot(run, run.price ?? this.priceOverride(run.model));
   }
 
   /**
@@ -208,6 +210,9 @@ export class OperateService {
   /** module-runtime plugs its own provider prices in at onEnable. */
   setModelPriceResolver(resolve: (model: string | null) => ModelPricing | null): void {
     this.modelPrice.current = resolve;
+    // The orchestrator snapshots the price onto a new run, so it needs the same
+    // answer the ceiling gets rather than a second registration to forget.
+    this.orchestrator.setModelPriceResolver(resolve);
   }
 
   /** An operator-declared price for a model, or null to use the built-in table. */

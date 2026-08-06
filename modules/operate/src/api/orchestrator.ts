@@ -21,6 +21,7 @@ import { laneKey } from '../contract/index.js';
 import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
 import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
+import type { ModelPricing } from '../contract/model-pricing.js';
 import { rowToRun, rowToRunList } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -231,6 +232,17 @@ export class Orchestrator implements RunnerEventSink {
     // every machine rather than only where the resolver happens to live.
     this.runners.setRunExtras((runId) => this.runExtras(runId));
   }
+
+  /**
+   * What an operator's own models cost. Shared with the ceiling through the
+   * same holder, so the number snapshotted onto a run and the number that
+   * blocked it cannot disagree.
+   */
+  setModelPriceResolver(resolve: (model: string | null) => ModelPricing | null): void {
+    this.modelPrice = resolve;
+  }
+
+  private modelPrice: (model: string | null) => ModelPricing | null = () => null;
 
   /** Registered by module-code at enable; see OperateService.setVerifyCommandResolver. */
   setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
@@ -698,6 +710,10 @@ export class Orchestrator implements RunnerEventSink {
       issueNumber: opts.issueNumber ?? null,
       proposalId: opts.proposalId ?? null,
       branch: opts.branch ?? null,
+      // Snapshotted here, at the one moment the model is settled. Reading the
+      // operator's provider record later would reprice a run that already
+      // happened, which is the one thing a spend report must not do.
+      price: this.modelPrice(model),
       prUrl: null,
       model,
       runnerId,

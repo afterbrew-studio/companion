@@ -34,6 +34,12 @@ export interface ResolvedModelSpec {
   readonly query: Readonly<Record<string, string>>;
   /** Provider-native model id, sent verbatim. On Azure this is a deployment. */
   readonly model: string;
+  /**
+   * The model's context window, as the operator declared it. Null turns
+   * compaction off for this run: trimming against a guessed number would drop
+   * work for a limit that may not exist.
+   */
+  readonly contextWindow: number | null;
   /** Azure versions its API this way; ignored by every other kind. */
   readonly apiVersion: string | null;
   readonly sampling: {

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { stepCountIs, streamText, type LanguageModelUsage, type ModelMessage, type ToolSet } from 'ai';
 import type { RuntimeCommand } from '../protocol.js';
 import type { ResolvedModelSpec, RuntimeAccess, RuntimeLimits } from '../spec.js';
+import { CONTEXT_BUDGET, compactMessages, estimateTokens } from './compaction.js';
 import { resolveModel } from './providers.js';
 import { isFile, toolsFor } from './tools.js';
 
@@ -142,6 +143,7 @@ export class Agent {
     this.turnId = command.turnId;
     this.event('user_prompt', { text: command.prompt });
     this.messages.push({ role: 'user', content: command.prompt });
+    this.compact();
 
     const aborter = new AbortController();
     this.aborter = aborter;
@@ -247,6 +249,27 @@ export class Agent {
       clearTimeout(timer);
       this.aborter = null;
     }
+  }
+
+  /**
+   * Trim the conversation to fit the window before spending a turn on it.
+   *
+   * Announced on the transcript rather than done quietly: a reader who cannot
+   * see that earlier work left the context has no way to explain an agent that
+   * suddenly forgot it.
+   */
+  private compact(): void {
+    const window = this.spec.contextWindow;
+    if (window === null) return;
+    const result = compactMessages(this.messages, Math.floor(window * CONTEXT_BUDGET));
+    if (result.droppedMessages === 0) return;
+    this.messages.length = 0;
+    this.messages.push(...result.messages);
+    this.event('compaction', {
+      droppedMessages: result.droppedMessages,
+      droppedTokens: result.droppedTokens,
+      keptTokens: estimateTokens(this.messages),
+    });
   }
 
   /**

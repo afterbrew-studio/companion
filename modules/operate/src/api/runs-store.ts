@@ -14,8 +14,8 @@ export class RunsStore {
   insert(run: Omit<RunRecord, 'live' | 'harness'> & { readonly harness: string }): void {
     this.db
       .prepare(
-        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens, outcome)
-         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @runnerId, @userId, @task, @harness, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
+        `INSERT INTO runs (id, kind, status, title, cwd, repo, issue_number, proposal_id, branch, pr_url, model, input_price_per_mtok, output_price_per_mtok, runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens, outcome)
+         VALUES (@id, @kind, @status, @title, @cwd, @repo, @issueNumber, @proposalId, @branch, @prUrl, @model, @inputPrice, @outputPrice, @runnerId, @userId, @task, @harness, @createdAt, @updatedAt, @inputTokens, @outputTokens, @outcome)`,
       )
       // Named one by one rather than handed the whole record: a key the SQL does
       // not declare is an error now, not a silent drop, and `verification` is set
@@ -32,6 +32,8 @@ export class RunsStore {
         branch: run.branch,
         prUrl: run.prUrl,
         model: run.model,
+        inputPrice: run.price?.inputPerMTok ?? null,
+        outputPrice: run.price?.outputPerMTok ?? null,
         runnerId: run.runnerId,
         userId: run.userId,
         task: run.task,
@@ -150,6 +152,7 @@ export class RunsStore {
     const rows = this.db
       .prepare(
         `SELECT id, kind, status, title, repo, issue_number, proposal_id, branch, pr_url, model,
+                input_price_per_mtok, output_price_per_mtok,
                 runner_id, user_id, task, harness, created_at, updated_at, input_tokens, output_tokens
          FROM runs ${clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       )
@@ -364,8 +367,12 @@ export class RunsStore {
     const params = userId === undefined ? [since] : [since, userId];
     return this.db
       .prepare(
-        `SELECT model, COUNT(*) AS runs, SUM(input_tokens) AS input, SUM(output_tokens) AS output
-         FROM runs WHERE created_at >= ?${clause} GROUP BY model`,
+        // Grouped by the PRICE as well as the model, so a run keeps the number
+        // it executed at even after somebody corrects a provider record.
+        `SELECT model, input_price_per_mtok, output_price_per_mtok, COUNT(*) AS runs,
+                SUM(input_tokens) AS input, SUM(output_tokens) AS output
+         FROM runs WHERE created_at >= ?${clause}
+         GROUP BY model, input_price_per_mtok, output_price_per_mtok`,
       )
       .all(...params) as UsageModelRow[];
   }
@@ -380,9 +387,9 @@ export class RunsStore {
     const column = SPEND_COLUMNS[dimension];
     return this.db
       .prepare(
-        `SELECT ${column} AS key, model, COUNT(*) AS runs,
+        `SELECT ${column} AS key, model, input_price_per_mtok, output_price_per_mtok, COUNT(*) AS runs,
                 SUM(input_tokens) AS input, SUM(output_tokens) AS output
-         FROM runs WHERE created_at >= ? GROUP BY ${column}, model`,
+         FROM runs WHERE created_at >= ? GROUP BY ${column}, model, input_price_per_mtok, output_price_per_mtok`,
       )
       .all(since) as SpendGroupRow[];
   }
@@ -433,6 +440,8 @@ const SPEND_COLUMNS: Record<SpendDimension, string> = {
 export interface SpendGroupRow {
   key: string | null;
   model: string | null;
+  input_price_per_mtok?: number | null;
+  output_price_per_mtok?: number | null;
   runs: number;
   input: number;
   output: number;
@@ -446,12 +455,18 @@ export interface UsageDayRow {
 
 export interface UsageModelRow {
   model: string | null;
+  /** The price these runs executed at; null falls back to the built-in table. */
+  input_price_per_mtok?: number | null;
+  output_price_per_mtok?: number | null;
   runs: number;
   input: number;
   output: number;
 }
 
 export interface RunRow {
+  /** The price this run executed at; null falls back to the built-in table. */
+  input_price_per_mtok: number | null;
+  output_price_per_mtok: number | null;
   id: string;
   kind: RunKind;
   status: RunStatus;
@@ -490,6 +505,10 @@ export function rowToRunList(row: RunListRow, live: boolean): RunListRecord {
     branch: row.branch,
     prUrl: row.pr_url,
     model: row.model,
+    price:
+      row.input_price_per_mtok === null || row.output_price_per_mtok === null
+        ? null
+        : { inputPerMTok: row.input_price_per_mtok, outputPerMTok: row.output_price_per_mtok },
     runnerId: row.runner_id,
     harness: describeHarness(row.harness),
     userId: row.user_id,

@@ -11,6 +11,15 @@ import WebSocket from 'ws';
 const agent = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
 const TOKEN = 'test-runner-token';
 
+/** A port the OS just told us is free, rather than one derived and hoped for. */
+async function freePort() {
+  const probe = createServer();
+  await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+  const { port } = probe.address();
+  await new Promise((r) => probe.close(r));
+  return port;
+}
+
 /**
  * The whole remote path, with no daemon: the published agent, started as an
  * operator would start it, driven over the same HTTP + WS surface companiond
@@ -61,7 +70,7 @@ test('a remote runner executes a run under the built-in runtime', async (t) => {
   const providerPort = provider.address().port;
 
   const home = mkdtempSync(join(tmpdir(), 'runner-test-'));
-  const port = 8000 + Math.floor(providerPort % 900);
+  const port = await freePort();
   const runner = spawn(process.execPath, [agent], {
     env: {
       ...process.env,
@@ -148,7 +157,7 @@ test('a remote runner executes a run under the built-in runtime', async (t) => {
 /** The refusal that keeps a machine from accepting work it cannot finish. */
 test('a runner with no model refuses the run and says why', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'runner-test-'));
-  const port = 8900 + Math.floor(Math.abs(home.length * 7) % 90);
+  const port = await freePort();
   const runner = spawn(process.execPath, [agent], {
     env: {
       ...process.env,
@@ -173,11 +182,13 @@ test('a runner with no model refuses the run and says why', async (t) => {
     return { status: res.status, text: await res.text() };
   };
 
+  // The agent is still binding for the first few attempts, so a refused
+  // connection is "not yet", not a failure.
   let health = null;
   for (let attempt = 0; attempt < 60 && health === null; attempt++) {
     await new Promise((r) => setTimeout(r, 250));
-    const res = await call('GET', '/health');
-    health = res.status === 200 ? JSON.parse(res.text) : null;
+    const res = await call('GET', '/health').catch(() => null);
+    health = res?.status === 200 ? JSON.parse(res.text) : null;
   }
   assert.ok(health, 'the runner came up');
   const runtime = health.runtimes.find((r) => r.id === 'companion');

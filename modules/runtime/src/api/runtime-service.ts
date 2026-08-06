@@ -222,6 +222,7 @@ export class RuntimeService {
       headers: provider.headers,
       query: provider.query,
       model: model.id,
+      contextWindow: model.contextWindow,
       apiVersion: provider.apiVersion,
       sampling: {},
       providerOptions: model.options ?? {},

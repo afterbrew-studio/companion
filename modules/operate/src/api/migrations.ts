@@ -433,4 +433,33 @@ export default defineMigrations([
       // Additive migrations are never rolled back destructively in-place.
     },
   },
+  {
+    /**
+     * The price a run actually executed at.
+     *
+     * `model-pricing.ts` knows Anthropic list prices and cannot know an
+     * endpoint an operator configured this morning, so a BYOK instance prices
+     * from its own provider records. Reading those live would reprice last
+     * month's runs the moment somebody corrects a number, which is the one
+     * thing a spend report must not do. Snapshotting at creation is the same
+     * rule the pipeline step library already follows for step specs.
+     *
+     * Null keeps the built-in table as the answer, which is every run that
+     * existed before this column and every model nobody priced here.
+     */
+    version: 13,
+    name: 'runs_price_snapshot',
+    up: (db) => {
+      for (const column of ['input_price_per_mtok', 'output_price_per_mtok']) {
+        try {
+          db.exec(`ALTER TABLE runs ADD COLUMN ${column} REAL`);
+        } catch {
+          // already present: this migration is additive and safe to re-run
+        }
+      }
+    },
+    down: () => {
+      // Additive migrations are never rolled back destructively in-place.
+    },
+  },
 ]);

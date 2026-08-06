@@ -6,6 +6,22 @@ import { estimateUsd, formatUsd, type ModelPricing } from '../contract/model-pri
 
 /** Where an operator-declared price for a model comes from; null = use the table. */
 export type PriceResolver = (model: string | null) => ModelPricing | null;
+
+/**
+ * The price a group of runs actually executed at, snapshotted on their rows.
+ * Preferred over any live lookup so a corrected provider record does not move
+ * a report of money already spent.
+ */
+function rowPrice(row: {
+  input_price_per_mtok?: number | null;
+  output_price_per_mtok?: number | null;
+}): ModelPricing | null {
+  const input = row.input_price_per_mtok;
+  const output = row.output_price_per_mtok;
+  return input === null || input === undefined || output === null || output === undefined
+    ? null
+    : { inputPerMTok: input, outputPerMTok: output };
+}
 import type { RunsStore, SpendDimension, UsageModelRow } from './runs-store.js';
 
 /**
@@ -46,7 +62,7 @@ function priceRows(rows: readonly UsageModelRow[], price: PriceResolver): Priced
   let costUsd = 0;
   let unpricedTokens = 0;
   for (const row of rows) {
-    const cost = estimateUsd(row.model, row.input, row.output, price(row.model));
+    const cost = estimateUsd(row.model, row.input, row.output, rowPrice(row) ?? price(row.model));
     if (cost === null) unpricedTokens += row.input + row.output;
     else costUsd += cost;
   }
@@ -221,7 +237,7 @@ export class Budgets {
     const buckets = new Map<string, { entry: SpendEntry; partial: boolean }>();
     for (const row of this.runs.spendByDimension(dimension, since)) {
       const key = row.key ?? '';
-      const cost = estimateUsd(row.model, row.input, row.output, this.price(row.model));
+      const cost = estimateUsd(row.model, row.input, row.output, rowPrice(row) ?? this.price(row.model));
       const existing = buckets.get(key)?.entry;
       const partial = (buckets.get(key)?.partial ?? false) || (cost === null && row.input + row.output > 0);
       buckets.set(key, {
