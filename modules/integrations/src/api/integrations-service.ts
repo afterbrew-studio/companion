@@ -32,6 +32,16 @@ const FIELD_KEY = /^[a-z][a-zA-Z0-9]*$/;
 const CAPABILITY_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 const CONNECTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/;
 const CONNECTION_SECRET_PREFIX = 'connection:';
+// Keyed by the union rather than listed, so widening the field kinds fails to
+// compile here instead of failing to register a provider at boot.
+const FIELD_KINDS = new Set<string>(Object.keys({
+  text: true,
+  url: true,
+  secret: true,
+  boolean: true,
+  select: true,
+  multiselect: true,
+} satisfies Record<IntegrationConfigField['kind'], true>));
 const PROBE_TIMEOUT_MS = 20_000;
 const DELIVERY_TIMEOUT_MS = 30_000;
 const integrationHealthSchema = z.object({
@@ -679,6 +689,12 @@ function validateField(field: IntegrationConfigField, value: IntegrationFieldVal
   if (field.kind === 'select' && !field.options?.some((option) => option.value === text)) {
     throw new Error(`${field.label} has an unsupported value`);
   }
+  if (field.kind === 'multiselect' && text) {
+    const allowed = new Set(field.options?.map((option) => option.value));
+    if (text.split(',').some((entry) => !allowed.has(entry.trim()))) {
+      throw new Error(`${field.label} has an unsupported value`);
+    }
+  }
   return text;
 }
 
@@ -745,7 +761,7 @@ function assertProvider(adapter: IntegrationProviderAdapter): void {
   }
   const fieldKeys = new Set<string>();
   for (const field of provider.fields) {
-    if (!['text', 'url', 'secret', 'boolean', 'select'].includes(field.kind)) {
+    if (!FIELD_KINDS.has(field.kind)) {
       throw new Error(`field '${field.key}' on integration provider '${provider.id}' has an invalid kind`);
     }
     if (!FIELD_KEY.test(field.key) || fieldKeys.has(field.key)) {
@@ -764,9 +780,9 @@ function assertProvider(adapter: IntegrationProviderAdapter): void {
     if (field.kind === 'secret' && field.default !== undefined) {
       throw new Error(`secret field '${field.key}' cannot have a default`);
     }
-    if (field.kind === 'select') {
+    if (field.kind === 'select' || field.kind === 'multiselect') {
       if (!field.options || field.options.length === 0 || field.options.length > 100) {
-        throw new Error(`select field '${field.key}' must declare between 1 and 100 options`);
+        throw new Error(`${field.kind} field '${field.key}' must declare between 1 and 100 options`);
       }
       const optionValues = new Set<string>();
       for (const option of field.options) {
@@ -775,12 +791,12 @@ function assertProvider(adapter: IntegrationProviderAdapter): void {
           !boundedText(option.label, 200) ||
           optionValues.has(option.value)
         ) {
-          throw new Error(`select field '${field.key}' has an invalid or duplicate option`);
+          throw new Error(`${field.kind} field '${field.key}' has an invalid or duplicate option`);
         }
         optionValues.add(option.value);
       }
     } else if (field.options !== undefined) {
-      throw new Error(`non-select field '${field.key}' cannot declare options`);
+      throw new Error(`field '${field.key}' cannot declare options`);
     }
     if (field.default !== undefined) validateField(field, field.default);
   }
