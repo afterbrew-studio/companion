@@ -1,9 +1,11 @@
 import { defineServices } from '@moxxy/companion-sdk/server';
+import { McpServersStore } from './mcp-store.js';
 import { ProvidersStore } from './providers-store.js';
 import { RuntimeService, type RuntimeConfig } from './runtime-service.js';
 
 export default defineServices((ctx) => {
   const store = new ProvidersStore(ctx.db);
+  const mcpStore = new McpServersStore(ctx.db);
   const config = (): RuntimeConfig => {
     const values = ctx.moduleConfig.values();
     return {
@@ -18,7 +20,7 @@ export default defineServices((ctx) => {
   const operate = ctx.services.get('operate');
   ctx.services.register(
     'runtime',
-    new RuntimeService(store, ctx.secrets, config, () => {
+    new RuntimeService(store, mcpStore, ctx.secrets, config, () => {
       ctx.broadcast({ t: 'runtime.changed' });
       // Configuring the first credential is what turns this runtime from
       // `installed` into `ready`, and a machine that has never chosen a runtime

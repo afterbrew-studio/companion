@@ -15,6 +15,8 @@ export {
   type RuntimeLimits,
 } from './spec.js';
 export { takeLines, type RuntimeCommand, type RuntimeFrame } from './protocol.js';
+export { type McpServerSpec, type McpTransport } from './mcp.js';
+export { probeMcpServer } from './mcp-client.js';
 
 /**
  * The provider-plugin seam is deliberately NOT re-exported here. Its type

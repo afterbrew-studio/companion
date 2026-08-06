@@ -6,6 +6,7 @@ import {
   RUNTIME_HARNESS_ID,
   RuntimeHarness,
   readRuntimeRunHistory,
+  type McpServerSpec,
   type ResolvedModelSpec,
   type RuntimeLimits,
 } from '@moxxy/companion-runtime';
@@ -84,6 +85,7 @@ export class RuntimeSessions {
     access: AgentRunAccess;
     spec?: unknown;
     limits?: unknown;
+    mcpServers?: unknown;
     verifyCommand?: string;
     resultSchema?: unknown;
     attended?: boolean;
@@ -106,6 +108,9 @@ export class RuntimeSessions {
         limits: (args.limits as RuntimeLimits | undefined) ?? DEFAULT_LIMITS,
         eventsPath: files.eventsPath,
         statePath: files.statePath,
+        // Resolved by the controlling Companion, which holds the records; this
+        // machine has no MCP configuration of its own to fall back to.
+        ...(Array.isArray(args.mcpServers) ? { mcpServers: args.mcpServers as readonly McpServerSpec[] } : {}),
         ...(args.verifyCommand ? { verifyCommand: args.verifyCommand } : {}),
         ...(args.resultSchema !== undefined ? { resultSchema: args.resultSchema } : {}),
         approvals: args.attended === true ? 'interactive' : 'policy',

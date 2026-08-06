@@ -1,3 +1,4 @@
+import type { McpServerSpec } from './mcp.js';
 import type { ResolvedModelSpec, RuntimeAccess, RuntimeLimits } from './spec.js';
 
 /**
@@ -29,6 +30,8 @@ export type RuntimeCommand =
       readonly resultSchema?: unknown;
       /** Scoped access back to this instance, for platform-operating runs. */
       readonly companionApi?: { readonly baseUrl: string; readonly token: string };
+      /** MCP servers this run may reach, already filtered by the daemon. */
+      readonly mcpServers?: readonly McpServerSpec[];
       /**
        * Whether a person is watching and may approve one tool call at a time.
        *

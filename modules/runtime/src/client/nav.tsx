@@ -20,4 +20,19 @@ export const nav = defineNav([
       </NavIcon>
     ),
   },
+  {
+    key: 'mcp-servers',
+    label: 'MCP servers',
+    hash: '#/mcp-servers',
+    permission: 'runtime:read',
+    section: 'admin-integrations',
+    order: 5,
+    icon: (
+      <NavIcon>
+        <path d="M4 7h16" />
+        <path d="M4 12h16" />
+        <path d="M4 17h10" />
+      </NavIcon>
+    ),
+  },
 ]);

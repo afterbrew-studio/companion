@@ -10,6 +10,7 @@ import type {
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
+import type { McpServerSpec } from './mcp.js';
 import { takeLines, type RuntimeCommand, type RuntimeFrame } from './protocol.js';
 import { DEFAULT_LIMITS, type ResolvedModelSpec, type RuntimeAccess, type RuntimeLimits } from './spec.js';
 
@@ -59,6 +60,8 @@ export interface RuntimeHarnessOptions {
   readonly companionApi?: { readonly baseUrl: string; readonly token: string };
   /** `interactive` only for a run somebody is watching. See the capability. */
   readonly approvals?: 'policy' | 'interactive';
+  /** MCP servers this run may reach, already filtered by the daemon's policy. */
+  readonly mcpServers?: readonly McpServerSpec[];
   /**
    * Every model this machine may run, not just the one this run resolved to.
    * `sessionInfo` is how the runner registry learns a machine's catalog, and a
@@ -153,6 +156,7 @@ export class RuntimeHarness implements Harness {
       ...(this.opts.resultSchema !== undefined ? { resultSchema: this.opts.resultSchema } : {}),
       ...(this.opts.companionApi ? { companionApi: this.opts.companionApi } : {}),
       ...(this.opts.approvals ? { approvals: this.opts.approvals } : {}),
+      ...(this.opts.mcpServers?.length ? { mcpServers: this.opts.mcpServers } : {}),
     });
 
     await new Promise((resolve) => setTimeout(resolve, settleMs));

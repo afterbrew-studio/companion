@@ -111,7 +111,9 @@ export interface HarnessRegistration {
   remotePlan?(
     model: string | null,
     workspaceId: string | null,
-  ): { readonly spec?: unknown; readonly limits?: unknown } | null;
+    /** The run's access, because what a run may reach is part of what it needs. */
+    access: AgentRunAccess,
+  ): { readonly spec?: unknown; readonly limits?: unknown; readonly mcpServers?: unknown } | null;
 }
 
 const registered = new Map<string, HarnessRegistration>();

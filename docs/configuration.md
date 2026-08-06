@@ -30,6 +30,37 @@ artifact is built, not when one runs. See
 Advanced settings such as `maxLiveRuns` and `moxxyCliPath` live in
 `${COMPANION_HOME}/companiond.json`, written after first boot.
 
+## MCP servers for the built-in runtime
+
+External tools an agent run may call. Configure them under Settings → MCP
+servers, or declare them in `companiond.json` so a container ships with its
+integrations. Each server's one secret arrives by environment indirection and is
+substituted wherever `${secret}` appears:
+
+```json
+{
+  "mcpServers": [
+    {
+      "id": "inventory",
+      "label": "Inventory",
+      "transport": "http",
+      "url": "https://mcp.acme.internal/mcp",
+      "headers": { "authorization": "Bearer ${secret}" },
+      "secretEnv": "INVENTORY_MCP_TOKEN",
+      "access": ["workspace-write"],
+      "tools": ["lookup"]
+    }
+  ]
+}
+```
+
+`access` is the run accesses this server serves, and a run whose access is not
+listed is never offered its tools. `tools` is an allowlist; omit it to offer
+everything the server lists. `transport: "stdio"` takes `command`, `args` and
+`env` instead, and the command must be installed on whichever machine runs the
+agent. A remote runner is sent these definitions only over https, because they
+carry credentials.
+
 ## GitHub Enterprise Server
 
 Two settings, by environment or in `companiond.json`:

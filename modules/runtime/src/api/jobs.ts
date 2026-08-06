@@ -4,7 +4,7 @@ import { paths } from '@moxxy/companion-services';
 import { registerHarness, unregisterHarness } from '@companion/module-operate/api';
 import { RUNTIME_HARNESS_ID } from '@moxxy/companion-runtime';
 import { harnessRegistration } from './harness.js';
-import type { DeclaredProvider } from './runtime-service.js';
+import type { DeclaredMcpServer, DeclaredProvider } from './runtime-service.js';
 import '../contract/index.js';
 
 /**
@@ -19,8 +19,9 @@ export default defineJobs({
     // Declared providers are adopted before anything can ask whether this
     // machine is ready, so a container that shipped with its providers is ready
     // on its first boot rather than after somebody clicks.
-    const declared = declaredProviders();
-    if (declared.length > 0) runtime.adopt(declared);
+    const declared = declaredConfig();
+    if (declared.providers.length > 0) runtime.adopt(declared.providers);
+    if (declared.mcpServers.length > 0) runtime.adoptMcp(declared.mcpServers);
     registerHarness(harnessRegistration(runtime, (runId) => operate.orchestrator.runExtras(runId)));
     // Detection was cached before this harness existed, and a machine that has
     // never chosen one adopts whatever is ready. Without this, enabling the
@@ -33,18 +34,22 @@ export default defineJobs({
 });
 
 /**
- * Providers declared in `$COMPANION_HOME/companiond.json`. A hosted deployment
- * is only reproducible if its providers ship with the container, and the key
- * arrives through `apiKeyEnv` so it can be a mounted secret rather than a value
- * committed into a file.
+ * What `$COMPANION_HOME/companiond.json` declares for this module. A hosted
+ * deployment is only reproducible if its providers and integrations ship with
+ * the container, and each credential arrives through an environment variable so
+ * it can be a mounted secret rather than a value committed into a file.
  */
-function declaredProviders(): readonly DeclaredProvider[] {
+function declaredConfig(): {
+  providers: readonly DeclaredProvider[];
+  mcpServers: readonly DeclaredMcpServer[];
+} {
   try {
     const parsed = JSON.parse(readFileSync(paths.daemonConfig(), 'utf8')) as {
       modelProviders?: readonly DeclaredProvider[];
+      mcpServers?: readonly DeclaredMcpServer[];
     };
-    return parsed.modelProviders ?? [];
+    return { providers: parsed.modelProviders ?? [], mcpServers: parsed.mcpServers ?? [] };
   } catch {
-    return [];
+    return { providers: [], mcpServers: [] };
   }
 }

@@ -37,6 +37,8 @@ export interface RemoteSpawnPlan {
   /** Resolved model spec; only ever sent over https (see `spawn`). */
   readonly spec?: unknown;
   readonly limits?: unknown;
+  /** Resolved MCP servers; they carry credentials, so they travel with `spec`. */
+  readonly mcpServers?: unknown;
   readonly verifyCommand?: string;
   readonly resultSchema?: unknown;
   readonly attended?: boolean;
@@ -75,7 +77,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
      * a provider record, neither of which an HTTP client should know how to
      * read; the default keeps the pre-protocol-7 behaviour of saying nothing.
      */
-    private readonly spawnPlan: (runId: string) => RemoteSpawnPlan = () => ({}),
+    private readonly spawnPlan: (runId: string, access: AgentRunAccess) => RemoteSpawnPlan = () => ({}),
     /** Whether this instance could resolve a model for that runtime itself. */
     private readonly canSupplyModel: (harnessId: string) => boolean = () => false,
   ) {
@@ -180,9 +182,14 @@ export class RemoteRunnerBackend implements RunnerBackend {
    * plain http is told the harness and the model reference and resolves the
    * credential from its own configuration; if it has none the spawn fails
    * there, visibly, rather than here with a key already on the wire.
+   *
+   * MCP server definitions carry credentials of their own — a bearer header, a
+   * token in an environment variable — so they travel under the same rule. A
+   * run on a plain-http runner therefore has no MCP tools rather than having
+   * them at the cost of a secret in the clear.
    */
   async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
-    const plan = this.spawnPlan(runId);
+    const plan = this.spawnPlan(runId, access);
     const secure = this.base().toLowerCase().startsWith('https://');
     await this.call('POST', `/runs/${runId}/spawn`, {
       cwd,
@@ -190,6 +197,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
       access,
       ...(plan.harness ? { harness: plan.harness, model: plan.model } : {}),
       ...(plan.spec !== undefined && secure ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(plan.mcpServers !== undefined && secure ? { mcpServers: plan.mcpServers } : {}),
       ...(plan.verifyCommand ? { verifyCommand: plan.verifyCommand } : {}),
       ...(plan.resultSchema !== undefined ? { resultSchema: plan.resultSchema } : {}),
       ...(plan.attended === true ? { attended: true } : {}),

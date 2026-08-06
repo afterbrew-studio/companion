@@ -280,7 +280,7 @@ async function routeRun(
   switch (action) {
     case 'spawn': {
       requireMethod(method, 'POST', action);
-      const { cwd, sessionId, access, harness, spec, limits, verifyCommand, resultSchema, attended } =
+      const { cwd, sessionId, access, harness, spec, limits, mcpServers, verifyCommand, resultSchema, attended } =
         body as AgentSpawnRequest;
       requireString(cwd, 'cwd');
       requireString(sessionId, 'sessionId');
@@ -301,6 +301,7 @@ async function routeRun(
             access,
             spec,
             limits,
+            mcpServers,
             ...(verifyCommand ? { verifyCommand } : {}),
             ...(resultSchema !== undefined ? { resultSchema } : {}),
             ...(attended === true ? { attended: true } : {}),

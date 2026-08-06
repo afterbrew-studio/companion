@@ -91,6 +91,7 @@ export function harnessRegistration(
           eventsPath: files.eventsPath,
           statePath: files.statePath,
           catalog: runtime.catalog(),
+          mcpServers: runtime.mcpFor(request.access, request.workspaceId),
           // Only a run somebody is watching asks: see the capability comment.
           approvals: request.attended ? 'interactive' : 'policy',
           ...(verifyCommand ? { verifyCommand } : {}),
@@ -114,9 +115,11 @@ export function harnessRegistration(
      * is the backend's call: it carries a credential, and the daemon sends one
      * only over https.
      */
-    remotePlan: (model, workspaceId) => {
+    remotePlan: (model, workspaceId, access) => {
       const spec = runtime.resolve(model, workspaceId);
-      return spec ? { spec, limits: runtime.limits() } : null;
+      if (!spec) return null;
+      const mcpServers = runtime.mcpFor(access, workspaceId);
+      return { spec, limits: runtime.limits(), ...(mcpServers.length > 0 ? { mcpServers } : {}) };
     },
   };
 }

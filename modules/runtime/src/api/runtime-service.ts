@@ -1,11 +1,22 @@
 import { randomUUID } from 'node:crypto';
-import { probeModel, type ResolvedModelSpec, type RuntimeLimits } from '@moxxy/companion-runtime';
+import {
+  probeMcpServer,
+  probeModel,
+  type McpServerSpec,
+  type ResolvedModelSpec,
+  type RuntimeAccess,
+  type RuntimeLimits,
+} from '@moxxy/companion-runtime';
 import type {
+  CreateMcpServerRequest,
   CreateProviderRequest,
+  McpCheckResult,
+  McpServerRecord,
   ModelProviderRecord,
   ModelRecord,
   ProbeResult,
 } from '../contract/index.js';
+import { rowToMcpServer, type McpServerRow, type McpServersStore } from './mcp-store.js';
 import { rowToProvider, type ProviderRow, type ProvidersStore } from './providers-store.js';
 
 /** A provider as declared in `companiond.json`, credential taken by indirection. */
@@ -13,6 +24,12 @@ export interface DeclaredProvider extends Omit<CreateProviderRequest, 'apiKey'> 
   readonly id: string;
   /** Name of the environment variable holding the key, so k8s secrets work. */
   readonly apiKeyEnv?: string;
+}
+
+/** An MCP server as declared in `companiond.json`, secret taken by indirection. */
+export interface DeclaredMcpServer extends Omit<CreateMcpServerRequest, 'secret'> {
+  readonly id: string;
+  readonly secretEnv?: string;
 }
 
 /**
@@ -46,6 +63,7 @@ export interface RuntimeConfig {
 export class RuntimeService {
   constructor(
     private readonly store: ProvidersStore,
+    private readonly mcpStore: McpServersStore,
     private readonly secrets: ProviderSecrets,
     private readonly config: () => RuntimeConfig,
     private readonly broadcast: () => void,
@@ -227,6 +245,113 @@ export class RuntimeService {
       .sort();
   }
 
+  // ---------- MCP servers -----------------------------------------------------
+
+  listMcp(): McpServerRecord[] {
+    return this.mcpStore.list().map((row) => rowToMcpServer(row, this.secrets.get(mcpKeyOf(row.id)) !== null));
+  }
+
+  getMcp(id: string): McpServerRecord | null {
+    const row = this.mcpStore.get(id);
+    return row ? rowToMcpServer(row, this.secrets.get(mcpKeyOf(id)) !== null) : null;
+  }
+
+  createMcp(request: CreateMcpServerRequest): McpServerRecord {
+    const id = slug(request.label);
+    const row = toMcpRow(id, request, Date.now());
+    this.mcpStore.insert(row);
+    if (request.secret) this.secrets.set(mcpKeyOf(id), request.secret);
+    this.broadcast();
+    // Reported from what was actually STORED. An empty string is a field the
+    // operator left blank, and answering `hasSecret: true` to it would put a
+    // green flag on a server that has no credential.
+    return rowToMcpServer(row, Boolean(request.secret));
+  }
+
+  /** An empty `secret` leaves the stored one alone: the form is never shown it. */
+  updateMcp(id: string, patch: Partial<CreateMcpServerRequest>): McpServerRecord | null {
+    const existing = this.mcpStore.get(id);
+    if (!existing) return null;
+    const merged = toMcpRow(id, { ...mcpRowToRequest(existing), ...patch }, existing.created_at);
+    this.mcpStore.update(merged);
+    if (patch.secret) this.secrets.set(mcpKeyOf(id), patch.secret);
+    this.broadcast();
+    return rowToMcpServer(merged, this.secrets.get(mcpKeyOf(id)) !== null);
+  }
+
+  deleteMcp(id: string): void {
+    this.mcpStore.delete(id);
+    this.secrets.delete(mcpKeyOf(id));
+    this.broadcast();
+  }
+
+  /**
+   * The servers one run may reach.
+   *
+   * Both gates are applied here rather than in the runtime: `access` is the
+   * operator's statement about what kind of run a server serves, and the
+   * workspace scope is the same one providers use. The runtime receives the
+   * result and has no way to widen it.
+   */
+  mcpFor(access: RuntimeAccess, workspaceId?: string | null): readonly McpServerSpec[] {
+    return this.listMcp()
+      .filter((record) => record.enabled && record.access.includes(access) && this.inMcpScope(record, workspaceId))
+      .map((record) => this.mcpSpecFor(record));
+  }
+
+  /** Connect once and report what it offers, so a bad record is known on save. */
+  async checkMcp(id: string): Promise<McpCheckResult> {
+    const record = this.getMcp(id);
+    if (!record) throw new Error('MCP server not found');
+    const outcome = await probeMcpServer({ ...this.mcpSpecFor(record), tools: null });
+    return { ok: outcome.ok, tools: outcome.tools, detail: outcome.detail };
+  }
+
+  /**
+   * MCP servers declared in daemon configuration rather than clicked in, so a
+   * hosted deployment ships with its integrations. The secret arrives through
+   * `secretEnv` for the same reason a provider key does.
+   */
+  adoptMcp(declared: readonly DeclaredMcpServer[]): void {
+    for (const entry of declared) {
+      const secret = entry.secretEnv ? (process.env[entry.secretEnv] ?? '') : '';
+      const request: CreateMcpServerRequest = { ...entry, ...(secret ? { secret } : {}) };
+      if (this.mcpStore.get(entry.id)) this.updateMcp(entry.id, request);
+      else {
+        const row = toMcpRow(entry.id, request, Date.now());
+        this.mcpStore.insert(row);
+        if (secret) this.secrets.set(mcpKeyOf(entry.id), secret);
+      }
+    }
+    if (declared.length > 0) this.broadcast();
+  }
+
+  private inMcpScope(record: McpServerRecord, workspaceId?: string | null): boolean {
+    if (record.workspaceIds === null) return true;
+    return workspaceId !== undefined && workspaceId !== null && record.workspaceIds.includes(workspaceId);
+  }
+
+  /**
+   * Record → what the runtime is handed, with the one secret substituted into
+   * wherever the operator wrote `${secret}`. Each server has its own idea of
+   * how a credential is presented — a bearer header, `GITHUB_TOKEN`, a query
+   * gateway's own header — and this models none of them.
+   */
+  private mcpSpecFor(record: McpServerRecord): McpServerSpec {
+    const secret = this.secrets.get(mcpKeyOf(record.id)) ?? '';
+    const fill = (values: Readonly<Record<string, string>>): Record<string, string> =>
+      Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.split(SECRET_TOKEN).join(secret)]));
+    return {
+      id: record.id,
+      label: record.label,
+      transport:
+        record.transport === 'http'
+          ? { kind: 'http', url: record.url ?? '', headers: fill(record.headers) }
+          : { kind: 'stdio', command: record.command ?? '', args: record.args, env: fill(record.env) },
+      tools: record.tools,
+    };
+  }
+
   // ---------- probing ---------------------------------------------------------
 
   /**
@@ -286,6 +411,13 @@ function keyOf(providerId: string): string {
   return `provider:${providerId}:key`;
 }
 
+function mcpKeyOf(serverId: string): string {
+  return `mcp:${serverId}:secret`;
+}
+
+/** Where a server's one secret is substituted, wherever the operator wrote it. */
+const SECRET_TOKEN = '${secret}';
+
 function slug(label: string): string {
   const base = label
     .toLowerCase()
@@ -309,6 +441,41 @@ function toRow(id: string, request: CreateProviderRequest, createdAt: number): P
     workspace_ids: request.workspaceIds ? JSON.stringify(request.workspaceIds) : null,
     enabled: request.enabled === false ? 0 : 1,
     created_at: createdAt,
+  };
+}
+
+function toMcpRow(id: string, request: CreateMcpServerRequest, createdAt: number): McpServerRow {
+  return {
+    id,
+    label: request.label,
+    transport: request.transport,
+    command: request.command ?? null,
+    args: JSON.stringify(request.args ?? []),
+    env: JSON.stringify(request.env ?? {}),
+    url: request.url ?? null,
+    headers: JSON.stringify(request.headers ?? {}),
+    access: JSON.stringify(request.access ?? []),
+    tools: request.tools ? JSON.stringify(request.tools) : null,
+    workspace_ids: request.workspaceIds ? JSON.stringify(request.workspaceIds) : null,
+    enabled: request.enabled === false ? 0 : 1,
+    created_at: createdAt,
+  };
+}
+
+function mcpRowToRequest(row: McpServerRow): CreateMcpServerRequest {
+  const record = rowToMcpServer(row, false);
+  return {
+    label: record.label,
+    transport: record.transport,
+    command: record.command,
+    args: record.args,
+    env: record.env,
+    url: record.url,
+    headers: record.headers,
+    access: record.access,
+    tools: record.tools,
+    workspaceIds: record.workspaceIds,
+    enabled: record.enabled,
   };
 }
 

@@ -6,7 +6,8 @@ import manifest from '../module.js';
 import { nav } from './nav.js';
 import { routes } from './routes.js';
 
-export { runtimeApi } from './api.js';
+export { mcpApi, runtimeApi } from './api.js';
 export { useProviders } from './hooks/useProviders.js';
+export { useMcpServers } from './hooks/useMcpServers.js';
 
 export default defineClientModule({ manifest, nav, routes });

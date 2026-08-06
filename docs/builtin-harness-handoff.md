@@ -9,8 +9,8 @@ Branch: `worktree-plan+companion-runner-harness`.
 ## Built and verified
 
 Gates on every commit: `pnpm build`, `pnpm typecheck`, `pnpm acl check`
-(53 permissions / 16 modules), and 9 tests
-(`pnpm --filter @moxxy/companion-runtime test`, `pnpm --filter @moxxy/companion-runner test`).
+(53 permissions / 16 modules), and 24 tests (`pnpm -r test` in
+`packages/runtime`, `apps/companion-runner` and `modules/runtime`).
 
 | Area | State |
 |---|---|
@@ -26,6 +26,7 @@ Gates on every commit: `pnpm build`, `pnpm typecheck`, `pnpm acl check`
 | Price snapshot on the run row, spend grouped by it | done |
 | `cloud` profile, `INSTALL_MOXXY=false`, `docker build --target runner` | done |
 | `companion provider` CLI, first-run key prompt | done |
+| MCP client: stdio + Streamable HTTP, records, policy, UI, config-as-code | done |
 
 Verified once against the real OpenAI API (a coding turn and a structured
 verdict validated by module-slop's own production parser). That run found two
@@ -35,11 +36,12 @@ just the exploration.
 
 ## Not built
 
-**MCP client.** The runtime cannot connect to MCP servers, and AI Help still
-reaches the platform through a single `companion_api` tool rather than the
-narrow per-work-item tools the plan describes. Shape: MCP server config on the
-runtime module, connected in the child at start, tool list gated by the run's
-access exactly as the built-in tools are.
+**Companion's own surface as narrow tools.** AI Help still reaches the platform
+through a single `companion_api` tool rather than the per-work-item tools the
+plan describes ("set the status of the card this run was launched for" is a
+different authority from "call any mutation as this user"). The generic MCP
+client is done and is not this; see `builtin-harness.md` §"Reaching back into
+Companion", which keeps the two apart deliberately.
 
 **A run driven by a live daemon.** Everything is proven by driving the runner's
 own HTTP+WS surface the way `RemoteRunnerBackend` does, which covers the
@@ -57,3 +59,12 @@ use the tool".
 reason is stripped before the model sees it. Whether the model gets a further
 step after a refusal is the provider's call and the runtime claims nothing
 about it.
+
+**A tool set that is shared between turns collects one guard per turn.** Because
+the guard replaces `execute` in place, `McpHub.toolSet()` rebuilds rather than
+caches. A cached set asks a person to approve the same call twice on turn two.
+
+**Registering a signal handler in the child replaces default termination.** The
+child now handles SIGTERM so it can stop the MCP servers it started, which means
+it must also release stdin: a flowing stdin holds the process alive until the
+parent's follow-up SIGKILL, turning every clean stop into a hard one.

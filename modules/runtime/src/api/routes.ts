@@ -50,6 +50,46 @@ const createSchema = z.object({
 // Empty means "leave the stored credential alone": the form is never shown it.
 const patchSchema = createSchema.partial();
 
+/**
+ * `command` is executed on whichever machine runs the agent, so this is
+ * administration in the strictest sense: it never comes from a prompt, a run
+ * argument or anything a model produced, and `runtime:manage` is the same
+ * permission that already configures where this instance sends its money.
+ */
+const mcpFields = z.object({
+  label: z.string().trim().min(1).max(80),
+  transport: z.enum(['stdio', 'http']),
+  command: z.string().trim().max(500).nullable().default(null),
+  args: z.array(z.string().max(500)).max(50).default([]),
+  env: z.record(z.string().max(2_000)).default({}),
+  url: z.union([baseUrl, z.null()]).default(null),
+  headers: z.record(z.string().max(2_000)).default({}),
+  secret: z.string().max(4_000).optional(),
+  access: z.array(z.enum(['read-only', 'workspace-write', 'trusted-assistant'])).default([]),
+  tools: z.array(z.string().min(1).max(200)).max(200).nullable().default(null),
+  workspaceIds: z.array(z.string().min(1).max(100)).nullable().default(null),
+  enabled: z.boolean().default(true),
+});
+
+const createMcpSchema = mcpFields
+  .refine((value) => value.transport !== 'stdio' || (value.command ?? '').length > 0, {
+    message: 'a stdio server needs the command that starts it',
+    path: ['command'],
+  })
+  .refine((value) => value.transport !== 'http' || value.url !== null, {
+    message: 'an http server needs the endpoint it is reached at',
+    path: ['url'],
+  });
+
+/**
+ * The same fields, all optional. A refinement cannot ride along, because these
+ * two rules are about the WHOLE record and a patch only carries part of one;
+ * the route applies them to the merged result instead. An absent key is omitted
+ * rather than parsed to undefined, which is what makes that merge preserve what
+ * was not sent. Empty `secret` means "leave the stored one alone".
+ */
+const patchMcpSchema = mcpFields.partial();
+
 export default defineRoutes((ctx) => {
   const runtime = ctx.services.get('runtime');
   return [
@@ -125,6 +165,71 @@ export default defineRoutes((ctx) => {
         if (!provider) throw notFound('provider not found');
         const result = await runtime.probe(params.id, body.model);
         return { result };
+      },
+    }),
+
+    // ---------- MCP servers -------------------------------------------------
+
+    route({
+      method: 'GET',
+      path: '/api/mcp-servers',
+      access: 'runtime:read',
+      handler: () => ({ servers: runtime.listMcp() }),
+    }),
+
+    route({
+      method: 'POST',
+      path: '/api/mcp-servers',
+      access: 'runtime:manage',
+      body: createMcpSchema,
+      handler: ({ body }) => created({ server: runtime.createMcp(body) }),
+    }),
+
+    route({
+      method: 'PATCH',
+      path: '/api/mcp-servers/:id',
+      access: 'runtime:manage',
+      body: patchMcpSchema,
+      handler: ({ params, body }) => {
+        const existing = runtime.getMcp(params.id);
+        if (!existing) throw notFound('MCP server not found');
+        // Checked against the MERGED record: a patch that only flips the
+        // transport would otherwise store a stdio server with no command.
+        const merged = { ...existing, ...body };
+        if (merged.transport === 'stdio' && !(merged.command ?? '').length) {
+          throw badRequest('a stdio server needs the command that starts it');
+        }
+        if (merged.transport === 'http' && merged.url === null) {
+          throw badRequest('an http server needs the endpoint it is reached at');
+        }
+        const server = runtime.updateMcp(params.id, body);
+        if (!server) throw notFound('MCP server not found');
+        return { server };
+      },
+    }),
+
+    route({
+      method: 'DELETE',
+      path: '/api/mcp-servers/:id',
+      access: 'runtime:manage',
+      handler: ({ params }) => {
+        if (!runtime.getMcp(params.id)) throw notFound('MCP server not found');
+        runtime.deleteMcp(params.id);
+        return { ok: true };
+      },
+    }),
+
+    /**
+     * One real connection, so an operator learns that a server works and which
+     * tools it offers here rather than from a run that quietly lost them.
+     */
+    route({
+      method: 'POST',
+      path: '/api/mcp-servers/:id/check',
+      access: 'runtime:manage',
+      handler: async ({ params }) => {
+        if (!runtime.getMcp(params.id)) throw notFound('MCP server not found');
+        return { result: await runtime.checkMcp(params.id) };
       },
     }),
   ];

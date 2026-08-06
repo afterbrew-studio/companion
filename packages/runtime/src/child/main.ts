@@ -35,6 +35,7 @@ export async function runAgentChild(): Promise<void> {
             ...(command.resultSchema !== undefined ? { resultSchema: command.resultSchema } : {}),
             ...(command.companionApi ? { companionApi: command.companionApi } : {}),
             ...(command.approvals ? { approvals: command.approvals } : {}),
+            ...(command.mcpServers ? { mcpServers: command.mcpServers } : {}),
           },
           (ask) => write({ t: 'ask', ask }),
           (requestId) => write({ t: 'ask.resolved', requestId }),
@@ -81,9 +82,25 @@ export async function runAgentChild(): Promise<void> {
     });
   });
 
-  // The parent closing stdin is how a session ends; anything still running is
-  // abandoned rather than left holding the process open.
-  await new Promise<void>((done) => process.stdin.on('end', () => done()));
+  // A session ends either by the parent closing stdin or by it terminating us.
+  // Both have to reach `close()`: an MCP server started here is a child of this
+  // process, and one left running would outlive the run and hold this process
+  // open with it.
+  const shutdown = (): void => agent?.close();
+  await new Promise<void>((done) => {
+    process.stdin.on('end', () => done());
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.on(signal, () => {
+        // Registering a handler REPLACES default termination, so the read side
+        // has to be released here as well. Left flowing, an open stdin keeps
+        // this process alive until the parent's follow-up SIGKILL, which turns
+        // every clean stop into a hard one.
+        process.stdin.pause();
+        done();
+      });
+    }
+  });
+  shutdown();
 }
 
 // Running this file directly IS the child. The parent spawns it by path, so

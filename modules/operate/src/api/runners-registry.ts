@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentStorageCleanupRequest } from '@moxxy/companion-types';
+import type { AgentRunAccess, AgentStorageCleanupRequest } from '@moxxy/companion-types';
 import type {
   CatalogMachine,
   CatalogMachineModel,
@@ -253,8 +253,10 @@ export class Runners {
             if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
           },
           (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
-          (runId) => this.remoteSpawnPlan(runId),
-          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null, null) != null,
+          (runId, access) => this.remoteSpawnPlan(runId, access),
+          // Only asks whether this instance could resolve a model at all, so it
+          // names a representative access rather than any particular run's.
+          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null, null, 'workspace-write') != null,
         ),
       );
     }
@@ -807,17 +809,19 @@ export class Runners {
    * spec. Only the module that owns those credentials can produce one, so it
    * is asked rather than reconstructed here.
    */
-  private remoteSpawnPlan(runId: string): RemoteSpawnPlan {
+  private remoteSpawnPlan(runId: string, access: AgentRunAccess): RemoteSpawnPlan {
     const row = this.store.runs.get(runId);
     const harness = row?.harness ?? MOXXY_HARNESS.id;
     const model = row?.model ?? null;
     const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
-    const plan = registeredHarness(harness)?.remotePlan?.(model, this.workspaceForRepo(row?.repo ?? null)) ?? null;
+    const plan =
+      registeredHarness(harness)?.remotePlan?.(model, this.workspaceForRepo(row?.repo ?? null), access) ?? null;
     const extras = this.runExtras?.(runId) ?? { verifyCommand: null, resultSchema: undefined };
     return {
       harness,
       model,
       ...(plan?.spec !== undefined ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(plan?.mcpServers !== undefined ? { mcpServers: plan.mcpServers } : {}),
       ...(extras.verifyCommand ? { verifyCommand: extras.verifyCommand } : {}),
       ...(extras.resultSchema !== undefined ? { resultSchema: extras.resultSchema } : {}),
       ...(attended ? { attended: true } : {}),

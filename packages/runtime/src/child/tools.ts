@@ -52,6 +52,12 @@ export interface ToolContext {
   readonly resultSchema?: unknown;
   /** Where a `trusted-assistant` run reaches this instance's own API. */
   readonly companionApi?: { readonly baseUrl: string; readonly token: string };
+  /**
+   * Tools contributed by the MCP servers this run was given. Already namespaced
+   * and already filtered by the daemon's policy, so the only decision left here
+   * is that they are external and therefore always behind the approval guard.
+   */
+  readonly mcpTools?: ToolSet;
   /** Captures the structured answer so it can be returned as the final message. */
   onResult?(value: unknown): void;
   /**
@@ -419,15 +425,20 @@ const companionApiTool = (ctx: ToolContext, api: { baseUrl: string; token: strin
 
 export function toolsFor(access: RuntimeAccess, ctx: ToolContext): ToolSet {
   const result = ctx.resultSchema !== undefined ? resultTool(ctx, ctx.resultSchema) : {};
+  // Guarded at every access, including read-only. "Read-only" is a statement
+  // about this checkout; an MCP server reaches something else entirely, and
+  // whether one of its tools writes is not ours to know.
+  const mcp = guarded({ ...ctx.mcpTools }, ctx);
   if (access === 'trusted-assistant') {
-    return { ...(ctx.companionApi ? companionApiTool(ctx, ctx.companionApi) : {}), ...result };
+    return { ...(ctx.companionApi ? companionApiTool(ctx, ctx.companionApi) : {}), ...mcp, ...result };
   }
-  if (access === 'read-only') return { ...readOnlyTools(ctx), ...result };
+  if (access === 'read-only') return { ...readOnlyTools(ctx), ...mcp, ...result };
   return {
     ...readOnlyTools(ctx),
     // Only what mutates is guarded: reading is not a decision anyone wants to
     // be asked about twenty times, and a person asked that often stops reading.
     ...guarded({ ...writeTools(ctx), ...(ctx.verifyCommand ? verifyTool(ctx, ctx.verifyCommand) : {}) }, ctx),
+    ...mcp,
     ...result,
   };
 }

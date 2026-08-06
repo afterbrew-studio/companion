@@ -287,9 +287,30 @@ as a provider error on the second turn of a resumed run.
 
 Two separate things, and conflating them would be a mistake.
 
-**A generic MCP client** so an instance can attach its own MCP servers per
-runner or per repository, with the tool list gated by the run's access. This is
-plumbing and is the smaller half.
+**A generic MCP client** so an instance can attach its own MCP servers, with the
+tool list gated by the run's access. This is plumbing and is the smaller half.
+
+It is built. A record on the runtime module names a transport (a command run
+directly, or a Streamable HTTP endpoint), the run accesses it serves, an
+optional tool allowlist and a workspace scope; one secret per server lives in
+the kernel's secret store and is substituted wherever the operator wrote
+`${secret}`. The daemon resolves the list for a run and the runtime is handed
+the result, so nothing in the agent process decides who may reach what. Three
+properties are worth keeping:
+
+- Tools are namespaced `mcp__<server>__<tool>`. Two servers may offer `search`,
+  and an MCP tool must never be mistaken for a built-in one in a transcript or
+  an approval card.
+- They are behind the approval guard at **every** access, read-only included.
+  "Read-only" describes this checkout; an MCP server reaches something else, and
+  whether one of its tools writes is not ours to know.
+- A server that will not connect costs its own tools and nothing else. The
+  failure goes on the transcript as a non-fatal `error`, because a coding run
+  that dies because an unrelated integration is down is the worse outcome.
+
+A server's tool descriptions and results are untrusted third-party text placed
+directly into the model's context, and the system prompt says so whenever any
+are attached.
 
 **Companion's own surface as tools.** The stdio MCP server exists
 (`apps/companion-cli/src/mcp.ts`), is filtered by the connected user's role and
@@ -433,9 +454,13 @@ it into a copy: `tool()` returns a branded value the SDK checks before it will
 execute anything, and a spread produces a look-alike that is silently never
 called.
 
-**7. Loopback and MCP.** Typed Companion tools for AI Help (retiring the curl
-briefing and the on-disk credential), narrow scoped write tools for a run's own
-work item, generic MCP client.
+**7. Loopback and MCP.** The generic MCP client is **done**: stdio and
+Streamable HTTP, records on the runtime module with their own secret, tools
+namespaced `mcp__<server>__<tool>` and gated by the run's access, resolved by
+the daemon and sent to a remote runner under the same https rule the model spec
+follows. Still open here: typed Companion tools for AI Help (retiring the curl
+briefing and the on-disk credential) and narrow scoped write tools for a run's
+own work item.
 
 **8. Remote (done).** Protocol 7 carries the harness id, the resolved spec, the
 ceilings, the verification command and the result schema. The agent bundles the

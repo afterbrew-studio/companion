@@ -130,6 +130,16 @@ export interface AgentSpawnRequest {
   readonly spec?: unknown;
   /** Resource ceilings the runtime enforces on itself. */
   readonly limits?: unknown;
+  /**
+   * MCP servers this run may reach, already filtered by the daemon's policy and
+   * opaque here for the same reason `spec` is.
+   *
+   * They can carry credentials, so they travel under the https rule `spec`
+   * does. Added without a protocol bump: an agent too old to read the field
+   * runs the same work with its built-in tools alone, which is a smaller loss
+   * than refusing to place the run at all.
+   */
+  readonly mcpServers?: unknown;
   /** The repository's own verification command, when one is configured. */
   readonly verifyCommand?: string;
   /** JSON Schema the caller wants the answer in (structured one-shots). */
