@@ -80,6 +80,8 @@ export interface HarnessSpawnRequest {
   readonly model: string | null;
   /** Somebody is watching, so a per-call approval would actually be answered. */
   readonly attended: boolean;
+  /** Whose workspace this run serves; null means only shared credentials apply. */
+  readonly workspaceId: string | null;
   readonly onEvent: (event: HarnessEvent) => void;
   readonly onTurnComplete: (turnId?: string) => void;
   readonly onAsk: (ask: AskRequest) => void;
@@ -106,7 +108,10 @@ export interface HarnessRegistration {
    * backend that sends it. Returning null means the machine must resolve its
    * own, which is what happens when the daemon cannot send one safely.
    */
-  remotePlan?(model: string | null): { readonly spec?: unknown; readonly limits?: unknown } | null;
+  remotePlan?(
+    model: string | null,
+    workspaceId: string | null,
+  ): { readonly spec?: unknown; readonly limits?: unknown } | null;
 }
 
 const registered = new Map<string, HarnessRegistration>();

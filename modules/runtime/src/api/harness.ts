@@ -72,7 +72,7 @@ export function harnessRegistration(
     },
 
     create: async (request) => {
-      const spec = runtime.resolve(request.model);
+      const spec = runtime.resolve(request.model, request.workspaceId);
       if (!spec) {
         throw new Error(
           'no model provider is configured for the built-in runtime: add one under Settings, or run companion provider add',
@@ -114,8 +114,8 @@ export function harnessRegistration(
      * is the backend's call: it carries a credential, and the daemon sends one
      * only over https.
      */
-    remotePlan: (model) => {
-      const spec = runtime.resolve(model);
+    remotePlan: (model, workspaceId) => {
+      const spec = runtime.resolve(model, workspaceId);
       return spec ? { spec, limits: runtime.limits() } : null;
     },
   };

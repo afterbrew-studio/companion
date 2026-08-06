@@ -220,6 +220,24 @@ export class OperateService {
     return this.modelPrice.current(model);
   }
 
+  /**
+   * Which workspace a repository belongs to, registered by the module that
+   * owns repositories. Placement does not need it, but a provider scoped to
+   * particular workspaces does: without an answer a scoped credential could
+   * only be applied by guessing, and guessing which team's key pays for a run
+   * is the one mistake a per-workspace credential exists to prevent.
+   */
+  setWorkspaceForRepo(resolve: (repo: string) => string | null): void {
+    this.workspaceForRepoFn = resolve;
+  }
+
+  /** Null when nothing registered, or the repository is not tracked. */
+  workspaceForRepo(repo: string | null): string | null {
+    return repo === null ? null : this.workspaceForRepoFn(repo);
+  }
+
+  private workspaceForRepoFn: (repo: string) => string | null = () => null;
+
   /** module-code plugs its account-aware resolver in at onEnable. */
   setGithubTokenSource(source: GithubTokenSource): void {
     this.tokenSource.current = source;

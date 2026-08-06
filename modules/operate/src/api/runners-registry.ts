@@ -254,7 +254,7 @@ export class Runners {
           },
           (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
           (runId) => this.remoteSpawnPlan(runId),
-          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null) != null,
+          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null, null) != null,
         ),
       );
     }
@@ -812,7 +812,7 @@ export class Runners {
     const harness = row?.harness ?? MOXXY_HARNESS.id;
     const model = row?.model ?? null;
     const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
-    const plan = registeredHarness(harness)?.remotePlan?.(model) ?? null;
+    const plan = registeredHarness(harness)?.remotePlan?.(model, this.workspaceForRepo(row?.repo ?? null)) ?? null;
     const extras = this.runExtras?.(runId) ?? { verifyCommand: null, resultSchema: undefined };
     return {
       harness,
@@ -823,6 +823,13 @@ export class Runners {
       ...(attended ? { attended: true } : {}),
     };
   }
+
+  /** Set by the composition root once the module that owns repositories is up. */
+  setWorkspaceForRepo(resolve: (repo: string | null) => string | null): void {
+    this.workspaceForRepo = resolve;
+  }
+
+  private workspaceForRepo: (repo: string | null) => string | null = () => null;
 
   /** Set by the orchestrator, which owns both per-run answers. */
   setRunExtras(resolve: (runId: string) => { verifyCommand: string | null; resultSchema: unknown }): void {
@@ -923,13 +930,16 @@ export class Runners {
    */
   private localRunSpec(runId: string): LocalRunSpec {
     const row = this.store.runs.get(runId);
-    if (!row) return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null, attended: false };
+    if (!row) {
+      return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null, attended: false, workspaceId: null };
+    }
     // The same two kinds `canSeeRun` calls private to their owner: those are
     // the runs a person is sitting in front of.
     return {
       harness: row.harness,
       model: row.model,
       attended: row.kind === 'interactive' || row.kind === 'assistant',
+      workspaceId: this.workspaceForRepo(row.repo),
     };
   }
 

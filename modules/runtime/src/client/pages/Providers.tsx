@@ -166,6 +166,14 @@ function ProviderRow({
             />
             <MetaSignal tone={provider.enabled ? 'green' : 'zinc'} label={provider.enabled ? 'enabled' : 'disabled'} />
             <MetaSignal tone="zinc" label={`${provider.models.length} model(s)`} />
+            <MetaSignal
+              tone="zinc"
+              label={
+                provider.workspaceIds === null
+                  ? 'every workspace'
+                  : `${provider.workspaceIds.length} workspace(s)`
+              }
+            />
           </div>
         </div>
         {manage && (

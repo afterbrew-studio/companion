@@ -36,6 +36,8 @@ export interface LocalRunSpec {
    * not to: a question nobody hears would hold the turn until it timed out.
    */
   readonly attended: boolean;
+  /** Whose workspace this run serves; scoped provider credentials need it. */
+  readonly workspaceId: string | null;
 }
 
 /**
@@ -57,7 +59,7 @@ export interface LocalRunnerHost {
 }
 
 const MOXXY_ONLY: LocalRunnerHost = {
-  runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null, attended: false }),
+  runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null, attended: false, workspaceId: null }),
   harnesses: () => [MOXXY_HARNESS.id],
   runtime: async () => ({ id: 'moxxy', label: 'Moxxy', version: null, state: 'ready', detail: null }),
 };
@@ -135,7 +137,7 @@ export class LocalRunnerBackend implements RunnerBackend {
     try {
       // A probe is nobody's conversation, so it is never attended: it must not
       // stop on an approval that has no one to answer it.
-      await this.spawnHarness(runId, cwd, 'workspace-write', { harness: harnessId, model: null, attended: false });
+      await this.spawnHarness(runId, cwd, 'workspace-write', { harness: harnessId, model: null, attended: false, workspaceId: null });
       return await this.sessionInfo(runId);
     } finally {
       await this.stop(runId).catch(() => undefined);
@@ -181,6 +183,7 @@ export class LocalRunnerBackend implements RunnerBackend {
           access,
           model: spec.model,
           attended: spec.attended,
+          workspaceId: spec.workspaceId,
           onEvent: handlers.onEvent,
           onTurnComplete: (turnId) => handlers.onTurnComplete({ turnId }),
           onAsk: (ask) => this.sink.onAsk(runId, ask),

@@ -133,6 +133,10 @@ export default defineServices(async (ctx) => {
     budgets,
     agentPolicy,
   );
+  // The registry resolves a scoped provider credential per run, and only the
+  // module that owns repositories knows which workspace a repository belongs
+  // to, so the answer is forwarded rather than duplicated.
+  orchestrator.runners.setWorkspaceForRepo((repo) => service.workspaceForRepo(repo));
   service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
   ctx.services.register('operate', service);
 });

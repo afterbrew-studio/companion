@@ -113,6 +113,7 @@ export default defineJobs({
     // the worktree), code owns the command (it owns repositories). Same inversion
     // as the git token source above; operate never imports code.
     operate.setVerifyCommandResolver((repo) => code.repos.get(repo)?.verify_command ?? null);
+    operate.setWorkspaceForRepo((repo) => code.repos.get(repo)?.workspace_id ?? null);
 
     // A clean install has no admin while services boot. First-boot onboarding
     // creates that admin later, so retry the host gh import at that exact

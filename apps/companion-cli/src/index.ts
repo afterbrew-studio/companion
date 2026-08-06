@@ -38,7 +38,7 @@ import {
   recommendedHarnesses,
   saveHarnesses,
 } from './harnesses.js';
-import { parseProviderCommand, runProviderCommand, PROVIDER_HELP } from './providers.js';
+import { offerBuiltinProvider, parseProviderCommand, runProviderCommand, PROVIDER_HELP } from './providers.js';
 import { withTerminal } from './terminal.js';
 import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
@@ -564,6 +564,9 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
   try {
     await saveHarnesses(url, token, picked);
     process.stdout.write(`Agent work here runs through ${picked.join(', ')}.\n`);
+    // The built-in runtime is the one whose "not ready" is fixed HERE rather
+    // than in another terminal, so it is offered a model straight away.
+    if (picked.includes('companion')) await offerBuiltinProvider(url, token, !options.yes && process.stdin.isTTY);
   } catch (err) {
     process.stderr.write(`Could not save the runtime choice: ${err instanceof Error ? err.message : String(err)}\n`);
   }

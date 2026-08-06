@@ -28,6 +28,8 @@ export const PROVIDER_HELP = `Usage: companion provider <command> [options]
                              call a tool? Records what it observed.
 
 Options:
+  --workspace <id>           Limit this provider to a workspace (repeat for
+                             several). Omitted means every workspace may use it.
   --api-version <v>          Azure only: the version the resource serves
   --yes                      Skip the remove confirmation (required when piped)
   --json                     Machine-readable output
@@ -45,6 +47,7 @@ export interface ProviderCommand {
   readonly key?: string;
   readonly apiVersion?: string;
   readonly models: readonly string[];
+  readonly workspaces: readonly string[];
   readonly json: boolean;
   readonly yes: boolean;
 }
@@ -64,6 +67,8 @@ interface ProviderRow {
   readonly hasKey: boolean;
   readonly enabled: boolean;
   readonly models: readonly ModelRow[];
+  /** null = every workspace; a list = only those. Mirrors how runners scope. */
+  readonly workspaceIds: readonly string[] | null;
 }
 
 const ACTIONS = ['list', 'add', 'remove', 'test', 'models'] as const;
@@ -72,6 +77,7 @@ export function parseProviderCommand(argv: readonly string[]): ProviderCommand {
   const action = ACTIONS.find((a) => a === argv[0]);
   if (!action) throw new Error(`Unknown provider command: ${argv[0] ?? '(none)'}\n\n${PROVIDER_HELP}`);
   const models: string[] = [];
+  const workspaces: string[] = [];
   let id: string | undefined;
   let kind: string | undefined;
   let url: string | undefined;
@@ -94,6 +100,7 @@ export function parseProviderCommand(argv: readonly string[]): ProviderCommand {
     else if (arg === '--key') key = next();
     else if (arg === '--api-version') apiVersion = next();
     else if (arg === '--model') models.push(next());
+    else if (arg === '--workspace') workspaces.push(next());
     else if (arg.startsWith('--')) throw new Error(`Unknown option: ${arg}\n\n${PROVIDER_HELP}`);
     else if (id === undefined) id = arg;
     else throw new Error(`Unexpected argument: ${arg}\n\n${PROVIDER_HELP}`);
@@ -107,6 +114,7 @@ export function parseProviderCommand(argv: readonly string[]): ProviderCommand {
     ...(key === undefined ? {} : { key }),
     ...(apiVersion === undefined ? {} : { apiVersion }),
     models,
+    workspaces,
     json,
     yes,
   };
@@ -129,7 +137,9 @@ export async function runProviderCommand(command: ProviderCommand, baseUrl: stri
         out(
           `${provider.id}  ${provider.label}  [${provider.kind}]  ${provider.enabled ? 'enabled' : 'disabled'}  ${
             provider.hasKey ? 'key set' : 'NO KEY'
-          }${provider.baseUrl ? `  ${provider.baseUrl}` : ''}`,
+          }${provider.baseUrl ? `  ${provider.baseUrl}` : ''}  ${
+            provider.workspaceIds ? `workspaces: ${provider.workspaceIds.join(', ')}` : 'shared'
+          }`,
         );
         for (const model of provider.models) {
           const price =
@@ -153,6 +163,7 @@ export async function runProviderCommand(command: ProviderCommand, baseUrl: stri
         ...(command.key ? { apiKey: command.key } : {}),
         ...(command.apiVersion ? { apiVersion: command.apiVersion } : {}),
         models: command.models.map((id) => ({ id })),
+        workspaceIds: command.workspaces.length > 0 ? command.workspaces : null,
       });
       if (command.json) return out(JSON.stringify(provider, null, 2));
       out(`added ${provider.id} (${provider.kind})`);
@@ -211,5 +222,80 @@ export async function runProviderCommand(command: ProviderCommand, baseUrl: stri
           : `PARTIAL  ${result.model} answered but did not call a tool: it can serve prompt-only work only`,
       );
     }
+  }
+}
+
+/**
+ * First run: give the built-in runtime a model, inline.
+ *
+ * Only asked when that runtime is present and the ONE thing missing is a
+ * credential, which is exactly the state its detection reports as `installed`.
+ * Every other runtime is fixed with its own command in a terminal; this is the
+ * equivalent, in the place the operator already is.
+ */
+export async function offerBuiltinProvider(baseUrl: string, token: string, interactive: boolean): Promise<void> {
+  if (!interactive) return;
+  const api = apiClient(baseUrl, token);
+  const existing = await api<{ providers: ProviderRow[] }>('GET', '/api/model-providers').catch(() => null);
+  // No route means the runtime module is not installed, which is not a problem
+  // to explain: this instance runs an installed CLI instead. A provider that is
+  // already configured is not a question either.
+  if (!existing || existing.providers.length > 0) return;
+
+  const { confirm, input, password, select } = await import('@inquirer/prompts');
+  process.stdout.write(
+    '\nThe built-in runtime is here but has no model to call. It uses a key you supply, and nothing leaves this machine except the model request itself.\n',
+  );
+  if (!(await confirm({ message: 'Add one now?', default: true }))) {
+    process.stdout.write('Skipped. Add one later with: companion provider add\n');
+    return;
+  }
+
+  const kind = await select({
+    message: 'Which endpoint?',
+    choices: [
+      { value: 'anthropic', name: 'Anthropic API' },
+      { value: 'openai', name: 'OpenAI API' },
+      { value: 'azure', name: 'Azure OpenAI / AI Foundry' },
+      { value: 'openai-compatible', name: 'An OpenAI-compatible gateway (LiteLLM, vLLM, OpenRouter, …)' },
+    ],
+  });
+  const needsUrl = kind === 'openai-compatible' || kind === 'azure';
+  const endpoint = needsUrl
+    ? await input({ message: 'Endpoint URL', validate: (v) => /^https?:\/\//i.test(v.trim()) || 'an http(s) URL' })
+    : '';
+  const apiVersion = kind === 'azure' ? await input({ message: 'API version the resource serves' }) : '';
+  const apiKey = await password({ message: 'API key', mask: '*' });
+  const model = await input({
+    message: kind === 'azure' ? 'Deployment name' : 'Model id',
+    validate: (v) => v.trim().length > 0 || 'required',
+  });
+
+  try {
+    const { provider } = await api<{ provider: ProviderRow }>('POST', '/api/model-providers', {
+      label: kind,
+      kind,
+      baseUrl: endpoint.trim() === '' ? null : endpoint.trim(),
+      ...(apiKey.trim() === '' ? {} : { apiKey: apiKey.trim() }),
+      ...(apiVersion.trim() === '' ? {} : { apiVersion: apiVersion.trim() }),
+      models: [{ id: model.trim() }],
+    });
+    // Detect rather than assume: one real round trip answers the question the
+    // operator asked by filling this in at all, which is whether agent work can
+    // run here now.
+    const { result } = await api<{ result: { probe: { ok: boolean; tools: boolean; detail: string | null } } }>(
+      'POST',
+      `/api/model-providers/${encodeURIComponent(provider.id)}/probe`,
+      { model: model.trim() },
+    );
+    if (!result.probe.ok) {
+      process.stdout.write(`Saved, but the test call failed: ${result.probe.detail ?? 'no answer'}\n`);
+    } else if (!result.probe.tools) {
+      process.stdout.write('Saved. It answers but does not call tools, so it can serve prompt-only work only.\n');
+    } else {
+      process.stdout.write(`Saved and tested: ${model.trim()} answers and calls tools.\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`Could not save the provider: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
