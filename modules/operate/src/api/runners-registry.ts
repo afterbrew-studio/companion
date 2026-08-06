@@ -35,6 +35,7 @@ import {
   harnessSet,
   MOXXY_HARNESS,
   offeredHarnesses,
+  registeredHarness,
   registeredHarnesses,
 } from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
@@ -43,7 +44,7 @@ import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import { LocalRunnerBackend, type LocalRunSpec } from './local-backend.js';
-import { RemoteRunnerBackend } from './remote-backend.js';
+import { RemoteRunnerBackend, type RemoteSpawnPlan } from './remote-backend.js';
 
 /** What legacy remote agents are offered until they report their runtime list. */
 const MOXXY_OPTION: HarnessOption = {
@@ -252,6 +253,7 @@ export class Runners {
             if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
           },
           (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
+          (runId) => this.remoteSpawnPlan(runId),
         ),
       );
     }
@@ -786,14 +788,45 @@ export class Runners {
   }
 
   /**
-   * The agent runtimes a machine runs work through, in preference order. Only
-   * the local machine can be set to anything else: the runner agent protocol
-   * carries moxxy-shaped calls, so a remote machine runs moxxy whatever its row
-   * says.
+   * The agent runtimes a machine runs work through, in preference order.
+   *
+   * Remote machines answer from their own row now that the protocol carries a
+   * harness id on spawn. An agent too old to read it reports a protocol
+   * mismatch and reads as outdated, so it never receives placement at all;
+   * before that existed, a remote machine ran moxxy whatever its row said and
+   * this had to force it.
    */
   private harnessesOn(row: RunnerRow): readonly HarnessDescriptor[] {
-    return row.kind === 'local' ? harnessSet(row.harnesses) : [MOXXY_HARNESS];
+    return harnessSet(row.harnesses);
   }
+
+  /**
+   * What to tell a remote agent about a run: which runtime, which model, and,
+   * for a runtime whose credentials this control plane holds, the resolved
+   * spec. Only the module that owns those credentials can produce one, so it
+   * is asked rather than reconstructed here.
+   */
+  private remoteSpawnPlan(runId: string): RemoteSpawnPlan {
+    const row = this.store.runs.get(runId);
+    const harness = row?.harness ?? MOXXY_HARNESS.id;
+    const model = row?.model ?? null;
+    const plan = registeredHarness(harness)?.remotePlan?.(model) ?? null;
+    const extras = this.runExtras?.(runId) ?? { verifyCommand: null, resultSchema: undefined };
+    return {
+      harness,
+      model,
+      ...(plan?.spec !== undefined ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(extras.verifyCommand ? { verifyCommand: extras.verifyCommand } : {}),
+      ...(extras.resultSchema !== undefined ? { resultSchema: extras.resultSchema } : {}),
+    };
+  }
+
+  /** Set by the orchestrator, which owns both per-run answers. */
+  setRunExtras(resolve: (runId: string) => { verifyCommand: string | null; resultSchema: unknown }): void {
+    this.runExtras = resolve;
+  }
+
+  private runExtras: ((runId: string) => { verifyCommand: string | null; resultSchema: unknown }) | null = null;
 
   /**
    * What is installed on this machine, cached.
@@ -901,7 +934,27 @@ export class Runners {
     const row = this.store.runners.get(id);
     if (!row) throw new Error('runner not found');
     const selected = this.harnessesOn(row).map((h) => h.id);
-    if (row.kind !== 'local') return { options: [MOXXY_OPTION], selected };
+    // A remote machine answers from what its agent reported, which is the same
+    // "detect, do not ask" rule the local machine follows: it lists what is
+    // really there rather than what this build could in principle run.
+    if (row.kind !== 'local') {
+      const reported = this.health.get(id)?.runtimes ?? [];
+      const options = reported.flatMap((runtime): HarnessOption[] => {
+        const known = describeHarness(runtime.id);
+        if (known.homepage === '') return [];
+        return [
+          {
+            id: runtime.id,
+            label: known.label,
+            homepage: known.homepage,
+            state: runtime.state === 'ready' ? 'ready' : 'installed',
+            detail: runtime.detail,
+            fix: null,
+          },
+        ];
+      });
+      return { options: options.length > 0 ? options : [MOXXY_OPTION], selected };
+    }
     return { options: offeredHarnesses(await this.detected()), selected };
   }
 

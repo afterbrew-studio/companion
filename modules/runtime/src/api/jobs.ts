@@ -21,7 +21,7 @@ export default defineJobs({
     // on its first boot rather than after somebody clicks.
     const declared = declaredProviders();
     if (declared.length > 0) runtime.adopt(declared);
-    registerHarness(harnessRegistration(runtime, (runId) => operate.orchestrator.verifyCommandForRun(runId)));
+    registerHarness(harnessRegistration(runtime, (runId) => operate.orchestrator.runExtras(runId)));
     // Detection was cached before this harness existed, and a machine that has
     // never chosen one adopts whatever is ready. Without this, enabling the
     // module leaves the box reporting the runtimes it had a minute ago.

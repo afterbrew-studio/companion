@@ -44,8 +44,9 @@ function runFiles(runId: string): { eventsPath: string; statePath: string } {
  */
 export function harnessRegistration(
   runtime: RuntimeService,
-  /** The repository's own verification command for a run, when one is set. */
-  verify: (runId: string) => string | null,
+  /** Per-run answers only the orchestrator has: the verify command and the
+   *  schema a structured one-shot wants its answer in. */
+  extras: (runId: string) => { verifyCommand: string | null; resultSchema: unknown },
 ): HarnessRegistration {
   return {
     descriptor: {
@@ -74,7 +75,7 @@ export function harnessRegistration(
         throw new Error('no model provider is configured: add one under Settings → Model providers');
       }
       const files = runFiles(request.runId);
-      const verifyCommand = verify(request.runId);
+      const { verifyCommand, resultSchema } = extras(request.runId);
       return new RuntimeHarness(
         {
           runId: request.runId,
@@ -87,6 +88,7 @@ export function harnessRegistration(
           statePath: files.statePath,
           catalog: runtime.catalog(),
           ...(verifyCommand ? { verifyCommand } : {}),
+          ...(resultSchema !== undefined ? { resultSchema } : {}),
         },
         {
           onEvent: request.onEvent,
@@ -97,5 +99,16 @@ export function harnessRegistration(
     },
 
     history: (runId, before, limit) => readRuntimeRunHistory(runFiles(runId).eventsPath, before, limit),
+
+    /**
+     * A remote machine cannot read this instance's provider records, so it is
+     * told the resolved model instead. Whether that actually crosses the wire
+     * is the backend's call: it carries a credential, and the daemon sends one
+     * only over https.
+     */
+    remotePlan: (model) => {
+      const spec = runtime.resolve(model);
+      return spec ? { spec, limits: runtime.limits() } : null;
+    },
   };
 }

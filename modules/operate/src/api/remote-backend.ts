@@ -27,6 +27,21 @@ import type { RunnerBackend, RunnerEventSink } from './backend.js';
 const HTTP_TIMEOUT_MS = 30_000;
 
 /**
+ * What the daemon tells a remote agent about a run beyond where to put it.
+ * Everything is optional: a machine that reported protocol 6 gets none of it
+ * and runs what it always ran.
+ */
+export interface RemoteSpawnPlan {
+  readonly harness?: string;
+  readonly model?: string | null;
+  /** Resolved model spec; only ever sent over https (see `spawn`). */
+  readonly spec?: unknown;
+  readonly limits?: unknown;
+  readonly verifyCommand?: string;
+  readonly resultSchema?: unknown;
+}
+
+/**
  * A runner on another machine, reached through its companion-runner agent.
  * Every backend method is one authenticated HTTP call to `/agent/*`; a single
  * long-lived WebSocket receives the run event stream and fans it into the
@@ -54,6 +69,12 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly onStreamState?: (up: boolean) => void,
     /** Instance policy gate; the daemon decides, the runner only executes. */
     private readonly assertPushTarget: (repo: string, branch: string) => void = () => {},
+    /**
+     * What a run executes as on this machine. Injected because it is a row plus
+     * a provider record, neither of which an HTTP client should know how to
+     * read; the default keeps the pre-protocol-7 behaviour of saying nothing.
+     */
+    private readonly spawnPlan: (runId: string) => RemoteSpawnPlan = () => ({}),
   ) {
     this.connectEvents();
   }
@@ -138,8 +159,27 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   // ---------- gateway lifecycle ----------
 
+  /**
+   * Start a run on the agent, telling it which runtime and, where the control
+   * plane holds the credentials, which model.
+   *
+   * The spec carries an API key, so it crosses only over https. A runner on
+   * plain http is told the harness and the model reference and resolves the
+   * credential from its own configuration; if it has none the spawn fails
+   * there, visibly, rather than here with a key already on the wire.
+   */
   async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
-    await this.call('POST', `/runs/${runId}/spawn`, { cwd, sessionId: runId, access });
+    const plan = this.spawnPlan(runId);
+    const secure = this.base().toLowerCase().startsWith('https://');
+    await this.call('POST', `/runs/${runId}/spawn`, {
+      cwd,
+      sessionId: runId,
+      access,
+      ...(plan.harness ? { harness: plan.harness, model: plan.model } : {}),
+      ...(plan.spec !== undefined && secure ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(plan.verifyCommand ? { verifyCommand: plan.verifyCommand } : {}),
+      ...(plan.resultSchema !== undefined ? { resultSchema: plan.resultSchema } : {}),
+    });
     this.liveRuns.add(runId);
   }
   async stop(runId: string): Promise<void> {

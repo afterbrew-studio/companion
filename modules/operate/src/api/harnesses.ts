@@ -95,6 +95,14 @@ export interface HarnessRegistration {
   create(request: HarnessSpawnRequest): Promise<Harness>;
   /** A reaped run's transcript, when the harness keeps one of its own. */
   history?(runId: string, before: number | null, limit: number): HistorySegment;
+  /**
+   * What a REMOTE machine needs in order to start this harness for a run: a
+   * resolved model and the ceilings it runs under. Only the module that owns
+   * the credentials can answer, which is why it is here rather than in the
+   * backend that sends it. Returning null means the machine must resolve its
+   * own, which is what happens when the daemon cannot send one safely.
+   */
+  remotePlan?(model: string | null): { readonly spec?: unknown; readonly limits?: unknown } | null;
 }
 
 const registered = new Map<string, HarnessRegistration>();

@@ -30,3 +30,28 @@ await build({
   },
   logLevel: 'info',
 });
+
+/**
+ * The built-in runtime's child process, beside the agent bundle. It cannot be
+ * inlined: it IS a separate process, spawned by path, and a runner that shipped
+ * without it would advertise a runtime it cannot start.
+ */
+await build({
+  entryPoints: ['../../packages/runtime/src/child/main.ts'],
+  outfile: 'dist/agent.js',
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node24',
+  banner: {
+    js: [
+      "import { createRequire as __cr } from 'module';",
+      "import { fileURLToPath as __f } from 'url';",
+      "import { dirname as __d } from 'path';",
+      'const require = __cr(import.meta.url);',
+      'const __filename = __f(import.meta.url);',
+      'const __dirname = __d(__filename);',
+    ].join('\n'),
+  },
+  logLevel: 'info',
+});

@@ -138,6 +138,9 @@ importers:
       '@moxxy/cli':
         specifier: '*'
         version: 0.29.0
+      '@moxxy/companion-runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       ws:
         specifier: ^8.18.0
         version: 8.21.0

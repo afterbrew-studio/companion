@@ -385,11 +385,12 @@ config-as-code adoption at enable, and `models: 'providers'`. The run-row price
 snapshot is the piece still outstanding, so a BYOK model outside the built-in
 table still prices as unknown.
 
-**4. One-shots in production.** Selectable per runner already; what remains is
-threading `resultSchema` from the callers that parse JSON out of a final message
-today. The runtime side is built and tested (`submit_result`); the orchestrator
-does not send a schema yet. Measure against moxxy on the saved evaluations
-before changing any default.
+**4. One-shots in production (mechanism done).** `runOneShot` takes a
+`resultSchema` and it reaches the harness on both the local and the remote path;
+a harness that cannot enforce it ignores it, so passing one is never a behaviour
+change on its own. What remains is per-caller: the nine modules that parse JSON
+out of a final message have to start declaring their shape. Measure against
+moxxy on the saved evaluations before changing any default.
 
 **5. Write tools and coding runs.** `write_file`, `edit_file`, `run`, the push
 refusal, output caps, context compaction. Coding runs opt-in per runner.
@@ -401,12 +402,14 @@ per-tool policy. The dark UI lights up.
 briefing and the on-disk credential), narrow scoped write tools for a run's own
 work item, generic MCP client.
 
-**8. Remote.** Protocol 7 carries the harness id and the resolved spec;
-runner-held provider credentials; https-or-refuse for daemon-supplied keys.
-Until it lands, a remote runner advertises moxxy only, which is enforced by
-`harnessesOn` rather than left to chance: a run is never placed on a machine
-that would silently start a different runtime than the one it was recorded
-under. A hosted single-node instance is unaffected; scale-out is what waits.
+**8. Remote (done).** Protocol 7 carries the harness id, the resolved spec, the
+ceilings, the verification command and the result schema. The agent bundles the
+same runtime package and emits its own child beside itself, so a runner needs no
+checkout and no installed CLI. Two rules hold the line: the daemon sends a spec
+only over **https**, and a runner with neither a supplied nor a configured model
+refuses the spawn instead of starting a session that cannot answer. An agent too
+old to read any of it reports a protocol mismatch and reads as outdated, so it
+never receives placement at all.
 
 **9. Hardening.** Keyless child over the loopback proxy, child resource
 ceilings, an image with no external runtime, optional per-run isolation.

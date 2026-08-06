@@ -26,6 +26,30 @@ root, so a companiond on the same box is never touched:
 | `COMPANION_RUNNER_PORT` | `8920` | Bind port. |
 | `COMPANION_RUNNER_GITHUB_TOKEN` | *(unset)* | Optional machine-specific GitHub PAT. Normally unset: the controlling Companion sends its own configured GitHub credential with each clone/fetch/push, held in memory only for that one git invocation. Set this to force this machine's own credential instead (per-machine audit trail / revocation). |
 | `COMPANION_RUNNER_MAX_RUNS` | `3` | Max concurrently live gateway (run) processes. |
+| `COMPANION_RUNNER_PROVIDER_KIND` | *(unset)* | This machine's own model for the **built-in runtime**: `anthropic`, `openai`, `azure` or `openai-compatible`. Set it with `COMPANION_RUNNER_MODEL` to give the box a model of its own. |
+| `COMPANION_RUNNER_MODEL` | *(unset)* | Model id (on Azure, the deployment name). |
+| `COMPANION_RUNNER_PROVIDER_URL` | *(unset)* | Endpoint. Required for `openai-compatible`; optional elsewhere to point at your own gateway. |
+| `COMPANION_RUNNER_PROVIDER_KEY` | *(unset)* | API key for that endpoint. |
+| `COMPANION_RUNNER_PROVIDER_API_VERSION` | *(unset)* | Azure only: the version the resource serves. |
+| `COMPANION_RUNNER_PROVIDER_ID` | *(kind)* | Name this provider reports itself under. |
+
+## The built-in runtime
+
+Companion's own agent runtime ships inside this agent: it runs as a subprocess
+of this bundle, so there is nothing to install and nothing to sign in to. That
+is what makes a runner a plain container image.
+
+It still needs a model, and there are two places one can come from:
+
+- **this machine's own**, the `COMPANION_RUNNER_PROVIDER_*` variables above;
+- **the controlling Companion's**, sent with the run.
+
+The second only happens over **https**. The runner endpoint is plain http unless
+you wrote `https://`, and the daemon will not put an API key on a plain-http
+wire, so an http runner must carry its own model or it refuses those runs and
+says why. Configuring the machine's own credential is also the option that keeps
+per-machine revocation and a per-machine audit trail, exactly like
+`COMPANION_RUNNER_GITHUB_TOKEN`.
 
 Runtime credentials remain on this machine. The runner detects capabilities
 from the runtime itself and reports them to Companion automatically.

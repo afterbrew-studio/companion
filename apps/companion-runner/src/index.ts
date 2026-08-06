@@ -18,6 +18,7 @@ import {
 import { autostart } from './autostart.js';
 import { removePidFile, startBackground, statusBackground, stopBackground, writePidFile } from './background.js';
 import { loadRunnerConfig } from './config.js';
+import { RuntimeSessions } from './runtime-sessions.js';
 import { log } from './log.js';
 import { runDoctor } from './doctor.js';
 import { openFirewall } from './firewall.js';
@@ -128,11 +129,20 @@ async function main(): Promise<void> {
     config.maxRuns,
   );
 
+  // The built-in runtime: a subprocess of this bundle rather than software
+  // installed on the box, which is what lets a runner be a plain container.
+  const runtime = new RuntimeSessions(
+    config,
+    (runId, event) => hub.broadcast({ t: 'event', runId, event }),
+    (runId, turnId) => hub.broadcast({ t: 'turn.complete', runId, turnId }),
+    (runId) => hub.broadcast({ t: 'gone', runId }),
+  );
+
   const server = await startAgentServer({
     host: config.host,
     port: config.port,
     token: config.token,
-    deps: { pool, checkouts, moxxy, maxRuns: config.maxRuns },
+    deps: { pool, checkouts, moxxy, maxRuns: config.maxRuns, runtime },
     hub,
   });
 
@@ -144,6 +154,7 @@ async function main(): Promise<void> {
     const force = setTimeout(() => process.exit(0), 6_000);
     force.unref();
     await pool.stopAll();
+    await runtime.stopAll();
     hub.close();
     server.close();
     removePidFile();
