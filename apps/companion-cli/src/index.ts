@@ -38,6 +38,7 @@ import {
   recommendedHarnesses,
   saveHarnesses,
 } from './harnesses.js';
+import { parseProviderCommand, runProviderCommand, PROVIDER_HELP } from './providers.js';
 import { withTerminal } from './terminal.js';
 import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
@@ -52,7 +53,7 @@ import { MCP_HELP, resolveMcpBaseUrl, runMcpServer } from './mcp.js';
 import { COMPANION_VERSION } from './version.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
-const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run', 'mcp'] as const;
+const CLIENT_COMMANDS = ['module', 'provider', 'acl', 'role', 'user', 'run', 'mcp'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
@@ -149,7 +150,15 @@ async function main(): Promise<void> {
     const { cli, rest } = splitClientArgs(argv);
     if ((group !== 'mcp' && !rest.length) || rest.includes('--help') || rest.includes('-h')) {
       process.stdout.write(
-        group === 'module' ? MODULE_HELP : group === 'run' ? RUN_HELP : group === 'mcp' ? MCP_HELP : ACL_HELP,
+        group === 'module'
+          ? MODULE_HELP
+          : group === 'provider'
+            ? PROVIDER_HELP
+            : group === 'run'
+              ? RUN_HELP
+              : group === 'mcp'
+                ? MCP_HELP
+                : ACL_HELP,
       );
       return;
     }
@@ -163,6 +172,7 @@ async function main(): Promise<void> {
       const baseUrl = resolveMcpBaseUrl(url);
       await runMcpServer(apiClient(baseUrl, process.env.COMPANION_TOKEN, 30_000));
     } else if (group === 'module') await runModuleCommand(parseModuleCommand(rest), url);
+    else if (group === 'provider') await runProviderCommand(parseProviderCommand(rest), url);
     else if (group === 'run') await runRunCommand(parseRunCommand(rest), url);
     else await runAclCommand(parseAclCommand(group, rest, options.home), url);
     return;

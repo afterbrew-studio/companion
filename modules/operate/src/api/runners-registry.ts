@@ -254,6 +254,7 @@ export class Runners {
           },
           (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
           (runId) => this.remoteSpawnPlan(runId),
+          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null) != null,
         ),
       );
     }

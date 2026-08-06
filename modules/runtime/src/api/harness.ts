@@ -65,14 +65,18 @@ export function harnessRegistration(
         version: null,
         state: 'installed',
         detail: 'No model provider is configured for it, so a turn would have nothing to run on.',
-        fix: 'Add a provider under Settings → Model providers',
+        // A command, like every other runtime's fix, so the "not ready" hint
+        // reads the same whether the runtime is an installed CLI or this one.
+        fix: 'companion provider add <name> --kind anthropic --key <key> --model <id>',
       };
     },
 
     create: async (request) => {
       const spec = runtime.resolve(request.model);
       if (!spec) {
-        throw new Error('no model provider is configured: add one under Settings → Model providers');
+        throw new Error(
+          'no model provider is configured for the built-in runtime: add one under Settings, or run companion provider add',
+        );
       }
       const files = runFiles(request.runId);
       const { verifyCommand, resultSchema } = extras(request.runId);

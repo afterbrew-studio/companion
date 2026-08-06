@@ -41,22 +41,27 @@ export class RuntimeSessions {
   ) {}
 
   /**
-   * What health reports. A machine with no local model is still `ready`: a run
-   * can arrive with one from an https Companion, and reporting it unavailable
-   * would take the machine out of placement for a configuration it does not
-   * need. The detail says which of the two it is running on.
+   * What health reports.
+   *
+   * With no local model this says `unavailable` and flags `needsModel`, rather
+   * than claiming ready and refusing on the first spawn. Whether the gap
+   * actually matters is the daemon's to decide: it knows whether it reaches
+   * this machine over https and may therefore send a model with the run, and it
+   * upgrades the answer when it can.
    */
-  get state(): { ready: boolean; detail: string | null } {
+  get state(): { ready: boolean; detail: string | null; needsModel: boolean } {
     if (!existsSync(childPath())) {
-      return { ready: false, detail: 'this runner build carries no agent child bundle' };
+      return { ready: false, detail: 'this runner build carries no agent child bundle', needsModel: false };
     }
     if (this.config.provider === null) {
       return {
-        ready: true,
-        detail: 'no local model configured; runs must arrive with one from an https Companion',
+        ready: false,
+        detail:
+          'No model is configured on this machine. Set COMPANION_RUNNER_PROVIDER_KIND and COMPANION_RUNNER_MODEL, or reach this runner over https so Companion can send one.',
+        needsModel: true,
       };
     }
-    return { ready: true, detail: null };
+    return { ready: true, detail: null, needsModel: false };
   }
 
   has(runId: string): boolean {

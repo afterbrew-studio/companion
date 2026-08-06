@@ -27,6 +27,16 @@ export interface AgentRuntimeHealth {
   readonly version: string | null;
   readonly state: 'ready' | 'unavailable';
   readonly detail: string | null;
+  /**
+   * The runtime is installed and has no model of its own (protocol 7).
+   *
+   * The machine cannot answer whether that matters, because only the daemon
+   * knows whether it reaches this runner over https and therefore whether it
+   * may send one. So the agent reports `unavailable` and states the fact; the
+   * daemon upgrades it to ready when it can supply the model itself. Both sides
+   * stay honest, and neither has to guess the other's configuration.
+   */
+  readonly needsModel?: boolean;
 }
 
 export interface AgentHealth {

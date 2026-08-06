@@ -188,6 +188,7 @@ async function route(
           version: null,
           state: deps.runtime.state.ready ? 'ready' : 'unavailable',
           detail: deps.runtime.state.detail,
+          needsModel: deps.runtime.state.needsModel,
         },
         {
           id: 'moxxy',

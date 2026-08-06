@@ -75,6 +75,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
      * read; the default keeps the pre-protocol-7 behaviour of saying nothing.
      */
     private readonly spawnPlan: (runId: string) => RemoteSpawnPlan = () => ({}),
+    /** Whether this instance could resolve a model for that runtime itself. */
+    private readonly canSupplyModel: (harnessId: string) => boolean = () => false,
   ) {
     this.connectEvents();
   }
@@ -115,7 +117,17 @@ export class RemoteRunnerBackend implements RunnerBackend {
       // A protocol-5 agent has no `runtimes` field. Read the old wire shape
       // defensively so it is diagnosed as outdated instead of falling into the
       // generic offline catch before the protocol mismatch can be reported.
-      const runtimes = Array.isArray(h.runtimes) ? h.runtimes : [];
+      const reported = Array.isArray(h.runtimes) ? h.runtimes : [];
+      // A runtime that only lacks a model is not unavailable if THIS daemon can
+      // send one, which is a fact only this side holds: the machine cannot see
+      // whether it is reached over https, and a key never goes on a plain-http
+      // wire. Upgrading it here is what keeps both answers honest.
+      const secure = this.base().toLowerCase().startsWith('https://');
+      const runtimes = reported.map((runtime) =>
+        runtime.needsModel === true && secure && this.canSupplyModel(runtime.id)
+          ? { ...runtime, state: 'ready' as const, detail: null }
+          : runtime,
+      );
       // Work uses the machine's first runtime unless a lane explicitly says
       // otherwise, so health must judge that same primary rather than a ready
       // fallback no automatic run would reach.
