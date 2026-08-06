@@ -18,7 +18,7 @@ import { paths } from '@moxxy/companion-services';
 import type { RunnerHealth, RunnerRuntimeHealth } from '../contract/index.js';
 import { ClaudeCodeHarness, readClaudeRunHistory } from '../exec/claude-code.js';
 import { CodexHarness, readCodexRunHistory } from '../exec/codex.js';
-import { CLAUDE_CODE_HARNESS, CODEX_HARNESS, MOXXY_HARNESS } from './harnesses.js';
+import { CLAUDE_CODE_HARNESS, CODEX_HARNESS, MOXXY_HARNESS, registeredHarness } from './harnesses.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -75,7 +75,7 @@ export class LocalRunnerBackend implements RunnerBackend {
    * which is the whole point of the contract, so nothing below this line asks
    * which kind a run is except where the answer is genuinely different.
    */
-  private readonly sessions = new Map<string, ClaudeCodeHarness | CodexHarness>();
+  private readonly sessions = new Map<string, Harness>();
 
   constructor(
     id: string,
@@ -145,11 +145,12 @@ export class LocalRunnerBackend implements RunnerBackend {
     spec: LocalRunSpec,
   ): Promise<void> {
     mkdirSync(cwd, { recursive: true });
+    const contributed = registeredHarness(spec.harness);
     // Named rather than "everything that is not moxxy": a run recorded under a
     // harness this build no longer has must land on moxxy, which is what every
     // machine ran before the choice existed, not on whichever branch happens to
     // be last.
-    if (spec.harness !== CLAUDE_CODE_HARNESS.id && spec.harness !== CODEX_HARNESS.id) {
+    if (!contributed && spec.harness !== CLAUDE_CODE_HARNESS.id && spec.harness !== CODEX_HARNESS.id) {
       await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath, access });
       return;
     }
@@ -165,8 +166,17 @@ export class LocalRunnerBackend implements RunnerBackend {
         this.sink.onGone(runId);
       },
     };
-    const harness =
-      spec.harness === CODEX_HARNESS.id
+    const harness = contributed
+      ? await contributed.create({
+          runId,
+          cwd,
+          access,
+          model: spec.model,
+          onEvent: handlers.onEvent,
+          onTurnComplete: (turnId) => handlers.onTurnComplete({ turnId }),
+          onClose: handlers.onClose,
+        })
+      : spec.harness === CODEX_HARNESS.id
         ? new CodexHarness({ runId, cwd, cliPath: 'codex', model: spec.model, access }, handlers)
         : new ClaudeCodeHarness({ runId, cwd, cliPath: 'claude', model: spec.model, access }, handlers);
     await harness.connect();
@@ -248,6 +258,12 @@ export class LocalRunnerBackend implements RunnerBackend {
     // session to fall back to. The reaped reader is the one thing that cannot
     // be shared: the two write different files.
     const harness = this.host.runSpec(runId).harness;
+    const contributed = registeredHarness(harness);
+    if (contributed) {
+      const session = this.sessions.get(runId);
+      if (session) return session.loadHistory(runId, before, limit);
+      return contributed.history?.(runId, before, limit) ?? { events: [], prevCursor: null };
+    }
     if (harness === CLAUDE_CODE_HARNESS.id || harness === CODEX_HARNESS.id) {
       const session = this.sessions.get(runId);
       if (session?.isOpen) return session.loadHistory(runId, before, limit);

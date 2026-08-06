@@ -338,29 +338,37 @@ concentrate work; make the built-in harness's readiness visible per runner.
 
 Each is shippable on its own and leaves the tree working.
 
-**0. Open the harness registry.** Phase 7 of `harness-abstraction.md`, done
-first and alone, with moxxy, Claude Code and Codex moved onto it and no
-behaviour change. Everything after this is a module rather than an operate edit.
+**0. Open the harness registry (done).** Phase 7 of `harness-abstraction.md`,
+done first and alone. `HARNESSES` became `allHarnesses()` over a compiled-in
+list plus a registry a module writes into, `LocalRunnerBackend` dispatches on
+the registry before its two named branches, and detection takes contributed
+answers alongside the three PATH probes. No behaviour change for the three
+harnesses that were already there.
 
-**1. The child and its stream.** `packages/runtime` with the child entry, three
-read-only tools, NDJSON `HarnessEvent` on stdout, one turn per stdin line, one
-provider hard-coded for the moment. Prove it against `fold.ts` and against the
-existing playground evaluations, on a prompt set moxxy has already answered. No
-production wiring. If the answers are not usable at this stage, the rest of the
-plan is wrong and it cost a week.
+**1. The child and its stream (done).** `packages/runtime`: the subprocess
+entry, the tool set, the provider factory table, NDJSON `HarnessEvent` on
+stdout, one turn per stdin line, the continuation record persisted separately
+from the display transcript. What remains of this phase is the measurement: run
+the same prompt set through it and through moxxy on the playground's saved
+evaluations before anything depends on the answer.
 
-**2. The parent.** `modules/runtime` registering the harness, spawning the child
-from `LocalRunnerBackend`, detection that can never say absent, the child
-located correctly in a checkout and in the bundle. Local runner only.
+**2. The parent (done).** `modules/runtime` registers the harness on enable and
+takes it back out on disable, `LocalRunnerBackend` spawns it, detection reports
+`ready` or `installed` and never `absent`, and the child is located through the
+package in a checkout and through `dist/agent.js` in the bundle. Local runner
+only.
 
-**3. Providers.** The records, the secret store, the routes and the page, the
-catalog through `sessionInfo`, `models: 'providers'`, the price snapshot on the
-run row. At this point an instance with an API key and no CLI can run a one-shot,
-against any of the four kinds.
+**3. Providers (done, minus the price snapshot).** The `model_providers` table,
+the credential in the kernel's secret store, the routes, the page, the probe,
+config-as-code adoption at enable, and `models: 'providers'`. The run-row price
+snapshot is the piece still outstanding, so a BYOK model outside the built-in
+table still prices as unknown.
 
 **4. One-shots in production.** Make it selectable per runner and per task for
-`runOneShot` work. Measure against moxxy on the saved evaluations before changing
-any default. Ship the `cloud` profile once this is the measured answer.
+`runOneShot` work, and thread `resultSchema` from the callers that parse JSON out
+of a final message today. The runtime side of that is built (`submit_result`);
+the orchestrator does not send a schema yet. Measure against moxxy on the saved
+evaluations before changing any default.
 
 **5. Write tools and coding runs.** `write_file`, `edit_file`, `run`, the push
 refusal, output caps, context compaction. Coding runs opt-in per runner.

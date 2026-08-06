@@ -1,12 +1,13 @@
 {
   "name": "full",
-  "description": "Every OSS module in this repo. Slim already carries integrations, notifications and contributor workflows; this adds refinement and ideas, the reactors (slop, playground), and enterprise sign-in (oidc). They land according to each manifest's autoInstall policy.",
+  "description": "Every OSS module in this repo. Slim already carries integrations, notifications and contributor workflows; this adds refinement and ideas, the reactors (slop, playground), enterprise sign-in (oidc) and the built-in agent runtime. They land according to each manifest's autoInstall policy.",
   "extends": "slim",
   "modules": [
     "refinement",
     "planner",
     "slop",
     "playground",
-    "oidc"
+    "oidc",
+    "runtime"
   ]
 }

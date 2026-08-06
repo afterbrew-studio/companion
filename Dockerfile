@@ -63,8 +63,15 @@ COPY --from=build /app/apps/companion-cli/dist ./dist
 # published 0.35.2. Below the dist copy the layer dies whenever the app does,
 # which is what "the image ships current moxxy" has to mean.
 # Pin it by passing MOXXY_VERSION when a specific one is wanted.
+#
+# INSTALL_MOXXY=false skips it entirely, which is the point of the `cloud`
+# profile: that build carries module-runtime, whose harness is a subprocess of
+# this bundle, so the image needs no external agent runtime and nobody has to
+# exec in and sign one in. Leave it true for slim/full, where the instance
+# expects an operator-installed CLI.
 ARG MOXXY_VERSION=latest
-RUN npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm
+ARG INSTALL_MOXXY=true
+RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm; fi
 # The `companion` command every doc and runbook uses. The runtime manifest is
 # generated from the CLI's dependencies alone, so it carries no `bin` field and
 # npm installs no launcher: without this, `docker exec <c> companion module list`

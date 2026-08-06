@@ -29,7 +29,14 @@ import type {
 import { servesProviderModels, taskPolicyAllows } from '../contract/index.js';
 import { log, paths } from '@moxxy/companion-services';
 import { detectHarnesses, type HarnessDetection } from '../exec/harness-detect.js';
-import { builtinCatalog, describeHarness, harnessSet, MOXXY_HARNESS, offeredHarnesses } from './harnesses.js';
+import {
+  builtinCatalog,
+  describeHarness,
+  harnessSet,
+  MOXXY_HARNESS,
+  offeredHarnesses,
+  registeredHarnesses,
+} from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -789,7 +796,10 @@ export class Runners {
     const now = Date.now();
     if (this.detectedAt + DETECT_TTL_MS > now && this.detectedHarnesses) return this.detectedHarnesses;
     this.detectedAt = now;
-    this.detectedHarnesses = await detectHarnesses(paths.moxxyHome());
+    this.detectedHarnesses = await detectHarnesses(
+      paths.moxxyHome(),
+      registeredHarnesses().map((entry) => () => entry.detect()),
+    );
     return this.detectedHarnesses;
   }
 
