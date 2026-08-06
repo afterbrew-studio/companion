@@ -62,11 +62,26 @@ export async function cleanupRunnerStorage(
     errors,
   });
 
+  // A run-config entry is a FILE for the runtimes that write one (moxxy's
+  // config, Codex's thread pointer) and a DIRECTORY for one that keeps a
+  // transcript per run. Sweeping only the first kind left the second growing
+  // for the life of the instance, which is the failure retention exists to
+  // prevent, so both are swept under the same lease and the same cutoff.
+  const configDirs = await sweepDirectories({
+    root: paths.runConfigs(),
+    cutoff: now - boundedRetention(request.sessionRetentionMs),
+    leasesByCwd,
+    leasesByRunId,
+    live,
+    errors,
+    remove: (candidate) => rm(candidate, { recursive: true, force: true }),
+  });
+
   return {
     removedWorktrees: worktrees,
     removedScratchDirs: scratch,
     removedSessionFiles: sessions,
-    removedRunConfigs: configs,
+    removedRunConfigs: configs + configDirs,
     errors,
   };
 }

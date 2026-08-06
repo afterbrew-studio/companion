@@ -246,6 +246,35 @@ docker build --build-arg PROFILE=cloud --build-arg INSTALL_MOXXY=false -t compan
 See [the built-in harness](docs/builtin-harness.md), [model providers](docs/model-providers.md)
 and [the hosted runtime](docs/cloud-runtime.md).
 
+### Distributed runners
+
+Execution scales by adding machines, and the built-in runtime works on them the
+same way it works on the daemon's own: `companion-runner` ships it inside its
+own bundle, so a runner is a plain container with no CLI to install and nobody
+to sign in.
+
+```sh
+npm i -g @moxxy/companion-runner
+
+COMPANION_RUNNER_TOKEN=<shared-secret> \
+COMPANION_RUNNER_PROVIDER_KIND=anthropic \
+COMPANION_RUNNER_PROVIDER_KEY=sk-… \
+COMPANION_RUNNER_MODEL=claude-sonnet-5 \
+  companion-runner --background
+```
+
+Register the endpoint and token under **Runners** and the machine advertises
+what it can actually run, exactly as a machine with moxxy or Claude Code
+installed does. Placement, task policy, repository clearance, role fences and
+the per-machine concurrency ceiling are the same for every runtime.
+
+The model can come from either side, and only one rule separates them: **a key
+crosses to a runner only over https.** The runner endpoint is plain http unless
+you made it otherwise, so an http machine carries its own model (above) and one
+reached over https can be sent Companion's instead. A machine with neither
+reports the runtime as unavailable and names both fixes, rather than accepting
+work it cannot finish.
+
 ## Modular without becoming fragmented
 
 A small kernel hosts feature modules that can be installed, configured,
