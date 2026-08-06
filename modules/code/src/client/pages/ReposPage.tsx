@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
+import { runIntent, Slot, useIntent } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
 import type { RunnerRecord } from '@companion/module-operate/contract';
 import { useWorkspace, useWorkspaceMembers, workspaceApi, workspaceLabel } from '@companion/module-workspace/client';
@@ -81,6 +81,7 @@ export function ReposPage(): JSX.Element {
         }
         actions={
           <>
+            <Slot name="repos.page.actions" can={can} />
             {canManageCurrent ? (
               <button className="btn-ghost" onClick={() => setManaging(true)}>
                 Workspace settings
@@ -171,7 +172,7 @@ function RepoCard({
   onChange: () => Promise<void>;
   onError: (e: string) => void;
 }): JSX.Element {
-  const { githubHost } = useAuth();
+  const { can, githubHost } = useAuth();
   const [busy, setBusy] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -216,6 +217,11 @@ function RepoCard({
         </div>
         <CardActions>
           <span className="dim mr-auto text-xs">GitHub actions are unavailable for this repository.</span>
+          <Slot
+            name="repos.card.actions"
+            can={can}
+            props={{ repo: repo.fullName, githubAccessible: false }}
+          />
           {canManage ? (
             <button className="btn-danger-ghost" disabled={busy} onClick={() => void disconnect()}>
               {busy ? 'Working…' : 'Remove from workspace'}
@@ -236,6 +242,7 @@ function RepoCard({
     { label: 'stale sweep', on: repo.staleSweepEnabled },
     { label: 'webhook', on: repo.webhookConfigured },
   ];
+  const enabledAutomations = automations.filter((automation) => automation.on);
 
   return (
     <article className="card" aria-label={repo.fullName}>
@@ -282,12 +289,16 @@ function RepoCard({
         </div>
       </dl>
 
-      <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="Automations">
-        {automations.map((a) => (
-          <span key={a.label} className={a.on ? 'badge-ok normal-case' : 'badge normal-case opacity-70'}>
-            {a.on ? '✓' : '○'} {a.label}
-          </span>
-        ))}
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs" aria-label="Automations">
+        <span className="dim">Automations</span>
+        <span className={enabledAutomations.length > 0 ? 'badge-ok normal-case' : 'badge normal-case'}>
+          {enabledAutomations.length} active
+        </span>
+        <span className="dim min-w-0 flex-1 truncate">
+          {enabledAutomations.length > 0
+            ? enabledAutomations.map((automation) => automation.label).join(' · ')
+            : 'None enabled'}
+        </span>
       </div>
 
       {/* What proves an agent's diff builds here, before anybody reads it. Blank
@@ -312,9 +323,16 @@ function RepoCard({
       ) : null}
 
       <CardActions>
-        <button className="btn-ghost mr-auto" onClick={() => setContextOpen(true)}>
-          Agent context
-        </button>
+        <div className="mr-auto flex flex-wrap items-center gap-2">
+          <button className="btn-ghost" onClick={() => setContextOpen(true)}>
+            Agent context
+          </button>
+          <Slot
+            name="repos.card.actions"
+            can={can}
+            props={{ repo: repo.fullName, githubAccessible: true }}
+          />
+        </div>
         {canManage ? (
           <>
             <button className="btn-ghost" disabled={busy} onClick={() => void act(() => api.syncRepo(repo.fullName))()}>

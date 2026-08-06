@@ -8,7 +8,7 @@ import { ReportCard } from '../components/ReportCard.js';
 /**
  * Daily Digest: the AI review of a repository — what shipped, what failed,
  * what matters now, and where the project is heading. One digest per repo per
- * run; generated on demand here or on the daily schedule (Automations).
+ * run; generated on demand here or on the repository's daily schedule.
  */
 export function DigestPage(): JSX.Element {
   const { current, repos, reports, runs, selected, setSelected, loaded, error, setError, refresh } = useDigest();
@@ -129,7 +129,7 @@ export function DigestPage(): JSX.Element {
           title="No digest yet"
           hint={
             can('automations:manage')
-              ? 'Generate your first digest above, or enable the daily schedule under Automations.'
+              ? 'Generate your first digest above, or enable the daily schedule for this repository.'
               : 'Digests appear here once a maintainer generates one or the daily schedule runs.'
           }
         />
@@ -138,8 +138,8 @@ export function DigestPage(): JSX.Element {
       {repo && can('automations:manage') && !repo.digestEnabled ? (
         <p className="dim mt-3 text-[13px]">
           Want this every morning without clicking?{' '}
-          <a className="linkish" href="#/automations">
-            Enable the daily digest schedule
+          <a className="linkish" href={`#/repos/${repo.fullName}/automations`}>
+            Enable it in repository automations
           </a>{' '}
           for {repo.fullName}.
         </p>

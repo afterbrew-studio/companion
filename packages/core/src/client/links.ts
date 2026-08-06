@@ -36,5 +36,6 @@ export function reportHref(r: {
 }): string {
   if (r.kind === 'ci-analysis' && r.repo && r.issueNumber) return `#/repos/${r.repo}/prs/${r.issueNumber}`;
   if (r.kind === 'digest') return '#/digest';
-  return '#/automations';
+  if (r.repo) return `#/repos/${r.repo}/automations`;
+  return '#/repos/automation-health';
 }

@@ -9,6 +9,16 @@ const AutomationsRoute = lazyView(async () => {
   return { default: Gated };
 });
 
+const RepositoryAutomationsRoute = lazyView(async () => {
+  const { RepositoryAutomationsPage } = await import('./pages/Automations.js');
+  const Gated = ({ params }: RouteProps): JSX.Element => (
+    <RequiresRepo what="Repository automations">
+      <RepositoryAutomationsPage key={params.repo} repo={params.repo!} />
+    </RequiresRepo>
+  );
+  return { default: Gated };
+});
+
 const DigestRoute = lazyView(async () => {
   const { DigestPage } = await import('./pages/Digest.js');
   const Gated = (_props: RouteProps): JSX.Element => (
@@ -31,6 +41,21 @@ const DigestLiveRoute = lazyView(async () => {
 
 export const routes = defineClientRoutes([
   {
+    match: { exact: '/repos/automation-health' },
+    permission: 'automations:manage',
+    component: AutomationsRoute,
+  },
+  {
+    match: {
+      regex: /^\/repos\/([\w.-]+)\/([\w.-]+)\/automations$/,
+      params: (m) => ({ repo: `${m[1]}/${m[2]}` }),
+    },
+    permission: 'automations:manage',
+    component: RepositoryAutomationsRoute,
+  },
+  {
+    // Compatibility for saved notifications and bookmarks from before
+    // automation configuration moved under the repository hub.
     match: { prefix: '/automations' },
     permission: 'automations:manage',
     component: AutomationsRoute,

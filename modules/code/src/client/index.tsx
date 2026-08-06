@@ -15,7 +15,7 @@ import { onboarding } from './onboarding.js';
  */
 
 export * from './widgets.js';
-export { useWorkspaceRepos } from './hooks/useWorkspaceRepos.js';
+export { useWorkspaceRepos, useWorkspaceReposState } from './hooks/useWorkspaceRepos.js';
 export { CommentsSection } from './components/Comments.js';
 export { AccountPicker } from './components/AccountPicker.js';
 export { RepoAccountPicker } from './components/RepoAccountPicker.js';

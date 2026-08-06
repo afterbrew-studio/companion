@@ -422,7 +422,7 @@ export class Automations {
           job.repo,
           `Webhook work needs attention for ${job.repo}`,
           err,
-          '#/automations',
+          '#/repos/automation-health',
         );
       }
     } finally {
@@ -808,7 +808,7 @@ export class Automations {
           : workspaceDetached
             ? `The repository no longer belongs to workspace ${flow.workspaceId}. Companion removed its end-to-end flow and disabled automatic merging; choose a new workspace deliberately if work should continue.`
             : 'The repository webhook receiver is no longer configured. Companion removed the end-to-end flow and disabled automatic merging; restore delivery before enabling it again.',
-        '#/automations',
+        workspaceDetached ? '#/repos' : `#/repos/${flow.repo}/automations`,
         flow.workspaceId,
       );
       this.audit({
@@ -1056,7 +1056,7 @@ export class Automations {
       kind: 'info',
       title: `Briefing ready — ${ws.name}`,
       body: 'A new workspace briefing is ready.',
-      href: '#/automations',
+      href: '#/repos/automation-health',
       createdAt: Date.now(),
     });
     // The schedule cursor is a success cursor. Advancing it before persistence
@@ -1276,7 +1276,7 @@ export class Automations {
       'action_required',
       `${action} paused by access policy — ${repo}`,
       `${username} is disabled or no longer holds ${missing.join(', ')}. Restore the permissions or assign the automation deliberately.`,
-      '#/automations',
+      `#/repos/${repo}/automations`,
     );
     this.audit({
       actor: username,
@@ -1296,7 +1296,7 @@ export class Automations {
       'action_required',
       `${action} paused by runtime configuration — ${repo}`,
       `${username ?? 'Unassigned automation'}: ${reason}. Connect or reassign the required account, then the next schedule tick will resume.`,
-      '#/automations',
+      `#/repos/${repo}/automations`,
     );
     this.audit({
       actor: username,
@@ -1321,7 +1321,7 @@ export class Automations {
       kind: 'action_required',
       title: `Workspace briefing paused${workspace ? ` — ${workspace.name}` : ''}`,
       body: `${username ?? 'Unassigned automation'}: ${reason}. Reassign the schedule deliberately to resume it.`,
-      href: '#/automations',
+      href: '#/repos/automation-health',
       createdAt: now,
     });
     this.audit({
@@ -1380,7 +1380,7 @@ export class Automations {
         'action_required',
         `Webhook queue is saturated — ${repo}`,
         'Companion is returning retryable errors instead of accepting work it cannot durably process. Pause noisy hooks or restore runner/database capacity; delivery health shows the active backlog.',
-        '#/automations',
+        '#/repos/automation-health',
       );
       this.audit({
         actor: ownerId,
