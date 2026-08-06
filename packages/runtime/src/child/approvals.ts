@@ -28,6 +28,8 @@ export interface ApprovalRequest {
 export interface ApprovalOutcome {
   readonly allowed: boolean;
   readonly mode: ApprovalMode;
+  /** Nobody answered in time, which the model is told rather than left to guess. */
+  readonly expired?: boolean;
 }
 
 export class Approvals {
@@ -50,12 +52,18 @@ export class Approvals {
    * is the existing rule for unattended work: its fence is the run's access and
    * its credential-less worktree, not a person.
    */
-  async request(tool: string, input: unknown, signal: AbortSignal): Promise<ApprovalOutcome> {
+  async request(
+    tool: string,
+    input: unknown,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<ApprovalOutcome> {
     if (!this.armed || this.allowedForSession.has(tool)) return { allowed: true, mode: 'allow' };
     const requestId = randomUUID();
     return await new Promise<ApprovalOutcome>((resolve) => {
       const settle = (outcome: ApprovalOutcome): void => {
         if (!this.pending.delete(requestId)) return;
+        clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
         this.resolved(requestId);
         resolve(outcome);
@@ -63,24 +71,35 @@ export class Approvals {
       // An aborted turn must not leave the model waiting on a person who is no
       // longer being asked.
       const onAbort = (): void => settle({ allowed: false, mode: 'deny' });
+      // Nor may a closed tab hold a runner slot until the turn times out.
+      // Unanswered is refused, never allowed: an approval that granted itself
+      // by expiring would be worse than not asking.
+      const timer = setTimeout(() => settle({ allowed: false, mode: 'deny', expired: true }), timeoutMs);
+      timer.unref();
       signal.addEventListener('abort', onAbort, { once: true });
       this.pending.set(requestId, settle);
       this.raise({ requestId, workspaceId: '', kind: 'permission', tool: { name: tool, input } });
     });
   }
 
-  /** The person answered. An unknown id is a late or duplicate reply; ignore it. */
-  answer(requestId: string, mode: string | undefined, tool?: string): void {
+  /**
+   * The person answered. Returns whether it settled anything: an unknown id is
+   * a late or duplicate reply, and reporting one as a decision would put an
+   * approval on the transcript that nobody made.
+   */
+  answer(requestId: string, mode: string | undefined, tool?: string): boolean {
     const settle = this.pending.get(requestId);
-    if (!settle) return;
+    if (!settle) return false;
     const decided: ApprovalMode =
       mode === 'deny' || mode === 'allow_session' || mode === 'allow_always' ? mode : 'allow';
-    if (decided !== 'deny' && tool) this.allowedForSession.add(tool);
+    // Only an answer that ASKED to stand for more than this call does. A plain
+    // `allow` is one call; remembering it would silently turn the first yes
+    // into permission for every later write, which is the opposite of what the
+    // person chose.
+    if (tool && (decided === 'allow_session' || decided === 'allow_always')) {
+      this.allowedForSession.add(tool);
+    }
     settle({ allowed: decided !== 'deny', mode: decided });
-  }
-
-  /** Which tool a pending request belongs to, so a session answer can remember it. */
-  has(requestId: string): boolean {
-    return this.pending.has(requestId);
+    return true;
   }
 }

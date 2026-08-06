@@ -11,6 +11,7 @@ export default defineServices((ctx) => {
       turnTimeoutMinutes: Number(values.turnTimeoutMinutes ?? 30),
       childMemoryMb: Number(values.childMemoryMb ?? 1024),
       commandTimeoutMinutes: Number(values.commandTimeoutMinutes ?? 10),
+      approvalTimeoutMinutes: Number(values.approvalTimeoutMinutes ?? 10),
       toolOutputChars: Number(values.toolOutputChars ?? 30_000),
     };
   };

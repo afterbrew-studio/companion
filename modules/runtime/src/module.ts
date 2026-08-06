@@ -63,6 +63,16 @@ export default defineManifest({
       max: 120,
     },
     {
+      key: 'approvalTimeoutMinutes',
+      label: 'Approval wait (minutes)',
+      kind: 'number',
+      description:
+        'How long a tool call waits for a person to approve it before being refused. Only attended chats ever ask; unattended work (issue fixes, board tasks, reviews) never stops for a human and is fenced by its worktree instead. Unanswered is always refused, never allowed.',
+      default: 10,
+      min: 1,
+      max: 120,
+    },
+    {
       key: 'toolOutputChars',
       label: 'Tool output limit (characters)',
       kind: 'number',

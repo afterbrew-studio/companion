@@ -98,7 +98,9 @@ export class Agent {
   answerAsk(requestId: string, mode: string | undefined): void {
     const tool = this.askedTools.get(requestId);
     this.askedTools.delete(requestId);
-    this.approvals.answer(requestId, mode, tool);
+    // Nothing on the transcript for an answer that decided nothing: a late or
+    // duplicate reply would otherwise read as a second approval.
+    if (!this.approvals.answer(requestId, mode, tool)) return;
     this.event(mode === 'deny' ? 'tool_call_denied' : 'tool_call_approved', {
       callId: requestId,
       decidedBy: 'reviewer',
@@ -204,10 +206,8 @@ export class Agent {
       onResult: (value) => (structured = value),
       ...(this.approvals.enabled
         ? {
-            approve: (name: string, input: unknown) => {
-              const ask = { name, input };
-              return this.approvals.request(ask.name, ask.input, aborter.signal);
-            },
+            approve: (name: string, input: unknown) =>
+              this.approvals.request(name, input, aborter.signal, this.limits.approvalTimeoutMs),
           }
         : {}),
     });

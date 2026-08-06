@@ -75,6 +75,16 @@ export interface RuntimeLimits {
   readonly commandTimeoutMs: number;
   /** Heap ceiling for the child process, in MB. */
   readonly memoryMb: number;
+  /**
+   * How long an approval may wait for a person before it is refused.
+   *
+   * Only attended runs ever raise one, and a person who closed the tab is
+   * indistinguishable from one who is thinking. Without a deadline the turn
+   * holds a runner slot until IT times out, so the wait is bounded well inside
+   * that and the refusal says why, which is a better answer than a run that
+   * looks alive for half an hour and then dies unexplained.
+   */
+  readonly approvalTimeoutMs: number;
 }
 
 export const DEFAULT_LIMITS: RuntimeLimits = {
@@ -83,6 +93,7 @@ export const DEFAULT_LIMITS: RuntimeLimits = {
   toolOutputChars: 30_000,
   commandTimeoutMs: 10 * 60_000,
   memoryMb: 1_024,
+  approvalTimeoutMs: 10 * 60_000,
 };
 
 /**

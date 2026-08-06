@@ -31,6 +31,7 @@ export interface RuntimeConfig {
   readonly turnTimeoutMinutes: number;
   readonly childMemoryMb: number;
   readonly commandTimeoutMinutes: number;
+  readonly approvalTimeoutMinutes: number;
   readonly toolOutputChars: number;
 }
 
@@ -142,6 +143,7 @@ export class RuntimeService {
       toolOutputChars: config.toolOutputChars,
       commandTimeoutMs: config.commandTimeoutMinutes * 60_000,
       memoryMb: config.childMemoryMb,
+      approvalTimeoutMs: config.approvalTimeoutMinutes * 60_000,
     };
   }
 
