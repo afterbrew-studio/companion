@@ -47,6 +47,18 @@ You have no network git access and no credential of your own. Committing, pushin
 
 Be concise. State what you changed and what you verified, and say plainly when something did not work.`;
 
+/**
+ * Appended whenever the caller asked for a shape.
+ *
+ * Measured, not assumed: with the tool merely available, a model asked for a
+ * structured verdict answered in prose about half the time, and prose is
+ * exactly what the caller's parser cannot use. Offering a tool is not the same
+ * as saying the answer must go through it.
+ */
+const RESULT_INSTRUCTION = `## How to answer
+
+This task has a required answer shape. Deliver it by calling the \`submit_result\` tool exactly once, with every field it declares, and do not put the answer in prose: prose is discarded and the run is recorded as having produced nothing. Do the reading or checking you need first, then call it as your final action.`;
+
 export class Agent {
   private readonly messages: ModelMessage[] = [];
   private seq = 0;
@@ -165,7 +177,9 @@ export class Agent {
     try {
       const result = streamText({
         model: resolveModel(this.spec),
-        system: this.surfaces.instructions ? `${SYSTEM}\n\n${this.surfaces.instructions}` : SYSTEM,
+        system: [SYSTEM, this.surfaces.instructions, this.surfaces.resultSchema === undefined ? null : RESULT_INSTRUCTION]
+          .filter((part): part is string => Boolean(part))
+          .join('\n\n'),
         messages: this.messages,
         tools,
         stopWhen: stepCountIs(this.limits.maxSteps),

@@ -21,6 +21,9 @@ export default defineApiModule({
   lifecycle,
 });
 
+/** A caller's zod answer shape, as the wire format a harness can enforce. */
+export { resultSchemaOf } from './result-schema.js';
+
 /**
  * The harness registry, which is how a module contributes an agent runtime
  * without this module knowing its name. Registration belongs to the enabling

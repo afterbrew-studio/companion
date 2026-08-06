@@ -385,12 +385,26 @@ at enable, and `models: 'providers'`. The price a run executed at is snapshotted
 onto its row and the spend aggregation groups by it, so correcting a provider
 record never reprices money already spent.
 
-**4. One-shots in production (mechanism done).** `runOneShot` takes a
-`resultSchema` and it reaches the harness on both the local and the remote path;
-a harness that cannot enforce it ignores it, so passing one is never a behaviour
-change on its own. What remains is per-caller: the nine modules that parse JSON
-out of a final message have to start declaring their shape. Measure against
-moxxy on the saved evaluations before changing any default.
+**4. One-shots in production (mechanism done, first caller wired).**
+`runOneShot` takes a `resultSchema`, it reaches the harness on both the local
+and the remote path, and `resultSchemaOf` derives it from the zod schema the
+caller already validates with, so there is one source of truth rather than a
+hand-written copy that drifts. module-slop's detection is wired.
+
+Measured against a real model on the real slop schema, validated by the module's
+own production parser. Two findings, both now fixed and guarded by tests:
+
+- **Offering the tool is not the same as requiring it.** With `submit_result`
+  merely available, the model answered in prose about half the time, and prose
+  is what the parser cannot use. The system prompt now says the answer must go
+  through the tool when a schema is present.
+- **A step ceiling too low costs the answer, not just the exploration.** A
+  read-only one-shot with filesystem tools will look around first; at four steps
+  it ran out before answering. The production default of forty is fine, but a
+  caller that tightens it should know what it is buying.
+
+What remains is the other eight callers, and the comparison against moxxy on the
+saved evaluations before any default moves.
 
 **5. Write tools and coding runs (done).** `write_file`, `edit_file`, `run`, the
 typed local git tools, the refusals that protect what Companion recorded, output

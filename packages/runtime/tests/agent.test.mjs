@@ -162,6 +162,207 @@ test('the shell refuses the git commands that would invalidate the run', async (
 });
 
 /**
+ * Offering the result tool is not the same as saying the answer must go
+ * through it. Measured against a real model, a structured task answered in
+ * prose about half the time until the system prompt said so, and prose is
+ * exactly what the caller's parser cannot use.
+ */
+test('a schema puts the result tool and its instruction in front of the model', async () => {
+  let seen = null;
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen ??= JSON.parse(body || '{}');
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const base = { id: 'c', object: 'chat.completion.chunk', created: 1, model: 'fake' };
+      res.write(
+        `data: ${JSON.stringify({
+          ...base,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_r',
+                    type: 'function',
+                    function: { name: 'submit_result', arguments: '{"score":7}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        })}\n\n`,
+      );
+      res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+
+  const cwd = mkdtempSync(join(tmpdir(), 'runtime-schema-'));
+  const proc = spawn(process.execPath, [child], {
+    cwd,
+    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  const ended = new Promise((resolve) => {
+    let buffer = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const frame = JSON.parse(line);
+        if (frame.t === 'turn.end') resolve(frame);
+      }
+    });
+  });
+
+  const send = (frame) => proc.stdin.write(`${JSON.stringify(frame)}\n`);
+  send({
+    t: 'start',
+    sessionId: 'schema-1',
+    cwd,
+    access: 'read-only',
+    resultSchema: {
+      type: 'object',
+      required: ['score'],
+      properties: { score: { type: 'integer' } },
+    },
+    spec: {
+      providerId: 'fake',
+      kind: 'openai-compatible',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      apiKey: 'k',
+      headers: {},
+      query: {},
+      model: 'fake',
+      contextWindow: null,
+      apiVersion: null,
+      sampling: {},
+      providerOptions: {},
+      factoryOptions: {},
+    },
+    limits: { maxSteps: 4, turnTimeoutMs: 20_000, toolOutputChars: 2_000, commandTimeoutMs: 5_000, memoryMb: 512 },
+  });
+  send({ t: 'turn', turnId: 'schema-1:t1', prompt: 'score it' });
+
+  const outcome = await ended;
+  proc.stdin.end();
+  server.close();
+
+  const tools = (seen.tools ?? []).map((t) => t.function?.name);
+  assert.ok(tools.includes('submit_result'), 'the result tool is offered');
+  const system = (seen.messages ?? []).find((m) => m.role === 'system');
+  assert.match(String(system?.content), /submit_result/, 'and the model is told the answer must go through it');
+  assert.equal(outcome.finalMessage, '{"score":7}', 'the structured answer becomes the final message');
+});
+
+/**
+ * The compactor reached through the real loop, not just as a function: a
+ * session whose conversation outgrows its window must trim and keep answering,
+ * because the alternative is a provider refusal that loses the whole run.
+ */
+test('a long session trims itself and keeps going', async () => {
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const base = { id: 'c', object: 'chat.completion.chunk', created: 1, model: 'fake' };
+      // A long answer, so the conversation grows fast enough to cross the window.
+      res.write(
+        `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { content: 'z'.repeat(1500) }, finish_reason: null }] })}\n\n`,
+      );
+      res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+
+  const cwd = mkdtempSync(join(tmpdir(), 'runtime-compact-'));
+  const proc = spawn(process.execPath, [child], {
+    cwd,
+    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+
+  const events = [];
+  const turnEnds = [];
+  const waiters = new Map();
+  let buffer = '';
+  proc.stdout.setEncoding('utf8');
+  proc.stdout.on('data', (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const frame = JSON.parse(line);
+      if (frame.t === 'event') events.push(frame.event);
+      if (frame.t === 'turn.end') {
+        turnEnds.push(frame);
+        waiters.get(frame.turnId)?.();
+      }
+    }
+  });
+
+  const send = (frame) => proc.stdin.write(`${JSON.stringify(frame)}\n`);
+  send({
+    t: 'start',
+    sessionId: 'compact-1',
+    cwd,
+    access: 'read-only',
+    spec: {
+      providerId: 'fake',
+      kind: 'openai-compatible',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      apiKey: 'k',
+      headers: {},
+      query: {},
+      model: 'fake',
+      // Small enough that three exchanges of this size cannot all fit.
+      contextWindow: 900,
+      apiVersion: null,
+      sampling: {},
+      providerOptions: {},
+      factoryOptions: {},
+    },
+    limits: { maxSteps: 2, turnTimeoutMs: 20_000, toolOutputChars: 4_000, commandTimeoutMs: 5_000, memoryMb: 512 },
+  });
+
+  for (let turn = 1; turn <= 4; turn++) {
+    const turnId = `compact-1:t${turn}`;
+    const done = new Promise((resolve) => waiters.set(turnId, resolve));
+    send({ t: 'turn', turnId, prompt: `question ${turn} ${'q'.repeat(600)}` });
+    await done;
+  }
+  proc.stdin.end();
+  server.close();
+
+  const compactions = events.filter((e) => e.type === 'compaction');
+  assert.ok(compactions.length > 0, 'the session trimmed itself');
+  assert.ok(compactions[0].droppedMessages > 0, 'and said how much left the context');
+  assert.ok(compactions[0].keptTokens <= Math.floor(900 * 0.7), 'down to inside the budget');
+  assert.equal(turnEnds.length, 4, 'every turn still finished');
+  assert.ok(
+    turnEnds.every((end) => end.ok === true),
+    'including the ones after trimming, which is the point',
+  );
+});
+
+/**
  * Trimming has one rule that matters: a tool result may never outlive its call.
  * Cutting anywhere but a user-message boundary produces a conversation the
  * provider rejects for a reason that reads nothing like "too long".
