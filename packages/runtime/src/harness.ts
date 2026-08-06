@@ -55,6 +55,18 @@ export interface RuntimeHarnessOptions {
   readonly resultSchema?: unknown;
   /** Scoped access back to this instance, for platform-operating runs. */
   readonly companionApi?: { readonly baseUrl: string; readonly token: string };
+  /**
+   * Every model this machine may run, not just the one this run resolved to.
+   * `sessionInfo` is how the runner registry learns a machine's catalog, and a
+   * session that reported only its own model would shrink the machine's catalog
+   * to one entry on every refresh.
+   */
+  readonly catalog?: readonly {
+    readonly name: string;
+    readonly enabled: boolean;
+    readonly ready: boolean;
+    readonly models: readonly { readonly id: string; readonly contextWindow: number | null }[];
+  }[];
 }
 
 export interface RuntimeHarnessHandlers {
@@ -177,22 +189,20 @@ export class RuntimeHarness implements Harness {
   }
 
   /**
-   * The one provider this run was resolved against, shaped so the existing
-   * catalog reader understands it. A machine's full catalog is the module's
-   * answer, not a live session's.
+   * What this machine can run, shaped so the existing catalog reader
+   * understands it. The whole configured catalog rather than this run's own
+   * model: the runner registry refreshes a machine's catalog off any live
+   * session, so answering with one model would shrink it to one on every run.
    */
   async sessionInfo(): Promise<unknown> {
     const provider = this.opts.spec.providerId;
+    const catalog = this.opts.catalog ?? [
+      { name: provider, enabled: true, ready: true, models: [{ id: this.opts.spec.model, contextWindow: null }] },
+    ];
     return {
       activeProvider: provider,
-      readyProviders: [provider],
-      providers: [
-        {
-          name: provider,
-          enabled: true,
-          models: [{ id: this.opts.spec.model, contextWindow: null }],
-        },
-      ],
+      readyProviders: catalog.filter((entry) => entry.ready).map((entry) => entry.name),
+      providers: catalog,
       tools: [],
       permissionMode: this.opts.access,
       slashCommands: [],

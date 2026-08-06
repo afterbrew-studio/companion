@@ -158,28 +158,49 @@ per-run boundary (`packages/types/src/runner-agent.ts:53`).
 | `read_file` | yes | yes | no |
 | `list_files` (glob) | yes | yes | no |
 | `search` (via `git grep`) | yes | yes | no |
+| `git_diff` | yes | yes | no |
 | `write_file` | no | yes | no |
 | `edit_file` (exact match, ambiguity is an error) | no | yes | no |
 | `run` (shell in cwd, capped, timed) | no | yes | no |
-| Companion loopback tools | no | narrow | yes |
+| `git_status`, `git_log`, `git_commit`, `git_restore` | no | yes | no |
+| `verify` (the repository's own command) | no | yes | no |
+| `submit_result` (when the caller asked for a schema) | yes | yes | yes |
+| `companion_api` (scoped, read-only session) | no | no | yes |
 | Configured MCP servers | per policy | per policy | per policy |
 
 `search` shells out to `git grep` rather than `rg`: git is already a hard
 dependency of every runner, ripgrep is not, and `git grep` respects
 `.gitignore`, which is most of what makes a search tool usable in a checkout.
 
-Three deliberate absences.
+`git_diff` is in the **read-only** column deliberately. A review run has no
+shell, and without a diff it is reviewing a repository rather than a change.
 
-**No network git, and no GitHub token.** The user-facing ask was "git operations
-by token" and the honest answer is no. Every network git operation on every
-runner already resolves its write credential through one function on the daemon,
-which is where `agentGitWrite`, `protectedBranches` and the audit entry live
-(`ENTERPRISE.md` §4). Handing the agent a token routes around all three. Local
-git (`status`, `diff`, `log`, `branch`) is available through `run`; commit and
-push stay where they are, executed by the orchestrator through `Checkouts` after
-review. `run` additionally refuses a `git push` prefix, as a second layer only,
-exactly as `DENIED_TOOLS` does for Claude Code and with the same caveat that it
-does not survive a shell wrapper. The fence is the credential-less worktree.
+`verify` runs the command the repository itself declares, resolved through the
+same resolver the pre-review check uses, so an agent that checks its work checks
+it against the thing a human will see. `submit_result` carries the caller's JSON
+Schema as its input schema, so a structured verdict is validated by the provider
+before it reaches a parser, which is where most of Companion's model use lands.
+
+### Which git operations the agent gets, and which it does not
+
+Not "no git": committing is local, needs no credential and makes a long change
+reviewable, so it is a tool. The refusals are each for their own reason, and the
+shell says which one rather than leaving the model to interpret a failure.
+
+| Operation | Agent | Why |
+|---|---|---|
+| `git_commit`, `git_status`, `git_log`, `git_diff`, `git_restore` | yes | local, no credential, no network |
+| `push` | no | Companion pushes after review, at the one credential seam that carries `agentGitWrite`, `protectedBranches` and the audit entry (`ENTERPRISE.md` §4) |
+| `fetch` / `pull` | no | Companion prepared this worktree at the base it wants; moving the base mid-run moves the diff under the review |
+| `checkout` / `switch` | no | the run row records one branch; switching makes the diff, the review and the eventual push describe something else |
+| `worktree` | no | worktrees are allocated by `Checkouts` and swept on retention; one made inside is invisible to both |
+| `remote` | no | the remote decides where a later push lands |
+
+So the ask "git operations by token" is answered by giving the agent everything
+that needs no token, and keeping everything that does on the daemon, which
+already has the policy and the audit trail for it.
+
+Two more deliberate absences.
 
 **No repository instruction files by default.** `AGENTS.md`, `CLAUDE.md`, hooks
 and MCP config found in a checkout are untrusted input, not configuration. Claude
@@ -364,11 +385,11 @@ config-as-code adoption at enable, and `models: 'providers'`. The run-row price
 snapshot is the piece still outstanding, so a BYOK model outside the built-in
 table still prices as unknown.
 
-**4. One-shots in production.** Make it selectable per runner and per task for
-`runOneShot` work, and thread `resultSchema` from the callers that parse JSON out
-of a final message today. The runtime side of that is built (`submit_result`);
-the orchestrator does not send a schema yet. Measure against moxxy on the saved
-evaluations before changing any default.
+**4. One-shots in production.** Selectable per runner already; what remains is
+threading `resultSchema` from the callers that parse JSON out of a final message
+today. The runtime side is built and tested (`submit_result`); the orchestrator
+does not send a schema yet. Measure against moxxy on the saved evaluations
+before changing any default.
 
 **5. Write tools and coding runs.** `write_file`, `edit_file`, `run`, the push
 refusal, output caps, context compaction. Coding runs opt-in per runner.
@@ -380,8 +401,12 @@ per-tool policy. The dark UI lights up.
 briefing and the on-disk credential), narrow scoped write tools for a run's own
 work item, generic MCP client.
 
-**8. Remote.** Protocol 7 carries the harness id; runner-held provider
-credentials; https-or-refuse for daemon-supplied keys.
+**8. Remote.** Protocol 7 carries the harness id and the resolved spec;
+runner-held provider credentials; https-or-refuse for daemon-supplied keys.
+Until it lands, a remote runner advertises moxxy only, which is enforced by
+`harnessesOn` rather than left to chance: a run is never placed on a machine
+that would silently start a different runtime than the one it was recorded
+under. A hosted single-node instance is unaffected; scale-out is what waits.
 
 **9. Hardening.** Keyless child over the loopback proxy, child resource
 ceilings, an image with no external runtime, optional per-run isolation.

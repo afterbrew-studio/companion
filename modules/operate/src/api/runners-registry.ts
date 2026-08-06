@@ -207,6 +207,18 @@ export class Runners {
     log.info('adopted detected agent runtimes for this machine', { runtimes: ready });
   }
 
+  /**
+   * Something that changes what this machine can run just happened: a runtime
+   * was contributed by a module, or its credentials were configured. Detection
+   * is cached for thirty seconds and adoption only ever fires for a machine
+   * that has never chosen, so both are safe to repeat.
+   */
+  async refreshRuntimes(): Promise<void> {
+    this.forgetDetection();
+    await this.adoptDetectedRuntimes();
+    this.broadcast({ t: 'runners.changed' });
+  }
+
   /** (Re)create remote backends to match the stored runner rows. */
   private rebuildRemotes(): void {
     const rows = this.store.runners.list().filter((r) => r.kind === 'remote');

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { stepCountIs, streamText, type LanguageModelUsage, type ModelMessage, type ToolSet } from 'ai';
 import type { RuntimeCommand } from '../protocol.js';
 import type { ResolvedModelSpec, RuntimeAccess, RuntimeLimits } from '../spec.js';
@@ -69,6 +69,32 @@ export class Agent {
   }
 
   /**
+   * Where a platform-operating run gets its scoped credential.
+   *
+   * The assistant already drops one into the run's working directory for
+   * whatever harness it lands on, so reading that file is what makes AI Help
+   * work here without a second mechanism. The file is a run-scoped, read-only
+   * session that the router re-checks on every call; this harness at least
+   * keeps it out of the prompt, where the previous shape put a curl tutorial.
+   */
+  private companionApi(): { baseUrl: string; token: string } | null {
+    if (this.surfaces.companionApi) return { ...this.surfaces.companionApi };
+    if (this.access !== 'trusted-assistant') return null;
+    const file = join(this.cwd, 'companion-credentials.json');
+    if (!isFile(file)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as { baseUrl?: unknown; token?: unknown };
+      if (typeof parsed.baseUrl === 'string' && typeof parsed.token === 'string') {
+        return { baseUrl: parsed.baseUrl, token: parsed.token };
+      }
+    } catch {
+      // an unreadable credential file leaves the run without the tool, which
+      // surfaces as "I cannot reach the API" rather than as a crash
+    }
+    return null;
+  }
+
+  /**
    * The continuation record, which is NOT the display transcript. Events are
    * shaped for the UI and the fold; resuming needs the model-facing messages,
    * including provider blocks that must survive a tool loop verbatim. Deriving
@@ -128,7 +154,7 @@ export class Agent {
       limits: this.limits,
       ...(this.surfaces.verifyCommand ? { verifyCommand: this.surfaces.verifyCommand } : {}),
       ...(this.surfaces.resultSchema !== undefined ? { resultSchema: this.surfaces.resultSchema } : {}),
-      ...(this.surfaces.companionApi ? { companionApi: this.surfaces.companionApi } : {}),
+      ...(this.companionApi() ? { companionApi: this.companionApi()! } : {}),
       onResult: (value) => (structured = value),
     });
     let text = '';
@@ -195,7 +221,10 @@ export class Agent {
         }
       }
 
-      this.messages.push(...(await result.response).messages);
+      // `responseMessages`, not `response.messages`: the second is the final
+      // step alone, which drops every tool call and result the turn made. A
+      // resumed run would then have the answer and no record of the work.
+      this.messages.push(...(await result.responseMessages));
       this.persist();
       // A structured answer is the answer. It is put on the transcript as the
       // assistant's message too, because every caller that reads a run's final

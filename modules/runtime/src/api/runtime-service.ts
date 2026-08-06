@@ -150,13 +150,20 @@ export class RuntimeService {
    * Editing a record later must not reprice last month's runs, and the built-in
    * table stays the answer for a model nobody priced here.
    */
-  priceFor(ref: string): { inputPerMTok: number; outputPerMTok: number } | null {
-    const spec = this.resolve(ref);
-    if (!spec) return null;
-    const provider = this.get(spec.providerId);
-    const model = provider?.models.find((m) => m.id === spec.model);
-    if (!model || model.inputPerMTok === null || model.outputPerMTok === null) return null;
-    return { inputPerMTok: model.inputPerMTok, outputPerMTok: model.outputPerMTok };
+  priceFor(ref: string | null): { inputPerMTok: number; outputPerMTok: number } | null {
+    if (ref === null) return null;
+    // Matched against what was CONFIGURED rather than through `resolve`, whose
+    // job is to pick a model for a run: an unpinned run resolves to the first
+    // one, which would price every unknown id as that model.
+    const [head, ...rest] = ref.split(':');
+    const qualified = rest.length > 0 ? { providerId: head ?? '', modelId: rest.join(':') } : null;
+    for (const provider of this.list()) {
+      if (qualified && provider.id !== qualified.providerId) continue;
+      const model = provider.models.find((m) => m.id === (qualified ? qualified.modelId : ref));
+      if (!model || model.inputPerMTok === null || model.outputPerMTok === null) continue;
+      return { inputPerMTok: model.inputPerMTok, outputPerMTok: model.outputPerMTok };
+    }
+    return null;
   }
 
   // ---------- configuration as code -------------------------------------------

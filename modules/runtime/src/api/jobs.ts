@@ -13,14 +13,19 @@ import '../contract/index.js';
  * way a disabled module's permissions leave the grid.
  */
 export default defineJobs({
-  onEnable: (ctx) => {
+  onEnable: async (ctx) => {
     const runtime = ctx.services.get('runtime');
+    const operate = ctx.services.get('operate');
     // Declared providers are adopted before anything can ask whether this
     // machine is ready, so a container that shipped with its providers is ready
     // on its first boot rather than after somebody clicks.
     const declared = declaredProviders();
     if (declared.length > 0) runtime.adopt(declared);
-    registerHarness(harnessRegistration(runtime));
+    registerHarness(harnessRegistration(runtime, (runId) => operate.orchestrator.verifyCommandForRun(runId)));
+    // Detection was cached before this harness existed, and a machine that has
+    // never chosen one adopts whatever is ready. Without this, enabling the
+    // module leaves the box reporting the runtimes it had a minute ago.
+    await operate.runners.refreshRuntimes();
   },
   onDisable: () => {
     unregisterHarness(RUNTIME_HARNESS_ID);

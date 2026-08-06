@@ -233,6 +233,16 @@ export class Orchestrator implements RunnerEventSink {
     this.verifyCommandFor = resolve;
   }
 
+  /**
+   * The command a run's repository verifies with, for a harness that can offer
+   * it as a tool. Read through the same resolver the pre-review check uses, so
+   * an agent that checks its work checks it against the same thing.
+   */
+  verifyCommandForRun(runId: string): string | null {
+    const repo = this.getRun(runId)?.repo;
+    return repo ? (this.verifyCommandFor(repo)?.trim() || null) : null;
+  }
+
   /** Registered by the composition root once module-core is available. */
   setRunAuthorityResolver(resolve: (username: string) => boolean): void {
     this.runAuthority = resolve;

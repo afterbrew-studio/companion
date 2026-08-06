@@ -42,7 +42,11 @@ function runFiles(runId: string): { eventsPath: string; statePath: string } {
  * only question is whether a model credential is configured. Answering `absent`
  * would drop it from the machine's options for a reason that is not true.
  */
-export function harnessRegistration(runtime: RuntimeService): HarnessRegistration {
+export function harnessRegistration(
+  runtime: RuntimeService,
+  /** The repository's own verification command for a run, when one is set. */
+  verify: (runId: string) => string | null,
+): HarnessRegistration {
   return {
     descriptor: {
       id: RUNTIME_HARNESS_ID,
@@ -70,6 +74,7 @@ export function harnessRegistration(runtime: RuntimeService): HarnessRegistratio
         throw new Error('no model provider is configured: add one under Settings → Model providers');
       }
       const files = runFiles(request.runId);
+      const verifyCommand = verify(request.runId);
       return new RuntimeHarness(
         {
           runId: request.runId,
@@ -80,6 +85,8 @@ export function harnessRegistration(runtime: RuntimeService): HarnessRegistratio
           limits: runtime.limits(),
           eventsPath: files.eventsPath,
           statePath: files.statePath,
+          catalog: runtime.catalog(),
+          ...(verifyCommand ? { verifyCommand } : {}),
         },
         {
           onEvent: request.onEvent,

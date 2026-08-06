@@ -2,7 +2,10 @@ import type { ModuleConfigAccessor } from '@moxxy/companion-core';
 import { StatusError } from '@moxxy/companion-core/server';
 import { log } from '@moxxy/companion-services';
 import type { BudgetScopeStatus, BudgetStatus, SpendBreakdown, SpendEntry } from '../contract/index.js';
-import { estimateUsd, formatUsd } from '../contract/model-pricing.js';
+import { estimateUsd, formatUsd, type ModelPricing } from '../contract/model-pricing.js';
+
+/** Where an operator-declared price for a model comes from; null = use the table. */
+export type PriceResolver = (model: string | null) => ModelPricing | null;
 import type { RunsStore, SpendDimension, UsageModelRow } from './runs-store.js';
 
 /**
@@ -39,11 +42,11 @@ interface PricedTotals {
   unpricedTokens: number;
 }
 
-function priceRows(rows: readonly UsageModelRow[]): PricedTotals {
+function priceRows(rows: readonly UsageModelRow[], price: PriceResolver): PricedTotals {
   let costUsd = 0;
   let unpricedTokens = 0;
   for (const row of rows) {
-    const cost = estimateUsd(row.model, row.input, row.output);
+    const cost = estimateUsd(row.model, row.input, row.output, price(row.model));
     if (cost === null) unpricedTokens += row.input + row.output;
     else costUsd += cost;
   }
@@ -86,6 +89,12 @@ export class Budgets {
     private readonly moduleConfig: ModuleConfigAccessor,
     /** Raises the operator-facing alert; wired to ctx.notify by services.ts. */
     private readonly alert: (title: string, body: string) => void,
+    /**
+     * An operator's own model prices. The built-in table cannot know an
+     * endpoint configured this morning, and a ceiling that silently never
+     * triggers is worse than not offering one.
+     */
+    private readonly price: PriceResolver = () => null,
   ) {}
 
   // ---------- configuration (module config, read live) -----------------------------
@@ -105,7 +114,7 @@ export class Budgets {
   private instanceSpend(): PricedTotals {
     const now = Date.now();
     if (this.cached && now - this.cached.at < SPEND_TTL_MS) return this.cached.instance;
-    const instance = priceRows(this.runs.spendByModel(monthStart(now)));
+    const instance = priceRows(this.runs.spendByModel(monthStart(now)), this.price);
     this.cached = { at: now, instance };
     return instance;
   }
@@ -114,7 +123,7 @@ export class Budgets {
     const now = Date.now();
     const hit = this.perUser.get(userId);
     if (hit && now - hit.at < SPEND_TTL_MS) return hit.totals;
-    const totals = priceRows(this.runs.spendByModel(monthStart(now), userId));
+    const totals = priceRows(this.runs.spendByModel(monthStart(now), userId), this.price);
     this.perUser.set(userId, { at: now, totals });
     return totals;
   }
@@ -212,7 +221,7 @@ export class Budgets {
     const buckets = new Map<string, { entry: SpendEntry; partial: boolean }>();
     for (const row of this.runs.spendByDimension(dimension, since)) {
       const key = row.key ?? '';
-      const cost = estimateUsd(row.model, row.input, row.output);
+      const cost = estimateUsd(row.model, row.input, row.output, this.price(row.model));
       const existing = buckets.get(key)?.entry;
       const partial = (buckets.get(key)?.partial ?? false) || (cost === null && row.input + row.output > 0);
       buckets.set(key, {
