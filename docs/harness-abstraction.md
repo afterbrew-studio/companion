@@ -278,10 +278,9 @@ repository being worked on, and Companion will not edit the first or commit into
 the second. The worktree without a push credential is the fence, as it is for
 every harness; Claude Code simply gets a second layer that Codex cannot have.
 
-Its model list is the other departure. Codex model ids are versioned
-(`gpt-5.6-sol`, `gpt-5.5`) with no stable aliases, so unlike Claude Code it
-carries no `models` array: a fixed list would describe the release this build
-was written against. It answers from the machine instead, through the cache
+Its model list is the other departure. Codex model ids are versioned with no
+stable aliases, so unlike Claude Code it carries no `models` array: a fixed list
+would describe the release this build was written against. It answers from the machine instead, through the cache
 Codex itself maintains. Pricing follows the existing rule and is not bent for
 it: the table is Anthropic list prices, so OpenAI ids price as null and a
 ceiling reads as partial rather than being fed a guessed number.

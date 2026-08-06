@@ -21,7 +21,7 @@ export interface UseLane {
   readonly label: string;
   /** Models the current lane can actually serve; empty while loading. */
   readonly models: ReadonlyArray<{ readonly id: string }>;
-  /** The lane's fallback model, or null when it rides the daemon default. */
+  /** The lane's fallback model, or null when its runtime decides. */
   readonly defaultModel: string | null;
   readonly loading: boolean;
 }

@@ -20,7 +20,7 @@ export function AuthLayout({
   children: ReactNode;
   className?: string;
 }): JSX.Element {
-  const { branding } = useAuth();
+  const { branding, version } = useAuth();
   const custom = branding.name?.trim();
   const brandName = custom || 'Companion';
 
@@ -38,6 +38,7 @@ export function AuthLayout({
         </div>
         {children}
         {footer ? <p className="dim mt-4 text-center text-xs">{footer}</p> : null}
+        {version ? <p className="dim mt-3 text-center text-[10px] tabular-nums">Companion v{version}</p> : null}
       </div>
     </main>
   );

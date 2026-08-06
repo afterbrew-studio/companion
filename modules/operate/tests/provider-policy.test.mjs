@@ -9,8 +9,7 @@ import { OperateStore } from '../dist/api/operate-store.js';
 import { Runners } from '../dist/api/runners-registry.js';
 import { LOCAL_RUNNER_ID } from '../dist/api/runners-store.js';
 
-// The snapshot also lists providers configured in the daemon's own moxxy home;
-// point that at an empty dir so these tests see only the catalogs they seed.
+// Keep runtime-owned files isolated so these tests see only seeded catalogs.
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-provider-policy-'));
 
 const SINK = {
@@ -94,7 +93,7 @@ test('a provider switched off on one machine stays usable on another', () => {
   // ...while the model itself stays reachable, which is the point of scoping.
   assert.equal(runners.serves('runner-b', 'opus'), true);
 
-  const snapshot = runners.catalogSnapshot('opus');
+  const snapshot = runners.catalogSnapshot();
   const merged = snapshot.providers.find((p) => p.name === 'anthropic');
   assert.deepEqual(merged.machines, ['runner-b']);
   assert.deepEqual(merged.disabledOn, [LOCAL_RUNNER_ID]);
@@ -126,7 +125,7 @@ test('a model switched off on one machine leaves the other serving it', () => {
   assert.equal(runners.serves('runner-b', 'sonnet'), false);
   assert.equal(runners.serves('runner-b', 'opus'), true);
 
-  const snapshot = runners.catalogSnapshot('opus');
+  const snapshot = runners.catalogSnapshot();
   const models = snapshot.providers.find((p) => p.name === 'anthropic').models;
   assert.deepEqual(models.find((m) => m.id === 'sonnet').machines, [LOCAL_RUNNER_ID]);
   assert.deepEqual(sorted(models.find((m) => m.id === 'opus').machines), sorted([LOCAL_RUNNER_ID, 'runner-b']));
@@ -182,7 +181,7 @@ test('a provider without credentials serves nothing even while switched on', () 
   const runners = registry(store);
 
   assert.deepEqual([...runners.runnersForModel('opus')], []);
-  const snapshot = runners.catalogSnapshot('opus');
+  const snapshot = runners.catalogSnapshot();
   assert.deepEqual(snapshot.providers.find((p) => p.name === 'anthropic').machines, []);
   assert.deepEqual(snapshot.providers.find((p) => p.name === 'anthropic').disabledOn, []);
   const local = snapshot.machines[0];
@@ -200,13 +199,13 @@ test("the merged view never carries another user's private machine", () => {
   store.runners.setCatalog('runner-bo', catalogOf(provider('mistral', ['large'])));
   const runners = registry(store);
 
-  const ana = runners.catalogSnapshot('opus', 'ana');
+  const ana = runners.catalogSnapshot('ana');
   assert.deepEqual(sorted(ana.machines.map((m) => m.id)), sorted([LOCAL_RUNNER_ID, 'runner-ana']));
   assert.deepEqual(sorted(ana.providers.map((p) => p.name)), sorted(['anthropic', 'openai']));
 
   // Placement already scopes personal machines to their owner; the page must
   // not imply a model is reachable through someone else's laptop.
-  const nobody = runners.catalogSnapshot('opus', null);
+  const nobody = runners.catalogSnapshot(null);
   assert.deepEqual(nobody.machines.map((m) => m.id), [LOCAL_RUNNER_ID]);
 });
 

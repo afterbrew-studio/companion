@@ -16,17 +16,16 @@ import { detectProviders } from '../../contract/index.js';
 import { useProviders } from '../hooks/useProviders.js';
 
 /**
- * Provider/model switchboard. Every machine reads its own models from moxxy, so
+ * Provider/model switchboard. Every machine reads models from its runtimes, so
  * the toggles are per machine: the same provider can be credential-ready on one
  * and absent on the next, and one instance-wide list could not say so. The page
  * stays merged rather than moving onto each machine's own page because the
  * question it answers is a fleet question ("can agents use model X at all"),
  * and because providers get retuned far more often than machines get set up.
  *
- * Fetching is the daemon's job (on bind, off live runs, and on a staleness
- * timer), and the daemon adopts the operator's own moxxy home on its way up, so
- * a configured machine needs no import step. Refresh re-reads on demand; the
- * page never asks a person to run a detection the system can run itself.
+ * Fetching is the daemon's job (on bind, from live runs, and on a staleness
+ * timer). A configured machine needs no import step. Refresh re-reads runtime
+ * capabilities on demand; the page never asks a person to locate a config file.
  */
 
 export function ProvidersPage(): JSX.Element {
@@ -46,7 +45,7 @@ export function ProvidersPage(): JSX.Element {
         subtitle="Which providers and models agents may use, per machine. The top list is what that adds up to"
         actions={
           <button className="btn-ghost" disabled={refetching} onClick={() => void refetchFromMachines()}>
-            {refetching ? 'Refreshing…' : 'Refresh'}
+            {refetching ? 'Refreshing…' : 'Refresh capabilities'}
           </button>
         }
       />
@@ -147,7 +146,7 @@ function EffectiveRow({
       : provider.disabledOn.length > 0
         ? `Switched off on ${where(provider.disabledOn, machines)}, so agents cannot use it anywhere.`
         : read
-          ? 'Configured in ~/.moxxy, but no machine has credentials for it.'
+          ? 'Reported by a runtime, but no machine can currently serve it.'
           : 'Reading models from your machines…';
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">

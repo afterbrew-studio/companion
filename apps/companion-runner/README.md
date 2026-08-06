@@ -7,11 +7,11 @@ and drives it over HTTP + WebSocket (the protocol lives in
 `RUNNER_AGENT_PROTOCOL`).
 
 Locally it does exactly what companiond does on its own machine — it reuses
-companiond's modules verbatim (GatewayPool, Checkouts, session history) via
-relative imports — but under its **own** data root, so a companiond on the
-same box is never touched:
+the execution, checkout, and session-history layers under its **own** data
+root, so a companiond on the same box is never touched:
 
-- spawns `moxxy serve` + `moxxy mobile` per run (isolated moxxy home),
+- starts the runtime selected for a run (the current remote-runner release
+  ships the Moxxy adapter),
 - holds git clones and per-run worktrees, produces diffs, commits, pushes,
 - serves live/offline session history,
 - streams run events back over `WS /agent/events`.
@@ -27,9 +27,8 @@ same box is never touched:
 | `COMPANION_RUNNER_GITHUB_TOKEN` | *(unset)* | Optional machine-specific GitHub PAT. Normally unset: the controlling Companion sends its own configured GitHub credential with each clone/fetch/push, held in memory only for that one git invocation. Set this to force this machine's own credential instead (per-machine audit trail / revocation). |
 | `COMPANION_RUNNER_MAX_RUNS` | `3` | Max concurrently live gateway (run) processes. |
 
-The box also needs the `moxxy` CLI on PATH (`npm i -g @moxxy/cli`). On first
-boot the runner imports moxxy provider credentials from the local `~/.moxxy`
-into its isolated moxxy home (same import companiond offers from Settings).
+Runtime credentials remain on this machine. The runner detects capabilities
+from the runtime itself and reports them to Companion automatically.
 
 ## Install & run
 
@@ -74,12 +73,10 @@ npm i -g @moxxy/companion-runner   # update the agent itself
 companion-runner stop && companion-runner --background
 ```
 
-Companion's Runners page shows when a machine is outdated: an agent protocol
-mismatch needs the on-machine update above, while an outdated **moxxy CLI**
-can be updated straight from the runner card ("Update moxxy") — Companion
-calls `POST /agent/update-moxxy`, which runs `npm i -g @moxxy/cli@latest`
-here. Runs already in flight keep their old binary; new runs pick up the
-update.
+Companion's Runners page shows when the runner agent protocol is outdated.
+Update the agent on this machine with the commands above. Runtime installation
+and upgrades remain owned by the machine rather than being mutated remotely by
+the control plane.
 
 ## Register with companiond
 
@@ -93,9 +90,7 @@ sets `COMPANION_RUNNER_GITHUB_TOKEN`.
 
 ## Model providers
 
-Model credentials belong to this machine, not to companiond. Add one from the
-machine's settings page in Companion ("Add provider"): companiond calls
-`POST /agent/providers` and the agent pipes the spec into `moxxy provision`
-here, so the key is written only into this machine's moxxy home. Companion
-stores no copy of it. Providers that sign in with a subscription have no
-headless path: run `moxxy login <provider>` on this machine for those.
+Model credentials belong to this machine, not to companiond. Configure or sign
+in through the runtime on the runner machine. Companion automatically refreshes
+the providers and models reported by each selected runtime and stores no copy
+of provider secrets.

@@ -70,4 +70,4 @@ export function useTaskModels(lane?: RunLane): {
   };
 }
 
-const EMPTY: TaskModelSnapshot = { tasks: [], models: [], defaultModel: '' };
+const EMPTY: TaskModelSnapshot = { tasks: [], models: [] };

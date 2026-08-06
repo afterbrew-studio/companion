@@ -3,7 +3,7 @@
  *
  * A remote runner is another machine running the `companion-runner` agent: a
  * slim daemon that does locally what companiond does on its own box — spawn
- * moxxy gateways, hold git clones/worktrees, serve session history. companiond
+ * agent runtimes, hold git clones/worktrees, serve session history. companiond
  * drives it over this HTTP + WebSocket API. Both sides import these types so
  * the contract can't drift.
  *
@@ -21,33 +21,29 @@
 import type { AskRequest, AskResponse, HarnessEvent, HistorySegment, PromptAttachment } from './harness.js';
 
 /** GET /agent/health */
+export interface AgentRuntimeHealth {
+  readonly id: string;
+  readonly label: string;
+  readonly version: string | null;
+  readonly state: 'ready' | 'unavailable';
+  readonly detail: string | null;
+}
+
 export interface AgentHealth {
   readonly ok: true;
-  readonly moxxyVersion: string | null;
-  readonly moxxyCompatible: boolean;
+  readonly runtimes: readonly AgentRuntimeHealth[];
   readonly liveRuns: number;
   readonly maxRuns: number;
   /** Protocol version so companiond can refuse an incompatible agent. */
   readonly protocol: number;
-  /**
-   * Model provider names configured in this runner's moxxy home. Placement
-   * matches a run's model against these so work lands on a machine that can
-   * serve it. Absent on older agents — companiond treats that as unknown
-   * (assume capable).
-   */
-  readonly providers?: readonly string[];
 }
 
 /**
- * Version 5 carries the reviewed commit author and optional fresh-PR base into
- * the runner. Without the bump, an older runner could silently keep an
- * agent-authored commit (including attribution trailers) instead of producing
- * the one clean commit Companion approved.
- *
- * `POST /agent/update-moxxy` was added WITHOUT a bump: it's additive — an old
- * agent answers 404 and the daemon falls back to "update it manually" guidance.
+ * Version 6 replaces implementation-specific health fields with the runtime
+ * list the machine actually exposes. A previous agent is rejected rather than
+ * having one runtime silently treated as the machine itself.
  */
-export const RUNNER_AGENT_PROTOCOL = 5;
+export const RUNNER_AGENT_PROTOCOL = 6;
 
 /**
  * The hard execution boundary selected by Companion for a run. It is separate
@@ -61,8 +57,7 @@ export type AgentRunAccess = 'read-only' | 'workspace-write' | 'trusted-assistan
  * prepared worktree on this machine, so a diff that does not build is known
  * before a human or a CI run is spent on it.
  *
- * Added WITHOUT a protocol bump, like `/agent/update-moxxy`: it is additive, so
- * an older agent answers 404 and the daemon records the verification as
+ * Added without its own protocol bump: an older agent answers 404 and the daemon records the verification as
  * unavailable instead of marking a working machine outdated and refusing to
  * place work on it.
  */
@@ -90,42 +85,6 @@ export interface AgentVerifyResponse {
   readonly output: string;
   readonly timedOut: boolean;
   readonly durationMs: number;
-}
-
-/**
- * POST /agent/update-moxxy — in-place `npm i -g @moxxy/cli@latest` on the
- * runner's machine, then re-detect. 404 on pre-update agents.
- */
-export interface AgentUpdateMoxxyResult {
-  readonly previous: string | null;
-  readonly version: string | null;
-  readonly compatible: boolean;
-}
-
-/**
- * POST /agent/providers: add a model provider to the runner's moxxy home by
- * running `moxxy provision` there. One shape at every hop: the browser sends it
- * to companiond, companiond forwards it to the agent, and the agent pipes it to
- * the CLI on stdin.
- *
- * `key` is a live credential. Companion never persists it, never puts it in
- * argv (which `ps` shows to every user on the machine), never logs it, and
- * never returns it. Providers that authenticate with a subscription have no
- * headless path at all: those need `moxxy login <provider>` run on the machine.
- *
- * Added WITHOUT a protocol bump, like `/agent/update-moxxy`: it is additive, so
- * an older agent answers 404 and the daemon turns that into guidance.
- */
-export interface ProvisionProviderSpec {
-  /**
-   * moxxy's provider slug (`anthropic`, `openai`, …). moxxy owns the list and
-   * refuses an unknown slug with its own message naming the valid ones, so
-   * nothing here validates against a copy of it that would rot.
-   */
-  readonly provider: string;
-  readonly key?: string;
-  /** Default model for the provider; omitted keeps moxxy's own default. */
-  readonly model?: string;
 }
 
 /** POST /agent/runs/:runId/spawn — bring up serve+gateway for a run at `cwd`. */

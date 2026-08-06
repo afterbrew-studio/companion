@@ -25,7 +25,7 @@ import { servesProviderModels, unmeteredHarnesses } from '../dist/contract/index
 
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-harness-caps-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3 };
 
 const harness = (id, capabilities) => ({ id, label: id, capabilities });
 
@@ -190,7 +190,7 @@ test('every machine reports at least one harness', () => {
  */
 test('the provider catalog says, per machine, whether providers decide its models', () => {
   const { orchestrator } = fixture();
-  const snapshot = orchestrator.runners.catalogSnapshot('opus', null);
+  const snapshot = orchestrator.runners.catalogSnapshot(null);
   const local = snapshot.machines.find((m) => m.id === LOCAL_RUNNER_ID);
   assert.equal(local.providerModels, servesProviderModels(orchestrator.runners.get(LOCAL_RUNNER_ID).harnesses));
   assert.equal(local.providerModels, true);

@@ -14,7 +14,6 @@ export default defineManifest({
   title: 'Automations',
   version: '0.1.0',
   dependsOn: ['plan', 'code', 'operate', 'workbench', 'workspace', 'core'],
-  autoInstall: false,
   permissions: ['automations:manage'],
   messages: ['automations.changed'],
 });

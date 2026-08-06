@@ -49,6 +49,7 @@ import { daemonLog, runningPid, startDetached, stopDaemon, tailLog, waitUntilSer
 import type { Detached } from './daemon.js';
 import { apiClient } from './client.js';
 import { MCP_HELP, resolveMcpBaseUrl, runMcpServer } from './mcp.js';
+import { COMPANION_VERSION } from './version.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
 const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run', 'mcp'] as const;
@@ -121,6 +122,7 @@ Options:
   -y, --yes        Accept secure generated defaults without prompting
   --github-from-gh Connect the active local gh account to the new admin
   --verbose        Show daemon startup and diagnostic logs
+  -v, --version    Show the Companion version
   -h, --help       Show this help
 
 Agent work runs through a harness installed on this machine (Moxxy, Claude Code
@@ -138,6 +140,10 @@ const INVOKED_FROM = process.cwd();
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-v')) {
+    process.stdout.write(`${COMPANION_VERSION}\n`);
+    return;
+  }
   const group = CLIENT_COMMANDS.find((c) => c === argv[0]);
   if (group) {
     const { cli, rest } = splitClientArgs(argv);

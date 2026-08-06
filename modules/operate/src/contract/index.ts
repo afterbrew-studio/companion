@@ -8,7 +8,7 @@ export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pri
 
 /**
  * module-operate contract slice — the execution plane: agent runs + the run
- * queue, runner machines (local/remote), the moxxy gateway surface, and skills.
+ * queue, runner machines (local/remote), runtime adapters, and skills.
  */
 
 declare module '@moxxy/companion-contracts' {
@@ -34,7 +34,7 @@ declare module '@moxxy/companion-contracts' {
     'task-models.changed': Record<never, never>;
   }
   interface ServiceMap {
-    /** The execution plane: orchestrator + runners + checkouts + the moxxy CLI. */
+    /** The execution plane: orchestrator + runners + checkouts + runtime adapters. */
     operate: OperateService;
   }
   interface BusEvents {
@@ -212,7 +212,7 @@ export interface RunRecord {
   /** Branch a fix/implement run works on (in its worktree). */
   readonly branch: string | null;
   readonly prUrl: string | null;
-  /** Per-run model override; null rides the daemon default. */
+  /** Per-run model override; null lets the selected runtime decide. */
   readonly model: string | null;
   /** Runner (machine) this run executes on; null = the built-in local runner. */
   readonly runnerId: string | null;
@@ -326,7 +326,7 @@ export interface TokenUsageDay {
 
 /** One model's window totals — a "most-used models" leaderboard row. */
 export interface TokenUsageModel {
-  /** Model id as recorded on the run; null = rode the daemon default. */
+  /** Model id as recorded on the run; null = the runtime selected its default. */
   readonly model: string | null;
   readonly runs: number;
   readonly inputTokens: number;
@@ -450,36 +450,31 @@ export type RunnerScope = 'shared' | 'delegated';
 export type RunnerStatus = 'online' | 'degraded' | 'offline' | 'unknown';
 
 /** Live health of a runner, refreshed by the daemon's health poller. */
+export interface RunnerRuntimeHealth {
+  readonly id: string;
+  readonly label: string;
+  readonly version: string | null;
+  readonly state: 'ready' | 'unavailable';
+  readonly detail: string | null;
+}
+
 export interface RunnerHealth {
   readonly status: RunnerStatus;
-  readonly moxxyVersion: string | null;
-  readonly moxxyCompatible: boolean;
+  /** Every runtime this machine is configured to use, in preference order. */
+  readonly runtimes: ReadonlyArray<RunnerRuntimeHealth>;
   readonly liveRuns: number;
   readonly maxRuns: number;
   readonly lastSeenAt: number | null;
   readonly detail: string | null;
   /**
-   * Model provider names configured on the runner. null = unknown (old agent /
-   * not probed yet) — placement assumes capable. Empty = can't serve any model.
-   */
-  readonly providers: readonly string[] | null;
-  /**
    * The runner AGENT speaks an older protocol than this daemon — only an
    * on-machine agent update fixes it (set by the remote probe; absent
-   * elsewhere). Distinct from moxxyCompatible, which the daemon can fix
-   * remotely via update-moxxy.
+   * elsewhere).
    */
   readonly agentOutdated?: boolean;
 }
 
-/** Result of updating the moxxy CLI on a runner's machine. */
-export interface RunnerMoxxyUpdateResult {
-  readonly previous: string | null;
-  readonly version: string | null;
-  readonly compatible: boolean;
-}
-
-/** A runner's own provider/model catalog, fetched live from its moxxy. */
+/** A runner's own provider/model catalog, reported by its configured runtimes. */
 export interface RunnerCatalog {
   readonly providers: ReadonlyArray<ModelCatalogProvider>;
   readonly defaultModel: string | null;
@@ -808,15 +803,13 @@ export interface RunnerProbeResult {
   readonly catalog: RunnerCatalog | null;
 }
 
-// ---------- moxxy / model catalog ----------
+// ---------- execution / model catalog ----------
 
-export interface MoxxyStatus {
-  readonly cliPath: string | null;
-  readonly cliVersion: string | null;
-  readonly compatible: boolean;
-  readonly homeDir: string;
-  readonly homeReady: boolean;
-  readonly providersImported: boolean;
+export interface OperateStatus {
+  /** At least one enabled machine can accept agent work. */
+  readonly executionReady: boolean;
+  /** Human diagnosis when no machine can currently accept work. */
+  readonly executionDetail: string | null;
   readonly githubConfigured: boolean;
   readonly githubUser: string | null;
 }
@@ -829,7 +822,7 @@ export interface ModelCatalogModel {
 export interface ModelCatalogProvider {
   readonly name: string;
   readonly enabled: boolean;
-  /** Credentials resolved — moxxy can actually serve this provider. */
+  /** Credentials resolved — the reporting runtime can actually serve this provider. */
   readonly ready: boolean;
   readonly models: ReadonlyArray<ModelCatalogModel>;
 }
@@ -838,13 +831,12 @@ export interface ModelCatalogProvider {
 export interface ModelCatalog {
   readonly activeProvider: string | null;
   readonly providers: ReadonlyArray<ModelCatalogProvider>;
-  /** Model the next turn of this run will use (override or daemon default). */
-  readonly current: string;
-  readonly defaultModel: string;
+  /** Model the next turn uses; null lets its runtime decide. */
+  readonly current: string | null;
 }
 
 export interface SetRunModelRequest {
-  /** null clears the override (back to the daemon default). */
+  /** null clears the override (back to the runtime default). */
   readonly model: string | null;
   /** Switch the session's active provider first (for provider-scoped models). */
   readonly provider?: string;
@@ -855,7 +847,7 @@ export interface SetRunModelRequest {
  * (what it reported plus its own policy) and the merged effective set, which
  * answers what a per-machine page cannot: can agents use model X at all. There
  * is no second catalog — runner catalogs are the only source, refreshed by the
- * daemon (bind, health TTL, live runs, provider import).
+ * daemon (bind, health TTL, and live runs).
  *
  * Scoped to the viewer: shared machines plus their own, matching who may
  * actually place runs on them.
@@ -864,7 +856,6 @@ export interface ProviderCatalog {
   /** The merged effective set: only what some visible machine can serve now. */
   readonly providers: ReadonlyArray<CatalogProvider>;
   readonly machines: ReadonlyArray<CatalogMachine>;
-  readonly defaultModel: string;
   /** Newest per-machine fetch across the pool; null = nothing fetched yet. */
   readonly fetchedAt: number | null;
 }
@@ -966,11 +957,9 @@ export type ProviderDetection =
 /**
  * Read the catalog for whether anything is actually configured anywhere.
  *
- * A provider NAME alone proves nothing: the merged list also carries providers
- * named by the daemon's own moxxy config that no machine can serve, which is
- * exactly the case the page must not call "found". `found` therefore needs a
- * machine that reported the provider ready, including one where the operator
- * switched it off, since that is a setting to flip, not a dead end.
+ * A provider NAME alone proves nothing. `found` needs a machine that reported
+ * the provider ready, including one where the operator switched it off, since
+ * that is a setting to flip rather than a dead end.
  *
  * Only ONLINE machines are ever catalog-probed, so an offline machine that has
  * never reported stays unread indefinitely; counting it as "reading" would
@@ -1009,7 +998,7 @@ export interface TaskModelPin {
   /** That module's title, or the raw id when it is not in this build. */
   readonly moduleTitle: string;
   /**
-   * The pin exactly as stored; null = the task rides the instance default. A
+   * The pin exactly as stored; null = the task uses the selected runtime's default. A
    * model no machine can serve right now stays visible here rather than reading
    * as unpinned, so an edit never silently discards it. Dispatch resolves it per
    * run (see the cascade in Orchestrator) and drops it where it cannot be met.
@@ -1046,8 +1035,6 @@ export interface TaskModelSnapshot {
    * pin would never apply to the work it was set for.
    */
   readonly models: ReadonlyArray<CatalogModel>;
-  /** Where every unpinned task lands (the daemon's configured model). */
-  readonly defaultModel: string;
   /** The lane these pins belong to; absent means the instance-wide layer. */
   readonly lane?: RunLane;
   /** That lane's own default, used by its tasks with no pin of their own. */

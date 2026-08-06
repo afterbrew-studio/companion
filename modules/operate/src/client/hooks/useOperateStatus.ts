@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { MoxxyStatus } from '../../contract/index.js';
+import type { OperateStatus } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 
-/**
- * The moxxy install status (CLI version, home, provider/GitHub readiness). One
- * concern; the error setter is exposed for pages whose actions share it.
- */
-export function useMoxxyStatus(): {
-  status: MoxxyStatus | null;
+/** Platform execution + GitHub readiness, without coupling the UI to a runtime. */
+export function useOperateStatus(): {
+  status: OperateStatus | null;
   error: string | null;
-  setError: (e: string | null) => void;
   refresh: () => Promise<void>;
 } {
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
+  const [status, setStatus] = useState<OperateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -28,5 +24,5 @@ export function useMoxxyStatus(): {
     void refresh();
   }, [refresh]);
 
-  return { status, error, setError, refresh };
+  return { status, error, refresh };
 }

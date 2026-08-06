@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineRoutes, route, created, badRequest, notFound } from '@moxxy/companion-core/server';
 import type { AuthUser } from '@moxxy/companion-contracts';
 import type {
-  MoxxyStatus,
+  OperateStatus,
   RunnerPolicyOptions,
   RunRecord,
   RunLane,
@@ -12,9 +12,6 @@ import type {
   TaskModelSnapshot,
 } from '../contract/index.js';
 import { taskModuleId } from '../contract/index.js';
-import { paths } from '@moxxy/companion-services';
-import { adoptDailyMoxxyHome, homeStatus, importProvidersFromDailyMoxxy } from '../exec/home.js';
-import { upgradeMoxxyCli } from '../exec/cli.js';
 import { HARNESSES } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
@@ -104,16 +101,6 @@ const providerPolicySchema = z.object({
   disabledModels: z.array(z.string().min(1).max(200)).max(500),
 });
 
-// Adding a provider to a machine. The slug is NOT checked against a copy of
-// moxxy's list: moxxy owns it and refuses an unknown one naming the valid ones,
-// so a copy here would only rot. `key` is bounded but otherwise opaque: it is
-// forwarded to the machine and never stored.
-const provisionProviderSchema = z.object({
-  provider: z.string().min(1).max(64),
-  key: z.string().min(1).max(4_000).optional(),
-  model: z.string().min(1).max(200).optional(),
-});
-
 const updateRunnerSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   endpoint: z.string().url().max(300).optional(),
@@ -131,7 +118,6 @@ const updateRunnerSchema = z.object({
 
 // ---------- system (status, provider/model settings, skills) ----------
 
-const importSchema = z.object({ sourceHome: z.string().optional() });
 const skillSchema = z.object({ content: z.string().max(64_000) });
 
 // A patch over the task pins: task id → model, null clears. Omitted tasks keep
@@ -148,7 +134,7 @@ const taskModelsSchema = z.object({
 
 /**
  * The execution plane's HTTP surface: runs + the run queue, runner machines,
- * moxxy status/provider settings, and the skill library. The fix-flow routes
+ * execution status, provider settings, and the skill library. The fix-flow routes
  * on a run (diff / approve-pr / discard) belong to module-code — they drive
  * `Fixes`, which needs GitHub — and are carved with it.
  */
@@ -206,7 +192,6 @@ export default defineRoutes((ctx) => {
       // serve a model must not offer it, or the pin is dropped at dispatch and
       // nobody is told why.
       models: lane ? op.runners.modelsForLane(lane.runnerId, lane.harness) : op.runners.servableModels(),
-      defaultModel: ctx.config.defaultModel,
       ...(lane ? { lane, laneDefaultModel: laneModels?.defaultModel ?? null } : {}),
       lanes,
     };
@@ -686,31 +671,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         requireManageableRunner(user, params.id);
         op.runners.setProviderPolicy(params.id, body);
-        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
-      },
-    }),
-
-    route({
-      // Give THIS machine a model provider, by running `moxxy provision` there.
-      // Sibling of the PUT above and deliberately so: that one decides which of
-      // the providers a machine already has agents may use, this one gives it
-      // another. Same gate (own the machine, or hold runners:manage over the
-      // shared pool) because both change what work can land here.
-      //
-      // The key is forwarded to the machine and never persisted, logged or
-      // returned; the reply is the re-probe, so the caller sees the machine's
-      // own account of what it now has.
-      method: 'POST',
-      path: '/api/runners/:id/providers',
-      access: 'runners:connect',
-      body: provisionProviderSchema,
-      handler: async ({ params, body, user }) => {
-        requireManageableRunner(user, params.id);
-        try {
-          return await op.runners.provisionProvider(params.id, body);
-        } catch (err) {
-          throw badRequest(String(err instanceof Error ? err.message : err).slice(0, 500));
-        }
+        return op.runners.catalogSnapshot(user?.username ?? null);
       },
     }),
 
@@ -725,32 +686,7 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    route({
-      // Update the moxxy CLI on a runner's machine from the Runners page. The
-      // local runner reuses the same in-place upgrade the Providers page does;
-      // remote runners go through the agent's /agent/update-moxxy endpoint.
-      method: 'POST',
-      path: '/api/runners/:id/update-moxxy',
-      access: 'runners:connect',
-      handler: async ({ params, user }) => {
-        requireManageableRunner(user, params.id);
-        try {
-          if (params.id === LOCAL_RUNNER_ID) {
-            const previous = op.moxxyCli?.version ?? null;
-            const cli = await upgradeMoxxyCli(paths.moxxyHome(), ctx.config.moxxyCliPath);
-            if (!cli) throw new Error('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
-            op.setMoxxyCli(cli);
-            ctx.broadcast({ t: 'runners.changed' });
-            return { previous, version: cli.version, compatible: cli.compatible };
-          }
-          return await op.runners.updateMoxxy(params.id);
-        } catch (err) {
-          throw badRequest(String(err instanceof Error ? err.message : err).slice(0, 500));
-        }
-      },
-    }),
-
-    // ---------- moxxy status + provider/model settings ---------------------------
+    // ---------- execution status + provider/model settings -----------------------
 
     route({
       // One group per machine plus the merged effective set. A pure read that
@@ -763,21 +699,20 @@ export default defineRoutes((ctx) => {
         // Self-limiting: unforced refreshes are no-ops while catalogs are
         // within their TTL, so opening the page costs nothing on the machines.
         void op.runners.refreshAllCatalogs(false, user?.username ?? null);
-        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
+        return op.runners.catalogSnapshot(user?.username ?? null);
       },
     }),
 
     route({
-      // Re-run detection, then force a re-read from every online machine (the
-      // page's only button). Adoption comes first so a moxxy home configured
-      // after this daemon booted is picked up without a restart.
+      // Force a capability re-read from every online machine. Runtime-specific
+      // config adoption happens inside its adapter at boot; this route knows
+      // only that machines report catalogs.
       method: 'POST',
       path: '/api/providers/refresh',
       access: 'settings:manage',
       handler: async ({ user }) => {
-        if (adoptDailyMoxxyHome()) ctx.broadcast({ t: 'runners.changed' });
         await op.runners.refreshAllCatalogs(true, user?.username ?? null);
-        return op.runners.catalogSnapshot(ctx.config.defaultModel, user?.username ?? null);
+        return op.runners.catalogSnapshot(user?.username ?? null);
       },
     }),
 
@@ -832,16 +767,21 @@ export default defineRoutes((ctx) => {
       path: '/api/status',
       access: 'any',
       allowScopedToken: true,
-      handler: async (): Promise<MoxxyStatus> => {
-        const home = homeStatus();
+      handler: async (): Promise<OperateStatus> => {
+        const runners = op.runners.list().filter((runner) => runner.enabled);
+        const ready = runners.find(
+          (runner) =>
+            runner.health.agentOutdated !== true &&
+            runner.health.runtimes[0]?.state === 'ready',
+        );
         const tokens = op.githubTokens();
         return {
-          cliPath: op.moxxyCli?.path ?? null,
-          cliVersion: op.moxxyCli?.version ?? null,
-          compatible: op.moxxyCli?.compatible ?? false,
-          homeDir: home.homeDir,
-          homeReady: home.homeReady,
-          providersImported: home.providersImported,
+          executionReady: ready !== undefined,
+          executionDetail:
+            ready !== undefined
+              ? null
+              : runners.find((runner) => runner.health.detail)?.health.detail ??
+                (runners.length === 0 ? 'No execution machine is enabled' : 'No selected runtime is ready'),
           // Instance-level health: is GitHub set up at all? Independent of who is
           // viewing (per-user account resolution must not flip the health dot).
           githubConfigured:
@@ -849,41 +789,6 @@ export default defineRoutes((ctx) => {
             ((tokens.login?.() ?? null) !== null || (await tokens.tokenFor()) !== null),
           githubUser: tokens.login?.() ?? null,
         };
-      },
-    }),
-
-    route({
-      method: 'POST',
-      path: '/api/moxxy/import-providers',
-      access: 'settings:manage',
-      body: importSchema,
-      handler: ({ body }) => {
-        const result = importProvidersFromDailyMoxxy(body.sourceHome);
-        // New credentials mean new models: re-read this machine in the
-        // background so the page fills in without a second click.
-        void op.runners.refreshCatalog(LOCAL_RUNNER_ID, true);
-        return result;
-      },
-    }),
-
-    route({
-      // In-place `npm i -g @moxxy/cli@latest`, then re-detect. Works as the
-      // initial install too (same command) when no CLI was found at boot.
-      method: 'POST',
-      path: '/api/moxxy/upgrade-cli',
-      access: 'settings:manage',
-      handler: async () => {
-        const previous = op.moxxyCli?.version ?? null;
-        let cli;
-        try {
-          cli = await upgradeMoxxyCli(paths.moxxyHome(), ctx.config.moxxyCliPath);
-        } catch (err) {
-          throw badRequest(`npm install failed: ${String(err).slice(0, 400)}`);
-        }
-        if (!cli) throw badRequest('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
-        op.setMoxxyCli(cli);
-        ctx.log.info('moxxy CLI upgraded', { previous, version: cli.version, compatible: cli.compatible });
-        return { previous, version: cli.version, compatible: cli.compatible };
       },
     }),
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
@@ -10,21 +11,17 @@ import type {
   HarnessEvent,
   HarnessSessionControls,
   HistorySegment,
-  ProvisionProviderSpec,
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
-import type { RunnerHealth } from '../contract/index.js';
+import type { RunnerHealth, RunnerRuntimeHealth } from '../contract/index.js';
 import { ClaudeCodeHarness, readClaudeRunHistory } from '../exec/claude-code.js';
 import { CodexHarness, readCodexRunHistory } from '../exec/codex.js';
 import { CLAUDE_CODE_HARNESS, CODEX_HARNESS, MOXXY_HARNESS } from './harnesses.js';
 import { GatewayPool } from '../exec/gateway-pool.js';
-import { configuredProviderNames } from '../exec/home.js';
 import { loadHistoryWithFallback } from '../exec/history.js';
-import { runMoxxyProvision } from '../exec/provision.js';
 import type { Checkouts } from '../exec/checkouts.js';
-import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
 import { killAllCommands, runCommand, runVerify, type ExecOptions } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
@@ -50,13 +47,13 @@ export interface LocalRunnerHost {
    * able to complete a turn. Answered by the layer that owns detection, and
    * expected to be cached: health polls this every thirty seconds.
    */
-  readiness(harnessId: string): Promise<{ readonly ok: boolean; readonly detail: string | null }>;
+  runtime(harnessId: string): Promise<RunnerRuntimeHealth>;
 }
 
 const MOXXY_ONLY: LocalRunnerHost = {
   runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null }),
   harnesses: () => [MOXXY_HARNESS.id],
-  readiness: async () => ({ ok: true, detail: null }),
+  runtime: async () => ({ id: 'moxxy', label: 'Moxxy', version: null, state: 'ready', detail: null }),
 };
 
 /**
@@ -84,8 +81,6 @@ export class LocalRunnerBackend implements RunnerBackend {
     id: string,
     private readonly checkouts: Checkouts,
     private readonly moxxyCliPath: string,
-    private moxxyVersion: string | null,
-    private moxxyCompatible: boolean,
     maxLive: number,
     private readonly sink: RunnerEventSink,
     private readonly host: LocalRunnerHost = MOXXY_ONLY,
@@ -104,12 +99,6 @@ export class LocalRunnerBackend implements RunnerBackend {
     );
   }
 
-  /** After an in-place CLI upgrade: health re-advertises without a daemon restart. */
-  updateMoxxyCli(version: string | null, compatible: boolean): void {
-    this.moxxyVersion = version;
-    this.moxxyCompatible = compatible;
-  }
-
   /**
    * Health is judged against the runtime a run started here would actually
    * take, which is the machine's FIRST choice and nothing else.
@@ -121,34 +110,41 @@ export class LocalRunnerBackend implements RunnerBackend {
    * the set" takes the whole machine offline for a fallback no run reaches.
    */
   async probe(): Promise<RunnerHealth> {
-    const takes = this.host.harnesses()[0] ?? MOXXY_HARNESS.id;
-    const { ok, detail } =
-      takes === MOXXY_HARNESS.id
-        ? {
-            ok: this.moxxyCompatible,
-            detail: this.moxxyCompatible ? null : `moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
-          }
-        : await this.host.readiness(takes);
+    const runtimes = await Promise.all(this.host.harnesses().map((id) => this.host.runtime(id)));
+    const primary = runtimes[0] ?? null;
+    const ready = primary?.state === 'ready';
     return {
-      status: ok ? 'online' : 'degraded',
-      moxxyVersion: this.moxxyVersion,
-      moxxyCompatible: this.moxxyCompatible,
+      status: ready ? 'online' : 'degraded',
+      runtimes,
       liveRuns: this.liveIds().length,
       maxRuns: this.maxLive,
       lastSeenAt: Date.now(),
-      detail,
-      providers: configuredProviderNames(),
+      detail: primary?.detail ?? (primary ? null : 'No agent runtime is selected on this machine'),
     };
   }
 
-  /** Companion's own isolated moxxy home: the one every gateway here boots against. */
-  provisionProvider(spec: ProvisionProviderSpec): Promise<void> {
-    return runMoxxyProvision(this.moxxyCliPath, paths.moxxyHome(), spec);
+  async probeRuntime(harnessId: string): Promise<unknown> {
+    const runId = `runtime-probe-${randomUUID().slice(0, 8)}`;
+    const cwd = await this.scratchDir(runId);
+    try {
+      await this.spawnHarness(runId, cwd, 'workspace-write', { harness: harnessId, model: null });
+      return await this.sessionInfo(runId);
+    } finally {
+      await this.stop(runId).catch(() => undefined);
+    }
   }
 
   async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
+    return this.spawnHarness(runId, cwd, access, this.host.runSpec(runId));
+  }
+
+  private async spawnHarness(
+    runId: string,
+    cwd: string,
+    access: AgentRunAccess,
+    spec: LocalRunSpec,
+  ): Promise<void> {
     mkdirSync(cwd, { recursive: true });
-    const spec = this.host.runSpec(runId);
     // Named rather than "everything that is not moxxy": a run recorded under a
     // harness this build no longer has must land on moxxy, which is what every
     // machine ran before the choice existed, not on whichever branch happens to

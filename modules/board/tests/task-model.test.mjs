@@ -93,21 +93,20 @@ test('editing a card moves it to another model, and clearing returns it to inher
   db.close();
 });
 
-test('the picker offers operate’s catalog and names what "inherit" resolves to', () => {
+test('the picker offers operate’s catalog and exposes only the task-level pin', () => {
   let pin = 'sonnet';
   const catalog = [{ id: 'opus', contextWindow: 200_000, machines: ['runner-a'] }];
   const { db, makeService } = fixture({ servableModels: () => catalog, taskModelPin: () => pin });
   const service = makeService();
 
-  const pinned = service.modelOptions('haiku');
+  const pinned = service.modelOptions();
   assert.deepEqual(pinned.models, catalog);
   assert.equal(pinned.workerModel, 'sonnet');
-  assert.equal(pinned.defaultModel, 'haiku');
 
   // Read through, not cached: repinning board.worker changes what every unset
   // card is shown to inherit, with no board-side write.
   pin = null;
-  assert.equal(service.modelOptions('haiku').workerModel, null);
+  assert.equal(service.modelOptions().workerModel, null);
   service.dispose();
   db.close();
 });

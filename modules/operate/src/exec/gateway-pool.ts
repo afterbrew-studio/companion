@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
 import type { AgentRunAccess, AskRequest, MoxxyEvent } from '@moxxy/companion-types';
@@ -136,6 +136,7 @@ export class GatewayPool {
     // skills.userDir: moxxy's defaultUserSkillsDir() hardcodes ~/.moxxy/skills
     // (ignores MOXXY_HOME — upstream bug), so point it at Companion's skills.
     const configFile = join(paths.runConfigs(), `${opts.runId}.yaml`);
+    mkdirSync(paths.runConfigs(), { recursive: true });
     const provider = providerDefaultsFromConfigYaml(readHomeFile('config.yaml'));
     writeFileSync(
       configFile,

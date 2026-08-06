@@ -94,6 +94,5 @@ export function useProviders(): {
 const EMPTY: ProviderCatalog = {
   providers: [],
   machines: [],
-  defaultModel: '',
   fetchedAt: null,
 };

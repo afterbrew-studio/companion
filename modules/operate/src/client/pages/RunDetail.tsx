@@ -218,12 +218,12 @@ function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunR
     <select
       className="input max-w-48"
       aria-label="Model for this run"
-      title="Model for this run (from the moxxy gateway)"
+      title="Model for this run (reported by its runtime)"
       value={current}
       disabled={busy}
       onChange={(e) => void pick(e.target.value)}
     >
-      <option value="">default — {catalog.defaultModel}</option>
+      <option value="">Auto — runtime default</option>
       {selectable.map((p) => (
         <optgroup key={p.name} label={`${p.name}${p.ready ? '' : ' (no credentials)'}`}>
           {p.models.map((m) => (

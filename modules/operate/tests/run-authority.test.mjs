@@ -10,7 +10,7 @@ import { Orchestrator } from '../dist/api/orchestrator.js';
 
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-run-authority-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8904, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8904, maxLiveRuns: 3 };
 
 function fixture() {
   const db = new Database(':memory:');

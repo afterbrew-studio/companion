@@ -410,9 +410,9 @@ function configDir(): string {
 /**
  * The models this installation can run, read from the cache Codex maintains.
  *
- * Deliberately not a list in this repo. Codex's model ids are versioned
- * (`gpt-5.6-sol`, `gpt-5.5`) with no stable aliases to pin to, so a hard-coded
- * list would start going stale on the next Codex release and would describe the
+ * Deliberately not a list in this repo. Codex's model ids are versioned with no
+ * stable aliases to pin to, so a hard-coded list would start going stale on the
+ * next Codex release and would describe the
  * models this build was written against rather than the ones the machine can
  * actually reach.
  */

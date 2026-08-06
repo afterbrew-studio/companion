@@ -11,7 +11,7 @@ import { LOCAL_RUNNER_ID } from '../dist/api/runners-store.js';
 
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-runner-policy-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8903, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8903, maxLiveRuns: 3 };
 const PROVIDERS = [
   { name: 'anthropic', enabled: true, ready: true, models: [{ id: 'opus', contextWindow: null }] },
 ];
@@ -33,13 +33,17 @@ function fakeBackend(id) {
     id,
     probe: async () => ({
       status: 'online',
-      moxxyVersion: '9.9.9',
-      moxxyCompatible: true,
+      runtimes: [{ id: 'test', label: 'Test', version: '9.9.9', state: 'ready', detail: null }],
       liveRuns: live.size,
       maxRuns: 3,
       lastSeenAt: Date.now(),
       detail: null,
       providers: PROVIDERS.map((p) => p.name),
+    }),
+    probeRuntime: async () => ({
+      activeProvider: 'anthropic',
+      providers: PROVIDERS,
+      readyProviders: PROVIDERS.map((p) => p.name),
     }),
     spawn: async (runId) => void live.add(runId),
     stop: async (runId) => void live.delete(runId),

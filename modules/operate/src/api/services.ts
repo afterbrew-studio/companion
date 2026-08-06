@@ -2,7 +2,7 @@ import { defineServices } from '@moxxy/companion-core/server';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { paths } from '@moxxy/companion-services';
 import type { GitCredentialResolver, GithubTokenSource } from '../contract/index.js';
-import { detectMoxxyCli, MIN_MOXXY_VERSION } from '../exec/cli.js';
+import { detectMoxxyCli } from '../exec/cli.js';
 import { adoptDailyMoxxyHome, healCredentialLinks, seedPermissionDenyRules } from '../exec/home.js';
 import { Checkouts } from '../exec/checkouts.js';
 import { AgentPolicy } from './agent-policy.js';
@@ -67,17 +67,10 @@ export default defineServices(async (ctx) => {
     if (msg.t === 'run.changed') ctx.bus.emit('run.changed', msg.run);
   };
 
-  const moxxyCli = await detectMoxxyCli(paths.moxxyHome(), ctx.config.moxxyCliPath);
-  if (!moxxyCli) {
-    ctx.log.warn(
-      `moxxy CLI not found on PATH — install it with: npm i -g @moxxy/cli  (>= ${MIN_MOXXY_VERSION}). ` +
-        'companiond starts anyway; runs will fail until moxxy is installed.',
-    );
-  } else if (!moxxyCli.compatible) {
-    ctx.log.warn(`installed moxxy ${moxxyCli.version} is older than ${MIN_MOXXY_VERSION}; upgrade with: npm i -g @moxxy/cli`);
-  } else {
-    ctx.log.info(`moxxy ${moxxyCli.version} at ${moxxyCli.path}`);
-  }
+  // Runtime adapters discover their own prerequisites. The composition root
+  // needs this handle only to construct the built-in adapter; absence is a
+  // valid configuration when another installed runtime handles the work.
+  const moxxyCli = await detectMoxxyCli(paths.moxxyHome());
 
   // Per-repo resolution, so the invoking/run-owning profile governs clones too.
   const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host, (repo, branch) =>
@@ -108,6 +101,7 @@ export default defineServices(async (ctx) => {
     (kind, title, body) => ctx.notify.emit({ workspaceId: null, kind, title, body, href: '#/runners' }),
     agentPolicy,
   );
+  await orchestrator.runners.adoptDetectedRuntimes();
   orchestrator.setRunAuthorityResolver((username) => {
     const role = auth.activeUserRole(username);
     return role !== undefined && ctx.rbac.has(role, 'runs:read') && ctx.rbac.has(role, 'runs:act');
@@ -124,7 +118,6 @@ export default defineServices(async (ctx) => {
     orchestrator,
     orchestrator.runners,
     checkouts,
-    moxxyCli,
     webhookTunnel,
     skills,
     store.runs,

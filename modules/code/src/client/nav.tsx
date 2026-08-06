@@ -69,10 +69,10 @@ export const nav = defineNav([
     shortcut: 'o',
     permission: 'issues:read',
     section: 'workspace',
-    order: -10,
-    // Fallback home when the viewer cannot access Today; the shell otherwise
-    // prefers Workbench's lower home order.
-    home: 0,
+    order: -20,
+    // The workspace summary is the common starting point; Today follows with
+    // the narrower queue of decisions that need action.
+    home: -20,
     icon: icons.overview,
   },
   {

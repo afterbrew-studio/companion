@@ -24,7 +24,7 @@ const builtin = (id, online = true) => machine(id, null, online, false);
 
 const merged = (name, machines = [], disabledOn = []) => ({ name, machines, disabledOn, models: [] });
 
-const catalog = (providers, machines) => ({ providers, machines, defaultModel: 'opus', fetchedAt: null });
+const catalog = (providers, machines) => ({ providers, machines, fetchedAt: null });
 
 test('a provider some machine serves is found, and names what was found', () => {
   const found = detectProviders(catalog([merged('anthropic', ['m1'])], [machine('m1', 1000)]));
@@ -42,8 +42,8 @@ test('credentials the operator switched off still count as found, not as nothing
 });
 
 test('a provider name no machine can serve is not found', () => {
-  // The merged list also carries names read from the daemon's own moxxy config;
-  // a name alone proves no credentials exist anywhere.
+  // A stale or partial report may carry a name without any capable machine; a
+  // name alone still proves no credentials exist anywhere.
   const answer = detectProviders(catalog([merged('anthropic')], [machine('m1', 1000)]));
   assert.equal(answer.state, 'none');
 });

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { APP_VERSION } from '@moxxy/companion-core';
 import {
   addModule,
   defineRoutes,
@@ -160,7 +159,7 @@ export default defineRoutes((ctx) => {
         ...(isLoopbackHost(ctx.config.host) && auth.localSeed()
           ? { localCredentials: auth.localSeed()! }
           : {}),
-        version: APP_VERSION,
+        version: ctx.appVersion,
         branding: { name: settings.get('branding.name') || null, logo: settings.get('branding.logo') || null },
         githubHost: ctx.config.github.host,
         providers: auth.providers(),

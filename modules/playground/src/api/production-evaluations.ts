@@ -552,7 +552,10 @@ function configurationFor(
     laneHarness: lane.harness,
     laneTaskModel: autoLane ? null : (laneModels.pins[task] ?? null),
     laneDefaultModel: autoLane ? null : laneModels.defaultModel,
-    daemonDefaultModel: op.orchestrator.defaultModelPreference(),
+    // Kept in the persisted evaluation shape for backwards compatibility.
+    // Auto-selection now always belongs to the runtime, so there is no daemon
+    // model to record.
+    daemonDefaultModel: null,
   };
   return {
     fingerprint: createHash('sha256').update(JSON.stringify(known)).digest('hex').slice(0, 20),

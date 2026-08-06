@@ -1024,8 +1024,8 @@ function NewTaskModal({
 
 /**
  * The card's model, shared by the create modal and the task editor. Empty means
- * inherit, and the option says what it inherits so nobody has to open the Task
- * models settings page to find out.
+ * Auto: use the board-worker setting when one exists, otherwise let the chosen
+ * runtime apply its own default.
  */
 function ModelField({
   options,
@@ -1036,7 +1036,7 @@ function ModelField({
   value: string | null;
   onChange: (model: string | null) => void;
 }): JSX.Element {
-  const inherited = options ? (options.workerModel ?? options.defaultModel) : '';
+  const inherited = options?.workerModel ?? null;
   const offered = options?.models ?? [];
   // A card holding a model the pool cannot serve right now keeps it and stays
   // visible: the catalog is capability, and it moves. Dropping the option would
@@ -1054,8 +1054,8 @@ function ModelField({
         options={[
           {
             value: '',
-            label: inherited ? `Inherit (${inherited})` : 'Inherit',
-            hint: options?.workerModel ? 'board workers pin' : 'instance default',
+            label: inherited ? `Auto — task setting (${inherited})` : 'Auto — runtime default',
+            hint: options?.workerModel ? 'board workers setting' : 'selected runtime',
           },
           ...stale,
           ...offered.map((m) => ({
@@ -1372,7 +1372,7 @@ function TaskDetailDrawer({
               <span className="font-mono">{task.model}</span>
             ) : (
               <span className="dim">
-                inherited{modelOptions ? ` · ${modelOptions.workerModel ?? modelOptions.defaultModel}` : ''}
+                {modelOptions?.workerModel ? `auto · task setting (${modelOptions.workerModel})` : 'auto · runtime default'}
               </span>
             )}
           </DetailRow>

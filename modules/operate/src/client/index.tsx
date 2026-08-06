@@ -32,7 +32,7 @@ export { useRunQueue } from './hooks/useRunQueue.js';
 export { useRunnerCapacity } from './hooks/useRunnerCapacity.js';
 export { useAiActivity } from './hooks/useAiActivity.js';
 export type { AiActivity } from './hooks/useAiActivity.js';
-export { useMoxxyStatus } from './hooks/useMoxxyStatus.js';
+export { useOperateStatus } from './hooks/useOperateStatus.js';
 export { operateApi } from './api.js';
 
 export default defineClientModule({

@@ -12,7 +12,6 @@ Companion reads real environment variables first, then `./.env`, then
 | `COMPANION_PORT` | `8901` | HTTP and WebSocket port. |
 | `COMPANION_HOME` | `~/.companion` | Data directory: SQLite database, clones, worktrees, isolated moxxy home. |
 | `COMPANION_PUBLIC_URL` | unset | The address SSO and webhooks come back to. Required behind a domain. |
-| `COMPANION_MODEL` | `gpt-5.5` | Default model passed to agent runs. |
 | `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_EMAIL` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. Read only while the user store is empty. |
 | `COMPANION_MAINTAINER_USER` / `COMPANION_MAINTAINER_PASSWORD` | unset | Optional seed maintainer account. |
 | `COMPANION_BUSINESS_USER` / `COMPANION_BUSINESS_PASSWORD` | unset | Optional seed business account. |

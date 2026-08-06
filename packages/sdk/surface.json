@@ -1,7 +1,6 @@
 {
   ".": [
     "ABI_GENERATION",
-    "APP_VERSION",
     "BUILTIN_ROLES",
     "BuiltinRole",
     "ModuleConfigAccessor",

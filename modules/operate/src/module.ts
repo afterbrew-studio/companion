@@ -2,7 +2,7 @@ import { defineManifest } from '@moxxy/companion-core';
 
 /**
  * module-operate — the execution plane: agent runs + the run queue, runner
- * machines (local/remote), the moxxy gateway surface, and skills. Its `/exec`
+ * machines (local/remote), runtime adapters, and skills. Its `/exec`
  * entry exports the pure execution primitives the published companion-runner
  * CLI bundles (no store, no kernel, no sqlite).
  */

@@ -260,7 +260,6 @@ function productionServiceFixture(fixtureOptions = {}) {
     userLane: () => ({ runnerId: null, harness: null }),
     laneModels: () => ({ defaultModel: null, pins: {} }),
     taskModelPin: () => 'model-a',
-    defaultModelPreference: () => 'model-default',
     runOneShot: (runOptions) => {
       runNumber += 1;
       const runId = `agent-${runNumber}`;

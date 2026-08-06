@@ -26,6 +26,7 @@ export type HarnessState =
 
 export interface HarnessDetection {
   readonly id: string;
+  readonly version: string | null;
   readonly state: HarnessState;
   /** What is wrong; null when nothing is. */
   readonly detail: string | null;
@@ -53,10 +54,11 @@ export async function detectHarnesses(moxxyHome: string): Promise<readonly Harne
  * it starts, and every turn has nothing to run on.
  */
 export function moxxyState(cli: MoxxyCli | null, providers: readonly string[]): HarnessDetection {
-  if (!cli) return { id: 'moxxy', state: 'absent', detail: null, fix: null };
+  if (!cli) return { id: 'moxxy', version: null, state: 'absent', detail: null, fix: null };
   if (!cli.compatible) {
     return {
       id: 'moxxy',
+      version: cli.version,
       state: 'installed',
       detail: `Version ${cli.version} is older than the ${MIN_MOXXY_VERSION} this daemon is written against.`,
       fix: 'npm i -g @moxxy/cli@latest',
@@ -65,38 +67,41 @@ export function moxxyState(cli: MoxxyCli | null, providers: readonly string[]): 
   if (providers.length === 0) {
     return {
       id: 'moxxy',
+      version: cli.version,
       state: 'installed',
       detail: 'No model provider is configured for it, so a turn would have nothing to run on.',
       fix: 'moxxy provision',
     };
   }
-  return { id: 'moxxy', state: 'ready', detail: null, fix: null };
+  return { id: 'moxxy', version: cli.version, state: 'ready', detail: null, fix: null };
 }
 
 /** Codex brings its own sign-in too, so the same one check settles it. */
 export function codexState(cli: CodexCli | null): HarnessDetection {
-  if (!cli) return { id: 'codex', state: 'absent', detail: null, fix: null };
+  if (!cli) return { id: 'codex', version: null, state: 'absent', detail: null, fix: null };
   if (!cli.loggedIn) {
     return {
       id: 'codex',
+      version: cli.version,
       state: 'installed',
       detail: 'It is installed but not signed in, so every turn would be refused.',
       fix: 'codex login',
     };
   }
-  return { id: 'codex', state: 'ready', detail: null, fix: null };
+  return { id: 'codex', version: cli.version, state: 'ready', detail: null, fix: null };
 }
 
 /** Claude Code brings its own sign-in, so being signed out is its whole check. */
 export function claudeState(cli: ClaudeCodeCli | null): HarnessDetection {
-  if (!cli) return { id: 'claude-code', state: 'absent', detail: null, fix: null };
+  if (!cli) return { id: 'claude-code', version: null, state: 'absent', detail: null, fix: null };
   if (!cli.loggedIn) {
     return {
       id: 'claude-code',
+      version: cli.version,
       state: 'installed',
       detail: 'It is installed but not signed in, so every turn would be refused.',
       fix: 'claude auth login',
     };
   }
-  return { id: 'claude-code', state: 'ready', detail: null, fix: null };
+  return { id: 'claude-code', version: cli.version, state: 'ready', detail: null, fix: null };
 }

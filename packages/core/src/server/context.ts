@@ -17,6 +17,8 @@ import type { WsScopeRegistry } from './ws-hub.js';
  * cross-module reactions through `bus`; browser push through `broadcast`.
  */
 export interface ModuleContext {
+  /** Version of the Companion product hosting this module, from its package manifest. */
+  readonly appVersion: string;
   readonly db: Database;
   readonly log: Logger;
   readonly config: DaemonConfig;

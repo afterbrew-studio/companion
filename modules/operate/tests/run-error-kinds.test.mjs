@@ -10,7 +10,7 @@ import { Orchestrator } from '../dist/api/orchestrator.js';
 
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-run-error-kinds-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8903, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8903, maxLiveRuns: 3 };
 
 /** The provider's own wording, which is all moxxy passes through. */
 const OVERLOADED = 'Our servers are currently overloaded. Please try again later.';

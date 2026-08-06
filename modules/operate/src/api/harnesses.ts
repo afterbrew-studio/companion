@@ -50,8 +50,8 @@ export function builtinCatalog(harness: HarnessDescriptor): RunnerCatalog | null
   // Codex carries no fixed list (see its descriptor) but does keep one on disk,
   // written by the runtime itself. Reading it costs a file read and is the
   // difference between its models being pinnable and the operator being told,
-  // wrongly, that this runtime reports nothing. Only correct for the local
-  // machine, which is the only kind that runs a non-moxxy runtime today.
+  // wrongly, that this runtime reports nothing. The file read is local to the
+  // machine whose adapter owns it.
   const models = harness.models ?? (harness.id === CODEX_HARNESS_ID ? codexModels() : undefined);
   if (models === undefined || models.length === 0) return null;
   return {

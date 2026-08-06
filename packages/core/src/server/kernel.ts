@@ -33,6 +33,8 @@ export interface InstalledModule {
 }
 
 export interface KernelOptions {
+  /** Product version from the published Companion package manifest. */
+  readonly appVersion: string;
   readonly db: Database;
   readonly log: Logger;
   readonly config: DaemonConfig;
@@ -133,6 +135,7 @@ export class ModuleKernel {
       delete: (k) => settingsSvc()?.delete(k),
     };
     this.ctx = {
+      appVersion: opts.appVersion,
       db: this.db,
       log: this.log,
       config: opts.config,

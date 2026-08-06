@@ -326,7 +326,7 @@ function SettingsForm({
 
         <Section
           title="Capability"
-          description="What this machine reported when the daemon last probed it: what it can do, not what it is allowed to do. The one change you can make here is giving it another model provider."
+          description="What this machine reported when the daemon last probed it: what it can do, not what it is allowed to do."
         >
           <ListCard subtle>
             <SettingRow className="px-4 py-3" title="Status" description={health.detail ?? undefined}>
@@ -335,26 +335,43 @@ function SettingsForm({
                 {health.lastSeenAt ? <span className="dim text-xs">seen {timeAgo(health.lastSeenAt)}</span> : null}
               </span>
             </SettingRow>
-            <SettingRow
-              className="px-4 py-3"
-              title="moxxy"
-              description={health.moxxyCompatible ? 'Recent enough for this daemon.' : 'Missing or older than this daemon needs.'}
-            >
-              <span className="dim text-sm">{health.moxxyVersion ?? 'unknown'}</span>
-            </SettingRow>
-            <SettingRow
-              className="px-4 py-3"
-              title="Model providers"
-              description="Credentials configured on the machine. Which of them agents may use is set under Providers."
-            >
-              <span className="dim text-sm">
-                {health.providers === null
-                  ? 'not probed yet'
-                  : health.providers.length > 0
-                    ? health.providers.join(' · ')
-                    : 'none configured'}
-              </span>
-            </SettingRow>
+            {health.runtimes.length === 0 ? (
+              <SettingRow className="px-4 py-3" title="Agent runtimes" description="No runtime report received yet.">
+                <span className="dim text-sm">unknown</span>
+              </SettingRow>
+            ) : (
+              health.runtimes.map((runtime) => (
+                <SettingRow
+                  key={runtime.id}
+                  className="px-4 py-3"
+                  title={runtime.label}
+                  description={runtime.detail ?? 'Installed, authenticated, and ready.'}
+                >
+                  <span className="flex items-center gap-2">
+                    <MetaSignal tone={runtime.state === 'ready' ? 'green' : 'amber'} label={runtime.state} />
+                    {runtime.version ? <span className="dim text-xs">v{runtime.version}</span> : null}
+                  </span>
+                </SettingRow>
+              ))
+            )}
+            {runner.harnesses.some((runtime) => runtime.capabilities.models === 'providers') ? (
+              <SettingRow
+                className="px-4 py-3"
+                title="Model providers"
+                description="Credentials reported by this machine. Which of them agents may use is set under Providers."
+              >
+                <span className="dim text-sm">
+                  {catalog === null
+                    ? 'not reported yet'
+                    : catalog.providers.some((provider) => provider.ready)
+                      ? catalog.providers
+                          .filter((provider) => provider.ready)
+                          .map((provider) => provider.name)
+                          .join(' · ')
+                      : 'none reported'}
+                </span>
+              </SettingRow>
+            ) : null}
             <SettingRow
               className="px-4 py-3"
               title="Models"
@@ -369,11 +386,15 @@ function SettingsForm({
 
         <Section
           title="Agent runtimes"
-          description="What agent work here actually runs on. Only runtimes installed on this machine are listed. Work runs through the one marked 'runs work here'; tick others to keep them available and use their models."
+          description={
+            local
+              ? "What agent work here actually runs on. Only detected runtimes are listed; the first selected runtime handles work by default."
+              : "What the remote machine reports it can run. Runtime installation and selection are managed on that machine."
+          }
         >
           <HarnessPicker
             runnerId={runner.id}
-            local={local}
+            editable={local}
             selected={harnesses}
             onChange={setHarnesses}
           />
@@ -496,27 +517,6 @@ function SettingsForm({
   );
 }
 
-/** Suggestions only: moxxy owns the real list and names it when it refuses one. */
-const PROVIDER_SLUGS = [
-  'anthropic',
-  'claude-code',
-  'google',
-  'local',
-  'openai',
-  'openai-codex',
-  'xai',
-  'zai',
-  'zai-plan',
-];
-
-/**
- * Providers known to authenticate with a subscription rather than a key. moxxy
- * has no headless path for those, so the form says so instead of pretending the
- * key field will work. Guidance, not a fence: the request still goes through,
- * because moxxy is the authority on what it accepts and this list will age.
- */
-const SUBSCRIPTION_PROVIDERS = new Set(['claude-code', 'openai-codex', 'zai-plan']);
-
 /** The app's all-or-selected reach control: one segmented choice, then the picker. */
 function ReachRow({
   title,
@@ -571,12 +571,12 @@ function ReachRow({
  */
 function HarnessPicker({
   runnerId,
-  local,
+  editable,
   selected,
   onChange,
 }: {
   runnerId: string;
-  local: boolean;
+  editable: boolean;
   selected: readonly string[];
   onChange: (next: readonly string[]) => void;
 }): JSX.Element {
@@ -594,22 +594,12 @@ function HarnessPicker({
     };
   }, [runnerId]);
 
-  if (!local) {
-    return (
-      <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
-        A machine reached over the network runs moxxy. The runner agent speaks one runtime, so this is not a choice
-        there.
-      </p>
-    );
-  }
   if (failed) return <p className="dim text-xs">Could not read what is installed on this machine.</p>;
   if (options === null) return <p className="dim text-xs">Looking at what is installed…</p>;
   if (options.length === 0) {
     return (
       <div className="banner-warn">
-        No agent runtime is installed on this machine, so nothing can run here yet. Install one and reload:{' '}
-        <code>npm i -g @moxxy/cli</code>, <code>npm i -g @anthropic-ai/claude-code</code> or{' '}
-        <code>npm i -g @openai/codex</code>.
+        No supported agent runtime was detected on this machine. Install and sign in to one, then reload this page.
       </div>
     );
   }
@@ -624,8 +614,8 @@ function HarnessPicker({
       {gone.length > 0 ? (
         <div className="px-4 py-3">
           <span className="text-xs text-amber-600 dark:text-amber-400">
-            Set to {gone.join(', ')}, which is no longer installed here. Reinstall it, or tick another runtime and
-            save.
+            Set to {gone.join(', ')}, which is no longer reported here.
+            {editable ? ' Reinstall it, or select another runtime and save.' : ' Repair the runtime on that machine.'}
           </span>
         </div>
       ) : null}
@@ -652,7 +642,7 @@ function HarnessPicker({
                   runtime runs work was to untick the one in front of it. */}
               {option.id === selected[0] ? (
                 <span className="chip">runs work here</span>
-              ) : selected.includes(option.id) ? (
+              ) : editable && selected.includes(option.id) ? (
                 <button
                   type="button"
                   className="linkish text-xs"
@@ -679,18 +669,22 @@ function HarnessPicker({
             )
           }
         >
-          <input
-            type="checkbox"
-            aria-label={`Run agents through ${option.label}`}
-            checked={selected.includes(option.id)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...selected, option.id]
-                  : selected.filter((id) => id !== option.id),
-              )
-            }
-          />
+          {editable ? (
+            <input
+              type="checkbox"
+              aria-label={`Run agents through ${option.label}`}
+              checked={selected.includes(option.id)}
+              onChange={(e) =>
+                onChange(
+                  e.target.checked
+                    ? [...selected, option.id]
+                    : selected.filter((id) => id !== option.id),
+                )
+              }
+            />
+          ) : (
+            <span className="dim text-xs">managed remotely</span>
+          )}
         </SettingRow>
       ))}
     </ListCard>

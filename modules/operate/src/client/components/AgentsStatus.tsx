@@ -1,23 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { StatusDot as Dot } from '@moxxy/companion-ui';
 import { isMessage, onServerMessage, onWsState, type WsState } from '@moxxy/companion-core/client';
-import { useLane } from '../hooks/useLane.js';
 import { useAuth } from '@companion/module-core/client';
-import type { MoxxyStatus } from '../../contract/index.js';
+import type { OperateStatus } from '../../contract/index.js';
 import { operateApi } from '../api.js';
 
 /**
- * One dot summarizing moxxy + GitHub + event stream: green when everything is
+ * One dot summarizing execution + GitHub + event stream: green when everything is
  * healthy, amber when partially degraded, red when the daemon is unreachable.
  * Hover or focus expands the popover with the individual statuses.
  */
 export function AgentsStatus(): JSX.Element | null {
   // Contributed to the shell's top bar. It renders only while operate is
-  // enabled, so the /api/moxxy/status 503 the shell-side version had to
-  // special-case (to avoid a red "daemon unreachable" dot) cannot happen.
+  // enabled, so the status endpoint cannot disappear underneath it.
   const { user } = useAuth();
   const me = user?.username ?? null;
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
+  const [status, setStatus] = useState<OperateStatus | null>(null);
   const [ws, setWs] = useState<WsState>('offline');
   const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -77,33 +75,17 @@ export function AgentsStatus(): JSX.Element | null {
     };
   }, []);
 
-
-  const { lane } = useLane();
-
-  const moxxyOk = Boolean(status && status.cliPath && status.compatible && status.homeReady);
-  // Named for what it is rather than for one implementation of it: a machine
-  // may run Claude Code or Codex, and calling the row "moxxy" made a healthy
-  // instance look misconfigured to anyone not using it.
-  const moxxyTitle = !status
-    ? 'Runtime: status unknown'
-    : !status.cliPath
-      ? 'moxxy CLI not found'
-      : !status.compatible
-        ? `moxxy ${status.cliVersion ?? '?'} is too old`
-        : !status.providersImported
-          ? 'moxxy ready — providers not imported yet'
-          : `moxxy ${status.cliVersion} ready`;
-
-  // Whether moxxy is healthy only bears on this dot when moxxy is what your
-  // work runs on. Having picked another runtime, a missing or outdated moxxy
-  // CLI is a fact about software you are not using, and colouring the whole
-  // indicator red for it reports an outage that is not happening.
-  const moxxyInUse = lane === null || lane.harness === null || lane.harness === 'moxxy';
+  const executionOk = status?.executionReady === true;
+  const executionTitle = !status
+    ? 'Execution status unknown'
+    : status.executionReady
+      ? 'At least one execution machine is ready'
+      : (status.executionDetail ?? 'No execution machine is ready');
 
   // healthy: all green · degraded: soft warnings only · unhealthy: something
   // is down · offline: the daemon itself is unreachable.
-  const anyDown = (moxxyInUse && !moxxyOk) || !status?.githubConfigured || ws === 'offline';
-  const anyWarn = (moxxyInUse && !status?.providersImported) || ws === 'connecting';
+  const anyDown = !executionOk || !status?.githubConfigured || ws === 'offline';
+  const anyWarn = ws === 'connecting';
   const overall: 'healthy' | 'degraded' | 'unhealthy' | 'offline' = !status
     ? 'offline'
     : anyDown
@@ -136,7 +118,7 @@ export function AgentsStatus(): JSX.Element | null {
         className="invisible absolute top-full right-0 z-40 mt-1.5 flex w-56 flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 opacity-0 shadow-lg transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900"
       >
         <div className="dim text-[10px] font-medium tracking-widest uppercase">{overall}</div>
-        <StatusDot ok={moxxyOk} degraded={moxxyOk && !status?.providersImported} label="Runtime" title={moxxyTitle} />
+        <StatusDot ok={executionOk} label="Execution" title={executionTitle} />
         <StatusDot
           ok={Boolean(status?.githubConfigured)}
           label="GitHub"

@@ -500,7 +500,7 @@ export class Orchestrator implements RunnerEventSink {
 
   /**
    * Provider-aware placement: resolve the model the run will actually ride
-   * (explicit > standing preference > task pin > daemon default) to the
+   * (explicit > standing preference > task pin) to the
    * providers that serve it, and prefer a runner advertising one of them.
    * Callers that provision a worktree before createRun (fixes, pipelines) use
    * this so the worktree lands on the runner the run will execute on.
@@ -525,8 +525,7 @@ export class Orchestrator implements RunnerEventSink {
     const effective =
       opts.model ??
       this.servableAnywhere(opts.preferredModel ?? null) ??
-      this.pinnedModel(opts.task ?? null) ??
-      this.config.defaultModel;
+      this.pinnedModel(opts.task ?? null);
     return this.runners.place(repo, opts.task ?? null, effective, opts.userId ?? null, opts.exclude);
   }
 
@@ -646,8 +645,7 @@ export class Orchestrator implements RunnerEventSink {
     // Model: a choice just made → the unit of work's standing preference → this
     // lane's pin for the task → this lane's default → the task's instance pin.
     // Everything but the explicit choice is narrowed to what the machine can
-    // serve; null falls through to the daemon default at dispatch, and to the
-    // runner's own default when even that cannot be served there.
+    // serve; null lets the selected runtime apply its own default at dispatch.
     const model = resolveModel({
       ...(opts.model !== undefined ? { explicit: opts.model } : {}),
       preferred: this.servableHere(runnerId, opts.preferredModel ?? null),
@@ -834,12 +832,10 @@ export class Orchestrator implements RunnerEventSink {
         `${requested} is not enabled on the machine this run is on. Enable it there under Providers, or switch this run to another model`,
       );
     }
-    // Nobody chose a model: the daemon default is itself a fallback, so when
-    // this machine cannot serve it the machine's own default applies. That is
-    // an absent choice, not a substituted one.
-    const chosen =
-      requested ?? (this.runners.serves(runnerId, this.config.defaultModel) ? this.config.defaultModel : null);
-    const result = await backend.runTurn(runId, { prompt, model: chosen ?? undefined, attachments });
+    // Nobody chose a model: omit it and let the selected runtime apply its own
+    // configuration. There is no meaningful instance-wide default across a
+    // heterogeneous fleet.
+    const result = await backend.runTurn(runId, { prompt, model: requested ?? undefined, attachments });
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
@@ -869,11 +865,6 @@ export class Orchestrator implements RunnerEventSink {
   taskModelPin(task: string): string | null {
     const pinned = this.store.settings.get(taskPinKey(task));
     return pinned && pinned.trim() !== '' ? pinned : null;
-  }
-
-  /** Daemon fallback included in evaluation configuration snapshots. */
-  defaultModelPreference(): string {
-    return this.config.defaultModel;
   }
 
   /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
@@ -1011,12 +1002,12 @@ export class Orchestrator implements RunnerEventSink {
       .filter((p): p is ModelCatalogProvider => p !== null);
     // A live gateway is the cheapest catalog there is — hand what we just read
     // to the registry (the single owner) so the settings view stays current.
-    this.runners.noteSessionInfo(this.store.runs.get(runId)?.runner_id ?? null, info);
+    const run = this.store.runs.get(runId);
+    this.runners.noteSessionInfo(run?.runner_id ?? null, info, run?.harness);
     return {
       activeProvider: typeof info?.activeProvider === 'string' ? info.activeProvider : null,
       providers,
-      current: this.store.runs.get(runId)?.model ?? this.config.defaultModel,
-      defaultModel: this.config.defaultModel,
+      current: this.store.runs.get(runId)?.model ?? null,
     };
   }
 

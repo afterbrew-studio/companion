@@ -6,9 +6,6 @@
  */
 import type { ModuleConfigField } from './module-config.js';
 
-/** The instance version reported to clients (WS hello + /api/auth/state). One source. */
-export const APP_VERSION = '0.3.0';
-
 export type ModuleId = string;
 
 export interface ModuleManifest {

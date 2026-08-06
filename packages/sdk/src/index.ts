@@ -44,7 +44,7 @@
 export const SDK_VERSION = '0.7.0'; // keep in step with package.json (checked by pnpm sdk:surface)
 export const ABI_GENERATION = '0.x';
 
-export { defineManifest, APP_VERSION } from '@moxxy/companion-core';
+export { defineManifest } from '@moxxy/companion-core';
 export type { ModuleManifest, ModuleId } from '@moxxy/companion-core';
 export type {
   ModuleConfigField,

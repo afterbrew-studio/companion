@@ -101,7 +101,7 @@ export interface TaskRecord {
   readonly dependsOn: readonly string[];
   /**
    * Model every run this card spawns rides. null = inherit, which is the
-   * `board.worker` pin (and the daemon default under it) resolved per run, so
+   * `board.worker` pin (and the selected runtime's default under it) resolved per run, so
    * changing that pin still moves every card that never chose for itself.
    * Editable mid-flight: the change reaches the card's NEXT run, since a run
    * already dispatched is bound to the machine and model it started on.
@@ -210,8 +210,6 @@ export interface TaskModelOptions {
    * outlives any one machine being offline or busy.
    */
   readonly models: ReadonlyArray<CatalogModel>;
-  /** The `board.worker` pin an unset card inherits; null = no pin, so the daemon default applies. */
+  /** The `board.worker` pin an unset card inherits; null lets the selected runtime decide. */
   readonly workerModel: string | null;
-  /** The daemon default, under everything else. */
-  readonly defaultModel: string;
 }
