@@ -163,4 +163,41 @@ export default defineMigrations([
       // bug in the first place.
     },
   },
+  {
+    version: 5,
+    name: 'delegated_session_access',
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE sessions ADD COLUMN access TEXT NOT NULL DEFAULT 'full'`);
+      } catch {
+        // column already exists
+      }
+    },
+    down: () => {
+      // Additive by design; older daemons ignore the extra column.
+    },
+  },
+  {
+    version: 6,
+    name: 'managed_api_tokens',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS api_tokens (
+          id           TEXT PRIMARY KEY,
+          token_hash   TEXT NOT NULL UNIQUE,
+          username     TEXT NOT NULL,
+          name         TEXT NOT NULL,
+          permissions  TEXT NOT NULL DEFAULT '[]',
+          created_at   INTEGER NOT NULL,
+          expires_at   INTEGER NOT NULL,
+          last_used_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens (username, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_expiry ON api_tokens (expires_at);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP TABLE IF EXISTS api_tokens`);
+    },
+  },
 ]);

@@ -72,6 +72,11 @@ export function harnessChoices(
   }));
 }
 
+/** The detected, usable default shared by interactive and unattended setup. */
+export function recommendedHarnesses(options: readonly HarnessOption[]): readonly string[] {
+  return options.filter((option) => option.state === 'ready').map((option) => option.id);
+}
+
 /** What to say when the machine can run nothing. The only case needing words. */
 export const NOTHING_INSTALLED = [
   'No agent runtime is installed on this machine, so agent work cannot run yet.',

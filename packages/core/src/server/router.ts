@@ -92,6 +92,10 @@ export interface RouteDef<P extends string, B> {
   readonly method: HttpMethod;
   readonly path: P;
   readonly access: RouteAccess;
+  /** Explicit exception for a safe write exposed to read-only delegated sessions. */
+  readonly allowDelegatedWrite?: boolean;
+  /** Explicitly expose an `any` route to scoped API credentials. */
+  readonly allowScopedToken?: boolean;
   /** Input pinned to `unknown` so B infers from the schema OUTPUT (defaults applied). */
   readonly body?: z.ZodType<B, z.ZodTypeDef, unknown>;
   readonly handler: (ctx: RouteContext<P, B>) => Promise<unknown> | unknown;
@@ -103,6 +107,8 @@ export interface CompiledRoute {
   readonly regex: RegExp;
   readonly keys: readonly string[];
   readonly access: RouteAccess;
+  readonly allowDelegatedWrite: boolean;
+  readonly allowScopedToken: boolean;
   /** Owning module id, tagged by the kernel on mount (for 503 attribution). */
   moduleId?: string;
   readonly run: (
@@ -123,6 +129,8 @@ export function route<P extends string, B = Record<string, never>>(def: RouteDef
     regex,
     keys,
     access: def.access,
+    allowDelegatedWrite: def.allowDelegatedWrite === true,
+    allowScopedToken: def.allowScopedToken === true,
     run: async (params, query, rawBody, user, token) => {
       const body = (def.body ? def.body.parse(rawBody) : {}) as B;
       return def.handler({ params: params as PathParams<P>, query, body, user, token });
@@ -234,12 +242,23 @@ export class DynamicRouter {
 
         const token = bearerToken(req, url);
         const user = this.auth.verify(token);
-        if (r.access !== 'public') {
+        if (Array.isArray(r.access)) {
+          for (const permission of r.access as readonly Permission[]) this.auth.require(user, permission);
+        } else if (r.access !== 'public') {
           if (r.access === 'any') {
             if (!user) throw new HttpError(401, 'authentication required');
           } else {
             this.auth.require(user, r.access as Permission);
           }
+        }
+        // A scoped token may reach an `any` route only when the author names
+        // that exception. Otherwise there is no permission for its scope to
+        // intersect, and account-level access would silently widen the token.
+        if (user?.permissionScope !== undefined && r.access === 'any' && !r.allowScopedToken) {
+          throw new HttpError(403, 'API token cannot use this unscoped route');
+        }
+        if (method !== 'GET' && user?.sessionAccess === 'read-only' && !r.allowDelegatedWrite) {
+          throw new HttpError(403, 'delegated sessions are read-only');
         }
 
         const params: Record<string, string> = {};
@@ -281,7 +300,7 @@ export class DynamicRouter {
       at: Date.now(),
       actor: user?.username ?? null,
       action: `${route.method} ${route.path}`,
-      access: route.access as string,
+      access: Array.isArray(route.access) ? route.access.join(' & ') : route.access as string,
       status,
       module: route.moduleId ?? null,
     });

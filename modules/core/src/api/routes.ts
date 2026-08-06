@@ -17,14 +17,17 @@ import {
   removeModule,
 } from '@moxxy/companion-core/server';
 import { paths, planRestart, restartDaemon } from '@moxxy/companion-services';
-import type { Permission } from '@moxxy/companion-contracts';
+import { NAV_AUDIENCES, NAV_PERSPECTIVES, type Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
   AccountInfo,
   AclExplained,
   AclMap,
   AddModuleResponse,
+  ApiTokenCapability,
+  ApiTokenRecord,
   AuthState,
+  CreateApiTokenResponse,
   ExternalModulesResponse,
   LoginResponse,
   ProfileResponse,
@@ -88,11 +91,17 @@ const addModuleSchema = z.object({
   force: z.boolean().optional(),
 });
 const scopeEnum = z.enum(['workspace', 'global']);
+const navigationPageOverrideSchema = z.object({
+  perspective: z.enum(NAV_AUDIENCES),
+  key: z.string().min(1).max(64),
+  visible: z.boolean(),
+});
 const updateProfileSchema = z.object({
   notificationScope: scopeEnum.nullable().optional(),
-  // Bounded so a client cannot grow one settings row without limit; the keys are
-  // module-owned strings the server never resolves, so anything else is ignored.
-  hiddenNav: z.array(z.string().min(1).max(64)).max(200).optional(),
+  // Three presets × at most 200 module-owned entry keys. The server persists
+  // these cosmetic deviations but never treats them as access control.
+  navOverrides: z.array(navigationPageOverrideSchema).max(600).optional(),
+  navPerspective: z.enum(NAV_PERSPECTIVES).optional(),
 });
 const updateAccountSchema = z
   .object({
@@ -105,6 +114,11 @@ const updateAccountSchema = z
     message: 'currentPassword is required to set a new password',
     path: ['currentPassword'],
   });
+const createApiTokenSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  permissions: z.array(z.string().trim().min(3).max(80)).min(1).max(200),
+  expiresInDays: z.number().int().min(1).max(365),
+});
 
 /** Only these mean "nothing but this machine can connect". */
 function isLoopbackHost(host: string): boolean {
@@ -126,7 +140,8 @@ export default defineRoutes((ctx) => {
   const profileResponse = (username: string): ProfileResponse => ({
     profile: {
       notificationScope: settings.userNotificationScope(username),
-      hiddenNav: settings.userHiddenNav(username),
+      navOverrides: settings.userNavOverrides(username),
+      navPerspective: settings.userNavPerspective(username),
     },
     defaults: { notificationScope: settings.notificationDefaultScope() },
   });
@@ -182,9 +197,75 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/auth/me',
       access: 'any',
+      allowScopedToken: true,
       handler: ({ user }): SessionInfo => {
         if (!user) throw new AuthError('authentication required', 401);
         return auth.sessionInfo(user);
+      },
+    }),
+
+    // ---------- managed API tokens ----------
+    route({
+      method: 'GET',
+      path: '/api/tokens',
+      access: 'tokens:manage',
+      handler: ({ user }): { tokens: ApiTokenRecord[]; capabilities: ApiTokenCapability[] } => ({
+        tokens: auth.listApiTokens(user!.username),
+        capabilities: auth.apiTokenCapabilities(user!),
+      }),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/tokens',
+      access: 'tokens:manage',
+      body: createApiTokenSchema,
+      handler: ({ body, user }): ReturnType<typeof created> => {
+        const response: CreateApiTokenResponse = auth.createApiToken(user!, {
+          ...body,
+          permissions: body.permissions as Permission[],
+        });
+        ctx.broadcast({ t: 'tokens.changed' });
+        return created(response);
+      },
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/tokens/:id',
+      access: 'tokens:manage',
+      handler: ({ params, user }) => {
+        const token = auth.revokeOwnApiToken(user!.username, params.id);
+        if (!token) throw notFound(`API token ${params.id} not found`);
+        ctx.broadcast({ t: 'tokens.changed' });
+        return { ok: true };
+      },
+    }),
+    route({
+      method: 'GET',
+      path: '/api/admin/tokens',
+      access: 'tokens:admin',
+      handler: ({ query }): { tokens: ApiTokenRecord[]; total: number } => {
+        const limitParam = query.get('limit');
+        const offsetParam = query.get('offset');
+        const requestedLimit = limitParam === null ? Number.NaN : Number(limitParam);
+        const requestedOffset = offsetParam === null ? Number.NaN : Number(offsetParam);
+        const limit = Number.isFinite(requestedLimit)
+          ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
+          : 100;
+        const offset = Number.isFinite(requestedOffset)
+          ? Math.min(Math.max(Math.trunc(requestedOffset), 0), 1_000_000)
+          : 0;
+        return auth.listAllApiTokens({ limit, offset });
+      },
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/admin/tokens/:id',
+      access: 'tokens:admin',
+      handler: ({ params }) => {
+        const token = auth.revokeApiToken(params.id);
+        if (!token) throw notFound(`API token ${params.id} not found`);
+        ctx.broadcast({ t: 'tokens.changed' });
+        return { ok: true };
       },
     }),
 
@@ -221,7 +302,11 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         if (!user) throw new AuthError('authentication required', 401);
         requireRole(body.role);
-        return { user: auth.updateUser(params.username, body, user) };
+        const updated = auth.updateUser(params.username, body, user);
+        if (body.role !== undefined || body.disabled === true || body.password !== undefined) {
+          ctx.broadcast({ t: 'tokens.changed' });
+        }
+        return { user: updated };
       },
     }),
     route({
@@ -231,6 +316,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, user }) => {
         if (!user) throw new AuthError('authentication required', 401);
         auth.deleteUser(params.username, user);
+        ctx.broadcast({ t: 'tokens.changed' });
         return { ok: true };
       },
     }),
@@ -382,6 +468,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/modules',
       access: 'any',
+      allowScopedToken: true,
       handler: () => ({ modules: ctx.modules.list() }),
     }),
     route({
@@ -566,7 +653,8 @@ export default defineRoutes((ctx) => {
       handler: ({ user, body }): ProfileResponse => {
         if (!user) throw new AuthError('authentication required', 401);
         if ('notificationScope' in body) settings.setUserNotificationScope(user.username, body.notificationScope ?? null);
-        if (body.hiddenNav) settings.setUserHiddenNav(user.username, body.hiddenNav);
+        if (body.navOverrides) settings.setUserNavOverrides(user.username, body.navOverrides);
+        if (body.navPerspective) settings.setUserNavPerspective(user.username, body.navPerspective);
         return profileResponse(user.username);
       },
     }),
@@ -586,7 +674,9 @@ export default defineRoutes((ctx) => {
       body: updateAccountSchema,
       handler: ({ user, body }): { account: AccountInfo } => {
         if (!user) throw new AuthError('authentication required', 401);
-        return { account: auth.updateOwnAccount(user.username, body) };
+        const account = auth.updateOwnAccount(user.username, body);
+        if (body.newPassword !== undefined) ctx.broadcast({ t: 'tokens.changed' });
+        return { account };
       },
     }),
   ];

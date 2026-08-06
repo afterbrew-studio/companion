@@ -1,5 +1,10 @@
 import type { Role } from '@moxxy/companion-types';
-import type { AuthUser, Permission } from '@moxxy/companion-contracts';
+import type {
+  AuthUser,
+  NavigationPageOverride,
+  NavigationPerspective,
+  Permission,
+} from '@moxxy/companion-contracts';
 import type { ModuleArtifact, ModuleProvenance } from '@moxxy/companion-core/server';
 import type { Supervisor } from '@moxxy/companion-services';
 import type { Auth } from '../api/auth.js';
@@ -24,6 +29,11 @@ declare module '@moxxy/companion-contracts' {
     'modules:manage': true;
     'modules:deploy': true;
     'audit:read': true;
+    'tokens:manage': true;
+    'tokens:admin': true;
+  }
+  interface ServerMessageRegistry {
+    'tokens.changed': Record<never, never>;
   }
   interface ServiceMap {
     core: Auth;
@@ -152,6 +162,30 @@ export interface UserRecord {
   readonly createdAt: number;
 }
 
+/** Metadata for one API credential. The bearer secret is never part of this record. */
+export interface ApiTokenRecord {
+  readonly id: string;
+  readonly username: string;
+  readonly name: string;
+  readonly permissions: readonly Permission[];
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly lastUsedAt: number | null;
+}
+
+/** One capability the current account may delegate to a new API token. */
+export interface ApiTokenCapability {
+  readonly id: Permission;
+  readonly title: string;
+  readonly owner: string;
+}
+
+/** The only response that carries a raw API token; the client must discard it after display. */
+export interface CreateApiTokenResponse {
+  readonly token: string;
+  readonly record: ApiTokenRecord;
+}
+
 /** Instance branding shown pre-login and in the shell chrome. */
 export interface InstanceBranding {
   readonly name: string | null;
@@ -235,17 +269,20 @@ export interface SessionInfo {
   readonly user: AuthUser;
   readonly permissions: readonly Permission[];
   readonly notificationScope: NotificationScope;
-  /** Nav entry keys this user hid from their sidebar; the shell needs them on
-   *  the first paint, so they ride the session rather than a second fetch. */
-  readonly hiddenNav: readonly string[];
+  /** Per-preset menu customisations ride the session to avoid a second fetch. */
+  readonly navOverrides: readonly NavigationPageOverride[];
+  /** Selected sidebar preset; cosmetic only and independent of RBAC. */
+  readonly navPerspective: NavigationPerspective;
 }
 
 /** A user's own editable settings, distinct from the admin-managed account. */
 export interface UserProfile {
   /** Inbox scope override; null = inherit the instance default. */
   readonly notificationScope: NotificationScope | null;
-  /** Sidebar entries this user hid. Cosmetic only: the pages stay reachable. */
-  readonly hiddenNav: readonly string[];
+  /** Personal deviations from each menu view's defaults. */
+  readonly navOverrides: readonly NavigationPageOverride[];
+  /** Selected sidebar preset; cosmetic only and independent of RBAC. */
+  readonly navPerspective: NavigationPerspective;
 }
 
 /** GET /api/profile — the user's overrides plus the defaults a null falls back to. */
@@ -256,7 +293,8 @@ export interface ProfileResponse {
 
 export interface UpdateProfileRequest {
   readonly notificationScope?: NotificationScope | null;
-  readonly hiddenNav?: readonly string[];
+  readonly navOverrides?: readonly NavigationPageOverride[];
+  readonly navPerspective?: NavigationPerspective;
 }
 
 /** The signed-in user's own account, as shown on their profile page. */

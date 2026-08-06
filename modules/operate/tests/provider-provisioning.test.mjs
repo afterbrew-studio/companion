@@ -294,7 +294,14 @@ function addProviderRoute(runners) {
           ? { runners, runTaskDescriptors: () => [] }
           : { canAccessWorkspace: () => true, canAccessRepo: () => true },
     },
-    rbac: { has: (role, perm) => (GRID[role] ?? []).includes(perm), roles: () => [], hasRole: () => true },
+    rbac: {
+      has: (role, perm) => (GRID[role] ?? []).includes(perm),
+      allows: (user, perm) =>
+        (GRID[user.role] ?? []).includes(perm)
+        && (user.permissionScope === undefined || user.permissionScope.includes(perm)),
+      roles: () => [],
+      hasRole: () => true,
+    },
     modules: { list: () => [] },
     config: { defaultModel: 'opus' },
     broadcast: () => {},

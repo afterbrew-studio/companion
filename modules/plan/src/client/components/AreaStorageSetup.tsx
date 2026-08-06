@@ -114,27 +114,28 @@ export function AreaStorageSetup({
   );
 }
 
-/** Header affordance showing the active choice with a change action. */
+/** Compact toolbar affordance showing the active choice with a change action. */
 export function StorageSummary({
   config,
   canManage,
   onChange,
 }: {
-  config: { dir: string | null };
+  config: { dir: string | null } | null;
   canManage: boolean;
   onChange: () => void;
 }): JSX.Element {
   return (
-    <div className="dim mb-3 flex items-center gap-2 text-xs">
-      <span>
-        Storage:{' '}
-        {config.dir ? <code className="code-inline">{config.dir}/</code> : 'virtual'}
+    <button
+      type="button"
+      className="flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-left text-xs transition-colors enabled:cursor-pointer enabled:hover:border-zinc-300 disabled:opacity-70 dark:border-zinc-800 dark:bg-zinc-950 dark:enabled:hover:border-zinc-700"
+      disabled={!canManage}
+      onClick={onChange}
+      title={canManage ? 'Change where new content is stored' : undefined}
+    >
+      <span className="dim">Storage</span>
+      <span className="font-medium">
+        {config?.dir ? <code className="font-mono text-[11px]">{config.dir}/</code> : 'Companion'}
       </span>
-      {canManage ? (
-        <button className="linkish text-xs" onClick={onChange}>
-          change
-        </button>
-      ) : null}
-    </div>
+    </button>
   );
 }

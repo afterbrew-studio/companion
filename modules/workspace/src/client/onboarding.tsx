@@ -22,8 +22,8 @@ export const onboarding = defineOnboarding([
     order: 10,
     permission: 'workspaces:manage',
     title: 'Start with a workspace',
-    body: 'Workspaces group related repositories — Ideas, Issues, and Pull Requests are all scoped to the one you have active. Create and switch workspaces from the switcher at the top of the sidebar, or press ⌘K and search “Create workspace”.',
-    chips: ['Sidebar → Workspace', '⌘K → Create workspace'],
+    body: 'A workspace groups related repositories. Create one from New, then switch context from the top of the sidebar; every page follows that choice.',
+    chips: ['New → Create workspace', 'Sidebar → Workspace'],
     art: (playing) => <WorkspaceArt playing={playing} />,
   },
 ]);

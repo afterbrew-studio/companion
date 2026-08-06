@@ -1,9 +1,8 @@
 import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * One entry in the Code group, after Pipelines (code owns the section; code is
- * a hard dependency, so the section always exists when this nav loads). The
- * icon is a signal droplet with a sparkle: contribution evidence under review.
+ * Contribution Quality is part of reviewing incoming code, so code owners can
+ * reach it from the same group as pull requests and pipelines.
  */
 export const nav = defineNav([
   {
@@ -14,7 +13,8 @@ export const nav = defineNav([
     shortcut: 't',
     permission: 'slop:read',
     section: 'code',
-    order: 25,
+    order: 30,
+    audiences: ['developer'],
     freshOn: (msg) => (msg.t === 'slop.changed' ? 'slop' : null),
     icon: (
       <NavIcon>

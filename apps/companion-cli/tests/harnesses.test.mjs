@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { harnessChoices, NOTHING_INSTALLED, readHarnessOptions } from '../dist/harnesses.js';
+import { harnessChoices, NOTHING_INSTALLED, readHarnessOptions, recommendedHarnesses } from '../dist/harnesses.js';
 
 /**
  * The first-run question about agent runtimes. What matters here is what the
@@ -22,6 +22,11 @@ test('a ready runtime arrives ticked, one that would fail arrives unticked', () 
   const [ready, broken] = harnessChoices([MOXXY, CLAUDE]);
   assert.equal(ready.checked, true);
   assert.equal(broken.checked, false);
+});
+
+test('unattended setup uses exactly the same detected-ready defaults', () => {
+  assert.deepEqual(recommendedHarnesses([MOXXY, CLAUDE]), ['moxxy']);
+  assert.deepEqual(recommendedHarnesses([CLAUDE]), []);
 });
 
 test('what is wrong is in the row itself, not only in the description', () => {

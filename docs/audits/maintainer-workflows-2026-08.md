@@ -171,6 +171,11 @@ inventing a complete bill.
   moved to a publishable draft rather than orphaned.
 - Large reviews record full/partial/error coverage and cannot auto-publish when
   incomplete. Failed chunks are not silently converted into success.
+- Findings are persisted and shown as soon as each bounded review group
+  finishes. A pipeline with explicit GitHub posting enabled publishes anchored,
+  ready findings progressively; serious or uncertain claims wait for the
+  independent verifier, and the aggregate verdict is posted only after the
+  complete review. Manual AI reviews retain review-then-apply.
 - Human draft findings survive a replacement AI review.
 - Review findings remain strings when anchoring is impossible, rather than being
   discarded.

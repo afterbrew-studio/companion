@@ -1,11 +1,11 @@
 import { defineClientModule } from '@moxxy/companion-sdk/client';
 import '../contract/index.js';
 import manifest from '../module.js';
-import { nav } from './nav.js';
+import { actions, nav } from './nav.js';
 import { routes } from './routes.js';
 import { onboarding } from './onboarding.js';
 
 export { ideasApi } from './api.js';
 export { useIdeas } from './hooks/useIdeas.js';
 
-export default defineClientModule({ manifest, nav, routes, onboarding });
+export default defineClientModule({ manifest, nav, routes, onboarding, quickActions: actions });

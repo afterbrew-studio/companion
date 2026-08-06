@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
 import {
+  ActionMenu,
   CardActions,
   EmptyState,
   ErrorBar,
@@ -13,7 +15,6 @@ import {
   Modal,
   Page,
   PageHeader,
-  SearchInput,
   Spinner,
   StatusGlyph,
   timeAgo,
@@ -26,6 +27,7 @@ import type { AreaStorage, DocListRecord, DocRecord, DocSearchHit, RepoDocFile }
 import { planApi as api } from '../api.js';
 import { useDocs } from '../hooks/useDocs.js';
 import { AreaStorageSetup, StorageSummary } from '../components/AreaStorageSetup.js';
+import { KnowledgeToolbar } from '../components/KnowledgeToolbar.js';
 
 /**
  * Documentation for the active workspace: curated knowledge (architecture,
@@ -57,11 +59,29 @@ export function DocsPage(): JSX.Element {
   } = useDocs();
   const [configuring, setConfiguring] = useState(false);
   const [modal, setModal] = useState<'write' | 'import' | 'generate' | null>(null);
-
-  if (!current) return <EmptyState title="No workspace selected" />;
   const canManage = can('docs:manage');
+
+  useIntent('new-doc', () => {
+    if (canManage) setModal('write');
+  });
+
+  if (!current) {
+    return (
+      <Page>
+        <PageHeader title="Documentation" subtitle="Shared context for people and agents" />
+        <EmptyState
+          title="Create a workspace first"
+          hint="Documentation stays with a workspace so every task retrieves the right product and system context."
+          action={
+            can('workspaces:create') ? (
+              <button className="btn" onClick={() => runIntent('new-workspace')}>Create workspace</button>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
   const canGenerate = canManage && can('runs:read') && can('runs:act');
-  const needsSetup = storage !== null && storage.config === null;
   const configDir = storage?.config?.dir ?? null;
 
   return (
@@ -70,15 +90,21 @@ export function DocsPage(): JSX.Element {
         title="Documentation"
         subtitle={`${current.name} · indexed for retrieval by agents and the assistant`}
         actions={
-          canManage && storage?.config ? (
+          canManage ? (
             <div className="flex gap-2">
-              <button className="btn-ghost" onClick={() => setModal('import')}>
-                Import from repo
-              </button>
-              {canGenerate ? (
-                <button className="btn-ghost" onClick={() => setModal('generate')}>
-                  ✦ Generate
-                </button>
+              {repos.length > 0 || canGenerate ? (
+                <ActionMenu
+                  label="Other ways to add documentation"
+                  trigger="Options"
+                  actions={[
+                    ...(repos.length > 0
+                      ? [{ label: 'Import Markdown from repository', onSelect: () => setModal('import' as const) }]
+                      : []),
+                    ...(canGenerate
+                      ? [{ label: 'Generate from repository with AI', onSelect: () => setModal('generate' as const) }]
+                      : []),
+                  ]}
+                />
               ) : null}
               <button className="btn" onClick={() => setModal('write')}>
                 New doc
@@ -89,7 +115,7 @@ export function DocsPage(): JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {storage !== null && ((needsSetup && canManage) || configuring) ? (
+      {storage !== null && configuring ? (
         <AreaStorageSetup
           area="documentation"
           defaultDir="docs"
@@ -101,20 +127,20 @@ export function DocsPage(): JSX.Element {
           }}
           onCancel={configuring ? () => setConfiguring(false) : undefined}
         />
-      ) : storage?.config ? (
-        <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
       ) : null}
 
       <RetrievalSearch workspaceId={current.id} />
 
-      <div className="mt-4 flex items-center justify-end gap-2">
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search title or content…  ( / )"
-          ariaLabel="Search documentation by title or content"
-          className="w-full sm:w-72"
-        />
+      <KnowledgeToolbar
+        search={search}
+        onSearch={setSearch}
+        ariaLabel="Search documentation by title or content"
+        leading={
+          storage !== null ? (
+            <StorageSummary config={storage.config} canManage={canManage} onChange={() => setConfiguring(true)} />
+          ) : undefined
+        }
+      >
         <FiltersPopover active={activeFilters} onClear={clearFilters}>
           <FilterField label="Repository">
             <select className="input" value={filters.repo} onChange={(event) => setFilter('repo')(event.target.value)}>
@@ -143,15 +169,13 @@ export function DocsPage(): JSX.Element {
             </select>
           </FilterField>
         </FiltersPopover>
-      </div>
+      </KnowledgeToolbar>
 
       {docs === null ? (
-        <div className="mt-4">
-          <InlineLoading label="Loading documentation…" />
-        </div>
+        <InlineLoading label="Loading documentation…" />
       ) : docs.length > 0 ? (
         <>
-          <div className="mt-4 flex flex-col gap-3">
+          <div className="flex flex-col gap-3">
             {docs.map((doc) => (
               <DocCard key={doc.id} doc={doc} onChange={refresh} />
             ))}
@@ -170,14 +194,7 @@ export function DocsPage(): JSX.Element {
       ) : !error ? (
         <EmptyState
           title="No documentation yet"
-          hint="Everything indexed here becomes retrievable knowledge — architecture notes, business context, runbooks. Import a repo's markdown to start."
-          action={
-            canManage ? (
-              <button className="btn" onClick={() => setModal('import')}>
-                Import from a repo
-              </button>
-            ) : undefined
-          }
+          hint="Write the context every maintainer and agent should be able to find: architecture notes, business rules, or a runbook."
         />
       ) : null}
 
@@ -254,36 +271,42 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
   }, [q, workspaceId]);
 
   return (
-    <div className="card p-3">
-      <div className="flex items-center gap-2">
-        <input
-          className="input flex-1"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search the knowledge index — see exactly what retrieval returns…"
-          aria-label="Search documentation"
-        />
-        {busy ? <Spinner /> : null}
-      </div>
-      {hits !== null ? (
-        <div className="mt-3 flex flex-col gap-2">
-          {hits.length === 0 ? (
-            <p className="dim text-[13px]">No indexed chunks match.</p>
-          ) : (
-            hits.map((h, i) => (
-              <div key={`${h.docId}-${h.seq}-${i}`} className="well">
-                <div className="dim mb-1 flex items-center gap-2 text-[11px]">
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{h.title}</span>
-                  {h.repo ? <span className="chip">{h.repo.split('/')[1] ?? h.repo}</span> : null}
-                  <span>chunk {h.seq + 1}</span>
-                </div>
-                <p className="line-clamp-3 text-[13px] whitespace-pre-wrap">{h.content}</p>
-              </div>
-            ))
-          )}
+    <details className="mb-4 rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2.5 text-[13px] font-medium">
+        Test agent retrieval
+        <span className="dim font-normal">Preview exactly what AI Help and agents can find</span>
+      </summary>
+      <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+        <div className="flex items-center gap-2">
+          <input
+            className="input flex-1"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Ask the knowledge index…"
+            aria-label="Search documentation retrieval index"
+          />
+          {busy ? <Spinner /> : null}
         </div>
-      ) : null}
-    </div>
+        {hits !== null ? (
+          <div className="mt-3 flex flex-col gap-2">
+            {hits.length === 0 ? (
+              <p className="dim text-[13px]">No indexed chunks match.</p>
+            ) : (
+              hits.map((h, i) => (
+                <div key={`${h.docId}-${h.seq}-${i}`} className="well">
+                  <div className="dim mb-1 flex items-center gap-2 text-[11px]">
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{h.title}</span>
+                    {h.repo ? <span className="chip">{h.repo.split('/')[1] ?? h.repo}</span> : null}
+                    <span>chunk {h.seq + 1}</span>
+                  </div>
+                  <p className="line-clamp-3 text-[13px] whitespace-pre-wrap">{h.content}</p>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

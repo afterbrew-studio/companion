@@ -25,6 +25,7 @@
     "@companion/module-playground": "workspace:*",
     "@companion/module-refinement": "workspace:*",
     "@companion/module-slop": "workspace:*",
+    "@companion/module-workbench": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-ui": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",

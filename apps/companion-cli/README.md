@@ -38,7 +38,7 @@ First run walks through three things and takes under a minute:
 
 1. **An admin account.** Accept the recommended local defaults and a random
    password is generated and shown once, or enter your own.
-2. **A module set.** *Slim* is the recommendation: repositories, agent runs,
+2. **A module set.** *Slim* is the recommendation: Today, AI Help, repositories, agent runs,
    durable contributor workflows, planning, automations and administration.
    *Full* adds refinement, ideas, contribution-quality analysis, the playground and delivery
    integrations. *Custom* lets you pick. Nothing is permanent, and everything
@@ -107,12 +107,15 @@ companion module install board       # adopt a module (runs its migrations)
 companion acl explain alice prs:act  # why a permission is granted or refused
 companion role create release-manager --from maintainer
 companion user role alice release-manager
+companion mcp                        # safe stdio tools for an IDE agent
 ```
 
 ## What you get
 
 - **Repositories.** GitHub as the source of truth, synced and cached, never
   duplicated. Multiple accounts, scoped per workspace, each owned by one profile.
+- **Today and AI Help.** One decision queue plus a conversational operator that
+  can read broadly and prepare, but never silently execute, platform changes.
 - **Issues and pull requests.** Triage, AI review, CI analysis, and fixes that
   arrive as real pull requests.
 - **Agent runs.** Every run visible, resumable and attributable, across as many

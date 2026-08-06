@@ -221,8 +221,9 @@ Properties this buys, and each one matters:
 - Overrides are **stored even when the owning module is disabled**, and filtered
   at fold time. Re-enabling the module restores the grant instead of silently
   having dropped it.
-- `ctx.rbac.has(role, perm)` is unchanged, so no module and no route changes.
-  `RbacReader` stays the only read path.
+- `ctx.rbac.has(role, perm)` remains the role-policy read path;
+  `ctx.rbac.allows(user, perm)` is the caller read path and also enforces a
+  managed API token's permission ceiling. `RbacReader` stays the only read path.
 
 `guardLastAdmin` generalises to the invariant that actually matters: **at least
 one enabled user must hold `users:manage`**. Same for the role side: you may not
@@ -373,7 +374,8 @@ more than necessary:
 
 - `defineAcl({ permissions, grants })` is unchanged. No module edits.
 - `route({ access })` and central enforcement are unchanged.
-- `ctx.rbac.has(role, permission)` remains the only read path.
+- `ctx.rbac.has(role, permission)` remains the role-policy read path, while
+  caller decisions use `ctx.rbac.allows(user, permission)`.
 - `implies` semantics are unchanged.
 - The client still receives a flat permission list and calls `can()`.
 - Permissions still disappear from the grid when their owning module is

@@ -1,6 +1,6 @@
 import type { BuiltinRole, Role } from '@moxxy/companion-types';
 import { BUILTIN_ROLES, isBuiltinRole } from '@moxxy/companion-types';
-import type { ModuleAcl, Permission } from '@moxxy/companion-contracts';
+import type { AuthUser, ModuleAcl, Permission } from '@moxxy/companion-contracts';
 import { buildRolePermissions } from '@moxxy/companion-contracts';
 import type { ModuleId } from '../manifest.js';
 
@@ -58,6 +58,8 @@ export interface AclExplanation {
 /** Read side of the grid, handed to modules via `ctx.rbac`. */
 export interface RbacReader {
   has(role: Role, permission: Permission): boolean;
+  /** Account RBAC intersected with the authority carried by this credential. */
+  allows(user: AuthUser, permission: Permission): boolean;
   permissionsFor(role: Role): Permission[];
   /** Every permission the enabled modules declare, with its owning module. */
   catalog(): readonly PermissionEntry[];
@@ -149,6 +151,13 @@ export class RbacGrid implements RbacReader {
 
   has(role: Role, permission: Permission): boolean {
     return this.grid.get(role)?.has(permission) ?? false;
+  }
+
+  allows(user: AuthUser, permission: Permission): boolean {
+    return (
+      this.has(user.role, permission)
+      && (user.permissionScope === undefined || user.permissionScope.includes(permission))
+    );
   }
 
   permissionsFor(role: Role): Permission[] {

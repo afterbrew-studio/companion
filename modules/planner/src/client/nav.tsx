@@ -1,4 +1,4 @@
-import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
+import { defineNav, defineQuickActions, NavIcon } from '@moxxy/companion-sdk/client';
 
 export const nav = defineNav([{
   key: 'ideas',
@@ -7,11 +7,22 @@ export const nav = defineNav([{
   shortcut: 'p',
   permission: 'planner:read',
   section: 'plan',
-  order: -10,
+  order: 0,
+  audiences: ['business'],
   freshOn: (message) => message.t === 'planner.changed' ? 'ideas' : null,
   icon: (
     <NavIcon>
       <path d="M9 18h6M10 22h4M8.5 14.5C6.9 13.4 6 11.7 6 9.7A6 6 0 0 1 18 9.7c0 2-.9 3.7-2.5 4.8-.7.5-1.1 1.2-1.2 2H9.7c-.1-.8-.5-1.5-1.2-2z" />
     </NavIcon>
   ),
+}]);
+
+export const actions = defineQuickActions([{
+  key: 'new-idea',
+  label: 'Plan a feature',
+  group: 'Create',
+  access: ['planner:read', 'planner:manage', 'runs:read', 'runs:act'],
+  keywords: 'feature requirement plan build idea',
+  order: 10,
+  intent: 'new-idea',
 }]);

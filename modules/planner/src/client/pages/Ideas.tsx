@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, Dropdown, EmptyState, ErrorBar, ListFooter, Page, SparkleIcon, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
+import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
+import { ChevronDown, Dropdown, EmptyState, ErrorBar, ListFooter, Page, PageHeader, SparkleIcon, Spinner, timeAgo } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { useWorkspaceRepos } from '@companion/module-code/client';
@@ -26,8 +27,42 @@ export default function Ideas(): JSX.Element {
   const ideaRef = useRef<HTMLTextAreaElement>(null);
   const sortedSessions = sessions ?? [];
 
+  useIntent('new-idea', () => ideaRef.current?.focus());
+
   if (!current) return <EmptyState title="No workspace selected" />;
+  if (current.repoCount === 0) {
+    return (
+      <Page>
+        <PageHeader title="Ideas" subtitle={`${current.name} · describe an outcome and turn it into a reviewable plan`} />
+        <EmptyState
+          title="Connect a repository before planning a feature"
+          hint="Companion reads the real codebase while it plans, so the result reflects what already exists."
+          action={
+            can('repos:manage') ? (
+              <button className="btn" onClick={() => runIntent('connect-repo')}>Connect repository</button>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
   const available = repos.filter((candidate) => candidate.githubAccessible);
+  if (repos.length > 0 && available.length === 0) {
+    return (
+      <Page>
+        <PageHeader title="Ideas" subtitle={current.name} />
+        <EmptyState
+          title="GitHub access is required"
+          hint="Connect an account that can read one of this workspace's repositories, then return here to plan from the code."
+          action={
+            can('github:connect') ? (
+              <button className="btn" onClick={() => runIntent('connect-github')}>Connect GitHub account</button>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
   const selectedRepo = repo && available.some((candidate) => candidate.fullName === repo)
     ? repo
     : available[0]?.fullName ?? null;

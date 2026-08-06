@@ -520,6 +520,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
       ctx.requirePermission('runs:read', 'observe the AI review run');
       ctx.requirePermission('runs:act', 'run the AI review');
+      if (step.config.post) ctx.requirePermission('prs:act', 'publish the AI review');
       let reviewId: string | null = null;
       const cancelReview = async (): Promise<void> => {
         if (!reviewId) return;
@@ -538,10 +539,19 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
             ...(step.config.strictness ? { strictness: step.config.strictness } : {}),
             ...(step.config.verify === undefined ? {} : { verify: step.config.verify }),
           },
-          (id) => {
-            reviewId = id;
-            ctx.updateSummary(`Review ${id} is running with durable chunk progress`);
-            if (ctx.signal.aborted) void cancelReview();
+          {
+            onCreated: (id) => {
+              reviewId = id;
+              ctx.updateSummary(`Review ${id} is running with durable chunk progress`);
+              if (ctx.signal.aborted) void cancelReview();
+            },
+            ...(step.config.post
+              ? {
+                  progressivePost: {
+                    ...(step.config.postMode ? { mode: step.config.postMode } : {}),
+                  },
+                }
+              : {}),
           },
         );
       } finally {
@@ -558,10 +568,13 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       let posted = '';
       if (step.config.post) {
         try {
-          ctx.requirePermission('prs:act', 'publish the AI review');
+          // The review may have taken close to an hour. Re-check both pipeline
+          // cancellation and live authority immediately before the final write.
+          ctx.requirePermission('prs:act', 'publish the final AI review verdict');
           await deps.reviews.apply(result.id, {
             userId: ctx.userId,
             ...(step.config.postMode ? { mode: step.config.postMode } : {}),
+            ...(step.config.postMode === 'comments' ? { skipEmpty: true } : {}),
           });
           posted = ', posted to GitHub';
         } catch (err) {

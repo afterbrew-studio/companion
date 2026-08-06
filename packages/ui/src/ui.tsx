@@ -61,7 +61,7 @@ export function Dropdown<T extends string>({
   /** Adds a filter input at the top of the menu. */
   searchable?: boolean;
   /** Pinned action row at the bottom of the menu (e.g. "New workspace"). */
-  action?: { label: string; onSelect: () => void };
+  action?: { label: string; onSelect: () => void; icon?: ReactNode };
   disabled?: boolean;
   /** Cap rendered options; searchable lists disclose how many remain. */
   maxVisible?: number;
@@ -315,7 +315,7 @@ export function Dropdown<T extends string>({
                       action.onSelect();
                     }}
                   >
-                    <span aria-hidden>＋</span> {action.label}
+                    {action.icon ?? <span aria-hidden>＋</span>} {action.label}
                   </button>
                 </div>
               ) : null}
@@ -1012,7 +1012,7 @@ export function FiltersPopover({
       <Tooltip content={active > 0 ? `Filters — ${active} active` : 'Filters'}>
         <button
           type="button"
-          className="btn-ghost relative w-9 justify-center px-0"
+          className="btn-ghost relative justify-center gap-1.5 px-2.5"
           aria-expanded={open}
           aria-haspopup="true"
           aria-label={active > 0 ? `Filters (${active} active)` : 'Filters'}
@@ -1027,6 +1027,7 @@ export function FiltersPopover({
               strokeLinejoin="round"
             />
           </svg>
+          <span className="hidden sm:inline">Filters</span>
           <CountBadge count={active} />
         </button>
       </Tooltip>

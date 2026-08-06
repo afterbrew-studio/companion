@@ -34,6 +34,7 @@
     "@companion/module-core": "workspace:*",
     "@companion/module-operate": "workspace:*",
     "@companion/module-plan": "workspace:*",
+    "@companion/module-workbench": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",
     "zod": "^3.24.0"

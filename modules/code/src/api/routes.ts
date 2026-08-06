@@ -5,7 +5,7 @@ import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log, paths } from '@moxxy/companion-sdk/server';
-import type { CommentRecord, PrFileChange, PrFileChangesPage, RepoPermission } from '../contract/index.js';
+import type { CommentRecord, PrFileChange, PrFileChangesPage } from '../contract/index.js';
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
@@ -209,12 +209,12 @@ export default defineRoutes((ctx) => {
    * the rule that keeps a GitHub push away from a shell.
    */
   const mayExecute = (user: AuthUser | null): boolean =>
-    user !== null && ctx.rbac.has(user.role, 'pipelines:execute');
+    user !== null && ctx.rbac.allows(user, 'pipelines:execute');
 
   /** Domain permissions decide what may be changed; launching or controlling an
    * agent is a second capability and must remain independently revocable. */
   const requireAgentRun: (user: AuthUser | null) => asserts user is AuthUser = (user) => {
-    if (!user || !ctx.rbac.has(user.role, 'runs:read') || !ctx.rbac.has(user.role, 'runs:act')) {
+    if (!user || !ctx.rbac.allows(user, 'runs:read') || !ctx.rbac.allows(user, 'runs:act')) {
       throw forbidden('this action also requires runs:read and runs:act');
     }
   };
@@ -240,7 +240,7 @@ export default defineRoutes((ctx) => {
   const assertMayAuthorExecutable = (user: AuthUser | null, steps: readonly { kind: string }[]): void => {
     const unsafe = steps.filter((s) => s.kind === 'executable' || s.kind === 'npm-bootstrap');
     if (unsafe.length === 0) return;
-    if (!user || !ctx.rbac.has(user.role, 'pipelines:author-execute')) {
+    if (!user || !ctx.rbac.allows(user, 'pipelines:author-execute')) {
       throw forbidden(
         `creating or editing "${unsafe[0]!.kind}" steps needs the pipelines:author-execute permission`,
       );
@@ -289,31 +289,10 @@ export default defineRoutes((ctx) => {
     }
   };
 
-  /**
-   * The permission the caller's own accounts hold on each repo of a workspace.
-   * One probe per repo (TTL-cached alongside credential resolution), so every
-   * consumer — pickers, the board, automations — gates on the same graded truth
-   * instead of re-deriving "can I?" per action.
-   */
-  const repoPermissions = async (user: AuthUser, workspaceId: string): Promise<Map<string, RepoPermission>> => {
-    const rows = code.repos.listByWorkspace(workspaceId);
-    const graded = await mapConcurrent(
-      rows,
-      8,
-      async (row) => {
-        const permission = await code.githubAccounts.permissionFor('fetch', row.full_name, {
-          username: user.username,
-          workspaceId,
-        });
-        return permission ? ([row.full_name, permission] as const) : null;
-      },
-    );
-    return new Map(graded.filter((entry): entry is readonly [string, RepoPermission] => entry !== null));
-  };
-
-  const accessibleRepoNames = async (user: AuthUser, workspaceId: string): Promise<string[]> => [
-    ...(await repoPermissions(user, workspaceId)).keys(),
-  ];
+  // CodeService owns the personal-account visibility rule so other modules can
+  // compose these feeds without copying (and eventually drifting from) it.
+  const accessibleRepoNames = (user: AuthUser, workspaceId: string): Promise<string[]> =>
+    code.accessibleRepoNames(user.username, workspaceId);
 
   // Access gate for the workspace feeds: a private workspace the user isn't in
   // reads as "not found" — same helper as module-workspace's routes.
@@ -439,6 +418,34 @@ export default defineRoutes((ctx) => {
               };
             },
           ),
+        };
+      },
+    }),
+
+    /**
+     * The same trusted base-branch context fix runs consume: surfacing it here
+     * makes the automatic behaviour inspectable instead of magical.
+     */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/agent-context',
+      access: 'repos:read',
+      handler: async ({ params, query, user }) => {
+        const { fullName, row } = requireRepo(user, params.owner, params.name);
+        const { client, tried } = await code.githubAccounts.verifiedClientFor('fetch', fullName, {
+          username: user!.username,
+        });
+        if (!client) {
+          throw forbidden(
+            tried.length > 0
+              ? `none of your connected GitHub accounts (${tried.join(', ')}) can scan ${fullName}`
+              : `your connected GitHub accounts cannot access ${fullName}`,
+          );
+        }
+        return {
+          context: await code.agentContext.scan(client, fullName, row.default_branch, {
+            refresh: query.get('refresh') === '1',
+          }),
         };
       },
     }),
@@ -1660,7 +1667,7 @@ export default defineRoutes((ctx) => {
       handler: async ({ params, user }) => {
         requireWorkspace(user, params.id);
         const rows = code.repos.listByWorkspace(params.id);
-        const permissions = await repoPermissions(user!, params.id);
+        const permissions = await code.repoPermissions(user!.username, params.id);
         const openIssueCounts = code.issues.openCounts(rows.map((row) => row.full_name));
         return {
           repos: rows.map((row) => {

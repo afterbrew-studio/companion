@@ -4,19 +4,19 @@ import type { Permission } from '@moxxy/companion-contracts';
 import { useAuth } from '../lib/auth.js';
 
 /**
- * Onboarding: a short, animated, skippable tour. Two modes off one step list:
+ * Optional product tour: short, animated, and skippable. Two modes off one
+ * step list remain available to hosts:
  *
- *  - `full` — the whole tour, shown once on first entry (and on replay).
- *  - `whatsnew` — only the steps a returning user hasn't seen yet, shown once
- *    when new steps appear (i.e. after a feature ships a new step).
+ *  - `full` — the whole tour, opened explicitly from shortcut help.
+ *  - `whatsnew` — only steps a returning user has not marked as seen.
  *
  * The steps are NOT defined here: each module contributes its own step (with its
  * own compile-checked permission) via `defineOnboarding`, and the shell hands us
  * `useKernel().onboarding` — already ordered and covering only enabled modules.
- * A new feature ships its step in its own module and existing users get a
- * "What's new" popup for it automatically. Steps are role-aware (a step whose
- * declared permission the user lacks is dropped), and the finish button deep-links
- * to the most useful next action. Seen step keys are remembered in localStorage.
+ * Steps are role-aware (a step whose declared permission the user lacks is
+ * dropped), and the finish button deep-links to the most useful next action.
+ * Seen step keys are remembered in localStorage, but the shell never opens a
+ * tour automatically; empty states provide contextual guidance instead.
  */
 
 const SEEN_KEY = 'companion.onboarding.seen';
@@ -29,7 +29,7 @@ function seenKeys(): Set<string> {
   }
 }
 
-/** True once the user has been through onboarding at least once. */
+/** True once the user has completed or skipped the optional tour at least once. */
 export function hasOnboarded(): boolean {
   return localStorage.getItem(SEEN_KEY) !== null;
 }
@@ -77,8 +77,8 @@ export function Onboarding({
   const cta = finishCta(steps, can);
 
   const finish = (): void => {
-    // Everything this role can currently see is now "seen" — so the next new
-    // step (added later) is the only thing that triggers "what's new".
+    // Everything this role can currently see is now "seen" for a host that
+    // chooses to expose the optional "what's new" mode.
     localStorage.setItem(SEEN_KEY, JSON.stringify(all.map((s) => s.key)));
     onClose();
   };

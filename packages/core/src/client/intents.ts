@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { ClientIntent } from '@moxxy/companion-contracts';
 
 /**
  * One-shot UI intents: let a component (the command palette) ask another
@@ -11,13 +12,19 @@ import { useEffect, useRef } from 'react';
  * listeners fire synchronously and it opens immediately.
  */
 
-export type Intent = 'new-workspace' | 'connect-repo' | 'connect-github';
+export type Intent = ClientIntent;
 
 /** The page that owns each intent's modal (undefined = handled anywhere, e.g. the sidebar). */
 export const INTENT_HASH: Record<Intent, string | undefined> = {
+  'ask-ai': undefined,
   'new-workspace': undefined,
   'connect-repo': '#/repos',
   'connect-github': '#/github',
+  'new-spec': '#/specs',
+  'new-doc': '#/docs',
+  'new-task': '#/board',
+  'new-idea': '#/ideas',
+  'new-agent-run': '#/runs',
 };
 
 /** Fire an intent, navigating to its owning page automatically. */

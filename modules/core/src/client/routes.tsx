@@ -22,6 +22,11 @@ export const routes = defineClientRoutes([
     component: page(() => import('./pages/Roles.js').then((m) => m.RolesPage)),
   },
   {
+    match: { exact: '/tokens' },
+    permission: 'tokens:manage',
+    component: page(() => import('./pages/Tokens.js').then((m) => m.TokensPage)),
+  },
+  {
     match: { prefix: '/modules' },
     permission: 'modules:manage',
     component: page(() => import('./pages/Modules.js').then((m) => m.ModulesPage)),

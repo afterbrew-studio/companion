@@ -169,10 +169,11 @@ also works while the daemon is down.
 
 Auth: the daemon mints a long-lived session at boot into
 `$COMPANION_HOME/cli-token` (mode 0600) and the CLI reads it. It carries the
-primary admin's identity, so it is **admin-equivalent**: `require()` checks
-`rbac.has(user.role, permission)` and there is no per-token scope. A `cli` role
-holding only `modules:manage` is now expressible, so narrowing it is a small
-follow-up rather than a new mechanism.
+primary admin's identity, so this local bootstrap credential is
+**admin-equivalent**. Remote or least-privilege CLI/MCP use should set
+`COMPANION_TOKEN` to a managed `cmp_…` token created in Settings → Access → API
+tokens. Managed tokens have an expiry and explicit permission scope, enforced
+by `rbac.allows(user, permission)` against the account's live role.
 
 ## Entitlement gate `[NOW]`
 

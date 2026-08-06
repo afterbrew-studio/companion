@@ -34,7 +34,7 @@ packages/
   core/        @moxxy/companion-core        THE FRAMEWORK: registrant API + server kernel + client host
   ui/          @moxxy/companion-ui          the design-system kit
 modules/
-  core workspace operate code plan automations admin   ← one @companion/module-<id> per domain
+  core workspace operate code workbench plan automations admin   ← one @companion/module-<id> per domain
 ```
 
 `@moxxy/companion-core` (the framework: kernel + registrants, no business logic) is
@@ -63,6 +63,7 @@ augmentations, types only), `./api` (server slice, lazy, no DOM), `./client`
 
 ```
 core → workspace → operate → code → plan       required = {core, workspace}
+                          \→ workbench          (Board is a soft decision source)
                           \→ admin              (dependsOn = hard load/enable order)
 ```
 
@@ -85,7 +86,7 @@ modules/<id>/src/contract/index.ts   ← DTOs + `declare module` augment RBAC/WS
         client/api.ts                ← request/post slice                     (client surface)
         client/hooks/use<X>.ts       ← useLive(refresh, msg.t === '<id>.changed')
         client/pages/<X>.tsx         ← page (ui.tsx kit), lazyView-chunked
-        client/nav.tsx               ← defineNav — sidebar entry + permission + shortcut
+        client/nav.tsx               ← defineNav — navigation metadata + permission + shortcut
         client/routes.tsx            ← defineClientRoutes — whole-segment match → page
         client/index.tsx             ← defineClientModule({ manifest, nav, routes, ... })
 ```
@@ -117,7 +118,8 @@ restarts.
 Break one and the change is wrong even if it typechecks.
 
 1. **RBAC is enforced once, centrally.** Every route declares `access`
-   (`Permission | 'public' | 'any'`); the router calls `auth.require`. Handlers
+   (`Permission | non-empty Permission[] | 'public' | 'any'`); arrays mean AND
+   and the router calls `auth.require` for every entry. Handlers
    never re-check. The runtime grid is assembled at boot from **enabled** modules'
    ACL grants — a permission exists in the type union whether or not its module is
    on. **Compile-checked shape, runtime-checked presence**: cross a `dependsOn`

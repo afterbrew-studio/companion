@@ -332,11 +332,21 @@ export class PrReviewFindingsStore {
   constructor(private readonly db: Database) {}
 
   insertMany(findings: readonly ReviewFinding[]): void {
+    this.writeMany(findings, false);
+  }
+
+  /** Final aggregation may replay findings that were already streamed live. */
+  insertMissing(findings: readonly ReviewFinding[]): void {
+    this.writeMany(findings, true);
+  }
+
+  private writeMany(findings: readonly ReviewFinding[], ignoreExisting: boolean): void {
     if (findings.length === 0) return;
     const stmt = this.db.prepare(
-      `INSERT INTO pr_review_findings (id, review_id, source, file, side, line, start_line, severity, title,
-                                       reason, impact, suggestion, suggested_patch, confidence, state,
-                                       verification, verification_note, rejection_reason, github_comment_id, created_at)
+      `${ignoreExisting ? 'INSERT OR IGNORE' : 'INSERT'} INTO pr_review_findings
+        (id, review_id, source, file, side, line, start_line, severity, title,
+         reason, impact, suggestion, suggested_patch, confidence, state,
+         verification, verification_note, rejection_reason, github_comment_id, created_at)
        VALUES (@id, @reviewId, @source, @file, @side, @line, @startLine, @severity, @title,
                @reason, @impact, @suggestion, @suggestedPatch, @confidence, @state,
                @verification, @verificationNote, @rejectionReason, @githubCommentId, @createdAt)`,
@@ -438,8 +448,13 @@ export class PrReviewFindingsStore {
 
   setVerification(id: string, verification: FindingVerification, note: string | null): void {
     this.db
-      .prepare(`UPDATE pr_review_findings SET verification = ?, verification_note = ? WHERE id = ?`)
-      .run(verification, note, id);
+      .prepare(
+        `UPDATE pr_review_findings
+            SET verification = ?, verification_note = ?,
+                state = CASE WHEN ? = 'refuted' AND state = 'included' THEN 'proposed' ELSE state END
+          WHERE id = ?`,
+      )
+      .run(verification, note, verification, id);
   }
 
   markPosted(id: string, githubCommentId: number | null): void {

@@ -29,7 +29,8 @@ running instance, and which artifact contains it.**
 
 Facts, measured, not assumed:
 
-- 12 modules under `modules/*`, roughly 55k lines of module source.
+- 15 modules under `modules/*`, including the read-only Workbench composition
+  layer over the existing domain services.
 - The kernel (`packages/core/src/server/kernel.ts`) already reconciles an
   installed set into a `modules` table, topo-sorts by `dependsOn`, and does
   live enable / disable / install / uninstall with migrations and RBAC
@@ -150,7 +151,7 @@ tiers, not eleven.
 
 | Profile | Modules | Artifact |
 |---|---|---|
-| `slim` | core, workspace, operate, code, admin, plan, board, automations | `@moxxy/companion` (npx), `companion:oss` image |
+| `slim` | core, workspace, operate, code, workbench, admin, plan, board, automations | `@moxxy/companion` (npx), `companion:oss` image |
 | `full` | slim + refinement, planner, slop, playground, notify, oidc | `@moxxy/companion-full`, `companion:full` image |
 | `enterprise` | slim + enterprise modules | `companion:enterprise` image only |
 

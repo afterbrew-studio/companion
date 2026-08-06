@@ -39,14 +39,15 @@ export interface AgentHealth {
 }
 
 /**
- * Version 4 carries the execution access profile into the runner. Without the
- * bump, a new daemon could label an analysis read-only while an older runner
- * silently started it with its former unrestricted policy.
+ * Version 5 carries the reviewed commit author and optional fresh-PR base into
+ * the runner. Without the bump, an older runner could silently keep an
+ * agent-authored commit (including attribution trailers) instead of producing
+ * the one clean commit Companion approved.
  *
  * `POST /agent/update-moxxy` was added WITHOUT a bump: it's additive — an old
  * agent answers 404 and the daemon falls back to "update it manually" guidance.
  */
-export const RUNNER_AGENT_PROTOCOL = 4;
+export const RUNNER_AGENT_PROTOCOL = 5;
 
 /**
  * The hard execution boundary selected by Companion for a run. It is separate
@@ -241,6 +242,12 @@ export interface AgentDiffResponse {
 export interface AgentCommitRequest {
   readonly cwd: string;
   readonly message: string;
+  readonly author?: {
+    readonly name: string;
+    readonly email: string;
+  };
+  /** Fresh PR only: collapse all branch work onto this trusted origin ref. */
+  readonly baseBranch?: string;
 }
 /** POST /agent/git/push */
 export interface AgentPushRequest {

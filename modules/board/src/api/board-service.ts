@@ -112,10 +112,7 @@ export class BoardService {
     opts: { readonly doneRepo?: string; readonly doneLimit?: number; readonly doneOffset?: number } = {},
   ): { tasks: TaskListRecord[]; workers: WorkerView[]; config: BoardConfig; doneTotal: number; doneOffset: number; taskRepos: string[] } {
     const boardTasks = this.store.listBoardTasks(workspaceId, opts);
-    const tasks = boardTasks.tasks.map((task): TaskListRecord => {
-      const { description: _description, acceptance: _acceptance, ...card } = task;
-      return { ...card, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) };
-    });
+    const tasks = boardTasks.tasks.map(toTaskListRecord);
     const busy = this.store.busyWorkerMap();
     const workers = this.store.listWorkers(workspaceId).map((w): WorkerView => {
       const b = busy.get(w.id);
@@ -137,6 +134,25 @@ export class BoardService {
       doneTotal: boardTasks.doneTotal,
       doneOffset: boardTasks.doneOffset,
       taskRepos: boardTasks.taskRepos,
+    };
+  }
+
+  /** Small read model for Today: actionable cards plus exact ownership links. */
+  listDecisionContext(
+    user: AuthUser,
+    workspaceId: string,
+    references: {
+      readonly runIds: readonly string[];
+      readonly pullRequests: ReadonlyArray<{ readonly repo: string; readonly number: number }>;
+    },
+    limit = 200,
+  ): { tasks: TaskListRecord[]; config: BoardConfig; hasMore: boolean } {
+    this.workspace.requireAccessible(user, workspaceId);
+    const snapshot = this.store.listDecisionTasks(workspaceId, references, limit);
+    return {
+      tasks: snapshot.tasks.map(toTaskListRecord),
+      config: this.store.getConfig(workspaceId),
+      hasMore: snapshot.hasMore,
     };
   }
 
@@ -1038,7 +1054,7 @@ ${acceptance}${previous}${specSection}
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
-- Commit your work with clear messages (git add + git commit). Do NOT push — the board reviews and pushes on your behalf.
+- Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the work is complete and verified, finish with a short summary of what you changed and how you verified it.`;
   }
 
@@ -1526,14 +1542,14 @@ ${acceptance}${previous}${specSection}
   }
 
   /** Human "merge now" from the task view — the same path auto-merge takes. */
-  async mergeNow(id: string, actorId: string): Promise<TaskRecord> {
+  async mergeNow(id: string, actorId: string, expectedHead?: string): Promise<TaskRecord> {
     const task = this.store.getTask(id);
     if (!task) throw new Error('task not found');
     if (task.status !== 'in_review' || task.prNumber == null) {
       throw new Error('only a task in review with an open PR can be merged');
     }
     this.mergeBackoff.delete(id);
-    await this.mergeTask(task, this.configFor(task), undefined, actorId);
+    await this.mergeTask(task, this.configFor(task), expectedHead, actorId);
     const fresh = this.store.getTask(id)!;
     if (fresh.status !== 'done') throw new Error(fresh.lastError ?? 'merge failed');
     return fresh;
@@ -1786,6 +1802,11 @@ ${acceptance}${previous}${specSection}
       userId: task.createdBy ?? null,
     });
   }
+}
+
+function toTaskListRecord(task: TaskRecord): TaskListRecord {
+  const { description: _description, acceptance: _acceptance, ...card } = task;
+  return { ...card, attachments: task.attachments.map((attachment) => ({ ...attachment, content: null })) };
 }
 
 function parsePrNumber(prUrl: string): number | null {

@@ -20,7 +20,10 @@ import type {
   AccountInfo,
   AclMap,
   AddModuleResponse,
+  ApiTokenCapability,
+  ApiTokenRecord,
   AuthState,
+  CreateApiTokenResponse,
   CreateUserRequest,
   ExternalModulesResponse,
   RemoveModuleResponse,
@@ -105,6 +108,18 @@ export const coreApi = {
   updateProfile: (body: UpdateProfileRequest) => put<ProfileResponse>('/api/profile', body),
   getAccount: () => request<{ account: AccountInfo }>('/api/account'),
   updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
+
+  // API credentials: the raw secret exists only in the create response.
+  listApiTokens: () =>
+    request<{ tokens: ApiTokenRecord[]; capabilities: ApiTokenCapability[] }>('/api/tokens'),
+  createApiToken: (body: { name: string; permissions: readonly string[]; expiresInDays: number }) =>
+    post<CreateApiTokenResponse>('/api/tokens', body),
+  revokeApiToken: (id: string) => del<{ ok: true }>(`/api/tokens/${id}`),
+  listAllApiTokens: (opts?: { limit?: number; offset?: number }) =>
+    request<{ tokens: ApiTokenRecord[]; total: number }>(
+      `/api/admin/tokens${qs({ limit: opts?.limit, offset: opts?.offset })}`,
+    ),
+  revokeAnyApiToken: (id: string) => del<{ ok: true }>(`/api/admin/tokens/${id}`),
 };
 
 // runtime module lifecycle + config (admin) — the Modules page drives the kernel with these

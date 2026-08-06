@@ -109,6 +109,52 @@ export interface RepoRecord {
   readonly runnerId: string | null;
 }
 
+/** A trusted, bounded repository file that can shape an agent run. */
+export interface RepoAgentContextFile {
+  readonly path: string;
+  readonly kind: 'instructions' | 'skill' | 'pull-request-template';
+  /** Frontmatter name for a skill, otherwise a human-readable filename. */
+  readonly name: string;
+  /** Frontmatter description when the repository supplied one. */
+  readonly description: string | null;
+  /** Plain UTF-8 text from the scanned base branch, never from a PR head. */
+  readonly content: string;
+  readonly size: number;
+  /** True when the file was too large to include in full. */
+  readonly truncated: boolean;
+  /** The one template Companion will merge into a newly opened PR. */
+  readonly primary: boolean;
+}
+
+/** Repository conventions Companion can enforce without executing repo code. */
+export interface RepoAgentContextPolicies {
+  /** Companion's platform default: commits and PR copy receive no AI credit trailer. */
+  readonly noAiAttribution: true;
+  /** A trusted rule explicitly asks for newly created pull requests to be drafts. */
+  readonly pullRequestDraft: boolean;
+  /** The trusted rules describe Conventional Commit-style PR titles. */
+  readonly conventionalPrTitle: boolean;
+  /** The selected PR template explicitly asks whether an agent produced the diff. */
+  readonly agentProvenance: boolean;
+  /** Branch prefixes shown in trusted examples such as `fix/<short-topic>`. */
+  readonly branchPrefixes: readonly string[];
+}
+
+/**
+ * What Companion discovered on the repository's trusted base branch. The SPA
+ * and fix runs share this bounded representation and scanner, rather than
+ * maintaining separate UI and execution interpretations.
+ */
+export interface RepoAgentContext {
+  readonly repo: string;
+  readonly ref: string;
+  readonly scannedAt: number;
+  readonly files: readonly RepoAgentContextFile[];
+  /** The Git tree or configured resource ceilings omitted additional content. */
+  readonly truncated: boolean;
+  readonly policies: RepoAgentContextPolicies;
+}
+
 // ---------- agent quality ----------
 
 /**

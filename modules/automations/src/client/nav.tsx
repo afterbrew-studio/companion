@@ -1,11 +1,8 @@
-import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
+import { defineNav, defineQuickActions, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * module-automations' sidebar contributions. No group of its own: the
- * Automations entry attaches to the operate section and Daily Digest to the
- * workspace section — automations generates the digests (module ≠ group — the
- * sidebar is a shared, ordered namespace). Icons copied exactly from the
- * legacy modules.tsx registry.
+ * Daily Digest is shared Home context. Automations configure the active
+ * workspace, while AI Help reaches the top bar through its own slot.
  */
 
 const icons = {
@@ -31,7 +28,7 @@ export const nav = defineNav([
     shortcut: 'g',
     permission: 'reports:read',
     section: 'workspace',
-    order: 10,
+    order: 0,
     freshOn: (msg) => (msg.t === 'reports.changed' ? 'digest' : null),
     icon: icons.digest,
   },
@@ -41,8 +38,21 @@ export const nav = defineNav([
     hash: '#/automations',
     shortcut: 'u',
     permission: 'automations:manage',
-    section: 'operate',
+    section: 'workspace-manage',
     order: 10,
+    audiences: ['developer'],
     icon: icons.automations,
+  },
+]);
+
+export const actions = defineQuickActions([
+  {
+    key: 'ask-ai',
+    label: 'Ask AI Help',
+    group: 'Help',
+    access: ['runs:read', 'runs:act'],
+    keywords: 'assistant explain find draft help companion',
+    order: 0,
+    intent: 'ask-ai',
   },
 ]);

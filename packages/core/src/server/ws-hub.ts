@@ -52,8 +52,11 @@ export class WsHub implements WsScopeRegistry {
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const user = url.pathname === '/ws' ? this.verify(url.searchParams.get('token')) : null;
-    if (!user) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    // API tokens are intentionally REST-only. The socket broadcasts messages
+    // by account/workspace, not by route permission, so accepting a scoped
+    // credential here would silently widen its read access.
+    if (!user || user.permissionScope !== undefined) {
+      socket.write(`HTTP/1.1 ${user ? '403 Forbidden' : '401 Unauthorized'}\r\n\r\n`);
       socket.destroy();
       return;
     }

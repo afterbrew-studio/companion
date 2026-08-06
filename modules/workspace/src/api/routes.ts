@@ -76,7 +76,7 @@ export default defineRoutes((ctx) => {
   // Manage gate (rename/delete/members): owner or admin only.
   const requireManage = (user: AuthUser | null, id: string): WorkspaceRecord => {
     const ws = requireWorkspace(user, id);
-    if (!user || (ws.ownerId !== user.username && !ctx.rbac.has(user.role, 'workspaces:manage'))) {
+    if (!user || (ws.ownerId !== user.username && !ctx.rbac.allows(user, 'workspaces:manage'))) {
       throw forbidden('only the workspace owner or an admin can manage this workspace');
     }
     return ws;
@@ -142,7 +142,7 @@ export default defineRoutes((ctx) => {
         // Omitted visibility defaults to private (the per-user case); making a
         // workspace public — shared with everyone — needs workspaces:manage.
         const visibility = body.visibility ?? 'private';
-        if (visibility === 'public' && !ctx.rbac.has(user!.role, 'workspaces:manage')) {
+        if (visibility === 'public' && !ctx.rbac.allows(user!, 'workspaces:manage')) {
           throw forbidden('only an admin can create a public workspace');
         }
         const id = `ws-${randomUUID().slice(0, 12)}`;
@@ -246,7 +246,7 @@ export default defineRoutes((ctx) => {
       access: 'workspaces:read',
       handler: ({ params, user }) => {
         requireManage(user, params.id);
-        if (params.username === user!.username && !ctx.rbac.has(user!.role, 'workspaces:manage')) {
+        if (params.username === user!.username && !ctx.rbac.allows(user!, 'workspaces:manage')) {
           throw badRequest('the owner cannot remove themselves — delete the workspace instead');
         }
         workspaces.removeMember(params.id, params.username);

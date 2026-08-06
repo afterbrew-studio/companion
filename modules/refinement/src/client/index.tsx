@@ -7,9 +7,8 @@ import { nav } from './nav.js';
 import { routes } from './routes.js';
 
 /**
- * The `/client` barrel — module-refinement's web surface: one Refinement entry
- * in the Plan sidebar group (plan owns the section; it is a hard dependency)
- * plus the list/detail routes.
+ * The `/client` barrel — module-refinement's Plan & build entry plus the
+ * list/detail routes.
  */
 
 export { refinementApi } from './api.js';

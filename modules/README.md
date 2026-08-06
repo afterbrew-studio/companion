@@ -296,7 +296,7 @@ the old god-object. The pieces you get:
 | `notify` | the shared notification emitter (`ctx.notify.emit({...})`). |
 | `settings` | namespaced key/value over the core-owned `settings` table. |
 | `moduleConfig` | THIS module's declared config (§4): `get(key)` / `values()`, read-only, live, defaults merged. |
-| `rbac` | the live effective RBAC grid reader (`ctx.rbac.has(role, perm)`, `roles()`, `catalog()`, `explain()`). Read-only. |
+| `rbac` | the live effective RBAC grid reader (`ctx.rbac.allows(user, perm)` for a caller, `has(role, perm)` for role policy/background identities, plus `roles()`, `catalog()`, `explain()`). Read-only. |
 | `setRoles` | publish this instance's role definitions + grant overrides into the grid. Owned by the module that STORES roles (module-core); nobody else calls it. |
 | `ws` | the WS scope-resolver registry — register per-message visibility in `onEnable`. |
 | `modules` / `isEnabled` | kernel lifecycle control + enabled-checks. |
@@ -419,12 +419,19 @@ export default defineRoutes((ctx) => {
 });
 ```
 
-`access` is `'public'` | `'any'` (signed-in) | a `Permission`. The router
-enforces it centrally — **a route cannot forget auth**. Path params are inferred
+`access` is `'public'` | `'any'` (signed-in) | a `Permission` | a non-empty
+permission tuple. A tuple is AND: the router requires every capability and
+records the complete requirement in the audit row. The router enforces access
+centrally — **a route cannot forget auth**. Path params are inferred
 from the pattern at the type level; matching is whole-segment (no ordering
 hazard). Throw `notFound`/`badRequest`/`forbidden` (they status-map); a foreign
 error becomes a logged 500, so an upstream 401 can never masquerade as a session
 denial.
+
+An internal delegated session (AI Help) is read-only at this same dispatch
+boundary. `allowDelegatedWrite: true` is the narrow exception for a route that
+only prepares a human-reviewed proposal or pushes a UI intent; it must never be
+placed on a direct domain/external mutation. Ordinary RBAC still applies first.
 
 ### raw-routes.ts — webhooks (optional)
 
@@ -516,23 +523,24 @@ dynamic-imports each enabled module's `/client`, and aggregates their
 contributions. The shell **presents** them — RBAC-filtering nav/routes by the
 live `can()`. Data hooks use `useLive(refresh, when)` over the single WebSocket.
 
-### nav.tsx — sidebar
+### nav.tsx — navigation metadata
 
 ```tsx
-import { defineNav, defineSections, NavIcon } from '@moxxy/companion-core/client';
+import { defineNav, NavIcon } from '@moxxy/companion-core/client';
 
-export const sections = defineSections([{ id: 'widgets', label: 'Widgets', order: 45 }]);
+// `workspace` (required in every build) already owns the shared `more`
+// catalog section. Specialist modules attach to it; they do not redeclare it.
 export const nav = defineNav([
   {
     key: 'widgets', label: 'Widgets', hash: '#/widgets', shortcut: 'w',
-    permission: 'widgets:read', section: 'widgets', order: 0,
+    permission: 'widgets:read', section: 'more', order: 0,
     icon: <NavIcon><path d="M4 7h16M4 12h16M4 17h10" /></NavIcon>,   // shared frame + stroke
     // freshOn?: (msg) => string | null   // nav "new activity" badge
   },
 ]);
 ```
 
-**Configuration pages don't belong in the sidebar.** A section declared with
+**Instance configuration pages don't belong in the sidebar.** A section declared with
 `placement: 'settings'` renders in the settings shell's own column instead, next
 to the page. Attach the entry to one of core's settings groups rather than
 declaring your own: `admin` (Instance), `admin-ai`, `admin-access`,
@@ -546,9 +554,65 @@ declaring your own: `admin` (Instance), `admin-ai`, `admin-access`,
 Core owns those groups because only core is `required: true`, and an entry whose
 section id nobody declared is dropped from the shell without a word.
 
-Users may hide sidebar entries they don't want (persisted per user, server-side).
-It is chrome only: hidden pages keep their routes, their permissions, and their
-place in ⌘K, so never treat a hidden entry as an unreachable one.
+Do not create a top-level group just because a module exists. Attach only a
+small, genuinely everyday destination to a shared outcome group: `workspace`
+(Home), `workspace-manage`, `plan`, `code`, or `operate`. Workspace-scoped
+configuration such as repositories and automations belongs in
+`workspace-manage`; instance-wide configuration belongs in Settings.
+
+Menu-view metadata lives on a section, not on individual destinations:
+
+```tsx
+export const sections = defineSections([
+  { id: 'plan', label: 'Plan & build', order: 30,
+    defaultCollapsed: true, audiences: ['business'] },
+]);
+
+{ key: 'widgets', /* ... */ section: 'plan' }
+```
+
+An omitted audience makes a group shared. Otherwise **Business** includes its
+planning groups, **Developer** its code and agent-operation groups, and
+**Admin** includes every permitted group. This filters only the sidebar: it is
+never authorization, and Search plus direct links retain every RBAC-permitted
+route. A shared group may refine one exceptional entry with its own `audiences`
+(for example, developer-only Automations inside the shared Workspace group),
+but prefer section metadata when the whole outcome belongs to one view. Auto
+derives a view from effective capabilities so custom roles work without being
+forced into a closed role union. Under **Your profile → Navigation**, switches
+mirror the selected preset and persist explicit add/remove overrides separately
+for Business, Developer, and Admin; users may also fold included groups.
+
+Attach specialist tools to the shared `more` section declared with
+`placement: 'catalog'`. They remain available through global **Search** (⌘K),
+shortcuts, and contextual links without occupying permanent sidebar space.
+Reserve this for bounded labs and drill-downs — never primary objects such as
+repositories, pipelines, queues, or quality workflows.
+
+### quick actions — outcomes, not more navigation
+
+An enabled module can contribute a natural action to the global **New** menu
+and command search. The shell owns presentation; the module owns the label,
+authorization, destination, and behavior:
+
+```tsx
+import { defineQuickActions } from '@moxxy/companion-core/client';
+
+export const quickActions = defineQuickActions([{
+  key: 'new-widget',
+  label: 'Create widget',
+  group: 'Create',
+  access: ['widgets:read', 'widgets:manage'], // AND, filtered before rendering
+  keywords: 'new add widget',
+  order: 30,
+  hash: '#/widgets',
+}]);
+```
+
+Use a `hash` for a module-owned destination. The small closed set of built-in
+cross-shell forms uses typed `ClientIntent` values instead. A quick action may
+open a form or navigate; it must not bypass the normal route permission or
+silently perform an external/destructive mutation.
 
 ### routes.tsx — pages
 
@@ -616,14 +680,14 @@ export const onboarding = defineOnboarding([{
 import { defineClientModule } from '@moxxy/companion-core/client';
 import '../contract/index.js';                    // MUST be first — carries the augmentations
 import manifest from '../module.js';
-import { nav, sections } from './nav.js';
+import { nav, quickActions, sections } from './nav.js';
 import { routes } from './routes.js';
 import { onboarding } from './onboarding.js';     // omit if none
 
 // Re-export anything the shell / other modules reach by name:
 export { widgetsApi } from './api.js';
 
-export default defineClientModule({ manifest, sections, nav, routes, onboarding });
+export default defineClientModule({ manifest, sections, nav, routes, onboarding, quickActions });
 ```
 
 ---
@@ -650,8 +714,8 @@ A new module is **one line in one profile** + a rebuild. Profiles are the only
 place a build's module set is named:
 
 - `profiles/slim.json` is the shipped default (core, workspace, operate, code,
-  admin, plus plan + board + automations, which carry the durable contributor
-  lifecycle and daily digest).
+  workbench and admin, plus plan + board + automations, which carry the durable
+  contributor lifecycle and daily digest).
   `profiles/full.json` `extends` it and adds the rest.
 - The registries `apps/api/src/modules.generated.ts` and
   `apps/web/src/modules.generated.ts` are **gitignored** and regenerated by

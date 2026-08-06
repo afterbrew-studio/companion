@@ -50,7 +50,7 @@ export function GithubAccountsPage(): JSX.Element {
   const [adding, setAdding] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
 
-  // ⌘K → "Connect GitHub account" lands here and opens the connect modal.
+  // New / command search → "Connect GitHub account" lands here and opens the form.
   useIntent('connect-github', () => setAdding(true));
 
   const togglePurpose = async (account: GitHubAccountRecord, purpose: GitHubPurpose): Promise<void> => {

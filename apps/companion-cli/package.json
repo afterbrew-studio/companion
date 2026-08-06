@@ -38,6 +38,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@companion/module-workbench": "workspace:*",
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@moxxy/companion-services": "workspace:*",

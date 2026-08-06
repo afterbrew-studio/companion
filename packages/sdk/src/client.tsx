@@ -20,6 +20,7 @@ export {
   defineClientRoutes,
   defineSlots,
   defineOnboarding,
+  defineQuickActions,
 } from '@moxxy/companion-core/client';
 
 export type {
@@ -32,6 +33,7 @@ export type {
   RouteProps,
   SlotContribution,
   OnboardingStep,
+  QuickAction,
 } from '@moxxy/companion-core/client';
 
 // ---- rendering helpers ----

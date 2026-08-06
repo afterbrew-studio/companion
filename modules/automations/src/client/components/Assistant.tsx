@@ -7,6 +7,7 @@ import { codeApi } from '@companion/module-code/client';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { AskSheet } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
+import { PreparedActions } from '@companion/module-workbench/client';
 import { automationsApi as api } from '../api.js';
 
 /**
@@ -396,6 +397,7 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
             {asks.map((ask) => (
               <AskSheet key={ask.requestId} ask={ask} onRespond={(response) => void api.assistantAsk(ask.requestId, response).catch((err) => setError(String(err)))} />
             ))}
+            <PreparedActions compact />
             <ErrorBar error={error} className="mt-2" />
             <div ref={bottomRef} />
           </div>

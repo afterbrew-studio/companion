@@ -1,8 +1,28 @@
-import { useEffect, useState } from 'react';
-import { refreshAuth } from '@moxxy/companion-core/client';
-import { DetailGrid, DetailRow, Dropdown, ErrorBar, Field, Page, PageHeader, Section, SettingRow } from '@moxxy/companion-ui';
+import { useEffect, useMemo, useState } from 'react';
+import type { NavigationPerspective } from '@moxxy/companion-contracts';
+import {
+  navigationEntryVisible,
+  refreshAuth,
+  useKernel,
+  type NavEntry,
+  type NavSection,
+} from '@moxxy/companion-core/client';
+import {
+  DetailGrid,
+  DetailRow,
+  Dropdown,
+  ErrorBar,
+  Field,
+  ListCard,
+  Page,
+  PageHeader,
+  Section,
+  SettingRow,
+  Switch,
+} from '@moxxy/companion-ui';
 import type { AccountInfo, NotificationScope } from '../../contract/index.js';
 import { coreApi } from '../api.js';
+import { useAuth } from '../lib/auth.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
 
 /** null = "use the instance default"; the concrete scopes override it. */
@@ -14,17 +34,135 @@ type ScopeChoice = NotificationScope | 'default';
  * Appearance is per-browser; an unset inbox scope inherits the instance default.
  */
 export function ProfilePage(): JSX.Element {
+  const {
+    can,
+    navOverrides,
+    navigationAudience,
+    navPerspective,
+    setNavOverrides,
+    setNavPerspective,
+  } = useAuth();
+  const kernel = useKernel();
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [error, setError] = useState<string | null>(null);
+  const navigationSections = useMemo(
+    () =>
+      kernel.sections
+        .filter((section) => section.placement === undefined || section.placement === 'sidebar')
+        .map((section) => ({
+          section,
+          entries: kernel.nav.filter((entry) => entry.section === section.id && can(entry.permission)),
+        }))
+        .filter(({ entries }) => entries.length > 0),
+    [can, kernel.nav, kernel.sections],
+  );
+  const currentOverrides = useMemo(
+    () => navOverrides.filter((override) => override.perspective === navigationAudience),
+    [navOverrides, navigationAudience],
+  );
+  const viewLabel = navigationAudience === 'business'
+    ? 'Business'
+    : navigationAudience === 'developer'
+      ? 'Developer'
+      : 'Admin';
+
+  const setPageVisible = (entry: NavEntry, section: NavSection, visible: boolean): void => {
+    const withoutEntry = navOverrides.filter(
+      (override) => override.perspective !== navigationAudience || override.key !== entry.key,
+    );
+    const presetVisible = navigationEntryVisible(entry, section, navigationAudience, []);
+    const next = visible === presetVisible
+      ? withoutEntry
+      : [...withoutEntry, { perspective: navigationAudience, key: entry.key, visible }];
+    setError(null);
+    void setNavOverrides(next).catch((err) => setError(String(err)));
+  };
 
   return (
     <Page>
-      <PageHeader title="Your profile" subtitle="Your account, appearance, and notification preferences" />
+      <PageHeader title="Your profile" subtitle="Your navigation, account, appearance, and notifications" />
       <ErrorBar error={error} />
+
+      <Section
+        title="Navigation"
+        description="Each view starts from a useful preset. The switches below customise that view and always mirror the current sidebar. Hidden pages remain available in Search and through links."
+      >
+        <SettingRow
+          className="card"
+          title="Menu view"
+          description={`Business shows planning, Developer shows delivery, and Admin starts with every permitted area. The active preset is ${viewLabel}.`}
+        >
+          <Dropdown<NavigationPerspective>
+            ariaLabel="Menu view"
+            value={navPerspective}
+            onChange={(value) => void setNavPerspective(value).catch((err) => setError(String(err)))}
+            options={[
+              { value: 'auto', label: 'Automatic', hint: 'Uses the best menu for your role' },
+              { value: 'business', label: 'Business', hint: 'Home, workspace and planning' },
+              { value: 'developer', label: 'Developer', hint: 'Home, workspace, code and agents' },
+              { value: 'admin', label: 'Admin', hint: 'Every permitted area' },
+            ]}
+          />
+        </SettingRow>
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-medium">Pages in the sidebar</div>
+            <div className="dim mt-0.5 text-xs">Customising the {viewLabel} view</div>
+          </div>
+          {currentOverrides.length > 0 ? (
+            <button
+              type="button"
+              className="linkish text-xs"
+              onClick={() => {
+                const next = navOverrides.filter((override) => override.perspective !== navigationAudience);
+                void setNavOverrides(next).catch((err) => setError(String(err)));
+              }}
+            >
+              Reset view
+            </button>
+          ) : null}
+        </div>
+        <ListCard className="mt-2" ariaLabel="Sidebar page visibility">
+          {navigationSections.map(({ section, entries }) => (
+            <div key={section.id} className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+              <div className="dim bg-zinc-50/70 px-3 py-2 text-[10px] font-medium tracking-widest uppercase dark:bg-zinc-900/40">
+                {section.label}
+              </div>
+              {entries.map((entry) => {
+                const presetVisible = navigationEntryVisible(entry, section, navigationAudience, []);
+                const visible = navigationEntryVisible(entry, section, navigationAudience, navOverrides);
+                const customised = currentOverrides.some((override) => override.key === entry.key);
+                const status = customised
+                  ? visible
+                    ? `Added to ${viewLabel}`
+                    : `Hidden from ${viewLabel}`
+                  : presetVisible
+                    ? null
+                    : `Not in the ${viewLabel} preset`;
+                return (
+                  <div key={entry.key} className="flex items-center gap-3 px-3 py-2.5">
+                    <span className="dim shrink-0">{entry.icon}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px]">{entry.label}</span>
+                      {status ? <span className="dim mt-0.5 block text-[11px]">{status}</span> : null}
+                    </span>
+                    <Switch
+                      checked={visible}
+                      label={`Show ${entry.label} in the ${navigationAudience} sidebar`}
+                      onChange={(nextVisible) => setPageVisible(entry, section, nextVisible)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </ListCard>
+      </Section>
 
       <AccountSection onError={setError} />
 
-      <Section title="Appearance" description="Theme is a per-browser preference; it applies immediately.">
+      <Section title="Appearance" description="How Companion looks on this browser.">
         <SettingRow className="card" title="Theme">
           <Dropdown
             ariaLabel="Theme"

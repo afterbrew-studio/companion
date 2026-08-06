@@ -9,6 +9,8 @@ import type { ReviewChat } from './review-chat.js';
 import type { PrChecks } from './pr-checks.js';
 import type { Fixes } from './fixes.js';
 import type { Pipelines } from './pipelines.js';
+import type { RepoAgentContextScanner } from './repo-agent-context.js';
+import type { RepoPermission } from '../contract/index.js';
 
 /**
  * The GitHub/code-domain bundle other modules resolve via
@@ -30,6 +32,7 @@ export class CodeService {
     readonly prReviews: PrReviews,
     readonly reviewChat: ReviewChat,
     readonly prChecks: PrChecks,
+    readonly agentContext: RepoAgentContextScanner,
     readonly fixes: Fixes,
     readonly pipelines: Pipelines,
     private readonly importActiveLocalGh: () => Promise<boolean>,
@@ -45,4 +48,44 @@ export class CodeService {
     });
     return this.localGhImport;
   }
+
+  /**
+   * The best permission this profile's own accounts hold across one workspace.
+   * This is the shared read boundary for Code's HTTP feeds and cross-module
+   * compositions: workspace membership alone must never expose cached GitHub
+   * rows after a personal credential loses access.
+   */
+  async repoPermissions(username: string, workspaceId: string): Promise<Map<string, RepoPermission>> {
+    const rows = this.repos.listByWorkspace(workspaceId);
+    const graded = await mapConcurrent(rows, 8, async (row) => {
+      const permission = await this.githubAccounts.permissionFor('fetch', row.full_name, {
+        username,
+        workspaceId,
+      });
+      return permission ? ([row.full_name, permission] as const) : null;
+    });
+    return new Map(graded.filter((entry): entry is readonly [string, RepoPermission] => entry !== null));
+  }
+
+  /** Repositories whose cached GitHub rows this profile may currently read. */
+  async accessibleRepoNames(username: string, workspaceId: string): Promise<string[]> {
+    return [...(await this.repoPermissions(username, workspaceId)).keys()];
+  }
+}
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
+  return results;
 }

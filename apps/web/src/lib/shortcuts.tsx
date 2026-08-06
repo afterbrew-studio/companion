@@ -132,7 +132,7 @@ export function ShortcutHelp({
         {onReplayTour ? (
           <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
             <button className="linkish text-sm" onClick={onReplayTour}>
-              Replay the welcome tour
+              Open the optional product tour
             </button>
           </div>
         ) : null}

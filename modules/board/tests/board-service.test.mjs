@@ -61,6 +61,39 @@ test('board cards omit long authoring fields and attachment bodies', () => {
   db.close();
 });
 
+test('decision context is bounded and retains active ownership links', () => {
+  const { db, store, makeService } = fixture();
+  for (let index = 0; index < 205; index += 1) {
+    insertTask(store, {
+      id: `failed-${String(index).padStart(3, '0')}`,
+      status: 'failed',
+      stage: null,
+      createdAt: index,
+      updatedAt: index,
+    });
+  }
+  insertTask(store, { id: 'linked-run', runId: 'run-review', status: 'in_progress' });
+  insertTask(store, { id: 'linked-pr', prNumber: 42, status: 'in_review', stage: 'reviewing' });
+  insertTask(store, { id: 'done-link', runId: 'run-done', status: 'done', stage: null });
+
+  const snapshot = makeService().listDecisionContext(
+    { username: 'alice' },
+    'ws-1',
+    {
+      runIds: ['run-review', 'run-done'],
+      pullRequests: [{ repo: 'owner/repo', number: 42 }],
+    },
+    200,
+  );
+
+  assert.equal(snapshot.hasMore, true);
+  assert.equal(snapshot.tasks.filter((task) => task.status === 'failed').length, 200);
+  assert.equal(snapshot.tasks.some((task) => task.id === 'linked-run'), true);
+  assert.equal(snapshot.tasks.some((task) => task.id === 'linked-pr'), true);
+  assert.equal(snapshot.tasks.some((task) => task.id === 'done-link'), false);
+  db.close();
+});
+
 test('developer blocker is deduplicated across ticks and service restarts', async () => {
   const { db, store, notifications, makeService } = fixture();
   insertTask(store);

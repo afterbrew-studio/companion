@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { defineClientRoutes, page, lazyView, type RouteProps } from '@moxxy/companion-sdk/client';
-import { RequiresGithubAccount, RequiresRepo } from './components/SetupGate.js';
+import { RequiresRepo, RequiresWorkspace } from './components/SetupGate.js';
 
 /**
  * Wrap a lazily-loaded page in the prerequisite gate.
@@ -46,7 +46,7 @@ export const routes = defineClientRoutes([
   {
     match: { prefix: '/agent-quality' },
     permission: 'repos:read',
-    component: page(() => import('./pages/AgentQuality.js').then((m) => m.AgentQualityPage)),
+    component: gated(() => import('./pages/AgentQuality.js').then((m) => ({ default: m.AgentQualityPage })), 'Agent quality'),
   },
   // The PR-in-the-making outcome view of a fix/implement run.
   {
@@ -98,15 +98,16 @@ export const routes = defineClientRoutes([
   },
   {
     match: { prefix: '/repos' },
-    permission: 'repos:manage',
+    permission: 'repos:read',
     component: lazyView(async () => {
       const { ReposPage } = await import('./pages/ReposPage.js');
-      // Only the account half: this page is where a repository gets added, so
-      // gating it on having one would send you here from here.
+      // Repository membership is foundational workspace context, so readers
+      // can inspect it without holding the mutation permission or connecting a
+      // personal GitHub account. ReposPage gates every management control.
       const Wrapped = (): JSX.Element => (
-        <RequiresGithubAccount what="Connecting a repository">
+        <RequiresWorkspace what="Repositories">
           <ReposPage />
-        </RequiresGithubAccount>
+        </RequiresWorkspace>
       );
       return { default: Wrapped };
     }),

@@ -14,11 +14,11 @@ const CLI_TOKEN_TTL_MS = 10 * 365 * 24 * 60 * 60_000;
  * an ordinary hashed session row like any browser login, handed to the CLI
  * through a 0600 file in COMPANION_HOME rather than a password prompt.
  *
- * It carries the primary admin's identity, so it is an ADMIN-EQUIVALENT
- * credential. Per-token permission scopes need a role that grants only
- * `modules:manage`, which is not expressible until roles open up (see
- * docs/acl-and-roles.md §D1). COMPANION_HOME already holds the database itself,
- * so the file does not widen the blast radius of that directory.
+ * It carries the primary admin's identity, so it is an ADMIN-EQUIVALENT local
+ * bootstrap credential. Remote or least-privilege CLI/MCP clients should use a
+ * managed, expiring `cmp_…` token from Settings instead. COMPANION_HOME already
+ * holds the database itself, so this file does not widen that directory's blast
+ * radius.
  */
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -40,6 +40,17 @@ export default defineJobs({
         const days = Number(ctx.moduleConfig.get('auditRetentionDays') ?? 365);
         const removed = ctx.services.get('audit').prune(days * DAY_MS);
         if (removed > 0) ctx.log.info(`audit: pruned ${removed} entries older than ${days} days`);
+      },
+    },
+    {
+      id: 'core.api-tokens.prune',
+      everyMs: DAY_MS,
+      run: (ctx) => {
+        const removed = ctx.services.get('core').pruneExpiredApiTokens();
+        if (removed > 0) {
+          ctx.log.info(`API tokens: pruned ${removed} expired credentials`);
+          ctx.broadcast({ t: 'tokens.changed' });
+        }
       },
     },
   ],
@@ -74,7 +85,7 @@ export default defineJobs({
     const admin = auth.primaryAdminUsername();
     // First-boot onboarding has not created an account yet; the next start writes it.
     if (!admin) return;
-    const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS);
+    const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS, 'full');
     writeFileSync(file, `${token}\n`, { mode: 0o600 });
     ctx.log.info(`CLI token for '${admin}' written to ${file}`);
   },

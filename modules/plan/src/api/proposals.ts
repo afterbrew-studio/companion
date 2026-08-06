@@ -372,9 +372,9 @@ ${steps || '(derive a sensible plan from the proposal)'}
 
 ## Rules
 - Work ONLY inside this worktree.
-- Follow the plan step by step; commit after each meaningful step (git add + git commit).
+- Follow the plan step by step, but leave the finished changes uncommitted.
 - Verify your work (run tests / build where possible) before finishing.
-- Do NOT push. The maintainer reviews the diff and pushes after approval.
+- Do not push. Companion creates the reviewed commit and publishes it only after approval.
 - Finish with a short summary of what you changed and how you verified it.`;
 }
 

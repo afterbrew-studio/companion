@@ -183,6 +183,50 @@ test('autonomy queue uses body-free GraphQL metadata instead of one REST detail 
   }
 });
 
+test('repository agent context batches text files into one read-only GraphQL request', async () => {
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({ method: req.method, url: req.url, body: JSON.parse(raw) });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      data: {
+        repository: {
+          f0: { text: '# Rules', isBinary: false, byteSize: 7 },
+          f1: { text: '## Summary', isBinary: false, byteSize: 10 },
+        },
+      },
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`);
+  try {
+    const files = await client.repoTextFiles(
+      'acme/app',
+      'main',
+      ['AGENTS.md', '.github/pull_request_template.md'],
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, 'POST');
+    assert.equal(requests[0].url, '/graphql');
+    assert.match(requests[0].body.query, /CompanionRepositoryAgentContext/);
+    assert.doesNotMatch(requests[0].body.query, /AGENTS\.md/);
+    assert.deepEqual(requests[0].body.variables, {
+      owner: 'acme',
+      name: 'app',
+      expression0: 'main:AGENTS.md',
+      expression1: 'main:.github/pull_request_template.md',
+    });
+    assert.equal(files.get('AGENTS.md'), '# Rules');
+    assert.equal(files.get('.github/pull_request_template.md'), '## Summary');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('merge enters the instance write-policy choke point before network I/O', async () => {
   let requests = 0;
   const server = createServer((_req, res) => {

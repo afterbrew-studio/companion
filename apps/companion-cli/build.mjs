@@ -33,6 +33,7 @@ await build({
     runs: join(here, 'src/runs.ts'),
     profile: join(here, 'src/profile.ts'),
     harnesses: join(here, 'src/harnesses.ts'),
+    mcp: join(here, 'src/mcp.ts'),
   },
   outdir: dist,
   bundle: true,

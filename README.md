@@ -8,7 +8,9 @@
 <h1 align="center">Companion</h1>
 
 <p align="center">
-  A self-hosted engineering dashboard that plugs into GitHub and runs your repositories with AI agents.
+  <strong>A local-first control plane for software teams and AI agents.</strong><br>
+  Start on a laptop. Run the same stack in your private cloud. Keep every repository,
+  agent run, review, and approval under your control.
 </p>
 
 <p align="center">
@@ -24,110 +26,208 @@
 npx @moxxy/companion
 ```
 
-That is the whole install. It carries the daemon and the built SPA, sets up an
-admin account on first launch, and opens <http://127.0.0.1:8901>. Docker, Coolify
-and source builds are in [`docs/install.md`](docs/install.md).
+That is the whole local install. Companion carries the daemon and SPA, creates
+the first admin, and opens <http://127.0.0.1:8901>. Your SQLite database, cloned
+repositories, worktrees, run history, and configuration stay in
+`~/.companion`. There is no hosted account to create and no control plane you
+must hand your code to.
+
+When the team grows, deploy the same application with Docker or Coolify, attach
+remote runner machines, and add organisation controls without changing the way
+developers work. See [install and deployment](docs/install.md).
 
 <p align="center">
-  <img src="docs/media/cli.gif" alt="A first run: the setup box, the module selection, the agent runtimes this machine detected, and the URL it is serving on." width="820">
+  <img src="docs/media/cli.gif" alt="Companion starts locally, detects available agent runtimes, and opens the application." width="820">
 </p>
 
-Agent runs additionally need an agent CLI, which Companion drives as an external
-runtime and which holds your model provider credentials rather than Companion
-doing so. Three are supported today, chosen per runner machine:
+## Why Companion
+
+AI coding tools are good at doing work. The hard part is giving a team one
+reliable place to decide **what should happen**, see **what actually happened**,
+and control **what may happen next**.
+
+| Local-first | Human-controlled automation | Ready for a team |
+| --- | --- | --- |
+| Code, state, transcripts, and worktrees live on infrastructure you choose. GitHub remains the source of truth. | Agents may read, analyse, draft, review, and prepare typed actions. Sensitive mutations remain explicit and auditable. | Custom roles, scoped API tokens, OIDC, audit export, GitHub Enterprise, proxies, and remote runners are built into the same product. |
+
+Companion connects the pieces that otherwise live in separate terminals,
+browser tabs, and bot comments:
+
+```text
+GitHub + repository rules ──► Companion ──► local or remote agent runners
+                                   ▲                    │
+                            AI Help + MCP               │ live progress
+                                   │                    ▼
+                                   └──── Today + review + approval ──► GitHub
+```
+
+GitHub issues and pull requests are synchronized as a cache, never turned into
+a competing source of truth. Agent execution can stay on the daemon machine or
+move to runners close to the code, credentials, and compute it needs.
+
+## One everyday loop
+
+1. Open **Today**. It contains only work waiting for a human: agent changes,
+   review findings, triage, failures, and merge gates.
+2. Ask **AI Help** or an IDE agent connected through **MCP** to collect context,
+   compare evidence, draft a requirement, or prepare the next action.
+3. Let Companion place work on an eligible runner and follow the run live.
+4. Review results as they arrive. Large AI reviews publish useful findings
+   shard by shard instead of holding everything until the final batch.
+5. Confirm the exact action. The owning issue, pull request, specification, or
+   run stays authoritative and updates the rest of the platform live.
+
+![The workspace overview shows open issues, pull requests, failing CI, live agents, velocity, and token spend.](docs/media/overview.png)
+
+The interface follows the same model. **Home**, **Workspace**, **Plan & build**,
+**Code & review**, and **Agents** are stable outcome-based homes. Business,
+Developer, and Admin menu views select useful defaults; each person can then
+customize visible pages without changing permissions. Search (`⌘K`) always
+reaches every permitted destination.
+
+## What ships today
+
+| Outcome | What Companion provides |
+| --- | --- |
+| **Decide** | Today, workspace overview, daily digest, AI Help, notifications |
+| **Plan** | Ideas, specifications, documentation, refinement, and a task board |
+| **Build** | Repository context, issue triage and fixes, agent-created branches and pull requests |
+| **Review** | CI-aware pull-request review, incremental AI findings, conflicts, decisions, and typed pipelines |
+| **Automate** | Webhooks, schedules, CI gates, agent steps, labels, comments, and delivery integrations |
+| **Operate** | Live run transcripts, model and runner placement, spend ceilings, roles, audit, and module lifecycle |
+
+Every surface is actionable. A pull request carries its diff, CI, AI findings,
+and pipeline state. A run carries its transcript and resulting change. A
+specification can be drafted from repository evidence and saved only after you
+review its complete content.
+
+![A tour of issues, pull requests, AI review, pipelines, and live agent runs.](docs/media/tour.gif)
+
+## MCP: Companion where your agent already works
+
+Companion includes a stdio MCP server, so Codex, Claude, an IDE, or another MCP
+client can use the platform without a second automation model:
+
+```sh
+companion mcp
+```
+
+For a local instance, the command automatically uses the owner-only credential
+stored in `$COMPANION_HOME/cli-token`. For a shared or remote instance, create a
+least-privilege credential in **Settings → API tokens**, choose its permissions
+and expiry, then configure the MCP process through environment variables:
+
+```json
+{
+  "mcpServers": {
+    "companion": {
+      "command": "companion",
+      "args": ["mcp"],
+      "env": {
+        "COMPANION_URL": "https://companion.example.com",
+        "COMPANION_TOKEN": "<scoped-token>"
+      }
+    }
+  }
+}
+```
+
+The MCP catalog follows the connected user's live role, token scope, workspace
+access, and enabled modules. Its core tools can:
+
+- read the Today queue and bounded Companion API state;
+- find current issues, pull requests, runs, specifications, and documentation;
+- inspect prepared-action status;
+- prepare typed actions such as publishing a reviewed result, retrying failed
+  work, or saving a complete specification.
+
+There is deliberately no generic `execute` tool. MCP can prepare an exact,
+single-use action; a normal Companion session owns the final confirmation. This
+makes the same integration useful to a solo maintainer and safe to expose to a
+team agent. See [Today, AI Help, and MCP](docs/ai-help-and-mcp.md) for the tool
+catalog and safety boundary.
+
+## Local by default. Cloud-ready when needed.
+
+| Start here | Grow into this |
+| --- | --- |
+| `npx @moxxy/companion` on a developer machine | Docker or Coolify on your own server, VPC, or private cloud |
+| Built-in local runner | Any number of remote runners with repository, role, task, and model placement policy |
+| Local admin and role presets | Custom roles, explicit revokes, OIDC sign-in, scoped and expiring API tokens |
+| Local audit trail | Retention, refusal logging, NDJSON export, and optional SIEM forwarding |
+| github.com | GitHub Enterprise Server, configurable endpoints, and outbound proxy support |
+
+Companion has no telemetry, update check, CDN, or licence-server dependency on
+its boot and request paths. It can therefore run in private and air-gapped
+environments when the Git and model infrastructure it uses is reachable there.
+
+The control plane is intentionally a **single-node appliance**. One daemon and
+one data directory keep installation, backup, and recovery understandable.
+Execution scales horizontally through `companion-runner`, so additional agent
+capacity does not require turning the control plane into a distributed system.
+See [Companion for enterprise](ENTERPRISE.md) for the available controls,
+deployment shape, and explicit limitations.
+
+## Bring the agent runtime you already use
+
+Companion detects supported agent CLIs on each runner. Provider credentials stay
+on that machine with the runtime rather than being copied into Companion.
 
 | Harness | Notes |
-|---|---|
-| [moxxy](https://github.com/moxxy-ai/moxxy) | The fullest set: interactive approvals, and switching model, provider or mode mid-session. |
-| [Claude Code](https://claude.com/claude-code) | Policy-based approvals; models come with the CLI. |
-| [Codex](https://developers.openai.com/codex) | Policy-based approvals; reports its own model list per session. |
+| --- | --- |
+| [moxxy](https://github.com/moxxy-ai/moxxy) | Interactive approvals and switching model, provider, or mode mid-session |
+| [Claude Code](https://claude.com/claude-code) | Policy-based approvals; models are reported by the CLI |
+| [Codex](https://developers.openai.com/codex) | Policy-based approvals; reports its model list per session |
 
-A runner advertises whichever it has installed, so a machine with only Claude
-Code is a perfectly good runner. Adding a harness is one descriptor plus a
-client, so the list is expected to grow.
+A runner advertises only what is installed and available on that machine.
+Companion then chooses an eligible, online, provider-capable runner and prepares
+the repository worktree there. See [runners](docs/runners.md).
 
-## What it does
+## Modular without becoming fragmented
 
-Everything is scoped to a **workspace**, a named group of repositories.
+A small kernel hosts feature modules that can be installed, configured,
+enabled, disabled, and uninstalled at runtime. Each module owns its API, data,
+permissions, jobs, and UI, while the shell keeps navigation, search, Today, and
+the **New** menu coherent.
 
-![The workspace overview: open issues, open pull requests, failing CI and live agents, with velocity and token spend underneath.](docs/media/overview.png)
-
-- **Issues** sync from GitHub, with triage and fix agents on tap.
-- **Pull requests** review with CI context, conflict state and review decisions.
-- **Pipelines** compose typed steps: CI gates, AI review, custom agent runs,
-  labels, comments.
-- **Proposals** capture a business request, analyse it, and turn an approved one
-  into an implementation run.
-- **Agent runs** show every run and its lifecycle, live, whichever harness it
-  landed on, under a monthly spend ceiling that refuses work rather than
-  surprising you.
-- **Automations** react to webhooks and schedules, and the inbox can be
-  forwarded to Slack, Discord, ntfy or a signed webhook of your own.
-
-Each of those is a surface you work in rather than a feed you read: an issue
-carries its triage verdict, a pull request its CI, its AI review and the
-pipeline that gated it, and a run its transcript and the diff it left on a
-branch, waiting for you to approve it rather than pushing itself.
-
-![A tour of the workspace: issues and one issue with its AI triage, pull requests and one with its diff and CI, an AI review requesting changes, the pipeline that gates them, the agent runs and one run's transcript.](docs/media/tour.gif)
-
-Auth and RBAC are built in. Every REST route declares the permission it requires,
-the SPA hides what your role cannot use, and roles are instance data rather than
-a closed union: see [`docs/permissions.md`](docs/permissions.md).
-
-`g` plus a module key jumps between modules, `/` focuses search, `?` opens the
-shortcuts cheatsheet.
-
-## How it is built
-
-**A modular framework.** A small kernel (`@moxxy/companion-core`) hosts feature
-**modules**, one per domain, that are loaded, migrated, permissioned and toggled
-at runtime. Each ships its own tables with rollback, REST and WebSocket routes,
-RBAC permissions, background jobs and pages, and declares what it depends on. An
-admin can enable, disable or uninstall any non-required module live: its API
-flips to `503`, its nav and routes disappear, its permissions drop from the grid,
-with no restart.
-
-![The Modules page: installed modules with their dependencies and enable toggles, and the rest of the build waiting under Available.](docs/media/modules.png)
-
-Modules do not have to live in this repository.
-[`@moxxy/companion-sdk`](https://www.npmjs.com/package/@moxxy/companion-sdk) is
-the published authoring surface, and `companion module add <spec>` installs one
-from any registry.
-
-**Work runs where you put it.** A **runner** is a machine that executes agent
-work. The built-in local runner is the machine the daemon runs on; attach as many
-remote ones as you like and Companion places each run on an eligible, online,
-provider-capable machine, preparing its git worktree there.
+Modules can also live outside this repository. The published
+[`@moxxy/companion-sdk`](https://www.npmjs.com/package/@moxxy/companion-sdk)
+provides the supported authoring surface, and `companion module add <spec>`
+installs a module from a registry, tarball, or directory.
 
 ## Documentation
 
 | | |
-|---|---|
-| [Install and deploy](docs/install.md) | npx, Docker, Coolify, pm2 |
-| [Configuration](docs/configuration.md) | environment, GitHub Enterprise, proxies |
-| [Runners](docs/runners.md) | multi-machine execution |
-| [Operating modules](docs/operating-modules.md) | the module CLI, out-of-tree modules |
-| [Permissions and roles](docs/permissions.md) | the RBAC model and its CLI |
-| [Development](docs/development.md) | local setup, commands, build profiles |
-| [Writing a module](modules/README.md) | the complete authoring guide |
-| [Running this for an organisation](ENTERPRISE.md) | roles, audit, deployment shape, and what is not built yet |
+| --- | --- |
+| [Install and deploy](docs/install.md) | npx, Docker, Coolify, and source builds |
+| [Today, AI Help, and MCP](docs/ai-help-and-mcp.md) | daily work, programmatic access, and approvals |
+| [Runners](docs/runners.md) | multi-machine execution and placement policy |
+| [Pipelines](docs/pipelines.md) | typed automation and review workflows |
+| [Configuration](docs/configuration.md) | environment, GitHub Enterprise, and proxies |
+| [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
+| [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
+| [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |
+| [Development](docs/development.md) | local setup, profiles, and quality gates |
+| [Writing a module](modules/README.md) | the complete module authoring guide |
 
-## Repository layout
+## Development
 
-- `apps/api`: the daemon. Boots the kernel, holds the static module registry,
-  runs the HTTP and WebSocket server. Feature logic lives in the modules it
-  loads, not here.
-- `apps/web`: the React SPA **shell**. Hosts and presents modules' client slices;
-  it has no feature pages of its own.
-- `apps/companion-runner`: the machine-holder agent that lets a remote box
-  execute agent work.
-- `packages/*`: the framework. `-types` (primitives), `-contracts` (the open
-  RBAC, WebSocket and service registries), `-services` (store and service utils),
-  `-core` (the kernel, registrant API and client host), `-ui` (the design system),
-  `-sdk` (the curated ABI that in-tree and out-of-tree modules both compile
-  against).
-- `modules/*`: the feature domains, one package each.
+Companion is a pnpm monorepo, strict TypeScript, all ESM:
+
+```sh
+pnpm install
+pnpm dev
+pnpm typecheck
+```
+
+- `apps/api` and `apps/web` are the daemon and SPA shell;
+- `apps/companion-runner` is the remote execution agent;
+- `packages/*` contain the framework, contracts, services, UI, and SDK;
+- `modules/*` contain the product domains.
+
+Feature modules follow one vertical contract → store → service → route → client
+slice. GitHub remains authoritative, every mutation is permissioned and audited,
+and live state travels over the shared WebSocket.
 
 ## Licence
 

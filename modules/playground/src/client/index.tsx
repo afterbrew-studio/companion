@@ -8,7 +8,7 @@ import { routes } from './routes.js';
 import { slots } from './slots.js';
 
 /**
- * The `/client` barrel — module-playground's web surface: the Agent Lab
+ * The `/client` barrel — module-playground's secondary web surfaces: Agent Lab
  * (fenced one-shot test runs, skill dry-runs), saved Evaluations, and the
  * Pipeline Lab (zero-side-effect pipeline previews). Vite reads this as source.
  */

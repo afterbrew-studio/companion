@@ -109,7 +109,11 @@ export interface ChecksGateStep extends BaseStep {
 export interface AiReviewStep extends BaseStep {
   readonly kind: 'ai-review';
   readonly config: {
-    /** Post the review to GitHub when it completes. */
+    /**
+     * Publish ready findings from split reviews as they settle, then publish
+     * the final verdict when complete. False keeps every GitHub write pending
+     * for an explicit maintainer action.
+     */
     readonly post: boolean;
     /** When the step itself counts as failed. */
     readonly failOn: 'request_changes' | 'high_risk' | 'blocker' | 'never';

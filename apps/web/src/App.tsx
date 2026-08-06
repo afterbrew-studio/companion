@@ -1,16 +1,21 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import type { NavigationAudience } from '@moxxy/companion-contracts';
 import type { WorkspaceVisibility } from '@companion/module-workspace/contract';
 import {
   ModulesProvider,
   Slot,
   useKernel,
   matchRoute,
+  navigationEntryVisible,
   onServerMessage,
   passesFreshFilters,
+  canUseQuickAction,
+  runQuickAction,
   runIntent,
   useIntent,
   type NavEntry,
   type NavSection,
+  type QuickAction,
 } from '@moxxy/companion-core/client';
 import {
   AuthProvider,
@@ -18,8 +23,6 @@ import {
   LoginPage,
   SetupPage,
   Onboarding,
-  hasOnboarded,
-  hasUnseenOnboarding,
   type OnboardingMode,
 } from '@companion/module-core/client';
 // module-core and module-workspace are `required: true`: every build contains
@@ -31,16 +34,14 @@ import {
   ChevronDown,
   Dropdown,
   ErrorBar,
-  EyeIcon,
-  EyeOffIcon,
   Field,
   FormActions,
   GearIcon,
   LockIcon,
   Modal,
   PageLoading,
+  PlusIcon,
   SearchIcon,
-  SlidersIcon,
 } from '@moxxy/companion-ui';
 import { CommandPalette } from './components/CommandPalette.js';
 import { ErrorBoundary, NotFoundPage } from './components/ErrorBoundary.js';
@@ -59,6 +60,20 @@ function groupSections(
     grouped.set(m.section, [...(grouped.get(m.section) ?? []), m]);
   }
   return sections.filter((s) => grouped.has(s.id)).map((s) => [s, grouped.get(s.id)!] as const);
+}
+
+/** A menu preset starts its own groups open. Shared groups without an audience
+ * can still opt into progressive disclosure through `defaultCollapsed`. */
+function defaultFoldedSections(
+  sections: readonly NavSection[],
+  perspective: NavigationAudience,
+): ReadonlySet<string> {
+  if (perspective === 'admin') return new Set();
+  return new Set(
+    sections
+      .filter((section) => section.defaultCollapsed && !section.audiences?.includes(perspective))
+      .map((section) => section.id),
+  );
 }
 
 /** '#/' when the URL is bare; the Shell then redirects to whichever nav entry
@@ -125,7 +140,7 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 }
 
 function Shell(): JSX.Element {
-  const { user, can, logout, branding, hiddenNav, setHiddenNav } = useAuth();
+  const { user, can, logout, branding, navOverrides, navigationAudience } = useAuth();
   const hash = useHashRoute();
   const kernel = useKernel();
 
@@ -141,33 +156,7 @@ function Shell(): JSX.Element {
   // Below md the sidebar is an off-canvas drawer instead of a resizable rail.
   const [mobileOpen, setMobileOpen] = useState(false);
   // Per-group collapse, persisted — the set holds the folded section keys.
-  const [foldedSections, setFoldedSections] = useState<ReadonlySet<string>>(() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem('companion.nav-folded') ?? '[]') as string[]);
-    } catch {
-      return new Set();
-    }
-  });
-  // Menu personalisation: the sidebar flips into a per-row show/hide editor.
-  // The hidden set itself is per USER (it rides the session), unlike the fold
-  // and rail states above, which are per browser like the theme.
-  const [editingNav, setEditingNav] = useState(false);
-  const hidden = useMemo(() => new Set(hiddenNav), [hiddenNav]);
-  const toggleHidden = (key: string): void => {
-    const next = hidden.has(key) ? hiddenNav.filter((k) => k !== key) : [...hiddenNav, key];
-    // The provider is optimistic and rolls the row back by itself if the write
-    // fails, which is the whole error report this needs.
-    void setHiddenNav(next).catch(() => undefined);
-  };
-  const toggleSection = (section: string): void => {
-    setFoldedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(section)) next.delete(section);
-      else next.add(section);
-      localStorage.setItem('companion.nav-folded', JSON.stringify([...next]));
-      return next;
-    });
-  };
+  const [foldedSections, setFoldedSections] = useState<ReadonlySet<string>>(new Set());
 
   // Icon-only rail applies to the desktop collapsed state; the mobile drawer
   // always shows full content. Rail items get a styled tooltip: one shared
@@ -181,8 +170,6 @@ function Shell(): JSX.Element {
 
   const toggleSidebar = (): void => {
     setRailTip(null);
-    // There is nothing to edit on an icon-only rail: no labels, no toggles.
-    setEditingNav(false);
     if (window.matchMedia('(min-width: 768px)').matches) {
       setCollapsed((c) => {
         localStorage.setItem('companion.sidebar', c ? 'expanded' : 'collapsed');
@@ -194,46 +181,102 @@ function Shell(): JSX.Element {
   };
 
   const visibleModules = useMemo(() => kernel.nav.filter((m) => can(m.permission)), [kernel.nav, can]);
+
+  // One route winner feeds highlight, breadcrumbs and active-group unfolding.
+  const activeNavKey = useMemo(() => {
+    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
+    let claimed: string | null = null;
+    let best: { key: string; len: number } | null = null;
+    for (const m of kernel.nav) {
+      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
+      const matches =
+        hash === m.hash ||
+        hash.startsWith(`${m.hash}/`) ||
+        hash.startsWith(`${m.hash}?`) ||
+        (m.key === 'overview' && hash === '#/');
+      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
+    }
+    return claimed ?? best?.key ?? null;
+  }, [kernel.nav, hash]);
+
+  const activePerspective = navigationAudience;
+
+  // Collapse choices are per browser AND per menu preset. Switching from a
+  // planning menu to a developer menu must not destroy either person's
+  // manual adjustments. A new preset starts from the modules' generic hints.
+  const foldedStorageKey = `companion.nav-folded:5:${activePerspective}`;
+  useEffect(() => {
+    if (!kernel.ready) return;
+    try {
+      const stored = localStorage.getItem(foldedStorageKey);
+      const next = stored
+        ? new Set(JSON.parse(stored) as string[])
+        : defaultFoldedSections(kernel.sections, activePerspective);
+      setFoldedSections(next);
+      if (stored === null) localStorage.setItem(foldedStorageKey, JSON.stringify([...next]));
+    } catch {
+      const next = defaultFoldedSections(kernel.sections, activePerspective);
+      setFoldedSections(next);
+      localStorage.setItem(foldedStorageKey, JSON.stringify([...next]));
+    }
+  }, [activePerspective, foldedStorageKey, kernel.ready, kernel.sections]);
+
+  const toggleSection = (section: string): void => {
+    setFoldedSections((previous) => {
+      const next = new Set(previous);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      localStorage.setItem(foldedStorageKey, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   // Configuration groups leave the sidebar and render inside the settings shell.
   const settingsSectionIds = useMemo(
     () => new Set(kernel.sections.filter((s) => s.placement === 'settings').map((s) => s.id)),
+    [kernel.sections],
+  );
+  // Specialist tools stay registered and searchable, but do not consume the
+  // everyday sidebar. Their module still owns the route, permission and links.
+  const catalogSectionIds = useMemo(
+    () => new Set(kernel.sections.filter((s) => s.placement === 'catalog').map((s) => s.id)),
     [kernel.sections],
   );
   const settingsEntries = useMemo(
     () => visibleModules.filter((m) => settingsSectionIds.has(m.section)),
     [visibleModules, settingsSectionIds],
   );
-  // Hiding applies to the sidebar only: the settings column is short, grouped,
-  // and the one place a user goes looking for a page they never see otherwise.
   const sidebarEntries = useMemo(
-    () => visibleModules.filter((m) => !settingsSectionIds.has(m.section)),
-    [visibleModules, settingsSectionIds],
+    () => visibleModules.filter((m) => !settingsSectionIds.has(m.section) && !catalogSectionIds.has(m.section)),
+    [visibleModules, settingsSectionIds, catalogSectionIds],
   );
-  const navEntries = useMemo(
-    () => sidebarEntries.filter((m) => editingNav || !hidden.has(m.key)),
-    [sidebarEntries, editingNav, hidden],
+  const sidebarSections = useMemo(
+    () => new Map(kernel.sections.map((section) => [section.id, section] as const)),
+    [kernel.sections],
   );
+  // A view is a real menu preset, not merely a folding preference. Personal
+  // overrides can add or remove any permitted row within that concrete preset.
+  // Routes, Search and RBAC remain unchanged.
+  const perspectiveEntries = useMemo(
+    () =>
+      sidebarEntries.filter((entry) =>
+        navigationEntryVisible(entry, sidebarSections.get(entry.section), activePerspective, navOverrides),
+      ),
+    [activePerspective, navOverrides, sidebarEntries, sidebarSections],
+  );
+  const navEntries = perspectiveEntries;
   const shortcutTargets = useMemo(
     () =>
       visibleModules
-        .filter((m) => m.shortcut && !hidden.has(m.key))
+        .filter((m) => m.shortcut)
         .map((m) => ({ key: m.shortcut!, label: m.label, hash: m.hash })),
-    [visibleModules, hidden],
+    [visibleModules],
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Onboarding: the full tour on first entry; a "what's new" popup when new
-  // steps have shipped since the user last looked; replayable (full) from the
-  // shortcuts help. Steps come from the modules, so the decision waits until the
-  // catalog has loaded (kernel.ready) — otherwise "what's new" would see zero
-  // steps and never fire. Decided once per session.
+  // The optional tour is available from shortcut help. First-time guidance is
+  // contextual inside empty states; entering the product never opens a wizard.
   const [tour, setTour] = useState<OnboardingMode | null>(null);
-  const tourDecided = useRef(false);
-  useEffect(() => {
-    if (tourDecided.current || !kernel.ready) return;
-    tourDecided.current = true;
-    setTour(!hasOnboarded() ? 'full' : hasUnseenOnboarding(kernel.onboarding, can) ? 'whatsnew' : null);
-  }, [kernel.ready, kernel.onboarding, can]);
   // Areas with unseen activity, badged in the nav. Scoped and persisted PER
   // workspace: issues/prs activity in another workspace's repos must not light
   // up the one you're looking at, and the marks survive a reload.
@@ -279,27 +322,20 @@ function Shell(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshKey, kernel.nav]);
 
-  // The hash can sit under several entries' prefixes (#/playground is a prefix
-  // of #/playground/pipelines) — the LONGEST match is the page the user is on,
-  // while prefix matching still lights a section for its detail pages
-  // (#/runs/:id → Runs). One entry wins everywhere: highlight, title, fresh-clear.
-  const activeNavKey = useMemo(() => {
-    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    let claimed: string | null = null;
-    let best: { key: string; len: number } | null = null;
-    for (const m of kernel.nav) {
-      // An entry that names a detail page as its own wins over whichever entry
-      // merely happens to be a prefix of that page's path.
-      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
-      const matches =
-        hash === m.hash ||
-        hash.startsWith(`${m.hash}/`) ||
-        hash.startsWith(`${m.hash}?`) ||
-        (m.key === 'overview' && hash === '#/');
-      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
-    }
-    return claimed ?? best?.key ?? null;
-  }, [kernel.nav, hash]);
+  // A direct link or search result inside a folded secondary section must stay
+  // visible in the menu. Once visited, that section remains expanded for this
+  // browser like any manual fold choice.
+  useEffect(() => {
+    if (!activeNavKey) return;
+    const section = kernel.nav.find((entry) => entry.key === activeNavKey)?.section;
+    if (!section || !foldedSections.has(section)) return;
+    setFoldedSections((previous) => {
+      const next = new Set(previous);
+      next.delete(section);
+      localStorage.setItem(foldedStorageKey, JSON.stringify([...next]));
+      return next;
+    });
+  }, [activeNavKey, foldedSections, foldedStorageKey, kernel.nav]);
 
   // Visiting an area clears its mark.
   useEffect(() => {
@@ -356,7 +392,6 @@ function Shell(): JSX.Element {
   // Where the sidebar's gear points: the first entry of the first settings
   // group the viewer can reach, so the shell never names a module.
   const settingsHref = settingsSections[0]?.[1][0]?.hash ?? null;
-
   return (
     <div className="flex h-full">
       <a
@@ -378,172 +413,103 @@ function Shell(): JSX.Element {
 
         <WorkspaceSwitcher rail={rail} />
 
-        <nav className="group/nav flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Modules">
-          {sections.map(([section, modules], si) => (
-            <div key={section.id} className="mt-3">
-              {rail ? (
-                <div className="mx-2 flex h-5 items-center" aria-hidden>
-                  {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
-                </div>
-              ) : editingNav ? (
-                // Folding is off while editing: a folded group would hide the
-                // very rows the editor exists to reach.
-                <div className="dim flex h-5 items-end px-2 pb-1 text-[10px] font-medium tracking-widest uppercase">
-                  {section.label}
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="dim flex h-5 w-full cursor-pointer items-end justify-between px-2 pb-1 text-[10px] font-medium tracking-widest uppercase transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
-                  onClick={() => toggleSection(section.id)}
-                  aria-expanded={!foldedSections.has(section.id)}
-                >
-                  {section.label}
-                  <ChevronDown open={!foldedSections.has(section.id)} className="size-3" />
-                </button>
-              )}
-              {/* The icon rail ignores folding — hiding icons there saves nothing. */}
-              {!rail && !editingNav && foldedSections.has(section.id)
-                ? null
-                : modules.map((m) => {
-                if (editingNav) {
-                  const off = hidden.has(m.key);
-                  return (
-                    <button
-                      key={m.key}
-                      type="button"
-                      onClick={() => toggleHidden(m.key)}
-                      aria-pressed={!off}
-                      aria-label={`${off ? 'Show' : 'Hide'} ${m.label}`}
-                      className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800 ${
-                        off ? 'text-zinc-400 dark:text-zinc-600' : 'text-zinc-700 dark:text-zinc-300'
-                      }`}
-                    >
-                      <span className="shrink-0">{m.icon}</span>
-                      <span className="flex-1 truncate text-left">{m.label}</span>
-                      {off ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
-                    </button>
-                  );
-                }
-                // Longest-match winner computed once above — boundary-aware
-                // (#/runners never lights #/runs) and nesting-aware
-                // (#/playground/pipelines lights only Pipeline Lab).
-                const active = m.key === activeNavKey;
-                return (
-                  <a
-                    key={m.key}
-                    href={m.hash}
-                    aria-current={active ? 'page' : undefined}
-                    aria-label={rail ? m.label : undefined}
-                    onMouseEnter={rail ? (e) => showRailTip(e, m.label) : undefined}
-                    onMouseLeave={rail ? () => setRailTip(null) : undefined}
-                    onFocus={rail ? (e) => showRailTip(e, m.label) : undefined}
-                    onBlur={rail ? () => setRailTip(null) : undefined}
-                    className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
-                      rail ? 'justify-center px-0' : 'px-2.5'
-                    } ${
-                      active
-                        ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
-                        : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
-                    }`}
+        <nav className="group/nav flex-1 overflow-x-hidden overflow-y-auto px-2.5 pb-3" aria-label="Primary navigation">
+          {sections.map(([section, modules], si) => {
+            // Home is stable; every other included domain can still be folded
+            // manually after the preset has removed irrelevant groups.
+            const collapsible = !rail && section.id !== 'workspace';
+            const sectionFolded = collapsible && foldedSections.has(section.id);
+            return (
+              <div key={section.id} className="mt-2">
+                {rail ? (
+                  <div className="mx-2 flex h-4 items-center" aria-hidden>
+                    {si > 0 ? <div className="w-full border-t border-zinc-200 dark:border-zinc-800" /> : null}
+                  </div>
+                ) : collapsible ? (
+                  <button
+                    type="button"
+                    className="dim flex h-6 w-full cursor-pointer items-center justify-between px-2 text-[10px] font-medium tracking-widest uppercase transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
+                    onClick={() => toggleSection(section.id)}
+                    aria-expanded={!sectionFolded}
                   >
-                    <span className="relative shrink-0">
-                      {m.icon}
-                      {/* Collapsed rail has no room for a label — a corner dot is
-                          the only affordance; the expanded row uses a pill. */}
-                      {rail && fresh.has(m.key) ? (
-                        <span
-                          className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-[#2a78d6] ring-2 ring-zinc-50 dark:bg-[#3987e5] dark:ring-zinc-900"
-                          role="status"
-                          aria-label={`New activity in ${m.label}`}
-                        />
-                      ) : null}
-                    </span>
-                    {rail ? null : (
-                      <>
-                        <span className="flex-1 truncate">{m.label}</span>
-                        {fresh.has(m.key) ? (
-                          <span
-                            className="rounded-full bg-[#2a78d6] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase dark:bg-[#3987e5]"
-                            role="status"
-                            aria-label={`New activity in ${m.label}`}
-                          >
-                            New
+                    {section.label}
+                    <ChevronDown open={!sectionFolded} className="size-3" />
+                  </button>
+                ) : (
+                  <div className="dim flex h-6 items-center px-2 text-[10px] font-medium tracking-widest uppercase">
+                    {section.label}
+                  </div>
+                )}
+                {/* The icon rail ignores folding — hiding icons there saves nothing. */}
+                {sectionFolded
+                  ? null
+                  : modules.map((m) => {
+                      // Longest-match winner computed once above — boundary-aware
+                      // (#/runners never lights #/runs) and nesting-aware
+                      // (#/playground/pipelines lights only Pipeline Lab).
+                      const active = m.key === activeNavKey;
+                      return (
+                        <a
+                          key={m.key}
+                          href={m.hash}
+                          aria-current={active ? 'page' : undefined}
+                          aria-label={rail ? m.label : undefined}
+                          onMouseEnter={rail ? (e) => showRailTip(e, m.label) : undefined}
+                          onMouseLeave={rail ? () => setRailTip(null) : undefined}
+                          onFocus={rail ? (e) => showRailTip(e, m.label) : undefined}
+                          onBlur={rail ? () => setRailTip(null) : undefined}
+                          className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
+                            rail ? 'justify-center px-0' : 'px-2.5'
+                          } ${
+                            active
+                              ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
+                              : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          <span className="relative shrink-0">
+                            {m.icon}
+                            {/* Collapsed rail has no room for a label — a corner dot is
+                                the only affordance; the expanded row uses a pill. */}
+                            {rail && fresh.has(m.key) ? (
+                              <span
+                                className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-[#2a78d6] ring-2 ring-zinc-50 dark:bg-[#3987e5] dark:ring-zinc-900"
+                                role="status"
+                                aria-label={`New activity in ${m.label}`}
+                              />
+                            ) : null}
                           </span>
-                        ) : chordPending && m.shortcut ? (
-                          // Only while `g` is held open. A permanent column of
-                          // hints is noise on every row of a long sidebar, and
-                          // the moment they are useful is exactly this one.
-                          <kbd
-                            className={`rounded px-1 font-mono text-[10px] ${
-                              active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
-                            }`}
-                            aria-hidden
-                          >
-                            g{m.shortcut}
-                          </kbd>
-                        ) : null}
-                      </>
-                    )}
-                  </a>
-                );
-              })}
-              {/* Instance configuration is navigation, not identity: it used to
-                  sit beside the avatar and sign-out, where a cog reads as "my
-                  settings" while every page behind it belongs to the platform.
-                  It rides the execution group because that is where the
-                  machines, runs and models it configures already are. */}
-              {section.id === 'operate' &&
-              settingsHref &&
-              !editingNav &&
-              !(!rail && foldedSections.has(section.id)) ? (
-                <a
-                  href={settingsHref}
-                  aria-current={inSettings ? 'page' : undefined}
-                  aria-label={rail ? 'Settings' : undefined}
-                  onMouseEnter={rail ? (e) => showRailTip(e, 'Settings') : undefined}
-                  onMouseLeave={rail ? () => setRailTip(null) : undefined}
-                  onFocus={rail ? (e) => showRailTip(e, 'Settings') : undefined}
-                  onBlur={rail ? () => setRailTip(null) : undefined}
-                  className={`relative flex items-center gap-2.5 rounded-lg py-1.5 text-[13px] ${
-                    rail ? 'justify-center px-0' : 'px-2.5'
-                  } ${
-                    inSettings
-                      ? 'bg-zinc-900 font-medium text-white dark:bg-zinc-700 dark:text-zinc-50'
-                      : 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800'
-                  }`}
-                >
-                  <GearIcon className="size-4 shrink-0" />
-                  {rail ? null : <span className="flex-1 truncate">Settings</span>}
-                </a>
-              ) : null}
-            </div>
-          ))}
-
-          {/* Quiet until wanted: the row holds its space so nothing jumps, and
-              shows on hover or focus. The drawer has no hover, so it is plain
-              there. */}
-          {rail ? null : (
-            <>
-              <button
-                type="button"
-                onClick={() => setEditingNav((e) => !e)}
-                className={`mt-4 flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
-                  editingNav
-                    ? 'bg-zinc-200 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100'
-                    : 'dim hover:bg-zinc-200 focus-visible:opacity-100 md:opacity-0 md:group-hover/nav:opacity-100 dark:hover:bg-zinc-800'
-                }`}
-              >
-                <SlidersIcon className="size-4" />
-                <span className="flex-1 text-left">{editingNav ? 'Done' : 'Customize menu'}</span>
-              </button>
-              {editingNav ? (
-                <p className="dim mt-1.5 px-2.5 text-[11px] leading-snug">
-                  Hidden pages stay reachable from search and their links.
-                </p>
-              ) : null}
-            </>
-          )}
+                          {rail ? null : (
+                            <>
+                              <span className="flex-1 truncate">{m.label}</span>
+                              {fresh.has(m.key) ? (
+                                <span
+                                  className="rounded-full bg-[#2a78d6] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase dark:bg-[#3987e5]"
+                                  role="status"
+                                  aria-label={`New activity in ${m.label}`}
+                                >
+                                  New
+                                </span>
+                              ) : chordPending && m.shortcut ? (
+                                // Only while `g` is held open. A permanent column of
+                                // hints is noise on every row of a long sidebar, and
+                                // the moment they are useful is exactly this one.
+                                <kbd
+                                  className={`rounded px-1 font-mono text-[10px] ${
+                                    active ? 'bg-white/20 dark:bg-white/10' : 'text-zinc-400 dark:text-zinc-500'
+                                  }`}
+                                  aria-hidden
+                                >
+                                  g{m.shortcut}
+                                </kbd>
+                              ) : null}
+                            </>
+                          )}
+                        </a>
+                      );
+                    })}
+              </div>
+            );
+          })}
         </nav>
 
         {/* Ambient context, like the workspace at the top of this sidebar.
@@ -558,7 +524,7 @@ function Shell(): JSX.Element {
           <Slot name="shell.sidebar.footer" can={can} props={{ rail }} />
         </div>
 
-        <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="border-t border-zinc-200 px-2.5 py-2 dark:border-zinc-800">
           {rail ? (
             // Icon-only: the profile glyph and the way into settings. Sign out
             // lives in the expanded sidebar.
@@ -566,24 +532,52 @@ function Shell(): JSX.Element {
               <a
                 href="#/profile"
                 className="flex w-fit items-center rounded-lg p-1.5 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                aria-label="Open your profile"
-                title={`${user?.displayName ?? ''} — open your profile`}
+                aria-label="Open your profile and navigation preferences"
+                title={`${user?.displayName ?? ''} — profile and navigation`}
               >
                 <span className="flex size-8 items-center justify-center rounded-lg bg-zinc-200 text-[13px] font-semibold uppercase dark:bg-zinc-800">
                   {(user?.displayName ?? '?').slice(0, 1)}
                 </span>
               </a>
+              {settingsHref ? (
+                <a
+                  href={settingsHref}
+                  className={`flex size-9 items-center justify-center rounded-lg transition-colors ${
+                    inSettings
+                      ? 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-label="Settings"
+                  title="Settings"
+                >
+                  <GearIcon className="size-4" />
+                </a>
+              ) : null}
             </div>
           ) : (
             <div className="-mx-2 flex items-center gap-1">
               <a
                 href="#/profile"
                 className="dim min-w-0 flex-1 cursor-pointer rounded-lg px-2 py-1.5 text-zinc-700 transition-colors hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                title="Open your profile"
+                title="Profile and navigation preferences"
               >
                 <div className="truncate text-[13px] font-medium">{user?.displayName}</div>
                 <div className="text-[11px] capitalize">{user?.role}</div>
               </a>
+              {settingsHref ? (
+                <a
+                  href={settingsHref}
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                    inSettings
+                      ? 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                      : 'dim hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-label="Settings"
+                  title="Settings"
+                >
+                  <GearIcon className="size-4" />
+                </a>
+              ) : null}
               <button
                 className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={() => void logout()}
@@ -667,7 +661,7 @@ function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
   const { workspaces, current, setCurrent, refresh } = useWorkspace();
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
-  // ⌘K → "Create workspace" opens this modal even when the rail is collapsed.
+  // New / command search opens this modal even when the rail is collapsed.
   useIntent('new-workspace', () => can('workspaces:create') && setCreating(true));
   const createModal =
     creating && can('workspaces:create') ? (
@@ -880,7 +874,7 @@ function crumbsFor(
   sections: readonly NavSection[],
 ): Array<{ label: string; href?: string }> {
   let m = path.match(/^\/runs\/([A-Za-z0-9_-]+)$/);
-  if (m) return [{ label: 'Agent Runs', href: '#/runs' }, { label: m[1]! }];
+  if (m) return [{ label: 'Agent activity', href: '#/runs' }, { label: m[1]! }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)(?:\/review)?$/);
@@ -922,6 +916,9 @@ function TopBar({
   const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
   const crumbs = crumbsFor(path, kernel.nav, kernel.sections);
+  const quickActions = kernel.quickActions.filter(
+    (action) => action.group !== 'Help' && canUseQuickAction(action, can),
+  );
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800">
       <button
@@ -966,6 +963,7 @@ function TopBar({
           g … waiting for module key
         </span>
       ) : null}
+      {quickActions.length > 0 ? <QuickActionsMenu actions={quickActions} /> : null}
       <button
         type="button"
         className="dim flex w-44 cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs transition-colors hover:border-zinc-300 hover:text-zinc-700 max-sm:w-auto dark:border-zinc-800 dark:hover:border-zinc-600 dark:hover:text-zinc-300"
@@ -980,6 +978,76 @@ function TopBar({
       </button>
       <Inbox />
       <Slot name="shell.topbar" can={can} />
+    </div>
+  );
+}
+
+const QUICK_ACTION_GROUPS: readonly QuickAction['group'][] = ['Create', 'Connect'];
+
+/** One predictable entry point for outcomes contributed by enabled modules. */
+function QuickActionsMenu({ actions }: { actions: readonly QuickAction[] }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent): void => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('pointerdown', closeOutside);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOutside);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={root} className="relative">
+      <button
+        type="button"
+        className="btn h-8 px-2.5"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <PlusIcon className="size-3.5" />
+        <span className="max-sm:hidden">New</span>
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Quick actions"
+          className="anim-in absolute top-full right-0 z-50 mt-1.5 w-64 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          {QUICK_ACTION_GROUPS.map((group) => {
+            const grouped = actions.filter((action) => action.group === group);
+            if (grouped.length === 0) return null;
+            return (
+              <div key={group} className="py-1 first:pt-0 last:pb-0">
+                <div className="dim px-2 py-1 text-[10px] font-medium tracking-widest uppercase">{group}</div>
+                {grouped.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full cursor-pointer items-center rounded-md px-2 py-2 text-left text-[13px] transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    onClick={() => {
+                      setOpen(false);
+                      runQuickAction(action);
+                    }}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

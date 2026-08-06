@@ -3,15 +3,15 @@ import { defineClientModule } from '@moxxy/companion-sdk/client';
 // into every compilation that loads the client slice.
 import '../contract/index.js';
 import manifest from '../module.js';
-import { nav, sections } from './nav.js';
+import { actions, nav, sections } from './nav.js';
 import { routes } from './routes.js';
 import { slots } from './slots.js';
 import { onboarding } from './onboarding.js';
 
 /**
- * The `/client` barrel — module-code's web surface: the Code sidebar group +
- * issues/PRs/pipelines/repos/github/overview routes, the GitHub-flavored
- * widget set, and the pieces downstream modules reach by name.
+ * The `/client` barrel — module-code's web surface: Workspace and Code & review
+ * groups, their routes, the GitHub-flavored widget set, and the pieces
+ * downstream modules reach by name.
  */
 
 export * from './widgets.js';
@@ -34,6 +34,7 @@ export default defineClientModule({
   routes,
   onboarding,
   slots,
+  quickActions: actions,
 });
 
 /** Published for other modules' bulk actions on the PR list. */

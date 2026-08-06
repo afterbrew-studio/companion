@@ -35,6 +35,7 @@ import {
   harnessChoices,
   NOTHING_INSTALLED,
   readHarnessOptions,
+  recommendedHarnesses,
   saveHarnesses,
 } from './harnesses.js';
 import { withTerminal } from './terminal.js';
@@ -46,9 +47,11 @@ import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js'
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
 import { daemonLog, runningPid, startDetached, stopDaemon, tailLog, waitUntilServing } from './daemon.js';
 import type { Detached } from './daemon.js';
+import { apiClient } from './client.js';
+import { MCP_HELP, resolveMcpBaseUrl, runMcpServer } from './mcp.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
-const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run'] as const;
+const CLIENT_COMMANDS = ['module', 'acl', 'role', 'user', 'run', 'mcp'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
@@ -101,6 +104,7 @@ Usage:
   npx @moxxy/companion init             Create the local admin configuration only
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
   npx @moxxy/companion run list         Runs awaiting you; also show/diff/approve/discard
+  npx @moxxy/companion mcp              Safe stdio MCP: read state, prepare reviewed actions
   npx @moxxy/companion backup [file]    Snapshot the database (safe while running)
   npx @moxxy/companion restore <file>   Replace the database from a snapshot (stop first)
   npx @moxxy/companion module ...       Inspect and toggle modules (see: module --help)
@@ -137,8 +141,10 @@ async function main(): Promise<void> {
   const group = CLIENT_COMMANDS.find((c) => c === argv[0]);
   if (group) {
     const { cli, rest } = splitClientArgs(argv);
-    if (!rest.length || rest.includes('--help') || rest.includes('-h')) {
-      process.stdout.write(group === 'module' ? MODULE_HELP : group === 'run' ? RUN_HELP : ACL_HELP);
+    if ((group !== 'mcp' && !rest.length) || rest.includes('--help') || rest.includes('-h')) {
+      process.stdout.write(
+        group === 'module' ? MODULE_HELP : group === 'run' ? RUN_HELP : group === 'mcp' ? MCP_HELP : ACL_HELP,
+      );
       return;
     }
     const options = parseArgs([group, ...cli]);
@@ -146,7 +152,11 @@ async function main(): Promise<void> {
     process.env.COMPANION_HOME = options.home;
     const { host, port } = resolveAddress(options);
     const url = localUrl(host, port);
-    if (group === 'module') await runModuleCommand(parseModuleCommand(rest), url);
+    if (group === 'mcp') {
+      if (rest.length) throw new Error(`Unknown argument: ${rest[0]}\n\n${MCP_HELP}`);
+      const baseUrl = resolveMcpBaseUrl(url);
+      await runMcpServer(apiClient(baseUrl, process.env.COMPANION_TOKEN, 30_000));
+    } else if (group === 'module') await runModuleCommand(parseModuleCommand(rest), url);
     else if (group === 'run') await runRunCommand(parseRunCommand(rest), url);
     else await runAclCommand(parseAclCommand(group, rest, options.home), url);
     return;
@@ -508,9 +518,9 @@ async function settleRepo(url: string, options: CliOptions): Promise<void> {
  *
  * Silent when the daemon does not answer: an instance without the execution
  * module has no such question, and saying nothing is better than explaining an
- * absence. Non-interactive runs keep the default, which is moxxy, because a
- * scripted install must not have its execution plane changed by whatever
- * happens to be on the box.
+ * absence. Interactive and non-interactive setup share the same detected
+ * default, so `--yes` cannot silently select historical moxxy on a machine
+ * whose only usable runtime is Codex or Claude Code.
  */
 async function settleHarnesses(url: string, options: CliOptions): Promise<void> {
   const token = await waitForToken();
@@ -521,15 +531,16 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
     process.stdout.write(`\n${NOTHING_INSTALLED}\n`);
     return;
   }
-  if (options.yes || !process.stdin.isTTY) return;
-
-  const { checkbox } = await import('@inquirer/prompts');
-  const picked = await withTerminal(() =>
-    checkbox<string>({
-      message: 'Which agent runtimes should this machine use?',
-      choices: harnessChoices(answer.options).map((c) => ({ ...c })),
-    }),
-  );
+  let picked: readonly string[] = recommendedHarnesses(answer.options);
+  if (!options.yes && process.stdin.isTTY) {
+    const { checkbox } = await import('@inquirer/prompts');
+    picked = await withTerminal(() =>
+      checkbox<string>({
+        message: 'Which agent runtimes should this machine use?',
+        choices: harnessChoices(answer.options).map((c) => ({ ...c })),
+      }),
+    );
+  }
   if (picked.length === 0) {
     process.stdout.write('Nothing ticked, so this machine keeps its current runtime.\n');
     return;
