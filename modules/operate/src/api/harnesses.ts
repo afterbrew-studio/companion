@@ -1,4 +1,4 @@
-import type { AgentRunAccess, Harness, HarnessEvent, HistorySegment } from '@moxxy/companion-types';
+import type { AgentRunAccess, AskRequest, Harness, HarnessEvent, HistorySegment } from '@moxxy/companion-types';
 import type { HarnessDescriptor, HarnessOption, RunnerCatalog } from '../contract/index.js';
 import { CLAUDE_CODE_CAPABILITIES, CLAUDE_MODEL_ALIASES } from '../exec/claude-code.js';
 import { CODEX_CAPABILITIES, codexModels } from '../exec/codex.js';
@@ -78,8 +78,12 @@ export interface HarnessSpawnRequest {
   readonly cwd: string;
   readonly access: AgentRunAccess;
   readonly model: string | null;
+  /** Somebody is watching, so a per-call approval would actually be answered. */
+  readonly attended: boolean;
   readonly onEvent: (event: HarnessEvent) => void;
   readonly onTurnComplete: (turnId?: string) => void;
+  readonly onAsk: (ask: AskRequest) => void;
+  readonly onAskResolved: (requestId: string) => void;
   readonly onClose: () => void;
 }
 

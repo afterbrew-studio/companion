@@ -91,12 +91,16 @@ export function harnessRegistration(
           eventsPath: files.eventsPath,
           statePath: files.statePath,
           catalog: runtime.catalog(),
+          // Only a run somebody is watching asks: see the capability comment.
+          approvals: request.attended ? 'interactive' : 'policy',
           ...(verifyCommand ? { verifyCommand } : {}),
           ...(resultSchema !== undefined ? { resultSchema } : {}),
         },
         {
           onEvent: request.onEvent,
           onTurnComplete: ({ turnId }) => request.onTurnComplete(turnId),
+          onAsk: (ask) => request.onAsk(ask as Parameters<typeof request.onAsk>[0]),
+          onAskResolved: request.onAskResolved,
           onClose: request.onClose,
         },
       );

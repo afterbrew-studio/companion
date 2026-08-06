@@ -411,8 +411,24 @@ typed local git tools, the refusals that protect what Companion recorded, output
 caps, and context compaction at exchange boundaries so a long run trims instead
 of failing. Coding runs opt-in per runner.
 
-**6. Interactive approvals.** `approvals: 'interactive'`, ask over the pipe,
-per-tool policy. The dark UI lights up.
+**6. Interactive approvals (done).** `approvals: 'interactive'`, the ask raised
+over the same pipe the events go out on, resolved through the `respondAsk` path
+moxxy already uses end to end. Three decisions worth knowing:
+
+- **Only what mutates is guarded.** A person asked to approve twenty reads
+  stops reading, and reading changes nothing.
+- **Only an attended run asks.** The capability says this harness CAN ask; the
+  RUN says whether anyone would hear it, and unattended work that raised an
+  approval would sit until its turn timed out. Kind decides: `interactive` and
+  `assistant` are the runs somebody is sitting in front of.
+- **A refusal is a tool error, not the end of the turn.** The model is told it
+  was denied and can propose something else, rather than the conversation being
+  lost over one call.
+
+The guard replaces `execute` on the tool object in place rather than spreading
+it into a copy: `tool()` returns a branded value the SDK checks before it will
+execute anything, and a spread produces a look-alike that is silently never
+called.
 
 **7. Loopback and MCP.** Typed Companion tools for AI Help (retiring the curl
 briefing and the on-disk credential), narrow scoped write tools for a run's own

@@ -134,6 +134,12 @@ export interface AgentSpawnRequest {
   readonly verifyCommand?: string;
   /** JSON Schema the caller wants the answer in (structured one-shots). */
   readonly resultSchema?: unknown;
+  /**
+   * Somebody is watching this run, so a runtime that can ask before a tool call
+   * will actually be answered. Absent means unattended, which is what every
+   * agent before protocol 7 assumed.
+   */
+  readonly attended?: boolean;
 }
 
 /** POST /agent/runs/:runId/prompt */

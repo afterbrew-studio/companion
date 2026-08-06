@@ -30,6 +30,12 @@ import type { RunnerBackend, RunnerEventSink } from './backend.js';
 export interface LocalRunSpec {
   readonly harness: string;
   readonly model: string | null;
+  /**
+   * Whether somebody is watching this run and could answer an approval.
+   * Unattended work never parks on a human, so a harness that CAN ask is told
+   * not to: a question nobody hears would hold the turn until it timed out.
+   */
+  readonly attended: boolean;
 }
 
 /**
@@ -51,7 +57,7 @@ export interface LocalRunnerHost {
 }
 
 const MOXXY_ONLY: LocalRunnerHost = {
-  runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null }),
+  runSpec: () => ({ harness: MOXXY_HARNESS.id, model: null, attended: false }),
   harnesses: () => [MOXXY_HARNESS.id],
   runtime: async () => ({ id: 'moxxy', label: 'Moxxy', version: null, state: 'ready', detail: null }),
 };
@@ -127,7 +133,9 @@ export class LocalRunnerBackend implements RunnerBackend {
     const runId = `runtime-probe-${randomUUID().slice(0, 8)}`;
     const cwd = await this.scratchDir(runId);
     try {
-      await this.spawnHarness(runId, cwd, 'workspace-write', { harness: harnessId, model: null });
+      // A probe is nobody's conversation, so it is never attended: it must not
+      // stop on an approval that has no one to answer it.
+      await this.spawnHarness(runId, cwd, 'workspace-write', { harness: harnessId, model: null, attended: false });
       return await this.sessionInfo(runId);
     } finally {
       await this.stop(runId).catch(() => undefined);
@@ -172,8 +180,11 @@ export class LocalRunnerBackend implements RunnerBackend {
           cwd,
           access,
           model: spec.model,
+          attended: spec.attended,
           onEvent: handlers.onEvent,
           onTurnComplete: (turnId) => handlers.onTurnComplete({ turnId }),
+          onAsk: (ask) => this.sink.onAsk(runId, ask),
+          onAskResolved: (requestId) => this.sink.onAskResolved(runId, requestId),
           onClose: handlers.onClose,
         })
       : spec.harness === CODEX_HARNESS.id

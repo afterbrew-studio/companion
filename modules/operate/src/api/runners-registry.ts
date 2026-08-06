@@ -811,6 +811,7 @@ export class Runners {
     const row = this.store.runs.get(runId);
     const harness = row?.harness ?? MOXXY_HARNESS.id;
     const model = row?.model ?? null;
+    const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
     const plan = registeredHarness(harness)?.remotePlan?.(model) ?? null;
     const extras = this.runExtras?.(runId) ?? { verifyCommand: null, resultSchema: undefined };
     return {
@@ -819,6 +820,7 @@ export class Runners {
       ...(plan?.spec !== undefined ? { spec: plan.spec, limits: plan.limits } : {}),
       ...(extras.verifyCommand ? { verifyCommand: extras.verifyCommand } : {}),
       ...(extras.resultSchema !== undefined ? { resultSchema: extras.resultSchema } : {}),
+      ...(attended ? { attended: true } : {}),
     };
   }
 
@@ -921,8 +923,14 @@ export class Runners {
    */
   private localRunSpec(runId: string): LocalRunSpec {
     const row = this.store.runs.get(runId);
-    if (!row) return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null };
-    return { harness: row.harness, model: row.model };
+    if (!row) return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null, attended: false };
+    // The same two kinds `canSeeRun` calls private to their owner: those are
+    // the runs a person is sitting in front of.
+    return {
+      harness: row.harness,
+      model: row.model,
+      attended: row.kind === 'interactive' || row.kind === 'assistant',
+    };
   }
 
   /**

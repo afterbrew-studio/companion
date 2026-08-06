@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { stepCountIs, streamText, type LanguageModelUsage, type ModelMessage, type ToolSet } from 'ai';
 import type { RuntimeCommand } from '../protocol.js';
 import type { ResolvedModelSpec, RuntimeAccess, RuntimeLimits } from '../spec.js';
+import { Approvals, type ApprovalRequest } from './approvals.js';
 import { CONTEXT_BUDGET, compactMessages, estimateTokens } from './compaction.js';
 import { resolveModel } from './providers.js';
 import { isFile, toolsFor } from './tools.js';
@@ -11,7 +12,7 @@ import { isFile, toolsFor } from './tools.js';
 /** What a run was started with beyond its model: the surfaces it may reach. */
 export type AgentSurfaces = Pick<
   Extract<RuntimeCommand, { t: 'start' }>,
-  'instructions' | 'statePath' | 'verifyCommand' | 'resultSchema' | 'companionApi'
+  'instructions' | 'statePath' | 'verifyCommand' | 'resultSchema' | 'companionApi' | 'approvals'
 >;
 
 /**
@@ -73,9 +74,40 @@ export class Agent {
     private readonly limits: RuntimeLimits,
     private readonly emit: (event: AgentEvent) => void,
     private readonly surfaces: AgentSurfaces = {},
+    /** Raised when a tool call needs a person; absent for unattended work. */
+    onAsk: (ask: ApprovalRequest) => void = () => undefined,
+    onAskResolved: (requestId: string) => void = () => undefined,
   ) {
+    this.approvals = new Approvals(
+      surfaces.approvals === 'interactive',
+      (ask) => {
+        // Remembered here rather than sent back by the parent: an
+        // `allow_session` answer has to know which tool it settled, and the
+        // answer carries only the id it is answering.
+        this.askedTools.set(ask.requestId, ask.tool.name);
+        onAsk(ask);
+      },
+      onAskResolved,
+    );
     this.restore();
   }
+
+  private readonly approvals: Approvals;
+
+  /** The person answered an approval this session raised. */
+  answerAsk(requestId: string, mode: string | undefined): void {
+    const tool = this.askedTools.get(requestId);
+    this.askedTools.delete(requestId);
+    this.approvals.answer(requestId, mode, tool);
+    this.event(mode === 'deny' ? 'tool_call_denied' : 'tool_call_approved', {
+      callId: requestId,
+      decidedBy: 'reviewer',
+      ...(mode === 'deny' ? { reason: 'denied by a reviewer' } : { mode: mode ?? 'allow' }),
+    });
+  }
+
+  /** Which tool each pending approval is for, so a session answer remembers it. */
+  private readonly askedTools = new Map<string, string>();
 
   private get statePath(): string | undefined {
     return this.surfaces.statePath;
@@ -170,6 +202,14 @@ export class Agent {
       ...(this.surfaces.resultSchema !== undefined ? { resultSchema: this.surfaces.resultSchema } : {}),
       ...(this.companionApi() ? { companionApi: this.companionApi()! } : {}),
       onResult: (value) => (structured = value),
+      ...(this.approvals.enabled
+        ? {
+            approve: (name: string, input: unknown) => {
+              const ask = { name, input };
+              return this.approvals.request(ask.name, ask.input, aborter.signal);
+            },
+          }
+        : {}),
     });
     let text = '';
     let finalMessage: string | null = null;

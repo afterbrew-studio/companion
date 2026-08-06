@@ -29,9 +29,23 @@ export type RuntimeCommand =
       readonly resultSchema?: unknown;
       /** Scoped access back to this instance, for platform-operating runs. */
       readonly companionApi?: { readonly baseUrl: string; readonly token: string };
+      /**
+       * Whether a person is watching and may approve one tool call at a time.
+       *
+       * Per RUN, not per harness: unattended work never parks on a human, and
+       * a run that raised an approval nobody is there to answer would hang
+       * until its turn timed out. The capability says this harness CAN ask; the
+       * run says whether anyone would hear it.
+       */
+      readonly approvals?: 'policy' | 'interactive';
     }
   | { readonly t: 'turn'; readonly turnId: string; readonly prompt: string }
-  | { readonly t: 'abort' };
+  | { readonly t: 'abort' }
+  | {
+      readonly t: 'ask.response';
+      readonly requestId: string;
+      readonly response: { readonly mode?: string; readonly optionId?: string; readonly text?: string };
+    };
 
 /** child → parent */
 export type RuntimeFrame =
@@ -44,6 +58,8 @@ export type RuntimeFrame =
       readonly finalMessage: string | null;
       readonly error?: string;
     }
+  | { readonly t: 'ask'; readonly ask: unknown }
+  | { readonly t: 'ask.resolved'; readonly requestId: string }
   | { readonly t: 'fatal'; readonly message: string };
 
 /** Split a growing buffer into complete lines, returning the remainder. */

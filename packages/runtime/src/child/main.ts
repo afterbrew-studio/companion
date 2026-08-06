@@ -34,7 +34,10 @@ export async function runAgentChild(): Promise<void> {
             ...(command.verifyCommand ? { verifyCommand: command.verifyCommand } : {}),
             ...(command.resultSchema !== undefined ? { resultSchema: command.resultSchema } : {}),
             ...(command.companionApi ? { companionApi: command.companionApi } : {}),
+            ...(command.approvals ? { approvals: command.approvals } : {}),
           },
+          (ask) => write({ t: 'ask', ask }),
+          (requestId) => write({ t: 'ask.resolved', requestId }),
         );
         write({ t: 'ready' });
         break;
@@ -60,6 +63,9 @@ export async function runAgentChild(): Promise<void> {
       }
       case 'abort':
         agent?.abort();
+        break;
+      case 'ask.response':
+        agent?.answerAsk(command.requestId, command.response.mode);
         break;
     }
   };

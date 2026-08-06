@@ -19,16 +19,18 @@ import { DEFAULT_LIMITS, type ResolvedModelSpec, type RuntimeAccess, type Runtim
  * machine and has no interactive sign-in.
  *
  * What it declares, rather than fakes:
- *  - permission is settled by the run's access before the process starts, so
- *    no approval is ever raised. Making this `interactive` is a later phase
- *    that has to carry the round trip, not a flag.
+ *  - permission can be answered one call at a time, which is the one thing no
+ *    other harness Companion runs can do: the others settle it as a start-time
+ *    policy and offer no headless round trip. Whether a given run actually
+ *    asks is the RUN's answer, not this one: unattended work has nobody to
+ *    answer and would sit until its turn timed out.
  *  - the session is not reconfigurable while it runs: the model is chosen when
  *    the spec is resolved, so every session control is off.
  *  - models come from the operator's own provider records, which is what
  *    `providers` means.
  */
 export const RUNTIME_CAPABILITIES: HarnessCapabilities = {
-  approvals: 'policy',
+  approvals: 'interactive',
   usage: 'tokens',
   models: 'providers',
   sessionControls: { model: false, provider: false, mode: false, autoApprove: false, commands: false },
@@ -55,6 +57,8 @@ export interface RuntimeHarnessOptions {
   readonly resultSchema?: unknown;
   /** Scoped access back to this instance, for platform-operating runs. */
   readonly companionApi?: { readonly baseUrl: string; readonly token: string };
+  /** `interactive` only for a run somebody is watching. See the capability. */
+  readonly approvals?: 'policy' | 'interactive';
   /**
    * Every model this machine may run, not just the one this run resolved to.
    * `sessionInfo` is how the runner registry learns a machine's catalog, and a
@@ -72,6 +76,8 @@ export interface RuntimeHarnessOptions {
 export interface RuntimeHarnessHandlers {
   onEvent?(event: HarnessEvent): void;
   onTurnComplete?(payload: { turnId?: string }): void;
+  onAsk?(ask: unknown): void;
+  onAskResolved?(requestId: string): void;
   onClose?(): void;
 }
 
@@ -146,6 +152,7 @@ export class RuntimeHarness implements Harness {
       ...(this.opts.verifyCommand ? { verifyCommand: this.opts.verifyCommand } : {}),
       ...(this.opts.resultSchema !== undefined ? { resultSchema: this.opts.resultSchema } : {}),
       ...(this.opts.companionApi ? { companionApi: this.opts.companionApi } : {}),
+      ...(this.opts.approvals ? { approvals: this.opts.approvals } : {}),
     });
 
     await new Promise((resolve) => setTimeout(resolve, settleMs));
@@ -209,9 +216,12 @@ export class RuntimeHarness implements Harness {
     };
   }
 
-  /** No prompt is ever raised, so there is nothing to answer. */
-  async respondAsk(_requestId: string, _response: AskResponse): Promise<void> {
-    throw new Error('the built-in runtime settles permission by policy and raises no approval');
+  /**
+   * A person answered an approval this run raised. Written down the same pipe
+   * the ask came up, so the waiting tool call resumes or is refused.
+   */
+  async respondAsk(requestId: string, response: AskResponse): Promise<void> {
+    this.send({ t: 'ask.response', requestId, response: { ...response } });
   }
 
   async loadHistory(_workspaceId: string, before: number | null, limit: number): Promise<HistorySegment> {
@@ -236,6 +246,12 @@ export class RuntimeHarness implements Harness {
         break;
       case 'turn.end':
         this.settleTurn();
+        break;
+      case 'ask':
+        this.handlers.onAsk?.(frame.ask);
+        break;
+      case 'ask.resolved':
+        this.handlers.onAskResolved?.(frame.requestId);
         break;
       case 'fatal':
         this.stderrTail = `${this.stderrTail}${frame.message}`.slice(-4_000);

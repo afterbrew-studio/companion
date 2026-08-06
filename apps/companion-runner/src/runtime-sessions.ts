@@ -38,6 +38,8 @@ export class RuntimeSessions {
     private readonly onEvent: (runId: string, event: HarnessEvent) => void,
     private readonly onTurnComplete: (runId: string, turnId?: string) => void,
     private readonly onGone: (runId: string) => void,
+    private readonly onAsk: (runId: string, ask: unknown) => void = () => undefined,
+    private readonly onAskResolved: (runId: string, requestId: string) => void = () => undefined,
   ) {}
 
   /**
@@ -84,6 +86,7 @@ export class RuntimeSessions {
     limits?: unknown;
     verifyCommand?: string;
     resultSchema?: unknown;
+    attended?: boolean;
   }): Promise<void> {
     if (this.sessions.has(args.runId)) return;
     const spec = (args.spec as ResolvedModelSpec | undefined) ?? this.config.provider;
@@ -105,10 +108,13 @@ export class RuntimeSessions {
         statePath: files.statePath,
         ...(args.verifyCommand ? { verifyCommand: args.verifyCommand } : {}),
         ...(args.resultSchema !== undefined ? { resultSchema: args.resultSchema } : {}),
+        approvals: args.attended === true ? 'interactive' : 'policy',
       },
       {
         onEvent: (event) => this.onEvent(args.runId, event),
         onTurnComplete: ({ turnId }) => this.onTurnComplete(args.runId, turnId),
+        onAsk: (ask) => this.onAsk(args.runId, ask),
+        onAskResolved: (requestId) => this.onAskResolved(args.runId, requestId),
         onClose: () => {
           this.sessions.delete(args.runId);
           this.onGone(args.runId);

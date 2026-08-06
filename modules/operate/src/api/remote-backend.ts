@@ -39,6 +39,7 @@ export interface RemoteSpawnPlan {
   readonly limits?: unknown;
   readonly verifyCommand?: string;
   readonly resultSchema?: unknown;
+  readonly attended?: boolean;
 }
 
 /**
@@ -191,6 +192,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
       ...(plan.spec !== undefined && secure ? { spec: plan.spec, limits: plan.limits } : {}),
       ...(plan.verifyCommand ? { verifyCommand: plan.verifyCommand } : {}),
       ...(plan.resultSchema !== undefined ? { resultSchema: plan.resultSchema } : {}),
+      ...(plan.attended === true ? { attended: true } : {}),
     });
     this.liveRuns.add(runId);
   }

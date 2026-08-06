@@ -280,7 +280,8 @@ async function routeRun(
   switch (action) {
     case 'spawn': {
       requireMethod(method, 'POST', action);
-      const { cwd, sessionId, access, harness, spec, limits, verifyCommand, resultSchema } = body as AgentSpawnRequest;
+      const { cwd, sessionId, access, harness, spec, limits, verifyCommand, resultSchema, attended } =
+        body as AgentSpawnRequest;
       requireString(cwd, 'cwd');
       requireString(sessionId, 'sessionId');
       if (access !== 'read-only' && access !== 'workspace-write' && access !== 'trusted-assistant') {
@@ -302,6 +303,7 @@ async function routeRun(
             limits,
             ...(verifyCommand ? { verifyCommand } : {}),
             ...(resultSchema !== undefined ? { resultSchema } : {}),
+            ...(attended === true ? { attended: true } : {}),
           });
         } catch (err) {
           throw new HttpError(503, err instanceof Error ? err.message : String(err));
@@ -380,6 +382,12 @@ async function runtimeCommand(session: Harness, body: unknown): Promise<unknown>
   }
   if (command.kind === 'abortTurn') {
     await session.abortTurn(command.turnId);
+    return { ok: true };
+  }
+  if (command.kind === 'respondAsk') {
+    requireString(command.requestId, 'requestId');
+    if (!command.response || typeof command.response !== 'object') throw badRequest('missing response');
+    await session.respondAsk(command.requestId, command.response);
     return { ok: true };
   }
   throw badRequest(`the built-in runtime has no ${command.kind}`);

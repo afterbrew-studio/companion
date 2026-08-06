@@ -136,6 +136,8 @@ async function main(): Promise<void> {
     (runId, event) => hub.broadcast({ t: 'event', runId, event }),
     (runId, turnId) => hub.broadcast({ t: 'turn.complete', runId, turnId }),
     (runId) => hub.broadcast({ t: 'gone', runId }),
+    (runId, ask) => hub.broadcast({ t: 'ask', runId, ask: ask as never }),
+    (runId, requestId) => hub.broadcast({ t: 'ask.resolved', runId, requestId }),
   );
 
   const server = await startAgentServer({

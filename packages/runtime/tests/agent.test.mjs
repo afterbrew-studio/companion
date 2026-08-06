@@ -363,6 +363,136 @@ test('a long session trims itself and keeps going', async () => {
 });
 
 /**
+ * The round trip no other harness Companion runs can do: stop before a tool
+ * call that changes something, ask, and act on the answer. Claude Code and
+ * Codex settle permission as a start-time policy and offer no headless way
+ * back, so their approval affordance has always been dark.
+ */
+test('an attended run asks before it writes, and a denial reaches the model', async () => {
+  let round = 0;
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      // Counted rather than sniffed from the messages: the system prompt talks
+      // about tools, so looking for the word answers the first call too.
+      const answered = round++ > 0;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const base = { id: 'c', object: 'chat.completion.chunk', created: 1, model: 'fake' };
+      if (!answered) {
+        res.write(
+          `data: ${JSON.stringify({
+            ...base,
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_w',
+                      type: 'function',
+                      function: { name: 'write_file', arguments: '{"path":"new.txt","content":"hi"}' },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`,
+        );
+        res.write(
+          `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+        );
+      } else {
+        res.write(
+          `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { content: 'I was refused.' }, finish_reason: null }] })}\n\n`,
+        );
+        res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+
+  const cwd = mkdtempSync(join(tmpdir(), 'runtime-ask-'));
+  const proc = spawn(process.execPath, [child], {
+    cwd,
+    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+
+  const events = [];
+  const asks = [];
+  const resolved = [];
+  const send = (frame) => proc.stdin.write(`${JSON.stringify(frame)}\n`);
+  const ended = new Promise((resolve) => {
+    let buffer = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const frame = JSON.parse(line);
+        if (frame.t === 'event') events.push(frame.event);
+        if (frame.t === 'ask.resolved') resolved.push(frame.requestId);
+        if (frame.t === 'ask') {
+          asks.push(frame.ask);
+          // The person says no.
+          send({ t: 'ask.response', requestId: frame.ask.requestId, response: { mode: 'deny' } });
+        }
+        if (frame.t === 'turn.end') resolve(frame);
+      }
+    });
+  });
+
+  send({
+    t: 'start',
+    sessionId: 'ask-1',
+    cwd,
+    access: 'workspace-write',
+    approvals: 'interactive',
+    spec: {
+      providerId: 'fake',
+      kind: 'openai-compatible',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      apiKey: 'k',
+      headers: {},
+      query: {},
+      model: 'fake',
+      contextWindow: null,
+      apiVersion: null,
+      sampling: {},
+      providerOptions: {},
+      factoryOptions: {},
+    },
+    limits: { maxSteps: 4, turnTimeoutMs: 20_000, toolOutputChars: 2_000, commandTimeoutMs: 5_000, memoryMb: 512 },
+  });
+  send({ t: 'turn', turnId: 'ask-1:t1', prompt: 'create new.txt' });
+
+  const outcome = await ended;
+  proc.stdin.end();
+  server.close();
+
+  assert.equal(asks.length, 1, 'the write was held for a person');
+  assert.equal(asks[0].tool.name, 'write_file', 'and the ask names the call being decided');
+  assert.deepEqual(resolved, [asks[0].requestId], 'the ask was closed once answered');
+  assert.ok(
+    events.some((e) => e.type === 'tool_call_denied'),
+    'the refusal is on the transcript, so a reader can see why nothing changed',
+  );
+  assert.ok(!existsSync(join(cwd, 'new.txt')), 'and the file was never written');
+  const result = events.find((e) => e.type === 'tool_result' && e.ok === false);
+  assert.match(String(result?.error?.message ?? ''), /denied/, 'the model was told, rather than the turn ending');
+  assert.equal(outcome.ok, true, 'the run continued after the refusal');
+});
+
+/**
  * Trimming has one rule that matters: a tool result may never outlive its call.
  * Cutting anywhere but a user-message boundary produces a conversation the
  * provider rejects for a reason that reads nothing like "too long".
