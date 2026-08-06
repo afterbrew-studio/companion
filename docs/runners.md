@@ -100,3 +100,13 @@ Agent runtimes are external tools, not package dependencies of the Companion
 core. Install and authenticate them on the machine that will execute work.
 Companion detects supported runtimes, reads their reported capabilities, and
 keeps every run isolated from the operator's normal CLI sessions.
+
+The one exception is the **built-in runtime**, which ships inside the bundle and
+runs as a subprocess of it, so a machine can never fail to have it installed.
+What it needs instead is a model: either one configured on that machine
+(`COMPANION_RUNNER_PROVIDER_*`), or one the controlling Companion sends with the
+run. The second only happens over **https**, because the runner endpoint is
+plain http unless the operator made it otherwise and a key does not belong on
+that wire. A machine with neither reports the runtime as unavailable and names
+both fixes, rather than accepting work it cannot finish. See
+[the built-in harness](builtin-harness.md).

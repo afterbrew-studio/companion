@@ -201,20 +201,50 @@ capacity does not require turning the control plane into a distributed system.
 See [Companion for enterprise](ENTERPRISE.md) for the available controls,
 deployment shape, and explicit limitations.
 
-## Bring the agent runtime you already use
+## Bring the agent runtime you already use, or bring only a key
 
-Companion detects supported agent CLIs on each runner. Provider credentials stay
-on that machine with the runtime rather than being copied into Companion.
+Companion detects supported agent CLIs on each runner, and ships one runtime of
+its own for machines that have none.
 
-| Harness | Notes |
-| --- | --- |
-| [moxxy](https://github.com/moxxy-ai/moxxy) | Interactive approvals and switching model, provider, or mode mid-session |
-| [Claude Code](https://claude.com/claude-code) | Policy-based approvals; models are reported by the CLI |
-| [Codex](https://developers.openai.com/codex) | Policy-based approvals; reports its model list per session |
+| Harness | Where models come from | Notes |
+| --- | --- | --- |
+| [moxxy](https://github.com/moxxy-ai/moxxy) | the machine's own providers | Interactive approvals and switching model, provider, or mode mid-session |
+| [Claude Code](https://claude.com/claude-code) | its own sign-in | Policy-based approvals; models are reported by the CLI |
+| [Codex](https://developers.openai.com/codex) | its own sign-in | Policy-based approvals; reports its model list per session |
+| **Companion** (built-in) | **your key, your endpoint** | Nothing to install: a subprocess of the running bundle. Ships in the `full` and `cloud` builds, off by default |
 
-A runner advertises only what is installed and available on that machine.
-Companion then chooses an eligible, online, provider-capable runner and prepares
-the repository worktree there. See [runners](docs/runners.md).
+A runner advertises only what is available on that machine, and the built-in
+runtime is available wherever Companion is. Companion then chooses an eligible,
+online, provider-capable runner and prepares the repository worktree there. See
+[runners](docs/runners.md).
+
+### Bring your own key
+
+The built-in runtime calls a model you supply, through the Vercel AI SDK. There
+is exactly one place in it that names a vendor, and it is a lookup:
+
+```sh
+companion module install runtime
+companion provider add "Anthropic" --kind anthropic --key sk-… --model claude-sonnet-5
+companion provider test <id> --model claude-sonnet-5   # does it answer, can it call a tool
+```
+
+Four kinds cover the field: `anthropic`, `openai`, `azure` (deployment names and
+api-version), and `openai-compatible` for any gateway, so LiteLLM, Portkey,
+OpenRouter, Azure AI Foundry's inference endpoint, vLLM and Ollama are a record
+rather than a release. Configure them in **Settings → Model providers**, with the
+CLI above, or declare them in `companiond.json` with `apiKeyEnv` so a container
+ships with its providers. Credentials go to the kernel's secret store, so an
+instance pointed at Vault keeps them there and no key ever reaches a browser.
+
+A hosted deployment is then the `cloud` profile with no external CLI at all:
+
+```sh
+docker build --build-arg PROFILE=cloud --build-arg INSTALL_MOXXY=false -t companion:cloud .
+```
+
+See [the built-in harness](docs/builtin-harness.md), [model providers](docs/model-providers.md)
+and [the hosted runtime](docs/cloud-runtime.md).
 
 ## Modular without becoming fragmented
 
@@ -235,6 +265,9 @@ installs a module from a registry, tarball, or directory.
 | [Install and deploy](docs/install.md) | npx, Docker, Coolify, and source builds |
 | [Today, AI Help, and MCP](docs/ai-help-and-mcp.md) | daily work, programmatic access, and approvals |
 | [Runners](docs/runners.md) | multi-machine execution and placement policy |
+| [The built-in harness](docs/builtin-harness.md) | the agent runtime Companion owns, its tools and its fences |
+| [Model providers](docs/model-providers.md) | bring your own key, endpoint, and model catalogue |
+| [The hosted runtime](docs/cloud-runtime.md) | running Companion as a service, module and profile |
 | [Pipelines](docs/pipelines.md) | typed automation and review workflows |
 | [Configuration](docs/configuration.md) | environment, GitHub Enterprise, and proxies |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
