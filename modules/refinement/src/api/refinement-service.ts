@@ -5,6 +5,7 @@ import type { ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import { log, paths } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
 import type { TaskPriority } from '@companion/module-board/contract';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type {
   RefineContextOptions,
   RefineItemRecord,
@@ -230,6 +231,7 @@ export class RefinementService {
       cwd: join(paths.scratch(), 'refine-methods'),
       userId,
       prompt: generateMethodPrompt(prompt),
+      resultSchema: resultSchemaOf(methodDraftSchema),
       timeoutMs: GENERATE_METHOD_TIMEOUT_MS,
     });
     // null = timeout or dead runner — say so instead of letting the JSON
@@ -319,6 +321,7 @@ export class RefinementService {
         userId,
         prompt,
         timeoutMs: DECOMPOSE_TIMEOUT_MS,
+        resultSchema: resultSchemaOf(decompositionSchema),
         onQueued: callbacks.onQueued,
         onStarted: (startedRunId) => {
           runId = startedRunId;

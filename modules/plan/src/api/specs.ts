@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type {
   AreaStorage,
   AreaStorageConfig,
@@ -298,6 +299,7 @@ export class Specs {
             repo,
             userId,
             prompt: generatePrompt(instructions, docs.map((d) => `### ${d.title}\n${d.content}`)),
+            resultSchema: resultSchemaOf(draftSchema),
             timeoutMs: 10 * 60_000,
           }),
         undefined,
@@ -394,6 +396,7 @@ export class Specs {
             userId,
             issueNumber: prNumber,
             prompt: driftPrompt(specs, pr?.title ?? live?.title ?? `PR #${prNumber}`, baseRef, diff),
+            resultSchema: resultSchemaOf(driftSchema),
             timeoutMs: 12 * 60_000,
           });
       },

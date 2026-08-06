@@ -24,6 +24,7 @@ import type {
 import { PIPELINE_EXPORT_VERSION, PIPELINE_TYPE_STEPS } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
@@ -666,6 +667,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
             userId: ctx.userId,
             issueNumber: targetOf(ctx)?.number ?? null,
             prompt: resolvedPrompt,
+            resultSchema: resultSchemaOf(agentVerdictSchema),
             timeoutMs: 12 * 60_000,
             onQueued: (id) => {
               queueId = id;
