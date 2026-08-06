@@ -37,7 +37,13 @@ export interface IntegrationFieldOption {
 export interface IntegrationConfigField {
   readonly key: string;
   readonly label: string;
-  readonly kind: 'text' | 'url' | 'secret' | 'boolean' | 'select';
+  /**
+   * `multiselect` is a closed set the operator picks from, stored as the same
+   * comma-separated string `text` would have held. Declaring the options rather
+   * than describing them in a placeholder is the difference between a field
+   * somebody fills in and one they have to remember the vocabulary for.
+   */
+  readonly kind: 'text' | 'url' | 'secret' | 'boolean' | 'select' | 'multiselect';
   readonly required?: boolean;
   readonly description?: string;
   readonly placeholder?: string;
@@ -174,9 +180,25 @@ export type IntegrationReviewResult =
       readonly summary: string;
     };
 
+export type IntegrationNotificationKind = 'action_required' | 'finished' | 'error' | 'info';
+
+/**
+ * The kinds a connection may filter on, shaped as a form declares them.
+ *
+ * One list rather than one per provider: the options an operator picks from and
+ * the allow-list their choice is validated against have to be the same set, or
+ * a kind exists in a menu that the validator then rejects.
+ */
+export const NOTIFICATION_KIND_OPTIONS: ReadonlyArray<IntegrationFieldOption> = [
+  { value: 'action_required', label: 'Action required' },
+  { value: 'finished', label: 'Finished' },
+  { value: 'error', label: 'Error' },
+  { value: 'info', label: 'Info' },
+];
+
 export interface IntegrationNotificationInput {
   readonly id: string;
-  readonly kind: 'action_required' | 'finished' | 'error' | 'info';
+  readonly kind: IntegrationNotificationKind;
   readonly title: string;
   readonly body: string;
   readonly workspaceId: string | null;

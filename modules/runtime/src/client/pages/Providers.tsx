@@ -256,6 +256,10 @@ function AddProvider({
 
   return (
     <Section title="Add provider">
+      {/* `Section` puts no space between its children, so a form built straight
+          into one runs its labels into the field above. Same rhythm as the
+          integration dialog's own form. */}
+      <div className="flex flex-col gap-4">
       <SegmentedControl
         label="Provider kind"
         name="provider-kind"
@@ -263,9 +267,9 @@ function AddProvider({
         onChange={(value) => setKind(value)}
         options={KIND_OPTIONS.map((option) => ({ value: option.value as string, label: option.label }))}
       />
-      <p className="text-sm text-zinc-500">{KIND_OPTIONS.find((option) => option.value === kind)?.hint}</p>
+      <p className="-mt-2 text-sm text-zinc-500">{KIND_OPTIONS.find((option) => option.value === kind)?.hint}</p>
       <Field label="Name">
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ACME gateway" />
+        <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ACME gateway" />
       </Field>
       <Field
         label="Endpoint"
@@ -275,15 +279,15 @@ function AddProvider({
             : 'Optional. Leave empty for the provider default; set it to point at your own gateway.'
         }
       >
-        <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" />
+        <input className="input" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" />
       </Field>
       {kind === 'azure' && (
         <Field label="API version" hint="The version your resource serves.">
-          <input value={apiVersion} onChange={(e) => setApiVersion(e.target.value)} />
+          <input className="input" value={apiVersion} onChange={(e) => setApiVersion(e.target.value)} />
         </Field>
       )}
       <Field label="API key" hint="Stored server-side and never sent back to a browser.">
-        <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        <input className="input" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
       </Field>
       <Field
         label="Models"
@@ -293,7 +297,7 @@ function AddProvider({
             : 'One model id per line, exactly as the provider names it.'
         }
       >
-        <textarea rows={4} value={models} onChange={(e) => setModels(e.target.value)} />
+        <textarea className="input" rows={4} value={models} onChange={(e) => setModels(e.target.value)} />
       </Field>
       <FormActions>
         <button className="btn btn-ghost" onClick={onCancel}>
@@ -303,6 +307,7 @@ function AddProvider({
           Add provider
         </button>
       </FormActions>
+      </div>
     </Section>
   );
 }

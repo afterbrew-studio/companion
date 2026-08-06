@@ -1,3 +1,4 @@
+import { NOTIFICATION_KIND_OPTIONS } from '@companion/module-integrations/provider';
 import type {
   IntegrationConnectionAccess,
   IntegrationNotificationInput,
@@ -79,9 +80,9 @@ export const jiraAutomationProvider: IntegrationProviderAdapter = {
       {
         key: 'eventKinds',
         label: 'Event kinds',
-        kind: 'text',
-        placeholder: 'action_required,error,finished',
-        description: 'Optional comma-separated filter. Empty delivers every notification kind.',
+        kind: 'multiselect',
+        options: NOTIFICATION_KIND_OPTIONS,
+        description: 'Pick nothing to receive every kind.',
       },
     ],
   },
@@ -164,7 +165,9 @@ function jiraAutomationTarget(rawUrl: string | null): URL {
   return target;
 }
 
-const NOTIFICATION_KINDS = new Set(['action_required', 'finished', 'error', 'info']);
+// Derived from the options the form offers, so the menu and the allow-list
+// cannot drift into disagreeing about what a valid kind is.
+const NOTIFICATION_KINDS = new Set(NOTIFICATION_KIND_OPTIONS.map((option) => option.value));
 
 function eventKinds(value: string): Set<string> {
   return new Set(value.split(',').map((kind) => kind.trim()).filter(Boolean));

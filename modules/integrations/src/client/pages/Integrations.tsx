@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Permission } from '@moxxy/companion-contracts';
 import { Slot } from '@moxxy/companion-sdk/client';
 import { useAuth } from '@companion/module-core/client';
@@ -729,6 +729,9 @@ function ConnectionField({
       </Field>
     );
   }
+  if (field.kind === 'multiselect') {
+    return <MultiSelectField field={field} value={value} hint={hint} onChange={onChange} />;
+  }
   return (
     <Field label={field.label} hint={hint}>
       <input
@@ -747,6 +750,66 @@ function ConnectionField({
           Clear the stored credential
         </label>
       ) : null}
+    </Field>
+  );
+}
+
+/**
+ * A closed set as toggles, stored as the comma-separated string the field
+ * always held, so every parser and validator behind it is untouched.
+ *
+ * Toggles rather than a typeahead: with a handful of values, a menu you have to
+ * open and filter is more work than the answer is worth, and picking from what
+ * is shown beats recalling the spelling of `action_required`. Nothing selected
+ * means no filter, which is what the empty string already meant.
+ */
+function MultiSelectField({
+  field,
+  value,
+  hint,
+  onChange,
+}: {
+  field: IntegrationConfigField;
+  value: IntegrationFieldValue | null | undefined;
+  hint: ReactNode;
+  onChange: (value: IntegrationFieldValue) => void;
+}): JSX.Element {
+  const selected = new Set(
+    (typeof value === 'string' ? value : '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+  const toggle = (option: string): void => {
+    const next = new Set(selected);
+    if (next.has(option)) next.delete(option);
+    else next.add(option);
+    // Emitted in the order the provider declared, so the stored value does not
+    // depend on the order somebody happened to click.
+    onChange((field.options ?? []).map((o) => o.value).filter((o) => next.has(o)).join(','));
+  };
+  return (
+    <Field label={field.label} hint={hint}>
+      <div className="flex flex-wrap gap-2">
+        {(field.options ?? []).map((option) => {
+          const on = selected.has(option.value);
+          return (
+            <button
+              type="button"
+              key={option.value}
+              aria-pressed={on}
+              onClick={() => toggle(option.value)}
+              className={`rounded-full border px-3 py-1.5 text-[13px] transition-colors ${
+                on
+                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+                  : 'border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-500'
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
     </Field>
   );
 }

@@ -215,6 +215,8 @@ function AddServer({
 
   return (
     <Section title="Add MCP server">
+      {/* See the note in Providers: a Section spaces nothing between children. */}
+      <div className="flex flex-col gap-4">
       <SegmentedControl
         label="Transport"
         name="mcp-transport"
@@ -231,19 +233,19 @@ function AddServer({
           : 'A server started as a subprocess on whichever machine runs the agent. That machine must have the command installed.'}
       </p>
       <Field label="Name">
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ACME issue tracker" />
+        <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ACME issue tracker" />
       </Field>
       {transport === 'http' ? (
         <Field label="Endpoint" hint="The MCP endpoint, e.g. https://mcp.acme.com/mcp">
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+          <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
         </Field>
       ) : (
         <>
           <Field label="Command" hint="Run directly, never through a shell.">
-            <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx" />
+            <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx" />
           </Field>
           <Field label="Arguments" hint="One per line.">
-            <textarea rows={3} value={args} onChange={(e) => setArgs(e.target.value)} />
+            <textarea className="input" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} />
           </Field>
         </>
       )}
@@ -252,6 +254,7 @@ function AddServer({
         hint={'One NAME=value per line. Write ${secret} where the value below belongs.'}
       >
         <textarea
+          className="input"
           rows={3}
           value={pairs}
           onChange={(e) => setPairs(e.target.value)}
@@ -259,7 +262,7 @@ function AddServer({
         />
       </Field>
       <Field label="Secret" hint="Stored server-side and never sent back to a browser.">
-        <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+        <input className="input" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
       </Field>
       <Field label="Available to" hint="A run whose access is not ticked is never offered this server's tools.">
         <div className="flex flex-col gap-1">
@@ -285,7 +288,7 @@ function AddServer({
         </div>
       </Field>
       <Field label="Tools" hint="One name per line to offer only those. Leave empty to offer everything the server lists.">
-        <textarea rows={3} value={tools} onChange={(e) => setTools(e.target.value)} />
+        <textarea className="input" rows={3} value={tools} onChange={(e) => setTools(e.target.value)} />
       </Field>
       <FormActions>
         <button className="btn btn-ghost" onClick={onCancel}>
@@ -295,6 +298,7 @@ function AddServer({
           Add server
         </button>
       </FormActions>
+      </div>
     </Section>
   );
 }
