@@ -88,6 +88,14 @@ export class Agent {
         onAsk(ask);
       },
       onAskResolved,
+      (requestId, tool, outcome) =>
+        this.event(outcome.allowed ? 'tool_call_approved' : 'tool_call_denied', {
+          callId: requestId,
+          decidedBy: outcome.expired === true ? 'timeout' : 'reviewer',
+          ...(outcome.allowed
+            ? { mode: outcome.mode }
+            : { reason: outcome.expired === true ? 'nobody answered in time' : `denied by a reviewer (${tool})` }),
+        }),
     );
     this.restore();
   }
@@ -98,14 +106,9 @@ export class Agent {
   answerAsk(requestId: string, mode: string | undefined): void {
     const tool = this.askedTools.get(requestId);
     this.askedTools.delete(requestId);
-    // Nothing on the transcript for an answer that decided nothing: a late or
-    // duplicate reply would otherwise read as a second approval.
-    if (!this.approvals.answer(requestId, mode, tool)) return;
-    this.event(mode === 'deny' ? 'tool_call_denied' : 'tool_call_approved', {
-      callId: requestId,
-      decidedBy: 'reviewer',
-      ...(mode === 'deny' ? { reason: 'denied by a reviewer' } : { mode: mode ?? 'allow' }),
-    });
+    // The transcript entry is written where the decision is APPLIED, so a late
+    // or duplicate reply that settles nothing produces nothing.
+    this.approvals.answer(requestId, mode, tool);
   }
 
   /** Which tool each pending approval is for, so a session answer remembers it. */

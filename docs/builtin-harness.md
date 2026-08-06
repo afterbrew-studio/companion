@@ -421,9 +421,12 @@ moxxy already uses end to end. Three decisions worth knowing:
   RUN says whether anyone would hear it, and unattended work that raised an
   approval would sit until its turn timed out. Kind decides: `interactive` and
   `assistant` are the runs somebody is sitting in front of.
-- **A refusal is a tool error, not the end of the turn.** The model is told it
-  was denied and can propose something else, rather than the conversation being
-  lost over one call.
+- **A refusal is returned as the tool's result, not thrown.** Measured: a thrown
+  refusal reaches the model as "the tool failed" with the reason stripped, and a
+  denial the model cannot read is one it cannot explain or work around. Returned,
+  the text is always the model's to read. Whether it is given a further step
+  after one is the provider's call, so the runtime does not claim the
+  conversation always continues.
 
 The guard replaces `execute` on the tool object in place rather than spreading
 it into a copy: `tool()` returns a branded value the SDK checks before it will

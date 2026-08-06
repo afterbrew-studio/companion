@@ -41,6 +41,14 @@ export class Approvals {
     private readonly armed: boolean,
     private readonly raise: (ask: ApprovalRequest) => void,
     private readonly resolved: (requestId: string) => void,
+    /**
+     * Announced where the decision is APPLIED rather than where an answer
+     * arrives, because a decision has three sources: a person, the deadline,
+     * and an aborted turn. Reporting only the first left the other two silently
+     * changing what the agent could do, which is the thing a transcript exists
+     * to prevent.
+     */
+    private readonly decided: (requestId: string, tool: string, outcome: ApprovalOutcome) => void = () => undefined,
   ) {}
 
   get enabled(): boolean {
@@ -65,6 +73,7 @@ export class Approvals {
         if (!this.pending.delete(requestId)) return;
         clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
+        this.decided(requestId, tool, outcome);
         this.resolved(requestId);
         resolve(outcome);
       };

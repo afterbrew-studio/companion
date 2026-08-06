@@ -80,15 +80,15 @@ function guarded(tools: ToolSet, ctx: ToolContext): ToolSet {
     if (typeof original !== 'function') continue;
     holder.execute = async (input: never, options: never) => {
       const decision = await approve(name, input);
-      // A refusal is a tool error, so the model sees it, can say what it was
-      // told, and can propose something else. Ending the turn would lose the
-      // conversation over one denied call.
+      // RETURNED, not thrown. A thrown refusal reaches the model as "the tool
+      // failed" with the reason stripped by the SDK, and a denial the model
+      // cannot read is one it cannot explain or work around. As a result it is
+      // text the model always sees, so it can say what it was told and propose
+      // something else. The call still did nothing, which is the point.
       if (!decision.allowed) {
-        throw new Error(
-          decision.expired
-            ? `refused: nobody answered the approval for this ${name} call in time`
-            : `refused: a reviewer denied this ${name} call`,
-        );
+        return decision.expired
+          ? `refused: nobody answered the approval for this ${name} call in time, so it was not run`
+          : `refused: a reviewer denied this ${name} call, so it was not run`;
       }
       return original(input, options);
     };
