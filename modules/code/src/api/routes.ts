@@ -37,6 +37,14 @@ const reviewOptionsSchema = z.object({
   depth: z.enum(['high-level', 'in-depth']).optional(),
   strictness: z.enum(['blockers-only', 'balanced', 'pedantic']).optional(),
   verify: z.boolean().optional(),
+  context: z.string().max(8_000).optional(),
+  workspaceId: z.string().min(1).max(100).optional(),
+  provider: z
+    .object({
+      providerId: z.string().min(3).max(120),
+      connectionId: z.string().min(1).max(120).nullable(),
+    })
+    .optional(),
 });
 const applyReviewSchema = z.object({
   findingIds: z.array(z.string().min(1)).max(200).optional(),
@@ -1211,9 +1219,8 @@ export default defineRoutes((ctx) => {
       body: reviewOptionsSchema,
       handler: ({ params, body, user }) => {
         const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        requireAgentRun(user);
         try {
-          code.prReviews.validateAnalyze(fullName, pr.number, user!.username);
+          code.prReviews.validateAnalyze(fullName, pr.number, user!.username, body);
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -1302,8 +1309,12 @@ export default defineRoutes((ctx) => {
       path: '/api/pr-reviews/:id/cancel',
       access: 'prs:act',
       handler: async ({ params, user }) => {
-        await requirePrReview(user, params.id);
-        requireAgentRun(user);
+        const review = await requirePrReview(user, params.id);
+        if (review.providerId === 'companion.native-review') {
+          requireAgentRun(user);
+        } else if (!user || !ctx.rbac.allows(user, 'integrations:use')) {
+          throw forbidden('cancelling an external review requires integrations:use');
+        }
         try {
           await code.prReviews.cancel(params.id);
         } catch (err) {

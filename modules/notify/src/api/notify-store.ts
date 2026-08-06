@@ -1,34 +1,14 @@
-import { safeParse, type Database } from '@moxxy/companion-sdk/server';
-import type { NotificationKind } from '@companion/module-workspace/contract';
-import type {
-  NotifyChannelKind,
-  NotifyChannelRecord,
-  NotifyDeliveryRecord,
-  NotifyDeliveryStatus,
-} from '../contract/index.js';
-import { redactTarget } from './delivery.js';
-
-interface ChannelRow {
-  id: string;
-  workspace_id: string | null;
-  user_id: string | null;
-  kind: string;
-  name: string;
-  url: string;
-  secret: string | null;
-  kinds: string;
-  enabled: number;
-  last_status: string | null;
-  last_error: string | null;
-  last_attempt_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
+import type { Database } from '@moxxy/companion-sdk/server';
+import type { IntegrationScope } from '@companion/module-integrations/contract';
+import type { NotifyDeliveryRecord, NotifyDeliveryStatus } from '../contract/index.js';
 
 interface DeliveryRow {
   id: string;
-  channel_id: string;
-  channel_name: string;
+  connection_id: string;
+  provider_id: string;
+  connection_name: string;
+  scope_key: string;
+  owner_id: string | null;
   title: string;
   status: string;
   http_status: number | null;
@@ -37,57 +17,12 @@ interface DeliveryRow {
   created_at: number;
 }
 
-/** The full row, including the credential. Never leaves the daemon. */
-export interface ChannelTarget {
-  readonly id: string;
-  readonly workspaceId: string | null;
-  readonly userId: string | null;
-  readonly kind: NotifyChannelKind;
-  readonly name: string;
-  readonly url: string;
-  readonly secret: string | null;
-  readonly kinds: ReadonlyArray<NotificationKind>;
-  readonly enabled: boolean;
-}
-
-function rowToChannel(row: ChannelRow): NotifyChannelRecord {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    userId: row.user_id,
-    kind: row.kind as NotifyChannelKind,
-    name: row.name,
-    targetHint: redactTarget(row.url),
-    enabled: !!row.enabled,
-    kinds: safeParse<NotificationKind[]>(row.kinds, []),
-    signed: row.secret !== null && row.secret !== '',
-    lastStatus: row.last_status as NotifyDeliveryStatus | null,
-    lastError: row.last_error,
-    lastAttemptAt: row.last_attempt_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function rowToTarget(row: ChannelRow): ChannelTarget {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    userId: row.user_id,
-    kind: row.kind as NotifyChannelKind,
-    name: row.name,
-    url: row.url,
-    secret: row.secret,
-    kinds: safeParse<NotificationKind[]>(row.kinds, []),
-    enabled: !!row.enabled,
-  };
-}
-
 function rowToDelivery(row: DeliveryRow): NotifyDeliveryRecord {
   return {
     id: row.id,
-    channelId: row.channel_id,
-    channelName: row.channel_name,
+    connectionId: row.connection_id,
+    providerId: row.provider_id,
+    connectionName: row.connection_name,
     title: row.title,
     status: row.status as NotifyDeliveryStatus,
     httpStatus: row.http_status,
@@ -97,139 +32,69 @@ function rowToDelivery(row: DeliveryRow): NotifyDeliveryRecord {
   };
 }
 
-/** Delivery attempts older than this are swept on insert. */
+/** Delivery attempts older than this are swept on insert, read, and scheduled maintenance. */
 const DELIVERY_RETENTION_MS = 14 * 24 * 60 * 60_000;
 
-/** Owner of the notify_channels / notify_deliveries tables. */
+/** Owner of the bounded provider-neutral notification delivery log. */
 export class NotifyStore {
   constructor(private readonly db: Database) {}
 
-  // ---------- channels --------------------------------------------------------------
-
-  insert(channel: ChannelTarget & { createdAt: number; updatedAt: number }): void {
+  logDelivery(entry: NotifyDeliveryRecord, scope: IntegrationScope, ownerId: string | null): void {
     this.db
       .prepare(
-        `INSERT INTO notify_channels (id, workspace_id, user_id, kind, name, url, secret, kinds, enabled, created_at, updated_at)
-         VALUES (@id, @workspaceId, @userId, @kind, @name, @url, @secret, @kinds, @enabled, @createdAt, @updatedAt)`,
+        `INSERT INTO notify_deliveries
+           (id, connection_id, provider_id, connection_name, scope_key, owner_id,
+            title, status, http_status, error, attempts, created_at)
+         VALUES (@id, @connectionId, @providerId, @connectionName, @scopeKey, @ownerId,
+                 @title, @status, @httpStatus, @error, @attempts, @createdAt)`,
       )
-      .run({
-        id: channel.id,
-        workspaceId: channel.workspaceId,
-        userId: channel.userId,
-        kind: channel.kind,
-        name: channel.name,
-        url: channel.url,
-        secret: channel.secret,
-        kinds: JSON.stringify(channel.kinds),
-        enabled: channel.enabled ? 1 : 0,
-        createdAt: channel.createdAt,
-        updatedAt: channel.updatedAt,
-      });
+      .run({ ...entry, scopeKey: deliveryScopeKey(scope), ownerId });
+    this.prune();
   }
 
-  /**
-   * Patch a channel. `url` and `secret` are only written when supplied, so an
-   * edit that does not retype the credential keeps it rather than blanking it.
-   */
-  update(
-    id: string,
-    fields: {
-      name?: string;
-      url?: string;
-      secret?: string | null;
-      kinds?: ReadonlyArray<NotificationKind>;
-      enabled?: boolean;
-      workspaceId?: string | null;
-    },
-  ): void {
-    const existing = this.getRow(id);
-    if (!existing) return;
-    this.db
-      .prepare(
-        `UPDATE notify_channels SET name = ?, url = ?, secret = ?, kinds = ?, enabled = ?, workspace_id = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(
-        fields.name ?? existing.name,
-        fields.url ?? existing.url,
-        fields.secret === undefined ? existing.secret : fields.secret,
-        JSON.stringify(fields.kinds ?? safeParse<NotificationKind[]>(existing.kinds, [])),
-        (fields.enabled ?? !!existing.enabled) ? 1 : 0,
-        fields.workspaceId === undefined ? existing.workspace_id : fields.workspaceId,
-        Date.now(),
-        id,
+  deliveriesForScopes(
+    scopes: readonly IntegrationScope[],
+    ownerId: string | null,
+    limit = 100,
+  ): NotifyDeliveryRecord[] {
+    this.prune();
+    const keys = [...new Set(scopes.map(deliveryScopeKey))];
+    if (keys.length === 0) return [];
+    const bounded = Math.min(Math.max(Math.trunc(limit), 1), 500);
+    const rows: DeliveryRow[] = [];
+    // Keep below SQLite's conservative variable ceiling. Taking the newest
+    // `bounded` rows per chunk is sufficient: anything older cannot enter the
+    // newest `bounded` rows after the chunk results are merged.
+    for (let offset = 0; offset < keys.length; offset += 400) {
+      const chunk = keys.slice(offset, offset + 400);
+      const placeholders = chunk.map(() => '?').join(', ');
+      rows.push(
+        ...(this.db
+          .prepare(
+            `SELECT * FROM notify_deliveries
+             WHERE scope_key IN (${placeholders}) AND (owner_id IS NULL OR owner_id = ?)
+             ORDER BY created_at DESC, id DESC LIMIT ?`,
+          )
+          .all(...chunk, ownerId, bounded) as DeliveryRow[]),
       );
+    }
+    return rows
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+      .slice(0, bounded)
+      .map(rowToDelivery);
   }
 
-  delete(id: string): boolean {
-    return this.db.prepare(`DELETE FROM notify_channels WHERE id = ?`).run(id).changes > 0;
+  prune(now = Date.now()): number {
+    return this.db
+      .prepare(`DELETE FROM notify_deliveries WHERE created_at < ?`)
+      .run(now - DELIVERY_RETENTION_MS).changes;
   }
+}
 
-  private getRow(id: string): ChannelRow | undefined {
-    return this.db.prepare(`SELECT * FROM notify_channels WHERE id = ?`).get(id) as ChannelRow | undefined;
-  }
-
-  get(id: string): NotifyChannelRecord | undefined {
-    const row = this.getRow(id);
-    return row ? rowToChannel(row) : undefined;
-  }
-
-  /** The full row including the credential, for delivery only, never a route. */
-  target(id: string): ChannelTarget | undefined {
-    const row = this.getRow(id);
-    return row ? rowToTarget(row) : undefined;
-  }
-
-  list(): NotifyChannelRecord[] {
-    const rows = this.db.prepare(`SELECT * FROM notify_channels ORDER BY created_at`).all() as ChannelRow[];
-    return rows.map(rowToChannel);
-  }
-
-  /**
-   * Enabled channels a notification in this workspace should reach: the
-   * workspace's own plus the instance-wide ones (workspace_id IS NULL). An
-   * instance-wide notification reaches only the instance-wide channels, because
-   * routing it into one team's Slack would be a surprise.
-   */
-  targetsFor(workspaceId: string | null, userId: string | null): ChannelTarget[] {
-    // Recipient matching is 1:1 and deliberately not a superset relation. A
-    // shared channel carries workspace-wide events only; a personal one carries
-    // only what names its owner. Letting either take both would make every
-    // personal destination a firehose of everyone's work, which is the exact
-    // thing per-recipient routing exists to prevent.
-    const owner = userId === null ? 'user_id IS NULL' : 'user_id = ?';
-    const scope = workspaceId === null ? 'workspace_id IS NULL' : '(workspace_id IS NULL OR workspace_id = ?)';
-    const params: string[] = [];
-    if (userId !== null) params.push(userId);
-    if (workspaceId !== null) params.push(workspaceId);
-    const rows = this.db
-      .prepare(`SELECT * FROM notify_channels WHERE enabled = 1 AND ${owner} AND ${scope}`)
-      .all(...params) as ChannelRow[];
-    return rows.map(rowToTarget);
-  }
-
-  recordAttempt(id: string, status: NotifyDeliveryStatus, error: string | null): void {
-    this.db
-      .prepare(`UPDATE notify_channels SET last_status = ?, last_error = ?, last_attempt_at = ? WHERE id = ?`)
-      .run(status, error, Date.now(), id);
-  }
-
-  // ---------- delivery log ----------------------------------------------------------
-
-  logDelivery(entry: NotifyDeliveryRecord): void {
-    this.db
-      .prepare(
-        `INSERT INTO notify_deliveries (id, channel_id, channel_name, title, status, http_status, error, attempts, created_at)
-         VALUES (@id, @channelId, @channelName, @title, @status, @httpStatus, @error, @attempts, @createdAt)`,
-      )
-      .run(entry);
-    this.db.prepare(`DELETE FROM notify_deliveries WHERE created_at < ?`).run(Date.now() - DELIVERY_RETENTION_MS);
-  }
-
-  deliveries(limit = 100): NotifyDeliveryRecord[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM notify_deliveries ORDER BY created_at DESC LIMIT ?`)
-      .all(limit) as DeliveryRow[];
-    return rows.map(rowToDelivery);
+function deliveryScopeKey(scope: IntegrationScope): string {
+  switch (scope.kind) {
+    case 'instance': return 'instance';
+    case 'workspace': return `workspace:${scope.workspaceId}`;
+    case 'repository': return `repository:${scope.workspaceId}:${scope.repo}`;
   }
 }

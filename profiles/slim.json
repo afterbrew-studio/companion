@@ -1,5 +1,20 @@
 {
   "name": "slim",
   "description": "The default build: a unified Today queue, repositories, agent execution, durable contributor workflows, the daily digest and instance administration. Everything else ships as an installable module in the full build.",
-  "modules": ["core", "workspace", "operate", "code", "workbench", "admin", "plan", "board", "automations"]
+  "modules": [
+    "core",
+    "workspace",
+    "integrations",
+    "operate",
+    "code",
+    "coderabbit",
+    "cursor-bugbot",
+    "jira",
+    "notify",
+    "workbench",
+    "admin",
+    "plan",
+    "board",
+    "automations"
+  ]
 }

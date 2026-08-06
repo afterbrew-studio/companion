@@ -632,10 +632,19 @@ export class Automations {
     if (automationOwner && repoRow?.pr_gate === 1 && !pipelineIncludesReview) {
       this.requireAuthorized(automationOwner, 'prs:read', 'read the pull request for review', job.repo);
       this.requireAuthorized(automationOwner, 'prs:act', 'run the PR review gate', job.repo);
-      this.requireAuthorized(automationOwner, 'runs:read', 'observe the PR review agent', job.repo);
-      this.requireAuthorized(automationOwner, 'runs:act', 'run the PR review agent', job.repo);
+      // The repository route decides whether this is a native agent run or an
+      // external integration. PrReviews performs the provider-specific live
+      // permission check; requiring run authority here would make CodeRabbit
+      // and delegated reviewers unusable for otherwise-valid custom roles.
       this.stage(job.id, `Reviewing PR #${pr.number}${updated ? ' at its new head' : ''}`);
-      await this.prReviews.gate(job.repo, pr.number, automationOwner);
+      // Repository automation is global for the cached repository row. Its
+      // canonical workspace is therefore also the policy source when the same
+      // repository is visible in several workspaces; silently choosing the
+      // first workspace the owner can access could execute another team's
+      // provider route.
+      await this.prReviews.gate(job.repo, pr.number, automationOwner, {
+        workspaceId: repoRow.workspace_id,
+      });
     } else if (pipelineIncludesReview) {
       this.stage(job.id, `PR #${pr.number} admitted to its review pipeline`);
     }

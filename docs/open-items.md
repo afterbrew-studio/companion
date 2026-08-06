@@ -145,13 +145,17 @@ someone hits it.
 
 ## 8. Outbound notifications `[BUILT]`
 
-`module-notify` forwards the inbox to Slack, Discord, ntfy or a signed webhook,
-off a single `notification.raised` bus event that every `ctx.notify.emit`
-raises. No new dependency: all four destinations are one HTTP POST.
+`module-notify` forwards the inbox through Slack, Discord, Jira Automation,
+ntfy or a signed-webhook provider, off a single `notification.raised` bus event
+that every `ctx.notify.emit` raises. Connections, write-only credentials,
+ownership and instance/workspace/repository scope belong to module-integrations;
+notify owns only execution fan-out and the bounded delivery history.
 
 Per-recipient routing is **built**: notifications carry an optional recipient,
-channels carry an optional owner, and delivery matches them 1:1 so a personal
-destination never becomes a firehose. `notify:self` lets anyone wire up their own.
+connections carry an optional owner, and delivery matches them 1:1 so a personal
+destination never becomes a firehose. Bundled personal delivery is limited to
+validated Slack and Discord webhook hosts; arbitrary destinations stay shared
+and admin-managed.
 
 Still open: **delivery is not durable.** A destination down through both attempts
 loses that notification (it stays in the inbox, and the failure is in the delivery

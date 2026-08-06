@@ -11,6 +11,7 @@
 // Type-only, so this leaves no runtime edge back to the barrel that re-exports
 // this file.
 import type { ReviewDepth, ReviewPostMode, ReviewStrictness } from './index.js';
+import type { IntegrationTargetRef } from '@companion/module-integrations/contract';
 
 export type PipelineType = 'pr' | 'issue' | 'platform';
 
@@ -128,6 +129,8 @@ export interface AiReviewStep extends BaseStep {
     readonly verify?: boolean;
     /** How much of the review `post` publishes. Absent means summary + inline. */
     readonly postMode?: ReviewPostMode;
+    /** Omitted follows the repository's integration route at run time. */
+    readonly provider?: IntegrationTargetRef;
   };
 }
 

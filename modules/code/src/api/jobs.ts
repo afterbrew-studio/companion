@@ -3,6 +3,7 @@ import type { TokenRefreshResult } from './github-accounts.js';
 import { createStepOutputScopeResolver } from './ws-scope.js';
 
 let offSetupCompleted: (() => void) | null = null;
+let offNativeReviewProvider: (() => void) | null = null;
 
 /**
  * Surface a credential going bad, and coming back.
@@ -51,6 +52,30 @@ export default defineJobs({
   onEnable: (ctx) => {
     const code = ctx.services.get('code');
     const operate = ctx.services.get('operate');
+
+    offNativeReviewProvider?.();
+    offNativeReviewProvider = ctx.services.get('integrations').registerProvider({
+      descriptor: {
+        id: 'companion.native-review',
+        moduleId: 'code',
+        vendor: 'Companion',
+        title: 'Companion AI review',
+        description: 'Companion-managed, evidence-backed review with chunking, verification and review-then-apply.',
+        category: 'review',
+        capabilities: ['code-review'],
+        scopes: ['instance', 'workspace', 'repository'],
+        connectionMode: 'none',
+        execution: 'local',
+        fields: [],
+        defaultFor: ['code-review'],
+      },
+      // PrReviews owns the native orchestration because it needs authenticated
+      // run admission and durable child-run state. The callback keeps the open
+      // provider contract honest if another module tries to execute it directly.
+      review: async () => {
+        throw new Error('Companion native review must be launched through the code service');
+      },
+    });
 
     // Aggregate review rows are separate from their child operate runs. Mark
     // the old process's live rows failed before durable queue entries replay as
@@ -117,6 +142,15 @@ export default defineJobs({
           ? { strictness: a.strictness }
           : {}),
         ...(typeof a.verify === 'boolean' ? { verify: a.verify } : {}),
+        ...(typeof a.workspaceId === 'string' ? { workspaceId: a.workspaceId } : {}),
+        ...(typeof a.providerId === 'string'
+          ? {
+              provider: {
+                providerId: a.providerId,
+                connectionId: typeof a.connectionId === 'string' ? a.connectionId : null,
+              },
+            }
+          : {}),
       }),
     );
     operate.orchestrator.registerResumer('ci-analysis', (a) =>
@@ -156,6 +190,8 @@ export default defineJobs({
     ctx.ws.unregisterScopeResolver('code.stepOutput');
     offSetupCompleted?.();
     offSetupCompleted = null;
+    offNativeReviewProvider?.();
+    offNativeReviewProvider = null;
     // Unplug our account-aware resolver; operate then fails network Git closed.
     ctx.services.get('operate').resetGithubTokenSource();
   },

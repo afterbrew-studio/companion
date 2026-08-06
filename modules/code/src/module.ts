@@ -10,7 +10,7 @@ export default defineManifest({
   id: 'code',
   title: 'Code',
   version: '0.1.0',
-  dependsOn: ['operate', 'workspace', 'core'],
+  dependsOn: ['operate', 'workspace', 'core', 'integrations'],
   permissions: [
     'repos:read',
     'repos:manage',

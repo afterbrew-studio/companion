@@ -1,6 +1,9 @@
 import { defineJobs, log } from '@moxxy/companion-sdk/server';
+import { notificationProviders } from './notification-providers.js';
 
 let unsubscribe: (() => void) | null = null;
+let unregisterProviders: Array<() => void> = [];
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * The one subscription this module exists for. Every inbox entry in the product
@@ -14,14 +17,51 @@ let unsubscribe: (() => void) | null = null;
 export default defineJobs({
   onEnable: (ctx) => {
     const notify = ctx.services.get('notify');
-    unsubscribe = ctx.bus.on('notification.raised', (notification) => {
-      void notify.fanOut(notification).catch((err) => log.warn('outbound fan-out failed', { err: String(err) }));
-    });
+    unsubscribe?.();
+    unsubscribe = null;
+    for (const unregister of unregisterProviders) unregister();
+    unregisterProviders = [];
+    try {
+      for (const provider of notificationProviders(() => ctx.config.publicUrl ?? null)) {
+        unregisterProviders.push(ctx.services.get('integrations').registerProvider(provider));
+      }
+    } catch (error) {
+      for (const unregister of unregisterProviders.reverse()) unregister();
+      unregisterProviders = [];
+      throw error;
+    }
+    try {
+      unsubscribe = ctx.bus.on('notification.raised', (notification) => {
+        void notify.fanOut(notification).catch((err) => log.warn('outbound fan-out failed', { err: String(err) }));
+      });
+      notify.pruneHistory();
+      if (pruneTimer) clearInterval(pruneTimer);
+      pruneTimer = setInterval(() => {
+        try {
+          notify.pruneHistory();
+        } catch (error) {
+          log.warn('notification delivery-history prune failed', { err: String(error) });
+        }
+      }, 6 * 60 * 60_000);
+      pruneTimer.unref();
+    } catch (error) {
+      unsubscribe?.();
+      unsubscribe = null;
+      for (const unregister of unregisterProviders.reverse()) unregister();
+      unregisterProviders = [];
+      if (pruneTimer) clearInterval(pruneTimer);
+      pruneTimer = null;
+      throw error;
+    }
   },
   onDisable: () => {
     // Dropping the subscription is what "disabled" means here: the inbox keeps
     // working, nothing leaves the instance.
     unsubscribe?.();
     unsubscribe = null;
+    for (const unregister of unregisterProviders) unregister();
+    unregisterProviders = [];
+    if (pruneTimer) clearInterval(pruneTimer);
+    pruneTimer = null;
   },
 });

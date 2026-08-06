@@ -2,7 +2,8 @@ import { createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import type { NotificationRecord } from '@companion/module-workspace/contract';
-import type { NotifyChannelKind } from '../contract/index.js';
+
+export type NotificationProviderKind = 'webhook' | 'slack' | 'discord' | 'ntfy';
 
 /** One attempt gets this long before it is abandoned as unreachable. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -54,7 +55,7 @@ type ResolveAddresses = (hostname: string) => Promise<readonly string[]>;
 const resolveAddresses: ResolveAddresses = async (hostname) =>
   (await lookup(hostname, { all: true, verbatim: true })).map((entry) => entry.address);
 
-/** Refuse a personal channel that can reach the daemon, LAN, metadata or another private service. */
+/** Refuse a personal destination that can reach the daemon, LAN, metadata or another private service. */
 export async function assertPublicDeliveryTarget(
   raw: string,
   resolve: ResolveAddresses = resolveAddresses,
@@ -93,23 +94,6 @@ export interface OutboundRequest {
   readonly body: string;
 }
 
-/**
- * A destination URL is a credential: a Slack webhook URL is enough to post into
- * that channel. Only host and a hint of the path are ever shown, so an
- * over-the-shoulder screenshot of the settings page leaks nothing usable.
- * A malformed URL is reported as such rather than echoed back.
- */
-export function redactTarget(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    const head = segments.length > 0 ? `/${segments[0]}` : '';
-    return `${parsed.host}${head}${segments.length > 1 ? '/…' : ''}`;
-  } catch {
-    return 'invalid URL';
-  }
-}
-
 /** An absolute link to the notification's page, when the instance knows its own URL. */
 function absoluteHref(notification: NotificationRecord, publicUrl: string | null): string | null {
   if (!notification.href) return null;
@@ -131,7 +115,7 @@ function plainText(notification: NotificationRecord, link: string | null): strin
  * is a verification recipe every receiver already has code for.
  */
 export function buildRequest(
-  kind: NotifyChannelKind,
+  kind: NotificationProviderKind,
   url: string,
   notification: NotificationRecord,
   opts: { publicUrl?: string | null; secret?: string | null } = {},
@@ -215,6 +199,9 @@ export async function deliver(
         // required by webhook providers. Store the 3xx as a visible failure.
         redirect: 'manual',
       });
+      // Webhook response bodies are not part of the contract. Cancel them so a
+      // noisy or malicious receiver cannot retain an idle socket/body stream.
+      await res.body?.cancel().catch(() => undefined);
       if (res.ok) return { ok: true, httpStatus: res.status, error: null, attempts: attempt };
       last = {
         ok: false,

@@ -30,6 +30,7 @@
   "dependencies": {
     "@moxxy/companion-contracts": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-integrations": "workspace:*",
     "@companion/module-operate": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",

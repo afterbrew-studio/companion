@@ -22,9 +22,21 @@ importers:
       '@companion/module-code':
         specifier: workspace:*
         version: link:../../modules/code
+      '@companion/module-coderabbit':
+        specifier: workspace:*
+        version: link:../../modules/coderabbit
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@companion/module-cursor-bugbot':
+        specifier: workspace:*
+        version: link:../../modules/cursor-bugbot
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../../modules/integrations
+      '@companion/module-jira':
+        specifier: workspace:*
+        version: link:../../modules/jira
       '@companion/module-notify':
         specifier: workspace:*
         version: link:../../modules/notify
@@ -166,9 +178,21 @@ importers:
       '@companion/module-code':
         specifier: workspace:*
         version: link:../../modules/code
+      '@companion/module-coderabbit':
+        specifier: workspace:*
+        version: link:../../modules/coderabbit
       '@companion/module-core':
         specifier: workspace:*
         version: link:../../modules/core
+      '@companion/module-cursor-bugbot':
+        specifier: workspace:*
+        version: link:../../modules/cursor-bugbot
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../../modules/integrations
+      '@companion/module-jira':
+        specifier: workspace:*
+        version: link:../../modules/jira
       '@companion/module-notify':
         specifier: workspace:*
         version: link:../../modules/notify
@@ -380,6 +404,9 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate
@@ -399,6 +426,31 @@ importers:
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/coderabbit:
+    dependencies:
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -446,7 +498,32 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  modules/notify:
+  modules/cursor-bugbot:
+    dependencies:
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/integrations:
     dependencies:
       '@companion/module-core':
         specifier: workspace:*
@@ -463,6 +540,80 @@ importers:
       zod:
         specifier: ^3.24.0
         version: 3.25.76
+    devDependencies:
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/jira:
+    dependencies:
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  modules/notify:
+    dependencies:
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
     devDependencies:
       '@moxxy/companion-services':
         specifier: workspace:*

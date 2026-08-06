@@ -46,10 +46,16 @@ export function PrReview({
 }): JSX.Element {
   const [actAs, setActAs] = useState('');
   const [mode, setMode] = useState<ReviewPostMode>('full');
+  const delegated = review.reviewMode === 'delegated';
   if (review.status === 'running') {
     return (
       <div className="flex flex-col gap-4">
-        <ReviewingStage review={review} canCancel={canUseAgents} busy={busy} onCancel={onCancel} />
+        <ReviewingStage
+          review={review}
+          canCancel={canUseAgents || (canAct && review.providerId !== 'companion.native-review')}
+          busy={busy}
+          onCancel={onCancel}
+        />
         {review.findings.length > 0 ? (
           <section className="card anim-in" aria-label="Findings available so far">
             <div className="flex flex-wrap items-center gap-2">
@@ -91,7 +97,7 @@ export function PrReview({
   // for it would attribute a judgement nobody made.
   const manual = review.source === 'human';
   // A pending review needs the reviewer's attention — green, gently pulsing.
-  const attn = pending && canAct;
+  const attn = pending && canAct && !delegated;
   const border = attn
     ? 'review-attn border-emerald-500/60 bg-gradient-to-b from-emerald-500/[0.06] to-transparent'
     : hero
@@ -103,13 +109,15 @@ export function PrReview({
           : 'border-amber-500/60';
 
   return (
-    <section className={`card anim-in ${border}`} aria-label="AI review">
+    <section className={`card anim-in ${border}`} aria-label="Code review">
       <div className="flex flex-wrap items-center gap-2">
-        <strong className="text-sm">{manual ? 'Your review' : 'AI review'}</strong>
+        <strong className="text-sm">{manual ? 'Your review' : 'Code review'}</strong>
+        {!manual ? <span className="badge">{providerLabel(review.providerId)}</span> : null}
+        {delegated ? <span className="badge-warn">delegated</span> : null}
         {v && !manual ? <span className={RISK_CLS[v.risk]}>{v.risk} risk</span> : null}
         {v && !manual ? <span className="badge">{v.recommendation.replace('_', ' ')}</span> : null}
         <span className="dim text-xs">
-          {manual ? 'started' : 'reviewed'} {timeAgo(review.createdAt)}
+          {manual ? 'started' : delegated ? 'requested' : 'reviewed'} {timeAgo(review.createdAt)}
         </span>
         {canReadRuns && review.runId ? (
           <a className="linkish text-xs" href={`#/runs/${review.runId}`}>
@@ -118,6 +126,7 @@ export function PrReview({
         ) : null}
         <span className="flex-1" />
         {review.status === 'applied' ? <span className="badge-ok">posted</span> : null}
+        {delegated && pending ? <span className="badge">waiting in provider</span> : null}
         {review.status === 'dismissed' ? <span className="badge">dismissed</span> : null}
         {review.status === 'cancelled' ? <span className="badge">cancelled</span> : null}
         {review.coverage.state === 'partial' && review.status === 'failed' ? (
@@ -125,7 +134,23 @@ export function PrReview({
         ) : null}
       </div>
 
-      {v ? (
+      {delegated ? (
+        <div className="mt-3 rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/30">
+          <p>{review.externalSummary ?? 'The review was handed off to the connected provider.'}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {review.externalUrl ? (
+              <a className="btn-ghost" href={review.externalUrl} target="_blank" rel="noreferrer">
+                Open provider activity ↗
+              </a>
+            ) : null}
+            {pending && canAct ? (
+              <button className="btn-ghost ml-auto" disabled={busy} onClick={onDismiss}>
+                Dismiss hand-off
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : v ? (
         <>
           {v.summary.trim() ? (
             <div className="mt-3">
@@ -177,7 +202,7 @@ export function PrReview({
         <ErrorBar error={review.error ?? 'no verdict'} className="mt-3" />
       )}
 
-      {review.coverage.state !== 'complete' && !manual ? (
+      {review.coverage.state !== 'complete' && !manual && !delegated ? (
         <div className="banner-warn mt-3 text-xs">
           Coverage {review.coverage.state}: {review.coverage.reviewedFiles}/{review.coverage.totalFiles} changed files
           directly inspected. This result is guidance only and cannot be published as a complete review or used by an
@@ -189,7 +214,7 @@ export function PrReview({
         <ReviewBudgetSummary budget={review.progress.budget} panel />
       ) : null}
 
-      {pending && canAct ? (
+      {pending && canAct && !delegated ? (
         <div className="mt-4 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
           <div className="flex flex-wrap items-center gap-2">
             <span className="dim mr-auto text-xs">Posts to GitHub as</span>
@@ -221,6 +246,13 @@ export function PrReview({
       ) : null}
     </section>
   );
+}
+
+function providerLabel(providerId: string): string {
+  if (providerId === 'companion.native-review') return 'Companion native';
+  if (providerId === 'coderabbit.cli') return 'CodeRabbit CLI';
+  if (providerId === 'cursor.bugbot') return 'Cursor Bugbot';
+  return providerId;
 }
 
 function postLabel(mode: ReviewPostMode, selected: number): string {

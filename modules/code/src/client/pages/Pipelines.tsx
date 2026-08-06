@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@companion/module-core/client';
 import { operateApi } from '@companion/module-operate/client';
+import { encodeIntegrationTarget, ReviewProviderSelect } from '@companion/module-integrations/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { ActionMenu, CardActions, EmptyState, ErrorBar, Field, FormActions, Modal, Page, PageHeader, RowsSkeleton, rowDelay, Section, useConfirm, useSettledFlag } from '@moxxy/companion-sdk/ui';
 import type {
@@ -44,7 +45,7 @@ const TYPE_META: Record<PipelineType, { label: string; hint: string; autoRun: st
 
 const KIND_META: Record<PipelineStepKind, { label: string; hint: string }> = {
   'checks-gate': { label: 'CI checks gate', hint: 'Fails when GitHub pipelines are red' },
-  'ai-review': { label: 'AI code review', hint: 'Built-in review agent reads the diff' },
+  'ai-review': { label: 'Code review', hint: 'Use the repository route or pin a connected review provider' },
   agent: { label: 'Custom agent', hint: 'Your prompt; agent returns pass/fail' },
   label: { label: 'Add labels', hint: 'Applies labels to the PR' },
   comment: { label: 'Post comment', hint: 'Comments on the PR (supports {{pr.title}}…)' },
@@ -715,7 +716,11 @@ function PipelineEditor({
                   </button>
                 </div>
                 {spec.type === 'inline' ? (
-                  <StepForm step={spec.step} onChange={(step) => updateStep(i, { type: 'inline', step })} />
+                  <StepForm
+                    workspaceId={workspaceId}
+                    step={spec.step}
+                    onChange={(step) => updateStep(i, { type: 'inline', step })}
+                  />
                 ) : (
                   <RefForm
                     spec={spec}
@@ -836,7 +841,15 @@ function stepIsValid(step: PipelineStep): boolean {
   }
 }
 
-function StepForm({ step, onChange }: { step: PipelineStep; onChange: (s: PipelineStep) => void }): JSX.Element {
+function StepForm({
+  workspaceId,
+  step,
+  onChange,
+}: {
+  workspaceId: string;
+  step: PipelineStep;
+  onChange: (s: PipelineStep) => void;
+}): JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 md:grid-cols-2">
@@ -854,12 +867,20 @@ function StepForm({ step, onChange }: { step: PipelineStep; onChange: (s: Pipeli
           </select>
         </Field>
       </div>
-      <StepConfigForm step={step} onChange={onChange} />
+      <StepConfigForm workspaceId={workspaceId} step={step} onChange={onChange} />
     </div>
   );
 }
 
-function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: PipelineStep) => void }): JSX.Element {
+function StepConfigForm({
+  workspaceId,
+  step,
+  onChange,
+}: {
+  workspaceId: string;
+  step: PipelineStep;
+  onChange: (s: PipelineStep) => void;
+}): JSX.Element {
   switch (step.kind) {
     case 'checks-gate':
       return (
@@ -975,6 +996,26 @@ function StepConfigForm({ step, onChange }: { step: PipelineStep; onChange: (s: 
     case 'ai-review':
       return (
         <div className="flex flex-col gap-3 text-sm">
+          <Field label="Review provider">
+            <ReviewProviderSelect
+              scope={{ kind: 'workspace', workspaceId }}
+              sharedOnly
+              value={step.config.provider ? encodeIntegrationTarget(step.config.provider) : ''}
+              onChange={(_value, provider) => {
+                if (provider) {
+                  onChange({ ...step, config: { ...step.config, provider } });
+                  return;
+                }
+                const config = { ...step.config };
+                delete config.provider;
+                onChange({ ...step, config });
+              }}
+            />
+            <span className="dim mt-1 block text-xs">
+              Repository route resolves primary and fallback when the pipeline runs. Delegated providers can be
+              informational only because their verdict arrives outside Companion.
+            </span>
+          </Field>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2">
               <input
@@ -1519,7 +1560,7 @@ function StepDefinitionEditor({
           </select>
         </Field>
 
-        <StepForm step={step} onChange={setStep} />
+        <StepForm workspaceId={workspaceId} step={step} onChange={setStep} />
 
         <ErrorBar error={error} />
         <FormActions>
