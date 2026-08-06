@@ -862,9 +862,11 @@ export interface ProviderCatalog {
 
 export interface CatalogProvider {
   readonly name: string;
-  /** Runner ids where it has credentials AND is enabled. */
+  /** Runtime-managed model access or credentials managed by a provider-backed runtime. */
+  readonly kind: 'runtime' | 'provider';
+  /** Runner ids where this source is ready and enabled. */
   readonly machines: ReadonlyArray<string>;
-  /** Runner ids that have credentials for it but where it is switched off. */
+  /** Runner ids where a provider source has credentials but is switched off. */
   readonly disabledOn: ReadonlyArray<string>;
   readonly models: ReadonlyArray<CatalogModel>;
 }
@@ -876,7 +878,7 @@ export interface CatalogModel {
   readonly machines: ReadonlyArray<string>;
 }
 
-/** A machine's own group: what its moxxy reported and what it allows. */
+/** A machine's own group: model sources reported by its selected runtimes. */
 export interface CatalogMachine {
   readonly id: string;
   readonly name: string;
@@ -903,6 +905,8 @@ export interface CatalogMachine {
 
 export interface CatalogMachineProvider {
   readonly name: string;
+  /** Runtime sources are displayed here, but their access is configured under Runners. */
+  readonly kind: 'runtime' | 'provider';
   /** Credentials resolved on this machine. */
   readonly ready: boolean;
   /** This machine's policy: agents may use it here. */
@@ -930,13 +934,13 @@ export interface RunnerProviderPolicy {
 }
 
 /**
- * What the fleet has been able to establish about provider credentials. The
- * third state is the point: a machine nobody has read yet must not be reported
- * as having nothing, or the page tells the operator to fix a problem that may
- * not exist.
+ * What the fleet has been able to establish about model sources. The third
+ * state is the point: a machine nobody has read yet must not be reported as
+ * having nothing, or the page tells the operator to fix a problem that may not
+ * exist.
  */
 export type ProviderDetection =
-  /** At least one machine holds credentials for these providers. */
+  /** At least one machine can serve models from these providers or runtimes. */
   | { readonly state: 'found'; readonly providers: readonly string[]; readonly machines: number }
   /** Every visible machine was read, and none holds any credentials. */
   | { readonly state: 'none' }
@@ -957,23 +961,23 @@ export type ProviderDetection =
 /**
  * Read the catalog for whether anything is actually configured anywhere.
  *
- * A provider NAME alone proves nothing. `found` needs a machine that reported
- * the provider ready, including one where the operator switched it off, since
- * that is a setting to flip rather than a dead end.
+ * A source NAME alone proves nothing. `found` needs a machine that reported the
+ * source ready, including a provider the operator switched off, since that is
+ * a setting to flip rather than a dead end.
  *
  * Only ONLINE machines are ever catalog-probed, so an offline machine that has
  * never reported stays unread indefinitely; counting it as "reading" would
  * promise an answer the daemon is not going to fetch.
  *
- * A machine whose harnesses bring their own models is never going to report a
- * provider, so it is left out of the count entirely rather than sitting in
- * "reading" forever.
+ * A runtime-managed source is folded into the same effective list. The
+ * `builtin` fallback therefore only covers a selected runtime that exposes no
+ * model catalog at all; it must not sit in "reading" forever.
  */
 export function detectProviders(catalog: ProviderCatalog): ProviderDetection {
-  const credentialed = catalog.providers.filter((p) => p.machines.length > 0 || p.disabledOn.length > 0);
-  if (credentialed.length > 0) {
-    const machines = new Set(credentialed.flatMap((p) => [...p.machines, ...p.disabledOn]));
-    return { state: 'found', providers: credentialed.map((p) => p.name), machines: machines.size };
+  const available = catalog.providers.filter((p) => p.machines.length > 0 || p.disabledOn.length > 0);
+  if (available.length > 0) {
+    const machines = new Set(available.flatMap((p) => [...p.machines, ...p.disabledOn]));
+    return { state: 'found', providers: available.map((p) => p.name), machines: machines.size };
   }
   const asked = catalog.machines.filter((m) => m.providerModels);
   if (asked.length === 0) return catalog.machines.length > 0 ? { state: 'builtin' } : { state: 'none' };

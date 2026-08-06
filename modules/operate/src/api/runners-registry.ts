@@ -961,18 +961,30 @@ export class Runners {
    * effective set: a model shows up once, carrying the machines that may serve
    * it. The merge is what a per-machine page cannot answer ("can agents use
    * model X at all"), so it lists only what is ready AND enabled somewhere.
-   * A provider exists here only when a selected runtime reports it. This keeps
-   * adapter-owned configuration out of the generic registry.
+   * Runtime-managed sources are included too, but labelled separately so the
+   * client does not offer a credential switch that cannot apply to them.
    */
   catalogSnapshot(userId: string | null = null): ProviderCatalog {
     const rows = this.visibleTo(userId).filter((row) => row.enabled === 1);
     const providers = new Map<
       string,
-      { machines: Set<string>; disabledOn: Set<string>; models: Map<string, CatalogModel> }
+      {
+        name: string;
+        kind: 'runtime' | 'provider';
+        machines: Set<string>;
+        disabledOn: Set<string>;
+        models: Map<string, CatalogModel>;
+      }
     >();
-    const entry = (name: string) => {
-      let found = providers.get(name);
-      if (!found) providers.set(name, (found = { machines: new Set(), disabledOn: new Set(), models: new Map() }));
+    const entry = (name: string, kind: 'runtime' | 'provider') => {
+      const key = `${kind}:${name}`;
+      let found = providers.get(key);
+      if (!found) {
+        providers.set(
+          key,
+          (found = { name, kind, machines: new Set(), disabledOn: new Set(), models: new Map() }),
+        );
+      }
       return found;
     };
     const machines: CatalogMachine[] = [];
@@ -981,45 +993,38 @@ export class Runners {
       const policy = policyOf(row);
       const servable = new Set<string>();
       const groups: CatalogMachineProvider[] = [];
-      // A machine whose runtimes bring their own models has a catalog, and it
-      // is not a provider catalog: folding it into the merged set would invent
-      // a provider nobody has credentials for and make an instance that runs
-      // only such machines read as configured.
-      //
-      // A machine running BOTH kinds answers the provider question, so its
-      // groups list the built-in runtime's models too (they are real models it
-      // serves) while that runtime still stays out of the merged set, which is
-      // about credentials.
+      // Both kinds are real model sources. Runtime-managed access is labelled
+      // separately so the client can show its models without pretending there
+      // are provider credentials to configure.
       const harnesses = this.harnessesOn(row);
       const fromProviders = servesProviderModels(harnesses);
       const builtinProviders = new Set(
         harnesses.filter((h) => h.capabilities.models === 'builtin').map((h) => h.id),
       );
-      for (const provider of fromProviders ? this.providersOn(row) : []) {
-        // A runtime that carries its own models needs no credential, so it gets
-        // no entry in the merged view — but it is still a real group on this
-        // machine, and its models still count towards what the machine serves.
-        const merged = builtinProviders.has(provider.name) ? null : entry(provider.name);
-        const providerEnabled = !policy.providers.has(provider.name);
+      for (const provider of this.providersOn(row)) {
+        const kind = builtinProviders.has(provider.name) ? 'runtime' : 'provider';
+        const merged = entry(provider.name, kind);
+        // A runtime is enabled under Runners, not through a credential switch
+        // on this page. Individual model policy still applies to explicit pins.
+        const providerEnabled = kind === 'runtime' || !policy.providers.has(provider.name);
         const models = provider.models.map((model): CatalogMachineModel => ({
           id: model.id,
           contextWindow: model.contextWindow,
           enabled: modelAllowed(policy, provider.name, model.id),
         }));
-        groups.push({ name: provider.name, ready: provider.ready, enabled: providerEnabled, models });
+        groups.push({ name: provider.name, kind, ready: provider.ready, enabled: providerEnabled, models });
         // Only a credential-ready provider the machine still allows contributes
         // to the merged set: listing models no machine can actually serve is
         // what made the old page misleading.
         if (!provider.ready) continue;
         if (!providerEnabled) {
-          merged?.disabledOn.add(row.id);
+          merged.disabledOn.add(row.id);
           continue;
         }
-        merged?.machines.add(row.id);
+        merged.machines.add(row.id);
         for (const model of models) {
           if (!model.enabled) continue;
           servable.add(model.id);
-          if (!merged) continue;
           const existing = merged.models.get(model.id);
           merged.models.set(model.id, {
             id: model.id,
@@ -1044,8 +1049,9 @@ export class Runners {
 
     return {
       providers: [...providers.entries()]
-        .map(([name, merged]): CatalogProvider => ({
-          name,
+        .map(([, merged]): CatalogProvider => ({
+          name: merged.name,
+          kind: merged.kind,
           machines: [...merged.machines],
           disabledOn: [...merged.disabledOn],
           models: [...merged.models.values()].sort((a, b) => a.id.localeCompare(b.id)),
@@ -1060,13 +1066,10 @@ export class Runners {
    * Every model some enabled SHARED machine is CAPABLE of serving, deduplicated
    * across providers and machines.
    *
-   * Read from the machines' own catalogs rather than from the merged provider
-   * view, because those answer different questions. The merged view is about
-   * CREDENTIALS: a runtime that carries its own models is left out of it, or
-   * the Providers page would invent a provider nobody has to configure. This
-   * one is about CAPABILITY, and a machine running Claude Code really can serve
-   * `opus`. Deriving this from that view is why a runtime's own models could
-   * not be pinned to a task at all.
+   * Read from the machines' own catalogs rather than from the merged model-
+   * source view because this method also applies machine policy and shared-
+   * runner scope directly. A machine running Claude Code really can serve
+   * `opus`, whether or not another machine reads credentials from a provider.
    *
    * This is what an instance-wide task pin may be set to. Capability only: a
    * machine that is offline right now, or blocks the task, still counts, because
