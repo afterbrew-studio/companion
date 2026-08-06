@@ -27,6 +27,24 @@ import type { RunnerBackend, RunnerEventSink } from './backend.js';
 const HTTP_TIMEOUT_MS = 30_000;
 
 /**
+ * What the daemon tells a remote agent about a run beyond where to put it.
+ * Everything is optional: a machine that reported protocol 6 gets none of it
+ * and runs what it always ran.
+ */
+export interface RemoteSpawnPlan {
+  readonly harness?: string;
+  readonly model?: string | null;
+  /** Resolved model spec; only ever sent over https (see `spawn`). */
+  readonly spec?: unknown;
+  readonly limits?: unknown;
+  /** Resolved MCP servers; they carry credentials, so they travel with `spec`. */
+  readonly mcpServers?: unknown;
+  readonly verifyCommand?: string;
+  readonly resultSchema?: unknown;
+  readonly attended?: boolean;
+}
+
+/**
  * A runner on another machine, reached through its companion-runner agent.
  * Every backend method is one authenticated HTTP call to `/agent/*`; a single
  * long-lived WebSocket receives the run event stream and fans it into the
@@ -54,6 +72,14 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly onStreamState?: (up: boolean) => void,
     /** Instance policy gate; the daemon decides, the runner only executes. */
     private readonly assertPushTarget: (repo: string, branch: string) => void = () => {},
+    /**
+     * What a run executes as on this machine. Injected because it is a row plus
+     * a provider record, neither of which an HTTP client should know how to
+     * read; the default keeps the pre-protocol-7 behaviour of saying nothing.
+     */
+    private readonly spawnPlan: (runId: string, access: AgentRunAccess) => RemoteSpawnPlan = () => ({}),
+    /** Whether this instance could resolve a model for that runtime itself. */
+    private readonly canSupplyModel: (harnessId: string) => boolean = () => false,
   ) {
     this.connectEvents();
   }
@@ -94,7 +120,17 @@ export class RemoteRunnerBackend implements RunnerBackend {
       // A protocol-5 agent has no `runtimes` field. Read the old wire shape
       // defensively so it is diagnosed as outdated instead of falling into the
       // generic offline catch before the protocol mismatch can be reported.
-      const runtimes = Array.isArray(h.runtimes) ? h.runtimes : [];
+      const reported = Array.isArray(h.runtimes) ? h.runtimes : [];
+      // A runtime that only lacks a model is not unavailable if THIS daemon can
+      // send one, which is a fact only this side holds: the machine cannot see
+      // whether it is reached over https, and a key never goes on a plain-http
+      // wire. Upgrading it here is what keeps both answers honest.
+      const secure = this.base().toLowerCase().startsWith('https://');
+      const runtimes = reported.map((runtime) =>
+        runtime.needsModel === true && secure && this.canSupplyModel(runtime.id)
+          ? { ...runtime, state: 'ready' as const, detail: null }
+          : runtime,
+      );
       // Work uses the machine's first runtime unless a lane explicitly says
       // otherwise, so health must judge that same primary rather than a ready
       // fallback no automatic run would reach.
@@ -138,8 +174,34 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   // ---------- gateway lifecycle ----------
 
+  /**
+   * Start a run on the agent, telling it which runtime and, where the control
+   * plane holds the credentials, which model.
+   *
+   * The spec carries an API key, so it crosses only over https. A runner on
+   * plain http is told the harness and the model reference and resolves the
+   * credential from its own configuration; if it has none the spawn fails
+   * there, visibly, rather than here with a key already on the wire.
+   *
+   * MCP server definitions carry credentials of their own — a bearer header, a
+   * token in an environment variable — so they travel under the same rule. A
+   * run on a plain-http runner therefore has no MCP tools rather than having
+   * them at the cost of a secret in the clear.
+   */
   async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
-    await this.call('POST', `/runs/${runId}/spawn`, { cwd, sessionId: runId, access });
+    const plan = this.spawnPlan(runId, access);
+    const secure = this.base().toLowerCase().startsWith('https://');
+    await this.call('POST', `/runs/${runId}/spawn`, {
+      cwd,
+      sessionId: runId,
+      access,
+      ...(plan.harness ? { harness: plan.harness, model: plan.model } : {}),
+      ...(plan.spec !== undefined && secure ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(plan.mcpServers !== undefined && secure ? { mcpServers: plan.mcpServers } : {}),
+      ...(plan.verifyCommand ? { verifyCommand: plan.verifyCommand } : {}),
+      ...(plan.resultSchema !== undefined ? { resultSchema: plan.resultSchema } : {}),
+      ...(plan.attended === true ? { attended: true } : {}),
+    });
     this.liveRuns.add(runId);
   }
   async stop(runId: string): Promise<void> {

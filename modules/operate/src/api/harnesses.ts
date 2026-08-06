@@ -1,3 +1,4 @@
+import type { AgentRunAccess, AskRequest, Harness, HarnessEvent, HistorySegment } from '@moxxy/companion-types';
 import type { HarnessDescriptor, HarnessOption, RunnerCatalog } from '../contract/index.js';
 import { CLAUDE_CODE_CAPABILITIES, CLAUDE_MODEL_ALIASES } from '../exec/claude-code.js';
 import { CODEX_CAPABILITIES, codexModels } from '../exec/codex.js';
@@ -69,7 +70,75 @@ export function builtinCatalog(harness: HarnessDescriptor): RunnerCatalog | null
 }
 
 /** In preference order: moxxy leads because it is the only full capability set. */
-export const HARNESSES: readonly HarnessDescriptor[] = [MOXXY_HARNESS, CLAUDE_CODE_HARNESS, CODEX_HARNESS];
+const COMPILED_IN: readonly HarnessDescriptor[] = [MOXXY_HARNESS, CLAUDE_CODE_HARNESS, CODEX_HARNESS];
+
+/** What a machine needs to start one run under a registered harness. */
+export interface HarnessSpawnRequest {
+  readonly runId: string;
+  readonly cwd: string;
+  readonly access: AgentRunAccess;
+  readonly model: string | null;
+  /** Somebody is watching, so a per-call approval would actually be answered. */
+  readonly attended: boolean;
+  /** Whose workspace this run serves; null means only shared credentials apply. */
+  readonly workspaceId: string | null;
+  readonly onEvent: (event: HarnessEvent) => void;
+  readonly onTurnComplete: (turnId?: string) => void;
+  readonly onAsk: (ask: AskRequest) => void;
+  readonly onAskResolved: (requestId: string) => void;
+  readonly onClose: () => void;
+}
+
+/**
+ * A harness contributed by a module. The three above are imported by name
+ * because they were here before the registry was; anything else arrives this
+ * way, so shipping a runtime does not mean editing this file.
+ */
+export interface HarnessRegistration {
+  readonly descriptor: HarnessDescriptor;
+  /** This machine's answer for it. A runtime with no binary never says absent. */
+  detect(): Promise<HarnessDetection>;
+  create(request: HarnessSpawnRequest): Promise<Harness>;
+  /** A reaped run's transcript, when the harness keeps one of its own. */
+  history?(runId: string, before: number | null, limit: number): HistorySegment;
+  /**
+   * What a REMOTE machine needs in order to start this harness for a run: a
+   * resolved model and the ceilings it runs under. Only the module that owns
+   * the credentials can answer, which is why it is here rather than in the
+   * backend that sends it. Returning null means the machine must resolve its
+   * own, which is what happens when the daemon cannot send one safely.
+   */
+  remotePlan?(
+    model: string | null,
+    workspaceId: string | null,
+    /** The run's access, because what a run may reach is part of what it needs. */
+    access: AgentRunAccess,
+  ): { readonly spec?: unknown; readonly limits?: unknown; readonly mcpServers?: unknown } | null;
+}
+
+const registered = new Map<string, HarnessRegistration>();
+
+export function registerHarness(registration: HarnessRegistration): void {
+  registered.set(registration.descriptor.id, registration);
+}
+
+/** Disabling a module takes its harness with it, as it takes its permissions. */
+export function unregisterHarness(id: string): void {
+  registered.delete(id);
+}
+
+export function registeredHarness(id: string): HarnessRegistration | null {
+  return registered.get(id) ?? null;
+}
+
+export function registeredHarnesses(): readonly HarnessRegistration[] {
+  return [...registered.values()];
+}
+
+/** Every harness this instance can run right now, compiled-in ones first. */
+export function allHarnesses(): readonly HarnessDescriptor[] {
+  return [...COMPILED_IN, ...[...registered.values()].map((entry) => entry.descriptor)];
+}
 
 /**
  * A machine's chosen set, as descriptors.
@@ -81,7 +150,7 @@ export const HARNESSES: readonly HarnessDescriptor[] = [MOXXY_HARNESS, CLAUDE_CO
  */
 export function harnessSet(stored: readonly string[]): readonly HarnessDescriptor[] {
   const known = stored
-    .map((id) => HARNESSES.find((h) => h.id === id))
+    .map((id) => allHarnesses().find((h) => h.id === id))
     .filter((h): h is HarnessDescriptor => h !== undefined);
   return known.length > 0 ? known : [MOXXY_HARNESS];
 }
@@ -98,7 +167,7 @@ export function harnessSet(stored: readonly string[]): readonly HarnessDescripto
 export function offeredHarnesses(detected: readonly HarnessDetection[]): HarnessOption[] {
   return detected.flatMap((d): HarnessOption[] => {
     if (d.state === 'absent') return [];
-    const known = HARNESSES.find((h) => h.id === d.id);
+    const known = allHarnesses().find((h) => h.id === d.id);
     if (!known) return [];
     return [
       { id: d.id, label: known.label, homepage: known.homepage, state: d.state, detail: d.detail, fix: d.fix },
@@ -116,7 +185,7 @@ export function offeredHarnesses(detected: readonly HarnessDetection[]): Harness
  * moxxy's answers would make a dead run look like a live one.
  */
 export function describeHarness(id: string): HarnessDescriptor {
-  return HARNESSES.find((h) => h.id === id) ?? claimsNothing(id);
+  return allHarnesses().find((h) => h.id === id) ?? claimsNothing(id);
 }
 
 function claimsNothing(id: string): HarnessDescriptor {

@@ -1,0 +1,52 @@
+{
+  "name": "@moxxy/companion-runtime",
+  "version": "0.5.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./child": {
+      "types": "./dist/child/main.d.ts",
+      "default": "./dist/child/main.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.33",
+    "@ai-sdk/azure": "^4.0.33",
+    "@ai-sdk/openai": "^4.0.32",
+    "@ai-sdk/openai-compatible": "^3.0.25",
+    "ai": "^7.0.55",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@moxxy/companion-types": "workspace:*",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "description": "Companion's built-in agent runtime: a light harness on the Vercel AI SDK, run as a subprocess.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moxxy-ai/companion.git",
+    "directory": "packages/runtime"
+  }
+}

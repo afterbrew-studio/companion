@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, mkdirSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -62,6 +62,23 @@ await build({
   logOverride: { 'ignored-bare-import': 'silent' },
   logLevel: 'info',
 });
+
+// The built-in runtime's child process, emitted ONLY when this profile carries
+// module-runtime. The module is inlined into the daemon bundle, so there is no
+// package on disk for it to resolve at run time: the child has to be a file
+// beside the bundle, which is what `childPath()` falls back to.
+if (readFileSync(join(root, 'apps/api/src/modules.generated.ts'), 'utf8').includes('@companion/module-runtime/')) {
+  await build({
+    entryPoints: [join(root, 'packages/runtime/src/child/main.ts')],
+    outfile: join(dist, 'agent.js'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node24',
+    banner: { js: nodeBanner },
+    logLevel: 'info',
+  });
+}
 
 cpSync(join(root, 'apps/web/dist'), join(dist, 'web'), { recursive: true });
 chmodSync(join(dist, 'index.js'), 0o755);

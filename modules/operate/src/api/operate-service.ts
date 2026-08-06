@@ -10,7 +10,7 @@ import type {
   RunVerification,
   TokenUsage,
 } from '../contract/index.js';
-import { estimateUsd } from '../contract/model-pricing.js';
+import { estimateUsd, type ModelPricing } from '../contract/model-pricing.js';
 import type { AgentPolicy } from './agent-policy.js';
 import type { Budgets } from './budgets.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -36,6 +36,7 @@ export class OperateService {
   /** Feature tasks modules registered, keyed by id — feeds the runner filter UI. */
   private readonly runTasks = new Map<string, RunTaskDescriptor>();
 
+
   /** Exact production prompt/parser seams registered by their owning modules. */
   readonly promptEvaluations = new PromptEvaluationCatalog();
 
@@ -48,6 +49,13 @@ export class OperateService {
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
     readonly runsStore: RunsStore,
     private readonly tokenSource: { current: GithubTokenSource },
+    /**
+     * What an operator's own models cost, registered by the module that owns
+     * their records. `model-pricing.ts` carries Anthropic list prices and cannot
+     * know an endpoint somebody configured this morning, so without this a BYOK
+     * instance has a spend ceiling that silently never triggers.
+     */
+    private readonly modelPrice: { current: (model: string | null) => ModelPricing | null },
     /** Monthly spend ceilings and cost attribution. */
     readonly budgets: Budgets,
     /** What agent work is permitted to do, as instance configuration. */
@@ -77,7 +85,11 @@ export class OperateService {
    */
   usageForRun(runId: string): RunUsageSnapshot | null {
     const row = this.runsStore.get(runId);
-    return row ? usageSnapshot(rowToRun(row, false)) : null;
+    if (!row) return null;
+    const run = rowToRun(row, false);
+    // The run's own snapshot first: a report of what was spent must not move
+    // when somebody corrects a provider record afterwards.
+    return usageSnapshot(run, run.price ?? this.priceOverride(run.model));
   }
 
   /**
@@ -195,6 +207,37 @@ export class OperateService {
     return { days, models };
   }
 
+  /** module-runtime plugs its own provider prices in at onEnable. */
+  setModelPriceResolver(resolve: (model: string | null) => ModelPricing | null): void {
+    this.modelPrice.current = resolve;
+    // The orchestrator snapshots the price onto a new run, so it needs the same
+    // answer the ceiling gets rather than a second registration to forget.
+    this.orchestrator.setModelPriceResolver(resolve);
+  }
+
+  /** An operator-declared price for a model, or null to use the built-in table. */
+  priceOverride(model: string | null): ModelPricing | null {
+    return this.modelPrice.current(model);
+  }
+
+  /**
+   * Which workspace a repository belongs to, registered by the module that
+   * owns repositories. Placement does not need it, but a provider scoped to
+   * particular workspaces does: without an answer a scoped credential could
+   * only be applied by guessing, and guessing which team's key pays for a run
+   * is the one mistake a per-workspace credential exists to prevent.
+   */
+  setWorkspaceForRepo(resolve: (repo: string) => string | null): void {
+    this.workspaceForRepoFn = resolve;
+  }
+
+  /** Null when nothing registered, or the repository is not tracked. */
+  workspaceForRepo(repo: string | null): string | null {
+    return repo === null ? null : this.workspaceForRepoFn(repo);
+  }
+
+  private workspaceForRepoFn: (repo: string) => string | null = () => null;
+
   /** module-code plugs its account-aware resolver in at onEnable. */
   setGithubTokenSource(source: GithubTokenSource): void {
     this.tokenSource.current = source;
@@ -214,12 +257,13 @@ export class OperateService {
 /** Pure form kept exported so capability/zero-telemetry semantics are testable. */
 export function usageSnapshot(
   run: Pick<RunRecord, 'model' | 'harness' | 'inputTokens' | 'outputTokens'>,
+  price: ModelPricing | null = null,
 ): RunUsageSnapshot {
   const reported = run.inputTokens + run.outputTokens > 0;
   return {
     inputTokens: run.inputTokens,
     outputTokens: run.outputTokens,
-    estimatedCostUsd: reported ? estimateUsd(run.model, run.inputTokens, run.outputTokens) : null,
+    estimatedCostUsd: reported ? estimateUsd(run.model, run.inputTokens, run.outputTokens, price) : null,
     telemetry: reported
       ? 'reported'
       : run.harness.capabilities.usage === 'tokens'

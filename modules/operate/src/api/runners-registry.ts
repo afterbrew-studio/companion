@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentStorageCleanupRequest } from '@moxxy/companion-types';
+import type { AgentRunAccess, AgentStorageCleanupRequest } from '@moxxy/companion-types';
 import type {
   CatalogMachine,
   CatalogMachineModel,
@@ -29,14 +29,22 @@ import type {
 import { servesProviderModels, taskPolicyAllows } from '../contract/index.js';
 import { log, paths } from '@moxxy/companion-services';
 import { detectHarnesses, type HarnessDetection } from '../exec/harness-detect.js';
-import { builtinCatalog, describeHarness, harnessSet, MOXXY_HARNESS, offeredHarnesses } from './harnesses.js';
+import {
+  builtinCatalog,
+  describeHarness,
+  harnessSet,
+  MOXXY_HARNESS,
+  offeredHarnesses,
+  registeredHarness,
+  registeredHarnesses,
+} from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import { LocalRunnerBackend, type LocalRunSpec } from './local-backend.js';
-import { RemoteRunnerBackend } from './remote-backend.js';
+import { RemoteRunnerBackend, type RemoteSpawnPlan } from './remote-backend.js';
 
 /** What legacy remote agents are offered until they report their runtime list. */
 const MOXXY_OPTION: HarnessOption = {
@@ -200,6 +208,18 @@ export class Runners {
     log.info('adopted detected agent runtimes for this machine', { runtimes: ready });
   }
 
+  /**
+   * Something that changes what this machine can run just happened: a runtime
+   * was contributed by a module, or its credentials were configured. Detection
+   * is cached for thirty seconds and adoption only ever fires for a machine
+   * that has never chosen, so both are safe to repeat.
+   */
+  async refreshRuntimes(): Promise<void> {
+    this.forgetDetection();
+    await this.adoptDetectedRuntimes();
+    this.broadcast({ t: 'runners.changed' });
+  }
+
   /** (Re)create remote backends to match the stored runner rows. */
   private rebuildRemotes(): void {
     const rows = this.store.runners.list().filter((r) => r.kind === 'remote');
@@ -233,6 +253,10 @@ export class Runners {
             if (up || this.health.get(row.id)?.status !== 'offline') void this.probeOne(row.id);
           },
           (repo, branch) => this.instancePolicy.assertPushTarget?.(repo, branch),
+          (runId, access) => this.remoteSpawnPlan(runId, access),
+          // Only asks whether this instance could resolve a model at all, so it
+          // names a representative access rather than any particular run's.
+          (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null, null, 'workspace-write') != null,
         ),
       );
     }
@@ -767,14 +791,56 @@ export class Runners {
   }
 
   /**
-   * The agent runtimes a machine runs work through, in preference order. Only
-   * the local machine can be set to anything else: the runner agent protocol
-   * carries moxxy-shaped calls, so a remote machine runs moxxy whatever its row
-   * says.
+   * The agent runtimes a machine runs work through, in preference order.
+   *
+   * Remote machines answer from their own row now that the protocol carries a
+   * harness id on spawn. An agent too old to read it reports a protocol
+   * mismatch and reads as outdated, so it never receives placement at all;
+   * before that existed, a remote machine ran moxxy whatever its row said and
+   * this had to force it.
    */
   private harnessesOn(row: RunnerRow): readonly HarnessDescriptor[] {
-    return row.kind === 'local' ? harnessSet(row.harnesses) : [MOXXY_HARNESS];
+    return harnessSet(row.harnesses);
   }
+
+  /**
+   * What to tell a remote agent about a run: which runtime, which model, and,
+   * for a runtime whose credentials this control plane holds, the resolved
+   * spec. Only the module that owns those credentials can produce one, so it
+   * is asked rather than reconstructed here.
+   */
+  private remoteSpawnPlan(runId: string, access: AgentRunAccess): RemoteSpawnPlan {
+    const row = this.store.runs.get(runId);
+    const harness = row?.harness ?? MOXXY_HARNESS.id;
+    const model = row?.model ?? null;
+    const attended = row?.kind === 'interactive' || row?.kind === 'assistant';
+    const plan =
+      registeredHarness(harness)?.remotePlan?.(model, this.workspaceForRepo(row?.repo ?? null), access) ?? null;
+    const extras = this.runExtras?.(runId) ?? { verifyCommand: null, resultSchema: undefined };
+    return {
+      harness,
+      model,
+      ...(plan?.spec !== undefined ? { spec: plan.spec, limits: plan.limits } : {}),
+      ...(plan?.mcpServers !== undefined ? { mcpServers: plan.mcpServers } : {}),
+      ...(extras.verifyCommand ? { verifyCommand: extras.verifyCommand } : {}),
+      ...(extras.resultSchema !== undefined ? { resultSchema: extras.resultSchema } : {}),
+      ...(attended ? { attended: true } : {}),
+    };
+  }
+
+  /** Set by the composition root once the module that owns repositories is up. */
+  setWorkspaceForRepo(resolve: (repo: string | null) => string | null): void {
+    this.workspaceForRepo = resolve;
+  }
+
+  private workspaceForRepo: (repo: string | null) => string | null = () => null;
+
+  /** Set by the orchestrator, which owns both per-run answers. */
+  setRunExtras(resolve: (runId: string) => { verifyCommand: string | null; resultSchema: unknown }): void {
+    this.runExtras = resolve;
+  }
+
+  private runExtras: ((runId: string) => { verifyCommand: string | null; resultSchema: unknown }) | null = null;
 
   /**
    * What is installed on this machine, cached.
@@ -789,7 +855,10 @@ export class Runners {
     const now = Date.now();
     if (this.detectedAt + DETECT_TTL_MS > now && this.detectedHarnesses) return this.detectedHarnesses;
     this.detectedAt = now;
-    this.detectedHarnesses = await detectHarnesses(paths.moxxyHome());
+    this.detectedHarnesses = await detectHarnesses(
+      paths.moxxyHome(),
+      registeredHarnesses().map((entry) => () => entry.detect()),
+    );
     return this.detectedHarnesses;
   }
 
@@ -865,8 +934,17 @@ export class Runners {
    */
   private localRunSpec(runId: string): LocalRunSpec {
     const row = this.store.runs.get(runId);
-    if (!row) return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null };
-    return { harness: row.harness, model: row.model };
+    if (!row) {
+      return { harness: this.harnessFor(LOCAL_RUNNER_ID).id, model: null, attended: false, workspaceId: null };
+    }
+    // The same two kinds `canSeeRun` calls private to their owner: those are
+    // the runs a person is sitting in front of.
+    return {
+      harness: row.harness,
+      model: row.model,
+      attended: row.kind === 'interactive' || row.kind === 'assistant',
+      workspaceId: this.workspaceForRepo(row.repo),
+    };
   }
 
   /**
@@ -879,7 +957,27 @@ export class Runners {
     const row = this.store.runners.get(id);
     if (!row) throw new Error('runner not found');
     const selected = this.harnessesOn(row).map((h) => h.id);
-    if (row.kind !== 'local') return { options: [MOXXY_OPTION], selected };
+    // A remote machine answers from what its agent reported, which is the same
+    // "detect, do not ask" rule the local machine follows: it lists what is
+    // really there rather than what this build could in principle run.
+    if (row.kind !== 'local') {
+      const reported = this.health.get(id)?.runtimes ?? [];
+      const options = reported.flatMap((runtime): HarnessOption[] => {
+        const known = describeHarness(runtime.id);
+        if (known.homepage === '') return [];
+        return [
+          {
+            id: runtime.id,
+            label: known.label,
+            homepage: known.homepage,
+            state: runtime.state === 'ready' ? 'ready' : 'installed',
+            detail: runtime.detail,
+            fix: null,
+          },
+        ];
+      });
+      return { options: options.length > 0 ? options : [MOXXY_OPTION], selected };
+    }
     return { options: offeredHarnesses(await this.detected()), selected };
   }
 

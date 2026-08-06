@@ -42,6 +42,8 @@
       "runners:manage",
       "runs:act",
       "runs:read",
+      "runtime:manage",
+      "runtime:read",
       "settings:manage",
       "skills:manage",
       "slop:act",
@@ -93,6 +95,7 @@
       "runners:connect",
       "runs:act",
       "runs:read",
+      "runtime:read",
       "skills:manage",
       "slop:act",
       "slop:manage",
@@ -461,6 +464,21 @@
     "runs:read": {
       "owner": "operate",
       "title": "View agent runs",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
+    "runtime:manage": {
+      "owner": "runtime",
+      "title": "Configure model providers and their credentials",
+      "grants": [
+        "admin"
+      ]
+    },
+    "runtime:read": {
+      "owner": "runtime",
+      "title": "View model providers and models",
       "grants": [
         "admin",
         "maintainer"

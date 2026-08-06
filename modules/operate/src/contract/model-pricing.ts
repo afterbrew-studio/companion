@@ -48,9 +48,22 @@ export function priceFor(model: string | null): ModelPricing | null {
   return null;
 }
 
-/** Estimated spend in USD for a token count at a model's list price; null when unpriced. */
-export function estimateUsd(model: string | null, inputTokens: number, outputTokens: number): number | null {
-  const price = priceFor(model);
+/**
+ * Estimated spend in USD for a token count; null when unpriced.
+ *
+ * `override` is what an operator declared for a model on their own endpoint.
+ * Nobody can price an arbitrary gateway, so a BYOK instance answers for its own
+ * models and this table stays the default for the ids it knows. It is still one
+ * function deciding, which is the property that matters: the number the
+ * operator was shown cannot disagree with the number that blocked them.
+ */
+export function estimateUsd(
+  model: string | null,
+  inputTokens: number,
+  outputTokens: number,
+  override?: ModelPricing | null,
+): number | null {
+  const price = override ?? priceFor(model);
   if (price === null) return null;
   return (inputTokens / 1_000_000) * price.inputPerMTok + (outputTokens / 1_000_000) * price.outputPerMTok;
 }

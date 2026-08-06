@@ -26,6 +26,7 @@ import { planReview, type ReviewChunk } from '../contract/review-chunks.js';
 import { meetsStrictness, terminalReviewCoverage } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type { CodeStore } from './code-store.js';
 import type { OutcomeCounts } from './quality.js';
 import type { Orchestrator, Checkouts, RunUsageSnapshot } from './operate-types.js';
@@ -974,6 +975,7 @@ export class PrReviews {
             userId,
             issueNumber: prNumber,
             prompt: reviewPrompt(briefing, diff),
+            resultSchema: resultSchemaOf(verdictSchema),
             timeoutMs: reviewTimeoutMs(depth),
             resume: {
               type: 'pr-review',
@@ -1165,6 +1167,7 @@ export class PrReviews {
       userId,
       issueNumber: prNumber,
       prompt: changeMapPrompt(briefing, sizes),
+      resultSchema: resultSchemaOf(changeMapSchema),
       timeoutMs: reviewTimeoutMs('high-level'),
     });
     if (!finalMessage?.trim()) {
@@ -1300,6 +1303,7 @@ export class PrReviews {
             userId,
             issueNumber: prNumber,
             prompt: chunkPrompt(briefing, chunk, chunkDiff, at + 1, chunks.length),
+            resultSchema: resultSchemaOf(chunkSchema),
             timeoutMs: CHUNK_TIMEOUT_MS,
           }, 1);
           const parsed = chunkSchema.parse(extractModelJson(finalMessage ?? ''));
@@ -1433,6 +1437,7 @@ export class PrReviews {
         userId,
         issueNumber: prNumber,
         prompt: summaryPrompt(briefing, findings, unread),
+        resultSchema: resultSchemaOf(summarySchema),
         timeoutMs: 8 * 60_000,
       });
       const parsed = summarySchema.parse(extractModelJson(finalMessage ?? ''));
@@ -1496,6 +1501,7 @@ export class PrReviews {
             userId,
             issueNumber: prNumber,
             prompt: verifyPrompt(finding, baseRef, diffEvidence),
+            resultSchema: resultSchemaOf(verificationSchema),
             timeoutMs: 6 * 60_000,
           }, reserveCalls);
           const parsed = verificationSchema.parse(extractModelJson(finalMessage ?? ''));

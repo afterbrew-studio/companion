@@ -38,6 +38,8 @@ import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
 import { cleanupRunnerStorage, loadHistoryWithFallback } from '@companion/module-operate/exec';
+import type { Harness } from '@moxxy/companion-types';
+import { RUNTIME_HARNESS_ID, type RuntimeSessions } from './runtime-sessions.js';
 import { log } from './log.js';
 
 /**
@@ -53,6 +55,8 @@ export interface AgentDeps {
   readonly checkouts: Checkouts;
   readonly moxxy: MoxxyCli | null;
   readonly maxRuns: number;
+  /** The built-in runtime's live sessions on this machine (protocol 7). */
+  readonly runtime: RuntimeSessions;
 }
 
 class HttpError extends Error {
@@ -179,6 +183,14 @@ async function route(
       ok: true,
       runtimes: [
         {
+          id: RUNTIME_HARNESS_ID,
+          label: 'Companion',
+          version: null,
+          state: deps.runtime.state.ready ? 'ready' : 'unavailable',
+          detail: deps.runtime.state.detail,
+          needsModel: deps.runtime.state.needsModel,
+        },
+        {
           id: 'moxxy',
           label: 'Moxxy',
           version: deps.moxxy?.version ?? null,
@@ -190,7 +202,7 @@ async function route(
             : 'Runtime executable not found',
         },
       ],
-      liveRuns: deps.pool.liveCount,
+      liveRuns: deps.pool.liveCount + deps.runtime.liveCount,
       maxRuns: deps.maxRuns,
       protocol: RUNNER_AGENT_PROTOCOL,
     };
@@ -268,11 +280,36 @@ async function routeRun(
   switch (action) {
     case 'spawn': {
       requireMethod(method, 'POST', action);
-      const { cwd, sessionId, access } = body as AgentSpawnRequest;
+      const { cwd, sessionId, access, harness, spec, limits, mcpServers, verifyCommand, resultSchema, attended } =
+        body as AgentSpawnRequest;
       requireString(cwd, 'cwd');
       requireString(sessionId, 'sessionId');
       if (access !== 'read-only' && access !== 'workspace-write' && access !== 'trusted-assistant') {
         throw new HttpError(400, 'access must be read-only, workspace-write, or trusted-assistant');
+      }
+      // Protocol 7: the run says which runtime it was recorded under. An older
+      // daemon sends nothing and gets what this agent always ran.
+      if (harness === RUNTIME_HARNESS_ID) {
+        mkdirSync(cwd, { recursive: true });
+        if (deps.pool.liveCount + deps.runtime.liveCount >= deps.maxRuns) {
+          throw new HttpError(429, `this machine is running ${deps.maxRuns} agents already`);
+        }
+        try {
+          await deps.runtime.spawn({
+            runId,
+            cwd,
+            access,
+            spec,
+            limits,
+            mcpServers,
+            ...(verifyCommand ? { verifyCommand } : {}),
+            ...(resultSchema !== undefined ? { resultSchema } : {}),
+            ...(attended === true ? { attended: true } : {}),
+          });
+        } catch (err) {
+          throw new HttpError(503, err instanceof Error ? err.message : String(err));
+        }
+        return { ok: true };
       }
       if (!deps.moxxy) throw new HttpError(503, 'moxxy CLI is not installed on this runner');
       // The pool pins MOXXY_SESSION_ID to the run id (sticky resume + history
@@ -286,6 +323,10 @@ async function routeRun(
     }
     case 'stop': {
       requireMethod(method, 'POST', action);
+      if (deps.runtime.has(runId)) {
+        await deps.runtime.stop(runId);
+        return { ok: true };
+      }
       await deps.pool.get(runId)?.stop();
       return { ok: true };
     }
@@ -293,10 +334,14 @@ async function routeRun(
       requireMethod(method, 'POST', action);
       const { prompt, model, attachments } = body as AgentPromptRequest;
       requireString(prompt, 'prompt');
+      const session = deps.runtime.get(runId);
+      if (session) return session.runTurn({ prompt, ...(model === undefined ? {} : { model }), attachments });
       return liveClient(deps.pool, runId).runTurn({ prompt, ...(model === undefined ? {} : { model }), attachments });
     }
     case 'command': {
       requireMethod(method, 'POST', action);
+      const session = deps.runtime.get(runId);
+      if (session) return runtimeCommand(session, body);
       return runCommand(deps.pool, runId, body);
     }
     case 'history': {
@@ -304,6 +349,9 @@ async function routeRun(
       const limit = clampInt(url.searchParams.get('limit'), DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
       const beforeRaw = url.searchParams.get('before');
       const before = beforeRaw === null || beforeRaw === '' ? null : clampInt(beforeRaw, 0, Number.MAX_SAFE_INTEGER);
+      if (deps.runtime.has(runId) || deps.runtime.get(runId) !== null) {
+        return deps.runtime.history(runId, before, limit);
+      }
       const handle = deps.pool.get(runId);
       return loadHistoryWithFallback(
         handle?.client.isOpen ? () => handle.client.loadHistory(runId, before, limit) : null,
@@ -314,11 +362,36 @@ async function routeRun(
     }
     case 'session-info': {
       requireMethod(method, 'GET', action);
+      const session = deps.runtime.get(runId);
+      if (session) return { info: await session.sessionInfo() } satisfies AgentSessionInfoResponse;
       return { info: await liveClient(deps.pool, runId).sessionInfo() } satisfies AgentSessionInfoResponse;
     }
     default:
       throw new HttpError(404, `no run action: ${action}`);
   }
+}
+
+/**
+ * The subset of the command surface a built-in-runtime session answers. Its
+ * capabilities declare no session controls, so a daemon that asks for one
+ * skipped the check rather than meeting a harness that fell short.
+ */
+async function runtimeCommand(session: Harness, body: unknown): Promise<unknown> {
+  const { command } = (body ?? {}) as AgentCommandRequest;
+  if (!command || typeof command !== 'object' || typeof command.kind !== 'string') {
+    throw badRequest('missing command');
+  }
+  if (command.kind === 'abortTurn') {
+    await session.abortTurn(command.turnId);
+    return { ok: true };
+  }
+  if (command.kind === 'respondAsk') {
+    requireString(command.requestId, 'requestId');
+    if (!command.response || typeof command.response !== 'object') throw badRequest('missing response');
+    await session.respondAsk(command.requestId, command.response);
+    return { ok: true };
+  }
+  throw badRequest(`the built-in runtime has no ${command.kind}`);
 }
 
 /** Dispatch the misc typed gateway commands onto the run's live GatewayClient. */

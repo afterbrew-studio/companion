@@ -27,6 +27,16 @@ export interface AgentRuntimeHealth {
   readonly version: string | null;
   readonly state: 'ready' | 'unavailable';
   readonly detail: string | null;
+  /**
+   * The runtime is installed and has no model of its own (protocol 7).
+   *
+   * The machine cannot answer whether that matters, because only the daemon
+   * knows whether it reaches this runner over https and therefore whether it
+   * may send one. So the agent reports `unavailable` and states the fact; the
+   * daemon upgrades it to ready when it can supply the model itself. Both sides
+   * stay honest, and neither has to guess the other's configuration.
+   */
+  readonly needsModel?: boolean;
 }
 
 export interface AgentHealth {
@@ -42,8 +52,15 @@ export interface AgentHealth {
  * Version 6 replaces implementation-specific health fields with the runtime
  * list the machine actually exposes. A previous agent is rejected rather than
  * having one runtime silently treated as the machine itself.
+ *
+ * Version 7 lets a spawn say WHICH runtime to start, and hand it a resolved
+ * model. Before it, every remote machine ran moxxy whatever its row said, so a
+ * run recorded under another harness could only be kept off remote machines
+ * entirely. A version 6 agent still works: it ignores the new fields and runs
+ * what it always ran, which is why the daemon only places a non-moxxy run on a
+ * machine that reported 7.
  */
-export const RUNNER_AGENT_PROTOCOL = 6;
+export const RUNNER_AGENT_PROTOCOL = 7;
 
 /**
  * The hard execution boundary selected by Companion for a run. It is separate
@@ -94,6 +111,45 @@ export interface AgentSpawnRequest {
   readonly sessionId: string;
   /** Immutable per-run policy; runners must reject unknown values. */
   readonly access: AgentRunAccess;
+  /**
+   * Which runtime to start (protocol 7). Absent means the machine's own
+   * default, which is what every agent before 7 did unconditionally.
+   */
+  readonly harness?: string;
+  /** Model reference for that runtime, as recorded on the run. */
+  readonly model?: string | null;
+  /**
+   * A resolved model spec for a runtime whose credentials the CONTROL PLANE
+   * holds. Opaque here: its shape belongs to the runtime that reads it.
+   *
+   * It carries an API key, so the daemon sends it only over https. A runner
+   * reached over plain http resolves its own model from its own configuration
+   * instead, exactly as `COMPANION_RUNNER_GITHUB_TOKEN` overrides the hub's git
+   * credential. Refusing loudly beats shipping a credential in the clear.
+   */
+  readonly spec?: unknown;
+  /** Resource ceilings the runtime enforces on itself. */
+  readonly limits?: unknown;
+  /**
+   * MCP servers this run may reach, already filtered by the daemon's policy and
+   * opaque here for the same reason `spec` is.
+   *
+   * They can carry credentials, so they travel under the https rule `spec`
+   * does. Added without a protocol bump: an agent too old to read the field
+   * runs the same work with its built-in tools alone, which is a smaller loss
+   * than refusing to place the run at all.
+   */
+  readonly mcpServers?: unknown;
+  /** The repository's own verification command, when one is configured. */
+  readonly verifyCommand?: string;
+  /** JSON Schema the caller wants the answer in (structured one-shots). */
+  readonly resultSchema?: unknown;
+  /**
+   * Somebody is watching this run, so a runtime that can ask before a tool call
+   * will actually be answered. Absent means unattended, which is what every
+   * agent before protocol 7 assumed.
+   */
+  readonly attended?: boolean;
 }
 
 /** POST /agent/runs/:runId/prompt */

@@ -12,7 +12,7 @@ import type {
   TaskModelSnapshot,
 } from '../contract/index.js';
 import { taskModuleId } from '../contract/index.js';
-import { HARNESSES } from './harnesses.js';
+import { allHarnesses } from './harnesses.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 
 // ---------- runs ----------
@@ -640,7 +640,7 @@ export default defineRoutes((ctx) => {
         // placements nothing could execute, so an unknown id is refused here
         // rather than silently dropped when the set is read back.
         for (const id of body.harnesses ?? []) {
-          if (!HARNESSES.some((h) => h.id === id)) throw badRequest(`unknown agent runtime ${id}`);
+          if (!allHarnesses().some((h) => h.id === id)) throw badRequest(`unknown agent runtime ${id}`);
         }
         return { runner: await op.runners.update(params.id, body) };
       },

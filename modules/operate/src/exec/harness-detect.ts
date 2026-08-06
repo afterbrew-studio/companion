@@ -39,13 +39,25 @@ export interface HarnessDetection {
  * moxxy leads because it is the only one with the full capability set and stays
  * the default.
  */
-export async function detectHarnesses(moxxyHome: string): Promise<readonly HarnessDetection[]> {
-  const [moxxy, claude, codex] = await Promise.all([
+export async function detectHarnesses(
+  moxxyHome: string,
+  extra: readonly (() => Promise<HarnessDetection>)[] = [],
+): Promise<readonly HarnessDetection[]> {
+  const [moxxy, claude, codex, ...registered] = await Promise.all([
     detectMoxxyCli(moxxyHome),
     detectClaudeCode(),
     detectCodexCli(),
+    // A registered harness answers for itself: one that ships inside this
+    // bundle has no binary to look for, so "is it on PATH" is the wrong
+    // question and its own check is the only honest one.
+    ...extra.map((detect) => detect()),
   ]);
-  return [moxxyState(moxxy, configuredProviderNames()), claudeState(claude), codexState(codex)];
+  return [
+    moxxyState(moxxy, configuredProviderNames()),
+    claudeState(claude),
+    codexState(codex),
+    ...registered,
+  ];
 }
 
 /**

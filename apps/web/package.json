@@ -28,6 +28,7 @@
     "@companion/module-planner": "workspace:*",
     "@companion/module-playground": "workspace:*",
     "@companion/module-refinement": "workspace:*",
+    "@companion/module-runtime": "workspace:*",
     "@companion/module-slop": "workspace:*",
     "@companion/module-workbench": "workspace:*",
     "@companion/module-workspace": "workspace:*",

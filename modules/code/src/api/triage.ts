@@ -4,6 +4,7 @@ import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { IssueRecord, TriageResult, TriageVerdict } from '../contract/index.js';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type { CodeStore } from './code-store.js';
 import type { OutcomeCounts } from './quality.js';
 import type { Orchestrator, Checkouts } from './operate-types.js';
@@ -135,6 +136,7 @@ export class Triage {
             userId,
             issueNumber,
             prompt: buildTriagePrompt(issue, openIssues),
+            resultSchema: resultSchemaOf(verdictSchema),
             timeoutMs: 6 * 60_000,
             resume: { type: 'triage', args: { repo, number: issueNumber, userId } },
             onStarted: (startedRunId) => {

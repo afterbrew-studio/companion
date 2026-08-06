@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type { ProposalAnalysis, ProposalListRecord, ProposalRecord } from '../contract/index.js';
 import type { PlanStore } from './plan-store.js';
 import type { Checkouts, Fixes, Orchestrator } from './cross-types.js';
@@ -167,6 +168,7 @@ export class Proposals {
           userId,
           prompt,
           timeoutMs: 10 * 60_000,
+          resultSchema: resultSchemaOf(analysisSchema),
           onQueued: context.onQueued,
           onStarted: (runId) => {
             this.store.proposals.update(id, { analysisRunId: runId });

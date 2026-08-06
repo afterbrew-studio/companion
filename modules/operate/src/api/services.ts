@@ -7,7 +7,7 @@ import { adoptDailyMoxxyHome, healCredentialLinks, seedPermissionDenyRules } fro
 import { Checkouts } from '../exec/checkouts.js';
 import { AgentPolicy } from './agent-policy.js';
 import { OperateStore } from './operate-store.js';
-import { Budgets } from './budgets.js';
+import { Budgets, type PriceResolver } from './budgets.js';
 import { Orchestrator } from './orchestrator.js';
 import { WebhookTunnel } from './webhook-tunnel.js';
 import { Skills } from './skills.js';
@@ -83,8 +83,15 @@ export default defineServices(async (ctx) => {
   // The ceiling reads the runs table directly rather than accumulating, so it
   // cannot drift from what was actually spent. Its alert is an inbox entry with
   // no workspace: a spend ceiling is instance-wide, not a workspace's concern.
-  const budgets = new Budgets(store.runs, ctx.moduleConfig, (title, body) =>
-    ctx.notify.emit({ workspaceId: null, kind: 'action_required', title, body, href: '#/settings/modules' }),
+  // Late-bound because the module that owns provider records enables after
+  // this one, and the ceiling has to price its models the moment it does.
+  const modelPrice: { current: PriceResolver } = { current: () => null };
+  const budgets = new Budgets(
+    store.runs,
+    ctx.moduleConfig,
+    (title, body) =>
+      ctx.notify.emit({ workspaceId: null, kind: 'action_required', title, body, href: '#/settings/modules' }),
+    (model) => modelPrice.current(model),
   );
   const orchestrator = new Orchestrator(
     store,
@@ -122,9 +129,14 @@ export default defineServices(async (ctx) => {
     skills,
     store.runs,
     tokenSource,
+    modelPrice,
     budgets,
     agentPolicy,
   );
+  // The registry resolves a scoped provider credential per run, and only the
+  // module that owns repositories knows which workspace a repository belongs
+  // to, so the answer is forwarded rather than duplicated.
+  orchestrator.runners.setWorkspaceForRepo((repo) => service.workspaceForRepo(repo));
   service.registerRunTask({ id: 'operate.chat', label: 'Interactive chats', placeable: true });
   ctx.services.register('operate', service);
 });

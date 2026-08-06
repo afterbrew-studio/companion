@@ -1,0 +1,6 @@
+{
+  "name": "cloud",
+  "description": "The hosted build: slim plus the built-in agent runtime, so an instance executes agent work with nothing installed on the box and nobody logged into it. Adds oidc and notify because an instance nobody signs into locally still needs SSO and an alert path. Every added module lands as Available: see each manifest's autoInstall.",
+  "extends": "slim",
+  "modules": ["runtime", "oidc", "notify"]
+}

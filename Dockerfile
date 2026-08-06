@@ -33,11 +33,39 @@ RUN pnpm gen:modules --profile "$PROFILE"
 # "COPY ... /app/apps/companion-cli/dist: not found". The `test -d` keeps the
 # failure here even if the bundle silently no-ops again.
 RUN pnpm -C apps/companion-cli run bundle && test -d apps/companion-cli/dist
+# The runner agent ships from the same build, so one image tree produces both
+# the control plane and the execution capacity it places work on.
+RUN pnpm --filter @moxxy/companion-runner build && test -f apps/companion-runner/dist/agent.js
 # A standalone manifest with ONLY the bundle's runtime dependencies. The CLI's
 # own package.json cannot be reused here: npm refuses to parse the `workspace:*`
 # devDependencies even with --omit=dev.
 RUN node -e "const p=require('./apps/companion-cli/package.json');\
 require('fs').writeFileSync('/app/runtime-package.json',JSON.stringify({name:'companion-runtime',version:p.version,private:true,type:'module',dependencies:p.dependencies},null,2))"
+
+# ---------------------------------------------------------------------------
+# The RUNNER image: extra execution capacity, and nothing else.
+#
+# It carries the agent plus its child bundle, and needs no Companion checkout,
+# no database and no external CLI. Give it a model of its own
+# (COMPANION_RUNNER_PROVIDER_*) or reach it over https so the controlling
+# Companion may send one; a machine with neither refuses those runs and says
+# why. Build it with: docker build --target runner -t companion-runner .
+FROM base AS runner
+ENV NODE_ENV=production
+ENV COMPANION_RUNNER_HOME=/data
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app/apps/companion-runner/dist ./dist
+# `ws` is the agent bundle's only external dependency; the child bundle inlines
+# everything it needs, which is what lets this stage carry no toolchain.
+RUN npm install --omit=dev --no-audit --no-fund ws && rm -rf /root/.npm
+RUN ln -s /app/dist/index.js /usr/local/bin/companion-runner && chmod +x /app/dist/index.js
+EXPOSE 8920
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.COMPANION_RUNNER_PORT||8920)+'/agent/health',{headers:{authorization:'Bearer '+(process.env.COMPANION_RUNNER_TOKEN||'')}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["node", "/app/dist/index.js"]
 
 FROM base AS runtime
 ENV NODE_ENV=production
@@ -63,8 +91,15 @@ COPY --from=build /app/apps/companion-cli/dist ./dist
 # published 0.35.2. Below the dist copy the layer dies whenever the app does,
 # which is what "the image ships current moxxy" has to mean.
 # Pin it by passing MOXXY_VERSION when a specific one is wanted.
+#
+# INSTALL_MOXXY=false skips it entirely, which is the point of the `cloud`
+# profile: that build carries module-runtime, whose harness is a subprocess of
+# this bundle, so the image needs no external agent runtime and nobody has to
+# exec in and sign one in. Leave it true for slim/full, where the instance
+# expects an operator-installed CLI.
 ARG MOXXY_VERSION=latest
-RUN npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm
+ARG INSTALL_MOXXY=true
+RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm; fi
 # The `companion` command every doc and runbook uses. The runtime manifest is
 # generated from the CLI's dependencies alone, so it carries no `bin` field and
 # npm installs no launcher: without this, `docker exec <c> companion module list`

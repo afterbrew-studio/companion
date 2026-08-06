@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { ServiceMap, SpaServerMessage, BusEvents } from '@moxxy/companion-contracts';
 import { log, paths } from '@moxxy/companion-sdk/server';
 import { extractModelJson } from '@moxxy/companion-sdk/agents';
+import { resultSchemaOf } from '@companion/module-operate/api';
 import type { PrRecord } from '@companion/module-code/contract';
 import type {
   SlopAction,
@@ -297,6 +298,10 @@ export class SlopService {
             userId,
             issueNumber: prNumber,
             prompt: detectionPrompt(pr, ruleSet, provenance, diffEvidence, evidenceComplete),
+            // The same schema `parseSlopVerdict` validates against, so a harness
+            // that can enforce a shape refuses a malformed verdict at the
+            // provider instead of handing the parser something to choke on.
+            resultSchema: resultSchemaOf(verdictSchema),
             timeoutMs: DETECT_TIMEOUT_MS,
             resume: { type: 'slop-detect', args: { repo, number: prNumber, userId } },
           });

@@ -292,6 +292,16 @@ registers a run task through them. A third party shipping opencode, hermes or pi
 should be a module registering a harness, with no core change. This is what
 makes the contract genuinely open rather than a two-way switch.
 
+### 8. A harness with no binary
+
+Every harness above is software an operator installs and signs in on a machine,
+which is what stops an instance being deployable without a person on the box.
+[`builtin-harness.md`](builtin-harness.md) plans a fourth one that Companion
+owns and runs as a subprocess of its own bundle, with
+[`model-providers.md`](model-providers.md) for the BYOK contract it runs on and
+[`cloud-runtime.md`](cloud-runtime.md) for how it ships. It needs the registry
+above to exist first, which is what moves phase 7 ahead of it.
+
 ## Choosing at setup, by detecting rather than asking
 
 First-run setup already asks which modules to start with. It should also settle

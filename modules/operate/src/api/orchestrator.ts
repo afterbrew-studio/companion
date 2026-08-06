@@ -21,6 +21,7 @@ import { laneKey } from '../contract/index.js';
 import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
 import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
+import type { ModelPricing } from '../contract/model-pricing.js';
 import { rowToRun, rowToRunList } from './runs-store.js';
 import { LOCAL_RUNNER_ID } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
@@ -226,12 +227,51 @@ export class Orchestrator implements RunnerEventSink {
         assertPushTarget: (repo, branch) => this.agentPolicy.assertPushTarget(repo, branch),
       },
     );
+    // A remote machine gets the repository's verification command with the
+    // spawn, so a harness that offers it as a tool offers the same command on
+    // every machine rather than only where the resolver happens to live.
+    this.runners.setRunExtras((runId) => this.runExtras(runId));
   }
+
+  /**
+   * What an operator's own models cost. Shared with the ceiling through the
+   * same holder, so the number snapshotted onto a run and the number that
+   * blocked it cannot disagree.
+   */
+  setModelPriceResolver(resolve: (model: string | null) => ModelPricing | null): void {
+    this.modelPrice = resolve;
+  }
+
+  private modelPrice: (model: string | null) => ModelPricing | null = () => null;
 
   /** Registered by module-code at enable; see OperateService.setVerifyCommandResolver. */
   setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
     this.verifyCommandFor = resolve;
   }
+
+  /**
+   * What a harness needs to know about a run beyond its prompt and its model:
+   * the command its repository verifies with, and the shape the caller wants
+   * the answer in. Both are per run and neither belongs on the run row: the
+   * first is repository configuration read live, the second is only meaningful
+   * while the run is in flight.
+   */
+  runExtras(runId: string): { verifyCommand: string | null; resultSchema: unknown } {
+    const repo = this.getRun(runId)?.repo;
+    return {
+      verifyCommand: repo ? (this.verifyCommandFor(repo)?.trim() || null) : null,
+      resultSchema: this.resultSchemas.get(runId),
+    };
+  }
+
+  /**
+   * The JSON Schema a one-shot wants its answer in, held only while the run is
+   * live. Most of Companion's model use is a structured verdict parsed out of a
+   * final message; a harness that can enforce the shape turns a malformed
+   * answer into a retryable tool error instead of a run that succeeded and
+   * produced something nobody can read.
+   */
+  private readonly resultSchemas = new Map<string, unknown>();
 
   /** Registered by the composition root once module-core is available. */
   setRunAuthorityResolver(resolve: (username: string) => boolean): void {
@@ -670,6 +710,10 @@ export class Orchestrator implements RunnerEventSink {
       issueNumber: opts.issueNumber ?? null,
       proposalId: opts.proposalId ?? null,
       branch: opts.branch ?? null,
+      // Snapshotted here, at the one moment the model is settled. Reading the
+      // operator's provider record later would reprice a run that already
+      // happened, which is the one thing a spend report must not do.
+      price: this.modelPrice(model),
       prUrl: null,
       model,
       runnerId,
@@ -1122,6 +1166,12 @@ export class Orchestrator implements RunnerEventSink {
     shouldStart?: (runId: string) => boolean;
     /** Called after each non-empty provider usage event is persisted. */
     onUsage?: (runId: string) => void;
+    /**
+     * JSON Schema the answer must satisfy. A harness that can enforce it does;
+     * one that cannot ignores it and the caller parses the final message as
+     * before, so passing it is never a behaviour change on its own.
+     */
+    resultSchema?: unknown;
   }): Promise<{ runId: string; finalMessage: string | null }> {
     // Captured HERE, while the request that asked for this run is still on the
     // stack. The job below may not start for minutes, by which point there is
@@ -1130,6 +1180,9 @@ export class Orchestrator implements RunnerEventSink {
     const job = async (): Promise<{ runId: string; finalMessage: string | null }> => {
       const run = await this.createRun({ ...opts, lane });
       if (opts.onUsage) this.usageObservers.set(run.id, opts.onUsage);
+      // Recorded BEFORE the first prompt: the harness reads it when the session
+      // starts, which is inside sendPrompt below.
+      if (opts.resultSchema !== undefined) this.resultSchemas.set(run.id, opts.resultSchema);
       try {
         opts.onStarted?.(run.id);
       } catch (err) {
@@ -1170,6 +1223,7 @@ export class Orchestrator implements RunnerEventSink {
         } else {
           this.setStatus(run.id, 'completed');
         }
+        this.resultSchemas.delete(run.id);
         return { runId: run.id, finalMessage };
       } catch (err) {
         this.setStatus(run.id, 'failed', String(err));
