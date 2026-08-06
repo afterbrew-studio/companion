@@ -3,7 +3,7 @@
  * SDK surface so an out-of-tree integration never has to import this private
  * workspace package at runtime.
  */
-export { IntegrationUnavailableError } from '@moxxy/companion-sdk/server';
+export { IntegrationUnavailableError, NOTIFICATION_KIND_OPTIONS } from '@moxxy/companion-sdk/server';
 export type {
   IntegrationConnectionAccess,
   IntegrationDeliveryResult,

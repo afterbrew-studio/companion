@@ -84,9 +84,10 @@ export { paths, likeArg, safeParse, currentUser, log } from '@moxxy/companion-se
 export type { DaemonConfig, Logger } from '@moxxy/companion-services';
 
 // ---- open integration-provider ABI ------------------------------------------
-export { IntegrationUnavailableError } from './integrations.js';
+export { IntegrationUnavailableError, NOTIFICATION_KIND_OPTIONS } from './integrations.js';
 export type {
   EffectiveIntegrationRoute,
+  IntegrationNotificationKind,
   IntegrationCapability,
   IntegrationCatalog,
   IntegrationCategory,

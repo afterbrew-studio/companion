@@ -1,4 +1,5 @@
 import type { NotificationRecord } from '@companion/module-workspace/contract';
+import { NOTIFICATION_KIND_OPTIONS } from '@companion/module-integrations/provider';
 import type {
   IntegrationConnectionAccess,
   IntegrationNotificationInput,
@@ -88,9 +89,9 @@ export function notificationProviders(publicUrl: () => string | null): Integrati
           {
             key: 'eventKinds',
             label: 'Event kinds',
-            kind: 'text',
-            placeholder: 'action_required,error,finished',
-            description: 'Optional comma-separated filter: action_required, finished, error, info.',
+            kind: 'multiselect',
+            options: NOTIFICATION_KIND_OPTIONS,
+            description: 'Pick nothing to receive every kind.',
           },
           ...(definition.signingSecret
             ? [{
@@ -162,7 +163,9 @@ export function acceptsIntegrationNotification(
   return kinds.has(notification.kind);
 }
 
-const NOTIFICATION_KINDS = new Set(['action_required', 'finished', 'error', 'info']);
+// Derived from the options the form offers, so the menu and the allow-list
+// cannot drift into disagreeing about what a valid kind is.
+const NOTIFICATION_KINDS = new Set(NOTIFICATION_KIND_OPTIONS.map((option) => option.value));
 
 function eventKinds(value: string): Set<string> {
   return new Set(value.split(',').map((kind) => kind.trim()).filter(Boolean));

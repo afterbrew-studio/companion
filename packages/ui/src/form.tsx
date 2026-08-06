@@ -170,7 +170,7 @@ export function SegmentedControl<T extends string>({
 }): JSX.Element {
   return (
     <fieldset
-      className={`flex h-9 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
+      className={`flex h-10 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
         disabled ? 'opacity-60' : ''
       } ${className}`}
     >
@@ -183,7 +183,7 @@ export function SegmentedControl<T extends string>({
           <label
             key={o.value}
             title={o.hint}
-            className={`flex min-w-max flex-1 items-center justify-center rounded-md px-3 text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-500 ${
+            className={`flex min-w-max flex-1 items-center justify-center rounded-md px-4 text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-500 ${
               disabled ? 'cursor-default' : 'cursor-pointer'
             } ${
               on
