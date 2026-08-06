@@ -7,7 +7,7 @@ import { Database } from '@moxxy/companion-services';
 import migrations from '../dist/api/migrations.js';
 import { OperateStore } from '../dist/api/operate-store.js';
 import { Orchestrator } from '../dist/api/orchestrator.js';
-import { describeHarness, HARNESSES, MOXXY_HARNESS } from '../dist/api/harnesses.js';
+import { allHarnesses, describeHarness, MOXXY_HARNESS } from '../dist/api/harnesses.js';
 import { rowToRun } from '../dist/api/runs-store.js';
 import { LOCAL_RUNNER_ID } from '../dist/api/runners-store.js';
 import { servesProviderModels, unmeteredHarnesses } from '../dist/contract/index.js';
@@ -121,8 +121,11 @@ test('a harness this build does not implement claims nothing, rather than borrow
 });
 
 test('every registered harness has a distinct id and a label to show', () => {
-  assert.equal(new Set(HARNESSES.map((h) => h.id)).size, HARNESSES.length);
-  for (const h of HARNESSES) assert.ok(h.label.trim().length > 0, `${h.id} has no label`);
+  // `allHarnesses()` rather than a constant: harnesses are a registry now, so
+  // the ones a module contributes have to meet this bar too.
+  const harnesses = allHarnesses();
+  assert.equal(new Set(harnesses.map((h) => h.id)).size, harnesses.length);
+  for (const h of harnesses) assert.ok(h.label.trim().length > 0, `${h.id} has no label`);
 });
 
 // ---------- where the answer reaches the pages -----------------------------

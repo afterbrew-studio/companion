@@ -326,9 +326,13 @@ test('picking a runtime on this machine is what a run started here records', asy
   assert.equal(orchestrator.getRun('run-1').harness.id, 'claude-code');
 });
 
-test('a machine reached over the network runs moxxy whatever its row says', () => {
-  // Written straight to the row: the write path refuses this, and the read path
-  // has to refuse it too, because the agent protocol carries moxxy calls only.
+test('a machine reached over the network answers with its own row, not with moxxy', () => {
+  // Before protocol 7 a spawn could not name a runtime, so a remote machine ran
+  // moxxy whatever its row said and this had to be forced here. The protocol
+  // carries the harness id now, and an agent too old to read it reports a
+  // mismatch and reads as outdated, so it never receives placement at all. The
+  // forcing is what would be wrong today: it would silently run a remote fix
+  // under a runtime the run was not recorded against.
   const { orchestrator } = fixture((store) => {
     addRemote(store);
     store.runners.update('runner-b', { harnesses: ['claude-code'] });
@@ -336,9 +340,9 @@ test('a machine reached over the network runs moxxy whatever its row says', () =
 
   assert.deepEqual(
     orchestrator.runners.get('runner-b').harnesses.map((h) => h.id),
-    [MOXXY_HARNESS.id],
+    ['claude-code'],
   );
-  assert.equal(orchestrator.runners.harnessFor('runner-b').id, MOXXY_HARNESS.id);
+  assert.equal(orchestrator.runners.harnessFor('runner-b').id, 'claude-code');
 });
 
 // ---------- detection: three states, and what each one does -----------------
