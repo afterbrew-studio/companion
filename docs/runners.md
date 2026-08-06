@@ -63,11 +63,10 @@ The default matters most on an allow-list instance: without it, work nobody
 explicitly permitted would quietly land on the daemon's machine, which is exactly
 where the policy meant to keep it out.
 
-Placement is **provider-aware**. Runners advertise the model providers configured
-in their moxxy home, Companion prefers one that can serve the run's pinned or
-default model, and never places work on a runner with no providers at all. If a
-run still lands somewhere its model is unavailable, that turn quietly rides the
-runner's own default model rather than failing.
+Placement is **provider-aware**. Each selected runtime advertises the providers
+and models it can actually serve. Companion prefers a compatible runner and
+never places work on a machine whose runtime reports no usable capability. An
+unpinned run always delegates model selection to that runtime's own default.
 
 The local execution path is unchanged by any of this; remote runners are
 entirely additive. Manage them in the admin **Runners** module.
@@ -95,13 +94,9 @@ manage a background runner. The full environment is in
 [`apps/companion-runner/README.md`](../apps/companion-runner/README.md). In a
 monorepo checkout: `pnpm --filter @moxxy/companion-runner dev`.
 
-## The moxxy runtime
+## Runtime ownership
 
-moxxy is an **external runtime**, not a package dependency of this repository.
-Companion expects the `moxxy` CLI to be installed and drives it over the moxxy
-gateway wire protocol.
-
-Every agent run uses its own `moxxy serve` and gateway process pair under an
-isolated `MOXXY_HOME` inside Companion's data directory (`~/.companion/moxxy-home`
-by default, `/data/moxxy-home` in Docker). That keeps Companion's sessions
-separate from your own moxxy desktop, TUI and CLI sessions.
+Agent runtimes are external tools, not package dependencies of the Companion
+core. Install and authenticate them on the machine that will execute work.
+Companion detects supported runtimes, reads their reported capabilities, and
+keeps every run isolated from the operator's normal CLI sessions.

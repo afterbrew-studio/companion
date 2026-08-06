@@ -1,16 +1,11 @@
 import { defineNav, defineQuickActions, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * Daily Digest is shared Home context. Automations configure the active
- * workspace, while AI Help reaches the top bar through its own slot.
+ * Daily Digest is shared Home context. Repository automation configuration is
+ * reached from Repositories, while AI Help reaches the top bar through a slot.
  */
 
 const icons = {
-  automations: (
-    <NavIcon>
-      <path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5L13 3z" />
-    </NavIcon>
-  ),
   digest: (
     <NavIcon>
       <path d="M4 5.5h13V17a3 3 0 0 0 3 3H7a3 3 0 0 1-3-3V5.5z" />
@@ -31,17 +26,6 @@ export const nav = defineNav([
     order: 0,
     freshOn: (msg) => (msg.t === 'reports.changed' ? 'digest' : null),
     icon: icons.digest,
-  },
-  {
-    key: 'automations',
-    label: 'Automations',
-    hash: '#/automations',
-    shortcut: 'u',
-    permission: 'automations:manage',
-    section: 'workspace-manage',
-    order: 10,
-    audiences: ['developer'],
-    icon: icons.automations,
   },
 ]);
 

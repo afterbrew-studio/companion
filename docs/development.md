@@ -100,7 +100,7 @@ profile is not buildable:
 ```
 
 Being in a build is not the same as being on. Optional modules ship with
-`autoInstall: false`, so a fresh `full` install still boots with the slim five
+`autoInstall: false`, so a fresh `full` install still boots with the slim baseline
 enabled and the rest waiting under **Available**.
 
 ## Writing a module

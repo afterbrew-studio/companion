@@ -8,9 +8,9 @@ import { routes } from './routes.js';
 import { slots } from './slots.js';
 
 /**
- * The `/client` barrel — module-automations' web surface: the Automations
- * route under the Operate sidebar section, plus AI Help, which attaches itself
- * to the shell's top bar through a slot. Vite reads this as source.
+ * The `/client` barrel — module-automations' web surface: repository-owned
+ * settings contributed into Code, workspace health routes, and AI Help in the
+ * shell top bar. Vite reads this as source.
  */
 
 export { automationsApi } from './api.js';

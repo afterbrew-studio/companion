@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { AgentActivity } from '@companion/module-operate/client';
+import { useAuth } from '@companion/module-core/client';
+import { Slot } from '@moxxy/companion-sdk/client';
 import { ActionMenu, AiActionMenu, Breadcrumb, CopyText, ErrorBar, Markdown, MetaItem, Page, PageLoading, Spinner, Switch, timeAgo, useConfirm, type MenuAction } from '@moxxy/companion-sdk/ui';
 import type { TriageResult } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
@@ -10,6 +12,7 @@ import { PipelineRunList } from '../components/PipelineRunList.js';
 import { GitHubUser } from '../widgets.js';
 
 export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
+  const { can } = useAuth();
   const {
     issue,
     triage,
@@ -133,6 +136,8 @@ export function IssueDetail({ repo, number }: { repo: string; number: number }):
       <article className="card mt-4 max-h-[480px] overflow-y-auto">
         {issue.body ? <Markdown text={issue.body} /> : <span className="dim text-sm">(no description)</span>}
       </article>
+
+      <Slot name="work-item.links" can={can} props={{ kind: 'issue', repo, number }} />
 
       {canReadRuns ? <AgentActivity repo={repo} issueNumber={number} /> : null}
 

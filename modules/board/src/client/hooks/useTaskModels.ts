@@ -31,4 +31,4 @@ export function useTaskModels(enabled: boolean): TaskModelOptions | null {
   return options;
 }
 
-const EMPTY: TaskModelOptions = { models: [], workerModel: null, defaultModel: '' };
+const EMPTY: TaskModelOptions = { models: [], workerModel: null };

@@ -2,21 +2,16 @@ import { defineAcl } from '@moxxy/companion-sdk/server';
 import '../contract/index.js';
 
 /**
- * Reading which destinations exist is operational awareness a maintainer needs
- * ("why did nobody hear about this?"); creating one means handing the instance
- * a credential that posts into a third party, which is administration.
+ * Connection management belongs to module-integrations. Notify owns only the
+ * bounded delivery history, which operators and maintainers use to diagnose a
+ * destination that stopped receiving events.
  */
 export default defineAcl({
   permissions: [
-    { id: 'notify:read', title: 'View outbound notification channels' },
-    { id: 'notify:manage', title: 'Configure outbound notification channels' },
-    { id: 'notify:self', title: 'Send your own notifications to a channel you own' },
+    { id: 'notify:read', title: 'View outbound notification delivery history' },
   ],
   grants: {
-    admin: '*',
-    maintainer: ['notify:read', 'notify:self'],
-    // Same shape as runners:connect: anyone may wire up their OWN destination
-    // without being able to touch a shared one.
-    business: ['notify:self'],
+    admin: ['notify:read'],
+    maintainer: ['notify:read'],
   },
 });

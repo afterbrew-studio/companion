@@ -350,48 +350,38 @@ command configured, or a runner agent too old to have the endpoint, says so.
 
 ### Being told about it **[available]**
 
-An inbox nobody has open is not an alert. `module-notify` (in the `full` build,
-not installed by default) forwards inbox entries to Slack, Discord, ntfy or your
-own endpoint, filtered by notification kind and optionally scoped to one
-workspace.
-
-```sh
-companion module install notify        # then add channels under Admin → Notifications
-```
+An inbox nobody has open is not an alert. The default build forwards inbox
+entries through notification providers configured in **Integrations**: Slack,
+Discord, Jira Automation, ntfy or an HMAC-signed webhook. Connections can be
+instance-, workspace- or repository-scoped and filtered by notification kind.
 
 It subscribes to a single bus event that every `ctx.notify.emit` raises, so a
 module that starts raising notifications later is delivered without a change
 here.
 
-**Channels are shared or personal, never both.** A notification carries an
-optional recipient; a channel carries an optional owner; delivery matches them 1:1.
-A team channel therefore receives workspace-wide events only, and a personal one
-receives only what names its owner. Letting either take both would make every
-personal destination a firehose of everybody's work, which is the thing this
-exists to avoid. Board card updates are addressed to the card's owner; instance
-alerts (budget, runner offline, credential health) are unaddressed and go to the
-team.
-
-A person wires up their own destination with `notify:self`, which every role
-holds, on the same reasoning as `runners:connect`: configuring your own is not the
-same authority as configuring the team's. The owner is taken from the session and
-never from the request, so a personal channel cannot be pointed at somebody else's
-work. Somebody else's personal channel reads as absent.
+**Connections are shared or personal, never both.** A notification carries an
+optional recipient and personal connections carry an owner; delivery matches
+them 1:1. A shared connection therefore receives team events, while a personal
+one receives only what names its owner. The bundled Slack and Discord providers
+allow personal destinations because their webhook hosts are fixed and
+validated. Arbitrary ntfy and generic webhook hosts remain admin-managed shared
+connections. Ownership, secret storage and scope are enforced once by the
+integration plane rather than reimplemented by notify.
 
 Properties that matter operationally:
 
 - **Delivery cannot fail the thing it reports.** The inbox row is durable before
   any request is made; a dead destination is recorded, never thrown.
 - **The destination URL is a credential** (a Slack webhook URL is enough to post
-  into that channel), so it is stored server-side and never returned to a
-  browser. The settings page shows a host hint.
+  into that channel), so the integration plane stores it as a write-only secret
+  and never returns it to a browser.
 - **A generic webhook body can be HMAC-signed** as `x-companion-signature-256:
   sha256=<hex>`, the same recipe GitHub uses, so a receiver already has code to
   verify it.
 - Requests use the daemon's global dispatcher, so an instance behind
   `HTTPS_PROXY` reaches Slack the same way it reaches GitHub. Transient failures
-  (429, 5xx, network) get one retry; a 404 gets none. Every attempt is in a
-  14-day delivery log, because a channel that silently stopped working is the
+  (429, 5xx, network) get one retry; a 404 gets none. Every final outcome is in a
+  14-day delivery log, because a destination that silently stopped working is the
   failure mode that matters.
 
 ---

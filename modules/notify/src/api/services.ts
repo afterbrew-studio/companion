@@ -9,5 +9,8 @@ import { NotifyService } from './notify-service.js';
  */
 export default defineServices((ctx) => {
   const store = new NotifyStore(ctx.db);
-  ctx.services.register('notify', new NotifyService(store, () => ctx.config.publicUrl ?? null, ctx.broadcast));
+  ctx.services.register(
+    'notify',
+    new NotifyService(store, ctx.services.get('integrations'), () => ctx.config.publicUrl ?? null, ctx.broadcast),
+  );
 });

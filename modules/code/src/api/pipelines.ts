@@ -133,6 +133,12 @@ export const pipelineStepSchema = z.discriminatedUnion('kind', [
       strictness: z.enum(['blockers-only', 'balanced', 'pedantic']).optional(),
       verify: z.boolean().optional(),
       postMode: z.enum(['full', 'comments', 'summary']).optional(),
+      provider: z
+        .object({
+          providerId: z.string().min(3).max(120),
+          connectionId: z.string().min(1).max(120).nullable(),
+        })
+        .optional(),
     }),
   }),
   z.object({
@@ -518,8 +524,6 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
 
     'ai-review': async (step, ctx) => {
       if (!ctx.pr) return { status: 'error', summary: 'AI review only applies to PR pipelines' };
-      ctx.requirePermission('runs:read', 'observe the AI review run');
-      ctx.requirePermission('runs:act', 'run the AI review');
       if (step.config.post) ctx.requirePermission('prs:act', 'publish the AI review');
       let reviewId: string | null = null;
       const cancelReview = async (): Promise<void> => {
@@ -538,6 +542,8 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
             ...(step.config.depth ? { depth: step.config.depth } : {}),
             ...(step.config.strictness ? { strictness: step.config.strictness } : {}),
             ...(step.config.verify === undefined ? {} : { verify: step.config.verify }),
+            ...(step.config.provider ? { provider: step.config.provider } : {}),
+            workspaceId: ctx.workspaceId,
           },
           {
             onCreated: (id) => {
@@ -556,6 +562,24 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
         );
       } finally {
         offCancel();
+      }
+      if (result.reviewMode === 'delegated') {
+        if (step.config.post) {
+          return {
+            status: 'error',
+            summary: `${result.providerId} owns publication; disable "post" for delegated reviews`,
+            detail: result.externalSummary,
+          };
+        }
+        return {
+          status: step.config.failOn === 'never' ? 'passed' : 'error',
+          summary:
+            step.config.failOn === 'never'
+              ? `review delegated to ${result.providerId}`
+              : `review delegated to ${result.providerId}; a synchronous verdict gate is not available`,
+          detail: result.externalSummary,
+          outputs: { provider: result.providerId, delegated: 'true' } as Readonly<Record<string, string>>,
+        };
       }
       if (
         result.status !== 'pending' ||
@@ -596,7 +620,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
         status: failed ? 'failed' : 'passed',
         summary: `risk ${risk}, recommends ${recommendation.replace('_', ' ')}${found}${posted}`,
         detail: reviewBody,
-        outputs: { risk, recommendation, blockers: String(blockers) },
+        outputs: { risk, recommendation, blockers: String(blockers) } as Readonly<Record<string, string>>,
       };
     },
 
@@ -2438,9 +2462,20 @@ export class Pipelines {
     ctx: Pick<StepContext, 'userId' | 'repo' | 'workspaceId' | 'type'>,
   ): void {
     const permissions = new Set<Permission>(['pipelines:run', targetReadPermission(ctx.type)]);
-    if (step.kind === 'ai-review' || step.kind === 'agent' || step.kind === 'slop-check') {
+    if (step.kind === 'agent' || step.kind === 'slop-check') {
       permissions.add('runs:read');
       permissions.add('runs:act');
+    }
+    if (step.kind === 'ai-review' && step.config.provider?.providerId === 'companion.native-review') {
+      permissions.add('runs:read');
+      permissions.add('runs:act');
+    }
+    if (
+      step.kind === 'ai-review' &&
+      step.config.provider !== undefined &&
+      step.config.provider.providerId !== 'companion.native-review'
+    ) {
+      permissions.add('integrations:use');
     }
     if (step.kind === 'slop-check') {
       permissions.add('slop:read' as Permission);

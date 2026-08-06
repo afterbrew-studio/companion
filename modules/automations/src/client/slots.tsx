@@ -41,6 +41,30 @@ function Assistant(): JSX.Element {
   );
 }
 
+/** Repository-owned configuration belongs beside the repository, while this
+ * module remains optional and owns the route that actually edits it. */
+function RepositoryAutomationsLink(props: Record<string, unknown>): JSX.Element | null {
+  const { can } = useAuth();
+  const repo = typeof props.repo === 'string' ? props.repo : null;
+  const githubAccessible = props.githubAccessible === true;
+  if (!repo || (!githubAccessible && !can('users:manage'))) return null;
+  return (
+    <a className="btn-ghost" href={`#/repos/${repo}/automations`} aria-label={`Manage automations for ${repo}`}>
+      Automations
+    </a>
+  );
+}
+
+/** Workspace/instance health is the exception to per-repo configuration. It
+ * stays one click away from the repository hub without occupying the sidebar. */
+function AutomationHealthLink(): JSX.Element {
+  return (
+    <a className="btn-ghost" href="#/repos/automation-health">
+      Automation health
+    </a>
+  );
+}
+
 export const slots = defineSlots([
   {
     slot: 'shell.topbar',
@@ -48,5 +72,19 @@ export const slots = defineSlots([
     order: 40,
     permission: 'runs:act',
     component: Assistant,
+  },
+  {
+    slot: 'repos.page.actions',
+    key: 'automations-health',
+    order: 0,
+    permission: 'automations:manage',
+    component: AutomationHealthLink,
+  },
+  {
+    slot: 'repos.card.actions',
+    key: 'automations-repo-settings',
+    order: 0,
+    permission: 'automations:manage',
+    component: RepositoryAutomationsLink,
   },
 ]);

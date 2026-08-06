@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentStorageCleanupRequest, ProvisionProviderSpec } from '@moxxy/companion-types';
+import type { AgentStorageCleanupRequest } from '@moxxy/companion-types';
 import type {
   CatalogMachine,
   CatalogMachineModel,
@@ -18,8 +18,8 @@ import type {
   RunnerCatalog,
   RunnerFallback,
   RunnerHealth,
-  RunnerMoxxyUpdateResult,
   RunnerProbeResult,
+  RunnerRuntimeHealth,
   RunnerProviderPolicy,
   RunnerRecord,
   RunnerRepoRef,
@@ -29,18 +29,16 @@ import type {
 import { servesProviderModels, taskPolicyAllows } from '../contract/index.js';
 import { log, paths } from '@moxxy/companion-services';
 import { detectHarnesses, type HarnessDetection } from '../exec/harness-detect.js';
-import { builtinCatalog, harnessSet, MOXXY_HARNESS, offeredHarnesses } from './harnesses.js';
+import { builtinCatalog, describeHarness, harnessSet, MOXXY_HARNESS, offeredHarnesses } from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
-import { configuredProviderNames } from '../exec/home.js';
-import { scrubSecret } from '../exec/provision.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import { LocalRunnerBackend, type LocalRunSpec } from './local-backend.js';
 import { RemoteRunnerBackend } from './remote-backend.js';
 
-/** What a remote machine is offered: the protocol it speaks carries moxxy only. */
+/** What legacy remote agents are offered until they report their runtime list. */
 const MOXXY_OPTION: HarnessOption = {
   id: MOXXY_HARNESS.id,
   label: MOXXY_HARNESS.label,
@@ -60,13 +58,11 @@ const CATALOG_RETRY_MS = 10 * 60_000;
 const DETECT_TTL_MS = 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
-  moxxyVersion: null,
-  moxxyCompatible: false,
+  runtimes: [],
   liveRuns: 0,
   maxRuns: 0,
   lastSeenAt: null,
   detail: null,
-  providers: null,
 };
 
 /**
@@ -133,19 +129,30 @@ export class Runners {
       LOCAL_RUNNER_ID,
       checkouts,
       moxxyCli?.path ?? 'moxxy',
-      moxxyCli?.version ?? null,
-      moxxyCli?.compatible ?? false,
       maxLiveRuns,
       sink,
       {
         runSpec: (runId) => this.localRunSpec(runId),
         harnesses: () => this.harnessesOn(this.store.runners.get(LOCAL_RUNNER_ID)!).map((h) => h.id),
-        readiness: async (id) => {
+        runtime: async (id): Promise<RunnerRuntimeHealth> => {
           const found = (await this.detected()).find((d) => d.id === id);
-          if (!found) return { ok: false, detail: `${id} is not a runtime this build can run` };
-          return found.state === 'ready'
-            ? { ok: true, detail: null }
-            : { ok: false, detail: found.detail ?? `${id} is not installed on this machine` };
+          const descriptor = this.harnessesOn(this.store.runners.get(LOCAL_RUNNER_ID)!).find((h) => h.id === id);
+          if (!found || !descriptor) {
+            return {
+              id,
+              label: descriptor?.label ?? id,
+              version: null,
+              state: 'unavailable',
+              detail: `${id} is not a runtime this build can run`,
+            };
+          }
+          return {
+            id,
+            label: descriptor.label,
+            version: found.version,
+            state: found.state === 'ready' ? 'ready' : 'unavailable',
+            detail: found.state === 'ready' ? null : (found.detail ?? `${id} is not ready on this machine`),
+          };
         },
       },
     );
@@ -173,6 +180,24 @@ export class Runners {
     for (const backend of this.backends.values()) {
       if (backend instanceof RemoteRunnerBackend) backend.dispose();
     }
+  }
+
+  /**
+   * A fresh or upgraded instance with no recorded runtime choice adopts every
+   * detected ready runtime. First-run setup may persist an explicit selection
+   * before this runs; that choice is never overwritten.
+   */
+  async adoptDetectedRuntimes(): Promise<void> {
+    const row = this.store.runners.get(LOCAL_RUNNER_ID);
+    if (!row || row.harnesses.length > 0) return;
+    const ready = offeredHarnesses(await this.detected())
+      .filter((runtime) => runtime.state === 'ready')
+      .map((runtime) => runtime.id);
+    if (ready.length === 0) return;
+    this.store.runners.update(LOCAL_RUNNER_ID, { harnesses: ready });
+    this.rebuildModelIndex();
+    this.broadcast({ t: 'runners.changed' });
+    log.info('adopted detected agent runtimes for this machine', { runtimes: ready });
   }
 
   /** (Re)create remote backends to match the stored runner rows. */
@@ -508,7 +533,7 @@ export class Runners {
   /**
    * One stale machine per poll tick — that's what makes the catalog current
    * without anyone clicking, and the drip keeps a whole fleet from spawning
-   * probe gateways at once (each probe is a real moxxy process).
+   * probe sessions at once (each probe starts the runtime it is reading).
    */
   private async refreshStalestCatalog(): Promise<void> {
     const now = Date.now();
@@ -662,70 +687,20 @@ export class Runners {
     this.broadcast({ t: 'runners.changed' });
   }
 
-  /**
-   * Update the moxxy CLI on a REMOTE runner's machine (the local runner goes
-   * through OperateService.setMoxxyCli — see the route). A pre-update agent
-   * 404s the endpoint; surface that as actionable manual guidance.
-   */
-  async updateMoxxy(id: string): Promise<RunnerMoxxyUpdateResult> {
-    const backend = this.backends.get(id);
-    if (!(backend instanceof RemoteRunnerBackend)) throw new Error('runner not found');
-    let result;
-    try {
-      result = await backend.updateMoxxy();
-    } catch (err) {
-      // A pre-update agent 404s with its own error envelope ("no route: …").
-      const msg = String(err instanceof Error ? err.message : err);
-      throw /no route|agent 404/.test(msg)
-        ? new Error(
-            'this runner agent predates remote updates — update it on the machine once (npm i -g @moxxy/companion-runner, then restart it); future updates work from here',
-          )
-        : err;
-    }
-    await this.probeOne(id);
-    this.broadcast({ t: 'runners.changed' });
-    return result;
-  }
-
-  /**
-   * Add a model provider to one machine, then re-read that machine so the new
-   * credential shows up in its health and its catalog: the same probe the
-   * "Test connection" action runs, broadcast included.
-   *
-   * The credential passes through to the backend and stops there: no runner
-   * row, settings key or log line on this side ever holds it. It is scrubbed
-   * back out of whatever the machine reports on failure, because a machine can
-   * quote the spec it was handed back and that text becomes an HTTP response.
-   */
-  async provisionProvider(id: string, spec: ProvisionProviderSpec): Promise<RunnerProbeResult> {
-    const backend = this.backends.get(id);
-    if (!backend) throw new Error(`runner ${id} not found`);
-    try {
-      await backend.provisionProvider(spec);
-    } catch (err) {
-      const detail = scrubSecret(String(err instanceof Error ? err.message : err), spec.key);
-      // A pre-provisioning agent 404s with its own error envelope ("no route: …").
-      throw /no route/.test(detail)
-        ? new Error(
-            'this runner agent predates adding providers from here; update it on the machine once (npm i -g @moxxy/companion-runner, then restart it)',
-          )
-        : new Error(detail);
-    }
-    return this.probeNow(id);
-  }
-
-  /** The "Test connection" action — probe health + fetch the runner's catalog. */
+  /** The "Test connection" action — only probe machine/runtime health. */
   async probeNow(id: string): Promise<RunnerProbeResult> {
     const health = await this.probeOne(id);
     const ok = health.status === 'online' || health.status === 'degraded';
-    // Only bother fetching the (heavier) catalog when the runner is reachable.
-    const catalog = ok ? await this.refreshCatalog(id, true) : (this.store.runners.get(id)?.catalog ?? null);
     this.broadcast({ t: 'runners.changed' });
-    return { ok, health, catalog };
+    return { ok, health, catalog: this.store.runners.get(id)?.catalog ?? null };
   }
 
   /** True when the runner has a credential-ready provider it is allowed to use. */
   private hasReadyProvider(row: RunnerRow): boolean {
+    // A runtime that owns its model access (for example a signed-in CLI) has no
+    // provider credential for Companion to validate. Its own readiness probe
+    // is the authority; an empty provider catalog is expected, not a refusal.
+    if (this.harnessesOn(row)[0]?.capabilities.models === 'builtin') return true;
     const cat = row.catalog;
     // Unknown catalog stays optimistic (never probed yet); an empty/all-unready
     // catalog means the runner can't actually serve anything.
@@ -933,7 +908,7 @@ export class Runners {
    * Every online machine the viewer can use, at once. `force` is the page's
    * explicit Refresh; unforced it respects the TTL and the failure backoff, so
    * calling it on a page load costs nothing when catalogs are current. Each
-   * probe spawns a real gateway on someone's machine, so it stays scoped the
+   * probe starts a short-lived runtime session on someone's machine, so it stays scoped the
    * same way the page is: shared machines plus the viewer's own.
    */
   async refreshAllCatalogs(force = true, userId: string | null = null): Promise<void> {
@@ -957,7 +932,7 @@ export class Runners {
       void this.backends
         .get(id)
         ?.sessionInfo(runId)
-        .then((info) => this.noteSessionInfo(runnerId, info))
+        .then((info) => this.noteSessionInfo(runnerId, info, this.store.runs.get(runId)?.harness))
         .catch(() => undefined);
     } catch {
       // Best effort by definition: the catalog stays as it was.
@@ -965,9 +940,13 @@ export class Runners {
   }
 
   /** Same, for session info a caller already holds — costs one parse. */
-  noteSessionInfo(runnerId: string | null, info: unknown): void {
+  noteSessionInfo(runnerId: string | null, info: unknown, harnessId?: string): void {
     const id = runnerId ?? LOCAL_RUNNER_ID;
     if (!this.catalogDue(id)) return;
+    // Built-in runtimes expose their models through their descriptor/cache.
+    // Persisting that session-shaped answer would replace the provider catalog
+    // of another selected runtime on the same machine.
+    if (harnessId && describeHarness(harnessId).capabilities.models !== 'providers') return;
     const catalog = parseCatalog(info as SessionInfo);
     if (catalog.providers.length > 0) this.storeCatalog(id, catalog);
   }
@@ -982,67 +961,70 @@ export class Runners {
    * effective set: a model shows up once, carrying the machines that may serve
    * it. The merge is what a per-machine page cannot answer ("can agents use
    * model X at all"), so it lists only what is ready AND enabled somewhere.
-   * Providers configured in the imported moxxy home but served nowhere are
-   * listed with no models, so the page can say *why* instead of going blank.
+   * Runtime-managed sources are included too, but labelled separately so the
+   * client does not offer a credential switch that cannot apply to them.
    */
-  catalogSnapshot(defaultModel: string, userId: string | null = null): ProviderCatalog {
+  catalogSnapshot(userId: string | null = null): ProviderCatalog {
     const rows = this.visibleTo(userId).filter((row) => row.enabled === 1);
     const providers = new Map<
       string,
-      { machines: Set<string>; disabledOn: Set<string>; models: Map<string, CatalogModel> }
+      {
+        name: string;
+        kind: 'runtime' | 'provider';
+        machines: Set<string>;
+        disabledOn: Set<string>;
+        models: Map<string, CatalogModel>;
+      }
     >();
-    const entry = (name: string) => {
-      let found = providers.get(name);
-      if (!found) providers.set(name, (found = { machines: new Set(), disabledOn: new Set(), models: new Map() }));
+    const entry = (name: string, kind: 'runtime' | 'provider') => {
+      const key = `${kind}:${name}`;
+      let found = providers.get(key);
+      if (!found) {
+        providers.set(
+          key,
+          (found = { name, kind, machines: new Set(), disabledOn: new Set(), models: new Map() }),
+        );
+      }
       return found;
     };
-    for (const name of configuredProviderNames()) entry(name);
-
     const machines: CatalogMachine[] = [];
     let fetchedAt: number | null = null;
     for (const row of rows) {
       const policy = policyOf(row);
       const servable = new Set<string>();
       const groups: CatalogMachineProvider[] = [];
-      // A machine whose runtimes bring their own models has a catalog, and it
-      // is not a provider catalog: folding it into the merged set would invent
-      // a provider nobody has credentials for and make an instance that runs
-      // only such machines read as configured.
-      //
-      // A machine running BOTH kinds answers the provider question, so its
-      // groups list the built-in runtime's models too (they are real models it
-      // serves) while that runtime still stays out of the merged set, which is
-      // about credentials.
+      // Both kinds are real model sources. Runtime-managed access is labelled
+      // separately so the client can show its models without pretending there
+      // are provider credentials to configure.
       const harnesses = this.harnessesOn(row);
       const fromProviders = servesProviderModels(harnesses);
       const builtinProviders = new Set(
         harnesses.filter((h) => h.capabilities.models === 'builtin').map((h) => h.id),
       );
-      for (const provider of fromProviders ? this.providersOn(row) : []) {
-        // A runtime that carries its own models needs no credential, so it gets
-        // no entry in the merged view — but it is still a real group on this
-        // machine, and its models still count towards what the machine serves.
-        const merged = builtinProviders.has(provider.name) ? null : entry(provider.name);
-        const providerEnabled = !policy.providers.has(provider.name);
+      for (const provider of this.providersOn(row)) {
+        const kind = builtinProviders.has(provider.name) ? 'runtime' : 'provider';
+        const merged = entry(provider.name, kind);
+        // A runtime is enabled under Runners, not through a credential switch
+        // on this page. Individual model policy still applies to explicit pins.
+        const providerEnabled = kind === 'runtime' || !policy.providers.has(provider.name);
         const models = provider.models.map((model): CatalogMachineModel => ({
           id: model.id,
           contextWindow: model.contextWindow,
           enabled: modelAllowed(policy, provider.name, model.id),
         }));
-        groups.push({ name: provider.name, ready: provider.ready, enabled: providerEnabled, models });
+        groups.push({ name: provider.name, kind, ready: provider.ready, enabled: providerEnabled, models });
         // Only a credential-ready provider the machine still allows contributes
         // to the merged set: listing models no machine can actually serve is
         // what made the old page misleading.
         if (!provider.ready) continue;
         if (!providerEnabled) {
-          merged?.disabledOn.add(row.id);
+          merged.disabledOn.add(row.id);
           continue;
         }
-        merged?.machines.add(row.id);
+        merged.machines.add(row.id);
         for (const model of models) {
           if (!model.enabled) continue;
           servable.add(model.id);
-          if (!merged) continue;
           const existing = merged.models.get(model.id);
           merged.models.set(model.id, {
             id: model.id,
@@ -1067,15 +1049,15 @@ export class Runners {
 
     return {
       providers: [...providers.entries()]
-        .map(([name, merged]): CatalogProvider => ({
-          name,
+        .map(([, merged]): CatalogProvider => ({
+          name: merged.name,
+          kind: merged.kind,
           machines: [...merged.machines],
           disabledOn: [...merged.disabledOn],
           models: [...merged.models.values()].sort((a, b) => a.id.localeCompare(b.id)),
         }))
         .sort((a, b) => b.models.length - a.models.length || a.name.localeCompare(b.name)),
       machines,
-      defaultModel,
       fetchedAt,
     };
   }
@@ -1084,13 +1066,10 @@ export class Runners {
    * Every model some enabled SHARED machine is CAPABLE of serving, deduplicated
    * across providers and machines.
    *
-   * Read from the machines' own catalogs rather than from the merged provider
-   * view, because those answer different questions. The merged view is about
-   * CREDENTIALS: a runtime that carries its own models is left out of it, or
-   * the Providers page would invent a provider nobody has to configure. This
-   * one is about CAPABILITY, and a machine running Claude Code really can serve
-   * `opus`. Deriving this from that view is why a runtime's own models could
-   * not be pinned to a task at all.
+   * Read from the machines' own catalogs rather than from the merged model-
+   * source view because this method also applies machine policy and shared-
+   * runner scope directly. A machine running Claude Code really can serve
+   * `opus`, whether or not another machine reads credentials from a provider.
    *
    * This is what an instance-wide task pin may be set to. Capability only: a
    * machine that is offline right now, or blocks the task, still counts, because
@@ -1180,8 +1159,8 @@ export class Runners {
   }
 
   /**
-   * Fetch a runner's own provider/model catalog by spawning a throwaway gateway
-   * on that runner and reading moxxy's session info. Heavier than a health
+   * Fetch a runner's provider/model catalog through every configured runtime
+   * that reports provider-backed models. Heavier than a health
    * probe — go through refreshCatalog, which dedupes and backs off.
    */
   private async probeCatalog(id: string): Promise<RunnerCatalog | null> {
@@ -1191,8 +1170,8 @@ export class Runners {
     const harnesses = row ? this.harnessesOn(row) : [this.harnessFor(id)];
 
     // A machine may be set to run SEVERAL runtimes, and its catalog is the union
-    // of what they serve. Asking only the first one is why a machine running
-    // both moxxy and Claude Code reported moxxy's models and nothing else.
+    // of what they serve. Asking only the first one previously hid every
+    // provider reported by the remaining runtimes.
     //
     // A runtime that ships its own models already told us what they are, so it
     // contributes without a process; only the ones that answer from configured
@@ -1206,19 +1185,18 @@ export class Runners {
       return catalog;
     }
 
-    const probeId = `catalog-probe-${randomUUID().slice(0, 8)}`;
-    try {
-      const cwd = await backend.scratchDir(probeId);
-      await backend.spawn(probeId, cwd, 'workspace-write');
-      const catalog = parseCatalog((await backend.sessionInfo(probeId)) as SessionInfo);
-      this.storeCatalog(id, catalog);
-      return catalog;
-    } catch (err) {
-      log.warn('runner catalog probe failed', { runner: id, err: String(err) });
-      return this.store.runners.get(id)?.catalog ?? null;
-    } finally {
-      await backend.stop(probeId).catch(() => undefined);
+    const catalogs: RunnerCatalog[] = [];
+    for (const harness of harnesses.filter((candidate) => candidate.capabilities.models === 'providers')) {
+      try {
+        catalogs.push(parseCatalog((await backend.probeRuntime(harness.id)) as SessionInfo));
+      } catch (err) {
+        log.warn('runtime catalog probe failed', { runner: id, runtime: harness.id, err: String(err) });
+      }
     }
+    if (catalogs.length === 0) return this.store.runners.get(id)?.catalog ?? null;
+    const catalog = mergeCatalogs(catalogs);
+    this.storeCatalog(id, catalog);
+    return catalog;
   }
 
   private storeCatalog(id: string, catalog: RunnerCatalog): void {
@@ -1288,7 +1266,7 @@ function rowServes(row: RunnerRow, servers: ReadonlySet<string> | null): boolean
 
 type SessionInfo = { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null;
 
-/** Parse moxxy session info into a per-runner catalog (providers + real readiness). */
+/** Parse the normalized session-info surface into a per-runner catalog. */
 function parseCatalog(info: SessionInfo): RunnerCatalog {
   // Readiness gates placement AND what the catalog shows. A moxxy build that
   // doesn't report the field at all leaves it unknown — fall back to `enabled`
@@ -1318,4 +1296,31 @@ function parseCatalog(info: SessionInfo): RunnerCatalog {
   const active = typeof info?.activeProvider === 'string' ? info.activeProvider : null;
   const defaultModel = providers.find((p) => p.name === active)?.models[0]?.id ?? null;
   return { providers, defaultModel, fetchedAt: Date.now() };
+}
+
+/** Union provider reports from every provider-backed runtime on a machine. */
+function mergeCatalogs(catalogs: readonly RunnerCatalog[]): RunnerCatalog {
+  const providers = new Map<string, ModelCatalogProvider>();
+  for (const catalog of catalogs) {
+    for (const provider of catalog.providers) {
+      const previous = providers.get(provider.name);
+      if (!previous) {
+        providers.set(provider.name, provider);
+        continue;
+      }
+      const models = new Map(previous.models.map((model) => [model.id, model]));
+      for (const model of provider.models) models.set(model.id, model);
+      providers.set(provider.name, {
+        name: provider.name,
+        enabled: previous.enabled || provider.enabled,
+        ready: previous.ready || provider.ready,
+        models: [...models.values()],
+      });
+    }
+  }
+  return {
+    providers: [...providers.values()],
+    defaultModel: catalogs.find((catalog) => catalog.defaultModel !== null)?.defaultModel ?? null,
+    fetchedAt: Date.now(),
+  };
 }

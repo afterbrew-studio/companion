@@ -19,12 +19,12 @@ const machine = (id, fetchedAt, online = true, providerModels = true) => ({
   policy: { disabledProviders: [], disabledModels: [] },
 });
 
-/** A machine whose agent runtime signs in on its own and brings its own models. */
-const builtin = (id, online = true) => machine(id, null, online, false);
+/** A runtime-managed machine whose selected runtime exposes no model catalog. */
+const cataloglessRuntime = (id, online = true) => machine(id, null, online, false);
 
 const merged = (name, machines = [], disabledOn = []) => ({ name, machines, disabledOn, models: [] });
 
-const catalog = (providers, machines) => ({ providers, machines, defaultModel: 'opus', fetchedAt: null });
+const catalog = (providers, machines) => ({ providers, machines, fetchedAt: null });
 
 test('a provider some machine serves is found, and names what was found', () => {
   const found = detectProviders(catalog([merged('anthropic', ['m1'])], [machine('m1', 1000)]));
@@ -42,8 +42,8 @@ test('credentials the operator switched off still count as found, not as nothing
 });
 
 test('a provider name no machine can serve is not found', () => {
-  // The merged list also carries names read from the daemon's own moxxy config;
-  // a name alone proves no credentials exist anywhere.
+  // A stale or partial report may carry a name without any capable machine; a
+  // name alone still proves no credentials exist anywhere.
   const answer = detectProviders(catalog([merged('anthropic')], [machine('m1', 1000)]));
   assert.equal(answer.state, 'none');
 });
@@ -95,28 +95,26 @@ test('no machines at all is none, not unknown', () => {
 });
 
 /**
- * A machine whose runtime brings its own models is never going to report a
- * provider. Reading it as "none" tells the operator to add credentials that
- * would land nowhere; reading it as "unknown" promises a report that is never
- * coming. Both are the same defect this page was built to avoid, so it gets its
- * own answer.
+ * A selected runtime may manage its own access but expose no model catalog.
+ * Reading it as "none" tells the operator to add credentials that would land
+ * nowhere; reading it as "unknown" promises a report that is never coming.
  */
-test('a machine that takes no models from providers is builtin, not none', () => {
-  assert.equal(detectProviders(catalog([], [builtin('m1')])).state, 'builtin');
+test('a runtime-managed machine with no model catalog is builtin, not none', () => {
+  assert.equal(detectProviders(catalog([], [cataloglessRuntime('m1')])).state, 'builtin');
 });
 
-test('a builtin machine never sits in unknown waiting for a report', () => {
+test('a catalogless runtime never sits in unknown waiting for a report', () => {
   // Online and unread: the only reason it would be counted as "reading".
-  const answer = detectProviders(catalog([], [builtin('m1'), machine('m2', null)]));
+  const answer = detectProviders(catalog([], [cataloglessRuntime('m1'), machine('m2', null)]));
   assert.equal(answer.state, 'unknown');
   assert.equal(answer.reading, 1);
   assert.equal(answer.unreachable, 0);
 });
 
-test('one provider machine among builtin ones still decides the answer', () => {
-  assert.equal(detectProviders(catalog([], [builtin('m1'), machine('m2', 1000)])).state, 'none');
+test('one provider machine among catalogless runtime ones still decides the answer', () => {
+  assert.equal(detectProviders(catalog([], [cataloglessRuntime('m1'), machine('m2', 1000)])).state, 'none');
   assert.equal(
-    detectProviders(catalog([merged('anthropic', ['m2'])], [builtin('m1'), machine('m2', 1000)])).state,
+    detectProviders(catalog([merged('anthropic', ['m2'])], [cataloglessRuntime('m1'), machine('m2', 1000)])).state,
     'found',
   );
 });

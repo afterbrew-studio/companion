@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
+import type { Permission, ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
+import type { IntegrationScope, IntegrationTargetRef } from '@companion/module-integrations/contract';
+import type {
+  IntegrationReviewFinding,
+  IntegrationReviewResult,
+  ResolvedIntegrationTarget,
+} from '@companion/module-integrations/provider';
+import { IntegrationUnavailableError } from '@companion/module-integrations/provider';
 import type {
   FindingSeverity,
   PrReviewCoverage,
@@ -182,6 +189,7 @@ function reviewTimeoutMs(depth: ReviewDepth): number {
  */
 export class PrReviews {
   private readonly activeReviews = new Map<string, ReviewExecution>();
+  private readonly activeIntegrationReviews = new Map<string, AbortController>();
   /** Coalesce provider events so live cost visibility does not become a PR refetch storm. */
   private readonly budgetSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -205,6 +213,10 @@ export class PrReviews {
     private readonly checks: PrChecks,
     private readonly authorized: (username: string, permission: Permission, repo: string) => boolean,
     private readonly broadcast: (msg: SpaServerMessage) => void,
+    private readonly integrations: ServiceMap['integrations'] | null = null,
+    private readonly integrationScope: (userId: string, repo: string, workspaceId?: string) => IntegrationScope = () => {
+      throw new Error('integration routing is unavailable');
+    },
   ) {}
 
   /** Outcome counts for the quality report; the store owns the aggregate. */
@@ -213,14 +225,33 @@ export class PrReviews {
   }
 
   /** Synchronous preflight so fire-and-forget HTTP routes can reject visibly. */
-  validateAnalyze(repo: string, prNumber: number, userId: string): void {
-    if (!this.hasReviewAuthority(userId, repo)) {
-      throw new Error(`${userId} is disabled, cannot access ${repo}, or no longer holds review-run permissions`);
-    }
+  validateAnalyze(repo: string, prNumber: number, userId: string, opts?: ReviewOptions): void {
     if (!this.store.prs.get(repo, prNumber)) throw new Error(`unknown PR ${repo}#${prNumber}`);
-    if (!this.github({ repo, username: userId })) throw new Error('GitHub is not configured');
-    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     if (this.store.prReviews.running(repo, prNumber)) throw new Error('a review of this pull request is already running');
+    const targets = this.reviewTargets(repo, userId, opts);
+    if (targets.length === 0) throw new Error('no code review provider is configured for this repository');
+    if (!this.hasProviderAuthority(userId, repo, targets[0]!)) {
+      throw new Error(`${userId} cannot use ${targets[0]!.provider.descriptor.title} for ${repo}`);
+    }
+  }
+
+  private reviewTargets(repo: string, userId: string, opts?: ReviewOptions): ResolvedIntegrationTarget[] {
+    if (!this.integrations) throw new Error('no code review provider is configured');
+    const scope = this.integrationScope(userId, repo, opts?.workspaceId);
+    return this.integrations.resolveTargets('code-review', scope, opts?.provider, userId);
+  }
+
+  private hasProviderAuthority(userId: string, repo: string, target: ResolvedIntegrationTarget): boolean {
+    if (target.provider.descriptor.id === 'companion.native-review') {
+      return this.hasReviewAuthority(userId, repo);
+    }
+    const mayUse = this.authorized(userId, 'prs:read', repo) && this.authorized(userId, 'integrations:use', repo);
+    // Delegation is itself a GitHub write (for example `cursor review`). A
+    // custom role that can consume integrations but cannot act on PRs must not
+    // gain comment authority through a provider callback.
+    return target.provider.descriptor.execution === 'delegated'
+      ? mayUse && this.authorized(userId, 'prs:act', repo)
+      : mayUse;
   }
 
   /** Boot recovery: an aggregate review cannot remain live after its process died. */
@@ -524,6 +555,7 @@ export class PrReviews {
     if (!this.store.prReviews.terminateRunning(reviewId, status, error, progress, review.coverage)) return false;
 
     execution?.stop(error);
+    this.activeIntegrationReviews.get(reviewId)?.abort(error);
     for (const queueId of execution?.queuedIds() ?? []) this.orchestrator.cancelQueued(queueId);
     this.broadcast({ t: 'prs.changed', repo: review.repo });
     await Promise.allSettled((execution?.runningIds() ?? []).map((runId) => this.orchestrator.stopRun(runId)));
@@ -554,7 +586,205 @@ export class PrReviews {
     /** Internal hooks for an owning pipeline; never populated by the HTTP route. */
     lifecycle?: ReviewLifecycle,
   ): Promise<PrReviewResult> {
-    this.validateAnalyze(repo, prNumber, userId);
+    this.validateAnalyze(repo, prNumber, userId, opts);
+    const targets = this.reviewTargets(repo, userId, opts);
+    let unavailable: PrReviewResult | null = null;
+    for (const target of targets) {
+      if (!this.hasProviderAuthority(userId, repo, target)) {
+        throw new Error(`${userId} cannot use ${target.provider.descriptor.title} for ${repo}`);
+      }
+      // A posting pipeline already promised that Companion will own the GitHub
+      // publication. Reject a delegated primary or fallback before it posts
+      // its trigger comment; reporting the mismatch afterwards would leave a
+      // real vendor side effect behind a failed pipeline step.
+      if (lifecycle?.progressivePost && target.provider.descriptor.execution === 'delegated') {
+        throw new Error(
+          `${target.provider.descriptor.title} owns its GitHub publication; disable pipeline posting for delegated reviews`,
+        );
+      }
+      try {
+        if (target.provider.descriptor.id === 'companion.native-review') {
+          return await this.analyzeNativePr(repo, prNumber, userId, { ...opts, provider: target.ref }, lifecycle);
+        }
+        return await this.analyzeIntegrationPr(repo, prNumber, userId, target, opts, lifecycle);
+      } catch (error) {
+        if (!(error instanceof IntegrationUnavailableError)) throw error;
+        unavailable = this.latestWithFindings(repo, prNumber);
+        log.warn('code review provider unavailable; trying fallback', {
+          repo,
+          prNumber,
+          providerId: target.provider.descriptor.id,
+          error: error.message,
+        });
+      }
+    }
+    if (unavailable) return unavailable;
+    throw new Error('no permitted code review provider is available');
+  }
+
+  private async analyzeIntegrationPr(
+    repo: string,
+    prNumber: number,
+    userId: string,
+    target: ResolvedIntegrationTarget,
+    opts?: ReviewOptions,
+    lifecycle?: ReviewLifecycle,
+  ): Promise<PrReviewResult> {
+    const pr = this.store.prs.get(repo, prNumber)!;
+    const provider = target.provider.descriptor;
+    const depth: ReviewDepth = opts?.depth ?? 'in-depth';
+    const strictness: ReviewStrictness = opts?.strictness ?? 'balanced';
+    const reviewId = `prr-${randomUUID().slice(0, 12)}`;
+    const controller = new AbortController();
+    const createdAt = Date.now();
+    const unavailableCoverage: PrReviewCoverage = {
+      state: 'unavailable',
+      reviewedGroups: 0,
+      totalGroups: 0,
+      reviewedFiles: 0,
+      totalFiles: 0,
+      unread: [],
+    };
+    const placeholder: PrReviewResult = {
+      id: reviewId,
+      repo,
+      prNumber,
+      runId: null,
+      runIds: [],
+      source: 'agent',
+      providerId: provider.id,
+      reviewMode: provider.execution === 'delegated' ? 'delegated' : 'managed',
+      externalUrl: null,
+      externalSummary: null,
+      status: 'running',
+      verdict: null,
+      error: null,
+      progress: {
+        phase: 'queued',
+        completed: 0,
+        total: 1,
+        message: `Preparing ${provider.title}`,
+        updatedAt: createdAt,
+      },
+      coverage: unavailableCoverage,
+      createdAt,
+      headSha: pr.headSha,
+      depth,
+      strictness,
+      findings: [],
+    };
+    this.store.prReviews.insert(placeholder);
+    this.activeIntegrationReviews.set(reviewId, controller);
+    try {
+      lifecycle?.onCreated?.(reviewId);
+    } catch (error) {
+      log.warn('integration review onCreated callback failed', { reviewId, error: String(error) });
+    }
+    this.broadcast({ t: 'prs.changed', repo });
+
+    const timeout = setTimeout(() => {
+      void this.terminateReview(
+        reviewId,
+        'failed',
+        `${provider.title} exceeded its 50 minute safety limit`,
+        'Integration review timed out',
+      ).catch((error) => log.warn('could not stop integration review', { reviewId, error: String(error) }));
+    }, 50 * 60_000);
+    timeout.unref();
+
+    const execute = (cwd: string | null): Promise<IntegrationReviewResult> =>
+      this.integrations!.executeReview(target, {
+        cwd,
+        repo,
+        prNumber,
+        baseRef: pr.baseRef,
+        headSha: pr.headSha,
+        depth,
+        strictness,
+        ...(opts?.context ? { context: opts.context } : {}),
+        signal: controller.signal,
+        progress: (message) => {
+          if (!this.hasProviderAuthority(userId, repo, target)) {
+            controller.abort('review authority was revoked');
+            return;
+          }
+          this.progress(reviewId, 'reviewing', 0, 1, message.slice(0, 300));
+        },
+        commentOnPullRequest: async (body) => {
+          if (!this.authorized(userId, 'prs:act', repo)) {
+            throw new Error(`${userId} no longer holds prs:act; refusing delegated review trigger`);
+          }
+          const client = this.github({ repo, username: userId });
+          if (!client) throw new IntegrationUnavailableError('GitHub is not configured');
+          const comment = await client.comment(repo, prNumber, body);
+          return { url: comment.html_url };
+        },
+      });
+
+    try {
+      this.progress(reviewId, 'reviewing', 0, 1, `Running ${provider.title}`);
+      // Availability failures are persisted against this concrete attempt
+      // before ordered routing continues. Otherwise an unavailable sole
+      // provider could return a stale review left by an earlier run.
+      if (provider.execution === 'local' && !this.checkouts.hasClone(repo)) {
+        throw new IntegrationUnavailableError(`repo ${repo} has no local clone for ${provider.title}`);
+      }
+      if (provider.execution === 'delegated' && !this.github({ repo, username: userId })) {
+        throw new IntegrationUnavailableError('GitHub is not configured for delegated reviews');
+      }
+      const response = provider.execution === 'local'
+        ? await this.checkouts.withPullRequestWorktree(
+            repo,
+            `integration-review-${prNumber}-${randomUUID().slice(0, 8)}`,
+            prNumber,
+            pr.baseRef,
+            execute,
+            undefined,
+            userId,
+          )
+        : await execute(null);
+      const settled = integrationReviewOutcome(placeholder, response, strictness);
+      if (!this.store.prReviews.finish(settled)) return this.getWithFindings(reviewId) ?? settled;
+      this.store.prReviewFindings.insertMissing(settled.findings);
+      this.broadcast({ t: 'prs.changed', repo });
+      return settled;
+    } catch (error) {
+      const current = this.store.prReviews.get(reviewId);
+      if (current && current.status !== 'running') return this.getWithFindings(reviewId) ?? current;
+      const message = String(error instanceof Error ? error.message : error).slice(0, 1_000);
+      const failed: PrReviewResult = {
+        ...placeholder,
+        status: 'failed',
+        error: message,
+        progress: {
+          phase: 'complete',
+          completed: 0,
+          total: 1,
+          message: `${provider.title} could not complete the review`,
+          updatedAt: Date.now(),
+        },
+      };
+      this.store.prReviews.finish(failed);
+      this.broadcast({ t: 'prs.changed', repo });
+      if (error instanceof IntegrationUnavailableError) throw error;
+      log.warn('integration review failed', { repo, prNumber, providerId: provider.id, error: message });
+      return failed;
+    } finally {
+      clearTimeout(timeout);
+      if (this.activeIntegrationReviews.get(reviewId) === controller) {
+        this.activeIntegrationReviews.delete(reviewId);
+      }
+    }
+  }
+
+  private async analyzeNativePr(
+    repo: string,
+    prNumber: number,
+    userId: string,
+    opts?: ReviewOptions,
+    /** Internal hooks for an owning pipeline; never populated by the HTTP route. */
+    lifecycle?: ReviewLifecycle,
+  ): Promise<PrReviewResult> {
     const pr = this.store.prs.get(repo, prNumber)!;
 
     const depth: ReviewDepth = opts?.depth ?? 'in-depth';
@@ -579,6 +809,10 @@ export class PrReviews {
       runId: null,
       runIds: [],
       source: 'agent',
+      providerId: 'companion.native-review',
+      reviewMode: 'managed',
+      externalUrl: null,
+      externalSummary: null,
       status: 'running',
       verdict: null,
       error: null,
@@ -625,6 +859,13 @@ export class PrReviews {
     this.broadcast({ t: 'prs.changed', repo });
 
     try {
+      // Treat missing local evidence exactly like an unavailable external
+      // provider: persist this attempt, then let ordered routing try its
+      // fallback. A configured provider must not silently turn fallback into
+      // a dead end merely because it is Companion's native implementation.
+      if (!this.checkouts.hasClone(repo)) {
+        throw new IntegrationUnavailableError(`repo ${repo} has no local clone for Companion native review`);
+      }
       this.progress(reviewId, 'planning', 0, 1, 'Reading the diff and CI evidence');
       const checksSummary = await this.checks.trySummary(repo, prNumber, userId);
       // Everything that needs the checkout happens inside ONE worktree: the
@@ -744,6 +985,13 @@ export class PrReviews {
                 strictness,
                 verify,
                 ...(opts?.context ? { context: opts.context } : {}),
+                ...(opts?.workspaceId ? { workspaceId: opts.workspaceId } : {}),
+                ...(opts?.provider
+                  ? {
+                      providerId: opts.provider.providerId,
+                      connectionId: opts.provider.connectionId,
+                    }
+                  : {}),
               },
             },
           });
@@ -853,6 +1101,7 @@ export class PrReviews {
       const finished = this.store.prReviews.finish(failed);
       if (!finished) return this.getWithFindings(reviewId) ?? failed;
       this.broadcast({ t: 'prs.changed', repo });
+      if (err instanceof IntegrationUnavailableError) throw err;
       log.warn('pr review failed', { repo, prNumber, err: String(err) });
       return failed;
     } finally {
@@ -1332,7 +1581,7 @@ export class PrReviews {
     const pr = this.store.prs.get(repo, prNumber);
     if (!pr) throw new Error(`unknown PR ${repo}#${prNumber}`);
     const existing = this.store.prReviews.running(repo, prNumber) ?? this.store.prReviews.latest(repo, prNumber);
-    if (existing && (existing.status === 'pending' || existing.status === 'running')) {
+    if (existing?.reviewMode === 'managed' && (existing.status === 'pending' || existing.status === 'running')) {
       return { ...existing, findings: this.store.prReviewFindings.listForReview(existing.id) };
     }
     const result: PrReviewResult = {
@@ -1342,6 +1591,10 @@ export class PrReviews {
       runId: null,
       runIds: [],
       source: 'human',
+      providerId: 'companion.human',
+      reviewMode: 'managed',
+      externalUrl: null,
+      externalSummary: null,
       status: 'pending',
       // A verdict shell so publishing has a body to compose into; the risk and
       // recommendation fields are never shown for a manual draft.
@@ -1475,6 +1728,9 @@ export class PrReviews {
     } = {},
   ): Promise<{ repo: string; number: number }> {
     const result = this.store.prReviews.get(id);
+    if (result?.reviewMode === 'delegated') {
+      throw new Error('this review is owned by an external provider and cannot be published by Companion');
+    }
     if (!result?.verdict) throw new Error('review not found or has no verdict');
     if (result.status !== 'pending') throw new Error(`review is ${result.status}, not pending`);
     if (result.source === 'agent' && (result.error || result.coverage.state !== 'complete')) {
@@ -1834,8 +2090,8 @@ export class PrReviews {
    * a confident low-risk verdict on a PR whose CI is not failing; anything
    * else stays pending for the human. Merging is never automatic.
    */
-  async gate(repo: string, prNumber: number, userId: string): Promise<void> {
-    const result = await this.analyzePr(repo, prNumber, userId);
+  async gate(repo: string, prNumber: number, userId: string, opts?: ReviewOptions): Promise<void> {
+    const result = await this.analyzePr(repo, prNumber, userId, opts);
     await this.publishPendingGate(repo, prNumber, userId, result);
   }
 
@@ -1992,6 +2248,122 @@ export class PrReviews {
     this.broadcast({ t: 'prs.changed', repo });
     log.info('review reply posted', { repo, prNumber, finding: finding.id });
   }
+}
+
+export function integrationReviewOutcome(
+  placeholder: PrReviewResult,
+  response: IntegrationReviewResult,
+  strictness: ReviewStrictness,
+): PrReviewResult {
+  const finishedAt = Date.now();
+  if (response.kind === 'delegated') {
+    return {
+      ...placeholder,
+      status: 'pending',
+      reviewMode: 'delegated',
+      externalUrl: response.externalUrl,
+      externalSummary: response.summary,
+      progress: {
+        phase: 'complete',
+        completed: 1,
+        total: 1,
+        message: 'Review handed off to the provider',
+        updatedAt: finishedAt,
+      },
+    };
+  }
+  if (response.kind === 'skipped') {
+    return {
+      ...placeholder,
+      status: 'failed',
+      externalSummary: response.summary,
+      error: response.summary,
+      progress: {
+        phase: 'complete',
+        completed: 0,
+        total: 1,
+        message: 'Provider skipped the review',
+        updatedAt: finishedAt,
+      },
+    };
+  }
+
+  const coverage: PrReviewCoverage = {
+    state: response.coverage,
+    reviewedGroups: 1,
+    totalGroups: 1,
+    reviewedFiles: 0,
+    totalFiles: 0,
+    unread: response.coverage === 'partial'
+      ? ['The provider reported partial review coverage.']
+      : [],
+  };
+  const findings = response.findings.map((finding, index) => integrationFinding(
+    placeholder.id,
+    placeholder.providerId,
+    finding,
+    strictness,
+    finishedAt + index,
+  ));
+  const included = findings.filter((finding) => finding.state === 'included');
+  const serious = included.some((finding) => finding.severity === 'blocker' || finding.severity === 'major');
+  const blocker = included.some((finding) => finding.severity === 'blocker');
+  const summary = response.summary;
+  const verdict: PrReviewVerdict = {
+    summary,
+    risk: blocker ? 'high' : serious || included.some((finding) => finding.severity === 'minor') ? 'medium' : 'low',
+    recommendation: serious ? 'request_changes' : findings.length === 0 ? 'approve' : 'comment',
+    findings: included.map((finding) => finding.title),
+    reviewBody: response.reviewBody,
+  };
+  const complete = coverage.state === 'complete';
+  return {
+    ...placeholder,
+    status: complete ? 'pending' : 'failed',
+    verdict,
+    error: complete ? null : 'the provider reported partial review coverage',
+    progress: {
+      phase: 'complete',
+      completed: 1,
+      total: 1,
+      message: complete ? 'Review ready for maintainer' : 'Review coverage is partial',
+      updatedAt: finishedAt,
+    },
+    coverage,
+    findings,
+  };
+}
+
+function integrationFinding(
+  reviewId: string,
+  providerId: string,
+  finding: IntegrationReviewFinding,
+  strictness: ReviewStrictness,
+  createdAt: number,
+): ReviewFinding {
+  return {
+    id: `prf-${randomUUID().slice(0, 12)}`,
+    reviewId,
+    source: providerId,
+    // External line numbers are useful context but are not trusted as GitHub
+    // anchors until Companion can validate side + quoted diff evidence.
+    anchor: null,
+    severity: finding.severity,
+    title: finding.title,
+    reason: finding.reason,
+    impact: finding.impact,
+    suggestion: finding.suggestion,
+    suggestedPatch: null,
+    confidence: Math.max(0, Math.min(1, finding.confidence)),
+    state: meetsStrictness(finding.severity, strictness) ? 'included' : 'proposed',
+    verification: 'unverified',
+    verificationNote: finding.file
+      ? `Reported by ${providerId} in ${finding.file}${finding.line ? `:${finding.line}` : ''}`
+      : null,
+    rejectionReason: null,
+    githubCommentId: null,
+    createdAt,
+  };
 }
 
 /**

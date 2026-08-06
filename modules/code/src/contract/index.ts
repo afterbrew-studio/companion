@@ -2,6 +2,8 @@
 import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
 import '@companion/module-operate/contract';
+import '@companion/module-integrations/contract';
+import type { IntegrationTargetRef } from '@companion/module-integrations/contract';
 import type { ChecksSnapshot } from './checks.js';
 import type { DiffSide } from './diff-anchors.js';
 import type { CodeService } from '../api/code-service.js';
@@ -554,6 +556,14 @@ export interface PrReviewResult {
   readonly runIds: ReadonlyArray<string>;
   /** Explicit because a queued agent review has no run id yet. */
   readonly source: 'agent' | 'human';
+  /** Stable integration protocol id, not merely the vendor brand. */
+  readonly providerId: string;
+  /** Managed results return to Companion; delegated results continue in the vendor. */
+  readonly reviewMode: 'managed' | 'delegated';
+  /** Vendor hand-off/result URL when the provider owns the remaining flow. */
+  readonly externalUrl: string | null;
+  /** Human-readable hand-off state returned by a delegated provider. */
+  readonly externalSummary: string | null;
   readonly status: 'running' | 'pending' | 'applied' | 'dismissed' | 'failed' | 'cancelled';
   readonly verdict: PrReviewVerdict | null;
   readonly error: string | null;
@@ -604,6 +614,10 @@ export interface ReviewOptions {
   /** Run the adversarial second pass. Defaults to true for in-depth. */
   readonly verify?: boolean;
   readonly context?: string;
+  /** Explicit provider/connection. Omitted means the repository's ordered route. */
+  readonly provider?: IntegrationTargetRef;
+  /** The workspace that gives this repository-scoped integration its policy. */
+  readonly workspaceId?: string;
 }
 
 // ---------- Triage -------------------------------------------------------------

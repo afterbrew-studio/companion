@@ -8,13 +8,17 @@
       "docs:manage",
       "docs:read",
       "github:connect",
+      "integrations:manage",
+      "integrations:read",
+      "integrations:self",
+      "integrations:use",
       "issues:act",
       "issues:read",
+      "jira:act",
+      "jira:read",
       "modules:deploy",
       "modules:manage",
-      "notify:manage",
       "notify:read",
-      "notify:self",
       "pipelines:author-execute",
       "pipelines:execute",
       "pipelines:manage",
@@ -60,10 +64,14 @@
       "docs:manage",
       "docs:read",
       "github:connect",
+      "integrations:read",
+      "integrations:self",
+      "integrations:use",
       "issues:act",
       "issues:read",
+      "jira:act",
+      "jira:read",
       "notify:read",
-      "notify:self",
       "pipelines:execute",
       "pipelines:manage",
       "pipelines:read",
@@ -100,7 +108,10 @@
       "board:read",
       "docs:manage",
       "docs:read",
-      "notify:self",
+      "integrations:read",
+      "integrations:self",
+      "jira:act",
+      "jira:read",
       "planner:execute",
       "planner:manage",
       "planner:read",
@@ -176,6 +187,39 @@
         "maintainer"
       ]
     },
+    "integrations:manage": {
+      "owner": "integrations",
+      "title": "Configure shared integration connections and routing",
+      "grants": [
+        "admin"
+      ]
+    },
+    "integrations:read": {
+      "owner": "integrations",
+      "title": "View integration connections and health",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "integrations:self": {
+      "owner": "integrations",
+      "title": "Configure personal integration destinations",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "integrations:use": {
+      "owner": "integrations",
+      "title": "Use connected third-party capabilities",
+      "grants": [
+        "admin",
+        "maintainer"
+      ]
+    },
     "issues:act": {
       "owner": "code",
       "title": "Act on issues (triage, fix, comment)",
@@ -192,6 +236,24 @@
         "maintainer"
       ]
     },
+    "jira:act": {
+      "owner": "jira",
+      "title": "Link and update Jira tickets",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
+    "jira:read": {
+      "owner": "jira",
+      "title": "View Jira links",
+      "grants": [
+        "admin",
+        "maintainer",
+        "business"
+      ]
+    },
     "modules:deploy": {
       "owner": "core",
       "title": "Add and remove out-of-tree module code on this host",
@@ -206,28 +268,12 @@
         "admin"
       ]
     },
-    "notify:manage": {
-      "owner": "notify",
-      "title": "Configure outbound notification channels",
-      "grants": [
-        "admin"
-      ]
-    },
     "notify:read": {
       "owner": "notify",
-      "title": "View outbound notification channels",
+      "title": "View outbound notification delivery history",
       "grants": [
         "admin",
         "maintainer"
-      ]
-    },
-    "notify:self": {
-      "owner": "notify",
-      "title": "Send your own notifications to a channel you own",
-      "grants": [
-        "admin",
-        "maintainer",
-        "business"
       ]
     },
     "pipelines:author-execute": {

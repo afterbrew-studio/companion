@@ -16,11 +16,11 @@ export default defineManifest({
   id: 'notify',
   title: 'Outbound Notifications',
   version: '0.1.0',
-  dependsOn: ['core', 'workspace'],
+  dependsOn: ['core', 'workspace', 'integrations'],
   required: false,
-  // Delivery targets are credentials pointed at third parties; an instance
-  // should acquire them deliberately, never by upgrading.
-  autoInstall: false,
-  permissions: ['notify:read', 'notify:manage', 'notify:self'],
+  // Enabling delivery registers safe provider descriptors only. Nothing leaves
+  // the instance until an operator deliberately creates a connection.
+  autoInstall: true,
+  permissions: ['notify:read'],
   messages: ['notify.changed'],
 });

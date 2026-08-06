@@ -103,6 +103,39 @@ review its complete content.
 
 ![A tour of issues, pull requests, AI review, pipelines, and live agent runs.](docs/media/tour.gif)
 
+## Open integrations, not a vendor lock-in
+
+Companion exposes a typed integration layer rather than hard-coding vendor
+forms into the review or notification screens. An integration module can add a
+provider, write-only connection fields, instance/workspace/repository scope,
+health checks, capability routing, domain actions, and UI slots. Ordered review
+routes support an explicit fallback, but only when the primary is unavailable;
+a real provider failure is never hidden by silently trying something else.
+
+The default build currently includes:
+
+| Capability | Available integrations |
+| --- | --- |
+| **Code review** | Companion native review, [CodeRabbit CLI](https://docs.coderabbit.ai/cli/reference), and [Cursor Bugbot](https://docs.cursor.com/bugbot) |
+| **Issue tracking** | Jira Cloud links on GitHub issues and pull requests, cached ticket context, comments, refresh, and workflow transitions such as close or reopen |
+| **Team updates** | Slack incoming webhooks, Discord webhooks, Jira Automation, ntfy, and a generic HMAC-signed webhook |
+
+Managed reviewers such as CodeRabbit return a draft to Companion for review.
+Delegated tools such as Cursor Bugbot keep ownership of their GitHub result, so
+Companion records the hand-off and never pretends that “request accepted” is a
+synchronous quality verdict. Jira follows the same boundary: credentials and
+connection policy live in the shared integration plane, while linked tickets
+and their cached snapshots remain owned by the Jira module.
+
+Additional integrations can ship as in-tree or external modules using
+`@moxxy/companion-sdk`. Most need only a provider descriptor and server adapter;
+richer modules can inject provider panels, connection actions, repository
+sections, and work-item links without modifying the shell. The public SDK also
+resolves scoped, write-only credentials for provider-owned actions, so external
+modules never depend on Companion's private tables or secret store. See the
+[integration architecture](modules/integrations/DESIGN.md) and
+[module authoring guide](modules/README.md).
+
 ## MCP: Companion where your agent already works
 
 Companion includes a stdio MCP server, so Codex, Claude, an IDE, or another MCP

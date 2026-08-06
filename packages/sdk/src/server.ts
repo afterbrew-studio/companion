@@ -82,3 +82,33 @@ export type { MessageScope, ScopeResolver } from '@moxxy/companion-core/server';
 // ---- host services a module legitimately touches ----
 export { paths, likeArg, safeParse, currentUser, log } from '@moxxy/companion-services';
 export type { DaemonConfig, Logger } from '@moxxy/companion-services';
+
+// ---- open integration-provider ABI ------------------------------------------
+export { IntegrationUnavailableError } from './integrations.js';
+export type {
+  EffectiveIntegrationRoute,
+  IntegrationCapability,
+  IntegrationCatalog,
+  IntegrationCategory,
+  IntegrationConfigField,
+  IntegrationConnectionAccess,
+  IntegrationConnectionDraft,
+  IntegrationConnectionRecord,
+  IntegrationDeliveryResult,
+  IntegrationFieldOption,
+  IntegrationFieldValue,
+  IntegrationHealth,
+  IntegrationHealthStatus,
+  IntegrationHost,
+  IntegrationNotificationInput,
+  IntegrationProviderAdapter,
+  IntegrationProviderDescriptor,
+  IntegrationProviderRegistry,
+  IntegrationReviewFinding,
+  IntegrationReviewRequest,
+  IntegrationReviewResult,
+  IntegrationRouteRecord,
+  IntegrationScope,
+  IntegrationTargetRef,
+  ResolvedIntegrationTarget,
+} from './integrations.js';

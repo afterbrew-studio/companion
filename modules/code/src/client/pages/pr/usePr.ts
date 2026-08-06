@@ -34,7 +34,9 @@ export interface UsePr {
   readonly canAct: boolean;
   readonly canReadRuns: boolean;
   readonly canUseAgents: boolean;
+  readonly canReview: boolean;
   readonly canRunPipelines: boolean;
+  readonly workspaceId: string | null;
 
   /** AI review agent. */
   readonly analyzing: boolean;
@@ -76,6 +78,7 @@ export function usePr(repo: string, number: number): UsePr {
   const canAct = can('prs:act');
   const canReadRuns = can('runs:read');
   const canUseAgents = canAct && canReadRuns && can('runs:act');
+  const canReview = canAct && (canUseAgents || can('integrations:use'));
   const canRunPipelines = can('pipelines:run');
 
   const [pipelines, setPipelines] = useState<PipelineRecord[]>([]);
@@ -120,12 +123,15 @@ export function usePr(repo: string, number: number): UsePr {
     setAnalyzing(true);
     setError(null);
     try {
-      await api.analyzePr(repo, number, opts);
+      await api.analyzePr(repo, number, {
+        ...opts,
+        ...(current ? { workspaceId: current.id } : {}),
+      });
     } catch (err) {
       setAnalyzing(false);
       setError(String(err));
     }
-  }, [repo, number]);
+  }, [repo, number, current]);
 
   const withBusy = useCallback(
     async (fn: () => Promise<unknown>): Promise<void> => {
@@ -196,7 +202,9 @@ export function usePr(repo: string, number: number): UsePr {
     canAct,
     canReadRuns,
     canUseAgents,
+    canReview,
     canRunPipelines,
+    workspaceId: current?.id ?? null,
     analyzing,
     analyze,
     applyReview: (accountId, mode) => withBusy(() => api.applyPrReview(review!.id, accountId, mode ? { mode } : {})),

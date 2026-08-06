@@ -39,14 +39,14 @@ const SILENT_SINK = {
   onRunnerUnreachable: () => undefined,
 };
 
-const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3 };
 
 /**
  * An orchestrator over a seeded store. `seed` runs before it is constructed,
  * because the registry builds its model index there: seeding after would leave
  * the index describing a fleet that no longer exists.
  */
-function fixture(seed = () => undefined) {
+function fixture(seed = () => undefined, moxxyCli = null) {
   const db = new Database(':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   for (const m of migrations) m.up(db);
@@ -55,7 +55,7 @@ function fixture(seed = () => undefined) {
     set: (key, value) => db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`).run(key, value),
   });
   seed(store);
-  return { db, store, orchestrator: new Orchestrator(store, CONFIG, {}, null, () => {}) };
+  return { db, store, orchestrator: new Orchestrator(store, CONFIG, {}, moxxyCli, () => {}) };
 }
 
 /**
@@ -172,6 +172,7 @@ test('its models are its own, not a provider the operator has credentials for', 
   const harness = new ClaudeCodeHarness({ runId: 'run-x', cwd: '/tmp', cliPath: 'claude' }, {});
   const info = await harness.sessionInfo();
   assert.deepEqual(info.readyProviders, ['claude-code']);
+  assert.ok(info.providers[0].models.some((m) => m.id === 'fable'));
   assert.ok(info.providers[0].models.some((m) => m.id === 'sonnet'));
 });
 
@@ -404,25 +405,28 @@ test('nothing installed is an empty list, which is the case that needs words', (
   );
 });
 
-// ---------- what stops applying once a machine runs Claude Code -------------
+// ---------- provider page with runtime-managed model access -----------------
 
-test('a machine with its own models contributes none to the provider page', () => {
+test('a machine with its own models contributes its runtime and models to the provider page', () => {
   const { orchestrator } = fixture((store) => {
     store.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
     store.runners.setCatalog(LOCAL_RUNNER_ID, claudeCatalog);
   });
 
-  const snapshot = orchestrator.runners.catalogSnapshot('opus', null);
+  const snapshot = orchestrator.runners.catalogSnapshot(null);
   const machine = snapshot.machines.find((m) => m.id === LOCAL_RUNNER_ID);
   assert.equal(machine.providerModels, false);
-  // Its catalog exists; it is simply not a provider catalog. Folding it in
-  // would invent a provider nobody holds credentials for.
-  assert.deepEqual(machine.providers, []);
-  assert.deepEqual(snapshot.providers.filter((p) => p.machines.length > 0), []);
-  assert.equal(detectProviders(snapshot).state, 'builtin');
+  assert.deepEqual(machine.providers.map((provider) => [provider.name, provider.kind]), [
+    ['claude-code', 'runtime'],
+  ]);
+  assert.ok(machine.providers[0].models.some((model) => model.id === 'fable'));
+  const source = snapshot.providers.find((provider) => provider.name === 'claude-code');
+  assert.equal(source.kind, 'runtime');
+  assert.deepEqual(source.machines, [LOCAL_RUNNER_ID]);
+  assert.equal(detectProviders(snapshot).state, 'found');
 });
 
-test('a moxxy machine beside it still answers the provider question', () => {
+test('a moxxy machine beside it returns both provider and runtime sources', () => {
   const { orchestrator } = fixture((store) => {
     store.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
     store.runners.setCatalog(LOCAL_RUNNER_ID, claudeCatalog);
@@ -430,12 +434,19 @@ test('a moxxy machine beside it still answers the provider question', () => {
     store.runners.setCatalog('runner-b', moxxyCatalog);
   });
 
-  const snapshot = orchestrator.runners.catalogSnapshot('opus', null);
+  const snapshot = orchestrator.runners.catalogSnapshot(null);
   assert.equal(detectProviders(snapshot).state, 'found');
   assert.equal(snapshot.machines.find((m) => m.id === 'runner-b').providerModels, true);
+  assert.deepEqual(
+    snapshot.providers.map((provider) => [provider.name, provider.kind]).sort(),
+    [
+      ['anthropic', 'provider'],
+      ['claude-code', 'runtime'],
+    ],
+  );
 });
 
-test('its models still decide placement, even though providers do not list them', () => {
+test('its listed models decide placement just like provider-backed models', () => {
   const { orchestrator } = fixture((store) => {
     store.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
     store.runners.setCatalog(LOCAL_RUNNER_ID, claudeCatalog);
@@ -444,9 +455,8 @@ test('its models still decide placement, even though providers do not list them'
   });
 
   // A model only one machine can serve must place there and nowhere else:
-  // hiding a built-in runtime from the Providers page must not hide it from
-  // placement. Claude Code's own models come from its descriptor, so `sonnet`
-  // is the local machine's alone and the moxxy machine's `opus` is not.
+  // Claude Code's own models come from its descriptor, so `sonnet` is the local
+  // machine's alone and the moxxy machine's `opus` is not.
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'sonnet'), true);
   assert.equal(orchestrator.runners.serves('runner-b', 'sonnet'), false);
   assert.equal(orchestrator.runners.serves('runner-b', 'opus'), true);
@@ -462,8 +472,28 @@ test('a machine set to its own models needs no probe to say what it can run', as
   // catalog: a runtime that ships its own models is merged in on read, because
   // caching something free only buys a window in which it is wrong.
   const models = orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'claude-code').map((m) => m.id);
-  assert.deepEqual(models.sort(), ['haiku', 'opus', 'sonnet']);
+  assert.deepEqual(models.sort(), ['fable', 'haiku', 'opus', 'sonnet']);
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'haiku'), true);
+});
+
+test('a built-in runtime session cannot replace another runtime provider catalog', () => {
+  const { store, orchestrator } = fixture((seeded) => {
+    seeded.runners.update(LOCAL_RUNNER_ID, { harnesses: ['moxxy', 'claude-code'] });
+    seeded.runners.setCatalog(LOCAL_RUNNER_ID, { ...moxxyCatalog, fetchedAt: 0 });
+  });
+
+  orchestrator.runners.noteSessionInfo(
+    null,
+    {
+      activeProvider: 'claude-code',
+      readyProviders: ['claude-code'],
+      providers: [{ name: 'claude-code', enabled: true, models: [{ id: 'fable' }] }],
+    },
+    'claude-code',
+  );
+
+  assert.equal(store.runners.get(LOCAL_RUNNER_ID).catalog.providers[0].name, 'anthropic');
+  assert.equal(orchestrator.runners.catalogSnapshot(null).providers.some((provider) => provider.name === 'anthropic'), true);
 });
 
 /**
@@ -473,13 +503,14 @@ test('a machine set to its own models needs no probe to say what it can run', as
  */
 test('health follows the runtime a run would take, not moxxy and not the whole set', async () => {
   const answers = new Map([
-    ['claude-code', { ok: true, detail: null }],
-    ['moxxy', { ok: true, detail: null }],
+    ['claude-code', { id: 'claude-code', label: 'Claude Code', version: '1.0.0', state: 'ready', detail: null }],
+    ['moxxy', { id: 'moxxy', label: 'Moxxy', version: '0.20.0', state: 'unavailable', detail: 'too old' }],
   ]);
-  const backend = new LocalRunnerBackend(LOCAL_RUNNER_ID, {}, 'moxxy', '0.20.0', false, 3, SILENT_SINK, {
+  const backend = new LocalRunnerBackend(LOCAL_RUNNER_ID, {}, 'moxxy', 3, SILENT_SINK, {
     runSpec: () => ({ harness: 'moxxy', model: null }),
     harnesses: () => order,
-    readiness: async (id) => answers.get(id) ?? { ok: false, detail: 'unknown' },
+    runtime: async (id) =>
+      answers.get(id) ?? { id, label: id, version: null, state: 'unavailable', detail: 'unknown' },
   });
   let order = ['moxxy'];
 
@@ -498,7 +529,13 @@ test('health follows the runtime a run would take, not moxxy and not the whole s
 
   // ...and the runtime it does take having gone away IS degraded, with a
   // reason. Reporting online here is how every run fails on a green machine.
-  answers.set('claude-code', { ok: false, detail: 'not signed in' });
+  answers.set('claude-code', {
+    id: 'claude-code',
+    label: 'Claude Code',
+    version: '1.0.0',
+    state: 'unavailable',
+    detail: 'not signed in',
+  });
   const health = await backend.probe();
   assert.equal(health.status, 'degraded');
   assert.equal(health.detail, 'not signed in');
@@ -507,14 +544,15 @@ test('health follows the runtime a run would take, not moxxy and not the whole s
 test('switching runtimes drops the models the previous one reported', async () => {
   // Kept, the old catalog reads as a credentialed provider the moment the
   // machine is back on moxxy, which is exactly what the switch should end.
-  const { orchestrator } = fixture();
+  const missingMoxxy = { path: 'companion-test-moxxy-no-such-binary', version: '0.26.0', compatible: true };
+  const { orchestrator } = fixture(() => undefined, missingMoxxy);
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['claude-code'] });
   assert.ok(orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'claude-code').length > 0);
 
   // Back to moxxy, whose probe cannot succeed here (no CLI in this fixture).
   await orchestrator.runners.update(LOCAL_RUNNER_ID, { harnesses: ['moxxy'] });
   assert.deepEqual(orchestrator.runners.modelsForLane(LOCAL_RUNNER_ID, 'moxxy'), []);
-  assert.equal(orchestrator.runners.catalogSnapshot('opus', null).providers.some((p) => p.name === 'claude-code'), false);
+  assert.equal(orchestrator.runners.catalogSnapshot(null).providers.some((p) => p.name === 'claude-code'), false);
   assert.equal(orchestrator.runners.serves(LOCAL_RUNNER_ID, 'haiku'), true, 'an unknown model stays permissive');
 });
 

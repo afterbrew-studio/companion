@@ -10,11 +10,10 @@ import { Orchestrator } from '../dist/api/orchestrator.js';
 import { Runners } from '../dist/api/runners-registry.js';
 import { LOCAL_RUNNER_ID } from '../dist/api/runners-store.js';
 
-// Provider names configured in the daemon's own moxxy home leak into the merged
-// catalog; point it at an empty dir so these tests see only seeded catalogs.
+// Keep runtime-owned files isolated so these tests see only seeded catalogs.
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-task-models-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8902, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8902, maxLiveRuns: 3 };
 
 const SINK = {
   onEvent() {},
@@ -106,14 +105,14 @@ async function bringOnline(orchestrator, id, dispatched, providers = []) {
     id,
     probe: async () => ({
       status: 'online',
-      moxxyVersion: '9.9.9',
-      moxxyCompatible: true,
+      runtimes: [{ id: 'test', label: 'Test', version: '9.9.9', state: 'ready', detail: null }],
       liveRuns: live.size,
       maxRuns: 3,
       lastSeenAt: Date.now(),
       detail: null,
       providers: ['anthropic'],
     }),
+    probeRuntime: async () => null,
     spawn: async (runId) => void live.add(runId),
     stop: async (runId) => void live.delete(runId),
     isLive: (runId) => live.has(runId),
@@ -147,7 +146,7 @@ async function bringOnline(orchestrator, id, dispatched, providers = []) {
   );
 }
 
-test('the model cascade is explicit choice, then the task pin, then the instance default', async () => {
+test('the model cascade is explicit choice, then the task pin, then the runtime default', async () => {
   const { orchestrator, dispatched } = fixture();
   orchestrator.setTaskModelPin('code.fix', 'sonnet');
 
@@ -156,7 +155,7 @@ test('the model cascade is explicit choice, then the task pin, then the instance
   const unpinned = await orchestrator.createRun({ kind: 'implement', task: 'code.implement' });
   const untasked = await orchestrator.createRun({ kind: 'analysis' });
 
-  // The row records the choice; null means nobody chose and the default applies.
+  // The row records the choice; null means nobody chose and the runtime decides.
   assert.equal(pinned.model, 'sonnet');
   assert.equal(explicit.model, 'haiku');
   assert.equal(unpinned.model, null);
@@ -167,9 +166,10 @@ test('the model cascade is explicit choice, then the task pin, then the instance
   }
   assert.equal(modelOf(dispatched, pinned.id), 'sonnet');
   assert.equal(modelOf(dispatched, explicit.id), 'haiku');
-  // One task's pin is not another's: both of these ride the daemon default.
-  assert.equal(modelOf(dispatched, unpinned.id), 'opus');
-  assert.equal(modelOf(dispatched, untasked.id), 'opus');
+  // One task's pin is not another's: omitting the model is the runtime-default
+  // contract at the actual dispatch boundary.
+  assert.equal(modelOf(dispatched, unpinned.id), null);
+  assert.equal(modelOf(dispatched, untasked.id), null);
 });
 
 test('a task pin no machine may serve falls back, while a fresh choice is refused', async () => {
@@ -178,11 +178,11 @@ test('a task pin no machine may serve falls back, while a fresh choice is refuse
   orchestrator.runners.setProviderPolicy(LOCAL_RUNNER_ID, { disabledProviders: [], disabledModels: ['sonnet'] });
 
   // A pin is a standing preference, not a choice a user just made: it gives way
-  // to the default rather than failing every run of the task.
+  // to the runtime default rather than failing every run of the task.
   const run = await orchestrator.createRun({ kind: 'fix', task: 'code.fix' });
   assert.equal(run.model, null);
   await orchestrator.sendPrompt(run.id, 'go');
-  assert.equal(modelOf(dispatched, run.id), 'opus');
+  assert.equal(modelOf(dispatched, run.id), null);
   // Nothing was rewritten: allow the model again and the pin is back in force.
   assert.equal(orchestrator.taskModelPin('code.fix'), 'sonnet');
   orchestrator.runners.setProviderPolicy(LOCAL_RUNNER_ID, { disabledProviders: [], disabledModels: [] });
@@ -217,7 +217,7 @@ test('a pin the machine the run landed on cannot serve gives way to its default'
   // preference gives way rather than the run dying after its worktree exists.
   assert.equal(run.model, null);
   await orchestrator.sendPrompt(run.id, 'go');
-  assert.equal(modelOf(dispatched, run.id), 'opus');
+  assert.equal(modelOf(dispatched, run.id), null);
   assert.equal(orchestrator.taskModelPin('code.fix'), 'sonnet');
 
   // The same pin still applies on a machine that can serve it: narrowing is per
@@ -274,7 +274,7 @@ test("a card's model gives way on a machine that cannot serve it, instead of fai
 
   const run = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: 'sonnet' });
   assert.equal(run.runnerId, null);
-  // The cascade continues rather than skipping to the daemon default: the pin
+  // The cascade continues rather than skipping to the runtime default: the pin
   // is the next-most-specific standing preference, and this machine serves it.
   assert.equal(run.model, 'opus');
   await orchestrator.sendPrompt(run.id, 'go');
@@ -310,7 +310,7 @@ test("a card's model no machine may run falls through to the pin, while the same
   );
 });
 
-test('a card that chose nothing keeps inheriting the pin, including after the pin changes', async () => {
+test('a card that chose nothing follows the task pin, then returns to the runtime default', async () => {
   const { orchestrator, dispatched } = await twoMachines();
   orchestrator.setTaskModelPin('board.worker', 'opus');
 
@@ -328,7 +328,7 @@ test('a card that chose nothing keeps inheriting the pin, including after the pi
   const third = await orchestrator.createRun({ kind: 'implement', task: 'board.worker', preferredModel: null });
   assert.equal(third.model, null);
   await orchestrator.sendPrompt(third.id, 'go');
-  assert.equal(modelOf(dispatched, third.id), 'opus');
+  assert.equal(modelOf(dispatched, third.id), null);
 });
 
 test('only models an enabled machine can serve are offered as a pin', async () => {

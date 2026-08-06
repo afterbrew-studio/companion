@@ -53,7 +53,7 @@ export const onboarding = defineOnboarding([
     key: 'welcome',
     order: 0,
     title: 'Welcome to Companion',
-    body: 'Start on Today. It gathers the few moments that need your decision; planning, review, and agent work stay available when you need the detail.',
+    body: 'Start on Overview for the state of the workspace, then use Today for the few moments that need your decision. Planning, review, and agent work stay available when you need the detail.',
     art: (playing) => <MascotArt playing={playing} />,
   },
   {

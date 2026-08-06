@@ -3,7 +3,6 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AuthUser, SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-services';
-import { APP_VERSION } from '../manifest.js';
 
 /**
  * The single WebSocket the browser SPA holds. The daemon multiplexes every
@@ -39,7 +38,10 @@ export class WsHub implements WsScopeRegistry {
   private readonly owner = new WeakMap<WebSocket, string>();
   private readonly resolvers = new Map<string, ScopeResolver>();
 
-  constructor(private readonly verify: (token: string | null) => AuthUser | null) {}
+  constructor(
+    private readonly verify: (token: string | null) => AuthUser | null,
+    private readonly appVersion: string,
+  ) {}
 
   registerScopeResolver(id: string, resolver: ScopeResolver): void {
     this.resolvers.set(id, resolver);
@@ -63,7 +65,7 @@ export class WsHub implements WsScopeRegistry {
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       this.owner.set(ws, user.username);
       this.wss.emit('connection', ws, req);
-      this.send(ws, { t: 'hello', version: APP_VERSION });
+      this.send(ws, { t: 'hello', version: this.appVersion });
     });
   }
 

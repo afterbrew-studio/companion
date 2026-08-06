@@ -24,27 +24,20 @@ import {
   type AgentSpawnRequest,
   type AgentStorageCleanupRequest,
   type AgentStorageCleanupResponse,
-  type AgentUpdateMoxxyResult,
   type AgentVerifyRequest,
   type AgentVerifyResponse,
   type AgentWorktreeAtRequest,
   type AgentWorktreeRequest,
   type AgentWorktreeResponse,
   type AgentWriteFileRequest,
-  type ProvisionProviderSpec,
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from '@companion/module-operate/exec';
-import { configuredProviderNames, runVerify } from '@companion/module-operate/exec';
+import { MIN_MOXXY_VERSION, runVerify } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
-import {
-  cleanupRunnerStorage,
-  loadHistoryWithFallback,
-  runMoxxyProvision,
-  upgradeMoxxyCli,
-} from '@companion/module-operate/exec';
+import { cleanupRunnerStorage, loadHistoryWithFallback } from '@companion/module-operate/exec';
 import { log } from './log.js';
 
 /**
@@ -58,8 +51,7 @@ import { log } from './log.js';
 export interface AgentDeps {
   readonly pool: GatewayPool;
   readonly checkouts: Checkouts;
-  /** Mutable: /agent/update-moxxy refreshes it so /agent/health tells the truth. */
-  moxxy: MoxxyCli | null;
+  readonly moxxy: MoxxyCli | null;
   readonly maxRuns: number;
 }
 
@@ -185,12 +177,22 @@ async function route(
   if (method === 'GET' && path === '/agent/health') {
     const health: AgentHealth = {
       ok: true,
-      moxxyVersion: deps.moxxy?.version ?? null,
-      moxxyCompatible: deps.moxxy?.compatible ?? false,
+      runtimes: [
+        {
+          id: 'moxxy',
+          label: 'Moxxy',
+          version: deps.moxxy?.version ?? null,
+          state: deps.moxxy?.compatible ? 'ready' : 'unavailable',
+          detail: deps.moxxy
+            ? deps.moxxy.compatible
+              ? null
+              : `Version ${deps.moxxy.version} is older than ${MIN_MOXXY_VERSION}`
+            : 'Runtime executable not found',
+        },
+      ],
       liveRuns: deps.pool.liveCount,
       maxRuns: deps.maxRuns,
       protocol: RUNNER_AGENT_PROTOCOL,
-      providers: configuredProviderNames(),
     };
     return health;
   }
@@ -199,28 +201,6 @@ async function route(
   if (run) {
     const runId = decodeURIComponent(run[1] ?? '');
     return routeRun(deps, method, run[2] ?? '', runId, url, body);
-  }
-
-  if (method === 'POST' && path === '/agent/update-moxxy') {
-    // In-place global upgrade; npm retargets the bin symlink, so already-live
-    // gateways keep their running binary and only new spawns pick up the new
-    // version. Companion triggers this from the Runners page.
-    const previous = deps.moxxy?.version ?? null;
-    log.info('updating moxxy CLI (npm i -g @moxxy/cli@latest)…');
-    const fresh = await upgradeMoxxyCli(paths.moxxyHome());
-    if (!fresh) throw badRequest('npm install succeeded but the moxxy CLI still cannot be detected on PATH');
-    deps.moxxy = fresh;
-    log.info(`moxxy CLI updated: ${previous ?? 'none'} → ${fresh.version}`);
-    return { previous, version: fresh.version, compatible: fresh.compatible } satisfies AgentUpdateMoxxyResult;
-  }
-
-  if (method === 'POST' && path === '/agent/providers') {
-    const spec = provisionSpec(body);
-    if (!deps.moxxy) throw new HttpError(503, 'moxxy CLI is not installed on this runner');
-    // The provider slug is safe to log; nothing else in the spec ever is.
-    log.info('adding model provider', { provider: spec.provider });
-    await runMoxxyProvision(deps.moxxy.path, paths.moxxyHome(), spec);
-    return { ok: true };
   }
 
   if (method === 'POST' && path === '/agent/scratch') {
@@ -472,18 +452,6 @@ function requireMethod(method: string, expected: string, action: string): void {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0) throw badRequest(`missing ${name}`);
   return value;
-}
-
-/** Narrow the provisioning body; `key` and `model` stay optional as moxxy has them. */
-function provisionSpec(value: unknown): ProvisionProviderSpec {
-  if (!value || typeof value !== 'object') throw badRequest('invalid provision request');
-  const raw = value as Record<string, unknown>;
-  const optional = (name: 'key' | 'model'): Record<string, string> => {
-    const candidate = raw[name];
-    if (candidate === undefined || candidate === null) return {};
-    return { [name]: requireString(candidate, name) };
-  };
-  return { provider: requireString(raw.provider, 'provider'), ...optional('key'), ...optional('model') };
 }
 
 function storageCleanupRequest(value: unknown): AgentStorageCleanupRequest {

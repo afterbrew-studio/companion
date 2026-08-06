@@ -19,14 +19,13 @@ import { rowToRun, type RunsStore } from './runs-store.js';
 import type { WebhookTunnel } from './webhook-tunnel.js';
 import type { Skills } from './skills.js';
 import type { Checkouts } from '../exec/checkouts.js';
-import type { MoxxyCli } from '../exec/cli.js';
 import { PromptEvaluationCatalog } from './prompt-evaluations.js';
 
 /**
  * The execution-plane bundle other modules resolve via
  * `ctx.services.get('operate')`: the orchestrator (launch/drive runs), the
- * runner registry (placement/health), checkouts (clones/worktrees), the
- * detected moxxy CLI, the public webhook tunnel and the skill library. Also the
+ * runner registry (placement/health), checkouts (clones/worktrees), the public
+ * webhook tunnel and the skill library. Also the
  * plug point for module-code's GitHub token resolver (inversion of control —
  * code depends on operate, never the reverse).
  */
@@ -44,7 +43,6 @@ export class OperateService {
     readonly orchestrator: Orchestrator,
     readonly runners: Runners,
     readonly checkouts: Checkouts,
-    public moxxyCli: MoxxyCli | null,
     readonly webhookTunnel: WebhookTunnel,
     readonly skills: Skills,
     /** The owner's runs store — consumers read/write run rows through it, never raw SQL. */
@@ -104,16 +102,6 @@ export class OperateService {
     // release (a retry, or the sweep having got there first) is a no-op.
     await this.runners.backendForRun(row.runner_id).removeWorktree(row.repo, row.cwd);
     return true;
-  }
-
-  /**
-   * After an in-place CLI upgrade: refresh the boot-time detection so
-   * /api/status and the local runner's advertised version reflect the new
-   * install. The spawn path is unchanged — npm swaps the bin symlink target.
-   */
-  setMoxxyCli(cli: MoxxyCli | null): void {
-    this.moxxyCli = cli;
-    this.runners.localBackend.updateMoxxyCli(cli?.version ?? null, cli?.compatible ?? false);
   }
 
   /**

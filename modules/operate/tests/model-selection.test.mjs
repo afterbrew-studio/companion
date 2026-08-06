@@ -11,7 +11,7 @@ import { LOCAL_RUNNER_ID } from '../dist/api/runners-store.js';
 
 process.env.COMPANION_HOME = mkdtempSync(join(tmpdir(), 'companion-model-selection-'));
 
-const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3, defaultModel: 'opus' };
+const CONFIG = { host: '127.0.0.1', port: 8901, maxLiveRuns: 3 };
 
 const provider = (name, models) => ({
   name,

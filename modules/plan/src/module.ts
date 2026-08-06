@@ -10,7 +10,6 @@ export default defineManifest({
   title: 'Plan',
   version: '0.1.0',
   dependsOn: ['code', 'operate', 'workspace', 'core'],
-  autoInstall: false,
   permissions: [
     'proposals:read',
     'proposals:create',

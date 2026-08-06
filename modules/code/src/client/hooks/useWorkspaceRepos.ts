@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLive } from '@moxxy/companion-sdk/client';
 import type { RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
@@ -26,21 +26,33 @@ export function useWorkspaceReposState(workspaceId: string | undefined): {
   repos: RepoRecord[];
   loaded: boolean;
 } {
-  const [state, setState] = useState<{ repos: RepoRecord[]; loaded: boolean }>({ repos: [], loaded: false });
+  const workspaceRef = useRef(workspaceId);
+  workspaceRef.current = workspaceId;
+  const [state, setState] = useState<{
+    workspaceId: string | undefined;
+    repos: RepoRecord[];
+    loaded: boolean;
+  }>({ workspaceId, repos: [], loaded: false });
   const load = useCallback(async () => {
     if (!workspaceId) {
-      setState({ repos: [], loaded: true });
+      setState({ workspaceId, repos: [], loaded: true });
       return;
     }
     try {
       const { repos } = await api.workspaceRepos(workspaceId);
-      setState({ repos, loaded: true });
+      if (workspaceRef.current === workspaceId) setState({ workspaceId, repos, loaded: true });
     } catch {
       // A failed read is not an empty workspace; keep whatever is on screen and
       // let the gate stay quiet rather than accuse the instance of being unset up.
-      setState((prev) => ({ repos: prev.repos, loaded: true }));
+      if (workspaceRef.current === workspaceId) {
+        setState((prev) => ({
+          workspaceId,
+          repos: prev.workspaceId === workspaceId ? prev.repos : [],
+          loaded: true,
+        }));
+      }
     }
   }, [workspaceId]);
   useLive(load, (msg) => msg.t === 'repos.changed');
-  return state;
+  return state.workspaceId === workspaceId ? state : { repos: [], loaded: false };
 }

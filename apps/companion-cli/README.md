@@ -86,15 +86,10 @@ Run `npx @moxxy/companion init` to do setup without starting the server.
 
 ## Running agents
 
-The dashboard works on its own. **Agent runs need the moxxy CLI**, which holds
-your model provider credentials:
-
-```sh
-npm i -g @moxxy/cli && moxxy onboard
-```
-
-Companion never sees a provider key. It asks moxxy to run a turn, on this
-machine or on a remote one you have connected as a runner.
+The dashboard works on its own. For agent work, install and sign in to a
+supported runtime such as Codex, Claude Code, or Moxxy. Companion detects what
+the machine can run, uses the runtime's own default model for Auto, and reads
+provider capabilities without copying provider keys into the control plane.
 
 ## Managing an instance
 

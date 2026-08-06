@@ -29,9 +29,11 @@ export class PrReviewsStore {
     this.db
       .prepare(
         `INSERT INTO pr_reviews (id, repo, pr_number, run_id, run_ids, source, status, verdict, error, created_at,
-                                 head_sha, depth, strictness, progress, coverage)
+                                 head_sha, depth, strictness, progress, coverage, provider_id, review_mode, external_url,
+                                 external_summary)
          VALUES (@id, @repo, @prNumber, @runId, @runIds, @source, @status, @verdict, @error, @createdAt,
-                 @headSha, @depth, @strictness, @progress, @coverage)`,
+                 @headSha, @depth, @strictness, @progress, @coverage, @providerId, @reviewMode, @externalUrl,
+                 @externalSummary)`,
       )
       .run({
         id: r.id,
@@ -51,6 +53,10 @@ export class PrReviewsStore {
         strictness: r.strictness,
         progress: JSON.stringify(r.progress),
         coverage: JSON.stringify(r.coverage),
+        providerId: r.providerId ?? (r.source === 'human' ? 'companion.human' : 'companion.native-review'),
+        reviewMode: r.reviewMode ?? 'managed',
+        externalUrl: r.externalUrl ?? null,
+        externalSummary: r.externalSummary ?? null,
       });
   }
 
@@ -106,7 +112,8 @@ export class PrReviewsStore {
       this.db
         .prepare(
           `UPDATE pr_reviews SET run_id = ?, run_ids = ?, status = ?, verdict = ?, error = ?,
-                                 progress = ?, coverage = ?, head_sha = ?, depth = ?, strictness = ?
+                                 progress = ?, coverage = ?, head_sha = ?, depth = ?, strictness = ?,
+                                 provider_id = ?, review_mode = ?, external_url = ?, external_summary = ?
            WHERE id = ? AND status = 'running'`,
         )
         .run(
@@ -120,6 +127,10 @@ export class PrReviewsStore {
           r.headSha,
           r.depth,
           r.strictness,
+          r.providerId ?? (r.source === 'human' ? 'companion.human' : 'companion.native-review'),
+          r.reviewMode ?? 'managed',
+          r.externalUrl ?? null,
+          r.externalSummary ?? null,
           r.id,
         ).changes > 0
     );
@@ -279,6 +290,10 @@ interface PrReviewRow {
   strictness: ReviewStrictness | null;
   progress: string | null;
   coverage: string | null;
+  provider_id: string | null;
+  review_mode: string | null;
+  external_url: string | null;
+  external_summary: string | null;
 }
 
 const finishedProgress = (createdAt: number): PrReviewProgress => ({
@@ -306,6 +321,10 @@ function prReviewRowToResult(row: PrReviewRow): PrReviewResult {
     runId: row.run_id || null,
     runIds: row.run_ids ? safeParse<string[]>(row.run_ids, row.run_id ? [row.run_id] : []) : row.run_id ? [row.run_id] : [],
     source: row.source ?? (row.run_id ? 'agent' : 'human'),
+    providerId: row.provider_id ?? (row.source === 'human' ? 'companion.human' : 'companion.native-review'),
+    reviewMode: row.review_mode === 'delegated' ? 'delegated' : 'managed',
+    externalUrl: row.external_url,
+    externalSummary: row.external_summary,
     status: row.status,
     verdict: row.verdict ? safeParse<PrReviewVerdict | null>(row.verdict, null) : null,
     error: row.error,

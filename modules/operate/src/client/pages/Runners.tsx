@@ -126,30 +126,13 @@ function RunnerCard({
   const [busy, setBusy] = useState(false);
   const [probe, setProbe] = useState<'busy' | { ok: boolean; note: string } | null>(null);
   const probeTimer = useRef<number | undefined>(undefined);
-  const [updating, setUpdating] = useState(false);
-  const [updateNote, setUpdateNote] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
   const local = runner.kind === 'local';
   const manageable = runner.ownerId === me || (runner.ownerId === null && admin);
   const { health } = runner;
-  // The agent binary itself is outdated: only an on-machine update fixes that
-  // (an old agent has no remote-update endpoint either).
   const agentOutdated = health.agentOutdated === true;
-  // moxxy missing/old but the machine is reachable — remotely updatable.
-  const moxxyOutdated = !agentOutdated && health.status !== 'offline' && health.status !== 'unknown' && !health.moxxyCompatible;
-
-  const updateMoxxy = async (): Promise<void> => {
-    setUpdating(true);
-    setUpdateNote(null);
-    try {
-      const r = await api.updateRunnerMoxxy(runner.id);
-      setUpdateNote(`moxxy ${r.previous ?? 'none'} → ${r.version ?? 'unknown'}${r.compatible ? '' : ' (still too old)'}`);
-    } catch (err) {
-      setUpdateNote(String(err));
-    } finally {
-      setUpdating(false);
-    }
-  };
+  const unavailableRuntimes = health.runtimes.filter((runtime) => runtime.state !== 'ready');
+  const providerBacked = runner.harnesses.some((runtime) => runtime.capabilities.models === 'providers');
 
   const setEnabled = async (enabled: boolean): Promise<void> => {
     setBusy(true);
@@ -168,11 +151,10 @@ function RunnerCard({
     setProbe('busy');
     try {
       const result = await api.probeRunner(runner.id);
+      const ready = result.health.runtimes.filter((runtime) => runtime.state === 'ready').map((runtime) => runtime.label);
       setProbe({
         ok: result.ok,
-        note: result.ok
-          ? `reachable — moxxy ${result.health.moxxyVersion ?? 'unknown'}`
-          : (result.health.detail ?? 'unreachable'),
+        note: result.ok ? `reachable${ready.length > 0 ? ` · ${ready.join(' · ')}` : ''}` : (result.health.detail ?? 'unreachable'),
       });
     } catch (err) {
       setProbe({ ok: false, note: String(err) });
@@ -292,14 +274,26 @@ function RunnerCard({
             <span>{taskNote}</span>
           </Tooltip>
         ) : null}
-        {health.moxxyVersion ? <span>moxxy {health.moxxyVersion}</span> : null}
+        {health.runtimes.map((runtime) => (
+          <Tooltip key={runtime.id} content={runtime.detail ?? `${runtime.label} is ready`}>
+            <span className={runtime.state === 'ready' ? '' : 'text-amber-600 dark:text-amber-400'}>
+              {runtime.label}
+              {runtime.version ? ` ${runtime.version}` : ''}
+            </span>
+          </Tooltip>
+        ))}
         {!local && runner.endpoint ? <span>{endpointHost(runner.endpoint)}</span> : null}
         {health.status === 'offline' ? (
           <span>{health.lastSeenAt ? `last seen ${timeAgo(health.lastSeenAt)}` : 'never seen'}</span>
-        ) : health.providers !== null ? (
-          health.providers.length > 0 ? (
+        ) : providerBacked && runner.catalog !== null ? (
+          runner.catalog.providers.some((provider) => provider.ready) ? (
             <Tooltip content="model providers configured on this machine — placement matches runs to them">
-              <span>{health.providers.join(' · ')}</span>
+              <span>
+                {runner.catalog.providers
+                  .filter((provider) => provider.ready)
+                  .map((provider) => provider.name)
+                  .join(' · ')}
+              </span>
             </Tooltip>
           ) : (
             <Tooltip content="no model providers configured — agent work is not placed here">
@@ -320,23 +314,16 @@ function RunnerCard({
 companion-runner stop && companion-runner --background`}
           </pre>
         </div>
-      ) : moxxyOutdated ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-[13px]">
-          <span className="font-medium text-amber-700 dark:text-amber-400">
-            moxxy on this machine is missing or too old — agent work can't run here.
-          </span>
-          <span className="flex-1" />
-          {updateNote ? <span className="dim">{updateNote}</span> : null}
-          {manageable ? (
-            <button className="btn-ghost shrink-0" disabled={updating} onClick={() => void updateMoxxy()}>
-              {updating ? 'Updating… (npm i -g @moxxy/cli)' : 'Update moxxy'}
-            </button>
-          ) : (
-            <span className="dim">An admin can update it.</span>
-          )}
+      ) : unavailableRuntimes.length > 0 ? (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-[13px]">
+          <p className="font-medium text-amber-700 dark:text-amber-400">
+            {unavailableRuntimes.map((runtime) => runtime.label).join(', ')} needs attention on this machine.
+          </p>
+          <p className="dim mt-1">
+            {unavailableRuntimes.map((runtime) => runtime.detail).filter(Boolean).join(' · ') ||
+              'Open the machine settings to choose another detected runtime.'}
+          </p>
         </div>
-      ) : updateNote ? (
-        <p className="dim mt-3 text-[13px]">{updateNote}</p>
       ) : null}
 
       {manageable ? (
@@ -369,11 +356,11 @@ function AttachGuide(): JSX.Element {
       </summary>
       <ol className="mt-2.5 ml-4 list-decimal space-y-2 text-[13px] leading-relaxed">
         <li>
-          On the machine you want to add, install the agent and let it check/repair prerequisites (Node, the moxxy CLI,
-          providers), then start it:
+          On the machine you want to add, install the runner agent, let it check its runtime and network prerequisites,
+          then start it:
           <pre className="mono-pane mt-1.5">
 {`npm i -g @moxxy/companion-runner
-companion-runner setup    # installs the moxxy CLI if missing, opens the firewall
+companion-runner setup    # checks the runtime and opens the firewall
 
 COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
           </pre>
@@ -409,10 +396,8 @@ COMPANION_RUNNER_TOKEN=<pick-a-secret> companion-runner --background`}
 companion-runner stop && companion-runner --background`}
         </pre>
         <p className="dim mt-1.5">
-          An outdated <span className="text-amber-600 dark:text-amber-400">moxxy CLI</span> can be updated straight from
-          the card's <span className="font-medium">Update moxxy</span> button (agents attached after this release);
-          on the machine it's <code className="code-inline">npm i -g @moxxy/cli</code>. Runs already in flight keep
-          their old binary — only new runs pick the update up.
+          Runtime installation, sign-in, and upgrades stay on that machine and use the runtime's own tooling. Companion
+          detects the resulting capability on the next health poll; it does not install or upgrade runtimes remotely.
         </p>
       </div>
     </details>

@@ -1,16 +1,15 @@
-import type { AskRequest, HistorySegment, ProvisionProviderSpec } from '@moxxy/companion-types';
+import type { AskRequest, HistorySegment } from '@moxxy/companion-types';
 import { del, patch, post, put, qs, request, type PageQuery } from '@moxxy/companion-core/client';
 import type {
   BudgetStatus,
   CreateRunnerRequest,
   HarnessOptions,
   ModelCatalog,
-  MoxxyStatus,
+  OperateStatus,
   ProviderCatalog,
   RunListRecord,
   RunQueueSnapshot,
   RunRecord,
-  RunnerMoxxyUpdateResult,
   RunnerCapacitySnapshot,
   RunnerPolicyOptions,
   RunnerProbeResult,
@@ -42,13 +41,13 @@ export interface LaneSnapshot {
 
 /**
  * module-operate's REST surface, carved from the legacy `lib/api.ts`: the agent
- * runs family + the run queue, runner machines, provider/model settings, the
- * moxxy status probe, and skills. HTTP + token plumbing lives in
+ * runs family + the run queue, runner machines, runtime capabilities,
+ * provider/model settings, and skills. HTTP + token plumbing lives in
  * `@moxxy/companion-core/client`.
  */
 
 export const operateApi = {
-  status: () => request<MoxxyStatus>('/api/status'),
+  status: () => request<OperateStatus>('/api/status'),
 
   // runs
   listRuns: () => request<{ runs: RunRecord[] }>('/api/runs'),
@@ -108,8 +107,6 @@ export const operateApi = {
     put<LaneSnapshot>('/api/me/lane/model', { lane, model, ...(task ? { task } : {}) }),
 
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
-  updateRunnerMoxxy: (id: string) => post<RunnerMoxxyUpdateResult>(`/api/runners/${id}/update-moxxy`),
-
   // providers + models (grouped per machine; machines fetch their own catalog)
   providerCatalog: () => request<ProviderCatalog>('/api/providers'),
   setRunnerProviderPolicy: (runnerId: string, policy: RunnerProviderPolicy) =>

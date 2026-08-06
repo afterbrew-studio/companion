@@ -45,6 +45,7 @@ export default defineServices((ctx) => {
   const core = ctx.services.get('core');
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
+  const integrations = ctx.services.get('integrations');
 
   // The feature tasks this module runs agents for, so runners can block them.
   operate.registerRunTask({ id: 'code.fix', label: 'Fix runs', placeable: true, hint: 'issue fixes and PR repairs — worktree goal runs' });
@@ -187,6 +188,18 @@ export default defineServices((ctx) => {
       workspace.canAccessRepo({ username, displayName: username, role }, repo);
   };
 
+  const integrationScope = (username: string, repo: string, requestedWorkspaceId?: string) => {
+    const role = core.activeUserRole(username);
+    if (!role) throw new Error(`${username} is disabled`);
+    const user = { username, displayName: username, role };
+    const candidates = requestedWorkspaceId ? [requestedWorkspaceId] : reposStore.workspaceIds(repo);
+    const workspaceId = candidates.find(
+      (id) => reposStore.inWorkspace(repo, id) && workspace.canAccessWorkspace(user, id),
+    );
+    if (!workspaceId) throw new Error(`repository ${repo} is not available in the requested workspace`);
+    return { kind: 'repository' as const, workspaceId, repo };
+  };
+
   const triage = new Triage(
     store,
     operate.orchestrator,
@@ -222,6 +235,8 @@ export default defineServices((ctx) => {
     prChecks,
     authorized,
     ctx.broadcast,
+    integrations,
+    integrationScope,
   );
   const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, ctx.broadcast);
   const agentContext = new RepoAgentContextScanner();

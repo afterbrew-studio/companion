@@ -93,14 +93,7 @@ export function TaskModelsPage({ query }: { query?: URLSearchParams }): JSX.Elem
               value={snapshot.laneDefaultModel ?? ''}
               onChange={(e) => void setLaneDefault(e.target.value === '' ? null : e.target.value)}
             >
-              {/* The daemon default is an instance-wide setting and may name a
-                  model this runtime cannot run. Naming it here would promise a
-                  fallback that dispatch discards on every run. */}
-              <option value="">
-                {snapshot.models.some((m) => m.id === snapshot.defaultModel)
-                  ? `Inherit (${snapshot.defaultModel})`
-                  : "Inherit (this runtime's own default)"}
-              </option>
+              <option value="">Auto — runtime default</option>
               {snapshot.models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.id}
@@ -145,7 +138,7 @@ export function TaskModelsPage({ query }: { query?: URLSearchParams }): JSX.Elem
                   <div key={entry.task.id} className="px-4 py-3">
                     <SettingRow
                       title={entry.task.label}
-                      description={describe(entry, lane, snapshot.defaultModel, snapshot.models)}
+                      description={describe(entry, lane, snapshot.models)}
                     >
                       <ModelPicker
                         entry={entry}
@@ -155,7 +148,6 @@ export function TaskModelsPage({ query }: { query?: URLSearchParams }): JSX.Elem
                           entry,
                           lane,
                           snapshot.laneDefaultModel ?? null,
-                          snapshot.defaultModel,
                           snapshot.models,
                         )}
                         busy={saving === entry.task.id}
@@ -182,22 +174,20 @@ function inheritedFor(
   entry: TaskModelPin,
   lane: RunLane | null,
   laneDefault: string | null,
-  daemonDefault: string,
   servable: readonly CatalogModel[],
-): string {
-  if (!lane) return daemonDefault;
+): string | null {
+  if (!lane) return null;
   // The instance pin only reaches this lane if the lane can serve it. Naming a
   // model this runtime cannot run would promise an inheritance that dispatch
   // drops on every run.
   const reachable = entry.model !== null && servable.some((m) => m.id === entry.model) ? entry.model : null;
-  return laneDefault ?? reachable ?? daemonDefault ?? '';
+  return laneDefault ?? reachable;
 }
 
 /** The row's second line: what it inherits, and what actually last ran it. */
 function describe(
   entry: TaskModelPin,
   lane: RunLane | null,
-  daemonDefault: string,
   servable: readonly CatalogModel[],
 ): string {
   const base = entry.task.hint ?? entry.task.id;
@@ -208,7 +198,9 @@ function describe(
   if (lane && entry.model && servable.some((m) => m.id === entry.model)) {
     parts.push(`unattended: ${entry.model}`);
   }
-  if (!lane && !entry.model) parts.push(`rides ${daemonDefault || 'the daemon default'}`);
+  if (!lane && !entry.model) {
+    parts.push("auto: selected runtime's default");
+  }
   if (entry.lastRun) {
     const model = entry.lastRun.model ?? 'that machine\u2019s default';
     parts.push(`last run: ${entry.lastRun.harness} \u00b7 ${model}, ${timeAgo(entry.lastRun.at)}`);
@@ -227,7 +219,7 @@ function ModelPicker({
   entry: TaskModelPin;
   lane: RunLane | null;
   models: readonly CatalogModel[];
-  inherited: string;
+  inherited: string | null;
   busy: boolean;
   onChange: (model: string | null) => void;
 }): JSX.Element {
@@ -244,7 +236,7 @@ function ModelPicker({
       value={pinned ?? ''}
       onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
     >
-      <option value="">Inherit{inherited ? ` (${inherited})` : ''}</option>
+      <option value="">{inherited ? `Auto — ${inherited}` : 'Auto — runtime default'}</option>
       {stale ? <option value={pinned!}>{pinned} (unavailable now)</option> : null}
       {models.map((m) => (
         <option key={m.id} value={m.id}>

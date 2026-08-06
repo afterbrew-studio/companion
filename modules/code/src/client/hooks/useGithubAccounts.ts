@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { operateApi } from '@companion/module-operate/client';
-import type { MoxxyStatus } from '@companion/module-operate/contract';
+import type { OperateStatus } from '@companion/module-operate/contract';
 import { workspaceApi } from '@companion/module-workspace/client';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { useLive } from '@moxxy/companion-sdk/client';
@@ -15,14 +15,14 @@ import { codeApi as api } from '../api.js';
 export function useGithubAccounts(): {
   accounts: GitHubAccountRecord[] | null;
   workspaces: WorkspaceRecord[];
-  status: MoxxyStatus | null;
+  status: OperateStatus | null;
   error: string | null;
   setError: (e: string | null) => void;
   refresh: () => Promise<void>;
 } {
   const [accounts, setAccounts] = useState<GitHubAccountRecord[] | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
-  const [status, setStatus] = useState<MoxxyStatus | null>(null);
+  const [status, setStatus] = useState<OperateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {

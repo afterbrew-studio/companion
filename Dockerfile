@@ -37,7 +37,7 @@ RUN pnpm -C apps/companion-cli run bundle && test -d apps/companion-cli/dist
 # own package.json cannot be reused here: npm refuses to parse the `workspace:*`
 # devDependencies even with --omit=dev.
 RUN node -e "const p=require('./apps/companion-cli/package.json');\
-require('fs').writeFileSync('/app/runtime-package.json',JSON.stringify({name:'companion-runtime',private:true,type:'module',dependencies:p.dependencies},null,2))" 
+require('fs').writeFileSync('/app/runtime-package.json',JSON.stringify({name:'companion-runtime',version:p.version,private:true,type:'module',dependencies:p.dependencies},null,2))"
 
 FROM base AS runtime
 ENV NODE_ENV=production

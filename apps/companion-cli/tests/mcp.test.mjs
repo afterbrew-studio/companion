@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CompanionMcpServer, resolveMcpBaseUrl } from '../dist/mcp.js';
+import { COMPANION_VERSION } from '../dist/version.js';
 
 const action = {
   id: 'spec.create',
@@ -33,6 +34,8 @@ async function initializedServer(api) {
   });
   assert.equal(response.result.protocolVersion, '2025-11-25');
   assert.deepEqual(response.result.capabilities, { tools: { listChanged: false } });
+  assert.equal(response.result.serverInfo.name, 'companion');
+  assert.equal(response.result.serverInfo.version, COMPANION_VERSION);
   assert.equal(
     await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }),
     null,

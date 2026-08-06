@@ -120,7 +120,7 @@ function Gate(): JSX.Element {
 /** Sidebar brand block: instance logo + name. A branded instance with no logo
  *  falls back to its own letter tile; an unbranded one gets the Companion mark. */
 function Brand({ rail }: { rail: boolean }): JSX.Element {
-  const { branding } = useAuth();
+  const { branding, version } = useAuth();
   const custom = branding.name?.trim();
   const name = custom || 'Companion';
   return (
@@ -134,7 +134,12 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
       ) : (
         <BrandTile />
       )}
-      {rail ? null : <span className="truncate text-[15px] font-semibold">{name}</span>}
+      {rail ? null : (
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="truncate text-[15px] font-semibold">{name}</span>
+          {version ? <span className="dim shrink-0 text-[10px] tabular-nums">v{version}</span> : null}
+        </span>
+      )}
     </div>
   );
 }

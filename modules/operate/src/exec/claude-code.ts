@@ -49,7 +49,7 @@ export const CLAUDE_CODE_CAPABILITIES: HarnessCapabilities = {
  * does not go stale, and the resolved id is reported per session by
  * `system/init` and added to the catalog from there.
  */
-export const CLAUDE_MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
+export const CLAUDE_MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'] as const;
 
 /** The provider name a Claude Code machine reports its models under. */
 export const CLAUDE_PROVIDER = 'claude-code';

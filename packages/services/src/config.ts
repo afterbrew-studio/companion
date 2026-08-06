@@ -60,9 +60,6 @@ export const consumePendingDbRecreate = (): boolean => {
   return true;
 };
 
-/** Model every agent run defaults to (overridable per prompt / via env). */
-export const DEFAULT_MODEL = 'gpt-5.5';
-
 export interface UserCredential {
   readonly username: string;
   readonly email: string;
@@ -77,10 +74,6 @@ export interface DaemonConfig {
   port: number;
   /** Max concurrently live gateway processes. */
   maxLiveRuns: number;
-  /** Explicit path to the moxxy CLI entry (overrides PATH lookup). */
-  moxxyCliPath?: string;
-  /** Default model passed on every agent turn. */
-  defaultModel: string;
   /** URL remote runners use to reach this daemon's REST API. */
   publicUrl?: string;
   /**
@@ -111,7 +104,6 @@ interface StoredConfig {
   githubApiUrl?: string;
   githubHost?: string;
   maxLiveRuns?: number;
-  moxxyCliPath?: string;
   publicUrl?: string;
 }
 
@@ -153,8 +145,6 @@ export function loadDaemonConfig(): DaemonConfig {
     host: env.COMPANION_HOST?.trim() || stored.host || DEFAULTS.host,
     port: numberFrom(env.COMPANION_PORT) ?? stored.port ?? DEFAULTS.port,
     maxLiveRuns: stored.maxLiveRuns ?? DEFAULTS.maxLiveRuns,
-    moxxyCliPath: stored.moxxyCliPath,
-    defaultModel: env.COMPANION_MODEL?.trim() || DEFAULT_MODEL,
     publicUrl: env.COMPANION_PUBLIC_URL?.trim() || stored.publicUrl || undefined,
     github: {
       apiUrl: (env.COMPANION_GITHUB_API_URL?.trim() || stored.githubApiUrl || DEFAULTS.githubApiUrl).replace(/\/+$/, ''),

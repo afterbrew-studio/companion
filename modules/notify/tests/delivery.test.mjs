@@ -6,8 +6,8 @@ import {
   buildRequest,
   deliver,
   isPublicAddress,
-  redactTarget,
 } from '../dist/api/delivery.js';
+import { notificationProviders } from '../dist/api/notification-providers.js';
 
 const NOTIFICATION = {
   id: 'n1',
@@ -20,22 +20,6 @@ const NOTIFICATION = {
   readAt: null,
   createdAt: 1_700_000_000_000,
 };
-
-// ---------- redaction ----------
-
-test('a destination URL is reduced to host plus one path segment', () => {
-  const hint = redactTarget('https://hooks.slack.com/services/T000/B111/xxxxSECRETxxxx');
-  assert.equal(hint, 'hooks.slack.com/services/…');
-  assert.doesNotMatch(hint, /SECRET/);
-});
-
-test('a URL with no path redacts to the bare host', () => {
-  assert.equal(redactTarget('https://example.com'), 'example.com');
-});
-
-test('a malformed stored URL is reported, never echoed back', () => {
-  assert.equal(redactTarget('not a url'), 'invalid URL');
-});
 
 // ---------- payload shapes ----------
 
@@ -104,6 +88,30 @@ test('a secret set on a non-webhook kind never leaks into its request', () => {
 // ---------- delivery ----------
 
 const REQUEST = { url: 'https://example.com/hook', headers: {}, body: '{}' };
+
+test('provider connections reject unsafe destinations before a secret is stored', () => {
+  const providers = new Map(notificationProviders(() => null).map((provider) => [provider.descriptor.id, provider]));
+  const validate = (providerId, url) => providers.get(providerId).validateConfig({}, () => url);
+
+  assert.throws(() => validate('slack.webhook', 'http://hooks.slack.com/services/T/B/X'), /Slack webhooks must use HTTPS/);
+  assert.throws(() => validate('slack.webhook', 'https://hooks.slack.test/services/T/B/X'), /official hooks\.slack\.com/);
+  assert.doesNotThrow(() => validate('slack.webhook', 'https://hooks.slack.com/services/T/B/X'));
+  assert.throws(() => validate('discord.webhook', 'https://example.test/api/webhooks/1/token'), /official discord\.com/);
+  assert.doesNotThrow(() => validate('discord.webhook', 'https://discord.com/api/webhooks/1/token'));
+  assert.throws(() => validate('discord.webhook', 'file:///tmp/hook'), /must use HTTP\(S\)/);
+  assert.throws(() => validate('webhook.generic', 'https://user:pass@example.test/hook'), /embedded credentials/);
+  assert.doesNotThrow(() => validate('webhook.generic', 'http://internal.example.test/hook'));
+});
+
+test('provider connections reject misspelled notification filters before storage', () => {
+  const [slack] = notificationProviders(() => null);
+  const secret = (key) => key === 'url' ? 'https://hooks.slack.com/services/T/B/X' : null;
+  assert.doesNotThrow(() => slack.validateConfig({ eventKinds: 'error,finished' }, secret));
+  assert.throws(
+    () => slack.validateConfig({ eventKinds: 'finishd' }, secret),
+    /Unsupported event kind: finishd/,
+  );
+});
 
 test('a 2xx is one attempt and done', async () => {
   let calls = 0;
@@ -187,7 +195,7 @@ test('personal delivery validates DNS and never follows redirects', async () => 
   assert.equal(calls, 1);
 });
 
-test('a personal channel targeting a private service fails before fetch', async () => {
+test('a personal destination targeting a private service fails before fetch', async () => {
   let calls = 0;
   const outcome = await deliver(
     REQUEST,

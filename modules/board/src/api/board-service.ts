@@ -195,11 +195,10 @@ export class BoardService {
    * shared pool's catalog and the `board.worker` pin, so this page and the
    * Task models settings page can never drift apart.
    */
-  modelOptions(defaultModel: string): TaskModelOptions {
+  modelOptions(): TaskModelOptions {
     return {
       models: this.operate.runners.servableModels(),
       workerModel: this.operate.orchestrator.taskModelPin('board.worker'),
-      defaultModel,
     };
   }
 

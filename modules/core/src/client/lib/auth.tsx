@@ -30,6 +30,8 @@ interface AuthState {
   readonly setNavPerspective: (perspective: NavigationPerspective) => Promise<void>;
   /** Instance branding (name/logo); available pre-login. */
   readonly branding: InstanceBranding;
+  /** Companion product version; available pre-login. */
+  readonly version: string | null;
   /** Host for user-facing GitHub links; `github.com` unless this instance points at GHES. */
   readonly githubHost: string;
   /** Alternative sign-in methods contributed by identity modules; empty by default. */
@@ -53,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [navOverrides, setNavOverridesState] = useState<readonly NavigationPageOverride[]>([]);
   const [navPerspective, setNavPerspectiveState] = useState<NavigationPerspective>('auto');
   const [branding, setBranding] = useState<InstanceBranding>({ name: null, logo: null });
+  const [version, setVersion] = useState<string | null>(null);
   const [githubHost, setGithubHost] = useState('github.com');
   const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
   const [localCredentials, setLocalCredentials] = useState<{ username: string; password: string } | null>(null);
@@ -72,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     try {
       const state = await authApi.state();
       setBranding(state.branding);
+      setVersion(state.version);
       setGithubHost(state.githubHost);
       setProviders(state.providers);
       setLocalCredentials(state.localCredentials ?? null);
@@ -175,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         navigationAudience,
         setNavPerspective,
         branding,
+        version,
         setBranding,
         githubHost,
         providers,

@@ -30,9 +30,9 @@
   "dependencies": {
     "@moxxy/companion-contracts": "workspace:*",
     "@companion/module-core": "workspace:*",
+    "@companion/module-integrations": "workspace:*",
     "@companion/module-workspace": "workspace:*",
-    "@moxxy/companion-sdk": "workspace:*",
-    "zod": "^3.24.0"
+    "@moxxy/companion-sdk": "workspace:*"
   },
   "devDependencies": {
     "@moxxy/companion-services": "workspace:*",

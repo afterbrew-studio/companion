@@ -1,5 +1,9 @@
 import { useCallback, useState } from 'react';
+import { useAuth } from '@companion/module-core/client';
 import { AgentActivity, LaneNote } from '@companion/module-operate/client';
+import { ReviewProviderSelect } from '@companion/module-integrations/client';
+import type { IntegrationTargetRef } from '@companion/module-integrations/contract';
+import { Slot } from '@moxxy/companion-sdk/client';
 import {
   ActionMenu,
   AiActionMenu,
@@ -43,6 +47,7 @@ type Mode = 'detail' | 'review';
  * folds the code away. Both are fed entirely by {@link usePr}.
  */
 export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): JSX.Element {
+  const { can } = useAuth();
   const pr = usePr(repo, number);
   const fetchFiles = useCallback((page: number) => api.prFiles(repo, number, page), [repo, number]);
   const expandContext = useCallback(
@@ -105,6 +110,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
               <article className="card max-h-[360px] overflow-y-auto">
                 {p.body ? <Markdown text={p.body} /> : <span className="dim text-sm">(no description)</span>}
               </article>
+              <Slot name="work-item.links" can={can} props={{ kind: 'pull-request', repo, number }} />
               {pr.analyzing && !pr.review ? (
                 <div className="banner-info anim-in">
                   <Spinner /> Review agent is reading the diff and CI status…
@@ -117,7 +123,7 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
                   canReadRuns={pr.canReadRuns}
                   canUseAgents={pr.canUseAgents}
                   busy={pr.busy}
-                  onApply={(acct) => void pr.applyReview(acct)}
+                  onApply={(acct, postMode) => void pr.applyReview(acct, postMode)}
                   onCancel={() => void pr.cancelReview()}
                   onDismiss={() => void pr.dismissReview()}
                   onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
@@ -172,11 +178,33 @@ export function PrView({ repo, number, mode = 'detail' }: { repo: string; number
  * decides how much of what it found starts selected. They are offered together
  * because the pair is the whole configuration of a review.
  */
-function ReviewLauncher({ onRun, busy = false }: { onRun: (opts: ReviewOptions) => void; busy?: boolean }): JSX.Element {
+function ReviewLauncher({
+  repo,
+  workspaceId,
+  onRun,
+  busy = false,
+}: {
+  repo: string;
+  workspaceId: string | null;
+  onRun: (opts: ReviewOptions) => void;
+  busy?: boolean;
+}): JSX.Element {
   const [depth, setDepth] = useState<ReviewDepth>('in-depth');
   const [strictness, setStrictness] = useState<ReviewStrictness>('balanced');
+  const [providerValue, setProviderValue] = useState('');
+  const [provider, setProvider] = useState<IntegrationTargetRef | undefined>();
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
+      {workspaceId ? (
+        <ReviewProviderSelect
+          scope={{ kind: 'repository', workspaceId, repo }}
+          value={providerValue}
+          onChange={(value, target) => {
+            setProviderValue(value);
+            setProvider(target);
+          }}
+        />
+      ) : null}
       <select className="input w-auto text-xs" value={depth} onChange={(e) => setDepth(e.target.value as ReviewDepth)} aria-label="Review depth">
         <option value="in-depth">In depth (line by line)</option>
         <option value="high-level">High level (architecture)</option>
@@ -191,8 +219,12 @@ function ReviewLauncher({ onRun, busy = false }: { onRun: (opts: ReviewOptions) 
         <option value="balanced">Balanced</option>
         <option value="pedantic">Pedantic</option>
       </select>
-      <button className="btn" disabled={busy} onClick={() => onRun({ depth, strictness })}>
-        {busy ? 'Reviewing…' : 'Run AI review'}
+      <button
+        className="btn"
+        disabled={busy}
+        onClick={() => onRun({ depth, strictness, ...(provider ? { provider } : {}) })}
+      >
+        {busy ? 'Reviewing…' : 'Run review'}
       </button>
       <LaneNote className="basis-full text-center" />
     </div>
@@ -222,7 +254,7 @@ function ReviewLead({
         canUseAgents={pr.canUseAgents}
         busy={pr.busy}
         emphasis="hero"
-        onApply={(acct) => void pr.applyReview(acct)}
+        onApply={(acct, postMode) => void pr.applyReview(acct, postMode)}
         onCancel={() => void pr.cancelReview()}
         onDismiss={() => void pr.dismissReview()}
         onUpdateFinding={(id, patch) => void pr.updateFinding(id, patch)}
@@ -234,7 +266,9 @@ function ReviewLead({
       return pr.review.status === 'failed' || pr.review.status === 'cancelled' ? (
         <div className="flex flex-col gap-4">
           {card}
-          {pr.canUseAgents ? <ReviewLauncher onRun={onRun} /> : null}
+          {pr.canReview ? (
+            <ReviewLauncher repo={pr.pr!.repo} workspaceId={pr.workspaceId} onRun={onRun} />
+          ) : null}
         </div>
       ) : (
         card
@@ -246,16 +280,29 @@ function ReviewLead({
     return (
       <div className="flex flex-col gap-4">
         {card}
-        {pr.analyzing ? <ReviewingStage /> : pr.canUseAgents ? <ReviewLauncher onRun={onRun} busy={pr.analyzing} /> : null}
+        {pr.analyzing ? (
+          <ReviewingStage />
+        ) : pr.canReview ? (
+          <ReviewLauncher
+            repo={pr.pr!.repo}
+            workspaceId={pr.workspaceId}
+            onRun={onRun}
+            busy={pr.analyzing}
+          />
+        ) : null}
       </div>
     );
   }
   if (pr.analyzing) return <ReviewingStage />;
   return (
     <EmptyState
-      title="No AI review yet"
-      hint="An agent reads the diff and CI status, then proposes findings anchored to the lines they concern. You choose which ones get posted to GitHub."
-      action={pr.canUseAgents ? <ReviewLauncher onRun={onRun} /> : undefined}
+      title="No review yet"
+      hint="Use Companion's native reviewer, a connected review CLI, or delegate to a GitHub review app. Managed findings return here before anything is posted."
+      action={
+        pr.canReview ? (
+          <ReviewLauncher repo={pr.pr!.repo} workspaceId={pr.workspaceId} onRun={onRun} />
+        ) : undefined
+      }
     />
   );
 }
@@ -267,9 +314,9 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
   const review = mode === 'review';
 
   const aiActions: MenuAction[] = [];
-  if (data.canUseAgents) {
+  if (data.canReview) {
     aiActions.push({
-      label: data.analyzing ? 'Reviewing…' : data.review ? 'Re-run AI review' : 'AI review',
+      label: data.analyzing ? 'Reviewing…' : data.review ? 'Re-run review' : 'Run review',
       disabled: data.analyzing,
       onSelect: () => void data.analyze({ depth: 'in-depth' }),
     });
@@ -278,6 +325,8 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
       disabled: data.analyzing,
       onSelect: () => void data.analyze({ depth: 'high-level' }),
     });
+  }
+  if (data.canUseAgents) {
     if (pr.state === 'open' && pr.checks?.state === 'failing') {
       aiActions.push({ label: 'Fix failing checks', disabled: data.agentBusy !== null, onSelect: () => void data.fixChecks() });
     }

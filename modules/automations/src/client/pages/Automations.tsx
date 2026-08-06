@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import type { Permission } from '@moxxy/companion-contracts';
 import type {
@@ -23,43 +23,15 @@ import { codeApi, RepoUnavailableRow } from '@companion/module-code/client';
 import { modulesApi, useAuth } from '@companion/module-core/client';
 import type { WebhookTunnelState } from '@companion/module-operate/contract';
 import type { ReportRecord } from '@companion/module-workspace/contract';
-import { CopyText, EmptyState, ErrorBar, Eyebrow, ListCard, MetaSignal, Modal, Page, PageHeader, Section, SettingRow, Skeleton, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
+import { CopyText, EmptyState, ErrorBar, Eyebrow, ListCard, MetaSignal, Modal, Page, PageHeader, RowsSkeleton, Section, SettingRow, Skeleton, Switch, timeAgo } from '@moxxy/companion-sdk/ui';
 import { automationsApi as api } from '../api.js';
 import { useAutomations } from '../hooks/useAutomations.js';
 import { ReportCard } from '../components/ReportCard.js';
 
-/** Per-repo automation switches + the report feed they produce, workspace-scoped. */
+/** Workspace-wide automation health. Repository policy is configured from the
+ * repository that owns it, not from this aggregate surface. */
 export function AutomationsPage(): JSX.Element {
   const { current, repos, reports, error, setError, refresh } = useAutomations();
-  const { can } = useAuth();
-  const [flows, setFlows] = useState<ContributorFlowPolicy[]>([]);
-  const [controls, setControls] = useState<AutomationAdmissionControl[]>([]);
-
-  const refreshFlows = useCallback(async (): Promise<void> => {
-    if (!current) {
-      setFlows([]);
-      setControls([]);
-      return;
-    }
-    try {
-      const [flowResult, controlResult] = await Promise.all([
-        api.contributorFlows(current.id),
-        api.admissionControls(current.id),
-      ]);
-      setFlows(flowResult.flows);
-      setControls(controlResult.controls);
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [current, setError]);
-
-  useEffect(() => {
-    void refreshFlows();
-  }, [refreshFlows]);
-  useLive(
-    refreshFlows,
-    (msg) => msg.t === 'automations.changed' && (msg.area === 'flows' || msg.area === 'controls'),
-  );
 
   if (!current) {
     return (
@@ -86,8 +58,13 @@ export function AutomationsPage(): JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Automations"
-        subtitle={`${current.name} — webhook receivers and scheduled agents, per repository`}
+        title="Automation health"
+        subtitle={`${current.name} — workspace briefing, public delivery and durable webhook work`}
+        actions={
+          <a className="btn-ghost" href="#/repos">
+            Repositories
+          </a>
+        }
       />
       <ErrorBar error={error} />
 
@@ -97,50 +74,15 @@ export function AutomationsPage(): JSX.Element {
 
       <DeliveryHealthCard workspaceId={current.id} />
 
-      <div className="mt-3 flex flex-col gap-3">
-        {repos.map((repo) => (
-          repo.githubAccessible || can('users:manage') ? (
-            <RepoAutomation
-              key={repo.fullName}
-              workspaceId={current.id}
-              repo={repo}
-              flow={flows.find((candidate) => candidate.repo === repo.fullName) ?? null}
-              admission={controls.find((candidate) => candidate.repo === repo.fullName) ?? {
-                repo: repo.fullName,
-                paused: false,
-                reason: null,
-                pausedBy: null,
-                pausedAt: null,
-              }}
-              onFlowChange={refreshFlows}
-              onChange={refresh}
-              onError={setError}
-            />
-          ) : (
-            <article key={repo.fullName} className="card overflow-hidden p-0 opacity-70">
-              <RepoUnavailableRow repo={repo.fullName} />
-            </article>
-          )
-        ))}
-      </div>
-      {repos.length === 0 ? (
-        <EmptyState
-          title="No repositories in this workspace"
-          hint="Connect a repository first (Repositories)."
-          action={
-            <a className="btn" href="#/repos">
-              Open Repositories
-            </a>
-          }
-        />
-      ) : null}
-
       <Section
         title="Reports"
         description="What the scheduled agents produced — briefings, digests, stale sweeps, CI analyses."
       >
         {workspaceReports.length === 0 ? (
-          <EmptyState title="No reports yet" hint="Enable a daily digest or stale sweep above and reports will land here." />
+          <EmptyState
+            title="No reports yet"
+            hint="Configure a digest or stale sweep from its repository and the results will land here."
+          />
         ) : (
           <div className="flex flex-col gap-2.5">
             {reportGroups.map(({ repo, group }) => (
@@ -164,6 +106,179 @@ export function AutomationsPage(): JSX.Element {
       </Section>
     </Page>
   );
+}
+
+/** The repository is the natural configuration boundary for webhook-driven
+ * and scheduled work. This route is contributed by Automations into Code's
+ * repository hub, keeping module ownership one-way. */
+export function RepositoryAutomationsPage({ repo: fullName }: { repo: string }): JSX.Element {
+  const { current, repos, reposLoaded, reports, error, setError, refresh } = useAutomations();
+  const { can } = useAuth();
+  const {
+    flows,
+    controls,
+    loaded: policiesLoaded,
+    error: policiesError,
+    refresh: refreshPolicies,
+  } = useRepositoryAutomationPolicies(current?.id);
+
+  if (!current) {
+    return (
+      <Page>
+        <EmptyState title="No workspace yet" hint="Create a workspace from the sidebar switcher first." />
+      </Page>
+    );
+  }
+
+  const repo = repos.find((candidate) => candidate.fullName === fullName) ?? null;
+  if (!reposLoaded) {
+    return (
+      <Page>
+        <PageHeader title={fullName} subtitle="Loading repository automations…" />
+        <div className="card"><RowsSkeleton rows={5} /></div>
+      </Page>
+    );
+  }
+  if (!repo) {
+    return (
+      <Page>
+        <EmptyState
+          title="Repository is not connected here"
+          hint={`${fullName} does not belong to ${current.name}. Open Repositories to choose a connected project.`}
+          action={<a className="btn" href="#/repos">Open Repositories</a>}
+        />
+      </Page>
+    );
+  }
+  if (!policiesLoaded) {
+    return (
+      <Page>
+        <PageHeader
+          title={repo.fullName}
+          subtitle="Loading repository automations…"
+          actions={<a className="btn-ghost" href="#/repos">Repositories</a>}
+        />
+        <ErrorBar error={policiesError ?? error} />
+        <div className="card">
+          {policiesError ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <span>Automation policy could not be loaded, so no editable defaults are being shown.</span>
+              <button className="btn-ghost" onClick={() => void refreshPolicies()}>Retry</button>
+            </div>
+          ) : <RowsSkeleton rows={5} />}
+        </div>
+      </Page>
+    );
+  }
+
+  const repoReports = reports.filter((report) => report.repo === repo.fullName);
+  const flow = flows.find((candidate) => candidate.repo === repo.fullName) ?? null;
+  const admission = controls.find((candidate) => candidate.repo === repo.fullName) ?? {
+    repo: repo.fullName,
+    paused: false,
+    reason: null,
+    pausedBy: null,
+    pausedAt: null,
+  };
+
+  return (
+    <Page>
+      <PageHeader
+        title={repo.fullName}
+        subtitle="Repository automations — webhooks, digests and the issue-to-merge lifecycle"
+        actions={
+          <>
+            <a className="btn-ghost" href="#/repos/automation-health">Automation health</a>
+            <a className="btn-ghost" href="#/repos">Repositories</a>
+          </>
+        }
+      />
+      <ErrorBar error={policiesError ?? error} />
+
+      {repo.githubAccessible || can('users:manage') ? (
+        <RepoAutomation
+          workspaceId={current.id}
+          repo={repo}
+          flow={flow}
+          admission={admission}
+          onFlowChange={refreshPolicies}
+          onChange={refresh}
+          onError={setError}
+        />
+      ) : (
+        <article className="card overflow-hidden p-0 opacity-70">
+          <RepoUnavailableRow repo={repo.fullName} />
+        </article>
+      )}
+
+      <Section
+        title="Repository reports"
+        description="Digests, stale sweeps and CI analyses produced for this repository."
+      >
+        {repoReports.length === 0 ? (
+          <EmptyState
+            title="No repository reports yet"
+            hint="Enable a digest or stale sweep above, or run one now."
+          />
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {repoReports.map((report) => <ReportCard key={report.id} report={report} />)}
+          </div>
+        )}
+      </Section>
+    </Page>
+  );
+}
+
+function useRepositoryAutomationPolicies(
+  workspaceId: string | undefined,
+): {
+  flows: ContributorFlowPolicy[];
+  controls: AutomationAdmissionControl[];
+  loaded: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+} {
+  const workspaceRef = useRef(workspaceId);
+  workspaceRef.current = workspaceId;
+  const [state, setState] = useState<{
+    workspaceId: string | undefined;
+    flows: ContributorFlowPolicy[];
+    controls: AutomationAdmissionControl[];
+    loaded: boolean;
+    error: string | null;
+  }>({ workspaceId, flows: [], controls: [], loaded: false, error: null });
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!workspaceId) {
+      setState({ workspaceId, flows: [], controls: [], loaded: true, error: null });
+      return;
+    }
+    try {
+      const [flowResult, controlResult] = await Promise.all([
+        api.contributorFlows(workspaceId),
+        api.admissionControls(workspaceId),
+      ]);
+      if (workspaceRef.current === workspaceId) {
+        setState({
+          workspaceId,
+          flows: flowResult.flows,
+          controls: controlResult.controls,
+          loaded: true,
+          error: null,
+        });
+      }
+    } catch (err) {
+      if (workspaceRef.current === workspaceId) {
+        setState({ workspaceId, flows: [], controls: [], loaded: false, error: String(err) });
+      }
+    }
+  }, [workspaceId]);
+
+  useLive(refresh, (msg) => msg.t === 'automations.changed' && (msg.area === 'flows' || msg.area === 'controls'));
+  const current = state.workspaceId === workspaceId
+    ? state
+    : { workspaceId, flows: [], controls: [], loaded: false, error: null };
+  return { ...current, refresh };
 }
 
 /** Workspace-level scheduled report: one briefing covering every repo. */
@@ -684,9 +799,9 @@ function RepoAutomation({
   };
 
   return (
-    <article className="card" aria-label={repo.fullName}>
+    <article className="card" aria-label={`Automations for ${repo.fullName}`}>
       <div className="flex flex-wrap items-center gap-2.5">
-        <strong className="text-sm">{repo.fullName}</strong>
+        <strong className="text-sm">Automation policy</strong>
         {repo.webhookConfigured ? (
           webhook?.remoteId ? (
             <MetaSignal tone="green" label="GitHub webhook installed" title={`Managed GitHub webhook #${webhook.remoteId}`} />

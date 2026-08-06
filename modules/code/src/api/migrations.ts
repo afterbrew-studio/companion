@@ -653,4 +653,31 @@ export default defineMigrations([
       // repos would risk the authoritative account and workspace bindings.
     },
   },
+  {
+    /** Attribute every review to its concrete integration protocol. Delegated
+     * providers retain the external hand-off instead of impersonating a
+     * Companion-managed verdict. */
+    version: 22,
+    name: 'pr_review_integration_provider',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(pr_reviews)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'provider_id')) {
+        db.exec(`ALTER TABLE pr_reviews ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'companion.native-review'`);
+      }
+      if (!columns.some((column) => column.name === 'review_mode')) {
+        db.exec(`ALTER TABLE pr_reviews ADD COLUMN review_mode TEXT NOT NULL DEFAULT 'managed'`);
+      }
+      if (!columns.some((column) => column.name === 'external_url')) {
+        db.exec(`ALTER TABLE pr_reviews ADD COLUMN external_url TEXT`);
+      }
+      if (!columns.some((column) => column.name === 'external_summary')) {
+        db.exec(`ALTER TABLE pr_reviews ADD COLUMN external_summary TEXT`);
+      }
+      db.exec(`UPDATE pr_reviews SET provider_id = 'companion.human' WHERE source = 'human'`);
+    },
+    down: () => {
+      // Additive history metadata is harmless to older builds. Rebuilding a
+      // review/audit table just to remove it would be destructive.
+    },
+  },
 ]);

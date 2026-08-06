@@ -7,6 +7,7 @@ import type {
   WorkbenchActionStatus,
 } from '@companion/module-workbench/contract';
 import type { ApiClient } from './client.js';
+import { COMPANION_VERSION } from './version.js';
 
 const MODERN_PROTOCOL = '2026-07-28';
 const LATEST_LEGACY_PROTOCOL = '2025-11-25';
@@ -26,7 +27,7 @@ const SERVER_INFO_META = 'io.modelcontextprotocol/serverInfo';
 const SERVER_INFO = {
   name: 'companion',
   title: 'Companion',
-  version: '0.10.1',
+  version: COMPANION_VERSION,
   description: 'Read engineering context and prepare human-reviewed Companion actions.',
 } as const;
 const SERVER_INSTRUCTIONS =

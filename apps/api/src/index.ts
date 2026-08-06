@@ -23,6 +23,7 @@ import * as sdkServer from '@moxxy/companion-sdk/server';
 import * as sdkAgents from '@moxxy/companion-sdk/agents';
 import { MODULES } from './modules.generated.js';
 import { startHttpServer } from './http/server.js';
+import { COMPANION_VERSION } from './version.js';
 
 /**
  * The api daemon's composition root — now just: config, database, WebSocket
@@ -38,8 +39,9 @@ async function main(): Promise<void> {
   // proxy, every outbound call fails without this and there is nothing to turn.
   await installOutboundProxy();
   const config = loadDaemonConfig();
+  log.info(`Companion ${COMPANION_VERSION}`);
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
-  log.info(`default agent model: ${config.defaultModel}`);
+  log.info('agent model selection: runtime default unless explicitly pinned');
 
   // An admin-requested database recreation is honored here, before the handle
   // opens: the previous process dropped the marker and exited; this boot starts
@@ -86,8 +88,9 @@ async function main(): Promise<void> {
   );
   if (external.length) log.info(`external modules: ${external.map((m) => m.manifest.id).join(', ')}`);
 
-  const hub: WsHub = new WsHub((token) => kernel.verifyToken(token));
+  const hub: WsHub = new WsHub((token) => kernel.verifyToken(token), COMPANION_VERSION);
   const kernel = new ModuleKernel({
+    appVersion: COMPANION_VERSION,
     db,
     log,
     config,

@@ -11,22 +11,21 @@ import {
   timeAgo,
 } from '@moxxy/companion-ui';
 import { useAuth } from '@companion/module-core/client';
-import type { CatalogMachine, CatalogProvider } from '../../contract/index.js';
+import type { CatalogMachine, CatalogMachineProvider, CatalogProvider } from '../../contract/index.js';
 import { detectProviders } from '../../contract/index.js';
 import { useProviders } from '../hooks/useProviders.js';
 
 /**
- * Provider/model switchboard. Every machine reads its own models from moxxy, so
+ * Provider/model switchboard. Every machine reads models from its runtimes, so
  * the toggles are per machine: the same provider can be credential-ready on one
  * and absent on the next, and one instance-wide list could not say so. The page
  * stays merged rather than moving onto each machine's own page because the
  * question it answers is a fleet question ("can agents use model X at all"),
  * and because providers get retuned far more often than machines get set up.
  *
- * Fetching is the daemon's job (on bind, off live runs, and on a staleness
- * timer), and the daemon adopts the operator's own moxxy home on its way up, so
- * a configured machine needs no import step. Refresh re-reads on demand; the
- * page never asks a person to run a detection the system can run itself.
+ * Fetching is the daemon's job (on bind, from live runs, and on a staleness
+ * timer). A configured machine needs no import step. Refresh re-reads runtime
+ * capabilities on demand; the page never asks a person to locate a config file.
  */
 
 export function ProvidersPage(): JSX.Element {
@@ -43,10 +42,10 @@ export function ProvidersPage(): JSX.Element {
     <Page>
       <PageHeader
         title="Providers"
-        subtitle="Which providers and models agents may use, per machine. The top list is what that adds up to"
+        subtitle="Which runtimes, providers, and models agents can select on each machine"
         actions={
           <button className="btn-ghost" disabled={refetching} onClick={() => void refetchFromMachines()}>
-            {refetching ? 'Refreshing…' : 'Refresh'}
+            {refetching ? 'Refreshing…' : 'Refresh capabilities'}
           </button>
         }
       />
@@ -57,8 +56,8 @@ export function ProvidersPage(): JSX.Element {
           {detection.state === 'none' ? <NothingConfigured /> : null}
           {detection.state === 'builtin' ? (
             <EmptyState
-              title="No machine takes its models from a provider"
-              hint="Every machine here runs an agent runtime that signs in on its own and brings its own models, so there are no credentials to add and nothing to allow."
+              title="No models reported by the selected runtimes"
+              hint="The runtimes manage their own sign-in, but none currently exposes a model catalog. Check their setup under Runners, then refresh capabilities."
             />
           ) : null}
           {detection.state === 'unknown' ? (
@@ -70,7 +69,7 @@ export function ProvidersPage(): JSX.Element {
           ) : null}
           {detection.state === 'found' ? (
             <p className="dim mb-2 text-xs" role="status">
-              {`${modelCount} model${modelCount === 1 ? '' : 's'} from ${detection.providers.length} provider${
+              {`${modelCount} model${modelCount === 1 ? '' : 's'} from ${detection.providers.length} source${
                 detection.providers.length === 1 ? '' : 's'
               } across ${detection.machines} machine${detection.machines === 1 ? '' : 's'}`}
               {fetchedAt === null ? '' : ` · read ${timeAgo(fetchedAt)}`}
@@ -80,7 +79,7 @@ export function ProvidersPage(): JSX.Element {
           {providers.length > 0 ? (
             <ListCard subtle ariaLabel="Available to agents">
               {providers.map((p) => (
-                <EffectiveRow key={p.name} provider={p} machines={machines} read={fetchedAt !== null} />
+                <EffectiveRow key={`${p.kind}:${p.name}`} provider={p} machines={machines} read={fetchedAt !== null} />
               ))}
             </ListCard>
           ) : null}
@@ -142,13 +141,15 @@ function EffectiveRow({
 }): JSX.Element {
   const models = provider.models.length;
   const description =
-    provider.machines.length > 0
-      ? `${models} model${models === 1 ? '' : 's'} on ${where(provider.machines, machines)}.`
-      : provider.disabledOn.length > 0
-        ? `Switched off on ${where(provider.disabledOn, machines)}, so agents cannot use it anywhere.`
-        : read
-          ? 'Configured in ~/.moxxy, but no machine has credentials for it.'
-          : 'Reading models from your machines…';
+    provider.kind === 'runtime' && provider.machines.length > 0
+      ? `${models} model${models === 1 ? '' : 's'} from the runtime on ${where(provider.machines, machines)}; sign-in is managed by the runtime itself.`
+      : provider.machines.length > 0
+        ? `${models} model${models === 1 ? '' : 's'} on ${where(provider.machines, machines)}.`
+        : provider.disabledOn.length > 0
+          ? `Switched off on ${where(provider.disabledOn, machines)}, so agents cannot use it anywhere.`
+          : read
+            ? 'Reported by a runtime, but no machine can currently serve it.'
+            : 'Reading models from your machines…';
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
       <StatusDot tone={provider.machines.length > 0 ? 'green' : 'zinc'} size="sm" label={provider.name} />
@@ -178,57 +179,43 @@ function MachineSection({
   onToggleModel: (machine: CatalogMachine, provider: string, id: string) => void;
   onEnableStranded: (machine: CatalogMachine, id: string) => void;
 }): JSX.Element {
-  // Nothing on this machine asks a provider which models exist, so every
-  // control below would govern nothing. Say that instead of showing them.
-  if (!machine.providerModels) {
-    return (
-      <Section title={machine.name}>
-        <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
-          Its agent runtime brings its own models, so provider credentials do not apply here.
-        </p>
-      </Section>
-    );
-  }
-
   // Before a machine has reported, its whole catalog is unknown, so every
   // disabled id would look stranded. Only judge once something was listed.
   const listed = new Set(machine.providers.flatMap((p) => p.models.flatMap((m) => [m.id, `${p.name}/${m.id}`])));
   const stranded =
     machine.fetchedAt === null ? [] : machine.policy.disabledModels.filter((id) => !listed.has(id));
+  const runtimeOnly =
+    machine.providers.length > 0 && machine.providers.every((provider) => provider.kind === 'runtime');
+  const description = runtimeOnly
+    ? `${machine.modelCount} model${machine.modelCount === 1 ? '' : 's'} from ${machine.providers.length} runtime${machine.providers.length === 1 ? '' : 's'}${machine.online ? '' : ' · offline'}`
+    : machine.fetchedAt === null
+      ? 'This machine reports its models on its own, usually within a minute of connecting.'
+      : `${machine.modelCount} model${machine.modelCount === 1 ? '' : 's'} usable here${machine.online ? '' : ' · offline'} · read ${timeAgo(machine.fetchedAt)}`;
 
   return (
-    <Section
-      title={machine.name}
-      description={
-        machine.fetchedAt === null
-          ? 'This machine reports its models on its own, usually within a minute of connecting.'
-          : `${machine.modelCount} model${machine.modelCount === 1 ? '' : 's'} usable here${machine.online ? '' : ' · offline'} · read ${timeAgo(machine.fetchedAt)}`
-      }
-    >
+    <Section title={machine.name} description={description}>
       {machine.providers.length === 0 ? (
         <p className="dim rounded-lg border border-dashed border-zinc-300 p-3 text-xs dark:border-zinc-700">
           Nothing reported yet from this machine.
         </p>
       ) : (
-        <ListCard subtle ariaLabel={`Providers on ${machine.name}`}>
+        <ListCard subtle ariaLabel={`Model sources on ${machine.name}`}>
           {machine.providers.map((provider) => (
-            <div key={provider.name} className="px-4 py-3">
+            <div key={`${provider.kind}:${provider.name}`} className="px-4 py-3">
               <SettingRow
                 title={provider.name}
-                description={
-                  !provider.ready
-                    ? 'No credentials for it on this machine.'
-                    : !provider.enabled
-                      ? 'Off here. Agents place elsewhere for its models.'
-                      : `Ready · ${provider.models.filter((m) => m.enabled).length} of ${provider.models.length} models on.`
-                }
+                description={machineSourceDescription(provider)}
               >
-                <Switch
-                  label={`Provider ${provider.name} on ${machine.name}`}
-                  checked={provider.enabled}
-                  onChange={() => onToggleProvider(machine, provider.name)}
-                  reason={provider.ready ? undefined : 'no credentials on this machine'}
-                />
+                {provider.kind === 'runtime' ? (
+                  <span className="chip text-[10px] uppercase tracking-wide">Runtime</span>
+                ) : (
+                  <Switch
+                    label={`Provider ${provider.name} on ${machine.name}`}
+                    checked={provider.enabled}
+                    onChange={() => onToggleProvider(machine, provider.name)}
+                    reason={provider.ready ? undefined : 'no credentials on this machine'}
+                  />
+                )}
               </SettingRow>
               {provider.enabled && provider.models.length > 0 ? (
                 <div
@@ -274,6 +261,16 @@ function MachineSection({
       ) : null}
     </Section>
   );
+}
+
+function machineSourceDescription(provider: CatalogMachineProvider): string {
+  const enabled = provider.models.filter((model) => model.enabled).length;
+  if (provider.kind === 'runtime') {
+    return `Runtime-managed sign-in · ${enabled} of ${provider.models.length} models available for explicit selection.`;
+  }
+  if (!provider.ready) return 'No credentials for it on this machine.';
+  if (!provider.enabled) return 'Off here. Agents place elsewhere for its models.';
+  return `Ready · ${enabled} of ${provider.models.length} models on.`;
 }
 
 /** "all 3 machines" / "mbp-work" / "mbp-work, gpu-box +1" — names, not ids. */

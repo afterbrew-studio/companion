@@ -219,7 +219,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/board/models',
       access: 'board:manage',
-      handler: () => board.modelOptions(ctx.config.defaultModel),
+      handler: () => board.modelOptions(),
     }),
 
     route({

@@ -7,8 +7,8 @@ Configuration for all of them is in [`configuration.md`](configuration.md).
 
 - Node.js 24 or newer (Companion stores its data in Node's built-in SQLite).
 - Git.
-- Optional for agent runs: the moxxy CLI (`npm i -g @moxxy/cli`). The daemon
-  starts without it, but agent runs fail until it is installed.
+- Optional for agent runs: a supported, authenticated runtime such as Codex,
+  Claude Code, or Moxxy. The daemon and dashboard start without one.
 - Optional for the Docker path: Docker and Docker Compose.
 - Only for building from source: pnpm 10 (`corepack enable`).
 
@@ -222,16 +222,16 @@ separates three things that look identical from outside:
 
 | In the build log | What it means |
 |---|---|
-| `profile 'full': 13 module(s)` | The build was right. If the app still shows five, a stale container is running. |
-| `profile 'slim': 5 module(s)` | The build argument never arrived. |
+| `profile 'full': 15 module(s)` | The build was right. If the optional modules are still absent, a stale container is running. |
+| `profile 'slim': 9 module(s)` | The slim build was selected. |
 | no `profile '...'` line at all | Docker reused a cached layer, which also proves the argument never changed: a real change from `slim` to `full` invalidates that layer. |
 
-The last two mean the same thing, and rebuilding without cache will not fix
-them: the variable is not reaching the build. Switching to the **Docker Compose**
-build pack is the reliable way out, since the compose file maps
+If you requested `full`, either of the latter two means the full-profile build
+argument did not reach this build. Switching to the **Docker Compose** build
+pack is the reliable way out, since the compose file maps
 `COMPANION_PROFILE` to the build argument itself.
 
-A `full` build still boots with only the slim five enabled. The rest ship as
+A `full` build still boots with only the slim baseline enabled. The rest ship as
 **Available** and an admin adopts them: see
 [`operating-modules.md`](operating-modules.md#turning-on-everything-a-full-build-contains).
 

@@ -5,13 +5,12 @@ import '../contract/index.js';
 import manifest from '../module.js';
 import { nav } from './nav.js';
 import { routes } from './routes.js';
+import { slots } from './slots.js';
 
 /**
- * The `/client` barrel: one Admin entry, one page with the channel list, the add
- * form and the recent delivery log.
+ * The `/client` barrel: delivery history is linked from the Integrations pane.
  */
 
 export { notifyApi } from './api.js';
-export { useChannels } from './hooks/useChannels.js';
 
-export default defineClientModule({ manifest, nav, routes });
+export default defineClientModule({ manifest, nav, routes, slots });

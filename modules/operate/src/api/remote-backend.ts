@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type {
   AgentRunAccess,
@@ -5,7 +6,6 @@ import type {
   AgentVerifyResponse,
   AgentEventMessage,
   AgentHealth,
-  AgentUpdateMoxxyResult,
   AgentHistoryResponse,
   AgentScratchResponse,
   AgentSessionInfoResponse,
@@ -15,14 +15,12 @@ import type {
   AgentCloneStatusResponse,
   AskResponse,
   HistorySegment,
-  ProvisionProviderSpec,
   RunTurnArgs,
   RunTurnResult,
 } from '@moxxy/companion-types';
 import { RUNNER_AGENT_PROTOCOL } from '@moxxy/companion-types';
 import { log } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver, RunnerHealth } from '../contract/index.js';
-import { MIN_MOXXY_VERSION } from '../exec/cli.js';
 import { DEFAULT_VERIFY_TIMEOUT_MS, type ExecOptions } from '../exec/verify.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 
@@ -93,55 +91,49 @@ export class RemoteRunnerBackend implements RunnerBackend {
       // machine to place work on — and a hanging probe must not stall the poll.
       const h = await this.call<AgentHealth>('GET', '/health', undefined, 5_000);
       const protocolOk = h.protocol === RUNNER_AGENT_PROTOCOL;
+      // A protocol-5 agent has no `runtimes` field. Read the old wire shape
+      // defensively so it is diagnosed as outdated instead of falling into the
+      // generic offline catch before the protocol mismatch can be reported.
+      const runtimes = Array.isArray(h.runtimes) ? h.runtimes : [];
+      // Work uses the machine's first runtime unless a lane explicitly says
+      // otherwise, so health must judge that same primary rather than a ready
+      // fallback no automatic run would reach.
+      const primary = runtimes[0] ?? null;
+      const runtimeReady = primary?.state === 'ready';
       return {
-        status: protocolOk && h.moxxyCompatible ? 'online' : 'degraded',
-        moxxyVersion: h.moxxyVersion,
-        moxxyCompatible: h.moxxyCompatible,
+        status: protocolOk && runtimeReady ? 'online' : 'degraded',
+        runtimes: protocolOk ? runtimes : [],
         liveRuns: h.liveRuns,
         maxRuns: h.maxRuns,
         lastSeenAt: Date.now(),
         detail: !protocolOk
           ? `agent protocol ${h.protocol} != ${RUNNER_AGENT_PROTOCOL} (version mismatch)`
-          : h.moxxyCompatible
+          : runtimeReady
             ? null
-            : `agent's moxxy is missing or older than ${MIN_MOXXY_VERSION}`,
-        // Older agents don't report providers — null = unknown, assume capable.
-        providers: h.providers ?? null,
+            : (primary?.detail ?? 'No primary runtime on this machine is ready'),
         agentOutdated: !protocolOk,
       };
     } catch (err) {
       return {
         status: 'offline',
-        moxxyVersion: null,
-        moxxyCompatible: false,
+        runtimes: [],
         liveRuns: 0,
         maxRuns: 0,
         lastSeenAt: null,
         detail: err instanceof Error ? err.message : String(err),
-        providers: null,
       };
     }
   }
 
-  /**
-   * Trigger `npm i -g @moxxy/cli@latest` on the agent's machine. Generous
-   * timeout — npm can be slow. Pre-update agents 404 this route; the caller
-   * turns that into "update the agent manually first" guidance.
-   */
-  async updateMoxxy(): Promise<AgentUpdateMoxxyResult> {
-    return this.call<AgentUpdateMoxxyResult>('POST', '/update-moxxy', undefined, 240_000);
-  }
-
-  /**
-   * Add a model provider to the agent's moxxy home. The credential rides the
-   * agent's authenticated channel (the same one the runner token and GitHub
-   * tokens already use), and the agent pipes it straight into its CLI.
-   *
-   * Outlives the agent's own 120s cap on the CLI, so a slow provisioning fails
-   * with the agent's message rather than an opaque abort here.
-   */
-  async provisionProvider(spec: ProvisionProviderSpec): Promise<void> {
-    await this.call('POST', '/providers', spec, 150_000);
+  async probeRuntime(_harnessId: string): Promise<unknown> {
+    const runId = `runtime-probe-${randomUUID().slice(0, 8)}`;
+    const cwd = await this.scratchDir(runId);
+    try {
+      await this.spawn(runId, cwd, 'workspace-write');
+      return await this.sessionInfo(runId);
+    } finally {
+      await this.stop(runId).catch(() => undefined);
+    }
   }
 
   // ---------- gateway lifecycle ----------
