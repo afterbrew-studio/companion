@@ -39,8 +39,10 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
   const major = Number(process.versions.node.split('.')[0]);
   checks.push({
     label: 'Node.js',
-    level: major >= 20 ? 'ok' : 'fail',
-    detail: `v${process.versions.node}${major >= 20 ? '' : ' — need >= 20'}`,
+    // The version this package declares in `engines`; a lower one installs
+    // nothing and would fail here for a reason doctor could not name.
+    level: major >= 24 ? 'ok' : 'fail',
+    detail: `v${process.versions.node}${major >= 24 ? '' : ', need >= 24'}`,
   });
 
   // git
