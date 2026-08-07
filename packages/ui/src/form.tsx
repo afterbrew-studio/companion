@@ -170,7 +170,7 @@ export function SegmentedControl<T extends string>({
 }): JSX.Element {
   return (
     <fieldset
-      className={`flex h-10 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
+      className={`flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
         disabled ? 'opacity-60' : ''
       } ${className}`}
     >
@@ -179,11 +179,14 @@ export function SegmentedControl<T extends string>({
         const on = o.value === value;
         // min-w-max, not min-w-0: flex-1 gives a zero basis, so without it an
         // auto-width control sizes below its own labels and truncates them.
+        // The height lives here, not on the fieldset: a fieldset lays its
+        // children out in an anonymous box that does not take the fieldset's
+        // height, so a track-level `h-*` left the segments at text height.
         return (
           <label
             key={o.value}
             title={o.hint}
-            className={`flex min-w-max flex-1 items-center justify-center rounded-md px-4 text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-500 ${
+            className={`flex h-7 min-w-max flex-1 items-center justify-center rounded-md px-4 text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-500 ${
               disabled ? 'cursor-default' : 'cursor-pointer'
             } ${
               on
