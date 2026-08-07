@@ -466,10 +466,28 @@ export interface RunnerRuntimeHealth {
   readonly detail: string | null;
 }
 
+/**
+ * One developer tool a machine has, as it answered when asked.
+ *
+ * Separate from a runtime because it is not something work runs THROUGH: it is
+ * a CLI a job shells out to, signed in as that machine's user, which is why a
+ * laptop can host a review its cloud Companion cannot.
+ */
+export interface RunnerToolHealth {
+  readonly id: string;
+  /** Which executable answered; null when none is on PATH. */
+  readonly binary: string | null;
+  readonly version: string | null;
+  readonly present: boolean;
+  readonly detail: string | null;
+}
+
 export interface RunnerHealth {
   readonly status: RunnerStatus;
   /** Every runtime this machine is configured to use, in preference order. */
   readonly runtimes: ReadonlyArray<RunnerRuntimeHealth>;
+  /** Developer tools found on it; absent until anything has asked. */
+  readonly tools?: ReadonlyArray<RunnerToolHealth>;
   readonly liveRuns: number;
   readonly maxRuns: number;
   readonly lastSeenAt: number | null;
@@ -480,6 +498,18 @@ export interface RunnerHealth {
    * elsewhere).
    */
   readonly agentOutdated?: boolean;
+}
+
+/** A machine that has a given tool installed, as an executor for one job. */
+export interface ToolMachine {
+  /** null is the daemon's own machine, as everywhere else runners are named. */
+  readonly runnerId: string | null;
+  readonly name: string;
+  /** The executable that answered, so the job runs the same one that was found. */
+  readonly binary: string;
+  readonly version: string | null;
+  /** Preference order; lower is a more deliberate choice. */
+  readonly rank: number;
 }
 
 /** A runner's own provider/model catalog, reported by its configured runtimes. */

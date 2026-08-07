@@ -79,6 +79,10 @@ export class RuntimeSessions {
     return this.sessions.size;
   }
 
+  liveIds(): string[] {
+    return [...this.sessions.keys()];
+  }
+
   async spawn(args: {
     runId: string;
     cwd: string;

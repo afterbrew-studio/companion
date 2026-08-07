@@ -20,6 +20,7 @@ import { RepoAgentContextScanner } from './repo-agent-context.js';
 import { Pipelines, type SlopGateService } from './pipelines.js';
 import { CodeService } from './code-service.js';
 import { readActiveLocalGhAccount } from './local-gh-account.js';
+import { toolExecutor } from './tool-executor.js';
 import { DEFAULT_MAX_PR_REVIEW_TOKENS } from '../contract/index.js';
 import {
   buildPrReviewEvaluationPrompt,
@@ -237,7 +238,26 @@ export default defineServices((ctx) => {
     ctx.broadcast,
     integrations,
     integrationScope,
+    operate.runners,
   );
+
+  // Where a provider's own CLI can run, and what to look for. These two lines
+  // are the whole of "a tool installed on somebody's laptop can serve this
+  // instance": operate owns machines and integrations owns providers, neither
+  // depends on the other, and this module is the one place that holds both.
+  operate.runners.setToolProbes(() =>
+    integrations
+      .providers()
+      .flatMap((provider) =>
+        provider.requires?.length ? [{ id: provider.id, binaries: provider.requires }] : [],
+      ),
+  );
+  integrations.setExecutors(async (providerId, options) =>
+    (await operate.runners.machinesWithTool(providerId, options)).map((machine) =>
+      toolExecutor(operate.runners, machine),
+    ),
+  );
+
   const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, ctx.broadcast);
   const agentContext = new RepoAgentContextScanner();
   const fixes = new Fixes(

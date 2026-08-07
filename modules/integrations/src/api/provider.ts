@@ -5,10 +5,16 @@
  */
 export { IntegrationUnavailableError, NOTIFICATION_KIND_OPTIONS } from '@moxxy/companion-sdk/server';
 export type {
+  IntegrationCommandOptions,
+  IntegrationCommandResult,
+  IntegrationCommandRunner,
   IntegrationConnectionAccess,
   IntegrationDeliveryResult,
+  IntegrationExecutor,
+  IntegrationExecutorResolver,
   IntegrationHost,
   IntegrationNotificationInput,
+  IntegrationProbeContext,
   IntegrationProviderAdapter,
   IntegrationReviewFinding,
   IntegrationReviewRequest,

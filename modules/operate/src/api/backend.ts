@@ -2,6 +2,8 @@ import type {
   AgentRunAccess,
   AgentStorageCleanupRequest,
   AgentStorageCleanupResponse,
+  AgentToolHealth,
+  AgentToolProbe,
   AgentVerifyResponse,
   AskRequest,
   AskResponse,
@@ -11,7 +13,30 @@ import type {
   RunTurnResult,
 } from '@moxxy/companion-types';
 import type { ExecOptions } from '../exec/verify.js';
+import type { ToolRunResult } from '../exec/tool-exec.js';
 import type { RunnerHealth } from '../contract/index.js';
+
+/** One developer tool invocation, on whichever machine holds the worktree. */
+export interface RunnerToolRequest {
+  /** A worktree or scratch dir this backend handed out. */
+  readonly cwd: string;
+  /** Candidate executables in preference order; the first installed one runs. */
+  readonly binaries: readonly string[];
+  readonly args: readonly string[];
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
+  /** Complete stdout lines as they arrive, so a long tool can report progress. */
+  readonly onLine?: (line: string) => void;
+  readonly maxStdout?: number;
+  readonly maxStderr?: number;
+  /**
+   * Per-invocation environment. It can carry a credential, so a remote backend
+   * sends it only over https and REFUSES otherwise: running the tool
+   * unauthenticated instead would report the tool's confusing complaint rather
+   * than ours.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+}
 
 /**
  * A RunnerBackend is everything the orchestrator needs to run an agent on a
@@ -67,6 +92,20 @@ export interface RunnerBackend {
   fetchOrigin(repo: string, username?: string | null): Promise<void>;
   addWorktree(repo: string, key: string, branch: string, baseBranch: string, username?: string | null): Promise<string>;
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string>;
+  /**
+   * Detached worktree at a pull request's head ref: what a code review reads,
+   * and the one checkout shape that also works for forks.
+   *
+   * Resolves to null on a runner agent that predates the endpoint, which the
+   * caller treats as "this machine cannot host a review" rather than a failure.
+   */
+  addPullRequestWorktree(
+    repo: string,
+    key: string,
+    prNumber: number,
+    baseBranch: string,
+    username?: string | null,
+  ): Promise<string | null>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
   diffVsBase(cwd: string, baseBranch: string): Promise<string>;
   commitAll(
@@ -101,6 +140,23 @@ export interface RunnerBackend {
    * `verify`.
    */
   exec(cwd: string, command: string, opts?: ExecOptions): Promise<AgentVerifyResponse | null>;
+
+  // ---------- developer tools installed on the machine ----------
+
+  /**
+   * Whether this machine has each named executable.
+   *
+   * Resolves to null on a runner agent too old to answer. That is "unknown",
+   * not "none": treating silence as absence would quietly stop routing reviews
+   * to a machine that has the tool, with nothing to show for the change.
+   */
+  detectTools(probes: readonly AgentToolProbe[]): Promise<readonly AgentToolHealth[] | null>;
+
+  /**
+   * Run one developer tool in a worktree on this machine. Null on an agent too
+   * old to have the endpoint, for the same reason `verify` degrades that way.
+   */
+  runTool(request: RunnerToolRequest): Promise<ToolRunResult | null>;
 }
 
 /** The event sink a backend feeds — one shared instance drives the orchestrator. */

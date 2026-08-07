@@ -63,6 +63,16 @@ export interface IntegrationProviderDescriptor {
   readonly scopes: ReadonlyArray<IntegrationScope['kind']>;
   readonly connectionMode: 'required' | 'optional' | 'none';
   readonly execution: 'local' | 'remote' | 'delegated';
+  /**
+   * Executables a `local` provider needs, in preference order; the first one
+   * installed is the one it runs.
+   *
+   * Declaring them is what lets the work follow the tool. Companion asks every
+   * machine it can reach whether it has one, so a CLI signed in on a
+   * developer's laptop can serve a Companion that runs somewhere else entirely;
+   * a provider that declares nothing can only ever run where the daemon does.
+   */
+  readonly requires?: ReadonlyArray<string>;
   readonly fields: ReadonlyArray<IntegrationConfigField>;
   readonly docsUrl?: string;
   readonly setup?: string;
@@ -149,6 +159,93 @@ export interface IntegrationReviewRequest {
   readonly progress: (message: string) => void;
   /** Delegated GitHub-app reviewers trigger through a normal PR comment. */
   readonly commentOnPullRequest: (body: string) => Promise<{ readonly url: string }>;
+  /**
+   * How to run this provider's own executable, on the machine that has it and
+   * holds `cwd`. Absent for a delegated provider, which runs nothing anywhere.
+   *
+   * A provider must never spawn a process itself: `cwd` may be a path on
+   * another machine entirely, and spawning here would run the tool where the
+   * checkout is not and the credential is not.
+   */
+  readonly exec?: IntegrationCommandRunner;
+}
+
+/**
+ * A machine that has a provider's executable, and can run it there.
+ *
+ * The seam exists because "where is this tool installed" is a question about
+ * machines, which the integrations layer does not own. It is resolved late, so
+ * a Companion built without a machine registry simply finds none and says so
+ * rather than pretending a tool is missing when it is only elsewhere.
+ */
+export interface IntegrationExecutor {
+  /** null is the daemon's own machine, as everywhere else machines are named. */
+  readonly runnerId: string | null;
+  readonly machine: string;
+  /** Which declared executable this machine has. */
+  readonly binary: string;
+  readonly version: string | null;
+  /** A throwaway working dir on that machine, for a command needing no checkout. */
+  scratch(key: string): Promise<string>;
+  /** Bind a command runner to a working directory on that same machine. */
+  at(cwd: string): IntegrationCommandRunner;
+}
+
+export type IntegrationExecutorResolver = (
+  providerId: string,
+  options: { readonly repo?: string | null; readonly userId?: string | null },
+) => Promise<ReadonlyArray<IntegrationExecutor>>;
+
+/** What a health check is given beyond the connection: where it may run. */
+export interface IntegrationProbeContext {
+  /**
+   * The machine the provider's executable was found on, already bound to a
+   * scratch dir there. Absent when no reachable machine has it, which is the
+   * answer a probe should report rather than a failure.
+   */
+  readonly exec?: IntegrationCommandRunner;
+}
+
+/** Where a review executes, and the one way it is allowed to get there. */
+export interface IntegrationCommandRunner {
+  /** The machine's name, for messages an operator has to act on. */
+  readonly machine: string;
+  run(
+    args: ReadonlyArray<string>,
+    options?: IntegrationCommandOptions,
+  ): Promise<IntegrationCommandResult>;
+}
+
+export interface IntegrationCommandOptions {
+  readonly timeoutMs?: number;
+  /**
+   * Cancels the command ON THE MACHINE, not just this promise. A review that
+   * was called off must not leave a credential-bearing CLI running on somebody
+   * else's laptop for another forty minutes.
+   */
+  readonly signal?: AbortSignal;
+  /** Complete stdout lines as they arrive; a long tool reports progress here. */
+  readonly onLine?: (line: string) => void;
+  readonly maxStdout?: number;
+  readonly maxStderr?: number;
+  /**
+   * Per-invocation environment, for a tool that takes its credential that way.
+   * Refused when the machine is reachable only over plain http, because that is
+   * a secret on a clear wire.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface IntegrationCommandResult {
+  /** Which declared executable ran; null when none of them is installed. */
+  readonly binary: string | null;
+  /** null when the process died on a signal or never started. */
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  /** Nothing the provider declared is on that machine: absence, not failure. */
+  readonly missing: boolean;
 }
 
 export interface IntegrationReviewFinding {
@@ -230,7 +327,10 @@ export interface IntegrationProviderAdapter {
     config: Readonly<Record<string, IntegrationFieldValue>>,
     secret: (key: string) => string | null,
   ) => void;
-  readonly probe?: (connection: IntegrationConnectionAccess) => Promise<IntegrationHealth>;
+  readonly probe?: (
+    connection: IntegrationConnectionAccess,
+    context?: IntegrationProbeContext,
+  ) => Promise<IntegrationHealth>;
   readonly review?: (
     connection: IntegrationConnectionAccess | null,
     request: IntegrationReviewRequest,

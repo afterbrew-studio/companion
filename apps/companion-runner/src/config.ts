@@ -1,9 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { paths } from '@moxxy/companion-services';
 import type { ResolvedModelSpec } from '@moxxy/companion-runtime';
-import { log } from './log.js';
 
 /**
  * Runner configuration — env only, no config file. `bootstrap.ts` already
@@ -18,8 +15,12 @@ export interface RunnerConfig {
   readonly port: number;
   /** Max concurrently live gateway processes. */
   readonly maxRuns: number;
-  /** Bearer token companiond must present on every request. */
-  readonly token: string;
+  /**
+   * `COMPANION_RUNNER_TOKEN`, when the operator set one. It is always valid and
+   * never written down; every other token lives in the token store, which can
+   * be rotated while the runner is running.
+   */
+  readonly tokenEnv: string | null;
   /**
    * Optional per-machine GitHub PAT override. When null (the default),
    * Companion supplies its own configured credential with each network git
@@ -60,7 +61,7 @@ export function loadRunnerConfig(): RunnerConfig {
     host: process.env.COMPANION_RUNNER_HOST?.trim() || DEFAULT_HOST,
     port: numberFrom(process.env.COMPANION_RUNNER_PORT) ?? DEFAULT_PORT,
     maxRuns: numberFrom(process.env.COMPANION_RUNNER_MAX_RUNS) ?? DEFAULT_MAX_RUNS,
-    token: resolveToken(paths.root()),
+    tokenEnv: process.env.COMPANION_RUNNER_TOKEN?.trim() || null,
     githubToken: process.env.COMPANION_RUNNER_GITHUB_TOKEN?.trim() || null,
     provider: localProvider(),
   };
@@ -90,27 +91,6 @@ function localProvider(): ResolvedModelSpec | null {
     providerOptions: {},
     factoryOptions: {},
   };
-}
-
-/**
- * Token precedence: COMPANION_RUNNER_TOKEN > <home>/token > generate.
- * A generated token is persisted (so restarts keep it) and logged ONCE so the
- * operator can paste it into companiond's runner registration.
- */
-function resolveToken(home: string): string {
-  const fromEnv = process.env.COMPANION_RUNNER_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-
-  const file = join(home, 'token');
-  if (existsSync(file)) {
-    const stored = readFileSync(file, 'utf8').trim();
-    if (stored) return stored;
-  }
-
-  const token = randomBytes(32).toString('hex');
-  writeFileSync(file, token + '\n', { mode: 0o600 });
-  log.info(`COMPANION_RUNNER_TOKEN not set — generated one (saved to ${file}): ${token}`);
-  return token;
 }
 
 function numberFrom(value: string | undefined): number | undefined {

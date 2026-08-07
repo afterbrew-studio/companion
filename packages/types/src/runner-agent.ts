@@ -69,6 +69,97 @@ export const RUNNER_AGENT_PROTOCOL = 7;
  */
 export type AgentRunAccess = 'read-only' | 'workspace-write' | 'trusted-assistant';
 
+// ---------- developer tools installed on the machine ---------------------------
+
+/**
+ * One executable the daemon wants to know whether this machine has.
+ *
+ * The daemon sends the list rather than the agent carrying one, because what is
+ * worth looking for is which integration providers this Companion has enabled,
+ * a fact that changes when a module is toggled, and that a published runner
+ * binary cannot know without being re-released for every new provider.
+ */
+export interface AgentToolProbe {
+  readonly id: string;
+  /** Candidate executables in preference order; the first that answers wins. */
+  readonly binaries: readonly string[];
+  /** Args that make it print its version. Defaults to `--version`. */
+  readonly versionArgs?: readonly string[];
+}
+
+/** POST /agent/tools/detect. 404 on an agent that predates the endpoint. */
+export interface AgentToolsDetectRequest {
+  readonly tools: readonly AgentToolProbe[];
+}
+
+export interface AgentToolHealth {
+  readonly id: string;
+  /** Which candidate answered; null when none is on PATH. */
+  readonly binary: string | null;
+  readonly version: string | null;
+  /**
+   * On PATH AND able to answer its version call. A tool that is present but
+   * broken is reported absent with the reason in `detail`: work placed on it
+   * would fail on its first invocation either way.
+   */
+  readonly present: boolean;
+  readonly detail: string | null;
+}
+
+export interface AgentToolsDetectResponse {
+  readonly tools: readonly AgentToolHealth[];
+}
+
+/**
+ * POST /agent/exec: run one developer tool inside a worktree on this machine.
+ *
+ * The general form of `/agent/verify`, and separate from it on purpose: a tool
+ * whose output is parsed needs stdout and stderr apart, needs the first
+ * candidate binary that exists rather than a shell line, and needs its progress
+ * while it runs. `verify` answers a yes/no question about a build and can keep
+ * its simpler shape.
+ *
+ * Output streams back over `WS /agent/events` as `exec.output`, keyed by the
+ * `execId` the daemon mints, so a forty-minute review is not silent until it
+ * ends. `POST /agent/exec/abort` cancels one.
+ */
+export interface AgentExecRequest {
+  /** Correlates the WS output stream; minted by the daemon. */
+  readonly execId: string;
+  /** Must be a worktree/scratch dir this agent handed out. */
+  readonly cwd: string;
+  /** Candidate executables in preference order (never a shell line). */
+  readonly binaries: readonly string[];
+  readonly args: readonly string[];
+  readonly timeoutMs: number;
+  readonly maxStdout?: number;
+  readonly maxStderr?: number;
+  /**
+   * Extra environment for this one invocation, merged over the machine's own
+   * safe environment. It can carry a credential, so the daemon sends it only
+   * over https, exactly the rule `AgentSpawnRequest.spec` follows.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface AgentExecResponse {
+  /** Which candidate ran; null when none of them is installed. */
+  readonly binary: string | null;
+  /** null when the process died on a signal or never started. */
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  readonly durationMs: number;
+  /** Set when the tool could not be started at all (nothing on PATH). */
+  readonly missing?: boolean;
+}
+
+/** POST /agent/exec/abort */
+export interface AgentExecAbortRequest {
+  readonly execId: string;
+}
+
 /**
  * POST /agent/verify — run a repository's own verification command inside a
  * prepared worktree on this machine, so a diff that does not build is known
@@ -224,6 +315,23 @@ export interface AgentFetchRequest {
   readonly githubToken?: string;
 }
 
+/**
+ * POST /agent/git/pr-worktree: detached worktree at GitHub's synthetic pull
+ * request head ref, which is what a review runs against. Unlike a branch
+ * checkout it also works for pull requests opened from forks.
+ *
+ * Added without a protocol bump: an older agent answers 404, and the daemon
+ * treats that as "this machine cannot host a review" rather than marking a
+ * working machine outdated and refusing to place runs on it.
+ */
+export interface AgentPullRequestWorktreeRequest {
+  readonly repo: string;
+  readonly key: string;
+  readonly prNumber: number;
+  readonly baseBranch: string;
+  readonly githubToken?: string;
+}
+
 /** POST /agent/git/worktree — create a fresh branch off a base (fetches). */
 export interface AgentWorktreeRequest {
   readonly repo: string;
@@ -318,6 +426,12 @@ export interface AgentStorageCleanupResponse {
 
 export type AgentEventMessage =
   | { readonly t: 'event'; readonly runId: string; readonly event: HarnessEvent }
+  | {
+      readonly t: 'exec.output';
+      readonly execId: string;
+      readonly stream: 'stdout' | 'stderr';
+      readonly chunk: string;
+    }
   | { readonly t: 'turn.complete'; readonly runId: string; readonly turnId?: string }
   | { readonly t: 'ask'; readonly runId: string; readonly ask: AskRequest }
   | { readonly t: 'ask.resolved'; readonly runId: string; readonly requestId: string }

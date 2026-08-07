@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path';
 import type {
   AgentRunAccess,
   AgentStorageCleanupRequest,
+  AgentToolHealth,
+  AgentToolProbe,
   AgentVerifyResponse,
   AgentStorageCleanupResponse,
   AskResponse,
@@ -24,7 +26,8 @@ import { loadHistoryWithFallback } from '../exec/history.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import { cleanupRunnerStorage } from '../exec/storage-cleanup.js';
 import { killAllCommands, runCommand, runVerify, type ExecOptions } from '../exec/verify.js';
-import type { RunnerBackend, RunnerEventSink } from './backend.js';
+import { detectTools, runTool, type ToolRunResult } from '../exec/tool-exec.js';
+import type { RunnerBackend, RunnerEventSink, RunnerToolRequest } from './backend.js';
 
 /** What a run executes as on this machine, read off its row when it starts. */
 export interface LocalRunSpec {
@@ -325,6 +328,15 @@ export class LocalRunnerBackend implements RunnerBackend {
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string> {
     return this.checkouts.addWorktreeAtBranch(repo, key, branch, undefined, username);
   }
+  addPullRequestWorktree(
+    repo: string,
+    key: string,
+    prNumber: number,
+    baseBranch: string,
+    username?: string | null,
+  ): Promise<string> {
+    return this.checkouts.addPullRequestWorktree(repo, key, prNumber, baseBranch, undefined, username);
+  }
   removeWorktree(repo: string, cwd: string): Promise<void> {
     return this.checkouts.removeWorktree(repo, cwd);
   }
@@ -346,6 +358,23 @@ export class LocalRunnerBackend implements RunnerBackend {
 
   exec(cwd: string, command: string, opts?: ExecOptions): Promise<AgentVerifyResponse> {
     return runCommand(cwd, command, opts);
+  }
+
+  detectTools(probes: readonly AgentToolProbe[]): Promise<readonly AgentToolHealth[]> {
+    return detectTools(probes);
+  }
+
+  /** This machine runs it directly; there is no agent hop and nothing to stream. */
+  runTool(request: RunnerToolRequest): Promise<ToolRunResult> {
+    return runTool(request.binaries, request.args, {
+      cwd: request.cwd,
+      timeoutMs: request.timeoutMs,
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.onLine ? { onLine: request.onLine } : {}),
+      ...(request.maxStdout !== undefined ? { maxStdout: request.maxStdout } : {}),
+      ...(request.maxStderr !== undefined ? { maxStderr: request.maxStderr } : {}),
+      ...(request.env ? { env: request.env } : {}),
+    });
   }
 
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {

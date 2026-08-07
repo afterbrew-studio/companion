@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Permission, ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { IntegrationScope, IntegrationTargetRef } from '@companion/module-integrations/contract';
 import type {
+  IntegrationCommandRunner,
   IntegrationReviewFinding,
   IntegrationReviewResult,
   ResolvedIntegrationTarget,
@@ -188,6 +189,22 @@ function reviewTimeoutMs(depth: ReviewDepth): number {
  * review / merging / closing only happens on explicit human action — except
  * when the repo's PR gate auto-posts a confident verdict (see Automations).
  */
+/**
+ * Checkouts on a chosen machine. Narrow on purpose: reviews need one shape of
+ * working directory on one machine, not the whole runner registry.
+ */
+export interface ReviewMachines {
+  withPullRequestWorktree<T>(
+    runnerId: string | null,
+    repo: string,
+    key: string,
+    prNumber: number,
+    baseBranch: string,
+    username: string | null,
+    job: (cwd: string) => Promise<T>,
+  ): Promise<T>;
+}
+
 export class PrReviews {
   private readonly activeReviews = new Map<string, ReviewExecution>();
   private readonly activeIntegrationReviews = new Map<string, AbortController>();
@@ -218,6 +235,12 @@ export class PrReviews {
     private readonly integrationScope: (userId: string, repo: string, workspaceId?: string) => IntegrationScope = () => {
       throw new Error('integration routing is unavailable');
     },
+    /**
+     * Checkouts on a named machine, for a provider whose executable lives
+     * somewhere other than this process. Absent (tests, a build without the
+     * machine registry) means every local provider runs here, as it always did.
+     */
+    private readonly machines: ReviewMachines | null = null,
   ) {}
 
   /** Outcome counts for the quality report; the store owns the aggregate. */
@@ -623,6 +646,53 @@ export class PrReviews {
     throw new Error('no permitted code review provider is available');
   }
 
+  /**
+   * A provider that runs its own executable, run on a machine that has it.
+   *
+   * Which machine is not a detail: the CLI is signed in as some machine's user,
+   * so the box holding that sign-in is the only one that can complete the
+   * review. That may be a developer's laptop attached as a runner rather than
+   * wherever companiond happens to run, and it is why the checkout is taken
+   * THERE: the worktree path the provider receives is a path on that machine.
+   *
+   * A provider that declares no executable keeps the old behaviour and runs on
+   * the daemon's own machine, which is the only place it could ever have run.
+   */
+  private async runLocalProvider(
+    target: ResolvedIntegrationTarget,
+    repo: string,
+    prNumber: number,
+    baseRef: string,
+    userId: string,
+    execute: (cwd: string | null, exec?: IntegrationCommandRunner) => Promise<IntegrationReviewResult>,
+  ): Promise<IntegrationReviewResult> {
+    const provider = target.provider.descriptor;
+    const key = `integration-review-${prNumber}-${randomUUID().slice(0, 8)}`;
+    if (!provider.requires?.length || !this.machines) {
+      if (!this.checkouts.hasClone(repo)) {
+        throw new IntegrationUnavailableError(`repo ${repo} has no local clone for ${provider.title}`);
+      }
+      return this.checkouts.withPullRequestWorktree(
+        repo,
+        key,
+        prNumber,
+        baseRef,
+        (cwd) => execute(cwd),
+        undefined,
+        userId,
+      );
+    }
+    const [machine] = await this.integrations!.executorsFor(provider.id, { repo, userId });
+    if (!machine) {
+      throw new IntegrationUnavailableError(
+        `no machine Companion can reach has ${provider.title} installed (looked for ${provider.requires.join(' or ')})`,
+      );
+    }
+    return this.machines.withPullRequestWorktree(machine.runnerId, repo, key, prNumber, baseRef, userId, (cwd) =>
+      execute(cwd, machine.at(cwd)),
+    );
+  }
+
   private async analyzeIntegrationPr(
     repo: string,
     prNumber: number,
@@ -693,9 +763,10 @@ export class PrReviews {
     }, 50 * 60_000);
     timeout.unref();
 
-    const execute = (cwd: string | null): Promise<IntegrationReviewResult> =>
+    const execute = (cwd: string | null, exec?: IntegrationCommandRunner): Promise<IntegrationReviewResult> =>
       this.integrations!.executeReview(target, {
         cwd,
+        ...(exec ? { exec } : {}),
         repo,
         prNumber,
         baseRef: pr.baseRef,
@@ -727,22 +798,11 @@ export class PrReviews {
       // Availability failures are persisted against this concrete attempt
       // before ordered routing continues. Otherwise an unavailable sole
       // provider could return a stale review left by an earlier run.
-      if (provider.execution === 'local' && !this.checkouts.hasClone(repo)) {
-        throw new IntegrationUnavailableError(`repo ${repo} has no local clone for ${provider.title}`);
-      }
       if (provider.execution === 'delegated' && !this.github({ repo, username: userId })) {
         throw new IntegrationUnavailableError('GitHub is not configured for delegated reviews');
       }
       const response = provider.execution === 'local'
-        ? await this.checkouts.withPullRequestWorktree(
-            repo,
-            `integration-review-${prNumber}-${randomUUID().slice(0, 8)}`,
-            prNumber,
-            pr.baseRef,
-            execute,
-            undefined,
-            userId,
-          )
+        ? await this.runLocalProvider(target, repo, prNumber, pr.baseRef, userId, execute)
         : await execute(null);
       const settled = integrationReviewOutcome(placeholder, response, strictness);
       if (!this.store.prReviews.finish(settled)) return this.getWithFindings(reviewId) ?? settled;

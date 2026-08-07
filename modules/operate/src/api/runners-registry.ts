@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import type { AgentRunAccess, AgentStorageCleanupRequest } from '@moxxy/companion-types';
 import type {
+  AgentRunAccess,
+  AgentStorageCleanupRequest,
+  AgentToolHealth,
+  AgentToolProbe,
+} from '@moxxy/companion-types';
+import type {
+  ToolMachine,
   CatalogMachine,
   CatalogMachineModel,
   CatalogMachineProvider,
@@ -64,6 +70,8 @@ const CATALOG_TTL_MS = 6 * 60 * 60_000;
 const CATALOG_RETRY_MS = 10 * 60_000;
 /** How long "what is installed here" is trusted; installing something is rare. */
 const DETECT_TTL_MS = 60_000;
+/** The same, for a machine's developer tools: one probe spawn per tool. */
+const TOOL_TTL_MS = 5 * 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
   runtimes: [],
@@ -116,6 +124,15 @@ export class Runners {
   /** Cached `detectHarnesses` answer for this machine (see `detected`). */
   private detectedHarnesses: readonly HarnessDetection[] | null = null;
   private detectedAt = 0;
+  /**
+   * Which developer tools each machine has, and when it last said so.
+   *
+   * A missing entry means never asked; an entry whose list is null means the
+   * machine's agent is too old to answer. The two are kept apart because only
+   * the second one is permanent, and neither is the same as "does not have it".
+   */
+  private readonly tools = new Map<string, { at: number; list: readonly AgentToolHealth[] | null }>();
+  private readonly toolsInFlight = new Map<string, Promise<void>>();
 
   constructor(
     private readonly store: OperateStore,
@@ -257,6 +274,13 @@ export class Runners {
           // Only asks whether this instance could resolve a model at all, so it
           // names a representative access rather than any particular run's.
           (harnessId) => registeredHarness(harnessId)?.remotePlan?.(null, null, 'workspace-write') != null,
+          // The RAW stored choice, read live: the operator changes what a
+          // machine runs from its settings page, and health must judge the new
+          // choice on the next poll rather than the one this backend was built
+          // with. Empty stays empty: a machine nobody has configured is judged
+          // on what it reported ready, which is the backend's own default.
+          () => this.store.runners.get(row.id)?.harnesses ?? row.harnesses,
+          (runId) => this.store.runs.get(runId)?.harness ?? null,
         ),
       );
     }
@@ -552,6 +576,14 @@ export class Runners {
       ),
     );
     await this.refreshStalestCatalog();
+    // Tools are cheap to ask about (one `--version` per probe) but only worth
+    // asking a machine that answered its health probe: an offline one would
+    // spend the whole poll tick timing out.
+    await Promise.all(
+      [...this.backends.keys()]
+        .filter((id) => id === LOCAL_RUNNER_ID || this.health.get(id)?.status === 'online')
+        .map((id) => this.refreshTools(id).catch(() => undefined)),
+    );
   }
 
   /**
@@ -573,7 +605,127 @@ export class Runners {
   }
 
   healthFor(id: string): RunnerHealth {
-    return this.health.get(id) ?? UNKNOWN_HEALTH;
+    const health = this.health.get(id) ?? UNKNOWN_HEALTH;
+    const tools = this.tools.get(id)?.list;
+    return tools && tools.length > 0 ? { ...health, tools } : health;
+  }
+
+  // ---------- developer tools on a machine ----------
+
+  /**
+   * What executables are worth looking for, set by the layer that knows which
+   * integration providers this instance has enabled. Late-bound, like every
+   * other cross-module answer here: the module that owns providers registers
+   * after this one, and toggling it must change the answer without a restart.
+   */
+  setToolProbes(resolve: () => readonly AgentToolProbe[]): void {
+    this.toolProbes = resolve;
+  }
+
+  private toolProbes: () => readonly AgentToolProbe[] = () => [];
+
+  /** What this machine reported having, as far as anyone has asked. */
+  toolsOn(runnerId: string | null): readonly AgentToolHealth[] {
+    return this.tools.get(runnerId ?? LOCAL_RUNNER_ID)?.list ?? [];
+  }
+
+  /**
+   * The machines that can run one tool, in the order a job should try them.
+   *
+   * A pinned machine first (somebody chose it for this repository), then the
+   * triggering user's own, since a laptop is attached precisely so its own sign-ins
+   * are used, then everything else, with the daemon's own machine last because
+   * it is the one that is always there and therefore the least deliberate
+   * choice. Machines that have never been asked are asked now.
+   */
+  async machinesWithTool(
+    toolId: string,
+    opts: { repo?: string | null; userId?: string | null } = {},
+  ): Promise<readonly ToolMachine[]> {
+    const rows = [
+      ...this.store.runners.list().filter((row) => row.enabled === 1 && row.id !== LOCAL_RUNNER_ID && this.isOnline(row)),
+      ...(this.store.runners.get(LOCAL_RUNNER_ID)?.enabled === 1 ? [this.store.runners.get(LOCAL_RUNNER_ID)!] : []),
+    ];
+    await Promise.all(rows.map((row) => this.refreshTools(row.id).catch(() => undefined)));
+    const pinned = opts.repo ? (this.store.repos.get(opts.repo)?.runner_id ?? null) : null;
+    const rank = (row: RunnerRow): number => {
+      if (row.id === pinned) return 0;
+      if (opts.userId !== null && opts.userId !== undefined && row.owner_id === opts.userId) return 1;
+      return row.id === LOCAL_RUNNER_ID ? 3 : 2;
+    };
+    return rows
+      .flatMap((row): ToolMachine[] => {
+        const tool = this.tools.get(row.id)?.list?.find((entry) => entry.id === toolId);
+        if (!tool?.present || !tool.binary) return [];
+        return [
+          {
+            runnerId: this.normalize(row.id),
+            name: row.name,
+            binary: tool.binary,
+            version: tool.version,
+            rank: rank(row),
+          },
+        ];
+      })
+      .sort((a, b) => a.rank - b.rank);
+  }
+
+  /**
+   * A pull request checked out on ONE machine for the duration of a job, and
+   * released afterwards whatever the job did.
+   *
+   * The clone is created there when it is missing, which is the normal case
+   * rather than an edge one: a machine chosen because it holds a tool's sign-in
+   * has no reason to have seen the repository before.
+   */
+  async withPullRequestWorktree<T>(
+    runnerId: string | null,
+    repo: string,
+    key: string,
+    prNumber: number,
+    baseBranch: string,
+    username: string | null,
+    job: (cwd: string) => Promise<T>,
+  ): Promise<T> {
+    const backend = this.backend(runnerId);
+    const name = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID)?.name ?? 'that machine';
+    if (!(await backend.hasClone(repo))) await backend.ensureClone(repo, username);
+    const cwd = await backend.addPullRequestWorktree(repo, key, prNumber, baseBranch, username);
+    if (cwd === null) {
+      throw new Error(`${name} runs a runner agent too old to check out a pull request; update companion-runner there`);
+    }
+    try {
+      return await job(cwd);
+    } finally {
+      await backend.removeWorktree(repo, cwd).catch((err) =>
+        log.warn('could not release a pull request worktree', { runner: runnerId, repo, err: String(err) }),
+      );
+    }
+  }
+
+  /** Re-ask one machine what it has; a fresh enough answer is reused. */
+  private async refreshTools(id: string, force = false): Promise<void> {
+    const probes = this.toolProbes();
+    if (probes.length === 0) {
+      this.tools.delete(id);
+      return;
+    }
+    const cached = this.tools.get(id);
+    if (!force && cached && Date.now() - cached.at < TOOL_TTL_MS) return;
+    const existing = this.toolsInFlight.get(id);
+    if (existing) return existing;
+    const work = (async () => {
+      try {
+        const list = await this.backend(id).detectTools(probes);
+        const previous = this.tools.get(id)?.list ?? null;
+        this.tools.set(id, { at: Date.now(), list });
+        if (JSON.stringify(previous) !== JSON.stringify(list)) this.broadcast({ t: 'runners.changed' });
+      } finally {
+        this.toolsInFlight.delete(id);
+      }
+    })();
+    this.toolsInFlight.set(id, work);
+    return work;
   }
 
   /** Companion owns retention; runners only execute it inside their managed
@@ -798,9 +950,19 @@ export class Runners {
    * mismatch and reads as outdated, so it never receives placement at all;
    * before that existed, a remote machine ran moxxy whatever its row said and
    * this had to force it.
+   *
+   * A remote machine with NOTHING chosen yet runs what it reported ready. The
+   * stored default is moxxy, which was the only thing a runner could run when
+   * the column was added; on a machine that has Claude Code and no moxxy it
+   * would make a freshly registered laptop read as degraded until somebody
+   * opened its settings page, for a choice they never made.
    */
   private harnessesOn(row: RunnerRow): readonly HarnessDescriptor[] {
-    return harnessSet(row.harnesses);
+    if (row.harnesses.length > 0 || row.kind === 'local') return harnessSet(row.harnesses);
+    const reported = (this.health.get(row.id)?.runtimes ?? [])
+      .filter((runtime) => runtime.state === 'ready')
+      .map((runtime) => runtime.id);
+    return harnessSet(reported);
   }
 
   /**

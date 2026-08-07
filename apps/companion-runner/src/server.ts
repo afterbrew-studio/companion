@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -12,10 +11,14 @@ import {
   type AgentDiffRequest,
   type AgentDiffResponse,
   type AgentEnsureCloneRequest,
+  type AgentExecAbortRequest,
+  type AgentExecRequest,
+  type AgentExecResponse,
   type AgentFetchRequest,
   type AgentEventMessage,
   type AgentHealth,
   type AgentPromptRequest,
+  type AgentPullRequestWorktreeRequest,
   type AgentPushRequest,
   type AgentRemoveWorktreeRequest,
   type AgentScratchRequest,
@@ -24,6 +27,9 @@ import {
   type AgentSpawnRequest,
   type AgentStorageCleanupRequest,
   type AgentStorageCleanupResponse,
+  type AgentToolProbe,
+  type AgentToolsDetectRequest,
+  type AgentToolsDetectResponse,
   type AgentVerifyRequest,
   type AgentVerifyResponse,
   type AgentWorktreeAtRequest,
@@ -33,13 +39,15 @@ import {
 } from '@moxxy/companion-types';
 import { paths } from '@moxxy/companion-services';
 import type { Checkouts } from '@companion/module-operate/exec';
-import { MIN_MOXXY_VERSION, runVerify } from '@companion/module-operate/exec';
+import { detectTools, runTool, runVerify } from '@companion/module-operate/exec';
 import type { MoxxyCli } from '@companion/module-operate/exec';
 import type { GatewayClient } from '@companion/module-operate/exec';
 import type { GatewayPool } from '@companion/module-operate/exec';
 import { cleanupRunnerStorage, loadHistoryWithFallback } from '@companion/module-operate/exec';
-import type { Harness } from '@moxxy/companion-types';
+import type { AgentRuntimeHealth, Harness } from '@moxxy/companion-types';
 import { RUNTIME_HARNESS_ID, type RuntimeSessions } from './runtime-sessions.js';
+import type { RunnerTokens } from './tokens.js';
+import { isCliHarness, MOXXY_HARNESS_ID, type CliHarnessSessions } from './harnesses.js';
 import { log } from './log.js';
 
 /**
@@ -57,6 +65,8 @@ export interface AgentDeps {
   readonly maxRuns: number;
   /** The built-in runtime's live sessions on this machine (protocol 7). */
   readonly runtime: RuntimeSessions;
+  /** Agent CLIs installed on this machine (Claude Code, Codex). */
+  readonly cli: CliHarnessSessions;
 }
 
 class HttpError extends Error {
@@ -111,15 +121,15 @@ export class EventHub {
 export function startAgentServer(opts: {
   host: string;
   port: number;
-  token: string;
+  tokens: RunnerTokens;
   deps: AgentDeps;
   hub: EventHub;
 }): Promise<Server> {
-  const { host, port, token, deps, hub } = opts;
+  const { host, port, tokens, deps, hub } = opts;
   const wss = new WebSocketServer({ noServer: true });
 
   const server = createServer((req, res) => {
-    void handle(req, res, token, deps);
+    void handle(req, res, tokens, deps, hub);
   });
 
   // WS /agent/events?token=… — the run event stream companiond subscribes to.
@@ -130,7 +140,7 @@ export function startAgentServer(opts: {
       return;
     }
     const presented = url.searchParams.get('token') ?? bearerToken(req);
-    if (!tokenMatches(token, presented)) {
+    if (!tokens.verify(presented)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n');
       socket.destroy();
       return;
@@ -150,17 +160,18 @@ export function startAgentServer(opts: {
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
-  token: string,
+  tokens: RunnerTokens,
   deps: AgentDeps,
+  hub: EventHub,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const method = req.method ?? 'GET';
   const path = url.pathname;
   try {
     if (!path.startsWith('/agent/')) throw new HttpError(404, `no route: ${method} ${path}`);
-    if (!tokenMatches(token, bearerToken(req))) throw new HttpError(401, 'invalid or missing token');
+    if (!tokens.verify(bearerToken(req))) throw new HttpError(401, 'invalid or missing token');
     const body = method === 'GET' ? {} : await readBody(req);
-    const result = await route(deps, method, path, url, body);
+    const result = await route(deps, hub, method, path, url, body);
     json(res, 200, result ?? null);
   } catch (err) {
     if (err instanceof HttpError) return json(res, err.status, { error: err.message });
@@ -173,36 +184,28 @@ async function handle(
 
 async function route(
   deps: AgentDeps,
+  hub: EventHub,
   method: string,
   path: string,
   url: URL,
   body: unknown,
 ): Promise<unknown> {
   if (method === 'GET' && path === '/agent/health') {
+    // The built-in runtime leads because it is not installed here at all: it is
+    // a subprocess of this bundle, so it is the one runtime a bare container
+    // always has. Everything after it is read off this machine's disk.
+    const builtin: AgentRuntimeHealth = {
+      id: RUNTIME_HARNESS_ID,
+      label: 'Companion',
+      version: null,
+      state: deps.runtime.state.ready ? 'ready' : 'unavailable',
+      detail: deps.runtime.state.detail,
+      needsModel: deps.runtime.state.needsModel,
+    };
     const health: AgentHealth = {
       ok: true,
-      runtimes: [
-        {
-          id: RUNTIME_HARNESS_ID,
-          label: 'Companion',
-          version: null,
-          state: deps.runtime.state.ready ? 'ready' : 'unavailable',
-          detail: deps.runtime.state.detail,
-          needsModel: deps.runtime.state.needsModel,
-        },
-        {
-          id: 'moxxy',
-          label: 'Moxxy',
-          version: deps.moxxy?.version ?? null,
-          state: deps.moxxy?.compatible ? 'ready' : 'unavailable',
-          detail: deps.moxxy
-            ? deps.moxxy.compatible
-              ? null
-              : `Version ${deps.moxxy.version} is older than ${MIN_MOXXY_VERSION}`
-            : 'Runtime executable not found',
-        },
-      ],
-      liveRuns: deps.pool.liveCount + deps.runtime.liveCount,
+      runtimes: [builtin, ...(await deps.cli.runtimes())],
+      liveRuns: deps.pool.liveCount + deps.runtime.liveCount + deps.cli.liveCount,
       maxRuns: deps.maxRuns,
       protocol: RUNNER_AGENT_PROTOCOL,
     };
@@ -223,6 +226,26 @@ async function route(
     return { cwd } satisfies AgentScratchResponse;
   }
 
+  if (method === 'POST' && path === '/agent/tools/detect') {
+    const { tools } = body as AgentToolsDetectRequest;
+    if (!Array.isArray(tools) || tools.length > MAX_TOOL_PROBES) {
+      throw badRequest(`tools must be an array of at most ${MAX_TOOL_PROBES} probes`);
+    }
+    const probes = tools.map((probe, index) => toolProbe(probe, index));
+    return { tools: await detectTools(probes) } satisfies AgentToolsDetectResponse;
+  }
+
+  if (method === 'POST' && path === '/agent/exec') {
+    return execTool(deps, hub, body);
+  }
+
+  if (method === 'POST' && path === '/agent/exec/abort') {
+    const { execId } = body as AgentExecAbortRequest;
+    requireString(execId, 'execId');
+    runningExecs.get(execId)?.abort();
+    return { ok: true };
+  }
+
   if (method === 'POST' && path === '/agent/verify') {
     const { cwd, command, timeoutMs } = body as AgentVerifyRequest;
     requireString(cwd, 'cwd');
@@ -235,10 +258,12 @@ async function route(
 
   if (method === 'POST' && path === '/agent/storage/cleanup') {
     const request = storageCleanupRequest(body);
+    // Every live run, of every runtime: reaping the working directory out from
+    // under a live Claude Code session is the same bug as doing it to a gateway.
     return (await cleanupRunnerStorage(
       request,
       deps.checkouts,
-      deps.pool.liveIds(),
+      [...deps.pool.liveIds(), ...deps.cli.liveIds(), ...deps.runtime.liveIds()],
     )) satisfies AgentStorageCleanupResponse;
   }
 
@@ -248,11 +273,7 @@ async function route(
     requireString(relPath, 'path');
     requireString(content, 'content');
     // Only inside dirs the agent manages, and no traversal out of `cwd`.
-    const roots = [paths.scratch(), paths.worktrees()].map((r) => resolve(r));
-    const base = resolve(cwd);
-    if (!roots.some((root) => base === root || base.startsWith(root + sep))) {
-      throw new HttpError(403, 'cwd is outside the agent working area');
-    }
+    const base = requireWorkingDir(cwd);
     const target = resolve(base, relPath);
     if (target !== base && !target.startsWith(base + sep)) {
       throw new HttpError(403, 'path escapes the working dir');
@@ -280,18 +301,19 @@ async function routeRun(
   switch (action) {
     case 'spawn': {
       requireMethod(method, 'POST', action);
-      const { cwd, sessionId, access, harness, spec, limits, mcpServers, verifyCommand, resultSchema, attended } =
+      const { cwd, sessionId, access, harness, model, spec, limits, mcpServers, verifyCommand, resultSchema, attended } =
         body as AgentSpawnRequest;
       requireString(cwd, 'cwd');
       requireString(sessionId, 'sessionId');
       if (access !== 'read-only' && access !== 'workspace-write' && access !== 'trusted-assistant') {
         throw new HttpError(400, 'access must be read-only, workspace-write, or trusted-assistant');
       }
+      const live = (): number => deps.pool.liveCount + deps.runtime.liveCount + deps.cli.liveCount;
       // Protocol 7: the run says which runtime it was recorded under. An older
       // daemon sends nothing and gets what this agent always ran.
       if (harness === RUNTIME_HARNESS_ID) {
         mkdirSync(cwd, { recursive: true });
-        if (deps.pool.liveCount + deps.runtime.liveCount >= deps.maxRuns) {
+        if (live() >= deps.maxRuns) {
           throw new HttpError(429, `this machine is running ${deps.maxRuns} agents already`);
         }
         try {
@@ -311,6 +333,29 @@ async function routeRun(
         }
         return { ok: true };
       }
+      // An agent CLI installed on THIS machine, signed in as this machine's
+      // user. That credential is why the run is here rather than on the
+      // daemon's box, so a machine that does not have it must refuse rather
+      // than quietly run the work through something else.
+      if (isCliHarness(harness)) {
+        if (live() >= deps.maxRuns) {
+          throw new HttpError(429, `this machine is running ${deps.maxRuns} agents already`);
+        }
+        try {
+          await deps.cli.spawn({ runId, cwd, access, harness, model: model ?? null });
+        } catch (err) {
+          throw new HttpError(503, err instanceof Error ? err.message : String(err));
+        }
+        return { ok: true };
+      }
+      // Naming moxxy rather than treating it as "everything else": a runtime
+      // this agent does not implement would otherwise start a moxxy session and
+      // report success, and the run would be answered by the wrong model with
+      // nobody told. An older daemon sends no harness at all and still means
+      // moxxy, which is what every machine ran before the field existed.
+      if (harness !== undefined && harness !== MOXXY_HARNESS_ID) {
+        throw new HttpError(400, `this runner does not implement the ${harness} runtime`);
+      }
       if (!deps.moxxy) throw new HttpError(503, 'moxxy CLI is not installed on this runner');
       // The pool pins MOXXY_SESSION_ID to the run id (sticky resume + history
       // file named after the run); companiond always sends sessionId === runId.
@@ -327,6 +372,10 @@ async function routeRun(
         await deps.runtime.stop(runId);
         return { ok: true };
       }
+      if (deps.cli.has(runId)) {
+        await deps.cli.stop(runId);
+        return { ok: true };
+      }
       await deps.pool.get(runId)?.stop();
       return { ok: true };
     }
@@ -334,14 +383,14 @@ async function routeRun(
       requireMethod(method, 'POST', action);
       const { prompt, model, attachments } = body as AgentPromptRequest;
       requireString(prompt, 'prompt');
-      const session = deps.runtime.get(runId);
+      const session = deps.runtime.get(runId) ?? deps.cli.get(runId);
       if (session) return session.runTurn({ prompt, ...(model === undefined ? {} : { model }), attachments });
       return liveClient(deps.pool, runId).runTurn({ prompt, ...(model === undefined ? {} : { model }), attachments });
     }
     case 'command': {
       requireMethod(method, 'POST', action);
-      const session = deps.runtime.get(runId);
-      if (session) return runtimeCommand(session, body);
+      const session = deps.runtime.get(runId) ?? deps.cli.get(runId);
+      if (session) return sessionCommand(session, body);
       return runCommand(deps.pool, runId, body);
     }
     case 'history': {
@@ -349,9 +398,12 @@ async function routeRun(
       const limit = clampInt(url.searchParams.get('limit'), DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
       const beforeRaw = url.searchParams.get('before');
       const before = beforeRaw === null || beforeRaw === '' ? null : clampInt(beforeRaw, 0, Number.MAX_SAFE_INTEGER);
-      if (deps.runtime.has(runId) || deps.runtime.get(runId) !== null) {
-        return deps.runtime.history(runId, before, limit);
-      }
+      // The run's runtime, as the daemon recorded it. It is the only answer that
+      // survives a restart of this agent, which is exactly when a reaped run's
+      // transcript is asked for and no live session is left to identify it.
+      const harness = url.searchParams.get('harness');
+      if (deps.runtime.has(runId)) return deps.runtime.history(runId, before, limit);
+      if (deps.cli.served(runId, harness)) return deps.cli.history(runId, harness, before, limit);
       const handle = deps.pool.get(runId);
       return loadHistoryWithFallback(
         handle?.client.isOpen ? () => handle.client.loadHistory(runId, before, limit) : null,
@@ -362,7 +414,7 @@ async function routeRun(
     }
     case 'session-info': {
       requireMethod(method, 'GET', action);
-      const session = deps.runtime.get(runId);
+      const session = deps.runtime.get(runId) ?? deps.cli.get(runId);
       if (session) return { info: await session.sessionInfo() } satisfies AgentSessionInfoResponse;
       return { info: await liveClient(deps.pool, runId).sessionInfo() } satisfies AgentSessionInfoResponse;
     }
@@ -372,11 +424,11 @@ async function routeRun(
 }
 
 /**
- * The subset of the command surface a built-in-runtime session answers. Its
- * capabilities declare no session controls, so a daemon that asks for one
- * skipped the check rather than meeting a harness that fell short.
+ * The subset of the command surface a session-controls-free harness answers:
+ * the built-in runtime, Claude Code and Codex all declare none. A daemon that
+ * asks for one skipped the check rather than meeting a harness that fell short.
  */
-async function runtimeCommand(session: Harness, body: unknown): Promise<unknown> {
+async function sessionCommand(session: Harness, body: unknown): Promise<unknown> {
   const { command } = (body ?? {}) as AgentCommandRequest;
   if (!command || typeof command !== 'object' || typeof command.kind !== 'string') {
     throw badRequest('missing command');
@@ -391,7 +443,7 @@ async function runtimeCommand(session: Harness, body: unknown): Promise<unknown>
     await session.respondAsk(command.requestId, command.response);
     return { ok: true };
   }
-  throw badRequest(`the built-in runtime has no ${command.kind}`);
+  throw badRequest(`this run's runtime has no ${command.kind}`);
 }
 
 /** Dispatch the misc typed gateway commands onto the run's live GatewayClient. */
@@ -462,6 +514,15 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       const cwd = await checkouts.addWorktree(repo, key, branch, baseBranch, githubToken);
       return { cwd } satisfies AgentWorktreeResponse;
     }
+    case 'pr-worktree': {
+      const { repo, key, prNumber, baseBranch, githubToken } = body as AgentPullRequestWorktreeRequest;
+      requireString(repo, 'repo');
+      requireString(key, 'key');
+      requireString(baseBranch, 'baseBranch');
+      if (!Number.isInteger(prNumber) || prNumber <= 0) throw badRequest('prNumber must be a positive integer');
+      const cwd = await checkouts.addPullRequestWorktree(repo, key, prNumber, baseBranch, githubToken);
+      return { cwd } satisfies AgentWorktreeResponse;
+    }
     case 'worktree-at': {
       const { repo, key, branch, githubToken } = body as AgentWorktreeAtRequest;
       requireString(repo, 'repo');
@@ -506,6 +567,140 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
     default:
       throw new HttpError(404, `no git action: ${action}`);
   }
+}
+
+// ---------- developer tools -------------------------------------------------------
+
+const MAX_TOOL_PROBES = 32;
+const MAX_TOOL_BINARIES = 8;
+const MAX_TOOL_ARGS = 64;
+const MAX_ARG_LENGTH = 4_096;
+const MAX_EXEC_TIMEOUT_MS = 60 * 60_000;
+/** How much of a tool's live output is worth relaying; the response carries all of it. */
+const MAX_STREAMED_BYTES = 1024 * 1024;
+
+/** Commands in flight, so the daemon can cancel one it started. */
+const runningExecs = new Map<string, AbortController>();
+
+/**
+ * Run one developer tool inside a worktree on this machine.
+ *
+ * The daemon reaches for this when the tool a job needs is installed HERE and
+ * not where companiond runs. A CodeRabbit CLI signed in as the laptop's user
+ * is the case it exists for. Output streams back over the event socket as it
+ * arrives, because these commands run for minutes and a progress bar that only
+ * fills at the end is indistinguishable from a hang.
+ */
+async function execTool(deps: AgentDeps, hub: EventHub, body: unknown): Promise<AgentExecResponse> {
+  const { execId, cwd, binaries, args, timeoutMs, maxStdout, maxStderr, env } = body as AgentExecRequest;
+  requireString(execId, 'execId');
+  requireString(cwd, 'cwd');
+  const dir = requireWorkingDir(cwd);
+  if (!Array.isArray(binaries) || binaries.length === 0 || binaries.length > MAX_TOOL_BINARIES) {
+    throw badRequest(`binaries must be 1 to ${MAX_TOOL_BINARIES} executable names`);
+  }
+  for (const binary of binaries) requireArg(binary, 'binaries');
+  if (!Array.isArray(args) || args.length > MAX_TOOL_ARGS) {
+    throw badRequest(`args must be at most ${MAX_TOOL_ARGS} entries`);
+  }
+  for (const arg of args) requireArg(arg, 'args');
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw badRequest('timeoutMs must be a positive number');
+  }
+  if (runningExecs.has(execId)) throw new HttpError(409, `exec ${execId} is already running`);
+
+  const controller = new AbortController();
+  runningExecs.set(execId, controller);
+  let streamed = 0;
+  try {
+    const result = await runTool(binaries, args, {
+      cwd: dir,
+      timeoutMs: Math.min(timeoutMs, MAX_EXEC_TIMEOUT_MS),
+      signal: controller.signal,
+      onChunk: (stream, chunk) => {
+        if (streamed >= MAX_STREAMED_BYTES) return;
+        streamed += Buffer.byteLength(chunk);
+        hub.broadcast({ t: 'exec.output', execId, stream, chunk });
+      },
+      ...(typeof maxStdout === 'number' ? { maxStdout } : {}),
+      ...(typeof maxStderr === 'number' ? { maxStderr } : {}),
+      ...(env ? { env: toolEnvOverlay(env) } : {}),
+    });
+    return {
+      binary: result.binary,
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      ...(result.missing ? { missing: true } : {}),
+    };
+  } finally {
+    runningExecs.delete(execId);
+  }
+}
+
+function toolProbe(value: unknown, index: number): AgentToolProbe {
+  if (!value || typeof value !== 'object') throw badRequest(`tools[${index}] is invalid`);
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || !raw.id.trim()) throw badRequest(`tools[${index}].id is invalid`);
+  if (!Array.isArray(raw.binaries) || raw.binaries.length === 0 || raw.binaries.length > MAX_TOOL_BINARIES) {
+    throw badRequest(`tools[${index}].binaries must be 1 to ${MAX_TOOL_BINARIES} executable names`);
+  }
+  for (const binary of raw.binaries) requireArg(binary, `tools[${index}].binaries`);
+  const versionArgs = raw.versionArgs;
+  if (versionArgs !== undefined) {
+    if (!Array.isArray(versionArgs) || versionArgs.length > MAX_TOOL_ARGS) {
+      throw badRequest(`tools[${index}].versionArgs is invalid`);
+    }
+    for (const arg of versionArgs) requireArg(arg, `tools[${index}].versionArgs`);
+  }
+  return {
+    id: raw.id,
+    binaries: raw.binaries as string[],
+    ...(versionArgs ? { versionArgs: versionArgs as string[] } : {}),
+  };
+}
+
+/**
+ * A per-invocation environment overlay. Bounded and shape-checked here because
+ * it is the one field of this endpoint that carries a credential, and a
+ * malformed one must be refused rather than handed to a spawn.
+ */
+function toolEnvOverlay(env: unknown): Record<string, string> {
+  if (!env || typeof env !== 'object') throw badRequest('env must be an object');
+  const entries = Object.entries(env as Record<string, unknown>);
+  if (entries.length > 32) throw badRequest('env may carry at most 32 variables');
+  const overlay: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw badRequest(`env name '${key.slice(0, 40)}' is invalid`);
+    if (typeof value !== 'string' || value.length > MAX_ARG_LENGTH) throw badRequest(`env value for ${key} is invalid`);
+    overlay[key] = value;
+  }
+  return overlay;
+}
+
+function requireArg(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_ARG_LENGTH) {
+    throw badRequest(`${name} must be non-empty strings under ${MAX_ARG_LENGTH} characters`);
+  }
+  return value;
+}
+
+/**
+ * A directory this agent handed out, resolved.
+ *
+ * Everything that runs a command or writes a file goes through here: a cwd from
+ * anywhere else would turn these endpoints into "run this anywhere on my
+ * machine", which is not what they are.
+ */
+function requireWorkingDir(cwd: string): string {
+  const roots = [paths.scratch(), paths.worktrees()].map((r) => resolve(r));
+  const base = resolve(cwd);
+  if (!roots.some((root) => base === root || base.startsWith(root + sep))) {
+    throw new HttpError(403, 'cwd is outside the agent working area');
+  }
+  return base;
 }
 
 // ---------- helpers ---------------------------------------------------------------
@@ -572,14 +767,6 @@ function bearerToken(req: IncomingMessage): string | null {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) return header.slice('Bearer '.length);
   return null;
-}
-
-/** Constant-time token comparison (hash first so lengths always match). */
-function tokenMatches(expected: string, presented: string | null): boolean {
-  if (!presented) return false;
-  const a = createHash('sha256').update(expected).digest();
-  const b = createHash('sha256').update(presented).digest();
-  return timingSafeEqual(a, b);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
