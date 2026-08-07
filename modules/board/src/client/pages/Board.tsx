@@ -446,112 +446,117 @@ export default function Board({ query }: RouteProps): JSX.Element {
   const decisions = byColumn.get('needs_decision')?.length ?? 0;
 
   return (
-    <div className="w-full px-6 py-6">
-      <PageHeader
-        title="Task Board"
-        subtitle={
-          `${inFlight} in flight` + (decisions > 0 ? ` · ${decisions} need${decisions === 1 ? 's' : ''} your decision` : '')
-        }
-        actions={
-          <>
-            {repoOptions.length > 1 ? (
-              <div className="w-56">
-                <Dropdown
-                  ariaLabel="Repository scope"
-                  value={scopedRepo ?? ALL_REPOS}
-                  onChange={chooseScope}
-                  options={[
-                    ...repoOptions.map((fullName) => {
-                      const record = repos.find((r) => r.fullName === fullName);
-                      return {
-                        value: fullName,
-                        label: repoLabel(fullName),
-                        hint: record && !canBoardPush(record) ? accessHint(record) : undefined,
-                      };
-                    }),
-                    { value: ALL_REPOS, label: 'All repositories' },
-                  ]}
-                  searchable={repoOptions.length > 6}
-                />
-              </div>
-            ) : null}
-            {/* Which of my credentials acts on the scoped repo. Hidden unless
-                several of my accounts are eligible — nothing to decide then. */}
-            {scopedRepo ? <RepoAccountPicker repo={scopedRepo} className="w-44" /> : null}
-            {canManage ? (
-              <>
-                <ActionMenu
-                  label="Board settings"
-                  trigger="Settings"
-                  actions={[
-                    {
-                      label:
-                        capacity === 0
-                          ? 'Add workers'
-                          : `Workers (${busyCount}/${capacity} busy)`,
-                      onSelect: () => setManagingWorkers(true),
-                    },
-                    {
-                      label: 'Review, merge, and retry rules',
-                      onSelect: () => setConfiguring(true),
-                    },
-                  ]}
-                />
-                <button className="btn" onClick={() => setCreating(true)}>
-                  <PlusIcon className="size-3.5" />
-                  New task
-                </button>
-              </>
-            ) : null}
-          </>
-        }
-      />
-      <ErrorBar error={error} className="mb-3" />
-      {scopedRecord && !canBoardPush(scopedRecord) ? (
-        <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          {scopedRecord.githubPermission === null
-            ? `None of your connected GitHub accounts can see ${scopedRepo}. Connect one with access to work on it here.`
-            : `Your GitHub access to ${scopedRepo} is read-only, so the board cannot push a branch or open a pull request. ` +
-              `Existing cards stay put; grant write access and they start on their own.`}
-        </div>
-      ) : null}
-      {developerCount === 0 && visibleTasks.length > 0 ? (
-        <div className="banner-warn mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span>Tasks are visible, but none can start until a developer worker is available.</span>
-          {canManage ? <button className="btn-ghost" onClick={() => setManagingWorkers(true)}>Add worker</button> : null}
-        </div>
-      ) : null}
-      {developerCount === 0 && visibleTasks.length === 0 ? (
-        <div className="mb-4">
+    // The rail spans the window, but its chrome sits in the same centred column
+    // every other page uses, so the title and its actions land where they do
+    // everywhere else rather than at the two far edges of a wide monitor.
+    <div className="w-full py-6">
+      <div className="mx-auto w-full max-w-5xl px-6">
+        <PageHeader
+          title="Task Board"
+          subtitle={
+            `${inFlight} in flight` + (decisions > 0 ? ` · ${decisions} need${decisions === 1 ? 's' : ''} your decision` : '')
+          }
+          actions={
+            <>
+              {repoOptions.length > 1 ? (
+                <div className="w-56">
+                  <Dropdown
+                    ariaLabel="Repository scope"
+                    value={scopedRepo ?? ALL_REPOS}
+                    onChange={chooseScope}
+                    options={[
+                      ...repoOptions.map((fullName) => {
+                        const record = repos.find((r) => r.fullName === fullName);
+                        return {
+                          value: fullName,
+                          label: repoLabel(fullName),
+                          hint: record && !canBoardPush(record) ? accessHint(record) : undefined,
+                        };
+                      }),
+                      { value: ALL_REPOS, label: 'All repositories' },
+                    ]}
+                    searchable={repoOptions.length > 6}
+                  />
+                </div>
+              ) : null}
+              {/* Which of my credentials acts on the scoped repo. Hidden unless
+                  several of my accounts are eligible — nothing to decide then. */}
+              {scopedRepo ? <RepoAccountPicker repo={scopedRepo} className="w-44" /> : null}
+              {canManage ? (
+                <>
+                  <ActionMenu
+                    label="Board settings"
+                    trigger="Settings"
+                    actions={[
+                      {
+                        label:
+                          capacity === 0
+                            ? 'Add workers'
+                            : `Workers (${busyCount}/${capacity} busy)`,
+                        onSelect: () => setManagingWorkers(true),
+                      },
+                      {
+                        label: 'Review, merge, and retry rules',
+                        onSelect: () => setConfiguring(true),
+                      },
+                    ]}
+                  />
+                  <button className="btn" onClick={() => setCreating(true)}>
+                    <PlusIcon className="size-3.5" />
+                    New task
+                  </button>
+                </>
+              ) : null}
+            </>
+          }
+        />
+        <ErrorBar error={error} className="mb-3" />
+        {scopedRecord && !canBoardPush(scopedRecord) ? (
+          <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            {scopedRecord.githubPermission === null
+              ? `None of your connected GitHub accounts can see ${scopedRepo}. Connect one with access to work on it here.`
+              : `Your GitHub access to ${scopedRepo} is read-only, so the board cannot push a branch or open a pull request. ` +
+                `Existing cards stay put; grant write access and they start on their own.`}
+          </div>
+        ) : null}
+        {developerCount === 0 && visibleTasks.length > 0 ? (
+          <div className="banner-warn mb-3 flex flex-wrap items-center justify-between gap-2">
+            <span>Tasks are visible, but none can start until a developer worker is available.</span>
+            {canManage ? <button className="btn-ghost" onClick={() => setManagingWorkers(true)}>Add worker</button> : null}
+          </div>
+        ) : null}
+        {developerCount === 0 && visibleTasks.length === 0 ? (
+          <div className="mb-4">
+            <EmptyState
+              title="No developer workers yet"
+              hint="Add one worker once; after that, new tasks can move from description to pull request without more setup."
+              action={
+                canManage ? (
+                  <button className="btn" onClick={() => setManagingWorkers(true)}>Add a worker</button>
+                ) : undefined
+              }
+            />
+          </div>
+        ) : visibleTasks.length === 0 ? (
           <EmptyState
-            title="No developer workers yet"
-            hint="Add one worker once; after that, new tasks can move from description to pull request without more setup."
+            title={scopedRepo ? `No tasks for ${repoLabel(scopedRepo)} yet` : 'No implementation tasks yet'}
+            hint="Describe the outcome and acceptance criteria. Companion handles the execution stages on this board."
             action={
               canManage ? (
-                <button className="btn" onClick={() => setManagingWorkers(true)}>Add a worker</button>
+                <button className="btn" onClick={() => setCreating(true)}>
+                  <PlusIcon className="size-3.5" />
+                  Create the first task
+                </button>
               ) : undefined
             }
           />
-        </div>
-      ) : visibleTasks.length === 0 ? (
-        <EmptyState
-          title={scopedRepo ? `No tasks for ${repoLabel(scopedRepo)} yet` : 'No implementation tasks yet'}
-          hint="Describe the outcome and acceptance criteria. Companion handles the execution stages on this board."
-          action={
-            canManage ? (
-              <button className="btn" onClick={() => setCreating(true)}>
-                <PlusIcon className="size-3.5" />
-                Create the first task
-              </button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <>
+        ) : null}
+      </div>
 
-      {/* Horizontal kanban rail: columns keep a readable width and the board
-          scrolls sideways instead of squeezing seven columns into the viewport. */}
-      <div className="-mx-6 overflow-x-auto px-6">
+      {visibleTasks.length > 0 ? (
+      /* Horizontal kanban rail: columns keep a readable width and the board
+         scrolls sideways instead of squeezing seven columns into the viewport. */
+      <div className="overflow-x-auto px-6">
         <div className="flex items-stretch gap-3 pb-4">
         {COLUMNS.map((col) => {
           const cards = byColumn.get(col.key) ?? [];
@@ -638,8 +643,7 @@ export default function Board({ query }: RouteProps): JSX.Element {
         })}
         </div>
       </div>
-        </>
-      )}
+      ) : null}
 
       {creating && current ? (
         <NewTaskModal
