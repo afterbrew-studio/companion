@@ -133,8 +133,9 @@ change is two nullable columns and one branch in the estimate.
 docker build --build-arg PROFILE=cloud -t companion:cloud .
 ```
 
-Then run it with a persisted `/data`, `COMPANION_PUBLIC_URL` set (webhooks and
-OIDC need it), the admin seed variables, and the provider secret mounted. No
+Then run it with a persisted `/data`, `COMPANION_PUBLIC_URL` set (OIDC needs it;
+webhook delivery takes the same host in operate's `webhookPublicUrl`), the admin
+seed variables, and the provider secret mounted. No
 second volume for a runtime home, because there is no external CLI to hold one:
 that is one of the two volumes `ENTERPRISE.md` §2 currently tells operators they
 must not lose.

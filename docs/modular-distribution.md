@@ -532,19 +532,22 @@ Modules cannot carry these. They are core changes and they gate deals.
 
    Both also need what an internal network always needs:
 
-   - **An outbound HTTP dispatcher.** There is none today, and Node's global
-     `fetch` ignores `HTTP_PROXY` / `HTTPS_PROXY` by default. On a corporate
-     network with an egress proxy, every GitHub call fails with no knob to turn.
-     One shared dispatcher (undici `ProxyAgent`, plus no-proxy rules) that the
-     GitHub client and every other outbound call use.
+   - **An outbound HTTP dispatcher**, **built**. Node's global `fetch` ignores
+     `HTTP_PROXY` / `HTTPS_PROXY` by default, so on a corporate network with an
+     egress proxy every GitHub call failed with no knob to turn.
+     `installOutboundProxy()` (`packages/services/src/http/outbound.ts`) sets an
+     undici `EnvHttpProxyAgent` as the global dispatcher at daemon boot, before
+     anything reaches the network, so no call site changed. It is installed only
+     when a proxy variable is set, and `NO_PROXY` is honoured.
    - **Custom CA trust** for TLS-intercepting proxies. `NODE_EXTRA_CA_CERTS`
      covers it at the process level, so this is documentation and a Docker
      mount point rather than code, but it must be tested, not assumed.
-   - **Direct webhook delivery.** Delivery currently goes through the moxxy
-     proxy tunnel, which registers a public URL. A GHES server sitting inside
-     the same network can reach Companion directly, and the tunnel is often
-     blocked outright. `COMPANION_PUBLIC_URL` already exists in `DaemonConfig`;
-     the webhook surface needs to prefer it over the tunnel when set.
+   - **Direct webhook delivery**, **built**. A GHES server sitting inside the
+     same network can reach Companion directly, and the moxxy proxy tunnel is
+     often blocked outright. Operate's `webhookPublicUrl` holds a self-managed
+     ingress and takes precedence over the tunnel when set. It is its own module
+     config key rather than `COMPANION_PUBLIC_URL`, so an instance can be behind
+     a domain without that domain also becoming a webhook endpoint.
 
    Split: the endpoint seam, the dispatcher and direct delivery are **OSS**
    work in `code` / `operate` / `services`. The **enterprise** module owns

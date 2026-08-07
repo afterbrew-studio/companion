@@ -547,9 +547,11 @@ hour-long installation token is cached and re-minted by a background job with a
 25-minute margin, so one failed refresh interrupts nothing.
 
 A custom CA works today via `NODE_EXTRA_CA_CERTS` (a Node-level setting, mounted
-into the container), which a TLS-intercepting proxy will need.
-`COMPANION_PUBLIC_URL` is available for webhook delivery, though the webhook
-surface still prefers the moxxy proxy tunnel over it.
+into the container), which a TLS-intercepting proxy will need. Webhook delivery
+need not leave the network either: operate's **Self-managed webhook URL**
+(`webhookPublicUrl`) points GitHub at your own ingress and takes precedence over
+the moxxy proxy relay, which an internal network often blocks outright.
+`COMPANION_PUBLIC_URL` does not feed it; the two are set separately.
 
 The split between OSS core work and what belongs in a commercial module is in
 `docs/modular-distribution.md` §10: the seams are core work, because a separate

@@ -144,7 +144,8 @@ Set up:
 - **Build variable**: `COMPANION_PROFILE=full`, marked as a build variable (the
   per-variable toggle). Leave it unset for `slim`.
 - **Environment**: admin credentials, and `COMPANION_PUBLIC_URL` set to your
-  domain so SSO and webhooks have an address to come back to. Coolify's values
+  domain so SSO has an address to come back to. Webhook delivery is a separate
+  setting, see [`configuration.md`](configuration.md#webhook-delivery). Coolify's values
   take precedence over any `.env`. `COMPANION_HOST` and `COMPANION_HOME` are
   already set correctly by the compose file.
 
