@@ -532,11 +532,13 @@ Modules cannot carry these. They are core changes and they gate deals.
 
    Both also need what an internal network always needs:
 
-   - **An outbound HTTP dispatcher.** There is none today, and Node's global
-     `fetch` ignores `HTTP_PROXY` / `HTTPS_PROXY` by default. On a corporate
-     network with an egress proxy, every GitHub call fails with no knob to turn.
-     One shared dispatcher (undici `ProxyAgent`, plus no-proxy rules) that the
-     GitHub client and every other outbound call use.
+   - **An outbound HTTP dispatcher**, **built**. Node's global `fetch` ignores
+     `HTTP_PROXY` / `HTTPS_PROXY` by default, so on a corporate network with an
+     egress proxy every GitHub call failed with no knob to turn.
+     `installOutboundProxy()` (`packages/services/src/http/outbound.ts`) sets an
+     undici `EnvHttpProxyAgent` as the global dispatcher at daemon boot, before
+     anything reaches the network, so no call site changed. It is installed only
+     when a proxy variable is set, and `NO_PROXY` is honoured.
    - **Custom CA trust** for TLS-intercepting proxies. `NODE_EXTRA_CA_CERTS`
      covers it at the process level, so this is documentation and a Docker
      mount point rather than code, but it must be tested, not assumed.
