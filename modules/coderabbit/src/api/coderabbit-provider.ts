@@ -1,54 +1,18 @@
-import { spawn } from 'node:child_process';
 import type {
+  IntegrationCommandResult,
+  IntegrationCommandRunner,
   IntegrationProviderAdapter,
   IntegrationReviewFinding,
   IntegrationReviewResult,
 } from '@companion/module-integrations/provider';
 import { IntegrationUnavailableError } from '@companion/module-integrations/provider';
 
+/** In preference order; the machine runs the first of them it has. */
 const BINARIES = ['cr', 'coderabbit'] as const;
 const REVIEW_TIMEOUT_MS = 45 * 60_000;
 const PROBE_TIMEOUT_MS = 15_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 512 * 1024;
-const SAFE_ENV_KEYS = [
-  'PATH',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'TMPDIR',
-  'TEMP',
-  'TMP',
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'XDG_CONFIG_HOME',
-  'XDG_CACHE_HOME',
-  'XDG_DATA_HOME',
-  'XDG_STATE_HOME',
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'NO_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'no_proxy',
-  'SSL_CERT_FILE',
-  'SSL_CERT_DIR',
-  'SYSTEMROOT',
-  'COMSPEC',
-  'PATHEXT',
-  'USERPROFILE',
-  'APPDATA',
-  'LOCALAPPDATA',
-] as const;
-
-interface CommandResult {
-  readonly binary: string;
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
 
 interface AgentEvent {
   readonly type?: unknown;
@@ -77,27 +41,45 @@ export const coderabbitProvider: IntegrationProviderAdapter = {
     scopes: ['instance', 'workspace'],
     connectionMode: 'required',
     execution: 'local',
+    requires: [...BINARIES],
     fields: [],
     docsUrl: 'https://docs.coderabbit.ai/cli/reference',
     setup:
-      'Install the cr CLI on the Companion host and authenticate the daemon user with cr auth login. Companion never accepts a custom executable or puts an API key in process arguments.',
+      'Install the cr CLI on any machine Companion can run work on (the daemon host or a registered runner such as your own laptop) and authenticate that machine\u2019s user with cr auth login. Companion runs the review where the CLI is, and never accepts a custom executable or puts an API key in process arguments.',
   },
 
-  probe: async () => {
+  probe: async (_connection, context) => {
+    // Nothing to probe means no machine Companion can reach has the CLI, not
+    // that CodeRabbit is broken. Naming where it would have to be installed is
+    // the actionable half of that answer.
+    if (!context?.exec) {
+      return {
+        status: 'unavailable',
+        message:
+          'No machine Companion can reach has the CodeRabbit CLI. Install cr on the Companion host or on a registered runner (your own laptop counts) and sign in there.',
+        checkedAt: Date.now(),
+      };
+    }
     try {
-      const result = await runFirstAvailable(['auth', 'status', '--agent'], {
-        timeoutMs: PROBE_TIMEOUT_MS,
-      });
+      const result = await context.exec.run(['auth', 'status', '--agent'], { timeoutMs: PROBE_TIMEOUT_MS });
+      if (result.missing) {
+        return {
+          status: 'unavailable',
+          message: `${context.exec.machine} no longer has the CodeRabbit CLI on PATH`,
+          checkedAt: Date.now(),
+        };
+      }
       if (result.code !== 0) {
         return {
           status: 'unavailable',
-          message: result.stderr.trim() || result.stdout.trim() || 'CodeRabbit is not authenticated',
+          message:
+            `${context.exec.machine}: ${result.stderr.trim() || result.stdout.trim() || 'CodeRabbit is not authenticated'}`,
           checkedAt: Date.now(),
         };
       }
       return {
         status: 'ready',
-        message: `${result.binary} is installed and authenticated`,
+        message: `${result.binary} is installed and authenticated on ${context.exec.machine}`,
         checkedAt: Date.now(),
       };
     } catch (error) {
@@ -106,30 +88,19 @@ export const coderabbitProvider: IntegrationProviderAdapter = {
   },
 
   review: async (_connection, request) => {
-    if (!request.cwd) throw new IntegrationUnavailableError('CodeRabbit needs a local pull-request worktree');
-    request.progress('Starting CodeRabbit CLI review');
-    let result: CommandResult;
-    try {
-      result = await runFirstAvailable(
-        ['review', '--agent', '--committed', '--base', request.baseRef, '--dir', request.cwd],
-        {
-          cwd: request.cwd,
-          timeoutMs: REVIEW_TIMEOUT_MS,
-          signal: request.signal,
-          onLine: (line) => {
-            const event = parseEvent(line);
-            if (event?.type === 'status' && typeof event.message === 'string') request.progress(event.message);
-          },
-        },
+    if (!request.cwd) throw new IntegrationUnavailableError('CodeRabbit needs a pull-request worktree');
+    // The worktree is on whichever machine has the CLI, which may not be the
+    // one this code runs on. Spawning here would run the tool where neither the
+    // checkout nor the sign-in is.
+    if (!request.exec) throw new IntegrationUnavailableError('No machine with the CodeRabbit CLI is available');
+    request.progress(`Starting CodeRabbit CLI review on ${request.exec.machine}`);
+    const result: IntegrationCommandResult = await run(request.exec, request);
+    if (result.missing) {
+      throw new IntegrationUnavailableError(
+        `${request.exec.machine} does not have the CodeRabbit CLI (\`cr\` or \`coderabbit\` must be on PATH)`,
       );
-    } catch (error) {
-      if (request.signal.aborted) throw error;
-      if (error instanceof IntegrationUnavailableError) throw error;
-      // A provider that started and then timed out, overflowed its bounded
-      // output, or crashed produced a real review failure. Ordered fallback is
-      // reserved for absence/auth/network, never for hiding tool defects.
-      throw error;
     }
+    if (result.timedOut) throw new Error('CodeRabbit exceeded its 45 minute limit');
     const parsed = parseAgentOutput(result.stdout);
     if (result.code !== 0) {
       const message = parsed.error ?? (result.stderr.trim() || `CodeRabbit exited with ${result.code}`);
@@ -153,6 +124,29 @@ export const coderabbitProvider: IntegrationProviderAdapter = {
     } satisfies IntegrationReviewResult;
   },
 };
+
+/**
+ * `cr review` against the checked-out pull request.
+ *
+ * `--dir` is the worktree as that machine sees it: for a remote runner it is a
+ * path on the runner's disk, which is exactly the path the review request
+ * carries and never one this process could resolve.
+ */
+function run(
+  exec: IntegrationCommandRunner,
+  request: { cwd: string | null; baseRef: string; signal: AbortSignal; progress: (message: string) => void },
+): Promise<IntegrationCommandResult> {
+  return exec.run(['review', '--agent', '--committed', '--base', request.baseRef, '--dir', request.cwd ?? '.'], {
+    timeoutMs: REVIEW_TIMEOUT_MS,
+    signal: request.signal,
+    maxStdout: MAX_STDOUT_BYTES,
+    maxStderr: MAX_STDERR_BYTES,
+    onLine: (line) => {
+      const event = parseEvent(line);
+      if (event?.type === 'status' && typeof event.message === 'string') request.progress(event.message);
+    },
+  });
+}
 
 export function parseAgentOutput(output: string): {
   readonly findings: IntegrationReviewFinding[];
@@ -252,145 +246,6 @@ function summaryFor(findings: readonly IntegrationReviewFinding[]): string {
   if (findings.length === 0) return 'CodeRabbit completed the review without reportable findings.';
   const serious = findings.filter((finding) => finding.severity === 'blocker' || finding.severity === 'major').length;
   return `CodeRabbit completed the review with ${findings.length} finding${findings.length === 1 ? '' : 's'}${serious ? `, including ${serious} serious` : ''}.`;
-}
-
-async function runFirstAvailable(
-  args: readonly string[],
-  options: {
-    readonly cwd?: string;
-    readonly timeoutMs: number;
-    readonly signal?: AbortSignal;
-    readonly onLine?: (line: string) => void;
-  },
-): Promise<CommandResult> {
-  let last: unknown = null;
-  for (const binary of BINARIES) {
-    try {
-      return await run(binary, args, options);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      last = error;
-    }
-  }
-  throw new IntegrationUnavailableError(
-    last ? 'CodeRabbit CLI was not found (`cr` or `coderabbit` must be on PATH)' : 'CodeRabbit CLI is unavailable',
-  );
-}
-
-function run(
-  binary: string,
-  args: readonly string[],
-  options: {
-    readonly cwd?: string;
-    readonly timeoutMs: number;
-    readonly signal?: AbortSignal;
-    readonly onLine?: (line: string) => void;
-  },
-): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) {
-      reject(new Error('CodeRabbit review cancelled'));
-      return;
-    }
-    const child = spawn(binary, args, {
-      ...(options.cwd ? { cwd: options.cwd } : {}),
-      shell: false,
-      // A CLI may start helpers. Give the review its own process group so
-      // cancellation cannot leave credential-bearing grandchildren running.
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // A provider CLI is a separate trust boundary. It needs the daemon
-      // user's CLI config and network settings, not unrelated Companion,
-      // GitHub or model-provider credentials from the daemon environment.
-      env: codeRabbitEnvironment(),
-    });
-    let stdout = '';
-    let stderr = '';
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let pending = '';
-    let settled = false;
-    let terminalError: Error | null = null;
-    let forceKill: NodeJS.Timeout | null = null;
-    const stop = (): void => {
-      signalProcessTree(child, 'SIGTERM');
-      forceKill ??= setTimeout(() => signalProcessTree(child, 'SIGKILL'), 5_000);
-      forceKill.unref();
-    };
-    const finish = (work: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
-      work();
-    };
-    const terminate = (error: Error): void => {
-      if (terminalError) return;
-      terminalError = error;
-      stop();
-    };
-    const abort = (): void => terminate(new Error('CodeRabbit review cancelled'));
-    const timer = setTimeout(() => {
-      terminate(new Error('CodeRabbit review exceeded its 45 minute limit'));
-    }, options.timeoutMs);
-    timer.unref();
-
-    child.once('error', (error) => finish(() => reject(error)));
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > MAX_STDOUT_BYTES) {
-        terminate(new Error('CodeRabbit output exceeded the 8 MiB safety limit'));
-        return;
-      }
-      const text = chunk.toString('utf8');
-      stdout += text;
-      pending += text;
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() ?? '';
-      for (const line of lines) options.onLine?.(line);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (stderrBytes >= MAX_STDERR_BYTES) return;
-      const kept = chunk.subarray(0, MAX_STDERR_BYTES - stderrBytes);
-      stderr += kept.toString('utf8');
-      stderrBytes += kept.byteLength;
-    });
-    child.once('close', (code) => {
-      if (forceKill) clearTimeout(forceKill);
-      finish(() => {
-        if (terminalError) reject(terminalError);
-        else resolve({ binary, code: code ?? 1, stdout, stderr });
-      });
-    });
-    options.signal?.addEventListener('abort', abort, { once: true });
-    // Close the small race between the pre-spawn check and listener setup.
-    if (options.signal?.aborted) abort();
-  });
-}
-
-export function codeRabbitEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {};
-  for (const key of SAFE_ENV_KEYS) {
-    const value = source[key];
-    if (value !== undefined) environment[key] = value;
-  }
-  return environment;
-}
-
-function signalProcessTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
-  if (child.pid !== undefined && process.platform !== 'win32') {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // The group may already be gone; fall back to the direct child below.
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // Cancellation is idempotent and a process that already exited is done.
-  }
 }
 
 function stringValue(value: unknown): string {

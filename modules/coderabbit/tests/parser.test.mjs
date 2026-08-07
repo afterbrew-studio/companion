@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { codeRabbitEnvironment, parseAgentOutput } from '../dist/api/coderabbit-provider.js';
+import { parseAgentOutput } from '../dist/api/coderabbit-provider.js';
 
 test('CodeRabbit JSONL becomes bounded Companion findings', () => {
   const output = [
@@ -51,24 +51,6 @@ test('a skipped review is distinct from an empty completed review', () => {
   assert.equal(parsed.complete, true);
   assert.equal(parsed.skipped, true);
   assert.equal(parsed.summary, 'No committed changes');
-});
-
-test('the CLI receives runtime basics but not unrelated daemon credentials', () => {
-  const environment = codeRabbitEnvironment({
-    PATH: '/usr/bin',
-    HOME: '/srv/companion',
-    HTTPS_PROXY: 'https://proxy.example',
-    GITHUB_TOKEN: 'github-secret',
-    OPENAI_API_KEY: 'model-secret',
-    COMPANION_SESSION_SECRET: 'session-secret',
-    NODE_OPTIONS: '--require /tmp/inject.js',
-  });
-
-  assert.deepEqual(environment, {
-    PATH: '/usr/bin',
-    HOME: '/srv/companion',
-    HTTPS_PROXY: 'https://proxy.example',
-  });
 });
 
 test('a finding is titled by its point, not by the preamble every one shares', () => {

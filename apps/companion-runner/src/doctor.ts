@@ -9,6 +9,8 @@ import { detectMoxxyCli, MIN_MOXXY_VERSION } from '@companion/module-operate/exe
 import { homeStatus, importProvidersFromDailyMoxxy } from '@companion/module-operate/exec';
 import { loadRunnerConfig } from './config.js';
 import { openFirewall } from './firewall.js';
+import { CliHarnessSessions } from './harnesses.js';
+import { RunnerTokens } from './tokens.js';
 
 const execFileP = promisify(execFile);
 
@@ -37,8 +39,10 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
   const major = Number(process.versions.node.split('.')[0]);
   checks.push({
     label: 'Node.js',
-    level: major >= 20 ? 'ok' : 'fail',
-    detail: `v${process.versions.node}${major >= 20 ? '' : ' — need >= 20'}`,
+    // The version this package declares in `engines`; a lower one installs
+    // nothing and would fail here for a reason doctor could not name.
+    level: major >= 24 ? 'ok' : 'fail',
+    detail: `v${process.versions.node}${major >= 24 ? '' : ', need >= 24'}`,
   });
 
   // git
@@ -72,6 +76,23 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
     });
   } else {
     checks.push({ label: 'moxxy CLI', level: 'ok', detail: `v${moxxy.version} at ${moxxy.path}` });
+  }
+
+  // Agent runtimes installed here. This is the answer to "why does Companion
+  // not offer my laptop's Claude Code": what this prints is exactly what the
+  // daemon is told, so a runtime missing here is missing there.
+  const cli = new CliHarnessSessions(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  for (const runtime of await cli.runtimes()) {
+    if (runtime.id === 'moxxy') continue; // reported above, with its own fix hint
+    checks.push({
+      label: runtime.label,
+      level: runtime.state === 'ready' ? 'ok' : 'warn',
+      detail: runtime.state === 'ready' ? `v${runtime.version ?? '?'} ready` : (runtime.detail ?? 'installed'),
+    });
   }
 
   // Provider credentials — import from ~/.moxxy on --fix when available.
@@ -145,11 +166,20 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
       : 'not set — Companion supplies its configured GitHub credential per git operation',
   });
 
-  // Auth token
+  // Auth tokens. Their secrets are not stored, so this can only report how many
+  // could authenticate, which is the one thing worth checking before attaching.
+  const tokens = new RunnerTokens(config.home, config.tokenEnv);
+  const active = tokens.list().filter((token) => token.revokedAt === null).length;
+  tokens.close();
   checks.push({
-    label: 'Runner token',
-    level: 'ok',
-    detail: `set — register this machine in Companion with this token (saved at ${join(config.home, 'token')} if generated)`,
+    label: 'Runner tokens',
+    level: tokens.usable ? 'ok' : 'warn',
+    detail: config.tokenEnv
+      ? `COMPANION_RUNNER_TOKEN is set${active ? `, plus ${active} stored` : ''}`
+      : active > 0
+        ? `${active} active. Secrets are not stored, so issue a new one if you lost it`
+        : 'none: nothing can authenticate to this machine yet',
+    fix: tokens.usable ? undefined : 'companion-runner token new',
   });
 
   // ---- report ----
@@ -177,7 +207,14 @@ export async function runDoctor(opts: { fix: boolean }): Promise<number> {
     process.stdout.write(`Run "companion-runner setup" to install and fix what it can automatically.\n`);
   }
   process.stdout.write(
-    `\nNext: start the agent with\n  COMPANION_RUNNER_TOKEN=<secret> companion-runner --background\nthen add it in Companion → Runners with this box's URL and the token.\n(GitHub access is supplied by Companion; "companion-runner open-firewall" opens the port.)\n\n`,
+    '\nNext:\n' +
+      '  companion-runner token new           issue the credential Companion presents\n' +
+      '  companion-runner ui                  start it with a live dashboard\n' +
+      '  companion-runner --background        …or detached, logging to <home>/runner.log\n' +
+      '  companion-runner --tunnel            publish this machine at a public https URL,\n' +
+      '                                       which is how a cloud Companion reaches a laptop\n' +
+      'Then add it in Companion → Runners with that URL and the token.\n' +
+      '(GitHub access is supplied by Companion; "companion-runner open-firewall" opens the port.)\n\n',
   );
   return fails > 0 ? 1 : 0;
 }

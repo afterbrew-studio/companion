@@ -1,9 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { paths } from '@moxxy/companion-services';
 import type { ResolvedModelSpec } from '@moxxy/companion-runtime';
-import { log } from './log.js';
 
 /**
  * Runner configuration — env only, no config file. `bootstrap.ts` already
@@ -18,8 +15,25 @@ export interface RunnerConfig {
   readonly port: number;
   /** Max concurrently live gateway processes. */
   readonly maxRuns: number;
-  /** Bearer token companiond must present on every request. */
-  readonly token: string;
+  /**
+   * Max developer-tool invocations at once. Its own ceiling rather than a share
+   * of `maxRuns`, because the two are different weights on the same box: a
+   * machine holding three chats must still be able to run a review, and a
+   * machine running two forty-minute CLIs should not accept a third.
+   */
+  readonly maxTools: number;
+  /**
+   * Scheduling priority for tool processes (higher is nicer, 0 disables). The
+   * default keeps a review from making the machine unusable for whoever is
+   * sitting at it, which is the whole reason a laptop stays attached.
+   */
+  readonly toolNice: number;
+  /**
+   * `COMPANION_RUNNER_TOKEN`, when the operator set one. It is always valid and
+   * never written down; every other token lives in the token store, which can
+   * be rotated while the runner is running.
+   */
+  readonly tokenEnv: string | null;
   /**
    * Optional per-machine GitHub PAT override. When null (the default),
    * Companion supplies its own configured credential with each network git
@@ -41,6 +55,8 @@ export interface RunnerConfig {
 const DEFAULT_PORT = 8920;
 const DEFAULT_HOST = '0.0.0.0';
 const DEFAULT_MAX_RUNS = 3;
+const DEFAULT_MAX_TOOLS = 2;
+const DEFAULT_TOOL_NICE = 10;
 
 export function loadRunnerConfig(): RunnerConfig {
   for (const dir of [
@@ -60,7 +76,9 @@ export function loadRunnerConfig(): RunnerConfig {
     host: process.env.COMPANION_RUNNER_HOST?.trim() || DEFAULT_HOST,
     port: numberFrom(process.env.COMPANION_RUNNER_PORT) ?? DEFAULT_PORT,
     maxRuns: numberFrom(process.env.COMPANION_RUNNER_MAX_RUNS) ?? DEFAULT_MAX_RUNS,
-    token: resolveToken(paths.root()),
+    maxTools: numberFrom(process.env.COMPANION_RUNNER_MAX_TOOLS) ?? DEFAULT_MAX_TOOLS,
+    toolNice: niceFrom(process.env.COMPANION_RUNNER_TOOL_NICE) ?? DEFAULT_TOOL_NICE,
+    tokenEnv: process.env.COMPANION_RUNNER_TOKEN?.trim() || null,
     githubToken: process.env.COMPANION_RUNNER_GITHUB_TOKEN?.trim() || null,
     provider: localProvider(),
   };
@@ -92,25 +110,11 @@ function localProvider(): ResolvedModelSpec | null {
   };
 }
 
-/**
- * Token precedence: COMPANION_RUNNER_TOKEN > <home>/token > generate.
- * A generated token is persisted (so restarts keep it) and logged ONCE so the
- * operator can paste it into companiond's runner registration.
- */
-function resolveToken(home: string): string {
-  const fromEnv = process.env.COMPANION_RUNNER_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-
-  const file = join(home, 'token');
-  if (existsSync(file)) {
-    const stored = readFileSync(file, 'utf8').trim();
-    if (stored) return stored;
-  }
-
-  const token = randomBytes(32).toString('hex');
-  writeFileSync(file, token + '\n', { mode: 0o600 });
-  log.info(`COMPANION_RUNNER_TOKEN not set — generated one (saved to ${file}): ${token}`);
-  return token;
+/** Unlike the others, 0 is meaningful here: it means "leave priority alone". */
+function niceFrom(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(-20, Math.min(19, Math.trunc(n))) : undefined;
 }
 
 function numberFrom(value: string | undefined): number | undefined {

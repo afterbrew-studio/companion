@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type {
   AgentRunAccess,
+  AgentRuntimeHealth,
   AgentDiffResponse,
+  AgentExecResponse,
+  AgentToolHealth,
+  AgentToolProbe,
+  AgentToolsDetectResponse,
   AgentVerifyResponse,
   AgentEventMessage,
   AgentHealth,
@@ -22,9 +27,36 @@ import { RUNNER_AGENT_PROTOCOL } from '@moxxy/companion-types';
 import { log } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver, RunnerHealth } from '../contract/index.js';
 import { DEFAULT_VERIFY_TIMEOUT_MS, type ExecOptions } from '../exec/verify.js';
-import type { RunnerBackend, RunnerEventSink } from './backend.js';
+import type { ToolRunResult } from '../exec/tool-exec.js';
+import type { RunnerBackend, RunnerEventSink, RunnerToolRequest } from './backend.js';
 
 const HTTP_TIMEOUT_MS = 30_000;
+
+/**
+ * The runtime a run placed on this machine would start.
+ *
+ * With a selection, it is the first one selected, reported or not. A machine
+ * set to run something it does not have is degraded FOR THAT REASON, and saying
+ * so is the difference between "install Claude Code here" and a run that fails
+ * on its first turn. Without a selection (a machine registered but never
+ * configured) the first thing it reported ready is what a run would take.
+ */
+function choosePrimary(
+  runtimes: readonly AgentRuntimeHealth[],
+  selected: readonly string[],
+): AgentRuntimeHealth | null {
+  const wanted = selected[0];
+  if (wanted === undefined) return runtimes.find((r) => r.state === 'ready') ?? runtimes[0] ?? null;
+  return (
+    runtimes.find((r) => r.id === wanted) ?? {
+      id: wanted,
+      label: wanted,
+      version: null,
+      state: 'unavailable' as const,
+      detail: `${wanted} is not installed on this machine`,
+    }
+  );
+}
 
 /**
  * What the daemon tells a remote agent about a run beyond where to put it.
@@ -61,6 +93,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
   private closed = false;
   /** Runs believed live on the agent (from spawn/gone stream + local tracking). */
   private readonly liveRuns = new Set<string>();
+  /** Live output relays for tool invocations in flight, keyed by exec id. */
+  private readonly execListeners = new Map<string, (stream: 'stdout' | 'stderr', chunk: string) => void>();
 
   constructor(
     readonly id: string,
@@ -80,12 +114,26 @@ export class RemoteRunnerBackend implements RunnerBackend {
     private readonly spawnPlan: (runId: string, access: AgentRunAccess) => RemoteSpawnPlan = () => ({}),
     /** Whether this instance could resolve a model for that runtime itself. */
     private readonly canSupplyModel: (harnessId: string) => boolean = () => false,
+    /**
+     * The runtimes this machine is SET to run, in preference order. Health is
+     * judged against the first of them, because that is what a run placed here
+     * would actually start; the machine's own report cannot answer it, since
+     * the choice is a row on this side.
+     */
+    private readonly selectedHarnesses: () => readonly string[] = () => [],
+    /** The runtime one run was recorded under; read straight off its row. */
+    private readonly runHarness: (runId: string) => string | null = () => null,
   ) {
     this.connectEvents();
   }
 
   private base(): string {
     return this.endpoint.replace(/\/+$/, '');
+  }
+
+  /** Whether a credential may cross to this machine at all. */
+  private secure(): boolean {
+    return this.base().toLowerCase().startsWith('https://');
   }
 
   private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = HTTP_TIMEOUT_MS): Promise<T> {
@@ -125,22 +173,26 @@ export class RemoteRunnerBackend implements RunnerBackend {
       // send one, which is a fact only this side holds: the machine cannot see
       // whether it is reached over https, and a key never goes on a plain-http
       // wire. Upgrading it here is what keeps both answers honest.
-      const secure = this.base().toLowerCase().startsWith('https://');
+      const secure = this.secure();
       const runtimes = reported.map((runtime) =>
         runtime.needsModel === true && secure && this.canSupplyModel(runtime.id)
           ? { ...runtime, state: 'ready' as const, detail: null }
           : runtime,
       );
-      // Work uses the machine's first runtime unless a lane explicitly says
-      // otherwise, so health must judge that same primary rather than a ready
-      // fallback no automatic run would reach.
-      const primary = runtimes[0] ?? null;
+      // Work uses the machine's first SELECTED runtime unless a lane explicitly
+      // says otherwise, so health must judge that same primary rather than a
+      // ready fallback no automatic run would reach. A machine set to run
+      // something it did not report is the interesting case and the one worth
+      // naming: reporting a different ready runtime instead would hide it.
+      const primary = choosePrimary(runtimes, this.selectedHarnesses());
       const runtimeReady = primary?.state === 'ready';
       return {
         status: protocolOk && runtimeReady ? 'online' : 'degraded',
         runtimes: protocolOk ? runtimes : [],
         liveRuns: h.liveRuns,
         maxRuns: h.maxRuns,
+        ...(typeof h.liveTools === 'number' ? { liveTools: h.liveTools } : {}),
+        ...(typeof h.maxTools === 'number' ? { maxTools: h.maxTools } : {}),
         lastSeenAt: Date.now(),
         detail: !protocolOk
           ? `agent protocol ${h.protocol} != ${RUNNER_AGENT_PROTOCOL} (version mismatch)`
@@ -190,7 +242,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
    */
   async spawn(runId: string, cwd: string, access: AgentRunAccess): Promise<void> {
     const plan = this.spawnPlan(runId, access);
-    const secure = this.base().toLowerCase().startsWith('https://');
+    const secure = this.secure();
     await this.call('POST', `/runs/${runId}/spawn`, {
       cwd,
       sessionId: runId,
@@ -247,7 +299,14 @@ export class RemoteRunnerBackend implements RunnerBackend {
   }
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
-    const q = `?limit=${limit}${before === null ? '' : `&before=${before}`}`;
+    // Which runtime the run used, so a REAPED run still reads the right
+    // transcript: the runtimes that keep their own write different files, and
+    // an agent restarted since the run ended has no live session left to tell
+    // them apart. This side holds the row, so this side answers.
+    const harness = this.runHarness(runId);
+    const q =
+      `?limit=${limit}${before === null ? '' : `&before=${before}`}` +
+      (harness ? `&harness=${encodeURIComponent(harness)}` : '');
     // Shorter than the default: this call blocks the transcript view, and an
     // updated agent answers within its own ~4s gateway-RPC fallback anyway.
     // Only a pre-fallback agent with a busy gateway ever reaches this deadline.
@@ -370,6 +429,106 @@ export class RemoteRunnerBackend implements RunnerBackend {
     }
   }
 
+  async addPullRequestWorktree(
+    repo: string,
+    key: string,
+    prNumber: number,
+    baseBranch: string,
+    username?: string | null,
+  ): Promise<string | null> {
+    try {
+      return (
+        await this.call<AgentWorktreeResponse>('POST', '/git/pr-worktree', {
+          repo,
+          key,
+          prNumber,
+          baseBranch,
+          ...(await this.ghToken(repo, username)),
+        })
+      ).cwd;
+    } catch (err) {
+      if (/\b404\b/.test(String(err))) return null;
+      throw err;
+    }
+  }
+
+  // ---------- developer tools ----------
+
+  async detectTools(probes: readonly AgentToolProbe[]): Promise<readonly AgentToolHealth[] | null> {
+    if (probes.length === 0) return [];
+    try {
+      return (await this.call<AgentToolsDetectResponse>('POST', '/tools/detect', { tools: probes }, 30_000)).tools;
+    } catch (err) {
+      if (/\b404\b/.test(String(err))) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Run a tool on the agent's machine, relaying its output while it runs.
+   *
+   * The response only lands when the tool exits, and these run for minutes, so
+   * the live output arrives over the event socket instead, keyed by an id
+   * minted here, registered BEFORE the request so no early chunk is missed.
+   */
+  async runTool(request: RunnerToolRequest): Promise<ToolRunResult | null> {
+    // The overlay carries a credential, and this endpoint is the one place it
+    // could reach the machine. Refusing loudly beats running the tool
+    // unauthenticated and reporting its confusion as the diagnosis.
+    if (request.env && Object.keys(request.env).length > 0 && !this.secure()) {
+      throw new Error(
+        `runner ${this.id} is reached over plain http; a tool needing injected credentials runs only over https`,
+      );
+    }
+    const execId = randomUUID();
+    let pending = '';
+    if (request.onLine) {
+      this.execListeners.set(execId, (stream, chunk) => {
+        if (stream !== 'stdout') return;
+        pending += chunk;
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? '';
+        for (const line of lines) request.onLine?.(line);
+      });
+    }
+    const abort = (): void => {
+      void this.call('POST', '/exec/abort', { execId }, 10_000).catch(() => undefined);
+    };
+    request.signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const response = await this.call<AgentExecResponse>(
+        'POST',
+        '/exec',
+        {
+          execId,
+          cwd: request.cwd,
+          binaries: request.binaries,
+          args: request.args,
+          timeoutMs: request.timeoutMs,
+          ...(request.maxStdout !== undefined ? { maxStdout: request.maxStdout } : {}),
+          ...(request.maxStderr !== undefined ? { maxStderr: request.maxStderr } : {}),
+          ...(request.env ? { env: request.env } : {}),
+        },
+        request.timeoutMs + 30_000,
+      );
+      return {
+        binary: response.binary,
+        code: response.code,
+        stdout: response.stdout,
+        stderr: response.stderr,
+        timedOut: response.timedOut,
+        durationMs: response.durationMs,
+        missing: response.missing === true,
+      };
+    } catch (err) {
+      if (/\b404\b/.test(String(err))) return null;
+      throw err;
+    } finally {
+      request.signal?.removeEventListener('abort', abort);
+      this.execListeners.delete(execId);
+    }
+  }
+
   cleanupStorage(request: AgentStorageCleanupRequest): Promise<AgentStorageCleanupResponse> {
     // Removing dependency-heavy worktrees can take minutes on slower disks.
     return this.call<AgentStorageCleanupResponse>('POST', '/storage/cleanup', request, 10 * 60_000);
@@ -424,6 +583,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
         case 'gone':
           this.liveRuns.delete(msg.runId);
           this.sink.onGone(msg.runId);
+          break;
+        case 'exec.output':
+          this.execListeners.get(msg.execId)?.(msg.stream, msg.chunk);
           break;
         default:
           break;

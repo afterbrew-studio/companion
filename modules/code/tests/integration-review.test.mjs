@@ -257,3 +257,107 @@ test('a posting pipeline rejects delegated review before the provider can write 
   );
   assert.equal(executed, 0);
 });
+
+test('a provider that declares an executable is run on the machine that has it', async () => {
+  const rows = new Map();
+  const order = [];
+  const store = {
+    prs: {
+      get: () => ({
+        state: 'open',
+        draft: false,
+        headSha: 'head-7',
+        baseRef: 'main',
+        title: 'Review me',
+        body: '',
+        author: 'alice',
+      }),
+    },
+    prReviews: {
+      running: () => null,
+      insert: (row) => {
+        rows.set(row.id, row);
+        order.push(row.id);
+      },
+      get: (id) => rows.get(id),
+      finish: (row) => {
+        rows.set(row.id, row);
+        return true;
+      },
+      latest: () => rows.get(order.at(-1)) ?? null,
+      setProgress: () => undefined,
+      setBudgetEvidence: () => undefined,
+    },
+    prReviewFindings: { listForReview: () => [], insertMissing: () => undefined },
+  };
+  const target = {
+    ref: { providerId: 'coderabbit.cli', connectionId: 'cr-1' },
+    provider: {
+      descriptor: {
+        id: 'coderabbit.cli',
+        title: 'CodeRabbit CLI',
+        execution: 'local',
+        requires: ['cr'],
+      },
+    },
+    connection: { record: { id: 'cr-1' }, secret: () => null },
+  };
+  // The laptop: it has the CLI, and its worktree path is a path on IT. The
+  // daemon's own checkout is deliberately never consulted here.
+  const executor = {
+    runnerId: 'runner-laptop',
+    machine: "alice's laptop",
+    binary: 'cr',
+    version: '0.7.2',
+    scratch: async () => '/laptop/scratch',
+    at: (cwd) => ({ machine: "alice's laptop", run: async () => ({ binary: 'cr', code: 0, stdout: cwd, stderr: '', timedOut: false, missing: false }) }),
+  };
+  let ranOn = null;
+  let reviewedCwd = null;
+  let reviewedOn = null;
+  const reviews = new PrReviews(
+    store,
+    {},
+    {
+      hasClone: () => {
+        throw new Error('the daemon checkout must not be used for a machine-placed review');
+      },
+    },
+    () => null,
+    () => 1_000_000,
+    () => null,
+    async () => ({ result: null, client: null, tried: [] }),
+    {},
+    () => true,
+    () => undefined,
+    {
+      resolveTargets: () => [target],
+      executorsFor: async () => [executor],
+      executeReview: async (_target, request) => {
+        reviewedCwd = request.cwd;
+        reviewedOn = request.exec?.machine ?? null;
+        return {
+          kind: 'draft',
+          summary: `ran on ${request.exec.machine}`,
+          reviewBody: 'No issues found.',
+          findings: [],
+          coverage: 'complete',
+        };
+      },
+    },
+    () => ({ kind: 'repository', workspaceId: 'ws-1', repo: 'acme/app' }),
+    {
+      withPullRequestWorktree: async (runnerId, _repo, _key, _prNumber, _base, _user, job) => {
+        ranOn = runnerId;
+        return job('/laptop/worktrees/pr-7');
+      },
+    },
+  );
+
+  const result = await reviews.analyzePr('acme/app', 7, 'alice');
+
+  assert.equal(ranOn, 'runner-laptop');
+  assert.equal(reviewedCwd, '/laptop/worktrees/pr-7');
+  assert.equal(reviewedOn, "alice's laptop");
+  assert.equal(result.status, 'pending');
+});

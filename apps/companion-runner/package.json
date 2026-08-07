@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@moxxy/companion-runtime": "workspace:*",
+    "@moxxy/plugin-tunnel-proxy": "^0.29.0",
     "ws": "^8.18.0"
   },
   "peerDependencies": {

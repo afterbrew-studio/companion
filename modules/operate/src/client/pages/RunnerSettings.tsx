@@ -354,6 +354,22 @@ function SettingsForm({
                 </SettingRow>
               ))
             )}
+            {(health.tools ?? []).length > 0 ? (
+              <SettingRow
+                className="px-4 py-3"
+                title="Developer tools"
+                description="Integration CLIs found on this machine. A review that needs one runs here, signed in as this machine's user."
+              >
+                <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                  {(health.tools ?? []).map((tool) => (
+                    <span key={tool.id} className="flex items-center gap-1.5">
+                      <MetaSignal tone={tool.present ? 'green' : 'zinc'} label={tool.binary ?? tool.id} />
+                      {tool.version ? <span className="dim text-xs">{tool.version}</span> : null}
+                    </span>
+                  ))}
+                </span>
+              </SettingRow>
+            ) : null}
             {runner.harnesses.some((runtime) => runtime.capabilities.models === 'providers') ? (
               <SettingRow
                 className="px-4 py-3"

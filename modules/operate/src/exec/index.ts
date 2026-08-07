@@ -7,6 +7,8 @@
 export * from './cli.js';
 export * from './claude-adapter.js';
 export * from './claude-code.js';
+export * from './codex-adapter.js';
+export * from './codex.js';
 export * from './harness-detect.js';
 export * from './gateway-client.js';
 export * from './gateway-pool.js';
@@ -14,4 +16,5 @@ export * from './history.js';
 export * from './home.js';
 export * from './checkouts.js';
 export * from './storage-cleanup.js';
+export * from './tool-exec.js';
 export * from './verify.js';

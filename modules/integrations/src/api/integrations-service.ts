@@ -17,7 +17,10 @@ import type {
 } from '../contract/index.js';
 import type {
   IntegrationConnectionAccess,
+  IntegrationExecutor,
+  IntegrationExecutorResolver,
   IntegrationNotificationInput,
+  IntegrationProbeContext,
   IntegrationProviderAdapter,
   IntegrationReviewRequest,
   IntegrationReviewResult,
@@ -117,6 +120,30 @@ export class IntegrationsService {
     private readonly secrets: IntegrationSecrets,
     private readonly broadcast: (message: SpaServerMessage) => void,
   ) {}
+
+  /**
+   * Where a provider's executable can be run, answered by the layer that owns
+   * machines. Late-bound and optional: a build without a machine registry finds
+   * none, and a probe told "nowhere" reports that instead of guessing.
+   */
+  setExecutors(resolve: IntegrationExecutorResolver): void {
+    this.executors = resolve;
+  }
+
+  private executors: IntegrationExecutorResolver = async () => [];
+
+  /**
+   * Machines that can run this provider's executable, most preferred first.
+   * Empty for a provider that declares none: it has nothing to place.
+   */
+  async executorsFor(
+    providerId: string,
+    options: { readonly repo?: string | null; readonly userId?: string | null } = {},
+  ): Promise<readonly IntegrationExecutor[]> {
+    const provider = this.providersById.get(providerId);
+    if (!provider || !provider.descriptor.requires?.length) return [];
+    return this.executors(providerId, options);
+  }
 
   registerProvider(adapter: IntegrationProviderAdapter): () => void {
     assertProvider(adapter);
@@ -280,7 +307,7 @@ export class IntegrationsService {
       health = provider.probe
         ? integrationHealthSchema.parse(
             await withSignal(
-              provider.probe(access),
+              provider.probe(access, await this.probeContext(provider)),
               AbortSignal.timeout(PROBE_TIMEOUT_MS),
               'Integration health check timed out',
             ),
@@ -483,6 +510,27 @@ export class IntegrationsService {
       };
     } catch (error) {
       throw redactProviderError(error, secretValues);
+    }
+  }
+
+  /**
+   * The machine a health check runs on: the most preferred one that has the
+   * provider's executable, bound to a scratch dir there.
+   *
+   * A provider that declares no executable, or one no reachable machine has,
+   * gets no runner at all, and answers with what that means, which is the
+   * whole reason the field is optional.
+   */
+  private async probeContext(provider: IntegrationProviderAdapter): Promise<IntegrationProbeContext> {
+    if (!provider.descriptor.requires?.length) return {};
+    const [executor] = await this.executorsFor(provider.descriptor.id).catch(() => []);
+    if (!executor) return {};
+    try {
+      return { exec: executor.at(await executor.scratch(`integration-probe-${provider.descriptor.moduleId}`)) };
+    } catch {
+      // A machine that cannot even hand out a scratch dir is not one to probe
+      // on; the health check reports absence rather than that machine's error.
+      return {};
     }
   }
 
@@ -737,6 +785,13 @@ function assertProvider(adapter: IntegrationProviderAdapter): void {
   }
   if (!['local', 'remote', 'delegated'].includes(provider.execution)) {
     throw new Error(`integration provider '${provider.id}' has an invalid execution mode`);
+  }
+  const requires = provider.requires ?? [];
+  if (requires.length > 8 || requires.some((binary) => !boundedText(binary, 120) || /[\\/\s]/.test(binary))) {
+    throw new Error(`integration provider '${provider.id}' declares invalid required executables`);
+  }
+  if (requires.length > 0 && provider.execution !== 'local') {
+    throw new Error(`only a local-execution provider can require an executable ('${provider.id}')`);
   }
   if (provider.connectionMode === 'none' && provider.fields.length > 0) {
     throw new Error(`connectionless provider '${provider.id}' cannot declare connection fields`);
