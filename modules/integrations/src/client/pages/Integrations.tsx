@@ -51,15 +51,11 @@ export function IntegrationsPage(): JSX.Element {
     provider: IntegrationProviderDescriptor;
     connection?: IntegrationConnectionRecord;
   } | null>(null);
-  const [reviewRoute, setReviewRoute] = useState<EffectiveIntegrationRoute | null>(null);
-  const [primary, setPrimary] = useState('');
-  const [fallback, setFallback] = useState('');
-  const [routeError, setRouteError] = useState<string | null>(null);
+  const [reviewDefaults, setReviewDefaults] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
   const reviewScope: IntegrationScope = current
     ? { kind: 'workspace', workspaceId: current.id }
     : { kind: 'instance' };
-  const reviewScopeKey = JSON.stringify(reviewScope);
 
   const providers = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -72,41 +68,6 @@ export function IntegrationsPage(): JSX.Element {
             .includes(needle)),
     );
   }, [state.catalog, query, category]);
-  const reviewOptions = useMemo(
-    () => reviewTargetOptions(
-      state.catalog?.providers ?? [],
-      state.catalog?.connections ?? [],
-      reviewScope,
-      true,
-    ),
-    [state.catalog, reviewScopeKey],
-  );
-
-  useEffect(() => {
-    setReviewRoute(null);
-    setPrimary('');
-    setFallback('');
-  }, [reviewScopeKey]);
-
-  useEffect(() => {
-    if (!state.catalog) return;
-    let live = true;
-    void integrationsApi
-      .route('code-review', reviewScope)
-      .then(({ route }) => {
-        if (!live) return;
-        setReviewRoute(route);
-        setPrimary(route.targets[0] ? encodeIntegrationTarget(route.targets[0]) : '');
-        setFallback(route.targets[1] ? encodeIntegrationTarget(route.targets[1]) : '');
-        setRouteError(null);
-      })
-      .catch((error) => {
-        if (live) setRouteError(error instanceof Error ? error.message : String(error));
-      });
-    return () => {
-      live = false;
-    };
-  }, [state.catalog, reviewScopeKey]);
 
   if (!state.catalog) return state.error ? <Page><ErrorBar error={state.error} /></Page> : <PageLoading label="Loading integrations…" />;
 
@@ -138,7 +99,14 @@ export function IntegrationsPage(): JSX.Element {
       <PageHeader
         title="Integrations"
         subtitle="Connect specialist tools once, then route their capabilities where your teams work"
-        actions={<Slot name="integrations.page.actions" can={can} />}
+        actions={
+          <>
+            <button className="btn-ghost" onClick={() => setReviewDefaults(true)}>
+              Review defaults
+            </button>
+            <Slot name="integrations.page.actions" can={can} />
+          </>
+        }
       />
       <ErrorBar error={state.error} />
 
@@ -147,90 +115,6 @@ export function IntegrationsPage(): JSX.Element {
         <SummaryStat label="Connections enabled" value={connected} tone={connected > 0 ? 'green' : 'zinc'} />
         <SummaryStat label="Needs attention" value={attention} tone={attention > 0 ? 'amber' : 'zinc'} />
       </div>
-
-      <Section
-        title="Default code review route"
-        description={current
-          ? `Used by repositories in ${current.name} until a repository overrides it.`
-          : 'Used instance-wide until a workspace or repository overrides it.'}
-      >
-        <div className="card flex flex-col gap-4">
-          <ErrorBar error={routeError} />
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">Primary reviewer</span>
-              <select
-                className="input"
-                value={primary}
-                onChange={(event) => {
-                  setPrimary(event.target.value);
-                  if (!event.target.value) setFallback('');
-                }}
-                disabled={!can('integrations:manage') || !reviewRoute}
-              >
-                <option value="">Use inherited platform default</option>
-                {primary && !reviewOptions.some((option) => option.value === primary) ? (
-                  <option value={primary}>Unavailable · {routeTargetName(primary, state.catalog.connections)}</option>
-                ) : null}
-                {reviewOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">Unavailable fallback</span>
-              <select
-                className="input"
-                value={fallback}
-                onChange={(event) => setFallback(event.target.value)}
-                disabled={!can('integrations:manage') || !reviewRoute || !primary}
-              >
-                <option value="">No fallback</option>
-                {fallback && !reviewOptions.some((option) => option.value === fallback) ? (
-                  <option value={fallback}>Unavailable · {routeTargetName(fallback, state.catalog.connections)}</option>
-                ) : null}
-                {reviewOptions
-                  .filter((option) => option.value !== primary)
-                  .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-            <MetaSignal
-              tone={reviewRoute?.sourceScope?.kind === reviewScope.kind ? 'green' : 'zinc'}
-              label={reviewRoute?.sourceScope
-                ? reviewRoute.sourceScope.kind === reviewScope.kind
-                  ? `${reviewScope.kind} override`
-                  : `inherited from ${reviewRoute.sourceScope.kind}`
-                : 'platform default'}
-            />
-            <span className="dim text-xs">Fallback runs only when the primary is unavailable, never after a real review failure.</span>
-            <span className="flex-1" />
-            {can('integrations:manage') ? (
-              <button
-                className="btn"
-                disabled={state.busy !== null || !reviewRoute}
-                onClick={() => void (async () => {
-                  const targets: IntegrationTargetRef[] = [];
-                  const first = decodeIntegrationTarget(primary, undefined, state.catalog!.connections);
-                  const second = decodeIntegrationTarget(fallback, undefined, state.catalog!.connections);
-                  if (first) targets.push(first);
-                  if (first && second && encodeIntegrationTarget(second) !== encodeIntegrationTarget(first)) {
-                    targets.push(second);
-                  }
-                  try {
-                    await state.setRoute('code-review', reviewScope, targets);
-                  } catch (error) {
-                    setRouteError(error instanceof Error ? error.message : String(error));
-                  }
-                })()}
-              >
-                {state.busy?.startsWith('route:') ? 'Saving…' : 'Save route'}
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </Section>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <input
@@ -339,6 +223,23 @@ export function IntegrationsPage(): JSX.Element {
         </Section>
       ) : null}
 
+      {reviewDefaults ? (
+        <ReviewDefaultsModal
+          workspaceId={current?.id ?? null}
+          workspaceName={current?.name ?? null}
+          providers={state.catalog.providers}
+          connections={state.catalog.connections}
+          canManage={can('integrations:manage')}
+          busy={state.busy !== null}
+          saving={state.busy?.startsWith('route:') ?? false}
+          onClose={() => setReviewDefaults(false)}
+          onSave={async (targets) => {
+            await state.setRoute('code-review', reviewScope, targets);
+            setReviewDefaults(false);
+          }}
+        />
+      ) : null}
+
       {editing ? (
         <ConnectionModal
           provider={editing.provider}
@@ -361,6 +262,147 @@ export function IntegrationsPage(): JSX.Element {
       ) : null}
       {confirmElement}
     </Page>
+  );
+}
+
+/**
+ * The scope's default code review route. A dialog rather than a panel on the
+ * page: it is set once and then inherited, so it was spending the top of the
+ * page on a question nobody was asking while scanning the catalogue.
+ */
+function ReviewDefaultsModal({
+  workspaceId,
+  workspaceName,
+  providers,
+  connections,
+  canManage,
+  busy,
+  saving,
+  onSave,
+  onClose,
+}: {
+  workspaceId: string | null;
+  workspaceName: string | null;
+  providers: readonly IntegrationProviderDescriptor[];
+  connections: readonly IntegrationConnectionRecord[];
+  canManage: boolean;
+  busy: boolean;
+  saving: boolean;
+  onSave: (targets: IntegrationTargetRef[]) => Promise<void>;
+  onClose: () => void;
+}): JSX.Element {
+  const scope: IntegrationScope = workspaceId
+    ? { kind: 'workspace', workspaceId }
+    : { kind: 'instance' };
+  const [route, setRoute] = useState<EffectiveIntegrationRoute | null>(null);
+  const [primary, setPrimary] = useState('');
+  const [fallback, setFallback] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const options = useMemo(
+    () => reviewTargetOptions(providers, connections, scope, true),
+    [providers, connections, workspaceId],
+  );
+
+  useEffect(() => {
+    let live = true;
+    void integrationsApi
+      .route('code-review', scope)
+      .then(({ route: loaded }) => {
+        if (!live) return;
+        setRoute(loaded);
+        setPrimary(loaded.targets[0] ? encodeIntegrationTarget(loaded.targets[0]) : '');
+        setFallback(loaded.targets[1] ? encodeIntegrationTarget(loaded.targets[1]) : '');
+      })
+      .catch((err) => {
+        if (live) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [workspaceId]);
+
+  const save = async (): Promise<void> => {
+    const targets: IntegrationTargetRef[] = [];
+    const first = decodeIntegrationTarget(primary, undefined, connections);
+    const second = decodeIntegrationTarget(fallback, undefined, connections);
+    if (first) targets.push(first);
+    if (first && second && encodeIntegrationTarget(second) !== encodeIntegrationTarget(first)) {
+      targets.push(second);
+    }
+    try {
+      await onSave(targets);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <Modal title="Default code review route" onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        <p className="dim text-[13px]">
+          {workspaceName
+            ? `Used by repositories in ${workspaceName} until a repository overrides it.`
+            : 'Used instance-wide until a workspace or repository overrides it.'}
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Primary reviewer">
+            <select
+              className="input"
+              value={primary}
+              onChange={(event) => {
+                setPrimary(event.target.value);
+                if (!event.target.value) setFallback('');
+              }}
+              disabled={!canManage || !route}
+            >
+              <option value="">Use inherited platform default</option>
+              {primary && !options.some((option) => option.value === primary) ? (
+                <option value={primary}>Unavailable · {routeTargetName(primary, connections)}</option>
+              ) : null}
+              {options.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Unavailable fallback">
+            <select
+              className="input"
+              value={fallback}
+              onChange={(event) => setFallback(event.target.value)}
+              disabled={!canManage || !route || !primary}
+            >
+              <option value="">No fallback</option>
+              {fallback && !options.some((option) => option.value === fallback) ? (
+                <option value={fallback}>Unavailable · {routeTargetName(fallback, connections)}</option>
+              ) : null}
+              {options
+                .filter((option) => option.value !== primary)
+                .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <MetaSignal
+            tone={route?.sourceScope?.kind === scope.kind ? 'green' : 'zinc'}
+            label={route?.sourceScope
+              ? route.sourceScope.kind === scope.kind
+                ? `${scope.kind} override`
+                : `inherited from ${route.sourceScope.kind}`
+              : 'platform default'}
+          />
+          <span className="dim text-xs">Fallback runs only when the primary is unavailable, never after a real review failure.</span>
+        </div>
+        <ErrorBar error={error} />
+        <FormActions>
+          <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
+          {canManage ? (
+            <button className="btn" disabled={busy || !route} onClick={() => void save()}>
+              {saving ? 'Saving…' : 'Save route'}
+            </button>
+          ) : null}
+        </FormActions>
+      </div>
+    </Modal>
   );
 }
 
@@ -419,8 +461,15 @@ function ProviderCard({
     <section aria-label={provider.title}>
       <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="flex min-w-0 items-start gap-3">
+          {/* The mark belongs to the module that owns the provider, so this page
+              never imports a vendor's artwork; initials stand in for the ones
+              with no mark to draw. */}
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-            {provider.vendor.slice(0, 2).toUpperCase()}
+            <Slot
+              name={`integrations.provider.${provider.id}.icon`}
+              can={can}
+              fallback={provider.vendor.slice(0, 2).toUpperCase()}
+            />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
