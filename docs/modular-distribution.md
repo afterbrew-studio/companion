@@ -540,11 +540,12 @@ Modules cannot carry these. They are core changes and they gate deals.
    - **Custom CA trust** for TLS-intercepting proxies. `NODE_EXTRA_CA_CERTS`
      covers it at the process level, so this is documentation and a Docker
      mount point rather than code, but it must be tested, not assumed.
-   - **Direct webhook delivery.** Delivery currently goes through the moxxy
-     proxy tunnel, which registers a public URL. A GHES server sitting inside
-     the same network can reach Companion directly, and the tunnel is often
-     blocked outright. `COMPANION_PUBLIC_URL` already exists in `DaemonConfig`;
-     the webhook surface needs to prefer it over the tunnel when set.
+   - **Direct webhook delivery**, **built**. A GHES server sitting inside the
+     same network can reach Companion directly, and the moxxy proxy tunnel is
+     often blocked outright. Operate's `webhookPublicUrl` holds a self-managed
+     ingress and takes precedence over the tunnel when set. It is its own module
+     config key rather than `COMPANION_PUBLIC_URL`, so an instance can be behind
+     a domain without that domain also becoming a webhook endpoint.
 
    Split: the endpoint seam, the dispatcher and direct delivery are **OSS**
    work in `code` / `operate` / `services`. The **enterprise** module owns
