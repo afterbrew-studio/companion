@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatUsd } from '@companion/module-operate/contract';
 import { ErrorBar, Eyebrow, Markdown, formatTokens, timeAgo } from '@moxxy/companion-sdk/ui';
 import type { PrReviewBudgetProgress, PrReviewResult, ReviewPostMode } from '../../../contract/index.js';
@@ -276,7 +276,12 @@ export function ReviewingStage({
 }): JSX.Element {
   const progress = review?.progress;
   const budget = progress?.budget;
-  const ratio = progress && progress.total > 0 ? Math.min(1, progress.completed / progress.total) : 0;
+  // A bar only means something once the provider counts something. Companion's
+  // own review counts groups; a CLI that reports one unit start to finish gave
+  // a stub that never moved, which reads as a hung review rather than a slow
+  // one — the shimmer at least says the page is still alive.
+  const counted = progress !== undefined && progress.total > 1;
+  const ratio = counted ? Math.min(1, progress.completed / progress.total) : 0;
   const phase = progress?.phase ?? 'reviewing';
   const phaseLabel: Record<PrReviewResult['progress']['phase'], string> = {
     queued: 'Waiting for a runner',
@@ -299,12 +304,11 @@ export function ReviewingStage({
       </p>
       <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-2 text-xs">
         <span className="badge">{phaseLabel[phase]}</span>
-        {progress && progress.total > 1 ? (
-          <span className="dim tabular-nums">{progress.completed}/{progress.total}</span>
-        ) : null}
+        {counted ? <span className="dim tabular-nums">{progress.completed}/{progress.total}</span> : null}
+        {review ? <Elapsed since={review.createdAt} /> : null}
       </div>
       <div className="mx-auto mt-3 h-1 w-56 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-        {progress && progress.total > 0 ? (
+        {counted ? (
           <div
             className="h-full rounded-full bg-accent-500 transition-[width] duration-500"
             style={{ width: `${Math.max(4, ratio * 100)}%` }}
@@ -334,6 +338,18 @@ export function ReviewingStage({
       ) : null}
     </section>
   );
+}
+
+/** Minutes on the clock, ticking, so a quiet provider still looks alive. */
+function Elapsed({ since }: { since: number }): JSX.Element {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, []);
+  const seconds = Math.max(0, Math.round((now - since) / 1000));
+  const shown = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return <span className="dim tabular-nums" role="timer">{shown}</span>;
 }
 
 function ReviewBudgetSummary({

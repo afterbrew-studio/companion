@@ -192,12 +192,14 @@ function parseEvent(line: string): AgentEvent | null {
 }
 
 function toFinding(event: AgentEvent): IntegrationReviewFinding {
-  const reason = stringValue(event.codegenInstructions) || stringValue(event.comment) || 'CodeRabbit reported a finding.';
+  const comment = stringValue(event.comment);
+  const instructions = stringValue(event.codegenInstructions);
+  const reason = instructions || comment || 'CodeRabbit reported a finding.';
   const suggestion = suggestionsText(event.suggestions);
   const file = stringValue(event.fileName) || null;
   return {
     severity: severityOf(event.severity),
-    title: titleOf(reason, file),
+    title: titleOf(comment || pointOf(instructions) || reason, file),
     file,
     line: positiveInteger(event.lineNumber) ?? positiveInteger(event.line),
     reason: reason.slice(0, 4_000),
@@ -216,6 +218,20 @@ function severityOf(value: unknown): IntegrationReviewFinding['severity'] {
     case 'info':
     default: return 'nit';
   }
+}
+
+/**
+ * The point inside CodeRabbit's codegen instructions.
+ *
+ * They open with a fixed preamble addressed to whatever agent will apply them
+ * ("Verify each finding against current code…"), then a paragraph that locates
+ * the point ("In @file around lines 12 - 20, …"). Titling from the first
+ * sentence gave every finding in a review the same title, which is how a review
+ * of six files arrived as six copies of one line.
+ */
+function pointOf(instructions: string): string {
+  const last = instructions.split(/\n\s*\n/).pop()?.trim() ?? '';
+  return last.replace(/^in\s+@?\S+\s+around\s+lines?\s+[\d\s,–-]+,\s*/i, '').trim();
 }
 
 function titleOf(reason: string, file: string | null): string {

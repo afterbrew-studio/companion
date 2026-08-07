@@ -70,3 +70,27 @@ test('the CLI receives runtime basics but not unrelated daemon credentials', () 
     HTTPS_PROXY: 'https://proxy.example',
   });
 });
+
+test('a finding is titled by its point, not by the preamble every one shares', () => {
+  // Shape the CLI actually emits: the human comment is absent and the codegen
+  // instructions open with the boilerplate addressed to the applying agent.
+  const parsed = parseAgentOutput(
+    [
+      JSON.stringify({
+        type: 'finding',
+        severity: 'minor',
+        fileName: 'src/pages/Integrations.tsx',
+        codegenInstructions:
+          'Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.\n\nIn @src/pages/Integrations.tsx around lines 201 - 208, Add role="group" to the category filter container so its aria-label is exposed to assistive technology.',
+      }),
+      JSON.stringify({ type: 'complete', status: 'review_completed' }),
+    ].join('\n'),
+  );
+  assert.equal(
+    parsed.findings[0].title,
+    'Add role="group" to the category filter container so its aria-label is exposed to assistive technology.',
+  );
+  // The instructions stay whole as the reason: the preamble is context for
+  // whoever applies the fix, it just makes a useless title.
+  assert.match(parsed.findings[0].reason, /^Verify each finding/);
+});
