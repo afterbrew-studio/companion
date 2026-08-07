@@ -488,6 +488,9 @@ export interface RunnerHealth {
   readonly runtimes: ReadonlyArray<RunnerRuntimeHealth>;
   /** Developer tools found on it; absent until anything has asked. */
   readonly tools?: ReadonlyArray<RunnerToolHealth>;
+  /** Tool invocations in flight there, and how many it accepts at once. */
+  readonly liveTools?: number;
+  readonly maxTools?: number;
   readonly liveRuns: number;
   readonly maxRuns: number;
   readonly lastSeenAt: number | null;
@@ -508,8 +511,6 @@ export interface ToolMachine {
   /** The executable that answered, so the job runs the same one that was found. */
   readonly binary: string;
   readonly version: string | null;
-  /** Preference order; lower is a more deliberate choice. */
-  readonly rank: number;
 }
 
 /** A runner's own provider/model catalog, reported by its configured runtimes. */

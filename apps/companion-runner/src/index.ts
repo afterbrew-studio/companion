@@ -184,7 +184,16 @@ async function main(): Promise<void> {
     host: config.host,
     port: config.port,
     tokens,
-    deps: { pool, checkouts, moxxy, maxRuns: config.maxRuns, runtime, cli },
+    deps: {
+      pool,
+      checkouts,
+      moxxy,
+      maxRuns: config.maxRuns,
+      maxTools: config.maxTools,
+      toolNice: config.toolNice,
+      runtime,
+      cli,
+    },
     hub,
   });
 

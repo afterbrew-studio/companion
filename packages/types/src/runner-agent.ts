@@ -44,6 +44,14 @@ export interface AgentHealth {
   readonly runtimes: readonly AgentRuntimeHealth[];
   readonly liveRuns: number;
   readonly maxRuns: number;
+  /**
+   * Developer-tool invocations in flight, and how many this machine accepts at
+   * once. Separate from runs because they are a different weight: an agent
+   * session and a forty-minute CLI review compete for the same box but not for
+   * the same ceiling. Absent on an agent that predates the fields.
+   */
+  readonly liveTools?: number;
+  readonly maxTools?: number;
   /** Protocol version so companiond can refuse an incompatible agent. */
   readonly protocol: number;
 }
@@ -134,6 +142,11 @@ export interface AgentExecRequest {
   readonly timeoutMs: number;
   readonly maxStdout?: number;
   readonly maxStderr?: number;
+  /**
+   * Scheduling priority for the tool process (higher is nicer). A review must
+   * not make the machine it runs on unusable for the person sitting at it.
+   */
+  readonly nice?: number;
   /**
    * Extra environment for this one invocation, merged over the machine's own
    * safe environment. It can carry a credential, so the daemon sends it only
@@ -424,6 +437,12 @@ export interface AgentStorageCleanupResponse {
 
 // ---------- WS event envelope (agent → companiond) -----------------------------
 
+/**
+ * Every message here goes to EVERY attached companiond, which is the same
+ * boundary run events have always had: a machine shared by two control planes
+ * shows each of them the other's activity. Attach a runner to one instance
+ * unless they are meant to see each other's work.
+ */
 export type AgentEventMessage =
   | { readonly t: 'event'; readonly runId: string; readonly event: HarnessEvent }
   | {

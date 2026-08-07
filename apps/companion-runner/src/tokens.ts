@@ -136,10 +136,15 @@ export class RunnerTokens {
   /** Drop revoked entries so the file does not grow forever. */
   prune(): number {
     this.reloadIfChanged();
-    const before = this.tokens.length;
-    this.tokens = this.tokens.filter((token) => token.revokedAt === null);
-    if (this.tokens.length !== before) this.save();
-    return before - this.tokens.length;
+    const kept = this.tokens.filter((token) => token.revokedAt === null);
+    const removed = this.tokens.length - kept.length;
+    if (removed > 0) {
+      // Written directly rather than through the merge: forgetting an entry is
+      // the one operation whose whole point is that the file's copy loses.
+      this.tokens = kept;
+      this.writeFile(kept);
+    }
+    return removed;
   }
 
   private noteUse(id: string): void {
@@ -164,8 +169,15 @@ export class RunnerTokens {
     } catch (err) {
       // A corrupt store must not silently authenticate nobody OR everybody: it
       // reads as empty, which refuses every request and says why in the log.
-      log.error(`could not read ${this.file}; no stored token will authenticate until it is fixed`, err);
+      // The mtime is recorded anyway, so a machine under load complains once
+      // rather than re-parsing and re-logging the same broken file per request.
       this.tokens = [];
+      try {
+        this.loadedMtimeMs = statSync(this.file).mtimeMs;
+      } catch {
+        this.loadedMtimeMs = -1;
+      }
+      log.error(`could not read ${this.file}; no stored token will authenticate until it is fixed`, err);
     }
   }
 
@@ -181,8 +193,22 @@ export class RunnerTokens {
     }
   }
 
+  /**
+   * Write the store, merged with whatever is on disk.
+   *
+   * Two processes legitimately write this file: the agent recording that a
+   * token was used, and a CLI issuing or revoking one while the agent runs.
+   * A plain overwrite would let the agent's lazy timestamp flush drop a token
+   * minted a second earlier, which is a credential silently disappearing.
+   */
   private save(): void {
-    const body: TokenFile = { version: 1, tokens: this.tokens };
+    const merged = this.merged();
+    this.tokens = merged;
+    this.writeFile(merged);
+  }
+
+  private writeFile(tokens: readonly RunnerToken[]): void {
+    const body: TokenFile = { version: 1, tokens };
     const tmp = `${this.file}.tmp`;
     // Written whole and renamed: a half-written token file is a machine nobody
     // can reach, and the process doing the writing may be a CLI that is about
@@ -192,6 +218,39 @@ export class RunnerTokens {
     this.loadedMtimeMs = statSync(this.file).mtimeMs;
     this.lastFlush = Date.now();
     this.dirty = false;
+  }
+
+  /**
+   * This process's view unioned with the file's, entry by entry. Revocation
+   * wins over its absence, and the later `lastUsedAt` wins, so the merge is
+   * order-independent and neither writer can undo the other.
+   */
+  private merged(): RunnerToken[] {
+    let onDisk: RunnerToken[] = [];
+    try {
+      if (existsSync(this.file)) {
+        const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as TokenFile;
+        onDisk = Array.isArray(parsed.tokens) ? parsed.tokens.filter(isToken) : [];
+      }
+    } catch {
+      // An unreadable file is replaced by what this process holds, which is the
+      // only recoverable outcome: refusing to write would strand the machine.
+    }
+    const byId = new Map<string, RunnerToken>();
+    for (const token of [...onDisk, ...this.tokens]) {
+      const existing = byId.get(token.id);
+      byId.set(
+        token.id,
+        existing
+          ? {
+              ...token,
+              revokedAt: existing.revokedAt ?? token.revokedAt,
+              lastUsedAt: Math.max(existing.lastUsedAt ?? 0, token.lastUsedAt ?? 0) || null,
+            }
+          : token,
+      );
+    }
+    return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
   /** Flush a pending "last used" on the way out. */

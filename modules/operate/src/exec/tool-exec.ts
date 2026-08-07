@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { setPriority } from 'node:os';
 import type { AgentToolHealth, AgentToolProbe } from '@moxxy/companion-types';
 
 /**
@@ -79,6 +80,13 @@ export interface ToolRunOptions {
   readonly maxStdout?: number;
   readonly maxStderr?: number;
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Scheduling priority, as `os.setPriority` takes it: higher is nicer. These
+   * commands run for tens of minutes on a machine somebody may be working at,
+   * and a review that makes their editor stutter is a review they will detach
+   * the machine over. Failure to set it is not failure to run.
+   */
+  readonly nice?: number;
 }
 
 export interface ToolRunResult {
@@ -91,14 +99,6 @@ export interface ToolRunResult {
   readonly durationMs: number;
   /** Nothing on PATH answered. Absence, never a tool defect. */
   readonly missing: boolean;
-}
-
-/** Nothing this machine could run answered: absence, not failure. */
-export class ToolMissingError extends Error {
-  constructor(readonly binaries: readonly string[]) {
-    super(`none of ${binaries.join(', ')} is installed on this machine`);
-    this.name = 'ToolMissingError';
-  }
 }
 
 /**
@@ -152,6 +152,15 @@ function runOne(
       stdio: ['ignore', 'pipe', 'pipe'],
       env: safeToolEnvironment(process.env, options.env ?? {}),
     });
+    if (options.nice !== undefined && options.nice !== 0 && child.pid !== undefined) {
+      try {
+        setPriority(child.pid, options.nice);
+      } catch {
+        // Lowering priority is a courtesy to whoever is using this machine, not
+        // a precondition for the work. A platform that refuses simply runs the
+        // tool at the priority it would have had anyway.
+      }
+    }
     let stdout = '';
     let stderr = '';
     let stdoutBytes = 0;
@@ -251,31 +260,49 @@ export async function detectTools(probes: readonly AgentToolProbe[]): Promise<Ag
 }
 
 async function detectOne(probe: AgentToolProbe): Promise<AgentToolHealth> {
+  // One budget for the whole probe, not one per candidate. A tool declaring
+  // several executables would otherwise take candidates x timeout to answer,
+  // which on a slow machine outlasts the caller that asked and leaves probe
+  // processes running after it has already given up.
+  const deadline = Date.now() + PROBE_TIMEOUT_MS;
+  const args = probe.versionArgs ?? ['--version'];
   try {
-    const result = await runTool(probe.binaries, probe.versionArgs ?? ['--version'], {
-      timeoutMs: PROBE_TIMEOUT_MS,
-      maxStdout: 64 * 1024,
-      maxStderr: 64 * 1024,
-    });
-    if (result.missing) {
-      return { id: probe.id, binary: null, version: null, present: false, detail: null };
-    }
-    if (result.code !== 0) {
+    for (const binary of probe.binaries) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const result = await runTool([binary], args, {
+        timeoutMs: remaining,
+        maxStdout: 64 * 1024,
+        maxStderr: 64 * 1024,
+      });
+      if (result.missing) continue;
+      if (result.timedOut) {
+        return {
+          id: probe.id,
+          binary: result.binary,
+          version: null,
+          present: false,
+          detail: `${result.binary} did not answer ${args.join(' ')} within ${Math.round(PROBE_TIMEOUT_MS / 1000)}s`,
+        };
+      }
+      if (result.code !== 0) {
+        return {
+          id: probe.id,
+          binary: result.binary,
+          version: null,
+          present: false,
+          detail: firstLine(result.stderr || result.stdout) || `${result.binary} exited with ${result.code}`,
+        };
+      }
       return {
         id: probe.id,
         binary: result.binary,
-        version: null,
-        present: false,
-        detail: firstLine(result.stderr || result.stdout) || `${result.binary} exited with ${result.code}`,
+        version: firstLine(result.stdout) || null,
+        present: true,
+        detail: null,
       };
     }
-    return {
-      id: probe.id,
-      binary: result.binary,
-      version: firstLine(result.stdout) || null,
-      present: true,
-      detail: null,
-    };
+    return { id: probe.id, binary: null, version: null, present: false, detail: null };
   } catch (error) {
     return {
       id: probe.id,

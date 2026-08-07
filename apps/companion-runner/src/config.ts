@@ -16,6 +16,19 @@ export interface RunnerConfig {
   /** Max concurrently live gateway processes. */
   readonly maxRuns: number;
   /**
+   * Max developer-tool invocations at once. Its own ceiling rather than a share
+   * of `maxRuns`, because the two are different weights on the same box: a
+   * machine holding three chats must still be able to run a review, and a
+   * machine running two forty-minute CLIs should not accept a third.
+   */
+  readonly maxTools: number;
+  /**
+   * Scheduling priority for tool processes (higher is nicer, 0 disables). The
+   * default keeps a review from making the machine unusable for whoever is
+   * sitting at it, which is the whole reason a laptop stays attached.
+   */
+  readonly toolNice: number;
+  /**
    * `COMPANION_RUNNER_TOKEN`, when the operator set one. It is always valid and
    * never written down; every other token lives in the token store, which can
    * be rotated while the runner is running.
@@ -42,6 +55,8 @@ export interface RunnerConfig {
 const DEFAULT_PORT = 8920;
 const DEFAULT_HOST = '0.0.0.0';
 const DEFAULT_MAX_RUNS = 3;
+const DEFAULT_MAX_TOOLS = 2;
+const DEFAULT_TOOL_NICE = 10;
 
 export function loadRunnerConfig(): RunnerConfig {
   for (const dir of [
@@ -61,6 +76,8 @@ export function loadRunnerConfig(): RunnerConfig {
     host: process.env.COMPANION_RUNNER_HOST?.trim() || DEFAULT_HOST,
     port: numberFrom(process.env.COMPANION_RUNNER_PORT) ?? DEFAULT_PORT,
     maxRuns: numberFrom(process.env.COMPANION_RUNNER_MAX_RUNS) ?? DEFAULT_MAX_RUNS,
+    maxTools: numberFrom(process.env.COMPANION_RUNNER_MAX_TOOLS) ?? DEFAULT_MAX_TOOLS,
+    toolNice: niceFrom(process.env.COMPANION_RUNNER_TOOL_NICE) ?? DEFAULT_TOOL_NICE,
     tokenEnv: process.env.COMPANION_RUNNER_TOKEN?.trim() || null,
     githubToken: process.env.COMPANION_RUNNER_GITHUB_TOKEN?.trim() || null,
     provider: localProvider(),
@@ -91,6 +108,13 @@ function localProvider(): ResolvedModelSpec | null {
     providerOptions: {},
     factoryOptions: {},
   };
+}
+
+/** Unlike the others, 0 is meaningful here: it means "leave priority alone". */
+function niceFrom(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(-20, Math.min(19, Math.trunc(n))) : undefined;
 }
 
 function numberFrom(value: string | undefined): number | undefined {

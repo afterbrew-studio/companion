@@ -63,6 +63,9 @@ export interface AgentDeps {
   readonly checkouts: Checkouts;
   readonly moxxy: MoxxyCli | null;
   readonly maxRuns: number;
+  /** Max developer-tool invocations at once, and how nicely they run. */
+  readonly maxTools: number;
+  readonly toolNice: number;
   /** The built-in runtime's live sessions on this machine (protocol 7). */
   readonly runtime: RuntimeSessions;
   /** Agent CLIs installed on this machine (Claude Code, Codex). */
@@ -207,6 +210,8 @@ async function route(
       runtimes: [builtin, ...(await deps.cli.runtimes())],
       liveRuns: deps.pool.liveCount + deps.runtime.liveCount + deps.cli.liveCount,
       maxRuns: deps.maxRuns,
+      liveTools: runningExecs.size,
+      maxTools: deps.maxTools,
       protocol: RUNNER_AGENT_PROTOCOL,
     };
     return health;
@@ -608,6 +613,12 @@ async function execTool(deps: AgentDeps, hub: EventHub, body: unknown): Promise<
     throw badRequest('timeoutMs must be a positive number');
   }
   if (runningExecs.has(execId)) throw new HttpError(409, `exec ${execId} is already running`);
+  // A ceiling of its own, checked here rather than left to the machine's memory
+  // pressure: these run for tens of minutes, and an unbounded number of them is
+  // how a laptop becomes unusable while still answering health checks happily.
+  if (runningExecs.size >= deps.maxTools) {
+    throw new HttpError(429, `this machine is running ${deps.maxTools} developer tools already`);
+  }
 
   const controller = new AbortController();
   runningExecs.set(execId, controller);
@@ -624,6 +635,7 @@ async function execTool(deps: AgentDeps, hub: EventHub, body: unknown): Promise<
       },
       ...(typeof maxStdout === 'number' ? { maxStdout } : {}),
       ...(typeof maxStderr === 'number' ? { maxStderr } : {}),
+      ...(deps.toolNice !== 0 ? { nice: deps.toolNice } : {}),
       ...(env ? { env: toolEnvOverlay(env) } : {}),
     });
     return {

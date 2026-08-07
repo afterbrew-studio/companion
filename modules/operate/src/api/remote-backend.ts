@@ -191,6 +191,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
         runtimes: protocolOk ? runtimes : [],
         liveRuns: h.liveRuns,
         maxRuns: h.maxRuns,
+        ...(typeof h.liveTools === 'number' ? { liveTools: h.liveTools } : {}),
+        ...(typeof h.maxTools === 'number' ? { maxTools: h.maxTools } : {}),
         lastSeenAt: Date.now(),
         detail: !protocolOk
           ? `agent protocol ${h.protocol} != ${RUNNER_AGENT_PROTOCOL} (version mismatch)`

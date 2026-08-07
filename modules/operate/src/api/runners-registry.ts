@@ -72,6 +72,8 @@ const CATALOG_RETRY_MS = 10 * 60_000;
 const DETECT_TTL_MS = 60_000;
 /** The same, for a machine's developer tools: one probe spawn per tool. */
 const TOOL_TTL_MS = 5 * 60_000;
+/** Backoff after a failed probe, so a slow machine is not re-probed every tick. */
+const TOOL_RETRY_MS = 10 * 60_000;
 const UNKNOWN_HEALTH: RunnerHealth = {
   status: 'unknown',
   runtimes: [],
@@ -133,6 +135,8 @@ export class Runners {
    */
   private readonly tools = new Map<string, { at: number; list: readonly AgentToolHealth[] | null }>();
   private readonly toolsInFlight = new Map<string, Promise<void>>();
+  /** Last probe attempt per machine, successful or not: drives the backoff. */
+  private readonly toolsAttempt = new Map<string, number>();
 
   constructor(
     private readonly store: OperateStore,
@@ -568,7 +572,24 @@ export class Runners {
 
   // ---------- health ----------
 
+  private polling = false;
+
+  /**
+   * One tick at a time. The interval is fixed, but a tick that waits on several
+   * machines can outlast it, and overlapping ticks would multiply the probes
+   * each of them starts rather than finishing the work any sooner.
+   */
   private async pollHealth(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try {
+      await this.pollOnce();
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private async pollOnce(): Promise<void> {
     // Parallel: one hanging machine must not delay every other runner's health.
     await Promise.all(
       [...this.backends.keys()].map((id) =>
@@ -632,42 +653,60 @@ export class Runners {
   /**
    * The machines that can run one tool, in the order a job should try them.
    *
-   * A pinned machine first (somebody chose it for this repository), then the
-   * triggering user's own, since a laptop is attached precisely so its own sign-ins
-   * are used, then everything else, with the daemon's own machine last because
-   * it is the one that is always there and therefore the least deliberate
-   * choice. Machines that have never been asked are asked now.
+   * Placement here answers to exactly the fences placement anywhere else does.
+   * A tool is a reason to PREFER a machine, never a reason to reach one that is
+   * closed to this work: running a review on somebody's personal laptop would
+   * clone the repository there and spend their sign-in, and running it on a
+   * machine fenced off from that repository would walk straight through the
+   * fence. So the eligible set is computed first and the tool only orders it.
+   *
+   * Within that set: a pinned machine first (somebody chose it for this
+   * repository), then the triggering user's own, since a laptop is attached
+   * precisely so its own sign-ins are used, then everything else, with the
+   * daemon's own machine last because it is the one that is always there and
+   * therefore the least deliberate choice. Ties break on how busy each machine
+   * says it is. Machines that have never been asked are asked now.
    */
   async machinesWithTool(
     toolId: string,
     opts: { repo?: string | null; userId?: string | null } = {},
   ): Promise<readonly ToolMachine[]> {
-    const rows = [
-      ...this.store.runners.list().filter((row) => row.enabled === 1 && row.id !== LOCAL_RUNNER_ID && this.isOnline(row)),
-      ...(this.store.runners.get(LOCAL_RUNNER_ID)?.enabled === 1 ? [this.store.runners.get(LOCAL_RUNNER_ID)!] : []),
-    ];
+    const repo = opts.repo ?? null;
+    const userId = opts.userId ?? null;
+    const rows = this.store.runners
+      .eligibleFor(this.workspaceForRepo(repo), userId)
+      .filter((row) => this.servesRepo(row, repo) && this.servesRole(row, userId) && this.isOnline(row));
     await Promise.all(rows.map((row) => this.refreshTools(row.id).catch(() => undefined)));
-    const pinned = opts.repo ? (this.store.repos.get(opts.repo)?.runner_id ?? null) : null;
+    const pinned = repo ? (this.store.repos.get(repo)?.runner_id ?? null) : null;
     const rank = (row: RunnerRow): number => {
       if (row.id === pinned) return 0;
-      if (opts.userId !== null && opts.userId !== undefined && row.owner_id === opts.userId) return 1;
+      if (userId !== null && row.owner_id === userId) return 1;
       return row.id === LOCAL_RUNNER_ID ? 3 : 2;
     };
+    // Tool load is stale by up to one health poll, so it ORDERS rather than
+    // excludes: a machine that turns out to be full refuses the invocation
+    // itself, which is a clear answer, while dropping it here on a stale number
+    // would report a tool as unavailable when it is merely busy.
+    const load = (row: RunnerRow): number => this.health.get(row.id)?.liveTools ?? 0;
     return rows
-      .flatMap((row): ToolMachine[] => {
+      .flatMap((row): { machine: ToolMachine; rank: number; load: number }[] => {
         const tool = this.tools.get(row.id)?.list?.find((entry) => entry.id === toolId);
         if (!tool?.present || !tool.binary) return [];
         return [
           {
-            runnerId: this.normalize(row.id),
-            name: row.name,
-            binary: tool.binary,
-            version: tool.version,
+            machine: {
+              runnerId: this.normalize(row.id),
+              name: row.name,
+              binary: tool.binary,
+              version: tool.version,
+            },
             rank: rank(row),
+            load: load(row),
           },
         ];
       })
-      .sort((a, b) => a.rank - b.rank);
+      .sort((a, b) => a.rank - b.rank || a.load - b.load)
+      .map((entry) => entry.machine);
   }
 
   /**
@@ -703,17 +742,27 @@ export class Runners {
     }
   }
 
-  /** Re-ask one machine what it has; a fresh enough answer is reused. */
+  /**
+   * Re-ask one machine what it has; a fresh enough answer is reused.
+   *
+   * A FAILED probe is remembered too, on its own shorter clock. Without that, a
+   * machine whose detection times out has no cached answer to age, so every
+   * health tick would start another one and a slow box would accumulate probe
+   * processes faster than it finished them.
+   */
   private async refreshTools(id: string, force = false): Promise<void> {
     const probes = this.toolProbes();
     if (probes.length === 0) {
       this.tools.delete(id);
       return;
     }
+    const now = Date.now();
     const cached = this.tools.get(id);
-    if (!force && cached && Date.now() - cached.at < TOOL_TTL_MS) return;
+    if (!force && cached && now - cached.at < TOOL_TTL_MS) return;
+    if (!force && now - (this.toolsAttempt.get(id) ?? 0) < TOOL_RETRY_MS) return;
     const existing = this.toolsInFlight.get(id);
     if (existing) return existing;
+    this.toolsAttempt.set(id, now);
     const work = (async () => {
       try {
         const list = await this.backend(id).detectTools(probes);
@@ -727,6 +776,7 @@ export class Runners {
     this.toolsInFlight.set(id, work);
     return work;
   }
+
 
   /** Companion owns retention; runners only execute it inside their managed
    * roots. Every registered compatible machine receives the same policy and

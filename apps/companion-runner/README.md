@@ -172,7 +172,9 @@ what a service manager wants.
 | `COMPANION_RUNNER_HOST` | `0.0.0.0` | Bind host. |
 | `COMPANION_RUNNER_PORT` | `8920` | Bind port. |
 | `COMPANION_RUNNER_TUNNEL` | *(unset)* | `1` publishes a public https address at start. |
-| `COMPANION_RUNNER_MAX_RUNS` | `3` | Concurrently live runs, across every runtime. |
+| `COMPANION_RUNNER_MAX_RUNS` | `3` | Concurrently live agent runs, across every runtime. |
+| `COMPANION_RUNNER_MAX_TOOLS` | `2` | Concurrent integration CLI invocations. Its own ceiling: a machine holding three chats can still take a review, and one already running two forty-minute CLIs refuses a third. |
+| `COMPANION_RUNNER_TOOL_NICE` | `10` | Scheduling priority for those CLIs (higher is nicer, `0` leaves it alone), so a review does not make the machine unusable for whoever is at it. |
 | `COMPANION_RUNNER_GITHUB_TOKEN` | *(unset)* | Machine-specific GitHub PAT. Normally unset: Companion sends its own configured credential with each clone, fetch, and push, held in memory for that one git invocation. Set this to force this machine's credential instead, for a per-machine audit trail and revocation. |
 | `COMPANION_RUNNER_PROVIDER_KIND` | *(unset)* | This machine's own model for the built-in runtime: `anthropic`, `openai`, `azure`, or `openai-compatible`. |
 | `COMPANION_RUNNER_MODEL` | *(unset)* | Model id, or on Azure the deployment name. |
@@ -224,6 +226,14 @@ companion-runner stop && companion-runner --background
 The Runners page shows when a machine's agent protocol is outdated. Runtime
 installation and upgrades stay owned by the machine rather than being mutated
 remotely by the control plane.
+
+**Upgrading from 0.11 or earlier:** moxxy is now reported ready only when the
+runner's moxxy home actually has a provider configured, the same rule Companion
+applies to its own machine. A runner whose moxxy is credentialed some other way
+will report it unavailable and, if moxxy is its selected runtime, read as
+degraded. `companion-runner setup` imports providers from `~/.moxxy`.
+The plaintext `<home>/token` is adopted into the hashed token store on first
+start and removed; `companion-runner token list` shows it afterwards.
 
 ## How it works
 
