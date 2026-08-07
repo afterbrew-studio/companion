@@ -71,7 +71,11 @@ export function JiraLinks({ subject }: { subject: JiraSubjectRef }): JSX.Element
     if (error || integrations.error) return <ErrorBar error={error ?? integrations.error} />;
     return null;
   }
-  if (links.length === 0 && connections.length === 0 && !can('integrations:manage')) return null;
+  // With nothing linked, the card is worth its space only to someone who could
+  // link something right now. Otherwise Jira is not part of this repository's
+  // work — and admins, the only ones who used to see it, were being pitched a
+  // product on a page they opened to read a pull request.
+  if (links.length === 0 && (connections.length === 0 || !can('jira:act'))) return null;
 
   const run = async (key: string, operation: () => Promise<unknown>): Promise<void> => {
     setBusy(key);
@@ -106,17 +110,9 @@ export function JiraLinks({ subject }: { subject: JiraSubjectRef }): JSX.Element
       <ErrorBar error={error ?? integrations.error} />
       {links.length === 0 ? (
         <div className="flex flex-col items-center gap-1.5 px-4 py-7 text-center">
-          <p className="text-sm font-medium">
-            {connections.length > 0 ? 'No ticket linked' : 'Connect Jira to link tickets'}
-          </p>
-          <p className="dim max-w-md text-sm">
-            {connections.length > 0
-              ? 'Link the Jira ticket that owns or tracks this work.'
-              : 'A Jira Cloud connection controls which workspace or repository may access tickets.'}
-          </p>
-          {can('jira:act') && connections.length > 0 ? (
-            <button className="btn mt-2" onClick={() => setAdding(true)}>Link Jira ticket</button>
-          ) : null}
+          <p className="text-sm font-medium">No ticket linked</p>
+          <p className="dim max-w-md text-sm">Link the Jira ticket that owns or tracks this work.</p>
+          <button className="btn mt-2" onClick={() => setAdding(true)}>Link Jira ticket</button>
         </div>
       ) : (
         <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
