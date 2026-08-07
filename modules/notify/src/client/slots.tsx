@@ -1,4 +1,5 @@
 import { defineSlots } from '@moxxy/companion-sdk/client';
+import { DiscordMark, NtfyMark, SlackMark } from './provider-icons.js';
 
 function NotificationDeliveryLink(): JSX.Element {
   return <a className="btn-ghost" href="#/notify">Delivery history</a>;
@@ -12,4 +13,7 @@ export const slots = defineSlots([
     permission: 'notify:read',
     component: NotificationDeliveryLink,
   },
+  { slot: 'integrations.provider.slack.webhook.icon', key: 'slack-mark', component: SlackMark },
+  { slot: 'integrations.provider.discord.webhook.icon', key: 'discord-mark', component: DiscordMark },
+  { slot: 'integrations.provider.ntfy.http.icon', key: 'ntfy-mark', component: NtfyMark },
 ]);

@@ -1,6 +1,7 @@
 import { defineSlots } from '@moxxy/companion-sdk/client';
 import type { JiraSubjectKind } from '../contract/index.js';
 import { JiraLinks } from './JiraLinks.js';
+import { JiraMark } from './provider-icons.js';
 
 function WorkItemLinks(props: Record<string, unknown>): JSX.Element | null {
   const kind = props.kind;
@@ -20,4 +21,6 @@ export const slots = defineSlots([
     permission: 'jira:read',
     component: WorkItemLinks,
   },
+  { slot: 'integrations.provider.jira.cloud.icon', key: 'jira-cloud-mark', component: JiraMark },
+  { slot: 'integrations.provider.jira.automation.icon', key: 'jira-automation-mark', component: JiraMark },
 ]);

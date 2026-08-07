@@ -16,6 +16,7 @@ export function Slot({
   name,
   can,
   props,
+  fallback,
 }: {
   name: string;
   can: (p: Permission) => boolean;
@@ -26,9 +27,15 @@ export function Slot({
    * extension point.
    */
   props?: Record<string, unknown>;
+  /**
+   * What the host draws when nothing is contributed, so a slot can carry an
+   * optional embellishment (a provider's logo over its initials) instead of
+   * only appending to what is already there.
+   */
+  fallback?: ReactNode;
 }): ReactNode {
   const kernel = useKernel();
-  return kernel
-    .slots(name)
-    .map((s) => (s.permission && !can(s.permission) ? null : <s.component key={s.key} {...props} />));
+  const visible = kernel.slots(name).filter((s) => !s.permission || can(s.permission));
+  if (visible.length === 0) return fallback ?? null;
+  return visible.map((s) => <s.component key={s.key} {...props} />);
 }

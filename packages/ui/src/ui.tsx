@@ -364,7 +364,7 @@ export function PageHeader({
 }): JSX.Element {
   return (
     <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
+      <div className="min-w-0 flex-1">
         <h1 className="text-xl font-semibold">{title}</h1>
         {subtitle ? <div className="dim mt-0.5">{subtitle}</div> : null}
       </div>
