@@ -239,3 +239,27 @@ test('the instance-wide policy is carried onto every existing machine, once', ()
   // The local runner is seeded by the store, after the migration, so it is open too.
   assert.deepEqual(store.runners.get(LOCAL_RUNNER_ID).disabled_providers, []);
 });
+
+test('dropping the runtime that read a catalog drops the providers it reported', () => {
+  // The cache outlives the runtime that filled it, so a machine kept offering
+  // credentials nothing selected on it could reach, listed as ready beside the
+  // built-in runtime whose own models they duplicated. The model id is a
+  // fixture one: a real one could also come from the Codex cache on the machine
+  // running this test.
+  const { store } = fixture();
+  store.runners.setCatalog(LOCAL_RUNNER_ID, catalogOf(provider('openai-codex', ['gpt-fixture'])));
+
+  store.runners.update(LOCAL_RUNNER_ID, { harnesses: ['moxxy'] });
+  const withMoxxy = registry(store).catalogSnapshot();
+  assert.deepEqual(withMoxxy.providers.map((p) => p.name), ['openai-codex']);
+  assert.deepEqual([...registry(store).runnersForModel('gpt-fixture')], [LOCAL_RUNNER_ID]);
+
+  store.runners.update(LOCAL_RUNNER_ID, { harnesses: ['codex'] });
+  const runners = registry(store);
+  const snapshot = runners.catalogSnapshot();
+  assert.equal(snapshot.providers.some((p) => p.name === 'openai-codex'), false);
+  // Unknown, not "known but allowed nowhere": no catalog lists it any more.
+  assert.equal(runners.runnersForModel('gpt-fixture'), null);
+  const local = snapshot.machines.find((m) => m.id === LOCAL_RUNNER_ID);
+  assert.equal(local.providers.some((p) => p.name === 'openai-codex'), false);
+});

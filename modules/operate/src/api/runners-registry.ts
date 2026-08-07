@@ -907,12 +907,20 @@ export class Runners {
    * so caching it bought nothing and cost correctness: such a runtime stayed
    * invisible until the catalog's six-hour TTL expired, which is how installing
    * Codex left it with no models for the rest of the afternoon.
+   *
+   * The cached half only counts while a runtime that answers from providers is
+   * still selected here. Dropping the last such runtime leaves that cache behind
+   * describing credentials nothing on this machine can now reach, and it was
+   * both offered for placement and listed as ready beside the runtime whose own
+   * models it duplicated.
    */
   private providersOn(row: RunnerRow): RunnerCatalog['providers'] {
-    const builtin = this.harnessesOn(row).flatMap((h) => builtinCatalog(h)?.providers ?? []);
-    if (builtin.length === 0) return row.catalog?.providers ?? [];
+    const harnesses = this.harnessesOn(row);
+    const cached = servesProviderModels(harnesses) ? (row.catalog?.providers ?? []) : [];
+    const builtin = harnesses.flatMap((h) => builtinCatalog(h)?.providers ?? []);
+    if (builtin.length === 0) return cached;
     const fresh = new Set(builtin.map((p) => p.name));
-    return [...(row.catalog?.providers ?? []).filter((p) => !fresh.has(p.name)), ...builtin];
+    return [...cached.filter((p) => !fresh.has(p.name)), ...builtin];
   }
 
   /** Runtimes a machine is set up to run, so a lane's choice can be checked. */
