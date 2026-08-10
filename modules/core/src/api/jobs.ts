@@ -22,11 +22,6 @@ const CLI_TOKEN_TTL_MS = 10 * 365 * 24 * 60 * 60_000;
  */
 const DAY_MS = 24 * 60 * 60_000;
 
-/** Only these mean "nothing but this machine can connect". */
-function isLoopbackHost(host: string): boolean {
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
-}
-
 export default defineJobs({
   jobs: [
     {
@@ -56,21 +51,6 @@ export default defineJobs({
   ],
   postActivate: (ctx) => {
     const auth = ctx.services.get('core');
-
-    // A first boot that only this machine can reach gets an admin outright,
-    // rather than a form on a laptop where there is nobody to keep out. Gated on
-    // the bind address: how the process was started says nothing about who can
-    // connect to it. The credentials are shown on the sign-in screen, and stop
-    // being shown the moment the password changes or the daemon is rebound.
-    if (isLoopbackHost(ctx.config.host)) {
-      const seeded = auth.seedLocalAdmin();
-      if (seeded) {
-        ctx.log.info(
-          `local first boot: signed-in as '${seeded.username}' / '${seeded.password}' ` +
-            '(shown on the sign-in screen; change it in Settings)',
-        );
-      }
-    }
 
     const file = paths.cliToken();
     // A password/role change deletes the account's sessions, which would leave a

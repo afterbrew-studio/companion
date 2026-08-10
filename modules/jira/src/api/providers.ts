@@ -1,4 +1,5 @@
 import { NOTIFICATION_KIND_OPTIONS } from '@companion/module-integrations/provider';
+import { withPublicHttpResponse } from '@moxxy/companion-sdk/server';
 import type {
   IntegrationConnectionAccess,
   IntegrationNotificationInput,
@@ -124,23 +125,28 @@ async function sendAutomation(
   const token = connection.secret('token');
   try {
     const target = jiraAutomationTarget(url);
-    const response = await fetch(target, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { 'x-automation-webhook-token': token } : {}),
+    return await withPublicHttpResponse(
+      target,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { 'x-automation-webhook-token': token } : {}),
+        },
+        body: JSON.stringify(notification),
+        signal: AbortSignal.timeout(10_000),
+        redirect: 'manual',
       },
-      body: JSON.stringify(notification),
-      signal: AbortSignal.timeout(10_000),
-      redirect: 'manual',
-    });
-    await response.body?.cancel().catch(() => undefined);
-    return {
-      ok: response.ok,
-      httpStatus: response.status,
-      error: response.ok ? null : `Jira Automation returned ${response.status}`,
-      attempts: 1,
-    };
+      async (response) => {
+        await response.body?.cancel().catch(() => undefined);
+        return {
+          ok: response.ok,
+          httpStatus: response.status,
+          error: response.ok ? null : `Jira Automation returned ${response.status}`,
+          attempts: 1,
+        };
+      },
+    );
   } catch (error) {
     return {
       ok: false,

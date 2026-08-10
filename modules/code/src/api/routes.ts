@@ -1764,7 +1764,7 @@ export default defineRoutes((ctx) => {
           },
         );
         // Warm missing/stale check snapshots for exactly the page being viewed;
-        // each landing snapshot broadcasts prs.changed so the list fills in live.
+        // each landing snapshot patches its row without invalidating pagination.
         code.prChecks.preloadWorkspace(params.id, page.prs, user!.username);
         return page;
       },

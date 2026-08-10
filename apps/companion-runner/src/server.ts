@@ -135,14 +135,14 @@ export function startAgentServer(opts: {
     void handle(req, res, tokens, deps, hub);
   });
 
-  // WS /agent/events?token=… — the run event stream companiond subscribes to.
+  // WS /agent/events — bearer auth stays in the upgrade header, never the URL.
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/agent/events') {
       socket.destroy();
       return;
     }
-    const presented = url.searchParams.get('token') ?? bearerToken(req);
+    const presented = bearerToken(req);
     if (!tokens.verify(presented)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n');
       socket.destroy();

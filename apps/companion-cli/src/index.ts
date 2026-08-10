@@ -3,13 +3,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { AuthMode } from '@moxxy/companion-services';
 import {
   applyPendingAdminSetup,
   consumePendingAdminSetup,
   createDefaultAdmin,
-  createDefaultLogin,
-  DEFAULT_LOGIN,
   readAdminSetup,
+  readStoredAuthMode,
   renderSetupBox,
   setupExists,
   validateEmail,
@@ -18,18 +18,14 @@ import {
   takePendingProfile,
   writePendingAdminSetup,
   writePendingProfile,
+  writeStoredAuthMode,
 } from './setup.js';
 import type { AdminSetup } from './setup.js';
 import {
   installModules,
   modulesFor,
-  OPTIONAL_MODULES,
-  PROFILE_CHOICES,
   profileFromEnv,
-  requires,
   waitForToken,
-  withDependencies,
-  type ProfileId,
 } from './profile.js';
 import {
   harnessChoices,
@@ -63,6 +59,7 @@ interface CliOptions {
   readonly port?: number;
   readonly open: boolean;
   readonly yes: boolean;
+  readonly withAuth: boolean;
   readonly githubFromGh: boolean;
   readonly verbose: boolean;
   readonly background: boolean;
@@ -103,7 +100,7 @@ Usage:
   npx @moxxy/companion                  Initialize when needed, start, open browser
   npx @moxxy/companion --background     Same, but leave it running without a terminal
   npx @moxxy/companion stop             Stop the daemon using this data directory
-  npx @moxxy/companion init             Create the local admin configuration only
+  npx @moxxy/companion init             Prepare the local data directory only
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
   npx @moxxy/companion run list         Runs awaiting you; also show/diff/approve/discard
   npx @moxxy/companion mcp              Safe stdio MCP: read state, prepare reviewed actions
@@ -121,13 +118,14 @@ Options:
   --no-open        Do not open a browser
   --background     Run the daemon detached; logs go to <home>/companiond.log
   -y, --yes        Accept secure generated defaults without prompting
-  --github-from-gh Connect the active local gh account to the new admin
+  --with-auth      Require Companion sign-in (default: trusted loopback session)
+  --github-from-gh Deprecated; active gh is connected automatically
   --verbose        Show daemon startup and diagnostic logs
   -v, --version    Show the Companion version
   -h, --help       Show this help
 
-Agent work runs through a harness installed on this machine (Moxxy, Claude Code
-or Codex). First run detects what is there and asks which of them to use.
+The default local flow installs the slim module set, detects available agent
+runtimes, connects the active gh account, and opens the app without a login form.
 `;
 
 class SetupCancelled extends Error {}
@@ -208,7 +206,27 @@ async function main(): Promise<void> {
   if (process.stdout.isTTY) {
     process.stdout.write(process.env.NO_COLOR ? BANNER.replace(/\x1b\[[0-9;]*m/g, '') : BANNER);
   }
-  if (!setupExists(options.home)) await initialize(options);
+  const initialized = setupExists(options.home);
+  const storedMode = readStoredAuthMode(options.home);
+  const envMode = process.env.COMPANION_AUTH_MODE?.trim();
+  if (envMode && envMode !== 'local' && envMode !== 'password') {
+    throw new Error(`Invalid COMPANION_AUTH_MODE=${envMode}; expected local or password.`);
+  }
+  const effectiveMode: AuthMode = options.withAuth
+    ? 'password'
+    : (envMode as AuthMode | undefined) ?? storedMode ?? (initialized ? 'password' : 'local');
+  if (storedMode === 'local' && effectiveMode === 'password') {
+    throw new Error(
+      'This data directory already uses trusted local mode. Use a new --home for password auth; ' +
+        'an in-place switch would leave its passwordless admin without a usable credential.',
+    );
+  }
+  if (options.withAuth) process.env.COMPANION_AUTH_MODE = 'password';
+  const { host } = resolveAddress(options);
+  if (effectiveMode === 'local' && host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
+    throw new Error(`Trusted local mode cannot bind to ${host}. Re-run with --with-auth before exposing Companion.`);
+  }
+  if (!initialized) await initialize(options, effectiveMode);
   else if (options.command === 'init') {
     process.stdout.write(`Companion is already initialized in ${options.home}\n`);
     return;
@@ -218,6 +236,7 @@ async function main(): Promise<void> {
 }
 
 async function connectGithub(options: CliOptions): Promise<void> {
+  process.env.COMPANION_HOME = options.home;
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
   if (!(await waitForHealth(url, 2_000))) {
@@ -226,6 +245,14 @@ async function connectGithub(options: CliOptions): Promise<void> {
 
   const ghLogin = detectGhLogin();
   if (!ghLogin) throw new Error('gh is not authenticated for github.com. Run `gh auth login` and retry.');
+  const localToken = await waitForToken();
+  if (localToken) {
+    process.stdout.write(`Connecting active gh account ${ghLogin} to Companion at ${url}...\n`);
+    await connectGhAccount(url, { bearerToken: localToken }, ghLogin);
+    process.stdout.write(`Connected GitHub account ${ghLogin}.\n`);
+    return;
+  }
+
   const stored = readAdminSetup(options.home);
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
   let credentials = stored;
@@ -269,111 +296,69 @@ async function connectGithub(options: CliOptions): Promise<void> {
   process.stdout.write(`Connected GitHub account ${ghLogin} to Companion user ${credentials.username}.\n`);
 }
 
-async function initialize(options: CliOptions): Promise<void> {
+async function initialize(options: CliOptions, authMode: AuthMode): Promise<void> {
   process.stdout.write('\nWelcome to Companion.\n\n');
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
-  const setup = interactive ? await promptForAdmin() : createDefaultAdmin();
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
+  const modules = await resolveProfile();
+  const ghLogin = detectGhLogin();
+
+  if (authMode === 'local') {
+    writeStoredAuthMode(options.home, authMode);
+    writePendingProfile(options.home, modules);
+    if (ghLogin) scheduleGhImport(options.home, ghLogin);
+    process.stdout.write(
+      `Trusted local mode · ${url}\n` +
+        'Companion will open as the local superadmin; no account or password is required.\n' +
+        'Use --with-auth with a fresh data directory for a shared or networked instance.\n',
+    );
+    if (ghLogin) process.stdout.write(`Active gh account ${ghLogin} will be connected automatically.\n`);
+    if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
+    return;
+  }
+
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !options.yes);
+  const setup = interactive ? await promptForAdmin() : createDefaultAdmin();
   process.stdout.write(`${renderSetupBox(setup, options.home, url)}\n`);
 
-  const ghLogin = detectGhLogin();
-  let connectGh = options.githubFromGh && ghLogin !== null;
   if (interactive) {
     const { confirm } = await import('@inquirer/prompts');
     const accepted = await confirm({ message: 'Create this local configuration?', default: true });
     if (!accepted) throw new SetupCancelled('Setup cancelled.');
-    if (ghLogin) {
-      connectGh = await confirm({
-        message: `Connect active gh account ${ghLogin} to the Companion admin?`,
-        default: true,
-      });
-    }
   } else {
     process.stdout.write('Using secure generated defaults because prompting was skipped.\n');
   }
 
-  const modules = await resolveProfile(options);
+  writeStoredAuthMode(options.home, authMode);
   writePendingProfile(options.home, modules);
-
+  if (ghLogin) scheduleGhImport(options.home, ghLogin);
   const file = writePendingAdminSetup(options.home, setup);
-  if (connectGh && ghLogin) {
-    scheduleGhImport(options.home, ghLogin);
+  if (ghLogin) {
     process.stdout.write(`Will connect gh account ${ghLogin} to admin ${setup.username} when Companion starts.\n`);
-  } else if (options.githubFromGh && !ghLogin) {
-    process.stderr.write('Could not find an active github.com account in gh; continuing without GitHub import.\n');
   }
   process.stdout.write(`\nSaved one-time bootstrap data in ${file} with owner-only permissions.\n`);
-  // Only the generated one is lost by not being read: the default login is in
-  // the box above and in this CLI's own help.
+  // The generated credential exists nowhere else, so it must be shown once.
   if (setup.passwordSource === 'generated') {
     process.stdout.write('Save the generated password now; it will not be shown on later starts.\n');
   }
   if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
 }
 
-/**
- * Which optional modules to turn on. `COMPANION_PROFILE` answers it without a
- * prompt, which is what a scripted or containerised install needs; `-y` takes
- * the recommendation.
- */
-async function resolveProfile(options: CliOptions): Promise<readonly string[]> {
+/** npx stays on the slim DX unless an advanced scripted run explicitly opts in. */
+async function resolveProfile(): Promise<readonly string[]> {
   const fromEnv = profileFromEnv();
   if (fromEnv) {
     process.stdout.write(`Module set: ${fromEnv} (from COMPANION_PROFILE).\n`);
     return modulesFor(fromEnv);
   }
-  if (options.yes || !process.stdin.isTTY) return modulesFor('slim');
-
-  const { checkbox, select } = await import('@inquirer/prompts');
-  const profile = await select<ProfileId>({
-    message: 'Which modules should this instance start with?',
-    choices: PROFILE_CHOICES.map((c) => ({ value: c.value, name: c.name, description: c.description })),
-    default: 'slim',
-  });
-  if (profile !== 'custom') return modulesFor(profile);
-
-  const picked = await checkbox<string>({
-    message: 'Choose the optional modules',
-    // What a tick costs goes in the NAME, not the description: inquirer only
-    // shows a description while its row is highlighted, and someone ticking
-    // "Ideas" would otherwise learn it brought three others along after
-    // confirming, which is the wrong moment to find out.
-    choices: OPTIONAL_MODULES.map((m) => {
-      const needs = requires(m.id);
-      return {
-        value: m.id,
-        name: needs.length ? `${m.label}  (also enables ${needs.join(', ')})` : m.label,
-        description: m.hint,
-      };
-    }),
-  });
-  const closed = withDependencies(picked);
-  const added = closed.filter((id) => !picked.includes(id));
-  if (added.length) process.stdout.write(`Also enabling ${added.join(', ')}, which the selection depends on.\n`);
-  return closed;
+  return modulesFor('slim');
 }
 
-/**
- * The admin this instance starts with.
- *
- * The question names the login it is offering instead of describing it. "Use
- * recommended defaults (including a generated password)" asked someone to
- * accept a credential they had not seen yet, and the answer to a question you
- * cannot picture is to go and read the box; naming both halves makes it a
- * choice that can be made where it is asked.
- */
+/** Full auth asks for the credential instead of shipping a well-known default. */
 async function promptForAdmin(): Promise<AdminSetup> {
-  const defaults = createDefaultLogin();
-  const { confirm, input, password } = await import('@inquirer/prompts');
-  const useDefaults = await confirm({
-    message: `Use the default login (${DEFAULT_LOGIN.username} / ${DEFAULT_LOGIN.password})?`,
-    default: true,
-  });
-  if (useDefaults) return defaults;
-
-  const username = await input({ message: 'Admin username', default: defaults.username, validate: validateUsername });
-  const email = await input({ message: 'Admin email', default: defaults.email, validate: validateEmail });
+  const { input, password } = await import('@inquirer/prompts');
+  const username = await input({ message: 'Admin username', default: 'admin', validate: validateUsername });
+  const email = await input({ message: 'Admin email', default: 'admin@companion.local', validate: validateEmail });
   const chosen = await password({ message: 'Admin password', mask: '*', validate: validatePassword });
   await password({
     message: 'Confirm password',
@@ -410,7 +395,9 @@ async function start(options: CliOptions): Promise<void> {
   if (options.verbose) process.env.COMPANION_LOG_LEVEL = 'info';
   else process.env.COMPANION_LOG_LEVEL ??= 'warn';
   const pendingAdmin = applyPendingAdminSetup(options.home);
-  if (pendingAdmin) process.env.COMPANION_IMPORT_LOCAL_GH = pendingGhLogin(options.home) ? 'true' : 'false';
+  // A pending import is completed synchronously through the CLI token below;
+  // keep the module's opportunistic boot import from racing the same account.
+  process.env.COMPANION_IMPORT_LOCAL_GH = pendingGhLogin(options.home) ? 'false' : 'true';
   process.env.COMPANION_STATIC_DIR = staticDir;
   if (options.host !== undefined) process.env.COMPANION_HOST = options.host;
   if (options.port !== undefined) process.env.COMPANION_PORT = String(options.port);
@@ -418,6 +405,7 @@ async function start(options: CliOptions): Promise<void> {
   const note = options.background ? `Logs: ${daemonLog(options.home)}` : 'Press Ctrl+C to stop.';
   process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\n${note}\n\n`);
   const pendingModules = takePendingProfile(options.home);
+  const firstRun = pendingModules.length > 0 || pendingAdmin !== null;
   // Either way this process stays in the foreground until the questions below
   // are answered; what --background changes is who owns the server afterwards.
   let detached: Detached | null = null;
@@ -450,16 +438,16 @@ async function start(options: CliOptions): Promise<void> {
   }
   // Only on a first run: the machine's runtimes are settled once, and every
   // later start would otherwise re-ask a question that already has an answer.
-  if (pendingAdmin) await settleHarnesses(url, options);
+  if (firstRun) await settleHarnesses(url, options);
   process.stdout.write(`\nCompanion is ready: ${url}\n`);
-  const admin = pendingAdmin ?? readAdminSetup(options.home);
-  if (admin) {
+  const cliToken = await waitForToken();
+  if (cliToken) {
     try {
-      const githubLogin = await importPendingGhAccount(options.home, url, admin);
-      if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin} to admin ${admin.username}.\n`);
+      const githubLogin = await importPendingGhAccount(options.home, url, { bearerToken: cliToken });
+      if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin}.\n`);
     } catch (err) {
       process.stderr.write(
-        `${err instanceof Error ? err.message : String(err)}\nSign in with the saved Companion password, then run \`npx @moxxy/companion connect-github\`.\n`,
+        `${err instanceof Error ? err.message : String(err)}\nRun \`npx @moxxy/companion connect-github\` to retry.\n`,
       );
     }
   }
@@ -548,7 +536,7 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
     return;
   }
   let picked: readonly string[] = recommendedHarnesses(answer.options);
-  if (!options.yes && process.stdin.isTTY) {
+  if (options.withAuth && !options.yes && process.stdin.isTTY) {
     const { checkbox } = await import('@inquirer/prompts');
     picked = await withTerminal(() =>
       checkbox<string>({
@@ -566,7 +554,9 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
     process.stdout.write(`Agent work here runs through ${picked.join(', ')}.\n`);
     // The built-in runtime is the one whose "not ready" is fixed HERE rather
     // than in another terminal, so it is offered a model straight away.
-    if (picked.includes('companion')) await offerBuiltinProvider(url, token, !options.yes && process.stdin.isTTY);
+    if (picked.includes('companion')) {
+      await offerBuiltinProvider(url, token, options.withAuth && !options.yes && process.stdin.isTTY);
+    }
   } catch (err) {
     process.stderr.write(`Could not save the runtime choice: ${err instanceof Error ? err.message : String(err)}\n`);
   }
@@ -579,6 +569,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let port: number | undefined;
   let open = true;
   let yes = false;
+  let withAuth = false;
   let githubFromGh = false;
   let verbose = false;
   let background = false;
@@ -596,6 +587,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
     else if (arg === '--no-open') open = false;
     else if (arg === '--yes' || arg === '-y') yes = true;
+    else if (arg === '--with-auth') withAuth = true;
     else if (arg === '--github-from-gh') githubFromGh = true;
     else if (arg === '--verbose') verbose = true;
     else if (arg === '--background') background = true;
@@ -605,7 +597,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
   }
   home = isAbsolute(home) ? home : resolve(home);
-  return { command, home, host, port, open, yes, githubFromGh, verbose, background, file };
+  return { command, home, host, port, open, yes, withAuth, githubFromGh, verbose, background, file };
 }
 
 /**

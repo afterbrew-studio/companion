@@ -41,7 +41,8 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.d.ts"
   ],
   "description": "Companion's built-in agent runtime: a light harness on the Vercel AI SDK, run as a subprocess.",
   "repository": {

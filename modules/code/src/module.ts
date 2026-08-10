@@ -25,7 +25,16 @@ export default defineManifest({
     'pipelines:execute',
     'pipelines:author-execute',
   ],
-  messages: ['repos.changed', 'issues.changed', 'triage.changed', 'prs.changed', 'pipelines.changed', 'pipelineRuns.changed', 'pipelineStep.output'],
+  messages: [
+    'repos.changed',
+    'issues.changed',
+    'triage.changed',
+    'prs.changed',
+    'prStatus.changed',
+    'pipelines.changed',
+    'pipelineRuns.changed',
+    'pipelineStep.output',
+  ],
   config: [
     {
       key: 'maxPrReviewTokens',
@@ -43,7 +52,26 @@ export default defineManifest({
       kind: 'boolean',
       default: false,
       description:
-        'Executable steps run arbitrary shell commands as the daemon user. An instance that leaves this off cannot be reached through that path at all. Turning it on also requires the pipelines:execute permission per user.',
+        'Executable steps require the pipelines:execute permission and a configured container image. They never run directly as the daemon user.',
+    },
+    {
+      key: 'executableSandboxImage',
+      label: 'Executable pipeline sandbox image',
+      kind: 'text',
+      default: '',
+      max: 300,
+      placeholder: 'ghcr.io/your-org/companion-pipeline-node24@sha256:…',
+      description:
+        'A pre-pulled, trusted OCI image containing the build tools your pipelines need. Pin a digest. Empty means executable steps fail closed even when the switch above is on.',
+    },
+    {
+      key: 'executableSandboxNetwork',
+      label: 'Executable pipeline network',
+      kind: 'text',
+      default: 'none',
+      max: 128,
+      description:
+        'Defaults to no network. Publishing requires an operator-created Docker network with an egress policy; host/default bridge networks are refused.',
     },
   ],
 });

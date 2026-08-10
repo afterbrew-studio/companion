@@ -145,7 +145,7 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
 }
 
 function Shell(): JSX.Element {
-  const { user, can, logout, branding, navOverrides, navigationAudience } = useAuth();
+  const { user, can, logout, authMode, branding, navOverrides, navigationAudience } = useAuth();
   const hash = useHashRoute();
   const kernel = useKernel();
 
@@ -185,7 +185,10 @@ function Shell(): JSX.Element {
     }
   };
 
-  const visibleModules = useMemo(() => kernel.nav.filter((m) => can(m.permission)), [kernel.nav, can]);
+  const visibleModules = useMemo(
+    () => kernel.nav.filter((m) => can(m.permission) && (!m.authModes || m.authModes.includes(authMode))),
+    [authMode, kernel.nav, can],
+  );
 
   // One route winner feeds highlight, breadcrumbs and active-group unfolding.
   const activeNavKey = useMemo(() => {
@@ -583,14 +586,16 @@ function Shell(): JSX.Element {
                   <GearIcon className="size-4" />
                 </a>
               ) : null}
-              <button
-                className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                onClick={() => void logout()}
-                aria-label="Sign out"
-                title={`Sign out ${user?.displayName ?? ''}`}
-              >
-                <SignOutIcon />
-              </button>
+              {authMode === 'password' ? (
+                <button
+                  className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  onClick={() => void logout()}
+                  aria-label="Sign out"
+                  title={`Sign out ${user?.displayName ?? ''}`}
+                >
+                  <SignOutIcon />
+                </button>
+              ) : null}
             </div>
           )}
         </div>

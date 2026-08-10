@@ -62,6 +62,9 @@ export interface NavEntry {
   readonly section: SectionId;
   readonly permission: Permission;
   readonly icon: ReactNode;
+  /** Hide account-administration surfaces in trusted local mode without
+   * changing their routes or RBAC. Omit when a page applies in both modes. */
+  readonly authModes?: readonly import('@moxxy/companion-contracts').AuthMode[];
   /** `g` + this key jumps to the entry. */
   readonly shortcut?: string;
   readonly order?: number;

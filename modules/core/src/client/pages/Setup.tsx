@@ -16,11 +16,13 @@ export function SetupPage(): JSX.Element {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [bootstrapToken, setBootstrapToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const mismatch = confirm.length > 0 && password !== confirm;
-  const ready = username.trim().length >= 2 && email.includes('@') && password.length >= 8 && password === confirm;
+  const ready = username.trim().length >= 2 && email.includes('@') && password.length >= 8 && password === confirm
+    && bootstrapToken.trim().length >= 32;
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -28,7 +30,7 @@ export function SetupPage(): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      await authApi.setup(username.trim(), email.trim(), password);
+      await authApi.setup(username.trim(), email.trim(), password, bootstrapToken.trim());
       // AuthProvider picks the session up via onAuthChanged.
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -92,6 +94,22 @@ export function SetupPage(): JSX.Element {
             aria-invalid={mismatch}
           />
         </Field>
+        <Field label="Bootstrap token">
+          <input
+            className="input font-mono"
+            type="password"
+            required
+            minLength={32}
+            value={bootstrapToken}
+            onChange={(e) => setBootstrapToken(e.target.value)}
+            autoComplete="off"
+            aria-describedby="bootstrap-help"
+          />
+        </Field>
+        <p id="bootstrap-help" className="dim -mt-1 text-xs">
+          Read it from <code>$COMPANION_HOME/bootstrap-token</code>, or use the value supplied as{' '}
+          <code>COMPANION_BOOTSTRAP_TOKEN</code>. It is invalidated after this account is created.
+        </p>
         <ErrorBar error={mismatch ? 'Passwords do not match.' : null} />
         <ErrorBar error={error} />
         <button className="btn mt-1 justify-center" type="submit" disabled={!ready || busy}>

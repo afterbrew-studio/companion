@@ -1,5 +1,6 @@
 import type { Role } from '@moxxy/companion-types';
 import type {
+  AuthMode,
   AuthUser,
   NavigationPageOverride,
   NavigationPerspective,
@@ -209,6 +210,7 @@ export interface AuthProvider {
 /** Public bootstrap: does this install still need first-boot onboarding? */
 export interface AuthState {
   readonly setup: boolean;
+  readonly authMode: AuthMode;
   readonly version: string;
   readonly branding: InstanceBranding;
   /**
@@ -217,13 +219,6 @@ export interface AuthState {
    * everyone already fetches rather than earning an endpoint of its own.
    */
   readonly githubHost: string;
-  /**
-   * The account a loopback-only first boot created, while that password is still
-   * the real one. Present ONLY when the daemon is still bound to loopback, so it
-   * cannot survive into an instance anyone else can reach. Absent everywhere
-   * else, including after the password is changed.
-   */
-  readonly localCredentials?: { readonly username: string; readonly password: string };
   /** Alternative sign-in methods; empty on a local-accounts-only install. */
   readonly providers: readonly AuthProvider[];
 }
@@ -232,6 +227,8 @@ export interface SetupRequest {
   readonly username: string;
   readonly email: string;
   readonly password: string;
+  /** One-time proof read from the daemon's owner-only bootstrap file or env. */
+  readonly bootstrapToken: string;
 }
 
 export interface CreateUserRequest {
@@ -256,7 +253,6 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  readonly token: string;
   readonly user: AuthUser;
   /** Epoch ms when the session expires. */
   readonly expiresAt: number;

@@ -3,6 +3,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AuthUser, SpaServerMessage } from '@moxxy/companion-contracts';
 import { log } from '@moxxy/companion-services';
+import { cookieValue, SESSION_COOKIE } from './router.js';
 
 /**
  * The single WebSocket the browser SPA holds. The daemon multiplexes every
@@ -16,8 +17,9 @@ import { log } from '@moxxy/companion-services';
  * Domain knowledge stays in the owning module — the hub never reaches into
  * auth/stores/orchestrators.
  *
- * Auth: `?token=<session token>` — the same login session the REST API uses;
- * an expired or bogus token is refused at upgrade time.
+ * Auth: the same HttpOnly session cookie REST uses. The token never enters the
+ * URL, browser history, proxy logs or JavaScript. Upgrade also checks Origin;
+ * a third-party page must not be able to spend a browser's ambient cookie.
  */
 
 /** May `username` see this message? */
@@ -53,12 +55,16 @@ export class WsHub implements WsScopeRegistry {
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const user = url.pathname === '/ws' ? this.verify(url.searchParams.get('token')) : null;
+    const sameOrigin = browserOriginMatchesHost(req);
+    const user = url.pathname === '/ws' && sameOrigin
+      ? this.verify(cookieValue(req, SESSION_COOKIE))
+      : null;
     // API tokens are intentionally REST-only. The socket broadcasts messages
     // by account/workspace, not by route permission, so accepting a scoped
     // credential here would silently widen its read access.
-    if (!user || user.permissionScope !== undefined) {
-      socket.write(`HTTP/1.1 ${user ? '403 Forbidden' : '401 Unauthorized'}\r\n\r\n`);
+    if (!sameOrigin || !user || user.permissionScope !== undefined) {
+      const forbidden = !sameOrigin || user?.permissionScope !== undefined;
+      socket.write(`HTTP/1.1 ${forbidden ? '403 Forbidden' : '401 Unauthorized'}\r\n\r\n`);
       socket.destroy();
       return;
     }
@@ -120,5 +126,17 @@ export class WsHub implements WsScopeRegistry {
   close(): void {
     for (const client of this.wss.clients) client.terminate();
     this.wss.close();
+  }
+}
+
+function browserOriginMatchesHost(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (!origin || !host) return false;
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host.toLowerCase() === host.toLowerCase();
+  } catch {
+    return false;
   }
 }

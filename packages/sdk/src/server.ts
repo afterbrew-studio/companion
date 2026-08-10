@@ -32,7 +32,17 @@ export type {
 } from '@moxxy/companion-core/server';
 
 // ---- routing ----
-export { route, Reply, created, accepted, document, redirect, bearerToken } from '@moxxy/companion-core/server';
+export {
+  route,
+  Reply,
+  created,
+  accepted,
+  document,
+  redirect,
+  bearerToken,
+  sessionCookie,
+  clearSessionCookie,
+} from '@moxxy/companion-core/server';
 export { HttpError, notFound, badRequest, forbidden } from '@moxxy/companion-core/server';
 export type { RouteContext, RouteDef, HttpMethod, PathParams, StatusError } from '@moxxy/companion-core/server';
 
@@ -80,8 +90,17 @@ export type {
 export type { MessageScope, ScopeResolver } from '@moxxy/companion-core/server';
 
 // ---- host services a module legitimately touches ----
-export { paths, likeArg, safeParse, currentUser, log } from '@moxxy/companion-services';
-export type { DaemonConfig, Logger } from '@moxxy/companion-services';
+export {
+  paths,
+  likeArg,
+  safeParse,
+  currentUser,
+  log,
+  assertPublicHttpTarget,
+  isPublicAddress,
+  withPublicHttpResponse,
+} from '@moxxy/companion-services';
+export type { DaemonConfig, Logger, PublicHttpOptions, ResolveAddresses } from '@moxxy/companion-services';
 
 // ---- open integration-provider ABI ------------------------------------------
 export { IntegrationUnavailableError, NOTIFICATION_KIND_OPTIONS } from './integrations.js';

@@ -19,9 +19,21 @@ export class ModuleConfigStore {
 
   constructor(
     private readonly db: Database,
+    encryptionKey: Buffer,
     private readonly isSecret: (moduleId: string, key: string) => boolean = () => false,
   ) {
-    this.secrets = new SqliteSecretStore(db, isSecret);
+    this.secrets = new SqliteSecretStore(db, isSecret, encryptionKey);
+  }
+
+  /** Eagerly migrate pre-encryption rows and fail boot on a bad key/ciphertext. */
+  migrateSecrets(moduleIds: readonly string[]): number {
+    let migrated = 0;
+    for (const moduleId of moduleIds) {
+      for (const key of this.secrets.keys(moduleId)) {
+        if (this.secrets.get(moduleId, key) !== null) migrated++;
+      }
+    }
+    return migrated;
   }
 
   /**
@@ -30,10 +42,16 @@ export class ModuleConfigStore {
    * behind in SQLite and every module reading as unconfigured; without the
    * delete, the plaintext would stay in the file the swap was meant to empty.
    */
-  useSecretStore(next: SecretStore, moduleIds: readonly string[], onMoved?: (n: number) => void): void {
+  useSecretStore(
+    next: SecretStore,
+    moduleIds: readonly string[],
+    retainedModuleId?: string,
+    onMoved?: (n: number) => void,
+  ): void {
     const previous = this.secrets;
     let moved = 0;
     for (const moduleId of moduleIds) {
+      if (moduleId === retainedModuleId) continue;
       for (const key of previous.keys(moduleId)) {
         const value = previous.get(moduleId, key);
         if (value === null) continue;
@@ -42,7 +60,7 @@ export class ModuleConfigStore {
         moved++;
       }
     }
-    this.secrets = next;
+    this.secrets = retainedModuleId ? new RetainedSecretStore(retainedModuleId, previous, next) : next;
     if (moved) onMoved?.(moved);
   }
 
@@ -152,6 +170,35 @@ export class ModuleConfigStore {
       values: () => ({ ...defaults, ...this.valuesFor(moduleId) }),
       get: (key) => this.valuesFor(moduleId)[key] ?? defaults[key] ?? null,
     };
+  }
+}
+
+/** A secret backend cannot contain the credential needed to reach itself. */
+class RetainedSecretStore implements SecretStore {
+  constructor(
+    private readonly retainedModuleId: string,
+    private readonly local: SecretStore,
+    private readonly external: SecretStore,
+  ) {}
+
+  private store(moduleId: string): SecretStore {
+    return moduleId === this.retainedModuleId ? this.local : this.external;
+  }
+
+  get(moduleId: string, key: string): string | null {
+    return this.store(moduleId).get(moduleId, key);
+  }
+  set(moduleId: string, key: string, value: string): void {
+    this.store(moduleId).set(moduleId, key, value);
+  }
+  delete(moduleId: string, key: string): void {
+    this.store(moduleId).delete(moduleId, key);
+  }
+  keys(moduleId: string): readonly string[] {
+    return this.store(moduleId).keys(moduleId);
+  }
+  deleteAll(moduleId: string): void {
+    this.store(moduleId).deleteAll(moduleId);
   }
 }
 

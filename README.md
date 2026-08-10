@@ -26,11 +26,18 @@
 npx @moxxy/companion
 ```
 
-That is the whole local install. Companion carries the daemon and SPA, creates
-the first admin, and opens <http://127.0.0.1:8901>. Your SQLite database, cloned
+That is the whole local install. Companion carries the daemon and SPA, opens a
+trusted local superadmin session, adopts the active `gh` account when one is
+available, and opens <http://127.0.0.1:8901>. There is no login or setup wizard.
+Your SQLite database, cloned
 repositories, worktrees, run history, and configuration stay in
 `~/.companion`. There is no hosted account to create and no control plane you
 must hand your code to.
+
+Need a shared or networked instance? Start a fresh home with
+`npx @moxxy/companion --with-auth`, or use Docker/Coolify. Password auth is the
+daemon and container default; trusted local mode refuses every non-loopback
+bind.
 
 When the team grows, deploy the same application with Docker or Coolify, attach
 remote runner machines, and add organisation controls without changing the way
@@ -305,6 +312,7 @@ installs a module from a registry, tarball, or directory.
 | [The hosted runtime](docs/cloud-runtime.md) | running Companion as a service, module and profile |
 | [Pipelines](docs/pipelines.md) | typed automation and review workflows |
 | [Configuration](docs/configuration.md) | environment, GitHub Enterprise, and proxies |
+| [Security policy](SECURITY.md) | vulnerability reporting, supported releases, and deployment trust boundaries |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
 | [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
 | [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |

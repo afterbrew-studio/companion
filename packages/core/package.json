@@ -44,7 +44,9 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "src/index.ts",
     "src/client"
   ],
   "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",

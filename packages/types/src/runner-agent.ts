@@ -9,7 +9,7 @@
  *
  * Transport:
  *   - HTTP  POST/GET under `/agent/*`, bearer-token auth (the runner's token).
- *   - WS    `/agent/events?token=…` — the agent pushes run events, ask
+ *   - WS    `/agent/events`, bearer auth in the upgrade header — the agent pushes run events, ask
  *           requests/resolutions, turn completions, and gone notices; the
  *           daemon fans them into the same sinks a local gateway feeds.
  *

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEnvFile } from '@moxxy/companion-services';
+import { parseEnvFile, type AuthMode } from '@moxxy/companion-services';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const DEFAULT_EMAIL = 'admin@companion.local';
@@ -10,11 +10,9 @@ const PENDING_SETUP_FILE = 'pending-admin-setup.json';
 /**
  * Where an admin password came from, which is what decides whether the setup
  * box may print it. A generated one has to be shown once or it is lost; the
- * default one is public knowledge already, so hiding it would only make the
- * operator hunt for something this CLI just told them to use; a chosen one is
- * the operator's and is never echoed back.
+ * operator's chosen one is never echoed back.
  */
-export type PasswordSource = 'generated' | 'default' | 'chosen';
+export type PasswordSource = 'generated' | 'chosen';
 
 export interface AdminSetup {
   readonly username: string;
@@ -24,34 +22,12 @@ export interface AdminSetup {
 }
 
 /**
- * The login a first run offers to start with.
- *
- * Deliberately guessable, because it is the answer to "just let me in": an
- * instance bound to the loopback interface, on a machine whose operator is
- * standing in front of it, minutes old and holding nothing yet. It is OFFERED
- * and never assumed, and a scripted install does not get it (see
- * `createDefaultAdmin`), because nobody is watching that one to decide.
- */
-export const DEFAULT_LOGIN = { username: 'admin', password: 'admin1234' } as const;
-
-export function createDefaultLogin(): AdminSetup {
-  return {
-    username: DEFAULT_LOGIN.username,
-    email: DEFAULT_EMAIL,
-    password: DEFAULT_LOGIN.password,
-    passwordSource: 'default',
-  };
-}
-
-/**
- * What an install nobody is watching gets: the same predictable identity, and
- * a credential that is not in this file. A `-y` run and a container both land
- * here, and a well-known password on either is a public instance with a
- * published login rather than a convenience.
+ * What an install nobody is watching gets: a predictable identity and an
+ * unpredictable credential. A `-y` run must never publish a well-known login.
  */
 export function createDefaultAdmin(): AdminSetup {
   return {
-    username: DEFAULT_LOGIN.username,
+    username: 'admin',
     email: DEFAULT_EMAIL,
     password: randomBytes(18).toString('base64url'),
     passwordSource: 'generated',
@@ -79,10 +55,43 @@ export function setupExists(home: string, env: NodeJS.ProcessEnv = process.env):
   if (env.COMPANION_ADMIN_USER?.trim() && env.COMPANION_ADMIN_PASSWORD) return true;
   if (existsSync(join(home, 'companion.db'))) return true;
   if (existsSync(join(home, PENDING_SETUP_FILE))) return true;
+  if (readStoredAuthMode(home) !== null) return true;
   const file = join(home, '.env');
   if (!existsSync(file)) return false;
   const raw = readFileSync(file, 'utf8');
   return /^\s*COMPANION_ADMIN_USER\s*=.+$/m.test(raw) && /^\s*COMPANION_ADMIN_PASSWORD\s*=.+$/m.test(raw);
+}
+
+/** An explicit field doubles as the npx install marker; old/networked homes
+ * without it remain on the daemon's safe password default. */
+export function readStoredAuthMode(home: string): AuthMode | null {
+  const file = join(home, 'companiond.json');
+  if (!existsSync(file)) return null;
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8')) as { authMode?: unknown };
+    return value.authMode === 'local' || value.authMode === 'password' ? value.authMode : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Merge instead of replacing: host, port and future daemon settings belong to
+ * the same operator-owned file. */
+export function writeStoredAuthMode(home: string, authMode: AuthMode): void {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const file = join(home, 'companiond.json');
+  let stored: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) stored = parsed as Record<string, unknown>;
+    } catch {
+      // A malformed file is replaced with the one setting the CLI owns. The
+      // daemon would otherwise ignore it and silently choose a different mode.
+    }
+  }
+  writeFileSync(file, `${JSON.stringify({ ...stored, authMode }, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
 }
 
 /** Credentials are needed once to authenticate the bootstrap API request. */

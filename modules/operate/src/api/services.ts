@@ -76,7 +76,7 @@ export default defineServices(async (ctx) => {
   const checkouts = new Checkouts(githubTokenFor, ctx.config.github.host, (repo, branch) =>
     agentPolicy.assertPushTarget(repo, branch),
   );
-  const store = new OperateStore(ctx.db, settings);
+  const store = new OperateStore(ctx.db, settings, ctx.secrets);
   // Roles are module-core's to store and edit; placement only reads them, live,
   // so a role change takes effect on the next placement rather than a restart.
   const auth = ctx.services.get('core');

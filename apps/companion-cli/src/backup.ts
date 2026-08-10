@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { Database } from '@moxxy/companion-services';
+import { Database, parseEnvFile } from '@moxxy/companion-services';
 
 /** Tables a Companion database always has; the shape check before a restore. */
 const SENTINEL_TABLES = ['users', 'module_migrations'];
@@ -83,6 +83,7 @@ export async function backupDatabase(home: string, destination: string, baseUrl:
       `\nNOT included, by design:\n` +
       `  - git clones and worktrees (re-clonable from the forge)\n` +
       `  - the moxxy home holding AI provider credentials (its own volume)\n` +
+      `  - ${join(home, 'secret-key')} (store it separately; the database ciphertext cannot be restored without it)\n` +
       `\nRestore with: companion restore ${target}\n`,
   );
 }
@@ -117,6 +118,7 @@ export async function restoreDatabase(home: string, sourcePath: string, baseUrl:
 
   // Verify first, in place second.
   const check = new Database(source, { readOnly: true });
+  let hasEncryptedSecrets = false;
   try {
     const [row] = check.pragma('integrity_check') as ReadonlyArray<{ integrity_check?: unknown }>;
     if (row?.integrity_check !== 'ok') {
@@ -129,8 +131,29 @@ export async function restoreDatabase(home: string, sourcePath: string, baseUrl:
         throw new Error(`${source} has no '${table}' table, so it is not a Companion database.`);
       }
     }
+    const hasModuleConfig = check
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'module_config'`)
+      .get() !== undefined;
+    if (hasModuleConfig) {
+      const rows = check.prepare(`SELECT value FROM module_config`).all() as Array<{ value: string }>;
+      hasEncryptedSecrets = rows.some(({ value }) => {
+        try {
+          const parsed = JSON.parse(value) as { version?: unknown };
+          return parsed && typeof parsed === 'object' && parsed.version === 1;
+        } catch {
+          return false;
+        }
+      });
+    }
   } finally {
     check.close();
+  }
+
+  if (hasEncryptedSecrets && !hasSecretKey(home)) {
+    throw new Error(
+      'This snapshot contains encrypted secrets, but no Companion secret key is available. ' +
+        'Restore the original secret-key file or set COMPANION_SECRET_KEY(_FILE) before replacing the database.',
+    );
   }
 
   const target = dbPath(home);
@@ -156,4 +179,13 @@ export async function restoreDatabase(home: string, sourcePath: string, baseUrl:
     `Restored ${target} from ${source}\n${notes.map((n) => `  ${n}\n`).join('')}` +
       `\nStart Companion again; module migrations run on boot as usual.\n`,
   );
+}
+
+function hasSecretKey(home: string): boolean {
+  if (process.env.COMPANION_SECRET_KEY?.trim()) return true;
+  if (process.env.COMPANION_SECRET_KEY_FILE?.trim()) return existsSync(process.env.COMPANION_SECRET_KEY_FILE.trim());
+  const homeEnv = parseEnvFile(join(home, '.env'));
+  if (homeEnv.COMPANION_SECRET_KEY?.trim()) return true;
+  if (homeEnv.COMPANION_SECRET_KEY_FILE?.trim()) return existsSync(homeEnv.COMPANION_SECRET_KEY_FILE.trim());
+  return existsSync(join(home, 'secret-key'));
 }

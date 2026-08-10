@@ -39,6 +39,12 @@ declare module '@moxxy/companion-contracts' {
     'issues.changed': { readonly repo: string };
     'triage.changed': { readonly repo: string };
     'prs.changed': { readonly repo: string };
+    /** One PR's frequently refreshed CI/review state; list views patch it in place. */
+    'prStatus.changed': {
+      readonly repo: string;
+      readonly number: number;
+      readonly status: PrStatusSnapshot;
+    };
     'pipelines.changed': Record<never, never>;
     'pipelineRuns.changed': { readonly repo: string };
     /** A chunk of a command's bounded, persisted, secret-scrubbed output. */
@@ -369,6 +375,12 @@ export interface PrRecord {
 
 /** Lightweight maintainer-queue row; the full body is fetched on detail open. */
 export type PrListRecord = Omit<PrRecord, 'body'>;
+
+/** Fields refreshed together by the checks warm-up without changing list order. */
+export type PrStatusSnapshot = Pick<
+  PrRecord,
+  'checks' | 'reviewDecision' | 'mergeable' | 'mergeStateStatus'
+>;
 
 /**
  * One changed file in a PR, from GitHub's paginated files API — which, unlike

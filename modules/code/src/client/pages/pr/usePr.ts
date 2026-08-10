@@ -115,9 +115,10 @@ export function usePr(repo: string, number: number): UsePr {
     }
     return onServerMessage((msg) => {
       if ((msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') && msg.repo === repo) void refresh();
+      if (msg.t === 'prStatus.changed' && msg.repo === repo && msg.number === number) void refresh();
       if (msg.t === 'reports.changed') void refresh();
     });
-  }, [refresh, current, can, repo]);
+  }, [refresh, current, can, repo, number]);
 
   const analyze = useCallback(async (opts?: ReviewOptions): Promise<void> => {
     setAnalyzing(true);

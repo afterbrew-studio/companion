@@ -70,8 +70,8 @@ export class PrChecks {
 
   /**
    * Fire-and-forget snapshot warm-up for a workspace's open PRs, invoked from
-   * the list endpoint. Each finished fetch broadcasts prs.changed, so badges
-   * stream into the open list view as they land.
+   * the list endpoint. Each finished fetch emits a narrow status patch, so
+   * badges stream into the open list without resetting its loaded pages.
    */
   preloadWorkspace(
     workspaceId: string,
@@ -127,8 +127,9 @@ export class PrChecks {
     // because that queue selects precisely the settled PRs with no snapshot.
     if (!pr.headSha) {
       const summary: ChecksSummary = { ...emptySnapshot(), repo, prNumber, headSha: null, runs: [] };
-      this.store.prs.setChecks(repo, prNumber, toSnapshot(summary));
-      this.broadcast({ t: 'prs.changed', repo });
+      const snapshot = toSnapshot(summary);
+      this.store.prs.setChecks(repo, prNumber, snapshot);
+      this.broadcastStatus(repo, prNumber, snapshot);
       return summary;
     }
 
@@ -180,8 +181,25 @@ export class PrChecks {
     } catch (err) {
       log.warn('review decision fetch failed', { repo, prNumber, err: String(err) });
     }
-    this.broadcast({ t: 'prs.changed', repo });
+    this.broadcastStatus(repo, prNumber, toSnapshot(summary));
     return summary;
+  }
+
+  /** High-frequency status refreshes never invalidate a server-paged list. */
+  private broadcastStatus(repo: string, prNumber: number, checks: ChecksSnapshot): void {
+    const pr = this.store.prs.get(repo, prNumber);
+    if (!pr) return;
+    this.broadcast({
+      t: 'prStatus.changed',
+      repo,
+      number: prNumber,
+      status: {
+        checks,
+        reviewDecision: pr.reviewDecision,
+        mergeable: pr.mergeable,
+        mergeStateStatus: pr.mergeStateStatus,
+      },
+    });
   }
 }
 

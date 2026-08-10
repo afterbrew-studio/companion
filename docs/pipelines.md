@@ -116,10 +116,37 @@ Two further rules are structural rather than configurable:
 - **Webhook auto-runs never execute.** A pipeline started by a GitHub delivery
   passes "may not execute" unconditionally, so a push cannot reach a shell no
   matter how the pipeline is flagged.
-- **Injected secrets are local-runner only.** A remote runner refuses the step
-  outright rather than running the command without the credential, because
-  "npm is not authenticated" is a much worse diagnosis than "this runner cannot
-  do that".
+- **Command steps run only in the daemon's container sandbox.** A remote runner
+  refuses them because the current runner protocol cannot attest an equivalent
+  isolation policy. It never falls back to executing as the daemon user.
+
+### Sandbox contract
+
+Turning the instance switch on is not sufficient. Configure a pre-pulled OCI
+image pinned by digest under **Settings → Modules → Code**:
+
+```text
+ghcr.io/acme/companion-pipeline-node24@sha256:<64 hex characters>
+```
+
+At run time Companion calls Docker with `--pull never`, a read-only root,
+non-root host uid/gid, all capabilities dropped, `no-new-privileges`, bounded
+PIDs/CPU/memory, a bounded `/tmp`, and only the selected checkout mounted
+read-write at `/workspace`. The daemon's environment is not inherited. Hidden
+values are named with Docker `--env NAME` and supplied only to the Docker client
+process environment, never embedded in its argv.
+
+The default network is `none`. A publish pipeline needs an operator-created
+network whose gateway enforces the exact registry/DNS egress policy you intend;
+`host`, Docker's default `bridge`, and `default` are refused. Naming a custom
+network does not make it restricted by itself. The Docker daemon/socket is a
+privileged boundary, so expose it only to the Companion execution host or a
+dedicated worker and pre-pull/verify the image there.
+
+If Docker, the digest-pinned image, or that policy is unavailable, executable
+and `npm-bootstrap` steps fail closed. Keep the feature disabled for repositories
+or contributors you do not trust, and issue the narrowest short-lived publishing
+credential the registry supports.
 
 ---
 

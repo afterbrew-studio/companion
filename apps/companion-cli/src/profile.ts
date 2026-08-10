@@ -14,36 +14,22 @@ import { paths } from '@moxxy/companion-services';
  * Modules page or `companion module install <id>`; a profile only decides where
  * you start.
  */
-export type ProfileId = 'slim' | 'full' | 'custom';
+export type ProfileId = 'slim' | 'full';
 
 /**
  * Modules beyond the always-on core, workspace, execution, code, Today and
  * admin surfaces. Ordered so `dependsOn` is satisfied by installing top to
  * bottom: refinement and planner need plan and board.
  */
-export const OPTIONAL_MODULES: ReadonlyArray<{ id: string; label: string; hint: string }> = [
-  { id: 'plan', label: 'Plan', hint: 'Specifications and documentation, drafted by agents.' },
-  { id: 'board', label: 'Task board', hint: 'Durable issue-to-fix work with an agent lifecycle.' },
-  { id: 'refinement', label: 'Product refinement', hint: 'Turn rough ideas into shaped work.' },
-  { id: 'planner', label: 'Ideas', hint: 'Guided planning sessions across the board.' },
-  { id: 'automations', label: 'Automations', hint: 'Scheduled and reactive agent work.' },
-  { id: 'slop', label: 'Contribution quality', hint: 'Scores value, evidence, risk and reviewability.' },
-  { id: 'playground', label: 'Playground', hint: 'A bench for testing agents, skills and pipelines.' },
-];
-
-export const PROFILE_CHOICES: ReadonlyArray<{ value: ProfileId; name: string; description: string }> = [
-  {
-    value: 'slim',
-    name: 'Slim (recommended)',
-    description: 'Today, repositories, agent runs, contributor workflows, the daily digest and administration.',
-  },
-  {
-    value: 'full',
-    name: 'Full',
-    description: 'Adds refinement, ideas, contribution-quality analysis, the playground, notifications and OIDC.',
-  },
-  { value: 'custom', name: 'Custom', description: 'Pick the optional modules yourself.' },
-];
+export const OPTIONAL_MODULES = [
+  'plan',
+  'board',
+  'refinement',
+  'planner',
+  'automations',
+  'slop',
+  'playground',
+] as const;
 
 /** `COMPANION_PROFILE` for a non-interactive run; unset or unknown = slim. */
 export function profileFromEnv(): ProfileId | null {
@@ -67,7 +53,7 @@ const NEEDS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Close a custom selection over its dependencies, in install order.
+ * Close a requested module set over its dependencies, in install order.
  *
  * Picking "Ideas" without Plan and the board would fail at install with "enable
  * dependency first", which is a true error and a useless one: the answer is
@@ -81,21 +67,7 @@ export function withDependencies(ids: readonly string[]): readonly string[] {
     if (wanted.size === before) break;
   }
   // OPTIONAL_MODULES is already in dependsOn order, so filtering preserves it.
-  return OPTIONAL_MODULES.filter((m) => wanted.has(m.id)).map((m) => m.id);
-}
-
-/**
- * The labels ticking one module would drag in with it, transitively.
- *
- * Derived from `withDependencies` rather than read off `NEEDS`, so the list the
- * chooser shows and the set the installer builds cannot disagree: a dependency
- * added to one is a dependency shown by the other.
- */
-export function requires(id: string): readonly string[] {
-  const labels = new Map(OPTIONAL_MODULES.map((m) => [m.id, m.label]));
-  return withDependencies([id])
-    .filter((dep) => dep !== id)
-    .map((dep) => labels.get(dep) ?? dep);
+  return OPTIONAL_MODULES.filter((id) => wanted.has(id));
 }
 
 /**
@@ -106,7 +78,7 @@ export function requires(id: string): readonly string[] {
 const SLIM_MODULES = withDependencies(['automations']);
 
 export const modulesFor = (profile: ProfileId): readonly string[] =>
-  profile === 'full' ? OPTIONAL_MODULES.map((m) => m.id) : profile === 'slim' ? SLIM_MODULES : [];
+  profile === 'full' ? OPTIONAL_MODULES : SLIM_MODULES;
 
 /**
  * Install the chosen modules against the freshly started daemon.

@@ -3,7 +3,16 @@ import test from 'node:test';
 import { PrChecks, UnknownPrError } from '../dist/api/pr-checks.js';
 
 function openPr(number) {
-  return { repo: 'moxxy-ai/companion', number, state: 'open', headSha: `sha${number}`, checks: null };
+  return {
+    repo: 'moxxy-ai/companion',
+    number,
+    state: 'open',
+    headSha: `sha${number}`,
+    checks: null,
+    reviewDecision: null,
+    mergeable: null,
+    mergeStateStatus: null,
+  };
 }
 
 /** Captures what the module logs, so "quietly" is an assertion and not a hope. */
@@ -84,9 +93,19 @@ function recordingStore(rows) {
     prs: {
       list: () => [...rows.values()],
       get: (_repo, number) => rows.get(number),
-      setChecks: (repo, number, snapshot) => cached.push({ repo, number, snapshot }),
-      setMergeable() {},
-      setReviewDecision() {},
+      setChecks: (repo, number, snapshot) => {
+        cached.push({ repo, number, snapshot });
+        const row = rows.get(number);
+        if (row) rows.set(number, { ...row, checks: snapshot });
+      },
+      setMergeable: (_repo, number, mergeable, mergeStateStatus = null) => {
+        const row = rows.get(number);
+        if (row) rows.set(number, { ...row, mergeable, mergeStateStatus });
+      },
+      setReviewDecision: (_repo, number, reviewDecision) => {
+        const row = rows.get(number);
+        if (row) rows.set(number, { ...row, reviewDecision });
+      },
     },
   };
 }
@@ -124,5 +143,55 @@ test('a settled PR with no head commit caches its empty snapshot', async () => {
   // uncached re-queues the same PR on every pass, forever.
   assert.equal(store.cached.length, 1);
   assert.equal(store.cached[0].snapshot.state, 'none');
-  assert.deepEqual(broadcasts, [{ t: 'prs.changed', repo: 'moxxy-ai/companion' }]);
+  assert.equal(broadcasts.length, 1);
+  assert.deepEqual(broadcasts[0], {
+    t: 'prStatus.changed',
+    repo: 'moxxy-ai/companion',
+    number: 26,
+    status: {
+      checks: store.cached[0].snapshot,
+      reviewDecision: null,
+      mergeable: null,
+      mergeStateStatus: null,
+    },
+  });
+});
+
+test('a live refresh broadcasts the complete status patch for one PR', async () => {
+  const rows = new Map([[26, openPr(26)]]);
+  const store = recordingStore(rows);
+  const client = {
+    checkRuns: async () => [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'success',
+        details_url: 'https://example.test/checks/1',
+        started_at: null,
+        completed_at: null,
+      },
+    ],
+    combinedStatus: async () => null,
+    pull: async () => ({ mergeable: false, mergeable_state: 'dirty' }),
+    prReviewList: async () => [
+      { state: 'CHANGES_REQUESTED', user: { login: 'reviewer' } },
+    ],
+  };
+  const broadcasts = [];
+  const checks = new PrChecks(store, () => client, (msg) => broadcasts.push(msg));
+
+  await checks.fetchSummary('moxxy-ai/companion', 26, 'maintainer');
+
+  assert.equal(broadcasts.length, 1);
+  assert.deepEqual(broadcasts[0], {
+    t: 'prStatus.changed',
+    repo: 'moxxy-ai/companion',
+    number: 26,
+    status: {
+      checks: store.cached[0].snapshot,
+      reviewDecision: 'changes_requested',
+      mergeable: false,
+      mergeStateStatus: 'dirty',
+    },
+  });
 });

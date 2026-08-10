@@ -115,7 +115,9 @@ test('a remote runner executes a run under the built-in runtime', async (t) => {
   assert.equal(runtime.state, 'ready', 'a machine with its own model is ready');
 
   const events = [];
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/agent/events?token=${TOKEN}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/agent/events`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
   const streamed = new Promise((resolve) => {
     ws.on('message', (raw) => {
       const msg = JSON.parse(raw.toString());
@@ -272,7 +274,9 @@ process.stdin.on('data', (chunk) => {
   assert.ok(health, 'the runner came up');
 
   const events = [];
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/agent/events?token=${TOKEN}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/agent/events`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
   const streamed = new Promise((resolve) => {
     ws.on('message', (raw) => {
       const msg = JSON.parse(raw.toString());

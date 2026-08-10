@@ -14,8 +14,11 @@ import {
   ModuleAlreadyAddedError,
   notFound,
   removeModule,
+  Reply,
+  sessionCookie,
+  clearSessionCookie,
 } from '@moxxy/companion-core/server';
-import { paths, planRestart, restartDaemon } from '@moxxy/companion-services';
+import { isLoopbackHost, paths, planRestart, restartDaemon } from '@moxxy/companion-services';
 import { NAV_AUDIENCES, NAV_PERSPECTIVES, type Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
@@ -45,6 +48,7 @@ const setupSchema = z.object({
   username: z.string().regex(USERNAME_RE, 'letters, digits, dots, dashes (2-40 chars)'),
   email: z.string().email().max(200),
   password: z.string().min(8).max(500),
+  bootstrapToken: z.string().min(32).max(500),
 });
 const createUserSchema = z.object({
   username: z.string().regex(USERNAME_RE, 'letters, digits, dots, dashes (2-40 chars)'),
@@ -119,16 +123,19 @@ const createApiTokenSchema = z.object({
   expiresInDays: z.number().int().min(1).max(365),
 });
 
-/** Only these mean "nothing but this machine can connect". */
-function isLoopbackHost(host: string): boolean {
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
-}
-
 export default defineRoutes((ctx) => {
   const auth = ctx.services.get('core');
   const roles = ctx.services.get('roles');
   const audit = ctx.services.get('audit');
   const settings = ctx.services.get('settings');
+  const secureCookie = ctx.config.publicUrl?.startsWith('https://') === true;
+  const browserSession = (session: { token: string; user: LoginResponse['user']; expiresAt: number }): Reply =>
+    new Reply(
+      200,
+      { user: session.user, expiresAt: session.expiresAt } satisfies LoginResponse,
+      undefined,
+      { 'set-cookie': sessionCookie(session.token, session.expiresAt, secureCookie), 'cache-control': 'no-store' },
+    );
   /** Serialises `add`: two of them would interleave a delete and a copy in one
    *  directory, and the loser would leave half a module on disk. */
   let adding = false;
@@ -153,12 +160,7 @@ export default defineRoutes((ctx) => {
       access: 'public',
       handler: (): AuthState => ({
         setup: auth.setupNeeded(),
-        // Re-checked per request, not remembered from boot: an operator who
-        // rebinds to 0.0.0.0 must stop handing the admin password to whoever
-        // asks, without having to remember to clear anything.
-        ...(isLoopbackHost(ctx.config.host) && auth.localSeed()
-          ? { localCredentials: auth.localSeed()! }
-          : {}),
+        authMode: ctx.config.authMode,
         version: ctx.appVersion,
         branding: { name: settings.get('branding.name') || null, logo: settings.get('branding.logo') || null },
         githubHost: ctx.config.github.host,
@@ -167,13 +169,27 @@ export default defineRoutes((ctx) => {
     }),
     route({
       method: 'POST',
+      path: '/api/auth/local-session',
+      access: 'public',
+      handler: (): Reply => {
+        // Defense in depth: config loading already refuses this combination,
+        // but this route owns an admin-equivalent credential and rechecks both
+        // halves at the point of issuance.
+        if (ctx.config.authMode !== 'local' || !isLoopbackHost(ctx.config.host)) {
+          throw new AuthError('local session bootstrap is disabled', 403);
+        }
+        return browserSession(auth.localSession());
+      },
+    }),
+    route({
+      method: 'POST',
       path: '/api/auth/setup',
       access: 'public',
       body: setupSchema,
-      handler: ({ body }): LoginResponse => {
-        const session = auth.setup(body.username, body.email, body.password);
+      handler: ({ body }): Reply => {
+        const session = auth.setup(body.username, body.email, body.password, body.bootstrapToken);
         ctx.bus.emit('auth.setup.completed', { username: session.user.username });
-        return session;
+        return browserSession(session);
       },
     }),
     route({
@@ -181,15 +197,19 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/login',
       access: 'public',
       body: loginSchema,
-      handler: ({ body }): LoginResponse => auth.login(body.username, body.password),
+      handler: ({ body, clientAddress }): Reply =>
+        browserSession(auth.login(body.username, body.password, clientAddress)),
     }),
     route({
       method: 'POST',
       path: '/api/auth/logout',
       access: 'any',
-      handler: ({ token }) => {
+      handler: ({ token }): Reply => {
         if (token) auth.logout(token);
-        return { ok: true };
+        return new Reply(200, { ok: true }, undefined, {
+          'set-cookie': clearSessionCookie(secureCookie),
+          'cache-control': 'no-store',
+        });
       },
     }),
     route({

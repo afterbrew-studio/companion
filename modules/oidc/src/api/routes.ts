@@ -1,4 +1,4 @@
-import { defineRoutes, route, Reply, badRequest, redirect } from '@moxxy/companion-sdk/server';
+import { defineRoutes, route, Reply, badRequest, redirect, sessionCookie } from '@moxxy/companion-sdk/server';
 import { OidcClient } from './oidc-client.js';
 import '../contract/index.js';
 
@@ -102,13 +102,15 @@ export default defineRoutes((ctx) => {
           detail: `signed in via ${ctx.moduleConfig.get('issuer') as string} as ${identity.username}`,
         });
 
-        // The SPA reads its session from localStorage under this exact key
-        // (`TOKEN_KEY` in @moxxy/companion-core/client), so hand it over in a page it
-        // controls rather than a cookie the app does not use.
-        return html(
-          `<script>localStorage.setItem('companion.session', ${scriptJson(session.token)});` +
-            `location.replace(${scriptJson(returnTo)});</script>` +
-            `<noscript>Signed in. <a href="${escapeHtml(returnTo)}">Continue</a>.</noscript>`,
+        return new Reply(
+          302,
+          '',
+          'text/plain; charset=utf-8',
+          {
+            location: returnTo,
+            'set-cookie': sessionCookie(session.token, session.expiresAt, redirectUri().startsWith('https://')),
+            'cache-control': 'no-store',
+          },
         );
       },
     }),
@@ -117,10 +119,6 @@ export default defineRoutes((ctx) => {
 
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
-/** JSON embedded in a script element must not be able to close that element. */
-const scriptJson = (value: string): string =>
-  JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
 /** Normalize a callback target and reject URL-parser backslash/control tricks. */
 export function safeReturnTo(raw: string): string {

@@ -1,4 +1,4 @@
-import type { ScopeResolver } from '@moxxy/companion-sdk/server';
+import type { ModuleContext, ScopeResolver } from '@moxxy/companion-sdk/server';
 
 /**
  * Who may see a pipeline step's live output.
@@ -18,5 +18,22 @@ export function createStepOutputScopeResolver(): ScopeResolver {
   return (msg) => {
     if (msg.t !== 'pipelineStep.output') return null;
     return (username: string): boolean => username === msg.ownerId;
+  };
+}
+
+/**
+ * A status patch contains repository state rather than a content-free change
+ * signal, so it follows the same permission + workspace boundary as the PR
+ * route that would otherwise return it.
+ */
+export function createPrStatusScopeResolver(ctx: ModuleContext): ScopeResolver {
+  return (msg) => {
+    if (msg.t !== 'prStatus.changed') return null;
+    return (username: string): boolean => {
+      const role = ctx.services.get('core').activeUserRole(username);
+      if (!role) return false;
+      const user = { username, displayName: username, role };
+      return ctx.rbac.allows(user, 'prs:read') && ctx.services.get('workspace').canAccessRepo(user, msg.repo);
+    };
   };
 }

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { AuthMode } from '@moxxy/companion-contracts';
 
 const execFileP = promisify(execFile);
 
@@ -14,7 +15,15 @@ export interface LocalGhAccount {
  * runtime credential fallback and the token is never logged or written outside
  * the account store.
  */
-export async function readActiveLocalGhAccount(host = 'github.com'): Promise<LocalGhAccount | null> {
+export async function readActiveLocalGhAccount(
+  host = 'github.com',
+  authMode: AuthMode = 'password',
+): Promise<LocalGhAccount | null> {
+  // Importing the host operator's credential is a convenience of the trusted,
+  // loopback-only npx appliance. In password mode the first administrator may
+  // be a remote person and must never inherit whoever happens to own the host's
+  // gh keyring. Defaulting to password makes future callers fail closed.
+  if (authMode !== 'local') return null;
   if (process.env.COMPANION_IMPORT_LOCAL_GH === 'false') return null;
   try {
     const { stdout: raw } = await execFileP(

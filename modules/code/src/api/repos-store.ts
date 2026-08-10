@@ -7,7 +7,10 @@ export class ReposStore {
   constructor(
     private readonly db: Database,
     private readonly workspaces: ServiceMap['workspace'],
-  ) {}
+    private readonly secrets: RepoSecrets,
+  ) {
+    this.migratePlaintextWebhookSecrets();
+  }
 
   upsert(repo: {
     fullName: string;
@@ -134,17 +137,23 @@ export class ReposStore {
   }
 
   setWebhookSecret(fullName: string, secret: string | null): void {
-    this.db.prepare(`UPDATE repos SET webhook_secret = ? WHERE full_name = ?`).run(secret, fullName);
+    if (secret === null) this.secrets.delete(webhookKey(fullName));
+    else this.secrets.set(webhookKey(fullName), secret);
+    this.db.prepare(`UPDATE repos SET webhook_secret = ? WHERE full_name = ?`).run(
+      secret === null ? null : SECRET_MARKER,
+      fullName,
+    );
   }
 
   setWebhookRegistration(fullName: string, secret: string, ownerId: string, accountId: string): void {
+    this.secrets.set(webhookKey(fullName), secret);
     this.db
       .prepare(
         `UPDATE repos
          SET webhook_secret = ?, webhook_owner_id = ?, webhook_account_id = ?
          WHERE full_name = ?`,
       )
-      .run(secret, ownerId, accountId, fullName);
+      .run(SECRET_MARKER, ownerId, accountId, fullName);
   }
 
   setWebhookRemote(fullName: string, remoteId: number | null, error: string | null): void {
@@ -164,11 +173,15 @@ export class ReposStore {
          WHERE full_name = ?`,
       )
       .run(fullName);
+    this.secrets.delete(webhookKey(fullName));
   }
 
   /** Disconnecting the owning account invalidates the registration. The next
    * owner gets a fresh secret and must update the hook on GitHub. */
   orphanWebhookRegistrationsForAccount(accountId: string): void {
+    const repos = this.db
+      .prepare(`SELECT full_name FROM repos WHERE webhook_account_id = ?`)
+      .all(accountId) as Array<{ full_name: string }>;
     this.db
       .prepare(
         `UPDATE repos SET webhook_secret = NULL, webhook_owner_id = NULL, webhook_account_id = NULL,
@@ -176,6 +189,7 @@ export class ReposStore {
          WHERE webhook_account_id = ?`,
       )
       .run(accountId);
+    for (const repo of repos) this.secrets.delete(webhookKey(repo.full_name));
   }
 
   getWebhookRegistration(fullName: string): {
@@ -198,22 +212,21 @@ export class ReposStore {
         remoteId: number | null;
         remoteError: string | null;
       } | undefined;
-    return row?.secret
-      ? {
-          secret: row.secret,
-          ownerId: row.ownerId,
-          accountId: row.accountId,
-          remoteId: row.remoteId,
-          remoteError: row.remoteError,
-        }
-      : null;
+    if (!row?.secret) return null;
+    return {
+      secret: this.requiredWebhookSecret(fullName),
+      ownerId: row.ownerId,
+      accountId: row.accountId,
+      remoteId: row.remoteId,
+      remoteError: row.remoteError,
+    };
   }
 
   getWebhookSecret(fullName: string): string | null {
     const row = this.db.prepare(`SELECT webhook_secret FROM repos WHERE full_name = ?`).get(fullName) as
       | { webhook_secret: string | null }
       | undefined;
-    return row?.webhook_secret ?? null;
+    return row?.webhook_secret ? this.requiredWebhookSecret(fullName) : null;
   }
 
   setGithubAccount(fullName: string, accountId: string | null): void {
@@ -258,6 +271,7 @@ export class ReposStore {
   }
 
   removeFromWorkspace(fullName: string, workspaceId: string): void {
+    let removedRepo = false;
     const remove = this.db.transaction(() => {
       this.db.prepare(`DELETE FROM repo_workspaces WHERE repo = ? AND workspace_id = ?`).run(fullName, workspaceId);
       const next = this.db
@@ -270,10 +284,43 @@ export class ReposStore {
       this.db.prepare(`DELETE FROM issues WHERE repo = ?`).run(fullName);
       this.db.prepare(`DELETE FROM prs WHERE repo = ?`).run(fullName);
       this.db.prepare(`DELETE FROM repos WHERE full_name = ?`).run(fullName);
+      removedRepo = true;
     });
     remove();
+    if (removedRepo) this.secrets.delete(webhookKey(fullName));
+  }
+
+  private requiredWebhookSecret(fullName: string): string {
+    const secret = this.secrets.get(webhookKey(fullName));
+    if (secret === null || secret === '') throw new Error(`webhook secret for ${fullName} is unavailable`);
+    return secret;
+  }
+
+  /** Move webhook HMAC keys written by releases before encrypted storage. */
+  private migratePlaintextWebhookSecrets(): void {
+    const rows = this.db
+      .prepare(`SELECT full_name, webhook_secret FROM repos WHERE webhook_secret IS NOT NULL`)
+      .all() as Array<{ full_name: string; webhook_secret: string }>;
+    const mark = this.db.prepare(`UPDATE repos SET webhook_secret = ? WHERE full_name = ?`);
+    for (const row of rows) {
+      if (row.webhook_secret !== SECRET_MARKER) {
+        this.secrets.set(webhookKey(row.full_name), row.webhook_secret);
+      } else {
+        this.requiredWebhookSecret(row.full_name);
+      }
+      mark.run(SECRET_MARKER, row.full_name);
+    }
   }
 }
+
+interface RepoSecrets {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+}
+
+const SECRET_MARKER = 'companion-secret:v1';
+const webhookKey = (fullName: string): string => `repo-webhook:${fullName}`;
 
 export interface RepoRow {
   full_name: string;

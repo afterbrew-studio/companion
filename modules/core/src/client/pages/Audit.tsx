@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getToken } from '@moxxy/companion-core/client';
 import {
   EmptyState,
   ErrorBar,
@@ -169,17 +168,12 @@ function ForwardingLine({ state }: { state: ForwarderState }): JSX.Element {
 }
 
 /**
- * Fetch the export with the session in a HEADER and hand the browser a blob.
- *
- * The obvious alternative was an <a href> with the token in the query string,
- * which would have put a live session token into browser history, any proxy log
- * and the daemon's own access log. A download is not worth that.
+ * Fetch the export with the browser's HttpOnly session cookie and hand it a blob.
  */
 async function downloadExport(since: number | undefined, onError: (message: string) => void): Promise<void> {
-  const token = getToken();
   try {
     const res = await fetch(`/api/audit/export${since === undefined ? '' : `?since=${since}`}`, {
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+      credentials: 'same-origin',
     });
     if (!res.ok) throw new Error(`export failed: ${res.status} ${res.statusText}`.trim());
     const url = URL.createObjectURL(await res.blob());

@@ -100,8 +100,8 @@ export default defineServices((ctx) => {
   const triageStore = new TriageStore(ctx.db);
   const prReviewsStore = new PrReviewsStore(ctx.db);
   const prReviewFindingsStore = new PrReviewFindingsStore(ctx.db);
-  const githubAccountsStore = new GithubAccountsStore(ctx.db);
-  const reposStore = new ReposStore(ctx.db, workspace);
+  const githubAccountsStore = new GithubAccountsStore(ctx.db, ctx.secrets);
+  const reposStore = new ReposStore(ctx.db, workspace, ctx.secrets);
   const issuesStore = new IssuesStore(ctx.db, triageStore, githubAccountsStore);
   const prsStore = new PrsStore(ctx.db, prReviewsStore, githubAccountsStore);
   const pipelinesStore = new PipelinesStore(ctx.db);
@@ -141,7 +141,7 @@ export default defineServices((ctx) => {
   const importActiveLocalGh = async (): Promise<boolean> => {
     const primaryAdmin = ctx.services.get('core').primaryAdminUsername();
     if (!primaryAdmin) return false;
-    const localGh = await readActiveLocalGhAccount(ctx.config.github.host);
+    const localGh = await readActiveLocalGhAccount(ctx.config.github.host, ctx.config.authMode);
     if (!localGh) return false;
     try {
       const connected = await ghAccounts.add(

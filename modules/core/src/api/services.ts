@@ -1,4 +1,5 @@
 import { defineServices } from '@moxxy/companion-core/server';
+import { paths } from '@moxxy/companion-services';
 import { SettingsStore } from './settings-store.js';
 import { SessionsStore } from './sessions-store.js';
 import { ApiTokensStore } from './api-tokens-store.js';
@@ -28,8 +29,18 @@ export default defineServices((ctx) => {
   // Legacy .env accounts seed an EMPTY user store once; afterwards the Users
   // module owns accounts. A clean install with no .env runs SPA onboarding.
   auth.seedFromEnv(ctx.config.users);
-  if (auth.setupNeeded()) {
-    ctx.log.info('no accounts yet — first-boot onboarding is waiting in the browser');
+  if (ctx.config.authMode === 'local') {
+    const seeded = auth.seedLocalAdmin();
+    if (seeded) ctx.log.info(`trusted local mode: created internal superadmin '${seeded}'`);
+  } else if (auth.setupNeeded()) {
+    const source = auth.prepareBootstrap(ctx.config.bootstrapToken ?? null, paths.bootstrapToken());
+    ctx.log.info(
+      source === 'environment'
+        ? 'no accounts yet — first-boot onboarding requires COMPANION_BOOTSTRAP_TOKEN'
+        : `no accounts yet — first-boot token written to ${paths.bootstrapToken()}`,
+    );
+  } else {
+    auth.prepareBootstrap(null, paths.bootstrapToken());
   }
   ctx.services.register('roles', roles);
   // Same instance the kernel writes through via provideAudit; registering it

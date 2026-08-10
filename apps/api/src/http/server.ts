@@ -1,7 +1,9 @@
 import { createServer, type Server } from 'node:http';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { log } from '@moxxy/companion-services';
+import { isTrustedLocalHttpRequest, log } from '@moxxy/companion-services';
+import type { AuthMode } from '@moxxy/companion-contracts';
 import type { ModuleKernel, WsHub } from '@moxxy/companion-core/server';
 
 const MIME: Record<string, string> = {
@@ -25,17 +27,35 @@ const MIME: Record<string, string> = {
 export function startHttpServer(opts: {
   host: string;
   port: number;
+  authMode: AuthMode;
   kernel: ModuleKernel;
   hub: WsHub;
   /** Directory of the built SPA (apps/web/dist); optional in dev. */
   staticDir?: string;
   /** Out-of-tree module id -> absolute path of its prebuilt browser chunk. */
   moduleChunks?: ReadonlyMap<string, string>;
+  /** Enables Secure cookies/HSTS when TLS terminates at the reverse proxy. */
+  publicUrl?: string;
 }): Promise<Server> {
-  const { host, port, kernel, hub, staticDir, moduleChunks } = opts;
+  const { host, port, authMode, kernel, hub, staticDir, moduleChunks, publicUrl } = opts;
+  const inlineScriptHashes = staticDir ? cspInlineScriptHashes(join(staticDir, 'index.html')) : [];
 
   const server = createServer((req, res) => {
+    setSecurityHeaders(req, res, publicUrl, inlineScriptHashes);
     const path = (req.url ?? '/').split('?')[0] ?? '/';
+    if (authMode === 'local' && path === '/api/auth/local-session' && !isTrustedLocalHttpRequest({
+      host: req.headers.host,
+      origin: singleHeader(req.headers.origin),
+      secFetchSite: singleHeader(req.headers['sec-fetch-site']),
+    })) {
+      const body = '{"error":"local session bootstrap requires a loopback browser origin"}';
+      res.writeHead(403, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      });
+      res.end(body);
+      return;
+    }
     // Unauthenticated liveness probe for Docker/Coolify/uptime monitors.
     if (path === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -84,6 +104,54 @@ export function startHttpServer(opts: {
       resolve(server);
     });
   });
+}
+
+function setSecurityHeaders(
+  req: import('node:http').IncomingMessage,
+  res: import('node:http').ServerResponse,
+  publicUrl: string | undefined,
+  inlineScriptHashes: readonly string[],
+): void {
+  const authority = /^[a-z0-9.\-\[\]:]+$/i.test(req.headers.host ?? '') ? req.headers.host! : 'localhost';
+  res.setHeader(
+    'content-security-policy',
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      `script-src 'self'${inlineScriptHashes.map((hash) => ` '${hash}'`).join('')}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      `connect-src 'self' ws://${authority} wss://${authority}`,
+      "font-src 'self'",
+    ].join('; '),
+  );
+  res.setHeader('referrer-policy', 'no-referrer');
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  res.setHeader('cross-origin-resource-policy', 'same-origin');
+  if (publicUrl?.startsWith('https://')) {
+    res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+/** Vite injects one inline import map. Hash the exact built bytes instead of
+ * weakening script-src with unsafe-inline. */
+function cspInlineScriptHashes(indexFile: string): string[] {
+  if (!existsSync(indexFile)) return [];
+  const html = readFileSync(indexFile, 'utf8');
+  const hashes: string[] = [];
+  for (const match of html.matchAll(/<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    hashes.push(`sha256-${createHash('sha256').update(match[1] ?? '').digest('base64')}`);
+  }
+  return hashes;
+}
+
+function singleHeader(value: string | readonly string[] | undefined): string | undefined {
+  return typeof value === 'string' ? value : value?.[0];
 }
 
 function serveStatic(root: string, path: string, res: import('node:http').ServerResponse): void {

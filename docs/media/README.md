@@ -7,10 +7,10 @@ workspace, so nothing here has to be redacted before it ships.
 | File | Source |
 | --- | --- |
 | `cli.gif` | `cli.tape`, a [VHS](https://github.com/charmbracelet/vhs) script. `vhs docs/media/cli.tape` |
-| `overview.png`, `modules.png` | `scripts/demo-shots.mjs`, headless Chrome over CDP at 1440×900 @2x |
+| `overview.png` | `scripts/demo-shots.mjs`, headless Chrome over CDP at 1440×900 @2x |
 | `tour.gif` | the same script: the shots marked `tour` in its `SHOTS` list, held ~2.6s each and assembled with ffmpeg |
 
-Stills are for the two places a reader needs to stop and read; everything else
+The still is for the place a reader needs to stop and read; everything else
 is a frame of the tour, and those frames are written to `/tmp` rather than here,
 because only the GIF they build is worth committing.
 

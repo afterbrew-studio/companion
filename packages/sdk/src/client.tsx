@@ -6,7 +6,7 @@
  * each module page stays its own lazy chunk. There is no `dist` here to import.
  *
  * Absent on purpose: `ModulesProvider`, `compileRoutes` / `matchRoute`,
- * `connectWs` / `disconnectWs`, `setToken` / `emitAuthChanged` / `refreshAuth`
+ * `connectWs` / `disconnectWs`, browser-session state / auth transition helpers
  * and `passesFreshFilters`. Those are the shell: the socket lifecycle, the route
  * compiler, and the auth transitions module-core owns. A feature module reads
  * state and contributes registrations; it does not drive the host.

@@ -7,6 +7,7 @@ import {
   InstanceLock,
   installOutboundProxy,
   loadDaemonConfig,
+  loadSecretEncryptionKey,
   log,
   paths,
 } from '@moxxy/companion-services';
@@ -43,17 +44,21 @@ async function main(): Promise<void> {
   log.info(`accounts: ${config.users.map((u) => `${u.username} (${u.role})`).join(', ')}`);
   log.info('agent model selection: runtime default unless explicitly pinned');
 
-  // An admin-requested database recreation is honored here, before the handle
-  // opens: the previous process dropped the marker and exited; this boot starts
-  // from a clean slate and first-boot setup runs again.
-  if (consumePendingDbRecreate()) log.warn('recreate-db marker found — starting with a fresh database');
-
-  // Before the database opens: one daemon per COMPANION_HOME. Companion is a
+  // Before creating the encryption key or touching the database: one daemon
+  // per COMPANION_HOME. Companion is a
   // single-node appliance and the home holds clones, worktrees and the moxxy
   // home, so a second daemon would duplicate every scheduled job and fight over
-  // the same checkouts. Refuse rather than corrupt.
+  // the same checkouts. Taking the lock first also prevents two first boots from
+  // racing to create different keys, or a second process consuming a live
+  // daemon's recreate marker.
   const lock = new InstanceLock();
   await lock.acquire();
+
+  const secretEncryptionKey = loadSecretEncryptionKey();
+  // An admin-requested database recreation is honored before the handle opens:
+  // the previous process dropped the marker and exited; this boot starts from a
+  // clean slate and first-boot setup runs again.
+  if (consumePendingDbRecreate()) log.warn('recreate-db marker found — starting with a fresh database');
 
   const dbPath = paths.db();
   const db = new Database(dbPath);
@@ -94,6 +99,7 @@ async function main(): Promise<void> {
     db,
     log,
     config,
+    secretEncryptionKey,
     modules: [...MODULES, ...external],
     broadcast: (msg) => hub.broadcast(msg),
     pushToUser: (username, msg) => hub.sendToUser(username, msg),
@@ -107,10 +113,12 @@ async function main(): Promise<void> {
   const server = await startHttpServer({
     host: config.host,
     port: config.port,
+    authMode: config.authMode,
     kernel,
     hub,
     staticDir: existsSync(join(builtSpa, 'index.html')) ? builtSpa : undefined,
     moduleChunks,
+    publicUrl: config.publicUrl,
   });
 
   let shuttingDown = false;

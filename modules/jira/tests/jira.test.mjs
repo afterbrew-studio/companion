@@ -21,6 +21,7 @@ test('Jira credentials can only be sent to an HTTPS origin', () => {
   assert.throws(() => new JiraCloudClient(connection('http://jira.internal')), /must be an HTTPS origin/);
   assert.throws(() => new JiraCloudClient(connection('https://user:pass@example.test')), /without embedded credentials/);
   assert.throws(() => new JiraCloudClient(connection('https://acme.atlassian.net/path')), /must be the site origin/);
+  assert.throws(() => new JiraCloudClient(connection('https://jira.internal.example/')), /atlassian\.net hostname/);
   assert.doesNotThrow(() => new JiraCloudClient(connection('https://acme.atlassian.net/')));
 });
 

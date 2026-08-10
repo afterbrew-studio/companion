@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type {
+  AuthMode,
   AuthUser,
   NavigationAudience,
   NavigationPageOverride,
@@ -15,6 +16,8 @@ interface AuthState {
   readonly user: AuthUser | null | undefined;
   /** Clean install: first-boot onboarding must run before anything else. */
   readonly needsSetup: boolean;
+  /** Local installs bootstrap a real session without showing credential UI. */
+  readonly authMode: AuthMode;
   readonly permissions: readonly Permission[];
   /** Effective inbox scope (per-user override ?? instance default). */
   readonly notificationScope: NotificationScope;
@@ -36,8 +39,6 @@ interface AuthState {
   readonly githubHost: string;
   /** Alternative sign-in methods contributed by identity modules; empty by default. */
   readonly providers: readonly AuthProvider[];
-  /** Shown on the sign-in screen when a loopback-only boot seeded an account. */
-  readonly localCredentials: { readonly username: string; readonly password: string } | null;
   /** Local update after saving branding in Settings — no refetch needed. */
   readonly setBranding: (b: InstanceBranding) => void;
   readonly can: (permission: Permission) => boolean;
@@ -50,6 +51,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('password');
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [notificationScope, setNotificationScope] = useState<NotificationScope>('workspace');
   const [navOverrides, setNavOverridesState] = useState<readonly NavigationPageOverride[]>([]);
@@ -58,7 +60,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [version, setVersion] = useState<string | null>(null);
   const [githubHost, setGithubHost] = useState('github.com');
   const [providers, setProviders] = useState<readonly AuthProvider[]>([]);
-  const [localCredentials, setLocalCredentials] = useState<{ username: string; password: string } | null>(null);
 
   // The uploaded logo becomes the favicon (falling back to the bundled letter
   // tile from index.html). The tab title is route-aware and owned by the
@@ -72,13 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, [branding]);
 
   const resolve = useCallback(async () => {
+    let resolvedAuthMode: AuthMode = 'password';
     try {
       const state = await authApi.state();
+      resolvedAuthMode = state.authMode;
       setBranding(state.branding);
       setVersion(state.version);
       setGithubHost(state.githubHost);
       setProviders(state.providers);
-      setLocalCredentials(state.localCredentials ?? null);
+      setAuthMode(state.authMode);
       setNeedsSetup(state.setup);
       if (state.setup) {
         setUser(null);
@@ -88,13 +91,18 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     } catch {
       // daemon unreachable — fall through; login screen surfaces it
     }
-    if (!authApi.hasSession()) {
-      setUser(null);
-      setPermissions([]);
-      return;
-    }
     try {
-      const session = await authApi.me();
+      let session: Awaited<ReturnType<typeof authApi.me>>;
+      try {
+        // The cookie is HttpOnly, so the only truthful way to know whether it
+        // exists is to ask the server. A reload therefore starts with `/me`,
+        // never with a mirror in localStorage.
+        session = await authApi.me();
+      } catch {
+        if (resolvedAuthMode !== 'local') throw new Error('signed out');
+        await authApi.localSession();
+        session = await authApi.me();
+      }
       setUser(session.user);
       setPermissions(session.permissions);
       setNotificationScope(session.notificationScope);
@@ -104,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setNavPerspectiveState(session.navPerspective ?? 'auto');
       connectWs();
     } catch {
-      // 401 handling in the net core already cleared the token.
+      // 401 handling in the net core already closed the live socket.
       setUser(null);
       setPermissions([]);
     }
@@ -171,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       value={{
         user,
         needsSetup,
+        authMode,
         permissions,
         notificationScope,
         navOverrides,
@@ -183,7 +192,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         setBranding,
         githubHost,
         providers,
-        localCredentials,
         can,
         login,
         logout,
