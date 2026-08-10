@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion-sdk",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "The public module-authoring surface for Companion.",
   "type": "module",
   "main": "./dist/index.js",
@@ -54,7 +54,7 @@
     "typescript": "^5.8.0"
   },
   "peerDependencies": {
-    "@moxxy/companion-contracts": "^0.5.2",
+    "@moxxy/companion-contracts": "^0.5.3",
     "react": "^18.3.1"
   },
   "sideEffects": false,
