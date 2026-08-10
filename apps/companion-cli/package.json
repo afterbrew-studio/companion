@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "description": "A self-hosted maintainer dashboard that runs your GitHub repositories with AI agents.",
   "type": "module",
   "license": "MIT",
