@@ -29,7 +29,9 @@
     }
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "src/index.ts",
     "src/client.tsx",
     "src/ui.ts"
   ],

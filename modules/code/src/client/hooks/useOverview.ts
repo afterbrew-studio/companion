@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import { request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
+import { onServerMessage, request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunListRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
@@ -115,7 +115,11 @@ function useFeed<T>(
   id: string | null,
   fetcher: (ws: string) => Promise<T>,
   when: (msg: SpaServerMessage) => boolean,
-): { data: T | null; error: string | null } {
+): {
+  data: T | null;
+  error: string | null;
+  patch: (update: (current: T) => T) => void;
+} {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const requestSequence = useRef(0);
@@ -139,7 +143,10 @@ function useFeed<T>(
     }
   }, [id, fetcher]);
   useLive(refresh, when);
-  return { data, error };
+  const patch = useCallback((update: (current: T) => T): void => {
+    setData((current) => current === null ? null : update(current));
+  }, []);
+  return { data, error, patch };
 }
 
 export function useOverview(): UseOverview {
@@ -168,6 +175,19 @@ export function useOverview(): UseOverview {
   const reports = useFeed(id, fetchReports, (m) => m.t === 'reports.changed');
   const pendingReviews = useFeed(id, fetchPendingReviews, (m) => m.t === 'prs.changed');
   const pendingTriage = useFeed(id, fetchPendingTriage, (m) => m.t === 'triage.changed' || m.t === 'issues.changed');
+
+  // CI/review warm-up can land dozens of snapshots in quick succession. Fold
+  // each one into the already loaded Overview feed instead of refetching the
+  // same 100-row window for every status event.
+  useEffect(() => onServerMessage((msg) => {
+    if (msg.t !== 'prStatus.changed') return;
+    prs.patch((current) => ({
+      ...current,
+      prs: current.prs.map((pr) =>
+        pr.repo === msg.repo && pr.number === msg.number ? { ...pr, ...msg.status } : pr,
+      ),
+    }));
+  }), [prs.patch]);
 
   const error =
     issues.error ??

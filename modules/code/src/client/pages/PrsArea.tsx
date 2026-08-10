@@ -17,7 +17,6 @@ import {
   Page,
   PageHeader,
   RowsSkeleton,
-  rowDelay,
   useSettledFlag,
   SearchInput,
   Tabs,
@@ -270,11 +269,10 @@ export function PrsAreaPage(): JSX.Element {
         <ListCard className="mt-3" ariaLabel="Pull request list">
           {settling && prs.length === 0 ? <RowsSkeleton rows={6} /> : null}
           {!loading ? unavailable.map((repo) => <RepoUnavailableRow key={repo} repo={repo} />) : null}
-          {prs.map((pr, i) => (
+          {prs.map((pr) => (
             <a
               key={`${pr.repo}#${pr.number}`}
-              style={rowDelay(i)}
-              className="row-link group/row row-in"
+              className="row-link group/row"
               href={`#/repos/${pr.repo}/prs/${pr.number}`}
               onContextMenu={(e) => {
                 e.preventDefault();

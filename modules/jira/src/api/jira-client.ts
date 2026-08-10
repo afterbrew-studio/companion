@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { withPublicHttpResponse } from '@moxxy/companion-sdk/server';
 import type { IntegrationConnectionAccess } from '@companion/module-integrations/provider';
 import type { JiraIssueSnapshot, JiraTransition } from '../contract/index.js';
 
@@ -98,27 +99,32 @@ export class JiraCloudClient {
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        authorization: this.authorization,
-        ...(init.headers ?? {}),
+    return withPublicHttpResponse(
+      `${this.baseUrl}${path}`,
+      {
+        ...init,
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: this.authorization,
+          ...(init.headers ?? {}),
+        },
+        signal: AbortSignal.timeout(15_000),
+        redirect: 'manual',
       },
-      signal: AbortSignal.timeout(15_000),
-      redirect: 'manual',
-    });
-    const text = await readBoundedText(response, 2_000_000);
-    if (!response.ok) {
-      throw new Error(`Jira returned ${response.status}: ${jiraError(text)}`);
-    }
-    if (!text.trim()) return null;
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      throw new Error('Jira returned invalid JSON');
-    }
+      async (response) => {
+        const text = await readBoundedText(response, 2_000_000);
+        if (!response.ok) {
+          throw new Error(`Jira returned ${response.status}: ${jiraError(text)}`);
+        }
+        if (!text.trim()) return null;
+        try {
+          return JSON.parse(text) as unknown;
+        } catch {
+          throw new Error('Jira returned invalid JSON');
+        }
+      },
+    );
   }
 }
 
@@ -134,6 +140,9 @@ export function jiraSiteOrigin(baseUrl: string): string {
   }
   if (site.pathname !== '/' || site.search || site.hash) {
     throw new Error('Jira site URL must be the site origin, for example https://company.atlassian.net');
+  }
+  if (!site.hostname.toLowerCase().endsWith('.atlassian.net')) {
+    throw new Error('Jira Cloud site must use an atlassian.net hostname');
   }
   return site.origin;
 }

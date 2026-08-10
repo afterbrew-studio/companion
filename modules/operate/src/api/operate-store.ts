@@ -23,10 +23,11 @@ export class OperateStore {
   constructor(
     private readonly db: Database,
     readonly settings: { get(key: string): string | null; set(key: string, value: string): void },
+    secrets: { get(key: string): string | null; set(key: string, value: string): void; delete(key: string): void },
   ) {
     this.runs = new RunsStore(db);
     this.runQueue = new RunQueueStore(db);
-    this.runners = new RunnersStore(db);
+    this.runners = new RunnersStore(db, secrets);
   }
 
   readonly repos = {

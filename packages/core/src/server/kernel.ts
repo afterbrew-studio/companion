@@ -38,6 +38,8 @@ export interface KernelOptions {
   readonly db: Database;
   readonly log: Logger;
   readonly config: DaemonConfig;
+  /** 32-byte key loaded outside SQLite; never exposed through ModuleContext. */
+  readonly secretEncryptionKey: Buffer;
   readonly modules: readonly InstalledModule[];
   /** Browser push, backed by the app's WebSocket hub. */
   readonly broadcast: (msg: SpaServerMessage) => void;
@@ -112,7 +114,12 @@ export class ModuleKernel {
       if (keys.length) secretFields.set(m.manifest.id, new Set(keys));
     }
     this.secretFields = secretFields;
-    this.moduleConfig = new ModuleConfigStore(this.db, (id, key) => this.isSecretField(id, key));
+    this.moduleConfig = new ModuleConfigStore(
+      this.db,
+      opts.secretEncryptionKey,
+      (id, key) => this.isSecretField(id, key),
+    );
+    this.moduleConfig.migrateSecrets([...this.installed.keys()]);
 
     // `settings` is provided by module-core, `notifications` by module-workspace —
     // both required, so these resolve for the whole normal lifetime. If a target
@@ -176,11 +183,11 @@ export class ModuleKernel {
 
   /**
    * A `kind: 'secret'` field routes to the SecretStore instead of the config
-   * table. The provider's own fields are exempt: they are the credentials for
-   * the backend, so they cannot be kept inside it.
+   * table. A provider's own credentials remain in the encrypted local store
+   * through RetainedSecretStore, because it cannot keep the key needed to reach
+   * itself inside that backend.
    */
   private isSecretField(id: string, key: string): boolean {
-    if (id === this.secretProvider) return false;
     // Run-time keys a module invented (ctx.secrets) rather than declared. The
     // prefix is what makes them redact like a declared secret without any
     // manifest ever having mentioned them.
@@ -191,10 +198,13 @@ export class ModuleKernel {
   /** Hand secret storage to `id` if it provides one, carrying stored values across. */
   private adoptSecretStore(id: ModuleId, mod: ServerModule): void {
     if (!mod.provideSecrets) return;
+    if (this.secretProvider && this.secretProvider !== id) {
+      throw new Error(`secret storage is already provided by '${this.secretProvider}'`);
+    }
     const next = mod.provideSecrets(this.moduleCtx(id));
     // Set first: the move below must leave the provider's own credentials behind.
     this.secretProvider = id;
-    this.moduleConfig.useSecretStore(next, [...this.installed.keys()], (n) =>
+    this.moduleConfig.useSecretStore(next, [...this.installed.keys()], id, (n) =>
       this.log.warn(`moved ${n} secret(s) into the store provided by '${id}'`),
     );
     this.log.info(`secret storage provided by '${id}'`);

@@ -22,7 +22,8 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.d.ts"
   ],
   "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",
   "repository": {

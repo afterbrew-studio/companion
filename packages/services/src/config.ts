@@ -1,8 +1,12 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, existsSync, lstatSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { AuthMode } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { log } from './lib/log.js';
+
+export type { AuthMode } from '@moxxy/companion-contracts';
 
 /**
  * Companion's own data root (NOT moxxy's). Everything Companion persists lives
@@ -30,6 +34,10 @@ export const paths = {
   envFile: (): string => join(companionHome(), '.env'),
   /** Bearer token the local CLI authenticates with (mode 0600, minted at boot). */
   cliToken: (): string => join(companionHome(), 'cli-token'),
+  /** One-time first-admin capability. Removed immediately after setup. */
+  bootstrapToken: (): string => join(companionHome(), 'bootstrap-token'),
+  /** Local encryption key kept outside SQLite and excluded from DB backups. */
+  secretKey: (): string => join(companionHome(), 'secret-key'),
   /** Offline, signed entitlement file. Absent on every OSS install. */
   license: (): string => join(companionHome(), 'license.jwt'),
   /** Marker requesting a fresh database on the NEXT boot (see requestDbRecreate). */
@@ -37,6 +45,40 @@ export const paths = {
   /** Out-of-tree modules, one directory per module id. */
   externalModules: (): string => join(companionHome(), 'modules'),
 };
+
+/**
+ * Load the AES key used by the default SQLite SecretStore. The key is never
+ * stored in the database (or a database-only backup). Production can inject it
+ * directly or mount a file; a local appliance gets an owner-only generated
+ * file so secure defaults do not add setup questions.
+ */
+export function loadSecretEncryptionKey(): Buffer {
+  const env = resolveEnv();
+  const inline = env.COMPANION_SECRET_KEY?.trim();
+  const customFile = env.COMPANION_SECRET_KEY_FILE?.trim();
+  if (inline && customFile) throw new Error('set only one of COMPANION_SECRET_KEY and COMPANION_SECRET_KEY_FILE');
+  if (inline) return decodeSecretKey(inline, 'COMPANION_SECRET_KEY');
+
+  const file = customFile || paths.secretKey();
+  if (existsSync(file)) {
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`refusing unsafe secret-key path: ${file}`);
+    if (!customFile) chmodSync(file, 0o600);
+    return decodeSecretKey(readFileSync(file, 'utf8').trim(), file);
+  }
+  if (customFile) throw new Error(`COMPANION_SECRET_KEY_FILE does not exist: ${file}`);
+  const key = randomBytes(32);
+  writeFileSync(file, `${key.toString('base64url')}\n`, { mode: 0o600, flag: 'wx' });
+  return key;
+}
+
+function decodeSecretKey(raw: string, source: string): Buffer {
+  const key = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64url');
+  if (key.byteLength !== 32) {
+    throw new Error(`${source} must encode exactly 32 bytes (base64url or 64 hex characters)`);
+  }
+  return key;
+}
 
 /**
  * Database recreation is a two-phase contract between the admin surface and
@@ -74,6 +116,8 @@ export interface DaemonConfig {
   port: number;
   /** Max concurrently live gateway processes. */
   maxLiveRuns: number;
+  /** Browser admission policy. Local mode is accepted only on loopback. */
+  authMode: AuthMode;
   /** URL remote runners use to reach this daemon's REST API. */
   publicUrl?: string;
   /**
@@ -88,12 +132,15 @@ export interface DaemonConfig {
   github: { readonly apiUrl: string; readonly host: string };
   /** Accounts sourced from the .env files. */
   users: readonly UserCredential[];
+  /** Optional operator-supplied first-admin capability; never returned by HTTP. */
+  bootstrapToken?: string;
 }
 
 const DEFAULTS = {
   host: '127.0.0.1',
   port: 8901,
   maxLiveRuns: 3,
+  authMode: 'password' as const,
   githubApiUrl: 'https://api.github.com',
   githubHost: 'github.com',
 };
@@ -101,6 +148,7 @@ const DEFAULTS = {
 interface StoredConfig {
   host?: string;
   port?: number;
+  authMode?: AuthMode;
   githubApiUrl?: string;
   githubHost?: string;
   maxLiveRuns?: number;
@@ -140,18 +188,81 @@ export function loadDaemonConfig(): DaemonConfig {
 
   const env = resolveEnv();
   const users = resolveUsers(env);
+  const host = env.COMPANION_HOST?.trim() || stored.host || DEFAULTS.host;
+  const authMode = authModeFrom(env.COMPANION_AUTH_MODE, stored.authMode);
+  if (authMode === 'local' && !isLoopbackHost(host)) {
+    throw new Error(
+      `COMPANION_AUTH_MODE=local requires a loopback bind; got COMPANION_HOST=${host}. ` +
+        'Use password auth before exposing Companion on a network.',
+    );
+  }
 
   return {
-    host: env.COMPANION_HOST?.trim() || stored.host || DEFAULTS.host,
+    host,
     port: numberFrom(env.COMPANION_PORT) ?? stored.port ?? DEFAULTS.port,
     maxLiveRuns: stored.maxLiveRuns ?? DEFAULTS.maxLiveRuns,
+    authMode,
     publicUrl: env.COMPANION_PUBLIC_URL?.trim() || stored.publicUrl || undefined,
     github: {
       apiUrl: (env.COMPANION_GITHUB_API_URL?.trim() || stored.githubApiUrl || DEFAULTS.githubApiUrl).replace(/\/+$/, ''),
       host: env.COMPANION_GITHUB_HOST?.trim() || stored.githubHost || DEFAULTS.githubHost,
     },
     users,
+    bootstrapToken: env.COMPANION_BOOTSTRAP_TOKEN?.trim() || undefined,
   };
+}
+
+/** Only these bind names guarantee that another machine cannot connect. */
+export function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
+/**
+ * Browser-facing admission guard for local auth. Binding the socket to
+ * loopback keeps other machines out, but without validating the HTTP authority
+ * a DNS-rebinding page could still make the browser address Companion through
+ * an attacker-controlled hostname. A local CLI has no Origin/Sec-Fetch-Site,
+ * so an absent Origin is accepted only when Host itself is loopback.
+ */
+export function isTrustedLocalHttpRequest(input: {
+  readonly host?: string;
+  readonly origin?: string;
+  readonly secFetchSite?: string;
+}): boolean {
+  if (input.secFetchSite === 'cross-site') return false;
+  if (!isLoopbackHost(authorityHostname(input.host))) return false;
+  if (input.origin === undefined) return true;
+  try {
+    const origin = new URL(input.origin);
+    return (origin.protocol === 'http:' || origin.protocol === 'https:') && isLoopbackHost(normalizeHostname(origin.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function authorityHostname(authority: string | undefined): string {
+  if (!authority) return '';
+  try {
+    return normalizeHostname(new URL(`http://${authority}`).hostname);
+  } catch {
+    return '';
+  }
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+function authModeFrom(envValue: string | undefined, storedValue: AuthMode | undefined): AuthMode {
+  const value = envValue?.trim();
+  if (value !== undefined && value !== '' && value !== 'local' && value !== 'password') {
+    throw new Error(`Invalid COMPANION_AUTH_MODE=${value}; expected local or password.`);
+  }
+  return value === 'local' || value === 'password'
+    ? value
+    : storedValue === 'local' || storedValue === 'password'
+      ? storedValue
+      : DEFAULTS.authMode;
 }
 
 // ---------- .env resolution ----------

@@ -34,27 +34,28 @@ account anywhere.
 npx @moxxy/companion
 ```
 
-First run walks through three things and takes under a minute:
+First run selects the slim developer experience, detects installed runtimes and
+opens <http://127.0.0.1:8901> as the local superadmin. There is no account form,
+password, or onboarding wizard. If `gh` is signed in, its active `github.com`
+identity is connected automatically; the token moves from the `gh` keyring to
+the local API and is never printed or copied into setup data.
 
-1. **An admin account.** Accept the recommended local defaults and a random
-   password is generated and shown once, or enter your own.
-2. **A module set.** *Slim* is the recommendation: Today, AI Help, repositories, agent runs,
-   durable contributor workflows, planning, automations and administration.
-   *Full* adds refinement, ideas, contribution-quality analysis, the playground and delivery
-   integrations. *Custom* lets you pick. Nothing is permanent, and everything
-   is one click away later on the Modules page.
-3. **A GitHub identity**, if `gh` is already signed in. The token is read from
-   `gh` only after you confirm, goes straight to the local API, and is never
-   printed or written to a setup file.
+This convenience is deliberately narrow: trusted local mode refuses a bind
+other than `127.0.0.1`, `::1`, or `localhost`. For Companion accounts, login and
+a shared/networked deployment, use a fresh data directory with:
 
-Then Companion starts on <http://127.0.0.1:8901> and opens your browser. Later
-runs reuse the data directory and skip setup entirely.
+```sh
+npx @moxxy/companion --with-auth
+```
+
+Docker and direct daemon deployments use password auth by default. Later runs
+reuse the data directory and skip initialization entirely.
 
 ### Without a terminal
 
 `--background` starts the daemon as its own process, detached from the shell.
-Setup still happens in front of you; when it is done the CLI returns and
-Companion keeps running, so the terminal can be closed.
+The small amount of local detection still happens before the CLI returns;
+Companion then keeps running, so the terminal can be closed.
 
 ```sh
 npx @moxxy/companion --background   # start, then hand the terminal back
@@ -69,20 +70,21 @@ the instance for that `--home` however it was started. Running `npx
 ### Non-interactive
 
 ```sh
-COMPANION_PROFILE=full npx @moxxy/companion --yes --no-open
+npx @moxxy/companion --yes --no-open
 ```
 
 | Flag / variable | Effect |
 |---|---|
-| `--yes`, `-y` | Accept generated defaults; never prompt |
+| `--yes`, `-y` | Never prompt; use detected local defaults |
 | `--no-open` | Do not open a browser |
 | `--background` | Leave the daemon running after the CLI exits |
+| `--with-auth` | Create an account-backed installation instead of trusted local mode |
 | `--port <n>`, `--host <h>` | Bind somewhere other than `127.0.0.1:8901` |
 | `--home <path>` | Use a different data directory |
-| `COMPANION_PROFILE` | `slim` or `full`, instead of the prompt |
-| `COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` | Seed the first admin and skip the wizard entirely |
+| `COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` | Seed the first admin for an authenticated installation |
 
-Run `npx @moxxy/companion init` to do setup without starting the server.
+Run `npx @moxxy/companion init` to prepare the data directory without starting
+the server. Use Docker or a source build when you need the full module profile.
 
 ## Running agents
 

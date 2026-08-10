@@ -66,6 +66,18 @@ async function harness(t) {
       allowScopedToken: true,
       handler: () => (calls.push('scoped-bootstrap'), { ok: true }),
     }),
+    route({
+      method: 'GET',
+      path: '/crash',
+      access: 'any',
+      handler: () => { throw new Error('/private/path and SQL internals'); },
+    }),
+    route({
+      method: 'POST',
+      path: '/public-write',
+      access: 'public',
+      handler: () => (calls.push('public-write'), { ok: true }),
+    }),
   ]);
 
   const server = createServer((req, res) => void router.dispatch(req, res));
@@ -80,7 +92,7 @@ async function harness(t) {
     });
     return { status: response.status, body: await response.json() };
   };
-  return { call, calls, audited };
+  return { call, calls, audited, base };
 }
 
 test('delegated sessions may read and prepare, but the router blocks ordinary writes', async (t) => {
@@ -127,4 +139,29 @@ test('permission arrays are an AND enforced centrally before the handler', async
   assert.match(denied.body.error, /second:act/);
   assert.deepEqual(h.calls, []);
   assert.equal(h.audited[0].access, 'first:read & second:act');
+});
+
+test('all browser mutations require CSRF proof and query tokens are refused', async (t) => {
+  const h = await harness(t);
+  const cookie = { cookie: 'companion.session=human' };
+
+  assert.equal((await fetch(`${h.base}/read`, { headers: cookie })).status, 200);
+  assert.equal((await fetch(`${h.base}/write`, { method: 'POST', headers: cookie })).status, 403);
+  assert.equal((await fetch(`${h.base}/write`, {
+    method: 'POST',
+    headers: { ...cookie, 'x-companion-csrf': '1' },
+  })).status, 200);
+  assert.equal((await fetch(`${h.base}/public-write`, { method: 'POST' })).status, 403);
+  assert.equal((await fetch(`${h.base}/public-write`, {
+    method: 'POST',
+    headers: { 'x-companion-csrf': '1' },
+  })).status, 200);
+  assert.equal((await fetch(`${h.base}/read?token=human`)).status, 401);
+});
+
+test('unexpected handler errors never disclose internals to the client', async (t) => {
+  const h = await harness(t);
+  const failed = await h.call('GET', '/crash', 'human');
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { error: 'internal server error' });
 });

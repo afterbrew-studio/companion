@@ -10,8 +10,12 @@ Companion reads real environment variables first, then `./.env`, then
 | --- | --- | --- |
 | `COMPANION_HOST` | `127.0.0.1` | HTTP and WebSocket bind host. Docker Compose sets `0.0.0.0` for published ports. |
 | `COMPANION_PORT` | `8901` | HTTP and WebSocket port. |
+| `COMPANION_AUTH_MODE` | `password` | `password` for normal/networked installs; `local` bootstraps a superadmin session and is rejected unless the bind host and browser origin are loopback. The npx CLI writes `local` unless `--with-auth` is used; Docker pins `password`. |
 | `COMPANION_HOME` | `~/.companion` | Data directory: SQLite database, clones, worktrees, isolated moxxy home. |
 | `COMPANION_PUBLIC_URL` | unset | Where this instance is reachable: the SSO redirect target, the base for links in outgoing notifications, and the daemon address a remote runner calls back on. Required behind a domain. Webhook delivery is configured separately, below. |
+| `COMPANION_BOOTSTRAP_TOKEN` | generated file | One-time capability required to create the first password-mode administrator. Must be at least 32 characters. When omitted, an owner-only token is written to `${COMPANION_HOME}/bootstrap-token`; the file is deleted after setup. |
+| `COMPANION_SECRET_KEY` | generated file | Exactly 32 bytes encoded as base64url or 64 hex characters. Encrypts credentials in the default SQLite secret store. Prefer the file form in managed deployments. |
+| `COMPANION_SECRET_KEY_FILE` | `${COMPANION_HOME}/secret-key` | File containing the same 32-byte key. Set only one key variable. The generated default is owner-only and excluded from database-only backups. |
 | `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_EMAIL` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. Read only while the user store is empty. |
 | `COMPANION_MAINTAINER_USER` / `COMPANION_MAINTAINER_PASSWORD` | unset | Optional seed maintainer account. |
 | `COMPANION_BUSINESS_USER` / `COMPANION_BUSINESS_PASSWORD` | unset | Optional seed business account. |
@@ -20,6 +24,12 @@ Seed accounts are imported once into an empty user store; after that the Users
 page owns accounts. See
 [`install.md`](install.md#the-first-admin-wizard-or-seeded-from-the-environment)
 for what that means in practice.
+
+The secret key and database are a pair. A database snapshot intentionally does
+not contain its decryption key; back up the key through a separate secret path.
+Losing it makes encrypted GitHub, integration, provider, runner and pipeline
+credentials unrecoverable. Copying both still exposes them, so full-volume and
+host compromise remain outside application-level encryption's boundary.
 
 `COMPANION_PROFILE` is **not** in this table on purpose. It is read when an
 artifact is built, not when one runs. See
@@ -104,3 +114,16 @@ local identity at boot, and the GitHub links in the UI. Defaults are github.com.
 Set `HTTP_PROXY` / `HTTPS_PROXY` and `NO_PROXY`. The daemon installs a
 proxy-aware dispatcher at boot when one of them is present, and logs which one it
 used. See [`../ENTERPRISE.md`](../ENTERPRISE.md) §6.
+
+Built-in webhook destinations are protected against DNS rebinding by resolving
+and validating every answer, then pinning the connection to an approved address
+while preserving the original HTTP Host and TLS SNI. A generic HTTP proxy would
+perform its own DNS lookup and break that guarantee, so webhook delivery
+fails closed when a proxy is active. Enable it only when the proxy independently
+blocks loopback, private, link-local, reserved and cloud-metadata destinations:
+
+```sh
+COMPANION_TRUST_EGRESS_PROXY=1
+```
+
+This flag is an operator assertion, not a proxy configuration mechanism.

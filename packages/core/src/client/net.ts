@@ -2,13 +2,24 @@ import type { SpaServerMessage } from '@moxxy/companion-contracts';
 
 /**
  * The single REST + WebSocket core for the SPA — extracted verbatim from the
- * legacy `lib/api.ts`. Auth is a login session token (localStorage); every 401
- * clears it and notifies the auth layer so the app falls back to the login
- * screen. EXACTLY ONE WebSocket app-wide: module api slices import `request`/
+ * legacy `lib/api.ts`. Auth is an HttpOnly SameSite session cookie; JavaScript
+ * never reads or stores the credential. Every 401 notifies the auth layer so
+ * the app falls back to the login screen. EXACTLY ONE WebSocket app-wide: module api slices import `request`/
  * `post`/`onServerMessage` from here and never open their own socket.
  */
 
-const TOKEN_KEY = 'companion.session';
+/** Whether this tab has observed an authenticated response. The credential is
+ * not here — it remains in the browser's HttpOnly cookie jar. */
+let sessionEstablished = false;
+
+/**
+ * @deprecated Browser credentials are HttpOnly cookies now. This compatibility
+ * marker preserves the old SDK truthiness check without exposing a credential;
+ * it must never be sent as an Authorization value or URL parameter.
+ */
+export function getToken(): string | null {
+  return sessionEstablished ? 'cookie-session' : null;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -49,13 +60,8 @@ function retryAfterSeconds(body: { retryAfter?: unknown }, res: Response): numbe
   return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
 }
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+export function markBrowserSession(active: boolean): void {
+  sessionEstablished = active;
 }
 
 // Auth-state listeners (the AuthProvider subscribes).
@@ -77,25 +83,28 @@ export function refreshAuth(): void {
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
+  const method = (init?.method ?? 'GET').toUpperCase();
   const res = await fetch(path, {
     ...init,
+    credentials: 'same-origin',
     headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(method !== 'GET' ? { 'x-companion-csrf': '1' } : {}),
       ...(init?.body ? { 'content-type': 'application/json' } : {}),
       ...init?.headers,
     },
   });
   if (res.status === 401) {
-    setToken(null);
+    const wasEstablished = sessionEstablished;
+    sessionEstablished = false;
     disconnectWs();
-    emitAuthChanged();
+    if (wasEstablished) emitAuthChanged();
     throw new ApiError('session expired — sign in again', 401);
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: unknown; retryAfter?: unknown };
     throw new ApiError(errorMessage(body, res), res.status, retryAfterSeconds(body, res));
   }
+  sessionEstablished = true;
   return (await res.json()) as T;
 }
 
@@ -111,7 +120,8 @@ export const del = <T>(path: string): Promise<T> => request<T>(path, { method: '
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', 'x-companion-csrf': '1' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -172,11 +182,11 @@ export function onServerMessage(fn: Listener): () => void {
 }
 
 export function connectWs(): void {
-  if (!getToken()) return;
+  if (!sessionEstablished) return;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   setWsState('connecting');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(getToken() ?? '')}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(String(ev.data)) as SpaServerMessage;
@@ -192,7 +202,7 @@ export function connectWs(): void {
   ws.onclose = () => {
     ws = null;
     setWsState('offline');
-    if (getToken()) {
+    if (sessionEstablished) {
       setTimeout(() => connectWs(), backoff);
       backoff = Math.min(backoff * 2, 10_000);
     }

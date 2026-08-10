@@ -16,10 +16,12 @@
  * Never point it at a real data directory.
  */
 
-import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ModuleConfigStore } from '../packages/core/dist/server/module-config-store.js';
+import { loadSecretEncryptionKey } from '../packages/services/dist/config.js';
+import { Database } from '../packages/services/dist/store/sqlite.js';
 
 const BEFORE = `export async function settleRefund(refund: Refund): Promise<void> {
   await db.transaction(async (tx) => {
@@ -55,7 +57,9 @@ const AFTER = `export async function settleRefund(refund: Refund): Promise<void>
 `;
 
 const home = readHome(process.argv.slice(2));
-const db = new DatabaseSync(join(home, 'companion.db'));
+process.env.COMPANION_HOME = home;
+const db = new Database(join(home, 'companion.db'));
+const secrets = new ModuleConfigStore(db, loadSecretEncryptionKey()).secretsFor('code');
 
 const now = Date.now();
 const MIN = 60_000;
@@ -104,7 +108,7 @@ insert('github_accounts', [
   {
     id: 'gha-demo',
     login: 'acme-bot',
-    token: 'demo-fixture-token',
+    token: 'companion-secret:v1',
     purposes: JSON.stringify(['fetch', 'runs', 'pipelines', 'webhooks']),
     scope: 'all',
     owner_id: ADMIN,
@@ -112,6 +116,7 @@ insert('github_accounts', [
     created_at: now - 40 * DAY,
   },
 ]);
+secrets.set('github-account:gha-demo:token', 'demo-fixture-token');
 
 insert('workspaces', [
   {

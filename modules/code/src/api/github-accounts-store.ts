@@ -2,14 +2,18 @@ import type { Database } from '@moxxy/companion-sdk/server';
 import type { GitHubAccountScope, GitHubCredentialKind, GitHubPurpose } from '../contract/index.js';
 
 /**
- * Personal GitHub accounts and what each owner uses them for. A row is either a
- * personal access token or a GitHub App installation; `token` is the credential
- * itself for a PAT and the cached, expiring installation token for an app.
- * Workspace selection lives in a side table; it never grants another profile
- * access.
+ * Personal GitHub accounts and what each owner uses them for. SQLite keeps only
+ * account metadata and an opaque marker; PATs, cached installation tokens and
+ * App private keys live in the kernel SecretStore. Older plaintext rows migrate
+ * synchronously before any account can be used.
  */
 export class GithubAccountsStore {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly secrets: CredentialSecrets,
+  ) {
+    this.migratePlaintextCredentials();
+  }
 
   insert(a: {
     id: string;
@@ -26,28 +30,41 @@ export class GithubAccountsStore {
     privateKey?: string | null;
     tokenExpiresAt?: number | null;
   }): void {
-    this.db
-      .prepare(
-        `INSERT INTO github_accounts
-           (id, login, token, purposes, scope, owner_id, created_at,
-            kind, app_id, installation_id, private_key, token_expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        a.id,
-        a.login,
-        a.token,
-        JSON.stringify(a.purposes),
-        a.scope,
-        a.ownerId,
-        a.createdAt,
-        a.kind ?? 'pat',
-        a.appId ?? null,
-        a.installationId ?? null,
-        a.privateKey ?? null,
-        a.tokenExpiresAt ?? null,
-      );
-    this.setWorkspaces(a.id, a.workspaceIds);
+    if (this.db.prepare(`SELECT 1 FROM github_accounts WHERE id = ?`).get(a.id)) {
+      throw new Error(`GitHub account ${a.id} already exists`);
+    }
+    this.secrets.set(tokenKey(a.id), a.token);
+    if (a.privateKey) this.secrets.set(privateKeyKey(a.id), a.privateKey);
+    try {
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            `INSERT INTO github_accounts
+               (id, login, token, purposes, scope, owner_id, created_at,
+                kind, app_id, installation_id, private_key, token_expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            a.id,
+            a.login,
+            SECRET_MARKER,
+            JSON.stringify(a.purposes),
+            a.scope,
+            a.ownerId,
+            a.createdAt,
+            a.kind ?? 'pat',
+            a.appId ?? null,
+            a.installationId ?? null,
+            a.privateKey ? SECRET_MARKER : null,
+            a.tokenExpiresAt ?? null,
+          );
+        this.setWorkspaces(a.id, a.workspaceIds);
+      })();
+    } catch (error) {
+      this.secrets.delete(tokenKey(a.id));
+      this.secrets.delete(privateKeyKey(a.id));
+      throw error;
+    }
   }
 
   /**
@@ -59,9 +76,11 @@ export class GithubAccountsStore {
    * with the credential the operator just replaced.
    */
   setAppCredentials(id: string, app: { appId: string; installationId: string; privateKey: string }): void {
+    this.requireAccount(id);
+    this.secrets.set(privateKeyKey(id), app.privateKey);
     this.db
       .prepare(`UPDATE github_accounts SET kind = 'app', app_id = ?, installation_id = ?, private_key = ? WHERE id = ?`)
-      .run(app.appId, app.installationId, app.privateKey, id);
+      .run(app.appId, app.installationId, SECRET_MARKER, id);
   }
 
   /**
@@ -70,9 +89,11 @@ export class GithubAccountsStore {
    * scope or workspaces, and it runs from a background job.
    */
   setInstallationToken(id: string, token: string, expiresAt: number): void {
+    this.requireAccount(id);
+    this.secrets.set(tokenKey(id), token);
     this.db
       .prepare(`UPDATE github_accounts SET token = ?, token_expires_at = ?, token_health = 'ok', token_error = NULL WHERE id = ?`)
-      .run(token, expiresAt, id);
+      .run(SECRET_MARKER, expiresAt, id);
   }
 
   /**
@@ -107,7 +128,7 @@ export class GithubAccountsStore {
     return rows.map((r) => ({
       id: r.id,
       login: r.login,
-      token: r.token,
+      token: this.requiredSecret(tokenKey(r.id), `GitHub credential ${r.id}`),
       purposes: JSON.parse(r.purposes) as GitHubPurpose[],
       // Normalize pre-personal-account values without a destructive migration.
       scope: r.scope === 'delegated' || r.scope === 'selected' ? 'selected' : 'all',
@@ -118,7 +139,9 @@ export class GithubAccountsStore {
       kind: r.kind === 'app' ? 'app' : 'pat',
       appId: r.app_id,
       installationId: r.installation_id,
-      privateKey: r.private_key,
+      privateKey: r.private_key === null
+        ? null
+        : this.requiredSecret(privateKeyKey(r.id), `GitHub App private key ${r.id}`),
       tokenExpiresAt: r.token_expires_at,
       // Null on a row no refresh has touched yet, which reads as "nothing known"
       // rather than as healthy: a PAT never refreshes at all.
@@ -137,6 +160,8 @@ export class GithubAccountsStore {
       workspaceIds?: readonly string[];
     },
   ): void {
+    this.requireAccount(id);
+    if (fields.token !== undefined) this.secrets.set(tokenKey(id), fields.token);
     this.db
       .prepare(
         `UPDATE github_accounts SET
@@ -148,7 +173,7 @@ export class GithubAccountsStore {
       )
       .run(
         fields.login ?? null,
-        fields.token ?? null,
+        fields.token === undefined ? null : SECRET_MARKER,
         fields.purposes ? JSON.stringify(fields.purposes) : null,
         fields.scope ?? null,
         id,
@@ -176,6 +201,38 @@ export class GithubAccountsStore {
     this.db.prepare(`DELETE FROM github_account_workspaces WHERE account_id = ?`).run(id);
     this.db.prepare(`DELETE FROM repo_account_bindings WHERE account_id = ?`).run(id);
     this.db.prepare(`DELETE FROM github_accounts WHERE id = ?`).run(id);
+    this.secrets.delete(tokenKey(id));
+    this.secrets.delete(privateKeyKey(id));
+  }
+
+  private requiredSecret(key: string, label: string): string {
+    const value = this.secrets.get(key);
+    if (value === null || value === '') throw new Error(`${label} is unavailable from the secret store`);
+    return value;
+  }
+
+  private requireAccount(id: string): void {
+    if (!this.db.prepare(`SELECT 1 FROM github_accounts WHERE id = ?`).get(id)) {
+      throw new Error(`GitHub account ${id} does not exist`);
+    }
+  }
+
+  /** Move credentials written by releases before encrypted secret storage. */
+  private migratePlaintextCredentials(): void {
+    const rows = this.db
+      .prepare(`SELECT id, token, private_key FROM github_accounts`)
+      .all() as Array<{ id: string; token: string; private_key: string | null }>;
+    const update = this.db.prepare(`UPDATE github_accounts SET token = ?, private_key = ? WHERE id = ?`);
+    for (const row of rows) {
+      if (row.token !== SECRET_MARKER) this.secrets.set(tokenKey(row.id), row.token);
+      else this.requiredSecret(tokenKey(row.id), `GitHub credential ${row.id}`);
+      if (row.private_key !== null && row.private_key !== SECRET_MARKER) {
+        this.secrets.set(privateKeyKey(row.id), row.private_key);
+      } else if (row.private_key === SECRET_MARKER) {
+        this.requiredSecret(privateKeyKey(row.id), `GitHub App private key ${row.id}`);
+      }
+      update.run(SECRET_MARKER, row.private_key === null ? null : SECRET_MARKER, row.id);
+    }
   }
 
   // ---------- per-repo bindings ----------
@@ -214,6 +271,16 @@ export class GithubAccountsStore {
     return this.list().map((a) => a.login);
   }
 }
+
+interface CredentialSecrets {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+}
+
+const SECRET_MARKER = 'companion-secret:v1';
+const tokenKey = (id: string): string => `github-account:${id}:token`;
+const privateKeyKey = (id: string): string => `github-account:${id}:private-key`;
 
 export interface GithubAccountRow {
   id: string;

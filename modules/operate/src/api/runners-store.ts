@@ -12,7 +12,7 @@ import type {
 /** The built-in runner: companiond's own machine. Always present, undeletable. */
 export const LOCAL_RUNNER_ID = 'runner-local';
 
-/** Row shape as stored (token stays here; the API layer strips it). */
+/** Hydrated internal row. The token comes from SecretStore; SQLite has a marker. */
 export interface RunnerRow {
   id: string;
   name: string;
@@ -58,7 +58,11 @@ export interface RunnerRow {
  * live in side tables so a runner can serve many of each (and vice versa).
  */
 export class RunnersStore {
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly secrets: RunnerSecrets,
+  ) {
+    this.migratePlaintextTokens();
     this.ensureLocal();
   }
 
@@ -92,6 +96,7 @@ export class RunnersStore {
     const repoScope: RunnerRepoScope = row.repo_scope === 'selected' ? 'selected' : 'all';
     return {
       ...row,
+      token: row.token === null ? null : this.requiredToken(row.id),
       blocked_tasks: parseJson<string[]>(row.blocked_tasks, []),
       task_policy_mode: row.task_policy_mode === 'allow' ? 'allow' : 'deny',
       policy_modules: parseJson<string[]>(row.policy_modules, []),
@@ -145,28 +150,39 @@ export class RunnersStore {
     workspaceIds: readonly string[];
     taskPolicy?: RunnerTaskPolicy;
   }): void {
-    this.db
-      .prepare(
-        `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled,
-                              task_policy_mode, policy_modules, policy_tasks, repo_scope, created_at)
-         VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1,
-                 @mode, @modules, @tasks, 'all', @createdAt)`,
-      )
-      .run({
-        id: r.id,
-        name: r.name,
-        kind: r.kind,
-        endpoint: r.endpoint,
-        token: r.token,
-        scope: r.scope,
-        ownerId: r.ownerId,
-        maxRuns: r.maxRuns,
-        mode: r.taskPolicy?.mode ?? 'deny',
-        modules: jsonList(r.taskPolicy?.modules),
-        tasks: jsonList(r.taskPolicy?.tasks),
-        createdAt: Date.now(),
-      });
-    this.setWorkspaces(r.id, r.workspaceIds);
+    if (this.db.prepare(`SELECT 1 FROM runners WHERE id = ?`).get(r.id)) {
+      throw new Error(`runner ${r.id} already exists`);
+    }
+    if (r.token) this.secrets.set(tokenKey(r.id), r.token);
+    try {
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            `INSERT INTO runners (id, name, kind, endpoint, token, scope, owner_id, max_runs, enabled,
+                                  task_policy_mode, policy_modules, policy_tasks, repo_scope, created_at)
+             VALUES (@id, @name, @kind, @endpoint, @token, @scope, @ownerId, @maxRuns, 1,
+                     @mode, @modules, @tasks, 'all', @createdAt)`,
+          )
+          .run({
+            id: r.id,
+            name: r.name,
+            kind: r.kind,
+            endpoint: r.endpoint,
+            token: r.token ? SECRET_MARKER : null,
+            scope: r.scope,
+            ownerId: r.ownerId,
+            maxRuns: r.maxRuns,
+            mode: r.taskPolicy?.mode ?? 'deny',
+            modules: jsonList(r.taskPolicy?.modules),
+            tasks: jsonList(r.taskPolicy?.tasks),
+            createdAt: Date.now(),
+          });
+        this.setWorkspaces(r.id, r.workspaceIds);
+      })();
+    } catch (error) {
+      if (r.token) this.secrets.delete(tokenKey(r.id));
+      throw error;
+    }
   }
 
   update(
@@ -193,6 +209,7 @@ export class RunnersStore {
     if (!current) return;
     const policy = fields.taskPolicy;
     const roles = fields.allowedRoles ?? current.allowed_roles;
+    if (fields.token !== undefined) this.secrets.set(tokenKey(id), fields.token);
     this.db
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
@@ -204,7 +221,7 @@ export class RunnersStore {
         id,
         name: fields.name ?? current.name,
         endpoint: fields.endpoint === undefined ? current.endpoint : fields.endpoint,
-        token: fields.token ?? current.token,
+        token: fields.token !== undefined || current.token !== null ? SECRET_MARKER : null,
         scope: fields.scope ?? current.scope,
         maxRuns: fields.maxRuns ?? current.max_runs,
         enabled: fields.enabled === undefined ? current.enabled : fields.enabled ? 1 : 0,
@@ -254,13 +271,42 @@ export class RunnersStore {
     this.db.prepare(`DELETE FROM runner_workspaces WHERE runner_id = ?`).run(id);
     this.db.prepare(`DELETE FROM runner_repos WHERE runner_id = ?`).run(id);
     this.db.prepare(`DELETE FROM runners WHERE id = ?`).run(id);
+    this.secrets.delete(tokenKey(id));
   }
 
   /** Token for a remote runner (never leaves the daemon). */
   tokenFor(id: string): string | null {
     return this.get(id)?.token ?? null;
   }
+
+  private requiredToken(id: string): string {
+    const token = this.secrets.get(tokenKey(id));
+    if (token === null || token === '') throw new Error(`credential for runner ${id} is unavailable`);
+    return token;
+  }
+
+  /** Move remote-runner bearer credentials from pre-encryption rows. */
+  private migratePlaintextTokens(): void {
+    const rows = this.db
+      .prepare(`SELECT id, token FROM runners WHERE token IS NOT NULL`)
+      .all() as Array<{ id: string; token: string }>;
+    const mark = this.db.prepare(`UPDATE runners SET token = ? WHERE id = ?`);
+    for (const row of rows) {
+      if (row.token !== SECRET_MARKER) this.secrets.set(tokenKey(row.id), row.token);
+      else this.requiredToken(row.id);
+      mark.run(SECRET_MARKER, row.id);
+    }
+  }
 }
+
+interface RunnerSecrets {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+}
+
+const SECRET_MARKER = 'companion-secret:v1';
+const tokenKey = (id: string): string => `runner:${id}:token`;
 
 /** Row as SQLite returns it — JSON columns are still strings here. */
 type RawRunnerRow = Omit<

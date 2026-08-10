@@ -168,8 +168,22 @@ test('a network error is retried and then reported, never thrown', async () => {
   assert.match(outcome.error, /ECONNREFUSED/);
 });
 
-test('personal targets cannot resolve to local, private, metadata, or documentation addresses', async () => {
-  for (const address of ['127.0.0.1', '10.1.2.3', '169.254.169.254', '192.168.1.2', '::1', 'fc00::1', '2001:db8::1']) {
+test('built-in targets cannot resolve to local, private, metadata, transition, or reserved addresses', async () => {
+  for (const address of [
+    '127.0.0.1',
+    '10.1.2.3',
+    '169.254.169.254',
+    '192.168.1.2',
+    '240.0.0.1',
+    '255.255.255.255',
+    '::1',
+    '::ffff:127.0.0.1',
+    '64:ff9b:1::7f00:1',
+    '100::1',
+    '2002:7f00:1::',
+    'fc00::1',
+    '2001:db8::1',
+  ]) {
     assert.equal(isPublicAddress(address), false, address);
   }
   assert.equal(isPublicAddress('1.1.1.1'), true);
@@ -178,9 +192,13 @@ test('personal targets cannot resolve to local, private, metadata, or documentat
     assertPublicDeliveryTarget('https://notifications.example/hook', async () => ['10.0.0.4']),
     /public addresses/,
   );
+  await assert.rejects(
+    assertPublicDeliveryTarget('https://notifications.example/hook', async () => ['93.184.216.34', '127.0.0.1']),
+    /public addresses/,
+  );
 });
 
-test('personal delivery validates DNS and never follows redirects', async () => {
+test('built-in delivery validates DNS and never follows redirects', async () => {
   let calls = 0;
   const outcome = await deliver(
     REQUEST,
@@ -195,7 +213,7 @@ test('personal delivery validates DNS and never follows redirects', async () => 
   assert.equal(calls, 1);
 });
 
-test('a personal destination targeting a private service fails before fetch', async () => {
+test('a built-in destination targeting a private service fails before fetch', async () => {
   let calls = 0;
   const outcome = await deliver(
     REQUEST,

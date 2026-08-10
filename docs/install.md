@@ -1,6 +1,6 @@
 # Installing and running Companion
 
-Three ways to run it, in order of how quickly they get you to a login screen.
+Three ways to run it, in order of how quickly they get you into the application.
 Configuration for all of them is in [`configuration.md`](configuration.md).
 
 ## Prerequisites
@@ -20,22 +20,26 @@ The published CLI contains both the daemon and the built SPA.
 npx @moxxy/companion
 ```
 
-On first launch, press Enter to take the default login (`admin` / `admin1234`),
-or answer no and choose your own username, email and password. Later launches
-reuse `~/.companion`, start Companion at <http://127.0.0.1:8901> and open a
-browser without repeating setup.
+On first launch Companion selects the slim module set, detects installed agent
+runtimes and opens as a local superadmin. There is no login screen. If the
+GitHub CLI is authenticated, its active `github.com` identity is attached to
+that profile automatically. The token is read from `gh`, sent to the local API,
+and never printed or copied into CLI setup data.
 
-The default login is offered, never assumed. A run that cannot ask, `-y` or
-anything without a terminal, gets a generated password instead and prints it
-once, because a well-known credential on an install nobody watched is a
-published login rather than a convenience.
+The UX is passwordless, but the security model is not: the daemon creates a
+real admin and the browser receives an ordinary expiring session. That session
+can only be bootstrapped while `authMode` is `local` and the daemon is bound to
+`127.0.0.1`, `::1`, or `localhost`; any network bind fails startup. The session
+endpoint also rejects non-loopback `Host`/`Origin` values, so DNS rebinding does
+not turn a trusted-local instance into an attacker-controlled origin.
 
-If the GitHub CLI is already authenticated, setup offers to connect its active
-`github.com` identity as a personal GitHub account owned by the new admin. The
-token is read from `gh` only after you confirm, sent to the local API, and never
-printed or copied into the CLI configuration.
+For Companion accounts and sign-in, initialize a fresh home with:
 
-`npx @moxxy/companion init` does setup without starting the server. `--no-open`,
+```sh
+npx @moxxy/companion --with-auth
+```
+
+`npx @moxxy/companion init` prepares the data directory without starting the server. `--no-open`,
 `--port` and `--home` do what they sound like.
 
 `--background` keeps the terminal out of it. Setup and the first-run questions
@@ -58,16 +62,28 @@ waiting out the instance lock.
 Under a supervisor (pm2, systemd, Docker), keep using the supervisor's own start
 and stop: `stop` kills the process, and a supervisor will simply start it again.
 
-This path is always the `slim` module set. The registry is compiled into the
-published bundle, so picking a different one means Docker or a source build. See
+This path defaults to the `slim` module set. A full distribution belongs in a
+Docker or source build. See
 [`development.md`](development.md#build-profiles-what-ships).
 
 ### The first admin: wizard, or seeded from the environment
 
-With no credentials in the environment, an instance with an empty user store
-sends you through first-run setup in the browser.
+With password auth and no credentials in the environment, an instance with an
+empty user store sends you through first-run setup in the browser. This is the
+daemon/Docker behaviour, not the trusted local npx flow. The form also requires
+the one-time capability written with mode `0600` to:
 
-`COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` **replace that wizard**: the
+```sh
+$COMPANION_HOME/bootstrap-token
+```
+
+Read it on the host running Companion, enter it once, and do not send it through
+chat or logs. Companion stores only its digest in memory and deletes the file
+after the administrator is created. For unattended provisioning, set a random
+`COMPANION_BOOTSTRAP_TOKEN` of at least 32 characters through your secret
+manager; it is ignored after the first account exists.
+
+`COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` **replace that ceremony**: the
 account is seeded on the first boot that finds no users, and the setup screen
 never appears. That is the normal shape for a container deployment, and it is
 worth knowing before you go looking for a setup step that is not coming.
@@ -81,7 +97,7 @@ now, discarding a password changed in the UI.
 ## Docker
 
 The image runs the same bundle as the npx package: the build stage compiles the
-workspace, the runtime stage carries only `dist/` plus four runtime
+workspace, the runtime stage carries only `dist/` plus three runtime
 dependencies.
 
 ```sh
@@ -91,8 +107,22 @@ docker compose up --build
 
 Then open <http://127.0.0.1:8901>.
 
+On a clean Compose volume, retrieve the first-admin capability from inside the
+container before completing the browser form:
+
+```sh
+docker compose exec companion sh -c 'cat /data/bootstrap-token'
+```
+
+For automation, inject `COMPANION_BOOTSTRAP_TOKEN` as a deployment secret
+instead. Do not set a fixed value in the Compose file or source control.
+
 Data lives in the named volume `companion-data` at `/data`: the SQLite database,
 cloned repositories and worktrees, the isolated moxxy home, and daemon config.
+It also contains the generated `secret-key`. A database-only backup excludes
+that key by design, so export it to a separate protected backup or mount
+`COMPANION_SECRET_KEY_FILE` from your secret manager. A restore refuses an
+encrypted database when no matching key is available.
 
 ```sh
 docker compose up -d --build        # background

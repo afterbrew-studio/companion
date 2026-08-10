@@ -344,6 +344,16 @@ interface EngineDeps {
   readonly canAccessWorkspace: (username: string, workspaceId: string) => boolean;
 }
 
+function executableSandbox(moduleConfig: EngineDeps['moduleConfig']): { image: string; network: string } | null {
+  const image = moduleConfig.get('executableSandboxImage');
+  if (typeof image !== 'string' || !image.trim()) return null;
+  const configuredNetwork = moduleConfig.get('executableSandboxNetwork');
+  return {
+    image: image.trim(),
+    network: typeof configuredNetwork === 'string' && configuredNetwork.trim() ? configuredNetwork.trim() : 'none',
+  };
+}
+
 interface StepContext {
   readonly repo: string;
   readonly userId: string;
@@ -805,6 +815,10 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
         return { status: 'error', summary: 'executable steps require the pipelines:execute permission' };
       }
       ctx.requirePermission('pipelines:execute', 'run an executable pipeline step');
+      const sandbox = executableSandbox(deps.moduleConfig);
+      if (!sandbox) {
+        return { status: 'error', summary: 'executable steps require a configured container sandbox image' };
+      }
 
       const { command, workdir, timeoutMs } = step.config;
       const env: Record<string, string> = {};
@@ -899,6 +913,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
                 env,
                 maxOutput: EXECUTABLE_MAX_OUTPUT,
                 signal: ctx.signal,
+                sandbox,
                 onChunk: (text) => emit(scrubber.push(text)),
               });
             },
@@ -956,6 +971,10 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
         return { status: 'error', summary: 'npm bootstrap requires the pipelines:execute permission' };
       }
       ctx.requirePermission('pipelines:execute', 'run the npm bootstrap step');
+      const sandbox = executableSandbox(deps.moduleConfig);
+      if (!sandbox) {
+        return { status: 'error', summary: 'npm bootstrap requires a configured container sandbox image' };
+      }
       if (!deps.checkouts.hasClone(ctx.repo)) {
         return { status: 'error', summary: `repo ${ctx.repo} has no clone yet` };
       }
@@ -1010,6 +1029,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
                   env,
                   maxOutput: EXECUTABLE_MAX_OUTPUT,
                   signal: ctx.signal,
+                  sandbox,
                   onChunk: (text) => emit(scrubber.push(text)),
                 });
               },

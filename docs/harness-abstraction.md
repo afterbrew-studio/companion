@@ -304,7 +304,7 @@ above to exist first, which is what moves phase 7 ahead of it.
 
 ## Choosing at setup, by detecting rather than asking
 
-First-run setup already asks which modules to start with. It should also settle
+The authenticated first-run setup can ask which modules to start with. It should also settle
 which harnesses this machine will use, and it should do it the way the Providers
 page now does it: **detect first, and only ask about what is really there.**
 

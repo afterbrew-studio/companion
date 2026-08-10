@@ -8,8 +8,11 @@ pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` and change at least `COMPANION_ADMIN_PASSWORD`. A clean setup with no
-seeded credentials runs first-boot onboarding in the browser instead.
+Edit `.env` and change at least `COMPANION_ADMIN_PASSWORD`. Source development
+uses the daemon's `password` default; a clean setup with no seeded credentials
+runs first-boot onboarding in the browser instead. Trusted local admission is a
+deliberate npx mode, not an implicit consequence of binding development to
+loopback.
 
 Contributors usually want every module, not the shipped default. Set it once and
 `install`, `dev`, `build` and `typecheck` all follow:

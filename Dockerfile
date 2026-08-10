@@ -3,7 +3,7 @@
 # One artifact, three delivery vehicles: this image, the npx tarball and a source
 # checkout all run the SAME bundle from apps/companion-cli. The runtime stage
 # therefore carries no pnpm workspace and no TypeScript, only the bundle and the
-# four runtime dependencies it declares external.
+# three runtime dependencies it declares external.
 
 FROM node:24-trixie-slim AS base
 WORKDIR /app
@@ -32,7 +32,7 @@ RUN pnpm gen:modules --profile "$PROFILE"
 # matches, so the build produced no dist and failed three steps later with
 # "COPY ... /app/apps/companion-cli/dist: not found". The `test -d` keeps the
 # failure here even if the bundle silently no-ops again.
-RUN pnpm -C apps/companion-cli run bundle && test -d apps/companion-cli/dist
+RUN COMPANION_PROFILE="$PROFILE" pnpm -C apps/companion-cli run bundle && test -d apps/companion-cli/dist
 # The runner agent ships from the same build, so one image tree produces both
 # the control plane and the execution capacity it places work on.
 RUN pnpm --filter @moxxy/companion-runner build && test -f apps/companion-runner/dist/agent.js

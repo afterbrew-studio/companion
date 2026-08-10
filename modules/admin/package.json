@@ -27,12 +27,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@moxxy/companion-contracts": "workspace:*",
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
-    "@companion/module-operate": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
-    "@moxxy/companion-types": "workspace:*",
     "@moxxy/companion-ui": "workspace:*",
     "zod": "^3.24.0"
   },

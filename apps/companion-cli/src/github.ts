@@ -1,8 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AdminSetup } from './setup.js';
-
 const PENDING_FILE = 'pending-gh-import.json';
 
 interface PendingGhImport {
@@ -13,6 +11,8 @@ export interface CompanionCredentials {
   readonly username: string;
   readonly password: string;
 }
+
+export type CompanionAuth = CompanionCredentials | { readonly bearerToken: string };
 
 /** Active github.com identity from gh's local auth metadata. Never reads the token. */
 export function detectGhLogin(): string | null {
@@ -42,7 +42,7 @@ export function parseGhLogin(raw: string): string | null {
   }
 }
 
-/** Persist only consent + expected identity; the GitHub token stays in gh's keyring. */
+/** Persist only the expected identity; the GitHub token stays in gh's keyring. */
 export function scheduleGhImport(home: string, login: string): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, PENDING_FILE);
@@ -68,10 +68,14 @@ export function pendingGhLogin(home: string): string | null {
  * legacy personal payload keeps this CLI safe if it is run against Companion
  * just before the personal-account migration lands.
  */
-export async function importPendingGhAccount(home: string, baseUrl: string, admin: AdminSetup): Promise<string | null> {
+export async function importPendingGhAccount(
+  home: string,
+  baseUrl: string,
+  auth: CompanionAuth,
+): Promise<string | null> {
   const expected = pendingGhLogin(home);
   if (!expected) return null;
-  const active = await connectGhAccount(baseUrl, admin, expected);
+  const active = await connectGhAccount(baseUrl, auth, expected);
   rmSync(join(home, PENDING_FILE), { force: true });
   return active;
 }
@@ -79,7 +83,7 @@ export async function importPendingGhAccount(home: string, baseUrl: string, admi
 /** Connect the active gh identity to the authenticated Companion user. */
 export async function connectGhAccount(
   baseUrl: string,
-  credentials: CompanionCredentials,
+  auth: CompanionAuth,
   expectedLogin?: string,
 ): Promise<string> {
   const active = detectGhLogin();
@@ -89,30 +93,43 @@ export async function connectGhAccount(
   }
 
   const token = readGhToken();
-  const login = await requestJson<{ token: string }>(`${baseUrl}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: credentials.username, password: credentials.password }),
-  });
-  const authorization = `Bearer ${login.token}`;
+  const borrowedSession = 'bearerToken' in auth;
+  let sessionHeaders: Record<string, string>;
+  if (borrowedSession) {
+    sessionHeaders = { authorization: `Bearer ${auth.bearerToken}` };
+  } else {
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-companion-csrf': '1' },
+      body: JSON.stringify({ username: auth.username, password: auth.password }),
+    });
+    if (!login.ok) throw new Error(await responseError(login, 'Companion sign-in failed.'));
+    const setCookie = login.headers.get('set-cookie');
+    if (!setCookie) throw new Error('Companion sign-in returned no session cookie.');
+    sessionHeaders = { cookie: setCookie.split(';', 1)[0]!, 'x-companion-csrf': '1' };
+  }
   try {
     const common = { token, purposes: ['fetch', 'runs', 'pipelines', 'webhooks'], workspaceIds: [] };
     let response = await fetch(`${baseUrl}/api/github/accounts`, {
       method: 'POST',
-      headers: { authorization, 'content-type': 'application/json' },
+      headers: { ...sessionHeaders, 'content-type': 'application/json' },
       body: JSON.stringify({ ...common, scope: 'all' }),
     });
     if (response.status === 400) {
       response = await fetch(`${baseUrl}/api/github/accounts`, {
         method: 'POST',
-        headers: { authorization, 'content-type': 'application/json' },
+        headers: { ...sessionHeaders, 'content-type': 'application/json' },
         body: JSON.stringify({ ...common, scope: 'shared', shared: false }),
       });
     }
     if (!response.ok) throw new Error(await responseError(response, 'Companion rejected the GitHub account.'));
     return active;
   } finally {
-    await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: { authorization } }).catch(() => undefined);
+    // Never revoke the daemon-owned CLI session merely because this command
+    // borrowed it. A password login above is disposable and is cleaned up.
+    if (!borrowedSession) {
+      await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: sessionHeaders }).catch(() => undefined);
+    }
   }
 }
 
@@ -128,12 +145,6 @@ function readGhToken(): string {
   } catch {
     throw new Error('Could not read the active github.com token from gh. Run `gh auth login` and retry.');
   }
-}
-
-async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error(await responseError(response, 'Companion request failed.'));
-  return (await response.json()) as T;
 }
 
 async function responseError(response: Response, fallback: string): Promise<string> {

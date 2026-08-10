@@ -24,6 +24,13 @@ services:
       COMPANION_HOME: /data
       COMPANION_HOST: 0.0.0.0
       COMPANION_PORT: 8901
+      # Networked deployments fail closed even if /data once came from a local run.
+      COMPANION_AUTH_MODE: password
+      # A clean volume writes a one-time first-admin capability to
+      # /data/bootstrap-token. For unattended provisioning inject
+      # COMPANION_BOOTSTRAP_TOKEN from a secret manager; never hard-code it here.
+      # In production, mount COMPANION_SECRET_KEY_FILE outside this data volume
+      # and back it up separately from companion.db.
     volumes:
       - companion-data:/data
       # moxxy's daily home holds the provider credentials (vault). Companion's

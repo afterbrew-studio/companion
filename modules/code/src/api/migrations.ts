@@ -268,14 +268,9 @@ export default defineMigrations([
     name: 'code_github_app_accounts',
     up: (db) => {
       // A GitHub App installation as a credential, alongside personal tokens.
-      // Additive on purpose: `token` keeps its meaning for a PAT and becomes the
-      // CACHED installation token for an app, with `token_expires_at` saying
-      // when it dies. One column means one accessor stays synchronous, and the
-      // cache survives a restart instead of re-minting for every account at boot.
-      //
-      // `private_key` is the app's PEM. It sits here rather than in the secret
-      // store because that seam is for per-module CONFIG (one value per key per
-      // module), and this is per-row data, exactly like the PAT beside it.
+      // These legacy columns remain additive schema markers/cache metadata;
+      // GithubAccountsStore moves their values into ctx.secrets at boot and
+      // replaces them with an opaque marker before any account is used.
       for (const column of [
         `kind TEXT NOT NULL DEFAULT 'pat'`,
         `app_id TEXT`,

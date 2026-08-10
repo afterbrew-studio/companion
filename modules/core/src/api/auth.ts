@@ -1,4 +1,5 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { Authenticator, AuthUser, Permission, SessionAccess } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { StatusError, type RbacReader } from '@moxxy/companion-core/server';
@@ -16,7 +17,7 @@ import type { SessionsStore } from './sessions-store.js';
 import type { ApiTokensStore } from './api-tokens-store.js';
 import type { SettingsStore } from './settings-store.js';
 import type { RolesService } from './roles-service.js';
-import { hashPassword, verifyPassword } from './passwords.js';
+import { hashPassword, passwordNeedsRehash, verifyPassword } from './passwords.js';
 
 /** The capability the install must never lose: without it nobody can fix roles. */
 const MANAGE_USERS = 'users:manage' as Permission;
@@ -27,6 +28,8 @@ const DAY_MS = 24 * 60 * 60_000;
 const API_TOKEN_TOUCH_INTERVAL_MS = 5 * 60_000;
 const MAX_API_TOKENS_PER_USER = 50;
 const TOKEN_MANAGEMENT_PERMISSIONS = new Set<Permission>(['tokens:manage', 'tokens:admin']);
+const LOGIN_WINDOW_MS = 15 * 60_000;
+const MAX_LOGIN_KEYS = 10_000;
 
 /** A legacy `.env` account, seeded once into an empty user store. */
 export interface SeedUser {
@@ -38,13 +41,17 @@ export interface SeedUser {
 
 /** Extends the kernel's StatusError so the router forwards its 401/403 (only
  *  framework errors status-map; a GitHubError's upstream status becomes a 500). */
-/** The account a loopback-only first boot creates so nobody fills in a form. */
+/** The account a trusted local installation acts through. */
 const LOCAL_ADMIN = 'admin';
-/** Settings key holding that account's password while it is still unchanged. */
-const LOCAL_SEED_KEY = 'auth.localSeedPassword';
+/** Removed in the passwordless local flow; cleared when an older home boots. */
+const LEGACY_LOCAL_SEED_KEY = 'auth.localSeedPassword';
 
 export class AuthError extends StatusError {
-  constructor(message: string, status: 401 | 403) {
+  constructor(
+    message: string,
+    status: 401 | 403 | 429 | 503,
+    readonly retryAfter?: number,
+  ) {
     super(status, message);
   }
 }
@@ -56,6 +63,10 @@ export class AuthError extends StatusError {
  * read the live effective grid (assembled from the enabled modules) via `rbac`.
  */
 export class Auth implements Authenticator {
+  private readonly loginThrottle = new LoginThrottle();
+  private bootstrapDigest: Buffer | null = null;
+  private bootstrapFile: string | null = null;
+
   constructor(
     private readonly users: UsersStore,
     private readonly sessions: SessionsStore,
@@ -145,56 +156,88 @@ export class Auth implements Authenticator {
     return this.users.count() === 0;
   }
 
-  /**
-   * Create the local admin on a first boot that only this machine can reach, so
-   * a `npx @moxxy/companion` try-out is not gated behind a form nobody needs to
-   * fill in on their own laptop.
-   *
-   * The gate is the BIND ADDRESS, not how the process was started. `npx` says
-   * how you launched it; it says nothing about who can connect, and
-   * `COMPANION_HOST=0.0.0.0 npx @moxxy/companion` is a real thing someone will
-   * type. Loopback is the only condition under which "no password was chosen"
-   * is defensible.
-   *
-   * The generated password is stored in the clear, deliberately: it exists to be
-   * shown on the sign-in screen, and a value nobody can read is a lockout rather
-   * than a convenience. It is deleted the moment the password is changed, and it
-   * is only ever served while the daemon is still loopback-bound.
-   */
-  seedLocalAdmin(): { username: string; password: string } | null {
-    if (!this.setupNeeded()) return null;
-    const password = randomBytes(9).toString('base64url');
+  /** Arm first-account creation with an operator-held, one-time capability. */
+  prepareBootstrap(configuredToken: string | null, file: string): 'environment' | 'file' | null {
+    if (!this.setupNeeded()) {
+      rmSync(file, { force: true });
+      this.bootstrapDigest = null;
+      this.bootstrapFile = null;
+      return null;
+    }
+    const token = configuredToken?.trim() || readOrCreateBootstrapToken(file);
+    if (token.length < 32) {
+      throw new Error('COMPANION_BOOTSTRAP_TOKEN must contain at least 32 characters');
+    }
+    this.bootstrapDigest = digestBootstrap(token);
+    this.bootstrapFile = configuredToken?.trim() ? null : file;
+    if (configuredToken?.trim()) rmSync(file, { force: true });
+    return configuredToken?.trim() ? 'environment' : 'file';
+  }
+
+  /** Ensure local mode always has a real superadmin identity. The password is
+   * deliberately unknowable: browser admission happens by minting an ordinary
+   * session at the loopback-only route, never by exposing a reusable secret. */
+  seedLocalAdmin(): string | null {
+    const existing = this.primaryAdminUsername();
+    if (existing) {
+      this.settings.delete(LEGACY_LOCAL_SEED_KEY);
+      return null;
+    }
+    if (this.users.get(LOCAL_ADMIN)) {
+      throw new AuthError(`local admin username '${LOCAL_ADMIN}' is already assigned to a non-admin account`, 403);
+    }
+    const password = randomBytes(32).toString('base64url');
     this.users.insert({
       username: LOCAL_ADMIN,
       email: `${LOCAL_ADMIN}@localhost`,
       passwordHash: hashPassword(password),
       role: 'admin',
     });
-    this.settings.set(LOCAL_SEED_KEY, password);
-    return { username: LOCAL_ADMIN, password };
+    this.settings.delete(LEGACY_LOCAL_SEED_KEY);
+    return LOCAL_ADMIN;
   }
 
-  /** The seeded credentials, while they are still the real ones. */
-  localSeed(): { username: string; password: string } | null {
-    const password = this.settings.get(LOCAL_SEED_KEY);
-    return password ? { username: LOCAL_ADMIN, password } : null;
+  /** Local mode still gets a normal, expiring, revocable full session. */
+  localSession(): { token: string; user: AuthUser; expiresAt: number } {
+    const username = this.primaryAdminUsername();
+    if (!username) throw new AuthError('local admin is unavailable', 403);
+    const account = this.users.get(username);
+    if (!account || account.disabled) throw new AuthError('local admin is unavailable', 403);
+    return this.startSession(account, SESSION_TTL_MS);
   }
 
-  /** Stop advertising the seed. Called whenever that password stops being true. */
-  clearLocalSeed(): void {
-    this.settings.delete(LOCAL_SEED_KEY);
-  }
-
-  setup(username: string, email: string, password: string): { token: string; user: AuthUser; expiresAt: number } {
+  setup(
+    username: string,
+    email: string,
+    password: string,
+    bootstrapToken: string,
+  ): { token: string; user: AuthUser; expiresAt: number } {
     if (!this.setupNeeded()) throw new AuthError('setup already completed', 403);
+    const presented = digestBootstrap(bootstrapToken);
+    if (!this.bootstrapDigest || !timingSafeEqual(presented, this.bootstrapDigest)) {
+      throw new AuthError('invalid bootstrap token', 403);
+    }
     this.users.insert({ username, email, passwordHash: hashPassword(password), role: 'admin' });
-    return this.login(username, password);
+    this.bootstrapDigest = null;
+    if (this.bootstrapFile) rmSync(this.bootstrapFile, { force: true });
+    this.bootstrapFile = null;
+    return this.startSession(this.users.get(username)!, SESSION_TTL_MS);
   }
 
-  login(identifier: string, password: string): { token: string; user: AuthUser; expiresAt: number } {
+  login(identifier: string, password: string, clientAddress = 'unknown'): { token: string; user: AuthUser; expiresAt: number } {
+    const throttleKey = `${clientAddress}\0${createHash('sha256').update(identifier.trim().toLowerCase()).digest('hex')}`;
+    this.loginThrottle.assertAllowed(throttleKey, clientAddress);
     const account = this.users.get(identifier) ?? this.users.getByEmail(identifier);
-    if (!account || account.disabled || !verifyPassword(password, account.passwordHash)) {
+    // Do one real scrypt operation even for an unknown/disabled account. That
+    // keeps the response from becoming a username enumeration oracle.
+    const valid = verifyPassword(password, account?.passwordHash ?? dummyPasswordHash());
+    if (!account || account.disabled || !valid) {
+      this.loginThrottle.failed(throttleKey, clientAddress);
       throw new AuthError('invalid username or password', 401);
+    }
+    this.loginThrottle.succeeded(throttleKey);
+    if (passwordNeedsRehash(account.passwordHash)) {
+      this.users.update(account.username, { passwordHash: hashPassword(password) });
     }
     return this.startSession(account, SESSION_TTL_MS);
   }
@@ -405,9 +448,6 @@ export class Auth implements Authenticator {
       this.sessions.deleteForUser(username);
       this.apiTokens.deleteForUser(username);
     }
-    // The advertised credential is no longer the real one; showing it after this
-    // would be worse than never showing it.
-    if (fields.newPassword && username === LOCAL_ADMIN) this.clearLocalSeed();
     return this.ownAccount(username);
   }
 
@@ -485,6 +525,95 @@ export class Auth implements Authenticator {
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function digestBootstrap(token: string): Buffer {
+  return createHash('sha256').update(token).digest();
+}
+
+let dummyHash: string | null = null;
+function dummyPasswordHash(): string {
+  dummyHash ??= hashPassword(randomBytes(32).toString('base64url'));
+  return dummyHash;
+}
+
+function readOrCreateBootstrapToken(file: string): string {
+  if (existsSync(file)) {
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`refusing unsafe bootstrap token path: ${file}`);
+    chmodSync(file, 0o600);
+    const token = readFileSync(file, 'utf8').trim();
+    if (token.length < 32) throw new Error(`bootstrap token file is invalid: ${file}`);
+    return token;
+  }
+  const token = randomBytes(32).toString('base64url');
+  try {
+    writeFileSync(file, `${token}\n`, { mode: 0o600, flag: 'wx' });
+    return token;
+  } catch (error) {
+    // Another boot process may have won the create race before the instance
+    // lock was acquired. Read the winner rather than replacing its capability.
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return readOrCreateBootstrapToken(file);
+    throw error;
+  }
+}
+
+interface LoginBucket {
+  attempts: number[];
+  touchedAt: number;
+}
+
+/** Process-local fixed-window limiter. Login remains correct behind one proxy:
+ * the coarse address bucket becomes stricter, never weaker. */
+class LoginThrottle {
+  private readonly buckets = new Map<string, LoginBucket>();
+
+  assertAllowed(principalKey: string, address: string): void {
+    const now = Date.now();
+    const principalWait = this.waitFor(principalKey, 5, now);
+    const addressWait = this.waitFor(`address:${address}`, 30, now);
+    const retryAfter = Math.max(principalWait, addressWait);
+    if (retryAfter > 0) {
+      throw new AuthError('too many sign-in attempts; try again later', 429, retryAfter);
+    }
+  }
+
+  failed(principalKey: string, address: string): void {
+    const now = Date.now();
+    this.add(principalKey, now);
+    this.add(`address:${address}`, now);
+    this.prune(now);
+  }
+
+  succeeded(principalKey: string): void {
+    this.buckets.delete(principalKey);
+  }
+
+  private waitFor(key: string, limit: number, now: number): number {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return 0;
+    bucket.attempts = bucket.attempts.filter((at) => at > now - LOGIN_WINDOW_MS);
+    bucket.touchedAt = now;
+    if (bucket.attempts.length < limit) return 0;
+    return Math.max(1, Math.ceil((bucket.attempts[0]! + LOGIN_WINDOW_MS - now) / 1000));
+  }
+
+  private add(key: string, now: number): void {
+    const bucket = this.buckets.get(key) ?? { attempts: [], touchedAt: now };
+    bucket.attempts = bucket.attempts.filter((at) => at > now - LOGIN_WINDOW_MS);
+    bucket.attempts.push(now);
+    bucket.touchedAt = now;
+    this.buckets.set(key, bucket);
+  }
+
+  private prune(now: number): void {
+    for (const [key, bucket] of this.buckets) {
+      if (bucket.touchedAt <= now - LOGIN_WINDOW_MS) this.buckets.delete(key);
+    }
+    if (this.buckets.size <= MAX_LOGIN_KEYS) return;
+    const oldest = [...this.buckets.entries()].sort((a, b) => a[1].touchedAt - b[1].touchedAt);
+    for (const [key] of oldest.slice(0, this.buckets.size - MAX_LOGIN_KEYS)) this.buckets.delete(key);
+  }
 }
 
 /** Hashes never leave the process — strip before returning API-bound records. */

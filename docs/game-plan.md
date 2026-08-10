@@ -669,7 +669,7 @@ None of these can be a module (see the ACL doc, and `docs/modular-distribution.m
 
 One artifact, three delivery vehicles: the image, the npx tarball and a source
 checkout now run the **same** bundle from `apps/companion-cli`. The runtime stage
-carries `dist/` plus the four runtime dependencies the bundle leaves external,
+carries `dist/` plus the three runtime dependencies the bundle leaves external,
 and nothing else: no pnpm workspace, no TypeScript, no module sources.
 
 Measured: the old runtime stage copied **156 MB** (`node_modules` 144 MB, plus

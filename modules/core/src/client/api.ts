@@ -5,14 +5,13 @@ import {
   del,
   disconnectWs,
   emitAuthChanged,
-  getToken,
+  markBrowserSession,
   patch,
   post,
   publicPost,
   put,
   qs,
   request,
-  setToken,
 } from '@moxxy/companion-core/client';
 import type { ModuleConfigState } from '@moxxy/companion-core';
 import type { ModuleDescriptor, PageQuery } from '@moxxy/companion-core/client';
@@ -54,29 +53,35 @@ export const authApi = {
   },
 
   /** First-boot onboarding: create the admin account and sign in. */
-  async setup(username: string, email: string, password: string): Promise<LoginResponse> {
-    const session = await publicPost<LoginResponse>('/api/auth/setup', { username, email, password });
-    setToken(session.token);
+  async setup(username: string, email: string, password: string, bootstrapToken: string): Promise<LoginResponse> {
+    const session = await publicPost<LoginResponse>('/api/auth/setup', { username, email, password, bootstrapToken });
+    markBrowserSession(true);
     emitAuthChanged();
     return session;
   },
 
   async login(username: string, password: string): Promise<LoginResponse> {
     const session = await publicPost<LoginResponse>('/api/auth/login', { username, password });
-    setToken(session.token);
+    markBrowserSession(true);
     emitAuthChanged();
+    return session;
+  },
+
+  /** Obtain an ordinary admin session from a trusted loopback installation. */
+  async localSession(): Promise<LoginResponse> {
+    const session = await publicPost<LoginResponse>('/api/auth/local-session', {});
+    markBrowserSession(true);
     return session;
   },
 
   async logout(): Promise<void> {
     await post('/api/auth/logout').catch(() => undefined);
-    setToken(null);
+    markBrowserSession(false);
     disconnectWs();
     emitAuthChanged();
   },
 
   me: () => request<SessionInfo>('/api/auth/me'),
-  hasSession: (): boolean => getToken() !== null,
 };
 
 export const coreApi = {

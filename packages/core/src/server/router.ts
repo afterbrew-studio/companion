@@ -86,6 +86,8 @@ export interface RouteContext<P extends string, B> {
   readonly user: AuthUser | null;
   /** Raw bearer token of this request (for logout-style flows). */
   readonly token: string | null;
+  /** Socket peer used for bounded login throttling. Proxy headers are not trusted. */
+  readonly clientAddress: string;
 }
 
 export interface RouteDef<P extends string, B> {
@@ -117,6 +119,7 @@ export interface CompiledRoute {
     rawBody: unknown,
     user: AuthUser | null,
     token: string | null,
+    clientAddress: string,
   ) => Promise<unknown>;
 }
 
@@ -131,9 +134,9 @@ export function route<P extends string, B = Record<string, never>>(def: RouteDef
     access: def.access,
     allowDelegatedWrite: def.allowDelegatedWrite === true,
     allowScopedToken: def.allowScopedToken === true,
-    run: async (params, query, rawBody, user, token) => {
+    run: async (params, query, rawBody, user, token, clientAddress) => {
       const body = (def.body ? def.body.parse(rawBody) : {}) as B;
-      return def.handler({ params: params as PathParams<P>, query, body, user, token });
+      return def.handler({ params: params as PathParams<P>, query, body, user, token, clientAddress });
     },
   };
 }
@@ -240,7 +243,8 @@ export class DynamicRouter {
         if (r.method !== method) continue;
         matched = r;
 
-        const token = bearerToken(req, url);
+        const credential = requestCredential(req);
+        const token = credential.token;
         const user = this.auth.verify(token);
         if (Array.isArray(r.access)) {
           for (const permission of r.access as readonly Permission[]) this.auth.require(user, permission);
@@ -260,13 +264,23 @@ export class DynamicRouter {
         if (method !== 'GET' && user?.sessionAccess === 'read-only' && !r.allowDelegatedWrite) {
           throw new HttpError(403, 'delegated sessions are read-only');
         }
+        // Browser sessions ride an HttpOnly cookie. Requiring a custom header
+        // for EVERY non-bearer mutation also covers login/setup CSRF before a
+        // cookie exists: a cross-origin form cannot set it, and fetch must pass
+        // a CORS preflight that Companion never permits. Bearer API tokens are
+        // intentionally exempt because they are explicit CLI/MCP credentials.
+        if (method !== 'GET' && credential.source !== 'bearer' && req.headers['x-companion-csrf'] !== '1') {
+          throw new HttpError(403, 'missing browser request proof');
+        }
 
         const params: Record<string, string> = {};
         r.keys.forEach((key, i) => {
           params[key] = decodeURIComponent(match[i + 1] ?? '');
         });
         const rawBody = method === 'GET' ? {} : await readBody(req);
-        const result = await withRequestUser(user, () => r.run(params, url.searchParams, rawBody, user, token));
+        const result = await withRequestUser(user, () =>
+          r.run(params, url.searchParams, rawBody, user, token, req.socket.remoteAddress ?? 'unknown'),
+        );
         const status = result instanceof Reply ? result.status : 200;
         // AFTER the handler: recording an attempt that then threw would claim
         // changes that never happened. Failures are audited in sendError, with
@@ -288,7 +302,7 @@ export class DynamicRouter {
       // A refused mutation is exactly what an auditor wants to see, so record it
       // with the status the client got. `matched` is null when nothing matched.
       const status = statusOf(err) ?? (err instanceof z.ZodError ? 400 : 500);
-      if (matched) this.recordIfMutating(matched, this.actorOf(req, url), status);
+      if (matched) this.recordIfMutating(matched, this.actorOf(req), status);
       return sendError(res, err, method, path, this.log);
     }
   }
@@ -307,9 +321,9 @@ export class DynamicRouter {
   }
 
   /** Best-effort actor for the failure path; a bad token simply audits as null. */
-  private actorOf(req: IncomingMessage, url: URL): AuthUser | null {
+  private actorOf(req: IncomingMessage): AuthUser | null {
     try {
-      return this.auth.verify(bearerToken(req, url));
+      return this.auth.verify(requestCredential(req).token);
     } catch {
       return null;
     }
@@ -330,13 +344,51 @@ function sendError(res: ServerResponse, err: unknown, method: string, path: stri
     });
   }
   log.warn('request failed', { method, path, err: String(err) });
-  return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+  // Unexpected exceptions often carry filesystem paths, SQL fragments or
+  // upstream details. They belong in the operator log, never in the response.
+  return json(res, 500, { error: 'internal server error' });
 }
 
-export function bearerToken(req: IncomingMessage, url: URL): string | null {
+export function bearerToken(req: IncomingMessage): string | null {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) return header.slice('Bearer '.length);
-  return url.searchParams.get('token');
+  return null;
+}
+
+/** Browser session cookie. Kept in one host-owned constant so REST, OIDC and WS cannot drift. */
+export const SESSION_COOKIE = 'companion.session';
+
+export function sessionCookie(token: string, expiresAt: number, secure: boolean): string {
+  const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${
+    secure ? '; Secure' : ''
+  }`;
+}
+
+export function clearSessionCookie(secure: boolean): string {
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`;
+}
+
+export function cookieValue(req: IncomingMessage, name: string): string | null {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const pair of raw.split(';')) {
+    const at = pair.indexOf('=');
+    if (at < 0 || pair.slice(0, at).trim() !== name) continue;
+    try {
+      return decodeURIComponent(pair.slice(at + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function requestCredential(req: IncomingMessage): { token: string | null; source: 'bearer' | 'cookie' | 'none' } {
+  const bearer = bearerToken(req);
+  if (bearer) return { token: bearer, source: 'bearer' };
+  const cookie = cookieValue(req, SESSION_COOKIE);
+  return cookie ? { token: cookie, source: 'cookie' } : { token: null, source: 'none' };
 }
 
 /** A Reply carries JSON, one verbatim string, or an async byte/string stream. */
@@ -355,7 +407,7 @@ async function send(res: ServerResponse, reply: Reply): Promise<void> {
     return;
   }
   if (!reply.contentType || typeof reply.body !== 'string') {
-    json(res, reply.status, reply.body);
+    json(res, reply.status, reply.body, reply.headers);
     return;
   }
   const raw = Buffer.from(reply.body, 'utf8');
@@ -387,11 +439,17 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<string | Uint8A
   return Boolean(value && typeof value === 'object' && Symbol.asyncIterator in value);
 }
 
-function json(res: ServerResponse, status: number, body: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers?: Readonly<Record<string, string>>,
+): void {
   const raw = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json',
     'content-length': Buffer.byteLength(raw),
+    ...headers,
   });
   res.end(raw);
 }

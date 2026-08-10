@@ -27,6 +27,7 @@ export const nav = defineNav([
     hash: '#/users',
     shortcut: 'm',
     permission: 'users:manage',
+    authModes: ['password'],
     section: 'admin-access',
     order: 20,
     icon: (
@@ -43,6 +44,7 @@ export const nav = defineNav([
     hash: '#/roles',
     shortcut: 'q',
     permission: 'users:manage',
+    authModes: ['password'],
     section: 'admin-access',
     order: 25,
     icon: (

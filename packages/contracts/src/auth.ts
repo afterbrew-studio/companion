@@ -6,6 +6,14 @@ import type { RouteAccess } from './access.js';
 export type SessionAccess = 'full' | 'read-only';
 
 /**
+ * How an installation admits browser users. `local` is a single-machine
+ * convenience: the daemon still creates a real admin and real sessions, but a
+ * loopback browser may bootstrap that session without presenting credentials.
+ * `password` is the fail-closed default for every networked/full deployment.
+ */
+export type AuthMode = 'local' | 'password';
+
+/**
  * Presentation-only menu preset for the application chrome. It never grants access:
  * RBAC still decides which routes and actions exist for the signed-in user.
  * `auto` derives the most useful preset from the user's role/capabilities while

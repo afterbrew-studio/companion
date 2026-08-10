@@ -1,7 +1,13 @@
 import { createHmac } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
 import type { NotificationRecord } from '@companion/module-workspace/contract';
+import {
+  assertPublicHttpTarget,
+  isPublicAddress,
+  withPublicHttpResponse,
+  type ResolveAddresses,
+} from '@moxxy/companion-sdk/server';
+
+export { isPublicAddress };
 
 export type NotificationProviderKind = 'webhook' | 'slack' | 'discord' | 'ntfy';
 
@@ -10,75 +16,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** A transient failure is retried once, after this pause. */
 const RETRY_DELAY_MS = 2_000;
 
-const NON_PUBLIC = new BlockList();
-for (const [network, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-] as const) {
-  NON_PUBLIC.addSubnet(network, prefix, 'ipv4');
-}
-for (const [network, prefix] of [
-  ['::', 128],
-  ['::1', 128],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['ff00::', 8],
-  ['2001:db8::', 32],
-] as const) {
-  NON_PUBLIC.addSubnet(network, prefix, 'ipv6');
-}
-
-// Node's BlockList maps IPv4 addresses through the IPv6 table while checking
-// them. Adding the whole ::ffff:0:0/96 range would therefore classify *every*
-// IPv4 destination as private. The IPv4 ranges above already match their
-// IPv4-mapped IPv6 forms, so no blanket mapped range belongs here.
-
-export function isPublicAddress(address: string): boolean {
-  const plain = address.split('%')[0] ?? address;
-  const family = isIP(plain);
-  return family !== 0 && !NON_PUBLIC.check(plain, family === 4 ? 'ipv4' : 'ipv6');
-}
-
-type ResolveAddresses = (hostname: string) => Promise<readonly string[]>;
-
-const resolveAddresses: ResolveAddresses = async (hostname) =>
-  (await lookup(hostname, { all: true, verbatim: true })).map((entry) => entry.address);
-
 /** Refuse a personal destination that can reach the daemon, LAN, metadata or another private service. */
 export async function assertPublicDeliveryTarget(
   raw: string,
-  resolve: ResolveAddresses = resolveAddresses,
-): Promise<void> {
-  const target = new URL(raw);
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') {
-    throw new Error('personal notification target must use http or https');
-  }
-  const hostname = target.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith('.home.arpa')
-  ) {
-    throw new Error('personal notification target must be publicly reachable');
-  }
-  const literal = isIP(hostname);
-  const addresses = literal ? [hostname] : await resolve(hostname);
-  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-    throw new Error('personal notification target must resolve only to public addresses');
-  }
+  resolve?: ResolveAddresses,
+): Promise<readonly string[]> {
+  return assertPublicHttpTarget(raw, resolve);
 }
 
 export interface DeliveryOutcome {
@@ -187,10 +130,7 @@ export async function deliver(
   let last: DeliveryOutcome = { ok: false, httpStatus: null, error: 'not attempted', attempts: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      if (opts.publicOnly) {
-        await assertPublicDeliveryTarget(request.url, opts.resolveAddresses ?? resolveAddresses);
-      }
-      const res = await fetchImpl(request.url, {
+      const init: RequestInit = {
         method: 'POST',
         headers: request.headers,
         body: request.body,
@@ -198,7 +138,10 @@ export async function deliver(
         // A redirect would be a second, unvalidated destination and is never
         // required by webhook providers. Store the 3xx as a visible failure.
         redirect: 'manual',
-      });
+      };
+      const res = opts.publicOnly
+        ? await publicFetch(request.url, init, fetchImpl, opts.resolveAddresses)
+        : await fetchImpl(request.url, init);
       // Webhook response bodies are not part of the contract. Cancel them so a
       // noisy or malicious receiver cannot retain an idle socket/body stream.
       await res.body?.cancel().catch(() => undefined);
@@ -222,4 +165,30 @@ export async function deliver(
     if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
   }
   return last;
+}
+
+/**
+ * Validate DNS and use that exact address for the connection. Re-resolving in
+ * `fetch` after validation is a DNS-rebinding TOCTOU; an undici Agent with a
+ * pinned lookup closes it while retaining the original Host header and TLS SNI.
+ *
+ * A configured proxy owns DNS instead. It is accepted only through an explicit
+ * trust switch, so deployments cannot silently trade the local guarantee for
+ * an arbitrary corporate proxy configuration.
+ */
+async function publicFetch(
+  url: string,
+  init: RequestInit,
+  fetchImpl: typeof fetch,
+  resolve?: ResolveAddresses,
+): Promise<Pick<Response, 'ok' | 'status' | 'statusText' | 'body'>> {
+  return withPublicHttpResponse(
+    url,
+    init,
+    async (response) => {
+      await response.body?.cancel().catch(() => undefined);
+      return { ok: response.ok, status: response.status, statusText: response.statusText, body: null };
+    },
+    { ...(fetchImpl === fetch ? {} : { fetchImpl }), ...(resolve ? { resolveAddresses: resolve } : {}) },
+  );
 }

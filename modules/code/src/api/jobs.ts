@@ -1,6 +1,6 @@
 import { defineJobs, type ModuleContext } from '@moxxy/companion-sdk/server';
 import type { TokenRefreshResult } from './github-accounts.js';
-import { createStepOutputScopeResolver } from './ws-scope.js';
+import { createPrStatusScopeResolver, createStepOutputScopeResolver } from './ws-scope.js';
 
 let offSetupCompleted: (() => void) | null = null;
 let offNativeReviewProvider: (() => void) | null = null;
@@ -87,6 +87,7 @@ export default defineJobs({
     // resolver claims, and this message carries a command's raw stdout. Team
     // members replay the scrubbed tail through the authenticated REST route.
     ctx.ws.registerScopeResolver('code.stepOutput', createStepOutputScopeResolver());
+    ctx.ws.registerScopeResolver('code.prStatus', createPrStatusScopeResolver(ctx));
 
     // Git credentials for clones/worktrees/pushes and remote runner agents,
     // resolved per repo and owning profile — and
@@ -189,6 +190,7 @@ export default defineJobs({
     // children while the raw-output scope is still installed.
     await ctx.services.get('code').pipelines.shutdown();
     ctx.ws.unregisterScopeResolver('code.stepOutput');
+    ctx.ws.unregisterScopeResolver('code.prStatus');
     offSetupCompleted?.();
     offSetupCompleted = null;
     offNativeReviewProvider?.();

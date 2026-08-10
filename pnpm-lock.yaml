@@ -138,12 +138,6 @@ importers:
       '@moxxy/cli':
         specifier: '*'
         version: 0.29.0
-      '@moxxy/companion-runtime':
-        specifier: workspace:*
-        version: link:../../packages/runtime
-      '@moxxy/plugin-tunnel-proxy':
-        specifier: ^0.29.0
-        version: 0.29.0(zod@3.25.76)
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -151,12 +145,18 @@ importers:
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../../modules/operate
+      '@moxxy/companion-runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
       '@moxxy/companion-types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@moxxy/plugin-tunnel-proxy':
+        specifier: ^0.29.0
+        version: 0.29.0(zod@3.25.76)
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -247,9 +247,6 @@ importers:
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      highlight.js:
-        specifier: ^11.11.1
-        version: 11.11.1
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -284,21 +281,12 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
-      '@companion/module-operate':
-        specifier: workspace:*
-        version: link:../operate
-      '@moxxy/companion-contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@moxxy/companion-types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@moxxy/companion-ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -697,9 +685,6 @@ importers:
       '@moxxy/sdk':
         specifier: ^0.29.0
         version: 0.29.0(zod@3.25.76)
-      jsonrepair:
-        specifier: ^3.15.0
-        version: 3.15.0
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -921,12 +906,6 @@ importers:
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
-      '@moxxy/companion-types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@moxxy/companion-ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
       zod:
         specifier: ^3.24.0
         version: 3.25.76

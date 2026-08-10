@@ -44,7 +44,7 @@ const SHOTS = [
   { name: 'pipelines', hash: '#/pipelines', awaits: 'PR gate', tour: true },
   { name: 'runs', hash: '#/runs', awaits: 'Triage', tour: true },
   { name: 'run', hash: '#/runs/run-demo-fix-412', awaits: 'settlement', tour: true },
-  { name: 'modules', hash: '#/modules', awaits: 'workspace' },
+  { name: 'modules', hash: '#/modules', awaits: 'workspace', tour: true },
 ];
 
 /** Seconds each tour frame holds. Long enough to read a heading and a row or two. */
@@ -54,7 +54,7 @@ const TOUR_WIDTH = 1100;
 const base = readArg('--url') ?? 'http://127.0.0.1:8901';
 const theme = readArg('--theme') ?? 'dark';
 
-const token = await login();
+const sessionCookie = await login();
 const chrome = spawn(
   CHROME,
   [
@@ -75,14 +75,23 @@ const chrome = spawn(
 try {
   const cdp = await connect();
   await cdp.send('Page.enable');
+  await cdp.send('Network.enable');
   await cdp.send('Emulation.setDeviceMetricsOverride', { ...VIEWPORT, mobile: false });
   await cdp.send('Emulation.setLocaleOverride', { locale: 'en-US' }).catch(() => undefined);
 
-  // The session and the theme are page state, so they have to be planted on the
+  // Authentication deliberately stays in an HttpOnly cookie. Plant it through
+  // CDP's cookie API (never localStorage), before the SPA makes its first /me.
+  await cdp.send('Network.setCookie', {
+    name: sessionCookie.name,
+    value: sessionCookie.value,
+    url: base,
+    httpOnly: true,
+    sameSite: 'Strict',
+  });
+  // Theme/sidebar preferences are non-sensitive page state. Plant them on the
   // origin before the SPA boots: index.html reads the theme before first paint.
   await goto(cdp, base);
-  await evaluate(cdp, `localStorage.setItem('companion.session', ${JSON.stringify(token)});
-    localStorage.setItem('companion.theme', ${JSON.stringify(theme)});
+  await evaluate(cdp, `localStorage.setItem('companion.theme', ${JSON.stringify(theme)});
     localStorage.setItem('companion.sidebar', 'expanded');
     localStorage.setItem('companion.onboarding.seen', ${JSON.stringify(JSON.stringify(ONBOARDING_STEPS))});`);
 
@@ -133,12 +142,18 @@ function buildTour() {
 async function login() {
   const res = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-companion-csrf': '1',
+    },
     body: JSON.stringify(LOGIN),
   });
   if (!res.ok) throw new Error(`login failed: ${res.status} ${await res.text()}`);
-  const { token } = await res.json();
-  return token;
+  const raw = res.headers.get('set-cookie');
+  const pair = raw?.split(';', 1)[0];
+  const at = pair?.indexOf('=') ?? -1;
+  if (!pair || at <= 0) throw new Error('login response did not set a browser session cookie');
+  return { name: pair.slice(0, at), value: decodeURIComponent(pair.slice(at + 1)) };
 }
 
 /** Chrome needs a moment to open the debugging port on a cold start. */

@@ -14,7 +14,13 @@ import {
   type ContextMenuState,
   type MenuAction,
 } from '@moxxy/companion-sdk/ui';
-import type { PipelineRecord, PrListRecord, RepoRecord, RepoSyncFailure } from '../../contract/index.js';
+import type {
+  PipelineRecord,
+  PrListRecord,
+  PrStatusSnapshot,
+  RepoRecord,
+  RepoSyncFailure,
+} from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 import { useWorkspaceRepos } from './useWorkspaceRepos.js';
 import { useWorkspacePipelines } from './useWorkspacePipelines.js';
@@ -101,6 +107,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { bulkRunning, bulkError, setBulkError, runBulk } = useBulkRunner();
 
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
+  const [liveStatus, setLiveStatus] = useState<ReadonlyMap<string, PrStatusSnapshot>>(() => new Map());
   const [facets, setFacets] = useState<{ authors: string[]; assignees: string[]; labels: string[] }>({ authors: [], assignees: [], labels: [] });
   const [counts, setCounts] = useState<{ open: number; merged: number; closed: number }>({ open: 0, merged: 0, closed: 0 });
 
@@ -138,13 +145,36 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   const { items: prs, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage, { seed, onFirstPage: retain });
 
   useEffect(() => {
+    setLiveStatus(new Map());
+  }, [listKey]);
+
+  useEffect(() => {
     return onServerMessage((msg) => {
-      if (msg.t === 'prs.changed' || msg.t === 'pipelineRuns.changed') reload();
+      if (msg.t === 'prs.changed') {
+        setLiveStatus(new Map());
+        reload();
+      }
+      if (msg.t === 'prStatus.changed') {
+        // Keep even a not-yet-rendered key: the server starts warming a page
+        // before its HTTP response reaches React, so the socket may win that
+        // race. Unmatched keys are harmless and the map resets with the query.
+        const key = `${msg.repo}#${msg.number}`;
+        setLiveStatus((previous) => {
+          const next = new Map(previous);
+          next.set(key, msg.status);
+          return next;
+        });
+      }
     });
   }, [reload]);
   const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
-  const visiblePrs = prs.filter((pr) => !unavailable.has(pr.repo));
+  const visiblePrs = prs
+    .map((pr) => {
+      const status = liveStatus.get(prKey(pr));
+      return status ? { ...pr, ...status } : pr;
+    })
+    .filter((pr) => !unavailable.has(pr.repo));
 
   const bulkAiReview = (): void => {
     if (!canRunAiReview) return;

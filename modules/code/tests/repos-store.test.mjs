@@ -27,7 +27,13 @@ function fixture() {
     CREATE TABLE issues (repo TEXT NOT NULL);
     CREATE TABLE prs (repo TEXT NOT NULL);
   `);
-  return { db, repos: new ReposStore(db, { ensureDefault() {} }) };
+  const values = new Map();
+  const secrets = {
+    get: (key) => values.get(key) ?? null,
+    set: (key, value) => values.set(key, value),
+    delete: (key) => values.delete(key),
+  };
+  return { db, secrets, repos: new ReposStore(db, { ensureDefault() {} }, secrets) };
 }
 
 test('one repository can belong to multiple workspaces without duplicating its cache', () => {
@@ -81,8 +87,8 @@ test('adding the same repository twice to one workspace is idempotent at the sto
   assert.deepEqual(repos.workspaceIds(input.fullName), ['ws-a']);
 });
 
-test('webhook registration has one personal owner and disconnecting its account disables it', () => {
-  const { repos } = fixture();
+test('webhook registration is encrypted, has one personal owner, and disconnecting disables it', () => {
+  const { db, repos } = fixture();
   repos.upsert({
     fullName: 'acme/private',
     owner: 'acme',
@@ -93,6 +99,10 @@ test('webhook registration has one personal owner and disconnecting its account 
   });
 
   repos.setWebhookRegistration('acme/private', 'secret', 'alice', 'gha-alice');
+  assert.notEqual(
+    db.prepare(`SELECT webhook_secret FROM repos WHERE full_name = 'acme/private'`).get().webhook_secret,
+    'secret',
+  );
   assert.deepEqual(repos.getWebhookRegistration('acme/private'), {
     secret: 'secret',
     ownerId: 'alice',

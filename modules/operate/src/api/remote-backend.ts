@@ -398,6 +398,9 @@ export class RemoteRunnerBackend implements RunnerBackend {
   }
 
   async exec(cwd: string, command: string, opts: ExecOptions = {}): Promise<AgentVerifyResponse | null> {
+    if (opts.sandbox) {
+      throw new Error(`runner ${this.id} cannot attest container isolation; executable pipelines stay on the daemon runner`);
+    }
     if (opts.signal) {
       throw new Error(`runner ${this.id} is remote; cancellable commands run on the local runner only`);
     }
@@ -556,8 +559,8 @@ export class RemoteRunnerBackend implements RunnerBackend {
 
   private connectEvents(): void {
     if (this.closed) return;
-    const url = `${this.base().replace(/^http/, 'ws')}/agent/events?token=${encodeURIComponent(this.token)}`;
-    const ws = new WebSocket(url);
+    const url = `${this.base().replace(/^http/, 'ws')}/agent/events`;
+    const ws = new WebSocket(url, { headers: { authorization: `Bearer ${this.token}` } });
     this.ws = ws;
     ws.on('open', () => this.onStreamState?.(true));
     ws.on('message', (data) => {

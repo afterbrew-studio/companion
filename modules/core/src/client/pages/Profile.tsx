@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { NavigationPerspective } from '@moxxy/companion-contracts';
+import type { AuthMode, NavigationPerspective } from '@moxxy/companion-contracts';
 import {
   navigationEntryVisible,
   refreshAuth,
@@ -35,6 +35,7 @@ type ScopeChoice = NotificationScope | 'default';
  */
 export function ProfilePage(): JSX.Element {
   const {
+    authMode,
     can,
     navOverrides,
     navigationAudience,
@@ -51,10 +52,15 @@ export function ProfilePage(): JSX.Element {
         .filter((section) => section.placement === undefined || section.placement === 'sidebar')
         .map((section) => ({
           section,
-          entries: kernel.nav.filter((entry) => entry.section === section.id && can(entry.permission)),
+          entries: kernel.nav.filter(
+            (entry) =>
+              entry.section === section.id &&
+              can(entry.permission) &&
+              (!entry.authModes || entry.authModes.includes(authMode)),
+          ),
         }))
         .filter(({ entries }) => entries.length > 0),
-    [can, kernel.nav, kernel.sections],
+    [authMode, can, kernel.nav, kernel.sections],
   );
   const currentOverrides = useMemo(
     () => navOverrides.filter((override) => override.perspective === navigationAudience),
@@ -160,7 +166,7 @@ export function ProfilePage(): JSX.Element {
         </ListCard>
       </Section>
 
-      <AccountSection onError={setError} />
+      <AccountSection authMode={authMode} onError={setError} />
 
       <Section title="Appearance" description="How Companion looks on this browser.">
         <SettingRow className="card" title="Theme">
@@ -186,7 +192,13 @@ export function ProfilePage(): JSX.Element {
 }
 
 /** Editable account details plus a separate password change. */
-function AccountSection({ onError }: { onError: (e: string | null) => void }): JSX.Element {
+function AccountSection({
+  authMode,
+  onError,
+}: {
+  authMode: AuthMode;
+  onError: (e: string | null) => void;
+}): JSX.Element {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -305,66 +317,68 @@ function AccountSection({ onError }: { onError: (e: string | null) => void }): J
         </div>
       </form>
 
-      <form className="card mt-3 flex flex-col gap-4" onSubmit={(e) => void changePassword(e)}>
-        {/* Password managers associate this otherwise separate form with the
-            signed-in account through the standard autocomplete pair. */}
-        <input
-          className="sr-only"
-          type="text"
-          name="username"
-          autoComplete="username"
-          value={account?.username ?? ''}
-          readOnly
-          tabIndex={-1}
-          aria-label="Username"
-        />
-        <div className="text-[13px] font-medium">Change password</div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Current password">
-            <input
-              className="input"
-              type="password"
-              name="currentPassword"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-            />
-          </Field>
-          <Field label="New password">
-            <input
-              className="input"
-              type="password"
-              name="newPassword"
-              autoComplete="new-password"
-              minLength={8}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
-          </Field>
-          <Field label="Confirm new password">
-            <input
-              className="input"
-              type="password"
-              name="confirmPassword"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-          </Field>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="btn" type="submit" disabled={!canChangePw || changingPw}>
-            {changingPw ? 'Changing…' : 'Change password'}
-          </button>
-          {newPassword.length > 0 && newPassword.length < 8 ? (
-            <span className="dim text-[13px]">At least 8 characters.</span>
-          ) : confirmPassword.length > 0 && newPassword !== confirmPassword ? (
-            <span className="dim text-[13px]">Passwords don&apos;t match.</span>
-          ) : pwMsg ? (
-            <span className="dim text-[13px]">{pwMsg}</span>
-          ) : null}
-        </div>
-      </form>
+      {authMode === 'password' ? (
+        <form className="card mt-3 flex flex-col gap-4" onSubmit={(e) => void changePassword(e)}>
+          {/* Password managers associate this otherwise separate form with the
+              signed-in account through the standard autocomplete pair. */}
+          <input
+            className="sr-only"
+            type="text"
+            name="username"
+            autoComplete="username"
+            value={account?.username ?? ''}
+            readOnly
+            tabIndex={-1}
+            aria-label="Username"
+          />
+          <div className="text-[13px] font-medium">Change password</div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Current password">
+              <input
+                className="input"
+                type="password"
+                name="currentPassword"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+              />
+            </Field>
+            <Field label="New password">
+              <input
+                className="input"
+                type="password"
+                name="newPassword"
+                autoComplete="new-password"
+                minLength={8}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+            </Field>
+            <Field label="Confirm new password">
+              <input
+                className="input"
+                type="password"
+                name="confirmPassword"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </Field>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="btn" type="submit" disabled={!canChangePw || changingPw}>
+              {changingPw ? 'Changing…' : 'Change password'}
+            </button>
+            {newPassword.length > 0 && newPassword.length < 8 ? (
+              <span className="dim text-[13px]">At least 8 characters.</span>
+            ) : confirmPassword.length > 0 && newPassword !== confirmPassword ? (
+              <span className="dim text-[13px]">Passwords don&apos;t match.</span>
+            ) : pwMsg ? (
+              <span className="dim text-[13px]">{pwMsg}</span>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
     </Section>
   );
 }

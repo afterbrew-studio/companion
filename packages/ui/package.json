@@ -32,7 +32,7 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/**/*.d.ts",
     "src"
   ],
   "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { DEFAULT_VERIFY_TIMEOUT_MS, runVerify } from '../dist/exec/verify.js';
+import { DEFAULT_VERIFY_TIMEOUT_MS, pipelineSandboxArgs, runVerify } from '../dist/exec/verify.js';
 
 function cwd(t) {
   const dir = mkdtempSync(join(tmpdir(), 'companion-verify-'));
@@ -75,6 +75,34 @@ test('duration is measured, so a slow verification is visible as slow', async (t
 test('CI is set, so tooling picks its non-interactive path', async (t) => {
   const outcome = await runVerify(cwd(t), 'echo "ci=$CI"');
   assert.match(outcome.output, /ci=1/);
+});
+
+test('pipeline sandbox is bounded, denies network, and keeps secret values out of argv', () => {
+  const args = pipelineSandboxArgs(
+    '/managed/repo',
+    'pnpm publish',
+    { image: `node:24-bookworm@sha256:${'a'.repeat(64)}`, network: 'none' },
+    { NPM_TOKEN: 'never-in-argv' },
+    'companion-pipeline-test',
+  );
+  assert.ok(args.includes('--read-only'));
+  assert.ok(args.includes('--cap-drop'));
+  assert.ok(args.includes('--pids-limit'));
+  assert.ok(args.includes('--memory'));
+  assert.deepEqual(args.slice(args.indexOf('--network'), args.indexOf('--network') + 2), ['--network', 'none']);
+  assert.deepEqual(args.slice(args.indexOf('--name'), args.indexOf('--name') + 2), ['--name', 'companion-pipeline-test']);
+  assert.ok(args.includes('NPM_TOKEN'));
+  assert.equal(args.includes('never-in-argv'), false);
+  assert.throws(
+    () =>
+      pipelineSandboxArgs(
+        '/managed/repo',
+        'true',
+        { image: `node:24-bookworm@sha256:${'a'.repeat(64)}`, network: 'host' },
+        {},
+      ),
+    /restricted Docker network/,
+  );
 });
 
 test('the default timeout is a ceiling, not a target', () => {

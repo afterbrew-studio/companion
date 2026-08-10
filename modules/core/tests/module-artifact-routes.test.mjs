@@ -64,6 +64,7 @@ async function harness(t, { catalog = [] } = {}) {
   const calls = [];
   const audited = [];
   const ctx = {
+    config: { publicUrl: undefined },
     log: noopLog,
     broadcast: () => calls.push({ op: 'broadcast' }),
     audit: { record: (e) => audited.push(e) },

@@ -191,7 +191,10 @@ async function send(
       publicUrl: publicUrl(),
       secret: connection.secret('signingSecret'),
     });
-    return await deliver(request, fetch, { publicOnly: connection.record.ownerId !== null });
+    // Every built-in HTTP destination is user-controlled configuration. Shared
+    // connections are privileged, but still do not need ambient access to the
+    // daemon's LAN or cloud metadata endpoint.
+    return await deliver(request, fetch, { publicOnly: true });
   } catch (error) {
     return {
       ok: false,
