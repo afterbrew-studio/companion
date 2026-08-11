@@ -10,7 +10,7 @@ export const sections = defineSections([{ id: 'more', label: 'Tools', order: 90,
 export const nav = defineNav([
   {
     key: 'playground-agent',
-    label: 'Agent Lab',
+    label: 'Agent lab',
     hash: '#/playground',
     shortcut: 'y',
     permission: 'playground:run',
@@ -40,7 +40,7 @@ export const nav = defineNav([
   },
   {
     key: 'playground-pipelines',
-    label: 'Pipeline Lab',
+    label: 'Pipeline lab',
     hash: '#/playground/pipelines',
     shortcut: 'j',
     permission: 'playground:run',

@@ -317,7 +317,7 @@ access in the longer term.
   empty states, incremental loading, and live gateway state only for the visible
   page. High-frequency run broadcasts are coalesced to at most one list reload
   per second; active-run widgets filter before applying their bounds.
-- The neutral user-facing surface is now **Contribution Quality**. Its radar
+- The neutral user-facing surface is now **Contribution quality**. Its radar
   orders actionable assessments by technical risk, value class, and missing
   evidence rather than treating AI-likelihood as a quality score.
 
@@ -366,7 +366,7 @@ access in the longer term.
 | `plan` | Proposal/spec/doc analysis is read-only, uses disposable worktrees/server snapshots, and has explicit untrusted-context prompts. Proposal, spec, and doc cards are server-paged lightweight rows; markdown/analysis loads only on detail, and selectors use bounded options. Start failures roll back cleanly. | Long documentation generation needs durable granular progress/cancel/retry; measure retrieval quality and staleness, and add cursor paging if offset depth becomes material at six-figure collections. |
 | `automations` | Single-flight scheduling, delivery ledger, correct cursor semantics, live pre-merge checks, and clean shutdown materially improve stability. | Assistant sessions remain the broadest privilege boundary; add per-automation run history, reason codes, rate-limit backoff visibility, and operator pause/circuit-breaker controls. |
 | `board` | Old-head/incomplete reviews cannot route or merge a newer PR. Active work remains visible as one board while the Done archive is independently paged; list rows strip descriptions, acceptance text, and attachment bodies. Worker-gating empty states are understandable. | `Board.tsx` and the service need decomposition; a workspace with an extreme number of simultaneously active cards can still produce a large board. Add lease-expiry/duplicate-work chaos tests and make transient slot use less confusing. |
-| `slop` | Reframed in the UI as **Contribution Quality**: an evidence-backed assessor preserving provenance as context, never a verdict. The workspace queue is server-paged/searchable/filterable and the radar prioritizes risk/value/evidence. Partial evidence is forced conservative. | Calibrate thresholds on labeled PR corpora, record false-positive/false-negative and post-merge outcomes, complete internal terminology migration, and support repository-specific policy packs. |
+| `slop` | Reframed in the UI as **Contribution quality**: an evidence-backed assessor preserving provenance as context, never a verdict. The workspace queue is server-paged/searchable/filterable and the radar prioritizes risk/value/evidence. Partial evidence is forced conservative. | Calibrate thresholds on labeled PR corpora, record false-positive/false-negative and post-merge outcomes, complete internal terminology migration, and support repository-specific policy packs. |
 | `planner` | The idea journey validates typed output, derives progress, recovers working sessions, and uses read-only analysis. Idea cards are paged summaries; usage/history retention and event reads are bounded, old sessions compact, and proposal status counts avoid loading analyses. | `Idea.tsx` remains the largest UI hotspot; add step-level cancellation/retry, measure compaction retrieval quality, and move very deep single-session history to a cursor if the 500-event detail ceiling proves too coarse. |
 | `refinement` | Human-reviewed import, bounded attached context, typed output, read-only agents, and uncertainty rules are sound. Refinement cards are lightweight server pages and attached spec/doc selectors no longer transfer every full body. | Add evaluation for task decomposition quality (dependency correctness, task size, acceptance-testability) and surface partial repository snapshot coverage. |
 | `playground` | The read-only test bench now has editable custom regressions plus eight immutable production cases that execute the exact Code/Slop/Planner/Refinement builders and parsers. The corpus explicitly tests false positives, test theatre, partial huge diffs, and provenance fairness. Prompt/config fingerprints stale old evidence; safety cases require two consecutive current passes, and the private release-gate suite is durable, server-owned, cancellable, restart-safe, live-budgeted, and reports case/resource progress. Pipeline preview remains a safe dry run. | Calibrate the corpus on labeled PR/outcome data, add actual billed/cache-aware currency enforcement, add cost-normalized scoring and confidence intervals, and make prompt/model configuration changes optionally require a current green gate before promotion. |
@@ -396,7 +396,7 @@ access in the longer term.
   triage/review decoration, and first-page-only facets. Synthetic 125-row queues
   prove the 100-row ceiling and cross-workspace isolation with multi-kilobyte
   bodies present in SQLite.
-- Plan, Planner, Refinement, Contribution Quality, Board Done, and Operate lists
+- Plan, Planner, Refinement, Contribution quality, Board Done, and Operate lists
   page compact projections. Search still covers full server-side bodies where
   useful without returning them. Detail/options endpoints hydrate only what the
   selected action needs.

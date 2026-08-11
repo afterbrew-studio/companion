@@ -60,7 +60,7 @@ export const nav = defineNav([
   },
   {
     key: 'providers',
-    label: 'Providers',
+    label: 'Machines & models',
     hash: '#/providers',
     shortcut: 'v',
     permission: 'settings:manage',

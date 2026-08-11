@@ -171,7 +171,7 @@ export function EvaluationsPage(): React.JSX.Element {
           <div>
             <h2 className="text-sm font-semibold">A model never grades itself</h2>
             <p className="dim mt-1 max-w-3xl text-xs leading-relaxed">
-              Companion runs each case through the same read-only fence as Agent Lab, then deterministic checks
+              Companion runs each case through the same read-only fence as the Agent lab, then deterministic checks
               verify required evidence, forbidden claims, JSON paths/values, latency and token ceilings. Repo cases
               are shared only with that workspace; scratch cases are private.
             </p>
@@ -207,7 +207,7 @@ export function EvaluationsPage(): React.JSX.Element {
             aria-valuenow={suiteProgress.done}
           >
             <div
-              className="h-full bg-blue-500 transition-[width] duration-300"
+              className="h-full bg-[#2a78d6] transition-[width] duration-300 dark:bg-[#5aa2f0]"
               style={{ width: `${suiteProgress.total ? (suiteProgress.done / suiteProgress.total) * 100 : 0}%` }}
             />
           </div>

@@ -103,7 +103,7 @@ export const nav = defineNav([
   },
   {
     key: 'prs',
-    label: 'Pull Requests',
+    label: 'Pull requests',
     hash: '#/prs',
     shortcut: 'r',
     permission: 'prs:read',

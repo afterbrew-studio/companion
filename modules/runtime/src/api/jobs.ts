@@ -20,7 +20,7 @@ export default defineJobs({
     // machine is ready, so a container that shipped with its providers is ready
     // on its first boot rather than after somebody clicks.
     const declared = declaredConfig();
-    if (declared.providers.length > 0) runtime.adopt(declared.providers);
+    if (declared.providers.length > 0) await runtime.adopt(declared.providers);
     if (declared.mcpServers.length > 0) runtime.adoptMcp(declared.mcpServers);
     registerHarness(harnessRegistration(runtime, (runId) => operate.orchestrator.runExtras(runId)));
     // Detection was cached before this harness existed, and a machine that has

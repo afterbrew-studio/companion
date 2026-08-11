@@ -50,7 +50,7 @@ export function DigestPage(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Daily Digest"
+        title="Daily digest"
         subtitle="The AI review of your repository — shipped, failed, what matters now, and the direction."
         actions={
           <>

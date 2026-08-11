@@ -168,7 +168,7 @@ const TRIAGE_STATE_SPECS = {
   },
   running: {
     label: 'Triage running',
-    cls: 'animate-pulse text-sky-600 dark:text-sky-400',
+    cls: 'animate-pulse text-[#2a78d6] dark:text-[#5aa2f0]',
     glyph: (
       <>
         <circle cx="8" cy="8" r="6.2" />

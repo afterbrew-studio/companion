@@ -101,7 +101,7 @@ export function PrsAreaPage(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Pull Requests"
+        title="Pull requests"
         subtitle={current.name}
         actions={
           <>

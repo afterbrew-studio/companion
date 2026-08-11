@@ -425,7 +425,7 @@ function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode })
       {review ? (
         <Breadcrumb
           className="mb-1"
-          items={[{ label: 'Pull Requests', href: '#/prs' }, { label: pr.repo }, { label: `#${pr.number}` }]}
+          items={[{ label: 'Pull requests', href: '#/prs' }, { label: pr.repo }, { label: `#${pr.number}` }]}
         />
       ) : null}
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">

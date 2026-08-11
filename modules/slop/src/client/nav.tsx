@@ -7,8 +7,11 @@ import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 export const nav = defineNav([
   {
     key: 'slop',
-    label: 'Contribution Quality',
-    hash: '#/slop',
+    label: 'Contribution quality',
+    hash: '#/contribution-quality',
+    // The pages also answer on the original #/slop prefix (routes.tsx keeps it
+    // as an alias), so legacy deep links still highlight this entry.
+    owns: [/^\/slop(\/|$)/],
     // 's' is taken (workspace chord), so 't' (de-t-ect) it is.
     shortcut: 't',
     permission: 'slop:read',

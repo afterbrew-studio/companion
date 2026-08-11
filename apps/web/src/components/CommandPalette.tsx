@@ -2,11 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { IssueListRecord, PrListRecord, RepoRecord } from '@companion/module-code/contract';
 import type { RunListRecord } from '@companion/module-operate/contract';
 import { SearchIcon } from '@moxxy/companion-ui';
-import { canUseQuickAction, runQuickAction, useKernel } from '@moxxy/companion-core/client';
+import { canUseQuickAction, runQuickAction, useKernel, useModuleEnabled } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import { useWorkspace } from '@companion/module-workspace/client';
-import { codeApi } from '@companion/module-code/client';
-import { operateApi } from '@companion/module-operate/client';
 
 /**
  * Cmd/Ctrl+K palette: fuzzy-ish jump to pages, workspaces, repos, issues, PRs,
@@ -39,22 +37,36 @@ export function CommandPalette({ onClose }: { onClose: () => void }): React.JSX.
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Optional modules feed entity groups only when enabled in THIS instance: a
+  // dynamic import keyed on the catalog keeps a minimal build from ever fetching
+  // (or even bundling into the shell chunk) a client it does not run.
+  const codeEnabled = useModuleEnabled('code');
+  const operateEnabled = useModuleEnabled('operate');
+
   useEffect(() => {
     inputRef.current?.focus();
     let alive = true;
     const grab = <T,>(p: Promise<T>, set: (v: T) => void): void => {
       p.then((v) => alive && set(v)).catch(() => undefined);
     };
-    if (current) {
-      grab(codeApi.workspaceIssues(current.id, 'open'), (r) => setIssues(r.issues));
-      grab(codeApi.workspacePrs(current.id), (r) => setPrs(r.prs.filter((p) => p.state === 'open')));
+    if (codeEnabled) {
+      grab(import('@companion/module-code/client'), ({ codeApi }) => {
+        if (current) {
+          grab(codeApi.workspaceIssues(current.id, 'open'), (r) => setIssues(r.issues));
+          grab(codeApi.workspacePrs(current.id), (r) => setPrs(r.prs.filter((p) => p.state === 'open')));
+        }
+        grab(codeApi.listRepos(), (r) => setRepos(r.repos));
+      });
     }
-    grab(operateApi.listRunsPage({ workspace: current?.id, limit: 50 }), (r) => setRuns(r.runs));
-    grab(codeApi.listRepos(), (r) => setRepos(r.repos));
+    if (operateEnabled) {
+      grab(import('@companion/module-operate/client'), ({ operateApi }) => {
+        grab(operateApi.listRunsPage({ workspace: current?.id, limit: 50 }), (r) => setRuns(r.runs));
+      });
+    }
     return () => {
       alive = false;
     };
-  }, [current]);
+  }, [current, codeEnabled, operateEnabled]);
 
   const go = (hash: string): void => {
     location.hash = hash;

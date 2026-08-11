@@ -95,7 +95,7 @@ export function AgentLabPage({ query }: RouteProps): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Agent Lab"
+        title="Agent lab"
         subtitle="Try a prompt against a real agent run — read-only fenced, nothing is applied"
       />
       <ErrorBar error={error} />

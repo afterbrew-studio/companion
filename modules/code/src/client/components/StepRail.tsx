@@ -17,7 +17,7 @@ const STATE: Record<Status, { tone: 'ok' | 'warn' | 'danger' | 'muted'; word: st
   failed: { tone: 'danger', word: 'failed', node: 'border-red-500 bg-red-500' },
   cancelled: { tone: 'muted', word: 'stopped', node: 'border-zinc-400 bg-zinc-400 dark:border-zinc-600 dark:bg-zinc-600' },
   error: { tone: 'warn', word: 'could not run', node: 'border-amber-500 bg-amber-500' },
-  running: { tone: 'muted', word: 'running', node: 'border-sky-500 bg-sky-500' },
+  running: { tone: 'muted', word: 'running', node: 'border-[#2a78d6] bg-[#2a78d6] dark:border-[#5aa2f0] dark:bg-[#5aa2f0]' },
   awaiting: { tone: 'warn', word: 'needs your confirmation', node: 'border-amber-500 bg-amber-500' },
   pending: { tone: 'muted', word: 'waiting', node: 'border-zinc-300 dark:border-zinc-700' },
   skipped: { tone: 'muted', word: 'skipped', node: 'border-zinc-300 dark:border-zinc-700' },
@@ -64,7 +64,7 @@ export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: 
               />
               {s.status === 'running' ? (
                 <span className="flex size-2.5 items-center justify-center">
-                  <span className="size-2.5 animate-pulse rounded-full bg-sky-500" />
+                  <span className="size-2.5 animate-pulse rounded-full bg-[#2a78d6] dark:bg-[#5aa2f0]" />
                 </span>
               ) : (
                 <span className={`size-2.5 rounded-full border ${state.node}`} />

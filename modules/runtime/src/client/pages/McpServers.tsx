@@ -14,7 +14,12 @@ import {
   useConfirm,
 } from '@moxxy/companion-sdk/ui';
 import { useAuth } from '@companion/module-core/client';
-import type { CreateMcpServerRequest, McpServerRecord, RuntimeAccess } from '../../contract/index.js';
+import type {
+  CreateMcpServerRequest,
+  McpServerRecord,
+  RuntimeAccess,
+  UpdateMcpServerRequest,
+} from '../../contract/index.js';
 import { useMcpServers } from '../hooks/useMcpServers.js';
 
 /**
@@ -39,6 +44,7 @@ export function McpServersPage(): React.JSX.Element {
   const { can } = useAuth();
   const { servers, error, busy, create, update, remove, check } = useMcpServers();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [checked, setChecked] = useState<Record<string, string>>({});
   const { confirmDanger, confirmElement } = useConfirm();
   const manage = can('runtime:manage');
@@ -73,7 +79,9 @@ export function McpServersPage(): React.JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {adding && manage && <AddServer onCancel={() => setAdding(false)} onCreate={create} busy={busy} />}
+      {adding && manage && (
+        <ServerForm onCancel={() => setAdding(false)} onCreate={create} onUpdate={update} busy={busy} error={error} />
+      )}
 
       {servers.length === 0 && !adding ? (
         <EmptyState
@@ -90,7 +98,18 @@ export function McpServersPage(): React.JSX.Element {
       ) : (
         <Section title="Configured servers">
           <ListCard ariaLabel="MCP servers">
-            {servers.map((server) => (
+            {servers.map((server) =>
+              editing === server.id && manage ? (
+                <ServerForm
+                  key={server.id}
+                  server={server}
+                  onCancel={() => setEditing(null)}
+                  onCreate={create}
+                  onUpdate={update}
+                  busy={busy}
+                  error={error}
+                />
+              ) : (
               <ServerRow
                 key={server.id}
                 server={server}
@@ -98,6 +117,7 @@ export function McpServersPage(): React.JSX.Element {
                 busy={busy}
                 checked={checked[server.id]}
                 onCheck={() => void runCheck(server.id)}
+                onEdit={() => setEditing(server.id)}
                 onToggle={() => void update(server.id, { enabled: !server.enabled })}
                 onRemove={async () => {
                   const ok = await confirmDanger({
@@ -108,7 +128,8 @@ export function McpServersPage(): React.JSX.Element {
                   if (ok) void remove(server.id);
                 }}
               />
-            ))}
+              ),
+            )}
           </ListCard>
         </Section>
       )}
@@ -123,6 +144,7 @@ function ServerRow({
   busy,
   checked,
   onCheck,
+  onEdit,
   onToggle,
   onRemove,
 }: {
@@ -131,6 +153,7 @@ function ServerRow({
   busy: boolean;
   checked: string | undefined;
   onCheck: () => void;
+  onEdit: () => void;
   onToggle: () => void;
   onRemove: () => void;
 }): React.JSX.Element {
@@ -160,6 +183,9 @@ function ServerRow({
         </div>
         {manage && (
           <div className="flex gap-2">
+            <button className="btn btn-ghost" disabled={busy} onClick={onEdit}>
+              Edit
+            </button>
             <button className="btn btn-ghost" disabled={busy} onClick={onCheck}>
               Test
             </button>
@@ -176,47 +202,64 @@ function ServerRow({
   );
 }
 
-function AddServer({
+function ServerForm({
+  server,
   onCancel,
   onCreate,
+  onUpdate,
   busy,
+  error,
 }: {
+  /** Present when editing; the stored secret is represented only by `hasSecret`. */
+  server?: McpServerRecord;
   onCancel: () => void;
-  onCreate: (draft: CreateMcpServerRequest) => Promise<void>;
+  onCreate: (draft: CreateMcpServerRequest) => Promise<boolean>;
+  onUpdate: (id: string, fields: UpdateMcpServerRequest) => Promise<boolean>;
   busy: boolean;
+  error: string | null;
 }): React.JSX.Element {
-  const [transport, setTransport] = useState<'stdio' | 'http'>('http');
-  const [label, setLabel] = useState('');
-  const [url, setUrl] = useState('');
-  const [command, setCommand] = useState('');
-  const [args, setArgs] = useState('');
-  const [pairs, setPairs] = useState('');
+  const [transport, setTransport] = useState<'stdio' | 'http'>(server?.transport ?? 'http');
+  const [label, setLabel] = useState(server?.label ?? '');
+  const [url, setUrl] = useState(server?.url ?? '');
+  const [command, setCommand] = useState(server?.command ?? '');
+  const [args, setArgs] = useState((server?.args ?? []).join('\n'));
+  const [pairs, setPairs] = useState(
+    server ? pairsText(server.transport === 'http' ? server.headers : server.env) : '',
+  );
   const [secret, setSecret] = useState('');
-  const [access, setAccess] = useState<readonly RuntimeAccess[]>(['workspace-write']);
-  const [tools, setTools] = useState('');
+  const [clearSecret, setClearSecret] = useState(false);
+  const [access, setAccess] = useState<readonly RuntimeAccess[]>(server?.access ?? ['workspace-write']);
+  const [tools, setTools] = useState((server?.tools ?? []).join('\n'));
+  const [workspaces, setWorkspaces] = useState((server?.workspaceIds ?? []).join('\n'));
 
   const ready = label.trim() !== '' && (transport === 'http' ? url.trim() !== '' : command.trim() !== '');
 
   const submit = async (): Promise<void> => {
     const values = parsePairs(pairs);
     const allowed = lines(tools);
-    await onCreate({
+    const scoped = lines(workspaces);
+    const fields = {
       label: label.trim(),
       transport,
       ...(transport === 'http'
         ? { url: url.trim(), headers: values }
         : { command: command.trim(), args: lines(args), env: values }),
-      ...(secret.trim() === '' ? {} : { secret: secret.trim() }),
       access,
       tools: allowed.length > 0 ? allowed : null,
-    });
-    onCancel();
+      workspaceIds: scoped.length > 0 ? scoped : null,
+    };
+    // Closed only on success: a rejected save keeps the draft and shows why.
+    const ok = server
+      ? await onUpdate(server.id, {
+          ...fields,
+          ...(clearSecret ? { secret: null } : secret.trim() === '' ? {} : { secret: secret.trim() }),
+        })
+      : await onCreate({ ...fields, ...(secret.trim() === '' ? {} : { secret: secret.trim() }) });
+    if (ok) onCancel();
   };
 
-  return (
-    <Section title="Add MCP server">
-      {/* See the note in Providers: a Section spaces nothing between children. */}
-      <div className="flex flex-col gap-4">
+  const body = (
+    <div className="flex flex-col gap-4">
       <SegmentedControl
         label="Transport"
         name="mcp-transport"
@@ -261,9 +304,28 @@ function AddServer({
           placeholder={transport === 'http' ? 'authorization=Bearer ${secret}' : 'API_TOKEN=${secret}'}
         />
       </Field>
-      <Field label="Secret" hint="Stored server-side and never sent back to a browser.">
-        <input className="input" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+      <Field
+        label="Secret"
+        hint={
+          server?.hasSecret
+            ? 'A secret is stored; leave blank to keep it.'
+            : 'Stored server-side and never sent back to a browser.'
+        }
+      >
+        <input
+          className="input"
+          type="password"
+          value={secret}
+          disabled={clearSecret}
+          onChange={(e) => setSecret(e.target.value)}
+        />
       </Field>
+      {server?.hasSecret && (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} />
+          <span>Clear the stored secret</span>
+        </label>
+      )}
       <Field label="Available to" hint="A run whose access is not ticked is never offered this server's tools.">
         <div className="flex flex-col gap-1">
           {ACCESS_OPTIONS.map((option) => (
@@ -290,17 +352,33 @@ function AddServer({
       <Field label="Tools" hint="One name per line to offer only those. Leave empty to offer everything the server lists.">
         <textarea className="input" rows={3} value={tools} onChange={(e) => setTools(e.target.value)} />
       </Field>
+      <Field
+        label="Workspaces"
+        hint="One workspace id per line to offer this server only there. Leave empty to serve every workspace."
+      >
+        <textarea className="input" rows={2} value={workspaces} onChange={(e) => setWorkspaces(e.target.value)} />
+      </Field>
+      <ErrorBar error={error} />
       <FormActions>
         <button className="btn btn-ghost" onClick={onCancel}>
           Cancel
         </button>
         <button className="btn" disabled={busy || !ready} onClick={() => void submit()}>
-          Add server
+          {server ? 'Save' : 'Add server'}
         </button>
       </FormActions>
-      </div>
-    </Section>
+    </div>
   );
+
+  if (server) {
+    return (
+      <div className="p-4">
+        <div className="mb-4 font-medium">Edit "{server.label}"</div>
+        {body}
+      </div>
+    );
+  }
+  return <Section title="Add MCP server">{body}</Section>;
 }
 
 function lines(value: string): string[] {
@@ -319,6 +397,12 @@ function parsePairs(value: string): Record<string, string> {
     out[line.slice(0, split).trim()] = line.slice(split + 1).trim();
   }
   return out;
+}
+
+function pairsText(values: Readonly<Record<string, string>>): string {
+  return Object.entries(values)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
 }
 
 function hostOf(url: string): string {

@@ -33,9 +33,17 @@ const baseUrl = z
   .max(2_000)
   .refine((value) => /^https?:\/\//i.test(value), 'the endpoint must be an http(s) URL');
 
+/**
+ * BUILTIN_PROVIDER_KINDS, as an edge validator: what this API accepts is what
+ * this build can construct a client for, so a typo fails here rather than on
+ * the first run. A plugin kind (`ProviderKind` is open for them) arrives by
+ * `companiond.json` adoption alongside the plugin itself, never through here.
+ */
+const kindSchema = z.enum(['anthropic', 'openai', 'azure', 'openai-compatible']);
+
 const createSchema = z.object({
   label: z.string().trim().min(1).max(80),
-  kind: z.string().trim().min(1).max(60),
+  kind: kindSchema,
   baseUrl: z.union([baseUrl, z.null()]).default(null),
   apiKey: z.string().max(500).optional(),
   headers: z.record(z.string().max(2_000)).default({}),
@@ -47,8 +55,11 @@ const createSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
-// Empty means "leave the stored credential alone": the form is never shown it.
-const patchSchema = createSchema.partial();
+// The credential is tri-state: absent or empty keeps the stored one (the form
+// is never shown it), a string replaces it, null explicitly clears it.
+const patchSchema = createSchema.partial().extend({
+  apiKey: z.string().max(500).nullable().optional(),
+});
 
 /**
  * `command` is executed on whichever machine runs the agent, so this is
@@ -86,9 +97,12 @@ const createMcpSchema = mcpFields
  * two rules are about the WHOLE record and a patch only carries part of one;
  * the route applies them to the merged result instead. An absent key is omitted
  * rather than parsed to undefined, which is what makes that merge preserve what
- * was not sent. Empty `secret` means "leave the stored one alone".
+ * was not sent. `secret` is tri-state: absent or empty keeps the stored one,
+ * a string replaces it, null explicitly clears it.
  */
-const patchMcpSchema = mcpFields.partial();
+const patchMcpSchema = mcpFields.partial().extend({
+  secret: z.string().max(4_000).nullable().optional(),
+});
 
 export default defineRoutes((ctx) => {
   const runtime = ctx.services.get('runtime');
@@ -118,8 +132,8 @@ export default defineRoutes((ctx) => {
       path: '/api/model-providers/:id',
       access: 'runtime:manage',
       body: patchSchema,
-      handler: ({ params, body }) => {
-        const provider = runtime.update(params.id, body);
+      handler: async ({ params, body }) => {
+        const provider = await runtime.update(params.id, body);
         if (!provider) throw notFound('provider not found');
         return { provider };
       },
