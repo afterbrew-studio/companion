@@ -44,7 +44,7 @@
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
-    "@types/node": "^26.2.0",
+    "@types/node": "^24.13.3",
     "companion-api": "workspace:*",
     "companion-web": "workspace:*",
     "esbuild": "^0.28.1",

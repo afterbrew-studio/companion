@@ -5,6 +5,7 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "declarationDir": "dist/types",
+    "rootDir": "src",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "customConditions": ["source"],

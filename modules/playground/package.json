@@ -37,7 +37,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^24.13.3",
     "@types/react": "^18.3.12",
     "@moxxy/companion-services": "workspace:*",
     "react": "^18.3.1",

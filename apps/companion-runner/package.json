@@ -48,7 +48,7 @@
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
     "@moxxy/plugin-tunnel-proxy": "^0.29.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^24.13.3",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.11",
