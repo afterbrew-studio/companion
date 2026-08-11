@@ -17,6 +17,8 @@
     "release:target": "node scripts/release-target.mjs",
     "security:workflow-policy": "node scripts/security-workflow-policy.mjs",
     "sdk:surface": "node scripts/sdk-surface.mjs",
+    "smoke": "node scripts/smoke-install.mjs",
+    "e2e": "playwright test",
     "test": "pnpm -r test",
     "typecheck": "pnpm gen:modules && pnpm -r typecheck",
     "version:check": "node scripts/version.mjs --check"
@@ -32,5 +34,8 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
   }
 }
