@@ -100,6 +100,7 @@ export class MigrationRunner {
 
   migrateUp(moduleId: string, migrations: readonly Migration[]): void {
     const current = this.appliedVersion(moduleId);
+    this.guardSchemaAhead(moduleId, current, migrations);
     const pending = migrations.filter((m) => m.version > current).sort((a, b) => a.version - b.version);
     const env = this.env(moduleId);
     for (const m of pending) {
@@ -110,6 +111,26 @@ export class MigrationRunner {
           .run(moduleId, m.version, m.name, Date.now());
       })();
     }
+  }
+
+  /**
+   * A ledger newer than the binary means the daemon was downgraded under a
+   * database some later build already migrated. This build cannot know what
+   * those migrations changed, so serving the data anyway risks silent
+   * corruption; refuse boot unless the operator explicitly accepts the risk.
+   */
+  private guardSchemaAhead(moduleId: string, applied: number, migrations: readonly Migration[]): void {
+    const known = migrations.reduce((max, m) => Math.max(max, m.version), 0);
+    if (applied <= known) return;
+    const message =
+      `module '${moduleId}' has schema version v${applied} applied, but this binary only knows migrations up to v${known}. ` +
+      `The database was written by a newer Companion. Upgrade the binary back to that version, ` +
+      `or restore the pre-upgrade backup (companion restore <snapshot>) to match this one.`;
+    if (process.env.COMPANION_ALLOW_SCHEMA_AHEAD === '1') {
+      this.log.warn(`COMPANION_ALLOW_SCHEMA_AHEAD=1: booting on a schema from the future. ${message}`);
+      return;
+    }
+    throw new Error(`${message} Set COMPANION_ALLOW_SCHEMA_AHEAD=1 to boot anyway, at the risk of data corruption.`);
   }
 
   migrateDown(moduleId: string, migrations: readonly Migration[], to = 0): void {

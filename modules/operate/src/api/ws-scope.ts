@@ -15,16 +15,32 @@ interface RunVisibility {
   readonly userId: string | null;
 }
 
+/** A terminal run stops streaming; keeping its entry would grow the cache
+ * for the whole module lifetime. */
+const TERMINAL_STATUSES = new Set(['completed', 'abandoned', 'interrupted', 'failed', 'stopped']);
+/** Late events after a terminal eviction re-cache via lookup; the cap bounds
+ * that regrowth (same idiom as the repo-agent-context cache). */
+const MAX_CACHE_ENTRIES = 512;
+
 export function createRunScopeResolver(ctx: ModuleContext): ScopeResolver {
   /** run id → its visibility, cached so per-message filtering avoids store hits. */
   const cache = new Map<string, RunVisibility | null>();
+
+  const remember = (runId: string, info: RunVisibility | null): void => {
+    cache.set(runId, info);
+    while (cache.size > MAX_CACHE_ENTRIES) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  };
 
   const lookup = (runId: string): RunVisibility | null => {
     let info = cache.get(runId);
     if (info === undefined) {
       const run = ctx.services.get('operate').orchestrator.getRun(runId);
       info = run ? { repo: run.repo, kind: run.kind, userId: run.userId } : null;
-      cache.set(runId, info);
+      remember(runId, info);
     }
     return info;
   };
@@ -41,7 +57,8 @@ export function createRunScopeResolver(ctx: ModuleContext): ScopeResolver {
     let info: RunVisibility | null = null;
     if (msg.t === 'run.changed') {
       info = { repo: msg.run.repo, kind: msg.run.kind, userId: msg.run.userId };
-      cache.set(msg.run.id, info);
+      if (TERMINAL_STATUSES.has(msg.run.status)) cache.delete(msg.run.id);
+      else remember(msg.run.id, info);
     } else if (msg.t === 'event' || msg.t === 'turn' || msg.t === 'ask' || msg.t === 'askResolved') {
       info = lookup(msg.runId);
     }

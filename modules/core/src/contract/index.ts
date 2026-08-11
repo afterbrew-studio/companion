@@ -35,6 +35,8 @@ declare module '@moxxy/companion-contracts' {
   }
   interface ServerMessageRegistry {
     'tokens.changed': Record<never, never>;
+    'users.changed': Record<never, never>;
+    'roles.changed': Record<never, never>;
   }
   interface ServiceMap {
     core: Auth;
@@ -47,6 +49,8 @@ declare module '@moxxy/companion-contracts' {
   interface BusEvents {
     /** First-boot onboarding created the installation's primary admin. */
     'auth.setup.completed': { readonly username: string };
+    /** An account was deleted; modules owning per-user data clean it up. */
+    'auth.user.deleted': { readonly username: string };
   }
 }
 
@@ -223,14 +227,6 @@ export interface AuthState {
   readonly providers: readonly AuthProvider[];
 }
 
-export interface SetupRequest {
-  readonly username: string;
-  readonly email: string;
-  readonly password: string;
-  /** One-time proof read from the daemon's owner-only bootstrap file or env. */
-  readonly bootstrapToken: string;
-}
-
 export interface CreateUserRequest {
   readonly username: string;
   readonly displayName?: string;
@@ -245,11 +241,6 @@ export interface UpdateUserRequest {
   readonly password?: string;
   readonly role?: Role;
   readonly disabled?: boolean;
-}
-
-export interface LoginRequest {
-  readonly username: string;
-  readonly password: string;
 }
 
 export interface LoginResponse {

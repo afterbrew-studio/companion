@@ -4,14 +4,15 @@ services:
       context: .
       args:
         # Which modules the image contains; see profiles/*.json.
-        PROFILE: ${COMPANION_PROFILE:-slim}
-        # Unset means the newest moxxy at build time. Set it to hold an image on
-        # a known one, for instance while a moxxy release is being qualified.
-        MOXXY_VERSION: ${MOXXY_VERSION:-latest}
+        - PROFILE=${COMPANION_PROFILE:-slim}
+        # Unset means the version pinned in the Dockerfile (a bare name passes
+        # the arg only when the variable is set). Export MOXXY_VERSION to hold
+        # an image on another one, e.g. while a moxxy release is being qualified.
+        - MOXXY_VERSION
         # false skips the moxxy CLI entirely. Use it with PROFILE=cloud, whose
         # built-in runtime is a subprocess of this bundle: that image runs agent
         # work with nothing installed and nobody signed in on the box.
-        INSTALL_MOXXY: ${INSTALL_MOXXY:-true}
+        - INSTALL_MOXXY=${INSTALL_MOXXY:-true}
     image: companion:local
     restart: unless-stopped
     read_only: true

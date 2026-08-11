@@ -227,6 +227,38 @@ export class PrReviewsStore {
     return row ? prReviewRowToResult(row) : undefined;
   }
 
+  /**
+   * Age-bound the review history. Never a PR's newest review: list decoration
+   * and the PR page read the latest row per PR regardless of age
+   * (latestByNumber/latest), so only superseded terminal rows go, findings
+   * riding along. Bounded per sweep so years of backlog cannot lock the
+   * database in one statement; the daily job catches up over a few runs.
+   */
+  prune(olderThanMs: number, maxRows = 5_000): number {
+    const stale = this.db
+      .prepare(
+        `SELECT id FROM pr_reviews t
+          WHERE t.created_at < ? AND t.status <> 'running'
+            AND EXISTS (
+              SELECT 1 FROM pr_reviews n
+               WHERE n.repo = t.repo AND n.pr_number = t.pr_number
+                 AND (n.created_at > t.created_at OR (n.created_at = t.created_at AND n.id > t.id))
+            )
+          ORDER BY t.created_at LIMIT ?`,
+      )
+      .all(Date.now() - olderThanMs, maxRows) as Array<{ id: string }>;
+    if (stale.length === 0) return 0;
+    const deleteFindings = this.db.prepare(`DELETE FROM pr_review_findings WHERE review_id = ?`);
+    const deleteReview = this.db.prepare(`DELETE FROM pr_reviews WHERE id = ?`);
+    this.db.transaction(() => {
+      for (const row of stale) {
+        deleteFindings.run(row.id);
+        deleteReview.run(row.id);
+      }
+    })();
+    return stale.length;
+  }
+
   latestByNumber(repo: string, only?: readonly number[]): Map<number, LatestReviewSignal> {
     const numbers = only ? [...new Set(only)] : null;
     if (numbers?.length === 0) return new Map();

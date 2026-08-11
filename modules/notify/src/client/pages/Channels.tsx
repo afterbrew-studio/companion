@@ -19,7 +19,9 @@ export function ChannelsPage(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const result = await notifyApi.deliveries();
+      // More history than the server's 100 default; still bounded well below
+      // the route's 500 ceiling so the page stays a quick diagnostic view.
+      const result = await notifyApi.deliveries({ limit: 250 });
       setDeliveries(result.deliveries);
       setError(null);
     } catch (err) {

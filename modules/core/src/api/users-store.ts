@@ -47,9 +47,12 @@ export class UsersStore {
   }
 
   getByEmail(email: string): (UserRecord & { passwordHash: string }) | undefined {
-    const row = this.db.prepare(`SELECT * FROM users WHERE email = ? AND email != '' LIMIT 1`).get(email) as
-      | UserRow
-      | undefined;
+    // The partial unique index makes duplicates impossible going forward; the
+    // ORDER BY keeps the answer deterministic (oldest wins) on a database the
+    // migration has not cleaned yet.
+    const row = this.db
+      .prepare(`SELECT * FROM users WHERE email = ? AND email != '' ORDER BY created_at, rowid LIMIT 1`)
+      .get(email) as UserRow | undefined;
     if (!row) return undefined;
     return { ...userRowToRecord(row), passwordHash: row.password_hash };
   }

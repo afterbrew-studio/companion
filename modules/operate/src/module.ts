@@ -81,6 +81,16 @@ export default defineManifest({
       max: 365,
     },
     {
+      key: 'runRetentionDays',
+      label: 'Run history retention',
+      kind: 'number',
+      description:
+        'Days to keep finished run records. Every cost/usage aggregate reads at most the current month, so the default keeps a year of history beyond any reader. Active and review runs are always kept.',
+      default: 365,
+      min: 30,
+      max: 3650,
+    },
+    {
       key: 'agentGitWrite',
       label: 'Agent repository access',
       kind: 'select',

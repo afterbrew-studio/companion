@@ -2,6 +2,7 @@ import type { AuthUser } from '@moxxy/companion-contracts';
 import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord } from '@companion/module-operate/contract';
 import { log, type DaemonConfig } from '@moxxy/companion-sdk/server';
+import { USER_MARKER } from '../contract/index.js';
 import type { AutomationsStore } from './automations-store.js';
 import type { Auth, Orchestrator } from './cross-types.js';
 
@@ -12,9 +13,6 @@ const TOKEN_TTL_MS = 12 * 60 * 60_000;
 const IDLE_REAP_MS = 5 * 60_000;
 /** …but a conversation parked on a pending ask gets a longer grace period. */
 const IDLE_REAP_ASK_MS = 30 * 60_000;
-
-/** The SPA folds the platform briefing out of the transcript above this marker. */
-export const USER_MARKER = '<<<USER_MESSAGE>>>';
 
 const CREDENTIALS_FILE = 'companion-credentials.json';
 

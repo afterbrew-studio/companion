@@ -121,14 +121,21 @@ COPY --from=build /app/apps/companion-cli/dist ./dist
 # day that layer was first built. An instance ran 0.35.0 for weeks against a
 # published 0.35.2. Below the dist copy the layer dies whenever the app does,
 # which is what "the image ships current moxxy" has to mean.
-# Pin it by passing MOXXY_VERSION when a specific one is wanted.
+#
+# The default is pinned to the qualified release so the same checkout builds
+# the same image tomorrow. Override with --build-arg MOXXY_VERSION=... (or the
+# MOXXY_VERSION variable through docker-compose.yml); `latest` restores the
+# floating behaviour. Bump the pin by hand when qualifying a new moxxy release
+# (`npm view @moxxy/cli version`): Dependabot cannot track it, because its
+# docker ecosystem watches only the FROM digest and its npm ecosystem only
+# package.json manifests, and a build ARG is neither.
 #
 # INSTALL_MOXXY=false skips it entirely, which is the point of the `cloud`
 # profile: that build carries module-runtime, whose harness is a subprocess of
 # this bundle, so the image needs no external agent runtime and nobody has to
 # exec in and sign one in. Leave it true for slim/full, where the instance
 # expects an operator-installed CLI.
-ARG MOXXY_VERSION=latest
+ARG MOXXY_VERSION=0.37.0
 ARG INSTALL_MOXXY=true
 RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VERSION}"; fi \
   && rm -rf /home/node/.npm /root/.npm

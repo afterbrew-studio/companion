@@ -462,4 +462,20 @@ export default defineMigrations([
       // Additive migrations are never rolled back destructively in-place.
     },
   },
+  {
+    /**
+     * `lastByTask` groups the whole table by task on every task-models
+     * snapshot; without this it is a full scan plus a temp B-tree on a table
+     * that only grows (EXPLAIN: SCAN runs → SEARCH via this index). The
+     * retention sweep's age select is already served by idx_runs_created_at.
+     */
+    version: 14,
+    name: 'runs_task_last_index',
+    up: (db) => {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_runs_task_created ON runs(task, created_at)`);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_runs_task_created`);
+    },
+  },
 ]);

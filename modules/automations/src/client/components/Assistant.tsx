@@ -8,6 +8,7 @@ import type { RunRecord } from '@companion/module-operate/contract';
 import { AskSheet } from '@companion/module-operate/client';
 import { useWorkspace } from '@companion/module-workspace/client';
 import { PreparedActions } from '@companion/module-workbench/client';
+import { USER_MARKER } from '../../contract/index.js';
 import { automationsApi as api } from '../api.js';
 
 /**
@@ -16,9 +17,6 @@ import { automationsApi as api } from '../api.js';
  * user's own role). One conversation run per user; the daemon briefs the agent
  * on first contact — the briefing is folded out of the visible transcript.
  */
-
-/** The daemon prefixes the first prompt with the platform briefing up to this marker. */
-const USER_MARKER = '<<<USER_MESSAGE>>>';
 
 function visibleUserText(text: string): string {
   const at = text.indexOf(USER_MARKER);

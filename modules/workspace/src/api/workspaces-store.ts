@@ -103,10 +103,22 @@ export class WorkspacesStore {
   }
 
   // Owned tables only. pipelines/step_definitions are code-owned; the delete
-  // route asks their owner (when present) to clean up.
+  // route asks their owner (when present) to clean up. reports/notifications
+  // are this module's own tables: rows keyed to a dead workspace id would
+  // otherwise sit orphaned behind every access filter forever.
   delete(id: string): void {
-    this.db.prepare(`DELETE FROM workspace_members WHERE workspace_id = ?`).run(id);
-    this.db.prepare(`DELETE FROM workspaces WHERE id = ?`).run(id);
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM workspace_members WHERE workspace_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM reports WHERE workspace_id = ?`).run(id);
+      this.db
+        .prepare(
+          `DELETE FROM notification_reads
+           WHERE notification_id IN (SELECT id FROM notifications WHERE workspace_id = ?)`,
+        )
+        .run(id);
+      this.db.prepare(`DELETE FROM notifications WHERE workspace_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM workspaces WHERE id = ?`).run(id);
+    })();
   }
 
   // ---------- membership + access ----------
@@ -220,81 +232,125 @@ export class WorkspacesStore {
     }
   }
 
-  /** Counters + weekly open/close velocity for a workspace's dashboard. */
+  /**
+   * Counters + weekly open/close velocity for a workspace's dashboard.
+   * Aggregated in SQL (GROUP BY state / week bucket): the old shape pulled
+   * every issue/PR row of the workspace into JS on each dashboard view.
+   */
   metrics(workspaceId: string, weeks = 12, repoNames?: readonly string[]): WorkspaceMetrics {
-    // issues/prs/repos are code-owned; if module-code is uninstalled the JOINs
-    // fail — degrade to empty series rather than crash the dashboard.
-    const rollup = (table: 'issues' | 'prs'): Array<{ state: string; created_at: number; closed_at: number | null }> => {
-      if (repoNames?.length === 0) return [];
-      try {
-        const repoFilter = repoNames ? ` AND t.repo IN (${repoNames.map(() => '?').join(', ')})` : '';
-        return this.db
-          .prepare(
-            `SELECT t.state, t.created_at, t.closed_at FROM ${table} t
-             JOIN v_repos r ON r.full_name = t.repo WHERE r.workspace_id = ?${repoFilter}`,
-          )
-          .all(workspaceId, ...(repoNames ?? [])) as Array<{ state: string; created_at: number; closed_at: number | null }>;
-      } catch {
-        return [];
-      }
-    };
-    const issues = rollup('issues');
-    const prs = rollup('prs');
-
     const monday = new Date();
     monday.setHours(0, 0, 0, 0);
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
-    const starts: number[] = [];
-    for (let i = weeks - 1; i >= 0; i--) starts.push(monday.getTime() - i * 7 * 86_400_000);
-    const bucket = (ts: number | null): number => {
-      if (ts === null || ts < starts[0]!) return -1;
-      for (let i = starts.length - 1; i >= 0; i--) if (ts >= starts[i]!) return i;
-      return -1;
-    };
-
-    const weekly = starts.map((weekStart) => ({
-      weekStart,
-      issuesOpened: 0,
-      issuesClosed: 0,
-      prsOpened: 0,
-      prsClosed: 0,
-    }));
-    for (const i of issues) {
-      const opened = bucket(i.created_at);
-      if (opened >= 0) weekly[opened]!.issuesOpened++;
-      const closed = bucket(i.closed_at);
-      if (closed >= 0) weekly[closed]!.issuesClosed++;
-    }
-    for (const p of prs) {
-      const opened = bucket(p.created_at);
-      if (opened >= 0) weekly[opened]!.prsOpened++;
-      const closed = bucket(p.closed_at);
-      if (closed >= 0) weekly[closed]!.prsClosed++;
-    }
-
-    const thisWeek = weekly[weekly.length - 1]!;
+    const weekMs = 7 * 86_400_000;
+    const start0 = monday.getTime() - (weeks - 1) * weekMs;
     const now = Date.now();
     const d7 = now - 7 * 86_400_000;
     const d14 = now - 14 * 86_400_000;
-    const win = (ts: number | null, from: number, to: number): boolean => ts !== null && ts >= from && ts < to;
+
+    interface TableAgg {
+      states: Map<string, number>;
+      openedWeekly: number[];
+      closedWeekly: number[];
+      opened7d: number;
+      openedPrev7d: number;
+      closed7d: number;
+      closedPrev7d: number;
+    }
+    const empty = (): TableAgg => ({
+      states: new Map(),
+      openedWeekly: new Array<number>(weeks).fill(0),
+      closedWeekly: new Array<number>(weeks).fill(0),
+      opened7d: 0,
+      openedPrev7d: 0,
+      closed7d: 0,
+      closedPrev7d: 0,
+    });
+
+    // issues/prs are code-owned; if module-code is uninstalled the JOINs fail —
+    // degrade to empty series rather than crash the dashboard.
+    const aggregate = (table: 'issues' | 'prs'): TableAgg => {
+      if (repoNames?.length === 0) return empty();
+      const repoFilter = repoNames ? ` AND t.repo IN (${repoNames.map(() => '?').join(', ')})` : '';
+      const repoArgs = repoNames ?? [];
+      const scope = `FROM ${table} t JOIN v_repos r ON r.full_name = t.repo
+         WHERE r.workspace_id = ?${repoFilter}`;
+      try {
+        const agg = empty();
+        const states = this.db
+          .prepare(`SELECT t.state AS state, COUNT(*) AS n ${scope} GROUP BY t.state`)
+          .all(workspaceId, ...repoArgs) as Array<{ state: string; n: number }>;
+        for (const row of states) agg.states.set(row.state, row.n);
+        // The CAST is load-bearing (see runs usageByDay): ms timestamps bind as
+        // REAL, and a real division would group fractional buckets per row.
+        // MIN clamps a future timestamp into the current week, as the old
+        // walk-back lookup did.
+        const opened = this.db
+          .prepare(
+            `SELECT MIN(CAST((t.created_at - ?) / ? AS INTEGER), ?) AS bucket, COUNT(*) AS n
+             ${scope} AND t.created_at >= ? GROUP BY bucket`,
+          )
+          .all(start0, weekMs, weeks - 1, workspaceId, ...repoArgs, start0) as Array<{ bucket: number; n: number }>;
+        for (const row of opened) agg.openedWeekly[row.bucket] = row.n;
+        const closed = this.db
+          .prepare(
+            `SELECT MIN(CAST((t.closed_at - ?) / ? AS INTEGER), ?) AS bucket, COUNT(*) AS n
+             ${scope} AND t.closed_at IS NOT NULL AND t.closed_at >= ? GROUP BY bucket`,
+          )
+          .all(start0, weekMs, weeks - 1, workspaceId, ...repoArgs, start0) as Array<{ bucket: number; n: number }>;
+        for (const row of closed) agg.closedWeekly[row.bucket] = row.n;
+        const windows = this.db
+          .prepare(
+            `SELECT
+               COALESCE(SUM(t.created_at >= ? AND t.created_at < ?), 0) AS opened7d,
+               COALESCE(SUM(t.created_at >= ? AND t.created_at < ?), 0) AS openedPrev7d,
+               COALESCE(SUM(t.closed_at IS NOT NULL AND t.closed_at >= ? AND t.closed_at < ?), 0) AS closed7d,
+               COALESCE(SUM(t.closed_at IS NOT NULL AND t.closed_at >= ? AND t.closed_at < ?), 0) AS closedPrev7d
+             ${scope}`,
+          )
+          .get(d7, now + 1, d14, d7, d7, now + 1, d14, d7, workspaceId, ...repoArgs) as {
+          opened7d: number;
+          openedPrev7d: number;
+          closed7d: number;
+          closedPrev7d: number;
+        };
+        agg.opened7d = windows.opened7d;
+        agg.openedPrev7d = windows.openedPrev7d;
+        agg.closed7d = windows.closed7d;
+        agg.closedPrev7d = windows.closedPrev7d;
+        return agg;
+      } catch {
+        return empty();
+      }
+    };
+
+    const issues = aggregate('issues');
+    const prs = aggregate('prs');
+    const weekly = Array.from({ length: weeks }, (_, i) => ({
+      weekStart: start0 + i * weekMs,
+      issuesOpened: issues.openedWeekly[i]!,
+      issuesClosed: issues.closedWeekly[i]!,
+      prsOpened: prs.openedWeekly[i]!,
+      prsClosed: prs.closedWeekly[i]!,
+    }));
+    const thisWeek = weekly[weekly.length - 1]!;
 
     return {
-      openIssues: issues.filter((i) => i.state === 'open').length,
-      closedIssues: issues.filter((i) => i.state === 'closed').length,
-      openPrs: prs.filter((p) => p.state === 'open').length,
-      mergedPrs: prs.filter((p) => p.state === 'merged').length,
+      openIssues: issues.states.get('open') ?? 0,
+      closedIssues: issues.states.get('closed') ?? 0,
+      openPrs: prs.states.get('open') ?? 0,
+      mergedPrs: prs.states.get('merged') ?? 0,
       issuesOpenedThisWeek: thisWeek.issuesOpened,
       issuesClosedThisWeek: thisWeek.issuesClosed,
       prsOpenedThisWeek: thisWeek.prsOpened,
       prsClosedThisWeek: thisWeek.prsClosed,
-      issuesOpened7d: issues.filter((i) => win(i.created_at, d7, now + 1)).length,
-      issuesOpenedPrev7d: issues.filter((i) => win(i.created_at, d14, d7)).length,
-      issuesClosed7d: issues.filter((i) => win(i.closed_at, d7, now + 1)).length,
-      issuesClosedPrev7d: issues.filter((i) => win(i.closed_at, d14, d7)).length,
-      prsOpened7d: prs.filter((p) => win(p.created_at, d7, now + 1)).length,
-      prsOpenedPrev7d: prs.filter((p) => win(p.created_at, d14, d7)).length,
-      prsClosed7d: prs.filter((p) => win(p.closed_at, d7, now + 1)).length,
-      prsClosedPrev7d: prs.filter((p) => win(p.closed_at, d14, d7)).length,
+      issuesOpened7d: issues.opened7d,
+      issuesOpenedPrev7d: issues.openedPrev7d,
+      issuesClosed7d: issues.closed7d,
+      issuesClosedPrev7d: issues.closedPrev7d,
+      prsOpened7d: prs.opened7d,
+      prsOpenedPrev7d: prs.openedPrev7d,
+      prsClosed7d: prs.closed7d,
+      prsClosedPrev7d: prs.closedPrev7d,
       weekly,
     };
   }

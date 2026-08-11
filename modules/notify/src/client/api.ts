@@ -1,6 +1,7 @@
-import { request } from '@moxxy/companion-sdk/client';
+import { qs, request } from '@moxxy/companion-sdk/client';
 import type { NotifyDeliveryRecord } from '../contract/index.js';
 
 export const notifyApi = {
-  deliveries: () => request<{ deliveries: NotifyDeliveryRecord[] }>('/api/notify/deliveries'),
+  deliveries: (opts?: { limit?: number }) =>
+    request<{ deliveries: NotifyDeliveryRecord[] }>(`/api/notify/deliveries${qs({ limit: opts?.limit })}`),
 };

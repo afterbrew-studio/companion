@@ -67,6 +67,29 @@ export function EmailMark(): React.JSX.Element {
   );
 }
 
+/** The generic webhook has no vendor: a neutral stroke glyph in currentColor. */
+export function WebhookMark(): React.JSX.Element {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label="Webhook"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+    >
+      <circle cx="5.5" cy="17" r="3" />
+      <circle cx="18.5" cy="17" r="3" />
+      <circle cx="12" cy="7" r="3" />
+      <path d="M10.6 9.6 7 14.5" />
+      <path d="M13.4 9.6 17 14.5" />
+      <path d="M8.5 17h7" />
+    </svg>
+  );
+}
+
 export function NtfyMark(): React.JSX.Element {
   return (
     <svg className="size-5" viewBox="0 0 24 24" role="img" aria-label="ntfy" fill="#317F6F">

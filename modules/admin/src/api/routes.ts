@@ -44,6 +44,7 @@ export default defineRoutes((ctx) => {
       body: z.object({ defaultScope: z.enum(['workspace', 'global']) }),
       handler: ({ body }): NotificationSettings => {
         ctx.settings.set('notifications.defaultScope', body.defaultScope);
+        ctx.broadcast({ t: 'admin.changed' });
         return { defaultScope: notificationDefaultScope() };
       },
     }),
@@ -76,6 +77,7 @@ export default defineRoutes((ctx) => {
       handler: ({ body }): UpdateBrandingResponse => {
         ctx.settings.set('branding.name', body.name?.trim() ?? '');
         ctx.settings.set('branding.logo', body.logo ?? '');
+        ctx.broadcast({ t: 'admin.changed' });
         return {
           branding: {
             name: ctx.settings.get('branding.name') || null,
