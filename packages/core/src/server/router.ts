@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AuthUser, Authenticator, Permission, RouteAccess } from '@moxxy/companion-contracts';
 import { withRequestUser, type Logger } from '@moxxy/companion-services';
 import type { AuditEvent } from './capabilities.js';
+import { clientAddressFrom, TrustedProxies } from './client-address.js';
 
 /**
  * The typed route factory + the dynamic router. A `route({...})` value declares
@@ -86,7 +87,9 @@ export interface RouteContext<P extends string, B> {
   readonly user: AuthUser | null;
   /** Raw bearer token of this request (for logout-style flows). */
   readonly token: string | null;
-  /** Socket peer used for bounded login throttling. Proxy headers are not trusted. */
+  /** The caller's address, used for bounded login throttling: the socket peer,
+   *  or the X-Forwarded-For client when the peer is a trusted proxy
+   *  (COMPANION_TRUSTED_PROXIES). From any other peer the header is ignored. */
   readonly clientAddress: string;
 }
 
@@ -178,6 +181,17 @@ function retryAfterOf(err: unknown): number | null {
   return typeof after === 'number' && after > 0 ? after : null;
 }
 
+export interface RouterOptions {
+  /** IPs/CIDRs whose X-Forwarded-For is believed (COMPANION_TRUSTED_PROXIES). */
+  readonly trustedProxies?: readonly string[];
+  /**
+   * Called once per completed response with the matched route PATTERN (never
+   * the concrete path, so metric cardinality stays bounded) and the status.
+   * Unmatched paths report as '(unmatched)'.
+   */
+  readonly observe?: (routePattern: string, method: HttpMethod, status: number) => void;
+}
+
 export class DynamicRouter {
   /** Enabled modules' routes, by module id. Dispatch reads a flattened snapshot. */
   private readonly mounted = new Map<string, readonly CompiledRoute[]>();
@@ -185,13 +199,19 @@ export class DynamicRouter {
   /** Patterns owned by installed-but-disabled modules → 503 (not 404). */
   private disabled = new Map<string, readonly CompiledRoute[]>();
   private disabledFlat: readonly CompiledRoute[] = [];
+  private readonly trustedProxies: TrustedProxies;
+  private readonly observe?: (routePattern: string, method: HttpMethod, status: number) => void;
 
   constructor(
     private readonly auth: Authenticator,
     private readonly log: Logger,
     /** Emits one record per mutating request; the kernel swallows sink failures. */
     private readonly audit: (event: AuditEvent) => void = () => {},
-  ) {}
+    options: RouterOptions = {},
+  ) {
+    this.trustedProxies = new TrustedProxies(options.trustedProxies ?? []);
+    this.observe = options.observe;
+  }
 
   mount(moduleId: string, routes: readonly CompiledRoute[]): void {
     for (const r of routes) {
@@ -233,6 +253,12 @@ export class DynamicRouter {
     const path = url.pathname;
     /** The route we committed to, so the catch block can audit a refusal. */
     let matched: CompiledRoute | null = null;
+    if (this.observe) {
+      const observe = this.observe;
+      // 'finish' = the response was fully written; an aborted connection is
+      // deliberately not counted, because its status code was never sent.
+      res.once('finish', () => observe(matched?.path ?? '(unmatched)', method, res.statusCode));
+    }
 
     try {
       let pathMatched = false;
@@ -278,8 +304,13 @@ export class DynamicRouter {
           params[key] = decodeURIComponent(match[i + 1] ?? '');
         });
         const rawBody = method === 'GET' ? {} : await readBody(req);
+        const clientAddress = clientAddressFrom(
+          req.socket.remoteAddress ?? 'unknown',
+          req.headers['x-forwarded-for'],
+          this.trustedProxies,
+        );
         const result = await withRequestUser(user, () =>
-          r.run(params, url.searchParams, rawBody, user, token, req.socket.remoteAddress ?? 'unknown'),
+          r.run(params, url.searchParams, rawBody, user, token, clientAddress),
         );
         const status = result instanceof Reply ? result.status : 200;
         // AFTER the handler: recording an attempt that then threw would claim
