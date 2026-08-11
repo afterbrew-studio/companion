@@ -53,6 +53,11 @@ export class WsHub implements WsScopeRegistry {
     this.resolvers.delete(id);
   }
 
+  /** Open SPA sockets, for the ws_connections gauge. */
+  connectionCount(): number {
+    return this.wss.clients.size;
+  }
+
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const sameOrigin = browserOriginMatchesHost(req);

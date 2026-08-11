@@ -1,10 +1,10 @@
 import { createServer, type Server } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { close, constants, createReadStream, fstat, open, readFileSync, readdirSync } from 'node:fs';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { isTrustedLocalHttpRequest, log } from '@moxxy/companion-services';
 import type { AuthMode } from '@moxxy/companion-contracts';
-import type { ModuleKernel, WsHub } from '@moxxy/companion-core/server';
+import { isLoopbackAddress, registerProcessMetrics, type ModuleKernel, type WsHub } from '@moxxy/companion-core/server';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -40,6 +40,13 @@ export function startHttpServer(opts: {
   const { host, port, authMode, kernel, hub, staticDir, moduleChunks, publicUrl } = opts;
   const inlineScriptHashes = staticDir ? cspInlineScriptHashes(join(staticDir, 'index.html')) : [];
   const staticFiles = staticDir ? indexStaticFiles(staticDir) : undefined;
+  // Metrics are off by default; enabling them also starts the sampling gauges.
+  const metricsEnabled = process.env.COMPANION_METRICS === '1';
+  const metricsToken = process.env.COMPANION_METRICS_TOKEN?.trim() || undefined;
+  if (metricsEnabled) {
+    registerProcessMetrics(kernel.metrics);
+    kernel.metrics.gauge('companion_ws_connections', 'Open SPA WebSocket connections', () => hub.connectionCount());
+  }
 
   const server = createServer((req, res) => {
     setSecurityHeaders(req, res, publicUrl, inlineScriptHashes);
@@ -61,6 +68,38 @@ export function startHttpServer(opts: {
     if (path === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"ok":true}');
+      return;
+    }
+    // Readiness, distinct from liveness: 200 only once the kernel booted and
+    // every enabled module activated. The body names module states and nothing
+    // else, so an unauthenticated probe learns no configuration.
+    if (path === '/readyz') {
+      const readiness = kernel.readiness();
+      const body = JSON.stringify(readiness);
+      res.writeHead(readiness.ready ? 200 : 503, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      });
+      res.end(body);
+      return;
+    }
+    if (path === '/metrics') {
+      if (!metricsEnabled) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('metrics are not enabled (set COMPANION_METRICS=1)');
+        return;
+      }
+      if (!metricsRequestAllowed(req.socket.remoteAddress, singleHeader(req.headers.authorization), metricsToken)) {
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('metrics require loopback or the metrics bearer token');
+        return;
+      }
+      const body = kernel.metrics.render();
+      res.writeHead(200, {
+        'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+      });
+      res.end(body);
       return;
     }
     if (path.startsWith('/api/')) {
@@ -105,6 +144,25 @@ export function startHttpServer(opts: {
       resolve(server);
     });
   });
+}
+
+/**
+ * Fail-closed /metrics admission: loopback scrapes need no credential, any
+ * other source must present the COMPANION_METRICS_TOKEN bearer, and with no
+ * token configured every non-loopback scrape is refused. Compared as digests
+ * so length differences leak nothing.
+ */
+export function metricsRequestAllowed(
+  peer: string | undefined,
+  authorization: string | undefined,
+  token: string | undefined,
+): boolean {
+  if (peer && isLoopbackAddress(peer)) return true;
+  if (!token) return false;
+  if (!authorization?.startsWith('Bearer ')) return false;
+  const presented = createHash('sha256').update(authorization.slice('Bearer '.length)).digest();
+  const expected = createHash('sha256').update(token).digest();
+  return timingSafeEqual(presented, expected);
 }
 
 function setSecurityHeaders(

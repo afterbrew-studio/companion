@@ -184,6 +184,12 @@ function retryAfterOf(err: unknown): number | null {
 export interface RouterOptions {
   /** IPs/CIDRs whose X-Forwarded-For is believed (COMPANION_TRUSTED_PROXIES). */
   readonly trustedProxies?: readonly string[];
+  /**
+   * Called once per completed response with the matched route PATTERN (never
+   * the concrete path, so metric cardinality stays bounded) and the status.
+   * Unmatched paths report as '(unmatched)'.
+   */
+  readonly observe?: (routePattern: string, method: HttpMethod, status: number) => void;
 }
 
 export class DynamicRouter {
@@ -194,6 +200,7 @@ export class DynamicRouter {
   private disabled = new Map<string, readonly CompiledRoute[]>();
   private disabledFlat: readonly CompiledRoute[] = [];
   private readonly trustedProxies: TrustedProxies;
+  private readonly observe?: (routePattern: string, method: HttpMethod, status: number) => void;
 
   constructor(
     private readonly auth: Authenticator,
@@ -203,6 +210,7 @@ export class DynamicRouter {
     options: RouterOptions = {},
   ) {
     this.trustedProxies = new TrustedProxies(options.trustedProxies ?? []);
+    this.observe = options.observe;
   }
 
   mount(moduleId: string, routes: readonly CompiledRoute[]): void {
@@ -245,6 +253,12 @@ export class DynamicRouter {
     const path = url.pathname;
     /** The route we committed to, so the catch block can audit a refusal. */
     let matched: CompiledRoute | null = null;
+    if (this.observe) {
+      const observe = this.observe;
+      // 'finish' = the response was fully written; an aborted connection is
+      // deliberately not counted, because its status code was never sent.
+      res.once('finish', () => observe(matched?.path ?? '(unmatched)', method, res.statusCode));
+    }
 
     try {
       let pathMatched = false;

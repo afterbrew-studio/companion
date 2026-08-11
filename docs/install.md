@@ -167,7 +167,12 @@ mount an SSH configuration and key in, and check the key's GitHub permissions.
 
 The image is self-contained (daemon, built SPA, git, moxxy CLI) and ships a
 `HEALTHCHECK` against the unauthenticated `/healthz` endpoint, so Coolify can
-gate deploys on it. Point Coolify at the repository.
+gate deploys on it. Point Coolify at the repository. `/readyz` additionally
+reports whether the kernel booted and every enabled module activated; gate
+rollouts on it if your orchestrator distinguishes readiness from liveness. The
+container `HEALTHCHECK` deliberately stays on `/healthz`, so one failed
+optional module degrades the instance instead of restart-looping the
+container.
 
 **Use the Docker Compose build pack.** Both packs can build the image, but the
 compose one avoids three separate problems, one of which has no other per-app
@@ -320,6 +325,13 @@ own nginx, Caddy or Traefik). Two settings make that topology behave:
   proxy, so a client cannot dodge the throttle by prepending fake hops.
   Connections from any other peer keep ignoring the header entirely. See
   [`configuration.md`](configuration.md#common-variables).
+
+Probe endpoints for the proxy or orchestrator: `/healthz` answers 200 as soon
+as the process serves HTTP (liveness), and `/readyz` answers 200 only once the
+kernel booted and every enabled module activated, with a body listing per-module
+states (readiness). `/metrics` serves Prometheus metrics when
+`COMPANION_METRICS=1`; a scrape arriving through the proxy is not loopback to
+the daemon and therefore needs the `COMPANION_METRICS_TOKEN` bearer.
 
 ## From source, without Docker
 

@@ -11,6 +11,7 @@ import type { ModuleId, ModuleManifest } from '../manifest.js';
 import type { ModuleConfigState } from '../module-config.js';
 import { DynamicRouter } from './router.js';
 import { RawRouter } from './raw-router.js';
+import { MetricsRegistry } from './metrics.js';
 import { ServiceRegistry } from './service-registry.js';
 import { ServerBus } from './bus.js';
 import { MigrationRunner } from './migration-runner.js';
@@ -81,6 +82,8 @@ export class ModuleKernel {
 
   readonly services = new ServiceRegistry();
   readonly bus = new ServerBus();
+  /** Prometheus registry served at /metrics when the operator enables it. */
+  readonly metrics = new MetricsRegistry();
   readonly migrations: MigrationRunner;
   readonly rbac = new RbacGrid();
   /** Offline licence state, re-read at most once a day; never on a request path. */
@@ -92,6 +95,10 @@ export class ModuleKernel {
   private authenticator: Authenticator | null = null;
   /** Set by whichever enabled module provides it; absent = auditing is a no-op. */
   private auditSink: AuditSink | null = null;
+  /** True once boot() finished; /readyz gates on it. */
+  private booted = false;
+  /** DB-enabled modules whose activation threw; boot keeps serving without them. */
+  private readonly activationFailed = new Set<ModuleId>();
   /** The shared base — `moduleConfig` is the one per-module member, added by moduleCtx(). */
   /** Both omitted fields are per-module, so they are added in `moduleCtx`. */
   private readonly ctx: Omit<ModuleContext, 'moduleConfig' | 'secrets'>;
@@ -149,6 +156,7 @@ export class ModuleKernel {
       fts: this.migrations.fts,
       services: this.services,
       bus: this.bus,
+      metrics: this.metrics,
       broadcast: opts.broadcast,
       pushToUser: opts.pushToUser,
       notify,
@@ -170,6 +178,10 @@ export class ModuleKernel {
       isEnabled: (id) => this.isEnabled(id),
     };
     this.rawRouter = new RawRouter(this.log);
+    const httpRequests = this.metrics.counter(
+      'companion_http_requests_total',
+      'HTTP requests answered by the API router, by route pattern and status class',
+    );
     // The router needs an authenticator, wired once module-core provides it (boot()).
     this.router = new DynamicRouter(
       {
@@ -178,7 +190,11 @@ export class ModuleKernel {
       },
       this.log,
       (e) => this.recordAudit(e),
-      { trustedProxies: opts.config.trustedProxies },
+      {
+        trustedProxies: opts.config.trustedProxies,
+        observe: (routePattern, method, status) =>
+          httpRequests.inc({ route: `${method} ${routePattern}`, status: `${Math.floor(status / 100)}xx` }),
+      },
     );
   }
 
@@ -380,10 +396,36 @@ export class ModuleKernel {
     }
 
     const enabled = this.topoSort([...enabledSet]);
+    // One optional module failing to activate must not take the daemon down: it
+    // is recorded (readiness() reports it), its partial registrations are rolled
+    // back, its later phases are skipped, and boot continues. A REQUIRED
+    // module's failure stays fatal, because module-core provides the
+    // authenticator nothing can serve without. A dependent of a failed module
+    // fails in turn when it reaches for the missing service, and cascades into
+    // the same handling.
+    const guard = async (id: ModuleId, run: () => void | Promise<void>): Promise<void> => {
+      if (this.activationFailed.has(id)) return;
+      try {
+        await run();
+      } catch (err) {
+        if (this.installed.get(id)?.manifest.required) throw err;
+        this.log.error(`module '${id}' failed to activate`, err);
+        this.activationFailed.add(id);
+        this.services.setActiveModule(null);
+        this.services.revokeModule(id);
+        this.router.unmount(id);
+        this.rawRouter.unmount(id);
+      }
+    };
     // Loads are independent (only the activation phases below are ordered), so
     // overlap the dynamic imports instead of paying their sum on cold start.
-    const mods = await Promise.all(enabled.map((id) => this.installed.get(id)!.load()));
-    enabled.forEach((id, i) => this.loaded.set(id, mods[i]!));
+    await Promise.all(
+      enabled.map((id) =>
+        guard(id, async () => {
+          this.loaded.set(id, await this.installed.get(id)!.load());
+        }),
+      ),
+    );
     this.assertNoCollisions(enabled);
 
     // Grid must be live before any request is served, so Auth sees the perms.
@@ -391,36 +433,70 @@ export class ModuleKernel {
 
     // Before ANY module reads its config: a late swap would hand the first
     // readers the old backend's answers. Last provider in enabled order wins.
-    for (const id of enabled) this.adoptSecretStore(id, this.loaded.get(id)!);
+    for (const id of enabled) await guard(id, () => this.adoptSecretStore(id, this.loaded.get(id)!));
 
     for (const id of enabled) {
-      const mod = this.loaded.get(id)!;
-      if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
-      this.services.setActiveModule(id);
-      await mod.registerServices?.(this.moduleCtx(id));
-      this.services.setActiveModule(null);
+      await guard(id, async () => {
+        const mod = this.loaded.get(id)!;
+        if (mod.migrations?.length) this.migrations.migrateUp(id, mod.migrations);
+        this.services.setActiveModule(id);
+        await mod.registerServices?.(this.moduleCtx(id));
+        this.services.setActiveModule(null);
+      });
     }
 
     // module-core (required, first) provides the authenticator the router uses.
     // Audit follows the same shape; enabled order means a dedicated audit module
     // (which sorts after core) takes over from core's minimal table.
     for (const id of enabled) {
-      const mod = this.loaded.get(id)!;
-      if (mod.provideAuthenticator) this.authenticator = mod.provideAuthenticator(this.moduleCtx(id));
-      if (mod.provideAudit) this.auditSink = mod.provideAudit(this.moduleCtx(id));
+      await guard(id, () => {
+        const mod = this.loaded.get(id)!;
+        if (mod.provideAuthenticator) this.authenticator = mod.provideAuthenticator(this.moduleCtx(id));
+        if (mod.provideAudit) this.auditSink = mod.provideAudit(this.moduleCtx(id));
+      });
     }
     if (!this.authenticator) throw new Error('no module provided an authenticator (module-core missing?)');
 
     for (const id of enabled) {
-      const mod = this.loaded.get(id)!;
-      if (mod.routes) this.router.mount(id, mod.routes(this.moduleCtx(id)));
-      if (mod.rawRoutes) this.rawRouter.mount(id, mod.rawRoutes(this.moduleCtx(id)));
+      await guard(id, () => {
+        const mod = this.loaded.get(id)!;
+        if (mod.routes) this.router.mount(id, mod.routes(this.moduleCtx(id)));
+        if (mod.rawRoutes) this.rawRouter.mount(id, mod.rawRoutes(this.moduleCtx(id)));
+      });
     }
-    for (const id of enabled) await this.loaded.get(id)!.lifecycle?.onEnable?.(this.moduleCtx(id));
+    for (const id of enabled) await guard(id, () => this.loaded.get(id)!.lifecycle?.onEnable?.(this.moduleCtx(id)));
     // Single post-activation pass: resumers fire only after every module subscribed.
-    for (const id of enabled) await this.loaded.get(id)!.lifecycle?.postActivate?.(this.moduleCtx(id));
-    for (const id of enabled) this.startJobs(id);
-    this.log.info(`kernel booted: ${enabled.length} module(s) enabled [${enabled.join(', ')}]`);
+    for (const id of enabled) await guard(id, () => this.loaded.get(id)!.lifecycle?.postActivate?.(this.moduleCtx(id)));
+
+    const active = enabled.filter((id) => !this.activationFailed.has(id));
+    // The grid built above may still credit a module that failed later phases.
+    if (this.activationFailed.size) this.rebuildGrid(active);
+    for (const id of active) this.startJobs(id);
+    this.booted = true;
+    this.log.info(`kernel booted: ${active.length} module(s) enabled [${active.join(', ')}]`);
+    if (this.activationFailed.size) {
+      this.log.error(`kernel booted degraded: [${[...this.activationFailed].join(', ')}] failed to activate`);
+    }
+  }
+
+  /**
+   * Deployment gate for /readyz: ready only once boot finished and every
+   * DB-enabled module actually activated. States are deliberately coarse
+   * (enabled/available/failed) so the body leaks no configuration.
+   */
+  readiness(): { ready: boolean; modules: readonly { id: ModuleId; state: 'enabled' | 'available' | 'failed' }[] } {
+    const enabledRows = new Set(
+      (this.db.prepare(`SELECT id FROM modules WHERE enabled = 1`).all() as { id: string }[]).map((r) => r.id),
+    );
+    const modules = [...this.installed.keys()].map((id) => ({
+      id,
+      state: this.activationFailed.has(id)
+        ? ('failed' as const)
+        : enabledRows.has(id)
+          ? ('enabled' as const)
+          : ('available' as const),
+    }));
+    return { ready: this.booted && !modules.some((m) => m.state === 'failed'), modules };
   }
 
   // ---- lifecycle transitions ----
@@ -496,8 +572,16 @@ export class ModuleKernel {
       if (mod.rawRoutes) this.rawRouter.mount(id, mod.rawRoutes(ctx));
       this.markState(id, opts.markInstalled ? { installed: true, enabled: true } : { enabled: true });
       this.rebuildGrid(this.topoSort(this.enabledIds()));
-      await mod.lifecycle?.onEnable?.(ctx);
-      await mod.lifecycle?.postActivate?.(ctx);
+      try {
+        await mod.lifecycle?.onEnable?.(ctx);
+        await mod.lifecycle?.postActivate?.(ctx);
+      } catch (err) {
+        // The DB now says enabled but activation broke: readiness() reports it
+        // as failed until a successful re-enable or a disable resolves it.
+        this.activationFailed.add(id);
+        throw err;
+      }
+      this.activationFailed.delete(id);
       this.startJobs(id);
       this.opts.broadcast({ t: 'modules.changed' });
     } finally {
@@ -574,6 +658,8 @@ export class ModuleKernel {
       this.router.unmount(id);
       this.rawRouter.unmount(id);
       this.markState(id, { enabled: false });
+      // A deliberately disabled module is 'available' again, not 'failed'.
+      this.activationFailed.delete(id);
       this.rebuildGrid(this.topoSort(this.enabledIds()));
       await mod?.lifecycle?.onDisable?.(this.moduleCtx(id));
       this.services.revokeModule(id);
