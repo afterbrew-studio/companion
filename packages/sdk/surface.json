@@ -96,6 +96,7 @@
     "assertPublicHttpTarget",
     "badRequest",
     "bearerToken",
+    "claimAuditActor",
     "clearSessionCookie",
     "created",
     "currentUser",

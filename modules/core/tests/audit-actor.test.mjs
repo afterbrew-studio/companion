@@ -11,7 +11,7 @@ const upTo = (version) => {
 };
 
 test('a public route has no actor, and recording one must not be dropped', () => {
-  const db = upTo(4);
+  const db = upTo(Infinity);
   const store = new AuditStore(db);
 
   // The event the trail exists for: someone tried to sign in and was refused.
@@ -30,7 +30,7 @@ test('a public route has no actor, and recording one must not be dropped', () =>
 });
 
 test('an authenticated event still records its actor', () => {
-  const db = upTo(4);
+  const db = upTo(Infinity);
   const store = new AuditStore(db);
   store.record({
     at: Date.now(),
@@ -46,11 +46,15 @@ test('an authenticated event still records its actor', () => {
 });
 
 test('upgrading an instance that already has audit rows keeps every one of them', () => {
-  // Exactly the shipped shape: v1..v3, with the NOT NULL actor that caused this.
+  // Exactly the shipped shape: v1..v3, with the NOT NULL actor that caused
+  // this. Seeded with raw SQL matching that era's columns; the current store
+  // targets the head schema and never runs against v3.
   const db = upTo(3);
-  const before = new AuditStore(db);
-  before.record({ at: 1, actor: 'admin', action: 'POST /api/roles', access: 'users:manage', status: 201, module: 'core' });
-  before.record({ at: 2, actor: 'bob', action: 'POST /api/modules/:id/disable', access: 'modules:manage', status: 403, module: 'core' });
+  const seed = db.prepare(
+    `INSERT INTO audit_log (at, actor, action, access, status, module, detail) VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+  );
+  seed.run(1, 'admin', 'POST /api/roles', 'users:manage', 201, 'core');
+  seed.run(2, 'bob', 'POST /api/modules/:id/disable', 'modules:manage', 403, 'core');
 
   migrations.find((m) => m.version === 4).up(db);
 

@@ -15,6 +15,10 @@ export interface AuditRecord {
   readonly status: number;
   readonly module: string | null;
   readonly detail: string | null;
+  /** Trust-proxy-derived client address; null for rows written outside a request. */
+  readonly ip: string | null;
+  /** Bounded User-Agent header; null outside a request. */
+  readonly agent: string | null;
 }
 
 export interface AuditQuery {
@@ -39,8 +43,8 @@ export class AuditStore {
     private readonly forward: (event: AuditEvent) => void = () => {},
   ) {
     this.insert = db.prepare(
-      `INSERT INTO audit_log (at, actor, action, access, status, module, detail)
-       VALUES (@at, @actor, @action, @access, @status, @module, @detail)`,
+      `INSERT INTO audit_log (at, actor, action, access, status, module, detail, ip, agent)
+       VALUES (@at, @actor, @action, @access, @status, @module, @detail, @ip, @agent)`,
     );
   }
 
@@ -84,6 +88,8 @@ export class AuditStore {
       status: event.status,
       module: event.module,
       detail: event.detail ?? null,
+      ip: event.ip ?? null,
+      agent: event.agent ?? null,
     });
     // After the row, and swallowing: a collector must never be able to fail the
     // write that is the actual record, nor the request being recorded.

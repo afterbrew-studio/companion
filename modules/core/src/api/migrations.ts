@@ -297,4 +297,27 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_sessions_id`);
     },
   },
+  {
+    version: 11,
+    name: 'audit_request_origin',
+    // Who did what FROM WHERE: the router records the trust-proxy-derived
+    // client address and the User-Agent with every mutation. Both nullable;
+    // rows written outside a request (jobs) leave them empty.
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE audit_log ADD COLUMN ip TEXT`,
+        `ALTER TABLE audit_log ADD COLUMN agent TEXT`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+    },
+    down: () => {
+      // Additive columns stay: the audit trail is append-only and dropping
+      // origin data from historical rows would itself be an audit event.
+    },
+  },
 ]);
