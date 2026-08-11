@@ -67,7 +67,7 @@ test('one trusted scan discovers rules, skills, template and enforceable policie
     repoTextBlob: async (_repo, sha) => files.get(sha),
   };
 
-  const context = await scanner.scan(client, 'octanejs/octane', 'main');
+  const context = await scanner.scan(client, 'example-org/example-repo', 'main');
 
   assert.deepEqual(context.files.map((file) => [file.kind, file.path, file.primary]), [
     ['instructions', 'AGENTS.md', false],
@@ -132,7 +132,7 @@ test('guidance keeps platform boundaries explicit and offers trusted skills', as
     ])),
     repoTextBlob: async (_repo, sha) => files.get(sha),
   };
-  const context = await scanner.scan(client, 'octanejs/octane', 'main');
+  const context = await scanner.scan(client, 'example-org/example-repo', 'main');
   const prompt = repositoryGuidancePrompt(context);
 
   assert.match(prompt, /Leave all changes uncommitted/);
