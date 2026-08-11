@@ -17,7 +17,7 @@ import { onboarding } from './onboarding.js';
 export { AuthProvider, useAuth } from './lib/auth.js';
 export { LoginPage } from './pages/Login.js';
 export { SetupPage } from './pages/Setup.js';
-export { Onboarding, hasOnboarded, hasUnseenOnboarding } from './components/Onboarding.js';
+export { Onboarding, hasOnboarded } from './components/Onboarding.js';
 export type { OnboardingMode } from './components/Onboarding.js';
 export { authApi, coreApi, modulesApi } from './api.js';
 // Theme is instance/user chrome owned by identity; the app shell calls initTheme

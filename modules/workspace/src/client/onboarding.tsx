@@ -14,8 +14,9 @@ function WorkspaceArt({ playing }: { playing: boolean }): React.JSX.Element {
   );
 }
 
-/** module-workspace's slice of the welcome tour. Gated on its own permission —
- *  no cross-module cast, the step simply never shows to a role that lacks it. */
+/** module-workspace's slice of the welcome tour. Two variants of one step, split
+ *  on the module's own permission: admins get the setup copy, everyone else a
+ *  read-only version, so no role loses the step. */
 export const onboarding = defineOnboarding([
   {
     key: 'workspaces',
@@ -24,6 +25,15 @@ export const onboarding = defineOnboarding([
     title: 'Start with a workspace',
     body: 'A workspace groups related repositories. Create one from New, then switch context from the top of the sidebar; every page follows that choice.',
     chips: ['New → Create workspace', 'Sidebar → Workspace'],
+    art: (playing) => <WorkspaceArt playing={playing} />,
+  },
+  {
+    key: 'workspaces-maintainer',
+    order: 10,
+    withoutPermission: 'workspaces:manage',
+    title: 'Start with a workspace',
+    body: 'A workspace groups related repositories. An admin creates and manages them; you pick your active one from the top of the sidebar, and every page follows that choice.',
+    chips: ['Sidebar → Workspace'],
     art: (playing) => <WorkspaceArt playing={playing} />,
   },
 ]);
