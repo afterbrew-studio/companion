@@ -5,8 +5,9 @@ import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 
 export function LoginPage(): React.JSX.Element {
-  const { login, completeMfa, branding, providers } = useAuth();
+  const { login, completeMfa, authMode, branding, providers } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
+  const ssoOnly = authMode === 'sso';
 
   useEffect(() => {
     document.title = `Sign in · ${brandName}`;
@@ -114,58 +115,78 @@ export function LoginPage(): React.JSX.Element {
       title={brandName}
       subtitle="Sign in to your workspace"
     >
-      <form
-        className="card flex flex-col gap-3 bg-white dark:bg-zinc-900"
-        onSubmit={(e) => void submit(e)}
-        aria-label="Sign in"
-      >
-        <Field label="Username">
-          <input
-            className="input"
-            autoComplete="username"
-            autoFocus
-            required
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-        </Field>
-        <Field label="Password">
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </Field>
-        <ErrorBar error={error} />
-        <button className="btn mt-1 justify-center" type="submit" disabled={busy || !username || !password}>
-          {busy ? (
+      {ssoOnly ? (
+        <div className="card flex flex-col gap-3 bg-white dark:bg-zinc-900" aria-label="Sign in">
+          {providers.length > 0 ? (
             <>
-              <Spinner /> Signing in…
+              <p className="dim text-[13px]">This instance uses single sign-on.</p>
+              {providers.map((p) => (
+                <a key={p.id} className="btn justify-center" href={p.startUrl}>
+                  {p.label}
+                </a>
+              ))}
             </>
           ) : (
-            'Sign in'
+            <p className="dim text-[13px]">
+              This instance requires single sign-on, but no identity provider is enabled yet. An
+              administrator must enable one before anyone can sign in here.
+            </p>
           )}
-        </button>
-        {providers.length > 0 ? (
-          <>
-            <div className="dim my-1 flex items-center gap-3 text-xs">
-              <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-              or
-              <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-            </div>
-            {/* A plain link, not a fetch: the handshake is a browser redirect the
-                identity module owns end to end. */}
-            {providers.map((p) => (
-              <a key={p.id} className="btn justify-center" href={p.startUrl}>
-                {p.label}
-              </a>
-            ))}
-          </>
-        ) : null}
-      </form>
+        </div>
+      ) : (
+        <form
+          className="card flex flex-col gap-3 bg-white dark:bg-zinc-900"
+          onSubmit={(e) => void submit(e)}
+          aria-label="Sign in"
+        >
+          <Field label="Username">
+            <input
+              className="input"
+              autoComplete="username"
+              autoFocus
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </Field>
+          <Field label="Password">
+            <input
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <ErrorBar error={error} />
+          <button className="btn mt-1 justify-center" type="submit" disabled={busy || !username || !password}>
+            {busy ? (
+              <>
+                <Spinner /> Signing in…
+              </>
+            ) : (
+              'Sign in'
+            )}
+          </button>
+          {providers.length > 0 ? (
+            <>
+              <div className="dim my-1 flex items-center gap-3 text-xs">
+                <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+                or
+                <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+              {/* A plain link, not a fetch: the handshake is a browser redirect the
+                  identity module owns end to end. */}
+              {providers.map((p) => (
+                <a key={p.id} className="btn justify-center" href={p.startUrl}>
+                  {p.label}
+                </a>
+              ))}
+            </>
+          ) : null}
+        </form>
+      )}
     </AuthLayout>
   );
 }

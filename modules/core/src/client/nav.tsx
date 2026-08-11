@@ -27,7 +27,8 @@ export const nav = defineNav([
     hash: '#/users',
     shortcut: 'm',
     permission: 'users:manage',
-    authModes: ['password'],
+    // Hidden only in trusted local mode: an sso instance still manages accounts here.
+    authModes: ['password', 'sso'],
     section: 'admin-access',
     order: 20,
     icon: (
@@ -44,7 +45,7 @@ export const nav = defineNav([
     hash: '#/roles',
     shortcut: 'q',
     permission: 'users:manage',
-    authModes: ['password'],
+    authModes: ['password', 'sso'],
     section: 'admin-access',
     order: 25,
     icon: (

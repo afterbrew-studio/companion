@@ -10,8 +10,11 @@ export type SessionAccess = 'full' | 'read-only';
  * convenience: the daemon still creates a real admin and real sessions, but a
  * loopback browser may bootstrap that session without presenting credentials.
  * `password` is the fail-closed default for every networked/full deployment.
+ * `sso` closes password sign-in entirely so identity-provider policy (MFA,
+ * offboarding) cannot be bypassed; the bootstrap token and the local CLI
+ * session remain the recovery paths.
  */
-export type AuthMode = 'local' | 'password';
+export type AuthMode = 'local' | 'password' | 'sso';
 
 /**
  * Presentation-only menu preset for the application chrome. It never grants access:

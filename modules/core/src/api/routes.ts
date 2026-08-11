@@ -207,6 +207,9 @@ export default defineRoutes((ctx) => {
       access: 'public',
       body: loginSchema,
       handler: ({ body, clientAddress }): Reply => {
+        if (ctx.config.authMode === 'sso') {
+          throw new AuthError('password sign-in is disabled: this instance requires single sign-on', 403);
+        }
         const result = auth.login(body.username, body.password, clientAddress);
         // An MFA challenge is not a session: no cookie until the second step.
         return 'mfaRequired' in result
