@@ -200,4 +200,48 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS api_tokens`);
     },
   },
+  {
+    version: 7,
+    name: 'users_email_unique',
+    /**
+     * One account per email. A dirty database may already hold duplicates, and
+     * the migration must not fail it: duplicates are resolved deterministically
+     * by keeping the email on the OLDEST row (created_at, then rowid) and
+     * blanking it on the later ones. Blank, not NULL, because the column is
+     * NOT NULL and '' is the existing "no email" sentinel, which is also why
+     * the unique index is partial.
+     */
+    up: (db) => {
+      db.exec(`
+        UPDATE users SET email = ''
+        WHERE email != ''
+          AND EXISTS (
+            SELECT 1 FROM users other
+            WHERE other.email = users.email
+              AND (other.created_at < users.created_at
+                   OR (other.created_at = users.created_at AND other.rowid < users.rowid))
+          );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email) WHERE email != '';
+      `);
+    },
+    down: (db) => {
+      // The blanked duplicates are gone for good; dropping the index is the
+      // only reversible half.
+      db.exec(`DROP INDEX IF EXISTS idx_users_email`);
+    },
+  },
+  {
+    version: 8,
+    name: 'sessions_indexes',
+    // deleteForUser and pruneExpired both scan; give each its index.
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (username);
+        CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions (expires_at);
+      `);
+    },
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_sessions_user; DROP INDEX IF EXISTS idx_sessions_expiry;`);
+    },
+  },
 ]);

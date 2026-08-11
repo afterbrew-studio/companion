@@ -1,7 +1,9 @@
 # Installing and running Companion
 
 Three ways to run it, in order of how quickly they get you into the application.
-Configuration for all of them is in [`configuration.md`](configuration.md).
+Configuration for all of them is in [`configuration.md`](configuration.md);
+upgrading and rolling back an existing install is covered in
+[`upgrades.md`](upgrades.md).
 
 ## Prerequisites
 
@@ -107,9 +109,29 @@ now, discarding a password changed in the UI.
 
 ## Docker
 
-The image runs the same bundle as the npx package: the build stage compiles the
-workspace, the runtime stage carries only `dist/` plus three runtime
-dependencies.
+Every release publishes a ready-made image to GitHub Container Registry, so
+the first Docker path is a pull, not a build:
+
+```sh
+docker pull ghcr.io/moxxy-ai/companion
+docker run -d --name companion \
+  -p 127.0.0.1:8901:8901 \
+  -v companion-data:/data \
+  -v companion-moxxy:/home/node/.moxxy \
+  ghcr.io/moxxy-ai/companion
+```
+
+The published image is a `full`-profile build, tagged with each release version
+and `latest`; an SPDX SBOM of the image is attached to the matching GitHub
+release. Pin the version tag in anything long-lived, and see
+[`upgrades.md`](upgrades.md) for moving between versions. Both volumes matter:
+`/data` holds Companion's state and `/home/node/.moxxy` holds moxxy's provider
+credentials.
+
+Building from source stays fully supported and is the path for a custom module
+profile. The image runs the same bundle as the npx package: the build stage
+compiles the workspace, the runtime stage carries only `dist/` plus three
+runtime dependencies.
 
 ```sh
 cp .env.example .env      # optional overrides; first login uses the bootstrap token above

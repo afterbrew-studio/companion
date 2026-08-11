@@ -169,6 +169,8 @@ const changeMapSchema = verdictSchema.extend({
 });
 /** Inline comments per posted review; the rest travel in the body. */
 const MAX_INLINE_COMMENTS = 25;
+/** Progress ticks arrive per child event; each prs.changed refetches whole PR lists. */
+const PROGRESS_BROADCAST_MS = 3_000;
 
 /**
  * Wall clock for one review turn. When it expires the run is stopped mid-turn
@@ -210,6 +212,8 @@ export class PrReviews {
   private readonly activeIntegrationReviews = new Map<string, AbortController>();
   /** Coalesce provider events so live cost visibility does not become a PR refetch storm. */
   private readonly budgetSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Trailing-edge coalescing for progress-tick broadcasts; terminal-state broadcasts stay immediate. */
+  private readonly progressBroadcastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly store: CodeStore,
@@ -298,7 +302,22 @@ export class PrReviews {
       coverage,
     );
     const repo = this.store.prReviews.get(id)?.repo;
-    if (repo) this.broadcast({ t: 'prs.changed', repo });
+    if (repo) this.scheduleProgressBroadcast(id, repo);
+  }
+
+  /**
+   * At most one prs.changed per few seconds per PR while progress ticks
+   * stream. Trailing edge, so the last tick's state always becomes visible;
+   * a review's terminal broadcast never routes through here.
+   */
+  private scheduleProgressBroadcast(reviewId: string, repo: string): void {
+    if (this.progressBroadcastTimers.has(reviewId)) return;
+    const timer = setTimeout(() => {
+      this.progressBroadcastTimers.delete(reviewId);
+      this.broadcast({ t: 'prs.changed', repo });
+    }, PROGRESS_BROADCAST_MS);
+    timer.unref();
+    this.progressBroadcastTimers.set(reviewId, timer);
   }
 
   private syncBudget(reviewId: string, execution: ReviewExecution): void {

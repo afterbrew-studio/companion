@@ -26,11 +26,12 @@ import { playgroundApi } from '../api.js';
  * the skill.
  */
 
+// Capped below the server's 5-minute HTTP request timeout, which would kill
+// the awaiting socket; longer experiments belong in an evaluation suite.
 const TIMEOUTS = [
   { ms: 60_000, label: '1 min' },
   { ms: 180_000, label: '3 min' },
-  { ms: 300_000, label: '5 min' },
-  { ms: 600_000, label: '10 min' },
+  { ms: 270_000, label: '4.5 min' },
 ] as const;
 
 export function AgentLabPage({ query }: RouteProps): React.JSX.Element {
@@ -165,6 +166,11 @@ export function AgentLabPage({ query }: RouteProps): React.JSX.Element {
             would do — no files change, no state changes.
           </p>
         ) : null}
+        <p className="dim text-xs">
+          Synchronous runs are capped at 4.5 minutes: the request that awaits them is cut off by the
+          server&apos;s 5-minute socket timeout. Run longer experiments as an evaluation suite, which
+          completes durably in the background.
+        </p>
       </form>
 
       {busy ? (

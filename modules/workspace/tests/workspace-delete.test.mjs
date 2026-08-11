@@ -50,6 +50,35 @@ test('deleting a workspace succeeds when module-code is absent', async () => {
   assert.equal(fx.workspaces.members('ws-2').length, 0);
 });
 
+test('deleting a workspace removes its reports, notifications and read receipts', async () => {
+  const fx = fixture();
+  const seedReport = fx.db.prepare(
+    `INSERT INTO reports (id, workspace_id, kind, title, body, created_at) VALUES (?, ?, 'digest', 't', '', 1)`,
+  );
+  seedReport.run('rep-doomed', 'ws-2');
+  seedReport.run('rep-kept', 'ws-default');
+  const seedNotification = fx.db.prepare(
+    `INSERT INTO notifications (id, workspace_id, repo, kind, title, body, created_at) VALUES (?, ?, 'o/r', 'info', 't', '', 1)`,
+  );
+  seedNotification.run('n-doomed', 'ws-2');
+  seedNotification.run('n-kept', 'ws-default');
+  seedNotification.run('n-global', null);
+  fx.db.prepare(`INSERT INTO notification_reads (notification_id, username, read_at) VALUES ('n-doomed', 'ana', 1)`).run();
+  fx.db.prepare(`INSERT INTO notification_reads (notification_id, username, read_at) VALUES ('n-kept', 'ana', 1)`).run();
+
+  await fx.run('DELETE', '/api/workspaces/:id', { id: 'ws-2' }, undefined, ana);
+
+  assert.deepEqual(fx.db.prepare(`SELECT id FROM reports`).all().map((r) => r.id), ['rep-kept']);
+  assert.deepEqual(
+    fx.db.prepare(`SELECT id FROM notifications ORDER BY id`).all().map((r) => r.id),
+    ['n-global', 'n-kept'],
+  );
+  assert.deepEqual(
+    fx.db.prepare(`SELECT notification_id FROM notification_reads`).all().map((r) => r.notification_id),
+    ['n-kept'],
+  );
+});
+
 test("code's pipeline cleanup runs when the module is present", async () => {
   const cleaned = [];
   const fx = fixture({ code: { pipelines: { removeForWorkspace: (id) => cleaned.push(id) } } });

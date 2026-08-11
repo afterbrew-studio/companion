@@ -115,7 +115,7 @@ export function DocsPage(): React.JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {storage !== null && configuring ? (
+      {storage !== null && (configuring || (canManage && storage.config === null)) ? (
         <AreaStorageSetup
           area="documentation"
           defaultDir="docs"
@@ -242,6 +242,7 @@ export function DocsPage(): React.JSX.Element {
 function RetrievalSearch({ workspaceId }: { workspaceId: string }): React.JSX.Element {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<DocSearchHit[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const searchSeq = useRef(0);
 
@@ -250,6 +251,7 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): React.JSX.El
     const query = q.trim();
     if (query.length < 2) {
       setHits(null);
+      setSearchError(null);
       setBusy(false);
       return;
     }
@@ -258,10 +260,17 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): React.JSX.El
       api
         .searchDocs(workspaceId, query)
         .then(({ hits }) => {
-          if (searchSeq.current === mySeq) setHits(hits);
+          if (searchSeq.current === mySeq) {
+            setHits(hits);
+            setSearchError(null);
+          }
         })
-        .catch(() => {
-          if (searchSeq.current === mySeq) setHits([]);
+        .catch((err) => {
+          // A failed request is not an empty index; say so instead of "no match".
+          if (searchSeq.current === mySeq) {
+            setHits(null);
+            setSearchError(String(err));
+          }
         })
         .finally(() => {
           if (searchSeq.current === mySeq) setBusy(false);
@@ -287,6 +296,7 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): React.JSX.El
           />
           {busy ? <Spinner /> : null}
         </div>
+        <ErrorBar error={searchError} />
         {hits !== null ? (
           <div className="mt-3 flex flex-col gap-2">
             {hits.length === 0 ? (

@@ -45,11 +45,11 @@ const CATEGORY_LABELS: Record<string, string> = {
   review: 'Code review',
   communication: 'Communication',
   'project-management': 'Project management',
-  'developer-tools': 'Developer tools',
 };
 
 export function IntegrationsPage(): React.JSX.Element {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const me = user?.username ?? null;
   const { current } = useWorkspace();
   const state = useIntegrations();
   const [query, setQuery] = useState('');
@@ -109,7 +109,9 @@ export function IntegrationsPage(): React.JSX.Element {
         message: 'Its credentials are deleted and any routing fallback that points to it is removed.',
         confirmLabel: 'Remove connection',
       });
-      if (ok) await state.remove(connection.id, connection.ownerId !== null);
+      // Another user's personal connection is only deletable through the
+      // managers' endpoint; the /mine route would honestly 404 it.
+      if (ok) await state.remove(connection.id, connection.ownerId !== null && connection.ownerId === me);
     })().catch(() => undefined);
 
   /**
@@ -121,6 +123,13 @@ export function IntegrationsPage(): React.JSX.Element {
   const connectionActions = (connection: IntegrationConnectionRecord): MenuAction[] => {
     const provider = providerOf.get(connection.providerId);
     const personal = connection.ownerId !== null;
+    // Someone else's personal connection is visible to managers for cleanup
+    // only: no test/edit (those stay owner-only), just Remove.
+    if (personal && connection.ownerId !== me) {
+      return canManage
+        ? [{ label: 'Remove', danger: true, disabled: state.busy !== null, onSelect: () => remove(connection) }]
+        : [];
+    }
     if (!(personal ? canSelf : canManage)) return [];
     const busy = state.busy !== null;
     return [
@@ -170,9 +179,10 @@ export function IntegrationsPage(): React.JSX.Element {
                 connection={connection}
                 provider={providerOf.get(connection.providerId) ?? null}
                 can={can}
+                me={me}
                 workspaceName={current?.name ?? null}
                 busy={state.busy === connection.id}
-                canToggle={connection.ownerId !== null ? canSelf : canManage}
+                canToggle={connection.ownerId !== null ? connection.ownerId === me && canSelf : canManage}
                 actions={connectionActions(connection)}
                 onToggle={(value) =>
                   void state.update(connection.id, { enabled: value }, connection.ownerId !== null).catch(
@@ -461,6 +471,7 @@ function ConnectionCard({
   connection,
   provider,
   can,
+  me,
   workspaceName,
   busy,
   canToggle,
@@ -472,6 +483,7 @@ function ConnectionCard({
   /** null once its module is disabled: the credentials outlive the provider. */
   provider: IntegrationProviderDescriptor | null;
   can: (permission: Permission) => boolean;
+  me: string | null;
   workspaceName: string | null;
   busy: boolean;
   canToggle: boolean;
@@ -499,7 +511,12 @@ function ConnectionCard({
             ) : (
               <MetaSignal tone="amber" label="provider disabled" />
             )}
-            {connection.ownerId ? <MetaSignal tone="zinc" label="just you" /> : null}
+            {connection.ownerId ? (
+              <MetaSignal
+                tone="zinc"
+                label={connection.ownerId === me ? 'just you' : `owner: ${connection.ownerId}`}
+              />
+            ) : null}
           </div>
           <p className="dim mt-1 truncate text-xs">
             {[

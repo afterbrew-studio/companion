@@ -197,7 +197,7 @@ export function ProductionEvaluationSuite({
         <div className="mt-3">
           <EmptyState
             title="No production adapters are enabled"
-            hint="Enable an agent-backed module such as Code, Slop Detection, Ideas or Product Refinement to load its exact prompt/parser regressions."
+            hint="Enable an agent-backed module such as Code, Contribution Quality, Ideas or Product Refinement to load its exact prompt/parser regressions."
           />
         </div>
       ) : null}

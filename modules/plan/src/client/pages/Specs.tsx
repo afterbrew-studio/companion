@@ -105,7 +105,7 @@ export function SpecsPage(): React.JSX.Element {
       />
       <ErrorBar error={error} />
 
-      {storage !== null && configuring ? (
+      {storage !== null && (configuring || (canManage && storage.config === null)) ? (
         <AreaStorageSetup
           area="specifications"
           defaultDir="specs"

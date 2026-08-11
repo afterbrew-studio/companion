@@ -27,6 +27,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@moxxy/companion-contracts": "workspace:*",
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@moxxy/companion-services": "workspace:*",

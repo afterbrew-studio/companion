@@ -24,6 +24,7 @@ import * as sdkServer from '@moxxy/companion-sdk/server';
 import * as sdkAgents from '@moxxy/companion-sdk/agents';
 import { MODULES } from './modules.generated.js';
 import { startHttpServer } from './http/server.js';
+import { startScheduledBackups } from './backup-job.js';
 import { COMPANION_VERSION } from './version.js';
 
 /**
@@ -107,6 +108,10 @@ async function main(): Promise<void> {
   });
   await kernel.boot();
 
+  const stopBackups = config.backup
+    ? startScheduledBackups({ dbPath, dir: config.backup.dir, keep: config.backup.keep, log })
+    : undefined;
+
   // Serve the built SPA when present (production); dev uses Vite + proxy.
   const here = dirname(fileURLToPath(import.meta.url));
   const builtSpa = process.env.COMPANION_STATIC_DIR?.trim() || join(here, '..', '..', 'web', 'dist');
@@ -128,6 +133,7 @@ async function main(): Promise<void> {
     log.info('shutting down…');
     const force = setTimeout(() => process.exit(0), 6_000);
     force.unref();
+    stopBackups?.();
     await kernel.shutdown();
     hub.close();
     server.close();

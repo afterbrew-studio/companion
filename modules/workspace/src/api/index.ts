@@ -4,6 +4,7 @@ import acl from './acl.js';
 import migrations from './migrations.js';
 import registerServices from './services.js';
 import routes from './routes.js';
+import lifecycle from './jobs.js';
 
 /**
  * module-workspace's `/api` barrel. Provides the access-control store other
@@ -17,4 +18,5 @@ export default defineApiModule({
   migrations,
   registerServices,
   routes,
+  lifecycle,
 });

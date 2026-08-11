@@ -61,7 +61,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/oidc/start',
       access: 'public',
-      handler: async ({ query }) => {
+      handler: async ({ query, clientAddress }) => {
         if (!ctx.config.publicUrl) {
           throw badRequest('COMPANION_PUBLIC_URL must be set: the provider redirects the browser back to it');
         }
@@ -69,7 +69,7 @@ export default defineRoutes((ctx) => {
         // redirect by a crafted link to /start.
         const raw = query.get('returnTo') ?? '/';
         const returnTo = safeReturnTo(raw);
-        return redirect(await client().authorizeUrl(redirectUri(), returnTo));
+        return redirect(await client().authorizeUrl(redirectUri(), returnTo, clientAddress));
       },
     }),
 

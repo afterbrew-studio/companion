@@ -23,7 +23,8 @@ import { hashPassword, passwordNeedsRehash, verifyPassword } from './passwords.j
 /** The capability the install must never lose: without it nobody can fix roles. */
 const MANAGE_USERS = 'users:manage' as Permission;
 
-/** Sliding session lifetime. */
+/** Fixed session lifetime: a session expires this long after sign-in. Nothing
+ *  renews it on use; sliding expiry is a separate planned change. */
 const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 const API_TOKEN_TOUCH_INTERVAL_MS = 5 * 60_000;
@@ -126,6 +127,12 @@ export class Auth implements Authenticator {
     }
     if (this.rbac.has(policy.role, MANAGE_USERS)) {
       throw new AuthError(`refusing to provision '${input.username}' into '${policy.role}': it can manage users`, 403);
+    }
+    if (input.email && this.users.getByEmail(input.email)) {
+      throw new AuthError(
+        `refusing to provision '${input.username}': email ${input.email} already belongs to another account`,
+        403,
+      );
     }
     this.users.insert({
       username: input.username,
@@ -440,6 +447,7 @@ export class Auth implements Authenticator {
         throw new AuthError('current password is incorrect', 403);
       }
     }
+    this.requireEmailAvailable(fields.email, username);
     this.users.update(username, {
       displayName: fields.displayName?.trim(),
       email: fields.email,
@@ -463,6 +471,7 @@ export class Auth implements Authenticator {
 
   createUser(input: { username: string; displayName?: string; email?: string; password: string; role: Role }): UserRecord {
     if (this.users.get(input.username)) throw new AuthError(`user ${input.username} already exists`, 403);
+    this.requireEmailAvailable(input.email);
     this.users.insert({
       username: input.username,
       displayName: input.displayName?.trim() ?? '',
@@ -483,6 +492,7 @@ export class Auth implements Authenticator {
     if (actor?.username === username && fields.role !== undefined && fields.role !== existing.role) {
       throw new AuthError('you cannot change your own role', 403);
     }
+    this.requireEmailAvailable(fields.email, username);
     this.guardLastAdmin(existing, fields.role, fields.disabled);
     this.users.update(username, {
       displayName: fields.displayName?.trim(),
@@ -505,6 +515,17 @@ export class Auth implements Authenticator {
     this.guardLastAdmin(existing, undefined, true);
     this.users.delete(username);
     this.apiTokens.deleteForUser(username);
+  }
+
+  /** The unique index would refuse a duplicate as a raw constraint failure;
+   *  answer with a 400 the caller can act on instead. '' is the no-email
+   *  sentinel and stays shareable. */
+  private requireEmailAvailable(email: string | undefined, exceptUsername?: string): void {
+    if (!email) return;
+    const holder = this.users.getByEmail(email);
+    if (holder && holder.username !== exceptUsername) {
+      throw new StatusError(400, `email ${email} is already in use by another account`);
+    }
   }
 
   /**
