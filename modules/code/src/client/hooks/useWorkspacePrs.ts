@@ -149,8 +149,11 @@ export function useWorkspacePrs(): UseWorkspacePrs {
   }, [listKey]);
 
   useEffect(() => {
+    // prs.changed names the repo; another workspace's review/sync activity must
+    // not refetch this whole paged list (same membership test as slots.tsx).
+    const inWorkspace = new Set(repos.map((r) => r.fullName));
     return onServerMessage((msg) => {
-      if (msg.t === 'prs.changed') {
+      if (msg.t === 'prs.changed' && inWorkspace.has(msg.repo)) {
         setLiveStatus(new Map());
         reload();
       }
@@ -166,7 +169,7 @@ export function useWorkspacePrs(): UseWorkspacePrs {
         });
       }
     });
-  }, [reload]);
+  }, [reload, repos]);
   const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
   const visiblePrs = prs

@@ -73,5 +73,35 @@ export default defineManifest({
       description:
         'Defaults to no network. Publishing requires an operator-created Docker network with an egress policy; host/default bridge networks are refused.',
     },
+    {
+      key: 'reviewRetentionDays',
+      label: 'Review history retention',
+      kind: 'number',
+      description:
+        'Days to keep superseded AI review verdicts and their findings. The newest review per pull request is always kept, whatever its age.',
+      default: 180,
+      min: 7,
+      max: 3650,
+    },
+    {
+      key: 'triageRetentionDays',
+      label: 'Triage history retention',
+      kind: 'number',
+      description:
+        'Days to keep superseded triage verdicts. The newest verdict per issue is always kept, whatever its age.',
+      default: 180,
+      min: 7,
+      max: 3650,
+    },
+    {
+      key: 'pipelineRunRetentionDays',
+      label: 'Pipeline run retention',
+      kind: 'number',
+      description:
+        'Days to keep finished pipeline runs and their step output. The newest run per pull request or issue is always kept, whatever its age.',
+      default: 180,
+      min: 7,
+      max: 3650,
+    },
   ],
 });

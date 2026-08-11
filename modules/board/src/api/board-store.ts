@@ -451,6 +451,25 @@ export class BoardStore {
   }
 
   /**
+   * Keep each task's newest events; the rest of the trail goes. 500 is
+   * deliberately generous: events are the task's audit trail, reads cap at
+   * 100, and a full worker cycle with retries logs a handful per attempt, so
+   * 500 spans a task's whole life with room to spare. Bounded per sweep so a
+   * backlog cannot lock the database; the daily job catches up.
+   */
+  pruneEvents(keepPerTask = 500, maxRows = 10_000): number {
+    return this.db
+      .prepare(
+        `DELETE FROM board_events WHERE id IN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY at DESC, id DESC) AS rank
+             FROM board_events
+           ) WHERE rank > ? LIMIT ?)`,
+      )
+      .run(keepPerTask, maxRows).changes;
+  }
+
+  /**
    * Whether a heartbeat blocker is still active. The latest matching event is
    * the durable latch, so daemon restarts cannot repeat an inbox notification.
    */
