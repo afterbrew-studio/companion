@@ -18,7 +18,7 @@ const icons = {
 export const nav = defineNav([
   {
     key: 'digest',
-    label: 'Daily Digest',
+    label: 'Daily digest',
     hash: '#/digest',
     shortcut: 'g',
     permission: 'reports:read',

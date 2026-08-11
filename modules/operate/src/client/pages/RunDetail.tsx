@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, MetaSignal, formatTokens } from '@moxxy/companion-ui';
+import { ActionMenu, DiffView, ErrorBar, IconButton, InlineLoading, Markdown, MetaSignal, formatTokens, useConfirm } from '@moxxy/companion-ui';
 import type { ModelCatalog, RunRecord, RunVerification } from '../../contract/index.js';
 import { operateApi as api } from '../api.js';
 import { useRun } from '../hooks/useRun.js';
@@ -243,6 +243,7 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirmDanger, confirmElement } = useConfirm();
 
   useEffect(() => {
     if (run.status !== 'review') return;
@@ -284,7 +285,12 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
   };
 
   const discard = async (): Promise<void> => {
-    if (!confirm('Discard this run and its worktree? The branch is lost.')) return;
+    const ok = await confirmDanger({
+      title: 'Discard run',
+      message: 'Discard this run and its worktree? The branch and its changes are lost.',
+      confirmLabel: 'Discard run',
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.discardRun(run.id);
@@ -298,6 +304,7 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
 
   return (
     <div className="card my-3 border-accent-500/60">
+      {confirmElement}
       {/* Above the diff, deliberately: the point of verifying is that a reviewer
           learns the thing does not build before spending attention on reading it. */}
       <VerificationLine verification={run.verification} />

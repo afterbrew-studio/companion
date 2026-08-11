@@ -8,7 +8,7 @@ import { defineManifest } from '@moxxy/companion-sdk';
  */
 export default defineManifest({
   id: 'slop',
-  title: 'Contribution Quality',
+  title: 'Contribution quality',
   version: '0.1.0',
   // Hard deps: PRs come from code's sync cache and actions go through its
   // GitHub client registry; the detection agent runs through operate; rules

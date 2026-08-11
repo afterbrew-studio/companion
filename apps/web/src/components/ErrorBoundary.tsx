@@ -1,4 +1,22 @@
 import { Component, type ReactNode } from 'react';
+import { useKernel } from '@moxxy/companion-core/client';
+import { useAuth } from '@companion/module-core/client';
+
+/**
+ * The viewer's landing nav entry (lowest `home` they can see), mirroring the
+ * shell's own pick: an escape hatch must never hardcode a module's route, or a
+ * build without that module gets a CTA into a 404. Only safe under the shell's
+ * providers — the full-page crash fallback links '#/' instead, which the shell
+ * redirects to this same entry.
+ */
+function useLandingNav(): { href: string; label: string } {
+  const { can, authMode } = useAuth();
+  const kernel = useKernel();
+  const landing = kernel.nav
+    .filter((m) => can(m.permission) && (!m.authModes || m.authModes.includes(authMode)))
+    .sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+  return landing ? { href: landing.hash, label: landing.label } : { href: '#/', label: 'Home' };
+}
 
 /**
  * Error containment. One boundary wraps the whole app (full-page crash
@@ -52,6 +70,7 @@ export class ErrorBoundary extends Component<
 
 /** Scoped fallback: the rest of the app keeps working around it. */
 function FeatureCrash({ area, error, onReset }: { area: string; error: Error; onReset: () => void }): React.JSX.Element {
+  const home = useLandingNav();
   return (
     <div className="mx-auto max-w-lg px-6 py-12 text-center" role="alert">
       <CrashGlyph />
@@ -67,8 +86,8 @@ function FeatureCrash({ area, error, onReset }: { area: string; error: Error; on
         <button className="btn" onClick={onReset}>
           Try again
         </button>
-        <a className="btn-ghost" href="#/overview">
-          Go to Overview
+        <a className="btn-ghost" href={home.href}>
+          Go to {home.label}
         </a>
       </div>
     </div>
@@ -94,8 +113,11 @@ function CrashPage({ error }: { error: Error }): React.JSX.Element {
           <button className="btn" onClick={() => location.reload()}>
             Reload
           </button>
-          <a className="btn-ghost" href="#/overview" onClick={() => setTimeout(() => location.reload(), 0)}>
-            Overview & reload
+          {/* Outside the shell's providers, so no kernel to ask: '#/' is the
+              dynamic fallback — after the reload the shell redirects it to the
+              viewer's landing entry. */}
+          <a className="btn-ghost" href="#/" onClick={() => setTimeout(() => location.reload(), 0)}>
+            Start over & reload
           </a>
         </div>
       </div>
@@ -105,6 +127,7 @@ function CrashPage({ error }: { error: Error }): React.JSX.Element {
 
 /** Unknown route: a friendly dead end instead of silently showing the dashboard. */
 export function NotFoundPage({ path }: { path: string }): React.JSX.Element {
+  const home = useLandingNav();
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="max-w-md text-center">
@@ -116,8 +139,8 @@ export function NotFoundPage({ path }: { path: string }): React.JSX.Element {
           doesn't match any module or detail view.
         </p>
         <div className="mt-6 flex justify-center">
-          <a className="btn" href="#/overview">
-            Back to Overview
+          <a className="btn" href={home.href}>
+            Back to {home.label}
           </a>
         </div>
       </div>

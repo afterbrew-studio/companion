@@ -87,6 +87,16 @@ export interface CreateProviderRequest {
   readonly enabled?: boolean;
 }
 
+/**
+ * PATCH body. The credential is tri-state: absent (or empty, which is what a
+ * form whose key field was left alone sends) keeps the stored one, a string
+ * replaces it, null clears it. Additive over the old `Partial<Create...>`
+ * shape: null is newly accepted, nothing else changed.
+ */
+export interface UpdateProviderRequest extends Omit<Partial<CreateProviderRequest>, 'apiKey'> {
+  readonly apiKey?: string | null;
+}
+
 export interface ProbeResult {
   readonly model: string;
   readonly probe: ModelProbe;
@@ -146,6 +156,11 @@ export interface CreateMcpServerRequest {
   readonly tools?: readonly string[] | null;
   readonly workspaceIds?: readonly string[] | null;
   readonly enabled?: boolean;
+}
+
+/** PATCH body; `secret` is tri-state exactly like a provider's `apiKey`. */
+export interface UpdateMcpServerRequest extends Omit<Partial<CreateMcpServerRequest>, 'secret'> {
+  readonly secret?: string | null;
 }
 
 /** What a connection attempt found, so an operator learns it here and not in a run. */

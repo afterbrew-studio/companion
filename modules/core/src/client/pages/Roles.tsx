@@ -6,7 +6,9 @@ import {
   Modal,
   Page,
   PageHeader,
+  RowsSkeleton,
   Section,
+  Skeleton,
   Switch,
   useConfirm,
 } from '@moxxy/companion-ui';
@@ -36,12 +38,20 @@ export function RolesPage(): React.JSX.Element {
   const [creating, setCreating] = useState(false);
   const { confirmDanger, confirmElement } = useConfirm();
 
-  useEffect(() => {
+  // The catalog failing must not silently dead-end the page (role clicks would
+  // open nothing), so its error is its own state with a retry, not the shared bar.
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const loadCatalog = useCallback((): void => {
+    setCatalogError(null);
     void coreApi
       .acl()
       .then(setCatalog)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setCatalogError(err instanceof Error ? err.message : String(err)));
   }, []);
+
+  useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
 
   const openRole = useCallback(async (id: string): Promise<void> => {
     setSelected(id);
@@ -135,10 +145,20 @@ export function RolesPage(): React.JSX.Element {
         </ListCard>
       </Section>
 
-      {selected && catalog ? (
+      {selected ? (
         <Modal title={detail ? detail.title : selected} onClose={() => setSelected(null)}>
-          {!detail ? (
-            <p className="dim">Loading…</p>
+          {catalogError ? (
+            <div className="flex flex-col items-start gap-3">
+              <ErrorBar error={`Couldn't load the permission catalog: ${catalogError}`} />
+              <button type="button" className="btn" onClick={loadCatalog}>
+                Retry
+              </button>
+            </div>
+          ) : !detail || !catalog ? (
+            <div className="flex flex-col gap-4">
+              <Skeleton className="h-3.5 w-2/3" />
+              <RowsSkeleton rows={5} />
+            </div>
           ) : (
             <PermissionEditor detail={detail} catalog={catalog} busy={busy} onToggle={toggle} />
           )}

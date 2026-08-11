@@ -1154,7 +1154,7 @@ function ContributorFlowEditor({
           <Eyebrow>Contributor lifecycle</Eyebrow>
           <p className="mt-1 text-sm font-medium">Issue → implementation → review → CI repair → merge</p>
           <p className="dim mt-1 text-xs leading-relaxed">
-            Uses durable webhook work and the Task Board reconciler. Every agent change is isolated, verified, reviewed
+            Uses durable webhook work and the Task board reconciler. Every agent change is isolated, verified, reviewed
             at its exact head, and bounded by the attempt and instance budget ceilings.
           </p>
         </div>
@@ -1173,7 +1173,7 @@ function ContributorFlowEditor({
 
       {!boardEnabled ? (
         <div className="banner-warn mb-0 mt-3 text-xs">
-          The Task Board module is disabled, so end-to-end contributor work is paused. Enable it from{' '}
+          The Task board module is disabled, so end-to-end contributor work is paused. Enable it from{' '}
           <a className="link" href="#/modules">Modules</a>; triage and standalone pipelines remain available.
         </div>
       ) : null}

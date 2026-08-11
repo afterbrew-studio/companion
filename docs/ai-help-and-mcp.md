@@ -16,7 +16,7 @@ of automation semantics hidden in the integration.
 
 The sidebar is organized around outcomes rather than technical modules:
 
-- **Home** contains Today, Overview, and Daily Digest;
+- **Home** contains Today, Overview, and Daily digest;
 - **Workspace** contains repositories and workspace automation policy;
 - **Plan & build** contains ideas, specifications, documentation, refinement,
   and the task board;
@@ -42,8 +42,8 @@ module is enabled and RBAC also permits it):
 
 | View | Default sidebar work areas |
 | --- | --- |
-| Business | Today, Repositories, Ideas, Specifications, Documentation, Task Board |
-| Developer | Today, Overview, Daily Digest, Repositories, Automations, Specifications, Documentation, Refinement, Task Board, Code & review, Agents |
+| Business | Today, Repositories, Ideas, Specifications, Documentation, Task board |
+| Developer | Today, Overview, Daily digest, Repositories, Automations, Specifications, Documentation, Refinement, Task board, Code & review, Agents |
 | Admin | Every permitted primary page from all five work areas |
 
 Enabled modules contribute actions to the global **New** menu and pages to
