@@ -32,10 +32,14 @@ import type {
   CreateApiTokenResponse,
   ExternalModulesResponse,
   LoginResponse,
+  MfaChallenge,
+  MfaEnrollment,
+  MfaRecoveryCodes,
   ProfileResponse,
   RemoveModuleResponse,
   RestartResponse,
   SessionInfo,
+  SessionRecord,
 } from '../contract/index.js';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
@@ -44,6 +48,11 @@ const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const roleSchema = z.string().trim().min(2).max(40);
 
 const loginSchema = z.object({ username: z.string().min(1).max(100), password: z.string().min(1).max(500) });
+const mfaCompleteSchema = z.object({
+  mfaToken: z.string().min(16).max(200),
+  code: z.string().trim().min(6).max(60),
+});
+const mfaCodeSchema = z.object({ code: z.string().trim().min(6).max(60) });
 const setupSchema = z.object({
   username: z.string().regex(USERNAME_RE, 'letters, digits, dots, dashes (2-40 chars)'),
   email: z.string().email().max(200),
@@ -128,6 +137,7 @@ export default defineRoutes((ctx) => {
   const roles = ctx.services.get('roles');
   const audit = ctx.services.get('audit');
   const settings = ctx.services.get('settings');
+  const mfa = ctx.services.get('mfa');
   const secureCookie = ctx.config.publicUrl?.startsWith('https://') === true;
   const browserSession = (session: { token: string; user: LoginResponse['user']; expiresAt: number }): Reply =>
     new Reply(
@@ -197,8 +207,24 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/login',
       access: 'public',
       body: loginSchema,
+      handler: ({ body, clientAddress }): Reply => {
+        if (ctx.config.authMode === 'sso') {
+          throw new AuthError('password sign-in is disabled: this instance requires single sign-on', 403);
+        }
+        const result = auth.login(body.username, body.password, clientAddress);
+        // An MFA challenge is not a session: no cookie until the second step.
+        return 'mfaRequired' in result
+          ? new Reply(200, result satisfies MfaChallenge, undefined, { 'cache-control': 'no-store' })
+          : browserSession(result);
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/auth/mfa',
+      access: 'public',
+      body: mfaCompleteSchema,
       handler: ({ body, clientAddress }): Reply =>
-        browserSession(auth.login(body.username, body.password, clientAddress)),
+        browserSession(auth.completeMfaLogin(body.mfaToken, body.code, clientAddress)),
     }),
     route({
       method: 'POST',
@@ -715,6 +741,101 @@ export default defineRoutes((ctx) => {
         if (body.newPassword !== undefined) ctx.broadcast({ t: 'tokens.changed' });
         ctx.broadcast({ t: 'users.changed' });
         return { account };
+      },
+    }),
+
+    // ---------- session inventory (self-service; admin under /api/users) ----------
+    route({
+      method: 'GET',
+      path: '/api/me/sessions',
+      access: 'any',
+      handler: ({ user, token }): { sessions: SessionRecord[] } => {
+        if (!user) throw new AuthError('authentication required', 401);
+        return { sessions: auth.listSessions(user.username, token) };
+      },
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/me/sessions/:id',
+      access: 'any',
+      handler: ({ user, params }) => {
+        if (!user) throw new AuthError('authentication required', 401);
+        // Revoking the session serving this request is allowed: it logs you out.
+        if (!auth.revokeOwnSession(user.username, params.id)) throw notFound(`session ${params.id} not found`);
+        return { ok: true };
+      },
+    }),
+    route({
+      method: 'GET',
+      path: '/api/users/:username/sessions',
+      access: 'users:manage',
+      handler: ({ params, token }): { sessions: SessionRecord[] } => ({
+        sessions: auth.listSessions(params.username, token),
+      }),
+    }),
+    route({
+      // Sessions are not broadcast state: the signed-out user simply 401s on
+      // their next request, so no message accompanies this.
+      method: 'DELETE',
+      path: '/api/users/:username/sessions',
+      access: 'users:manage',
+      handler: ({ params }) => ({ ok: true, revoked: auth.revokeAllSessions(params.username) }),
+    }),
+
+    // ---------- MFA (self-service enrollment; admin reset lives with /api/users) ----------
+    route({
+      method: 'POST',
+      path: '/api/mfa/enroll',
+      access: 'any',
+      handler: ({ user }): MfaEnrollment => {
+        if (!user) throw new AuthError('authentication required', 401);
+        return mfa.beginEnrollment(user.username, settings.get('branding.name') || 'Companion');
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/mfa/confirm',
+      access: 'any',
+      body: mfaCodeSchema,
+      handler: ({ user, body }): MfaRecoveryCodes => {
+        if (!user) throw new AuthError('authentication required', 401);
+        const recoveryCodes = mfa.confirmEnrollment(user.username, body.code);
+        ctx.broadcast({ t: 'users.changed' });
+        return { recoveryCodes };
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/mfa/recovery-codes',
+      access: 'any',
+      body: mfaCodeSchema,
+      handler: ({ user, body }): MfaRecoveryCodes => {
+        if (!user) throw new AuthError('authentication required', 401);
+        return { recoveryCodes: mfa.regenerateRecoveryCodes(user.username, body.code) };
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/mfa/disable',
+      access: 'any',
+      body: mfaCodeSchema,
+      handler: ({ user, body }) => {
+        if (!user) throw new AuthError('authentication required', 401);
+        mfa.disable(user.username, body.code);
+        ctx.broadcast({ t: 'users.changed' });
+        return { ok: true };
+      },
+    }),
+    route({
+      // Support recovery for a lost authenticator: users:manage turns the second
+      // factor off; the user signs in with their password and re-enrolls.
+      method: 'DELETE',
+      path: '/api/users/:username/mfa',
+      access: 'users:manage',
+      handler: ({ params }) => {
+        const user = auth.resetUserMfa(params.username);
+        ctx.broadcast({ t: 'users.changed' });
+        return { user };
       },
     }),
   ];

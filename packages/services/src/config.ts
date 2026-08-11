@@ -300,15 +300,12 @@ function normalizeHostname(hostname: string): string {
 }
 
 function authModeFrom(envValue: string | undefined, storedValue: AuthMode | undefined): AuthMode {
+  const isMode = (v: string | undefined): v is AuthMode => v === 'local' || v === 'password' || v === 'sso';
   const value = envValue?.trim();
-  if (value !== undefined && value !== '' && value !== 'local' && value !== 'password') {
-    throw new Error(`Invalid COMPANION_AUTH_MODE=${value}; expected local or password.`);
+  if (value !== undefined && value !== '' && !isMode(value)) {
+    throw new Error(`Invalid COMPANION_AUTH_MODE=${value}; expected local, password or sso.`);
   }
-  return value === 'local' || value === 'password'
-    ? value
-    : storedValue === 'local' || storedValue === 'password'
-      ? storedValue
-      : DEFAULTS.authMode;
+  return isMode(value) ? value : isMode(storedValue) ? storedValue : DEFAULTS.authMode;
 }
 
 // ---------- .env resolution ----------

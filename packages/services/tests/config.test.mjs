@@ -24,6 +24,16 @@ test('password auth is the daemon default', () => {
   withHome(() => assert.equal(loadDaemonConfig().authMode, 'password'));
 });
 
+test('sso auth mode is accepted from the environment and needs no loopback bind', () => {
+  withHome(() => {
+    process.env.COMPANION_AUTH_MODE = 'sso';
+    process.env.COMPANION_HOST = '0.0.0.0';
+    assert.equal(loadDaemonConfig().authMode, 'sso');
+    process.env.COMPANION_AUTH_MODE = 'nonsense';
+    assert.throws(() => loadDaemonConfig(), /expected local, password or sso/);
+  });
+});
+
 test('trusted local auth accepts loopback and rejects a network bind', () => {
   withHome((home) => {
     writeFileSync(join(home, 'companiond.json'), JSON.stringify({ authMode: 'local', host: '127.0.0.1' }));
