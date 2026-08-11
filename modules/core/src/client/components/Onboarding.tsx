@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { OnboardingStep } from '@moxxy/companion-core/client';
+import { useKernel, type OnboardingStep } from '@moxxy/companion-core/client';
 import type { Permission } from '@moxxy/companion-contracts';
 import { useAuth } from '../lib/auth.js';
 
@@ -46,10 +46,14 @@ function visibleSteps(steps: readonly OnboardingStep[], can: (p: Permission) => 
 }
 
 /** The best first action for the role: the lowest-order visible step that
- *  declares a `cta`, else the Overview. */
-function finishCta(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): { label: string; href: string } {
+ *  declares a `cta`, else the viewer's landing nav entry. */
+function finishCta(
+  steps: readonly OnboardingStep[],
+  can: (p: Permission) => boolean,
+  fallback: { label: string; href: string },
+): { label: string; href: string } {
   const step = visibleSteps(steps, can).find((s) => s.cta);
-  return step?.cta ?? { label: 'Go to Overview', href: '#/overview' };
+  return step?.cta ?? fallback;
 }
 
 export function Onboarding({
@@ -61,7 +65,8 @@ export function Onboarding({
   mode: OnboardingMode;
   onClose: () => void;
 }): React.JSX.Element {
-  const { can, user } = useAuth();
+  const { can, user, authMode } = useAuth();
+  const kernel = useKernel();
   const all = visibleSteps(steps, can);
   const seen = seenKeys();
   // Full tour shows everything; "what's new" shows only the unseen steps (a
@@ -71,7 +76,16 @@ export function Onboarding({
   const [playing, setPlaying] = useState(true);
   const step = shown[Math.min(i, shown.length - 1)]!;
   const last = i === shown.length - 1;
-  const cta = finishCta(steps, can);
+  // No module route is hardcoded in the finish fallback: it points at the
+  // viewer's landing nav entry, whatever this build and role contain.
+  const landing = kernel.nav
+    .filter((m) => can(m.permission) && (!m.authModes || m.authModes.includes(authMode)))
+    .sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+  const cta = finishCta(
+    steps,
+    can,
+    landing ? { label: `Go to ${landing.label}`, href: landing.hash } : { label: 'Get started', href: '#/' },
+  );
 
   const finish = (): void => {
     // Everything this role can currently see is now "seen" for a host that
@@ -141,16 +155,20 @@ export function Onboarding({
           </div>
 
           <div className="mt-5 flex items-center gap-3">
-            {/* Progress dots */}
-            <div className="flex flex-1 items-center gap-1.5" aria-hidden>
+            {/* Progress dots: real jump targets, so they must stay in the
+                accessibility tree (focusable content inside aria-hidden is a
+                contradiction assistive tech surfaces as a broken control). */}
+            <div className="flex flex-1 items-center gap-1.5" role="group" aria-label="Tour progress">
               {shown.map((s, n) => (
                 <button
                   key={s.key}
+                  type="button"
                   className={`h-1.5 rounded-full transition-all ${
                     n === i ? 'w-5 bg-emerald-500' : 'w-1.5 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-700 dark:hover:bg-zinc-600'
                   }`}
                   onClick={() => setI(n)}
-                  aria-label={`Step ${n + 1}`}
+                  aria-label={`Step ${n + 1} of ${shown.length}: ${s.title}`}
+                  aria-current={n === i ? 'step' : undefined}
                 />
               ))}
             </div>
