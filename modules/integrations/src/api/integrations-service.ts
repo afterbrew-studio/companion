@@ -178,27 +178,18 @@ export class IntegrationsService {
       .sort((a, b) => a.vendor.localeCompare(b.vendor) || a.title.localeCompare(b.title));
   }
 
-  catalog(viewer: string | null): IntegrationCatalog {
+  /** `manager` widens visibility to every personal connection (admin cleanup view). */
+  catalog(viewer: string | null, manager = false): IntegrationCatalog {
     return {
       providers: this.providers(),
-      connections: this.connectionsVisibleTo(viewer),
+      connections: this.connectionsVisibleTo(viewer, manager),
     };
   }
 
-  connectionsVisibleTo(viewer: string | null): IntegrationConnectionRecord[] {
-    return this.allConnections().filter((connection) => connection.ownerId === null || connection.ownerId === viewer);
-  }
-
-  sharedConnections(): IntegrationConnectionRecord[] {
-    return this.allConnections().filter((connection) => connection.ownerId === null);
-  }
-
-  ownedConnections(ownerId: string): IntegrationConnectionRecord[] {
-    return this.allConnections().filter((connection) => connection.ownerId === ownerId);
-  }
-
-  connectionsForProvider(providerId: string, viewer?: string | null): IntegrationConnectionRecord[] {
-    return this.connectionsVisibleTo(viewer ?? null).filter((connection) => connection.providerId === providerId);
+  connectionsVisibleTo(viewer: string | null, manager = false): IntegrationConnectionRecord[] {
+    return this.allConnections().filter(
+      (connection) => manager || connection.ownerId === null || connection.ownerId === viewer,
+    );
   }
 
   getConnection(id: string): IntegrationConnectionRecord | undefined {
@@ -292,6 +283,18 @@ export class IntegrationsService {
     const deleted = this.store.delete(id);
     if (!deleted && !routesChanged) return;
     this.changed();
+  }
+
+  /** A deleted account must not leave orphaned personal connections or secrets. */
+  removeConnectionsOwnedBy(ownerId: string): number {
+    const owned = this.allConnections().filter((connection) => connection.ownerId === ownerId);
+    for (const connection of owned) {
+      this.deleteSecrets(connection.id);
+      this.store.deleteRoutesUsingConnection(connection.id);
+      this.store.delete(connection.id);
+    }
+    if (owned.length > 0) this.changed();
+    return owned.length;
   }
 
   async testConnection(id: string): Promise<IntegrationConnectionRecord> {

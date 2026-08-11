@@ -25,7 +25,8 @@ import { decodeIntegrationTarget, encodeIntegrationTarget, reviewTargetOptions }
 import { ConnectionModal } from './Integrations.js';
 
 export function RepositoryIntegrationsPage({ repo }: { repo: string }): React.JSX.Element {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const me = user?.username ?? null;
   const { current } = useWorkspace();
   const state = useIntegrations();
   const [route, setRoute] = useState<EffectiveIntegrationRoute | null>(null);
@@ -160,7 +161,7 @@ export function RepositoryIntegrationsPage({ repo }: { repo: string }): React.JS
                 const provider = state.catalog!.providers.find((candidate) => candidate.id === connection.providerId);
                 if (!provider) {
                   const manageable = connection.ownerId !== null
-                    ? can('integrations:self')
+                    ? (connection.ownerId === me ? can('integrations:self') : can('integrations:manage'))
                     : can('integrations:manage');
                   return (
                     <div key={connection.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -181,7 +182,9 @@ export function RepositoryIntegrationsPage({ repo }: { repo: string }): React.JS
                               message: 'Its preserved credentials and any routing references are deleted.',
                               confirmLabel: 'Remove connection',
                             });
-                            if (confirmed) await state.remove(connection.id, connection.ownerId !== null);
+                            if (confirmed) {
+                              await state.remove(connection.id, connection.ownerId !== null && connection.ownerId === me);
+                            }
                           })().catch(() => undefined)}
                         >
                           Remove
@@ -204,9 +207,29 @@ export function RepositoryIntegrationsPage({ repo }: { repo: string }): React.JS
                         <strong className="text-sm">{connection.name}</strong>
                         <MetaSignal tone={tone} label={connection.health.status} title={connection.health.message} />
                       </div>
-                      <p className="dim mt-1 text-xs">{provider.title}{connection.ownerId ? ' · just you' : ''}</p>
+                      <p className="dim mt-1 text-xs">
+                        {provider.title}
+                        {connection.ownerId ? (connection.ownerId === me ? ' · just you' : ` · owner: ${connection.ownerId}`) : ''}
+                      </p>
                     </div>
-                    {can('integrations:manage') || (connection.ownerId !== null && can('integrations:self')) ? (
+                    {connection.ownerId !== null && connection.ownerId !== me ? (
+                      // Another user's personal connection: managers may only
+                      // remove it (test/edit stay owner-only server-side).
+                      can('integrations:manage') ? (
+                        <button
+                          className="btn-ghost text-red-600 dark:text-red-400"
+                          disabled={state.busy !== null}
+                          onClick={() => void (async () => {
+                            const confirmed = await confirmDanger({
+                              title: `Remove “${connection.name}”?`,
+                              message: 'Its stored credentials and any route references are deleted.',
+                              confirmLabel: 'Remove connection',
+                            });
+                            if (confirmed) await state.remove(connection.id, false);
+                          })().catch(() => undefined)}
+                        >Remove</button>
+                      ) : null
+                    ) : can('integrations:manage') || (connection.ownerId !== null && can('integrations:self')) ? (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           className="btn-ghost"
