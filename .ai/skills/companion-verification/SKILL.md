@@ -1,20 +1,21 @@
 ---
 name: companion-verification
 description: >-
-  How to verify a change in Companion, which has NO automated test suite and NO
-  linter — so `pnpm typecheck` plus driving the real app is the quality gate.
-  Covers the typecheck gate, launching daemon+SPA, exercising a route/flow,
-  tracing an agent run (transcript, session JSONL, logs), and inspecting the
-  SQLite DB. Use before calling any non-trivial change done. Complements the
-  built-in run/verify skills and critical-thinking.
+  How to verify a change in Companion: the typecheck gate, the node:test suites
+  (`pnpm test`), `pnpm acl check`, `pnpm sdk:surface`, then driving the real
+  app. Covers launching daemon+SPA, exercising a route/flow, tracing an agent
+  run (transcript, session JSONL, logs), and inspecting the SQLite DB. Use
+  before calling any non-trivial change done. Complements the built-in
+  run/verify skills and critical-thinking.
 ---
 
 # Verifying a change in Companion
 
-There is **no test framework wired up** (`pnpm test` runs `-r test` but no
-package defines tests) and **no ESLint/Prettier**. So "done" is not "tests pass"
-— it's **typecheck clean + I drove the real behaviour and observed it**. Never
-claim a runtime change works on types alone.
+There is **no ESLint/Prettier**, but there is a real gate: `pnpm typecheck`,
+`pnpm test` (about 150 `node --test` suites across modules, packages and apps),
+`pnpm acl check` and `pnpm sdk:surface` all run in CI. For behaviour or UI work
+that is still not enough: "done" is **gates clean + I drove the real behaviour
+and observed it**. Never claim a runtime change works on types alone.
 
 ## 1. The type gate (always)
 
@@ -25,9 +26,9 @@ pnpm typecheck        # root: tsc --noEmit across all packages
 This is your first and cheapest gate and it catches a lot *by design*: an
 unhandled `SpaServerMessage` variant, an ungranted `Permission`, a missing
 `ApiDeps` field, a DTO that drifted between client and server, an exhaustive
-switch missing a case. When you change `packages/contract`, run it at the
-**root** so both apps are checked (rebuild contract first if not running
-`pnpm dev`: `pnpm --filter @companion/contract build`). Fix everything it flags;
+switch missing a case. When you change `packages/contracts`, run it at the
+**root** so both apps are checked (rebuild contracts first if not running
+`pnpm dev`: `pnpm --filter @moxxy/companion-contracts build`). Fix everything it flags;
 do not `any` past it.
 
 ## 2. Drive the real app
@@ -98,5 +99,5 @@ failure path — a failure that isn't logged is a failure you can't diagnose.
   low-privilege role.
 - Agent changes: the verdict parsed, or the failure is surfaced honestly.
 - I can state what I verified vs. what I only assume, and the one input most
-  likely to break it. If I couldn't run something, I say so — I don't imply
-  coverage that doesn't exist (there are no tests to hide behind).
+  likely to break it. If I couldn't run something, I say so; I don't imply
+  coverage that doesn't exist.
