@@ -15,6 +15,12 @@ import type {
  * the generated-reports feed. HTTP plumbing lives in `@moxxy/companion-core/client`.
  */
 
+/** Keyset cursor into the inbox archive (created_at DESC, id DESC). */
+export interface NotificationCursor {
+  readonly createdAt: number;
+  readonly id: string;
+}
+
 export const workspaceApi = {
   // workspaces
   listWorkspaces: () => request<{ workspaces: WorkspaceRecord[] }>('/api/workspaces'),
@@ -42,9 +48,9 @@ export const workspaceApi = {
   workspaceMetrics: (id: string) => request<{ metrics: WorkspaceMetrics }>(`/api/workspaces/${id}/metrics`),
 
   // notifications
-  listNotifications: (workspaceId?: string) =>
-    request<{ notifications: NotificationRecord[] }>(
-      `/api/notifications${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`,
+  listNotifications: (workspaceId?: string, before?: NotificationCursor) =>
+    request<{ notifications: NotificationRecord[]; nextCursor: NotificationCursor | null }>(
+      `/api/notifications${qs({ workspace: workspaceId, before: before?.createdAt, beforeId: before?.id })}`,
     ),
   markNotificationRead: (id: string) => post<{ ok: true }>(`/api/notifications/${id}/read`),
   markAllNotificationsRead: (workspaceId?: string) =>
