@@ -7,6 +7,13 @@ import type { InstanceBranding, NotificationScope } from '@companion/module-core
 
 export type { InstanceBranding, NotificationScope } from '@companion/module-core/contract';
 
+declare module '@moxxy/companion-contracts' {
+  interface ServerMessageRegistry {
+    /** Branding or the notification default changed; refetch what you show. */
+    'admin.changed': Record<never, never>;
+  }
+}
+
 /** Instance-wide notification defaults (admin-managed). Each user may override in their profile. */
 export interface NotificationSettings {
   readonly defaultScope: NotificationScope;
