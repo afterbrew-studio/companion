@@ -123,13 +123,13 @@ test('provider connections reject unsafe destinations before a secret is stored'
   assert.throws(() => validate('webhook.generic', 'https://user:pass@example.test/hook'), /embedded credentials/);
   assert.doesNotThrow(() => validate('webhook.generic', 'http://internal.example.test/hook'));
   assert.throws(() => validate('teams.webhook', 'http://acme.webhook.office.com/webhookb2/a/IncomingWebhook/b/c'), /must use HTTPS/);
-  assert.throws(() => validate('teams.webhook', 'https://evil.example/webhookb2/a/IncomingWebhook/b/c'), /webhook\.office\.com/);
+  assert.throws(() => validate('teams.webhook', 'https://evil.example/webhookb2/a/IncomingWebhook/b/c'), /Teams webhook must be/);
   assert.throws(
     () => validate('teams.webhook', 'https://acme.webhook.office.com.evil.example/webhookb2/a/IncomingWebhook/b/c'),
-    /webhook\.office\.com/,
+    /Teams webhook must be/,
   );
-  assert.throws(() => validate('teams.webhook', 'https://acme.webhook.office.com/other/path'), /webhook\.office\.com/);
-  assert.throws(() => validate('teams.webhook', 'https://prod-27.westus.logic.azure.com/other/path'), /webhook\.office\.com/);
+  assert.throws(() => validate('teams.webhook', 'https://acme.webhook.office.com/other/path'), /Teams webhook must be/);
+  assert.throws(() => validate('teams.webhook', 'https://prod-27.westus.logic.azure.com/other/path'), /Teams webhook must be/);
   assert.doesNotThrow(() => validate('teams.webhook', 'https://acme.webhook.office.com/webhookb2/a@b/IncomingWebhook/c/d'));
   assert.doesNotThrow(
     () => validate('teams.webhook', 'https://prod-27.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=x'),
