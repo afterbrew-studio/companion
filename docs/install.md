@@ -157,8 +157,11 @@ COMPANION_PROFILE=full docker compose up -d --build
 ```
 
 The image installs `@moxxy/cli` globally so agent runs can start inside the
-container. If your repositories need SSH, mount an SSH configuration and key in,
-and check the key's GitHub permissions.
+container. The build arg `INSTALL_MOXXY=false` (`--build-arg INSTALL_MOXXY=false`,
+or `INSTALL_MOXXY=false` in the Compose environment) skips that install, which
+is what a `cloud`-profile image running only the
+[built-in runtime](cloud-runtime.md) wants. If your repositories need SSH,
+mount an SSH configuration and key in, and check the key's GitHub permissions.
 
 ## Coolify
 

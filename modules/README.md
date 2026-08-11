@@ -817,8 +817,9 @@ public surface you build against; read `packages/core/src/server/kernel.ts` and
 
 ## 13. Distribution (which edition, which artifact)
 
-This document covers **authoring** a module. Where it lives (OSS vs Enterprise),
-whether it ships enabled by default, build profiles, the module CLI, and the
-out-of-tree loading design are in **`docs/modular-distribution.md`**, which tags
-every mechanism as existing today or planned. Read it before changing what a
-build contains or adding a module outside `modules/*`.
+This document covers **authoring** a module. Build profiles and what each build
+contains are in
+[`docs/development.md`](../docs/development.md#build-profiles-what-ships); the
+module CLI and out-of-tree installation are in
+[`docs/operating-modules.md`](../docs/operating-modules.md). Read those before
+changing what a build contains or adding a module outside `modules/*`.

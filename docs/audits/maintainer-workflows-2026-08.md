@@ -2,7 +2,6 @@
 
 Date: 2026-08-01<br>
 Scope: every in-tree Companion module, the daemon, SPA, runner, CLI, and static landing page
-Change branch: `feat/resilient-maintainer-workflows`
 
 ## Executive conclusion
 
