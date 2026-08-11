@@ -1,6 +1,17 @@
 import { defineJobs, type ModuleContext } from '@moxxy/companion-sdk/server';
 import type { TokenRefreshResult } from './github-accounts.js';
+import { PrReviewsStore } from './pr-reviews-store.js';
+import { TriageStore } from './triage-store.js';
+import { PipelinesStore } from './pipelines-store.js';
 import { createPrStatusScopeResolver, createStepOutputScopeResolver } from './ws-scope.js';
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** A declared retention window, floored to its manifest default on bad input. */
+function retentionDays(ctx: ModuleContext, key: string, fallback: number): number {
+  const value = Number(ctx.moduleConfig.get(key) ?? fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 let offSetupCompleted: (() => void) | null = null;
 let offNativeReviewProvider: (() => void) | null = null;
@@ -175,6 +186,23 @@ export default defineJobs({
           .githubAccounts.refreshInstallationTokens(25 * 60_000, (msg) => ctx.log.warn(msg));
         if (result.refreshed) ctx.log.info(`refreshed ${result.refreshed} GitHub App installation token(s)`);
         announceCredentialHealth(ctx, result);
+      },
+    },
+    {
+      // Verdict/run history had no age bound and review/pipeline rows carry up
+      // to ~200KB of step output each. Each store's prune is bounded per sweep
+      // and always keeps the newest result per surface, whatever its age.
+      id: 'code.history.prune',
+      everyMs: DAY_MS,
+      run: (ctx) => {
+        const sweeps = [
+          ['reviews', new PrReviewsStore(ctx.db).prune(retentionDays(ctx, 'reviewRetentionDays', 180) * DAY_MS)],
+          ['triage', new TriageStore(ctx.db).prune(retentionDays(ctx, 'triageRetentionDays', 180) * DAY_MS)],
+          ['pipeline runs', new PipelinesStore(ctx.db).pruneRuns(retentionDays(ctx, 'pipelineRunRetentionDays', 180) * DAY_MS)],
+        ] as const;
+        for (const [what, removed] of sweeps) {
+          if (removed > 0) ctx.log.info(`code history: pruned ${removed} superseded ${what} row(s)`);
+        }
       },
     },
   ],

@@ -314,6 +314,28 @@ export class PipelinesStore {
     return this.getRun(id);
   }
 
+  /**
+   * Age-bound run history; step results carry command output, so old rows are
+   * the table's weight. Never a target's newest run: PR/issue pages and gates
+   * read the latest run first regardless of age. Bounded per sweep; the daily
+   * job catches up over a few runs.
+   */
+  pruneRuns(olderThanMs: number, maxRows = 5_000): number {
+    return this.db
+      .prepare(
+        `DELETE FROM pipeline_runs WHERE id IN (
+           SELECT id FROM pipeline_runs t
+            WHERE t.created_at < ? AND t.status <> 'running'
+              AND EXISTS (
+                SELECT 1 FROM pipeline_runs n
+                 WHERE n.repo = t.repo AND n.pr_number = t.pr_number AND n.target = t.target
+                   AND (n.created_at > t.created_at OR (n.created_at = t.created_at AND n.id > t.id))
+              )
+            ORDER BY t.created_at LIMIT ?)`,
+      )
+      .run(Date.now() - olderThanMs, maxRows).changes;
+  }
+
   /** Boot sweep: runs left 'running' by a dead daemon are errors. */
   markInterruptedRuns(): number {
     const rows = this.db.prepare(`SELECT * FROM pipeline_runs WHERE status = 'running'`).all() as PipelineRunRow[];
