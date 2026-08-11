@@ -1,5 +1,5 @@
 import { safeParse, type Database } from '@moxxy/companion-sdk/server';
-import type { ModelProviderRecord, ModelRecord, ProviderKind } from '../contract/index.js';
+import type { ModelProviderRecord, ModelRecord } from '../contract/index.js';
 
 interface ProviderRow {
   id: string;
@@ -83,7 +83,10 @@ export function rowToProvider(row: ProviderRow, hasKey: boolean): ModelProviderR
   return {
     id: row.id,
     label: row.label,
-    kind: row.kind as ProviderKind,
+    // `ProviderKind` is deliberately open (plugins may add kinds), so a stored
+    // kind this build has never heard of passes through verbatim rather than
+    // crashing; the routes edge is what rejects unknown kinds on the way IN.
+    kind: row.kind,
     baseUrl: row.base_url,
     headers: safeParse<Record<string, string>>(row.headers, {}),
     query: safeParse<Record<string, string>>(row.query, {}),
