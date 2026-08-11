@@ -5,13 +5,13 @@ import {
   classifyContributorPull,
 } from '../dist/api/readiness.js';
 
-const OCTANE_LINES = [
+const BACKLOG_LINES = [
   70_378, 68_371, 37_589, 36_776, 31_366, 23_878, 11_145, 7_671, 6_978, 6_045,
   5_692, 5_149, 3_629, 3_410, 2_930, 2_901, 2_559, 2_487, 2_040, 2_014,
   1_667, 1_491, 1_435, 1_045, 967, 843, 811, 788, 726, 646, 583, 520, 512,
   438, 423, 334, 286, 277, 222, 220, 217, 196, 193, 190, 186, 167, 163, 97, 21,
 ];
-const OCTANE_FILES = [
+const BACKLOG_FILES = [
   683, 667, 312, 444, 488, 265, 77, 118, 79, 66, 66, 11, 43, 47, 147, 42, 45,
   40, 51, 43, 27, 37, 38, 21, 37, 28, 31, 22, 32, 20, 20, 14, 14, 14, 15, 8,
   11, 10, 10, 4, 8, 9, 10, 10, 11, 5, 11, 2, 1,
@@ -23,12 +23,12 @@ const AGENT_AUTHORED = new Set([
 ]);
 const MERGEABLE = new Set([1, 14, 24, 25, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 39, 45, 46, 48]);
 
-function pull(index, count = OCTANE_LINES[index] ?? 100) {
+function pull(index, count = BACKLOG_LINES[index] ?? 100) {
   const number = 600 - index;
   const mergeable = MERGEABLE.has(index);
   return {
     number,
-    title: `Octane-shaped pull ${number}`,
+    title: `backlog-shaped pull ${number}`,
     body: '',
     state: 'open',
     merged_at: null,
@@ -44,8 +44,8 @@ function pull(index, count = OCTANE_LINES[index] ?? 100) {
     author_association: index < 42 ? 'OWNER' : 'CONTRIBUTOR',
     additions: Math.floor(count * 0.8),
     deletions: count - Math.floor(count * 0.8),
-    changed_files: OCTANE_FILES[index] ?? 1,
-    html_url: `https://github.com/octanejs/octane/pull/${number}`,
+    changed_files: BACKLOG_FILES[index] ?? 1,
+    html_url: `https://github.com/example-org/example-repo/pull/${number}`,
     created_at: '2026-08-02T00:00:00Z',
     updated_at: '2026-08-02T20:00:00Z',
   };
@@ -54,7 +54,7 @@ function pull(index, count = OCTANE_LINES[index] ?? 100) {
 function cachedPull(remote, index, now) {
   const ci = index < 33 ? 'failing' : index < 35 ? 'pending' : 'passing';
   return {
-    repo: 'octanejs/octane',
+    repo: 'example-org/example-repo',
     number: remote.number,
     title: remote.title,
     body: '',
@@ -89,14 +89,14 @@ function cachedPull(remote, index, now) {
 
 function context(client, cachedPulls) {
   return {
-    workspaceId: 'ws-octane',
-    repo: 'octanejs/octane',
+    workspaceId: 'ws-example',
+    repo: 'example-org/example-repo',
     defaultBranch: 'main',
     mode: 'governed',
     mergeMethod: 'squash',
     client,
     cachedPulls,
-    admission: { repo: 'octanejs/octane', paused: false, reason: null, pausedBy: null, pausedAt: null },
+    admission: { repo: 'example-org/example-repo', paused: false, reason: null, pausedBy: null, pausedAt: null },
     missingPermissions: [],
     accounts: { fetch: true, runs: true, pipelines: true, webhooks: true },
     boardEnabled: true,
@@ -106,9 +106,9 @@ function context(client, cachedPulls) {
   };
 }
 
-test('an Octane-shaped live dry run reports the measured backlog without starting work', async () => {
+test('a backlog-shaped live dry run reports the measured backlog without starting work', async () => {
   const now = Date.now();
-  const pulls = OCTANE_LINES.map((lines, index) => pull(index, lines));
+  const pulls = BACKLOG_LINES.map((lines, index) => pull(index, lines));
   const byNumber = new Map(pulls.map((item) => [item.number, item]));
   const issues = Array.from({ length: 4 }, (_, index) => ({
     number: 900 + index,
@@ -119,7 +119,7 @@ test('an Octane-shaped live dry run reports the measured backlog without startin
     user: { login: `reporter-${index}` },
     assignees: [],
     comments: 0,
-    html_url: `https://github.com/octanejs/octane/issues/${900 + index}`,
+    html_url: `https://github.com/example-org/example-repo/issues/${900 + index}`,
     created_at: '2026-08-02T00:00:00Z',
     updated_at: '2026-08-02T20:00:00Z',
     closed_at: null,
