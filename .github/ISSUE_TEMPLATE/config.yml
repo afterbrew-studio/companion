@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Ask the community
+    url: https://github.com/moxxy-ai/companion/discussions/categories/q-a
+    about: Get help using, deploying, extending, or evaluating Companion.
   - name: Report a security vulnerability privately
     url: https://github.com/moxxy-ai/companion/security/advisories/new
     about: Never place credentials, exploits, or sensitive deployment details in a public issue.

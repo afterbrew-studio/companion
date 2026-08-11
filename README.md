@@ -323,6 +323,7 @@ installs a module from a registry, tarball, or directory.
 | [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |
 | [Development](docs/development.md) | local setup, profiles, and quality gates |
 | [Contributing](CONTRIBUTING.md) | issues, local development, verification, and pull requests |
+| [Support and discussions](SUPPORT.md) | help, bug reports, feature proposals, and private security reporting |
 | [Writing a module](modules/README.md) | the complete module authoring guide |
 
 ## Development

@@ -51,6 +51,17 @@ npx @moxxy/companion --background
 npx @moxxy/companion stop
 ```
 
+If startup or runtime detection does not behave as expected, run:
+
+```sh
+npx @moxxy/companion doctor
+npx @moxxy/companion doctor --json   # redacted output suitable for a public issue
+```
+
+The report checks Node, Git, `gh`, the data directory, bind, daemon and agent
+runtimes. It deliberately excludes credentials, repository and log contents,
+absolute paths, and the active GitHub username.
+
 Its output goes to `~/.companion/companiond.log`, rolled at 5 MB with one
 previous file kept, since nothing is watching the screen. `stop` sends SIGTERM
 to the pid recorded in `instance.lock` and waits for the daemon's own shutdown,

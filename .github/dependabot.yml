@@ -8,7 +8,21 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Warsaw
-    open-pull-requests-limit: 5
+    # One production and one development proposal is reviewable; five
+    # unrelated upgrades all rebuilding the monorepo are not. Security updates
+    # remain independent and are never ignored by these version-update groups.
+    open-pull-requests-limit: 2
+    groups:
+      production-dependencies:
+        applies-to: version-updates
+        dependency-type: production
+        patterns:
+          - "*"
+      development-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
@@ -18,7 +32,12 @@ updates:
       day: monday
       time: "06:30"
       timezone: Europe/Warsaw
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
@@ -28,4 +47,9 @@ updates:
       day: monday
       time: "07:00"
       timezone: Europe/Warsaw
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
+    groups:
+      container-images:
+        applies-to: version-updates
+        patterns:
+          - "*"

@@ -60,6 +60,7 @@ Companion then keeps running, so the terminal can be closed.
 ```sh
 npx @moxxy/companion --background   # start, then hand the terminal back
 npx @moxxy/companion stop           # stop it again
+npx @moxxy/companion doctor         # diagnose this installation without exposing secrets
 ```
 
 Output goes to `~/.companion/companiond.log` (rolled at 5 MB, one file kept)
@@ -82,6 +83,11 @@ npx @moxxy/companion --yes --no-open
 | `--port <n>`, `--host <h>` | Bind somewhere other than `127.0.0.1:8901` |
 | `--home <path>` | Use a different data directory |
 | `COMPANION_ADMIN_USER` + `COMPANION_ADMIN_PASSWORD` | Seed the first admin for an authenticated installation |
+
+`companion doctor` checks Node, Git, `gh`, the data directory, bind, daemon and
+available agent runtimes. `companion doctor --json` prints the same report for a
+bug report without credentials, repository contents, log contents, absolute
+paths, or the active GitHub username.
 
 Run `npx @moxxy/companion init` to prepare the data directory without starting
 the server. Use Docker or a source build when you need the full module profile.

@@ -31,10 +31,12 @@ const LOCAL_RUNNER_ID = 'runner-local';
 export async function readHarnessOptions(
   baseUrl: string,
   token: string,
+  timeoutMs?: number,
 ): Promise<HarnessOptions | null> {
   try {
     const res = await fetch(`${baseUrl}/api/runners/harnesses/${LOCAL_RUNNER_ID}`, {
       headers: { authorization: `Bearer ${token}` },
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     // 404 is an instance without the execution module, or a daemon that
     // predates the question. Neither is an error worth printing.
