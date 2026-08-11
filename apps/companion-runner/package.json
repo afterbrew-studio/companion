@@ -48,11 +48,11 @@
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
     "@moxxy/plugin-tunnel-proxy": "^0.36.1",
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.13.3",
     "@types/ws": "^8.5.13",
-    "esbuild": "^0.25.12",
-    "tsx": "^4.19.0",
-    "typescript": "^5.8.0",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.23.11",
+    "typescript": "^7.0.2",
     "zod": "^3.24.0"
   },
   "publishConfig": {

@@ -37,11 +37,11 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@moxxy/companion-services": "workspace:*",
     "react": "^19.2.8",
-    "typescript": "^5.8.0"
+    "typescript": "^7.0.2"
   },
   "sideEffects": false
 }
