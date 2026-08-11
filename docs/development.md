@@ -38,6 +38,10 @@ Before opening a pull request, run what CI runs:
 pnpm build && pnpm typecheck && pnpm acl check
 ```
 
+`pnpm smoke` boots the built daemon against a scratch `COMPANION_HOME` and walks
+the documented first-run path (bootstrap token, first-admin setup, login, create
+and list a workspace) over the real HTTP API.
+
 ## Commands
 
 ```sh

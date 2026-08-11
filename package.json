@@ -17,6 +17,7 @@
     "release:target": "node scripts/release-target.mjs",
     "security:workflow-policy": "node scripts/security-workflow-policy.mjs",
     "sdk:surface": "node scripts/sdk-surface.mjs",
+    "smoke": "node scripts/smoke-install.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm gen:modules && pnpm -r typecheck",
     "version:check": "node scripts/version.mjs --check"

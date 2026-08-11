@@ -156,6 +156,25 @@ jobs:
           done
           echo "all $(echo "$expected" | wc -w) modules of the full profile are in the image"
 
+  # The documented first-run path over the real daemon: the bootstrap token
+  # file, first-admin setup, login, and a workspace that lists back. The docker
+  # job proves the image boots; this proves a fresh install is operable.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm smoke
+
   # The dependency graph is evaluated before code lands. Development
   # dependencies count too: a compromised build tool can alter the artifact as
   # effectively as a vulnerable runtime package.
