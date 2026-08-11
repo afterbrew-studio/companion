@@ -10,16 +10,16 @@ description: >-
 
 # Companion code standards
 
-No ESLint, no Prettier, no test runner is configured. The bar is: **it
-typechecks (`pnpm typecheck`) and reads like the file next to it.** Match the
-surrounding code's naming, comment density, and idiom.
+No ESLint, no Prettier. The bar is: **it typechecks (`pnpm typecheck`), the
+`node --test` suites pass (`pnpm test`), and it reads like the file next to
+it.** Match the surrounding code's naming, comment density, and idiom.
 
 ## TypeScript
 
 - **ESM everywhere.** `"type": "module"`, `module`/`moduleResolution: NodeNext`.
   Relative imports **must** carry the `.js` suffix even though the source is
-  `.ts`: `import { route } from '../router.js'`. The shared package is always
-  `import … from '@companion/contract'`.
+  `.ts`: `import { route } from '../router.js'`. The shared registries live in
+  `@moxxy/companion-contracts`; a module's own DTOs come from its contract slice.
 - **`import type` for types.** Type-only imports use `import type { X } from …`
   (`isolatedModules` is on). Mixed value/type imports split the type out.
 - **strict + `noUncheckedIndexedAccess`.** Indexing an array/record yields

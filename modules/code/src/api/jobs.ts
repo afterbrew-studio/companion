@@ -19,7 +19,7 @@ let offNativeReviewProvider: (() => void) | null = null;
 /**
  * Surface a credential going bad, and coming back.
  *
- * This is the gap `docs/open-items.md` §1 named: an app uninstalled on GitHub
+ * This is the gap `docs/internal/open-items.md` §1 named: an app uninstalled on GitHub
  * left the account holding a dead token until a human read a log line or a call
  * failed over. Refresh runs every ten minutes, so the emit has to be driven by
  * the TRANSITION the refresh reports, never by the current state, or an outage

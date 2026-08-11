@@ -16,7 +16,7 @@ description: >-
 `companion-build-module` + `modules/README.md` tell you **how to write** a module.
 This skill tells you **which edition it belongs to and how it ships**.
 
-**Source of truth: `docs/modular-distribution.md`.** Read it before designing
+**Source of truth: `docs/internal/modular-distribution.md`.** Read it before designing
 anything here. It tags every mechanism `[NOW] / [NEXT] / [LATER] / [NO]`.
 
 ## Status: what exists today
@@ -71,7 +71,7 @@ Ask, in order:
 3. **Is it a core generalization rather than a feature?** Custom roles,
    pluggable authenticators, an audit choke point. Then it is **core**, not a
    module, and it goes in the OSS repo even though enterprise is what pays for
-   it. See `docs/modular-distribution.md` §10.
+   it. See `docs/internal/modular-distribution.md` §10.
 
 Case 3 is the one that gets misfiled. A module cannot open a closed union in
 `packages/types`, it cannot retrofit an audit hook onto the router, and it
@@ -84,7 +84,7 @@ but the API host, the clone host and the `gh --hostname` are hardcoded in
 `code` and `operate`, and there is no outbound proxy dispatcher at all. The
 **seam** is OSS work in those modules; the enterprise module owns only the
 credentials and the org policy on top of it. See
-`docs/modular-distribution.md` §10.
+`docs/internal/modular-distribution.md` §10.
 
 ## Where the code lives
 
