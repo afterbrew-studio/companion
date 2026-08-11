@@ -139,10 +139,13 @@ export function useWorkspaceIssues(): UseWorkspaceIssues {
   const { items: issues, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage, { seed, onFirstPage: retain });
 
   useEffect(() => {
+    // The event names the repo; another workspace's activity must not refetch
+    // this whole paged list (same membership test as slots.tsx's fresh filter).
+    const inWorkspace = new Set(repos.map((r) => r.fullName));
     return onServerMessage((msg) => {
-      if (msg.t === 'issues.changed' || msg.t === 'triage.changed') reload();
+      if ((msg.t === 'issues.changed' || msg.t === 'triage.changed') && inWorkspace.has(msg.repo)) reload();
     });
-  }, [reload]);
+  }, [reload, repos]);
   const refresh = useWorkspaceRefresh(workspaceId, repos);
   const unavailable = new Set(refresh.unavailableRepos);
   const visibleIssues = issues.filter((issue) => !unavailable.has(issue.repo));

@@ -192,11 +192,11 @@ export class RunsStore {
    * somewhere else, and neither is visible from the settings alone.
    */
   lastByTask(): Map<string, { harness: string; model: string | null; at: number }> {
-    // SQLite's bare-column-with-MAX form: one grouped pass, and the other
+    // SQLite's bare-column-with-MAX form: one grouped pass in
+    // idx_runs_task_created order (no temp B-tree since v14), and the other
     // columns come from the row that MAX picked. The correlated subquery this
-    // replaces was evaluated once per candidate row against a table with no
-    // index on `task` and one that only grows, so it was quadratic — and the
-    // settings page that calls it refetches on two broadcasts.
+    // replaces was evaluated once per candidate row, so it was quadratic — and
+    // the settings page that calls it refetches on two broadcasts.
     const rows = this.db
       .prepare(
         `SELECT task, harness, model, MAX(created_at) AS created_at FROM runs
@@ -412,6 +412,26 @@ export class RunsStore {
          WHERE verification IS NOT NULL AND json_extract(verification, '$.status') = 'running'`,
       )
       .run().changes;
+  }
+
+  /**
+   * Age-bound terminal run history. A hard DELETE rather than blanking heavy
+   * columns: every dashboard aggregate reads at most the current calendar
+   * month (usage charts 14 days, spend/budgets since monthStart), so a row
+   * past the year-scale bound has no reader left. Live-ish rows are never
+   * touched, and the sweep is bounded per run so a years-old table cannot
+   * lock the database in one statement.
+   */
+  pruneTerminal(olderThanMs: number, maxRows = 20_000): number {
+    return this.db
+      .prepare(
+        `DELETE FROM runs WHERE id IN (
+           SELECT id FROM runs
+            WHERE created_at < ?
+              AND status NOT IN ('queued', 'provisioning', 'running', 'idle', 'review')
+            ORDER BY created_at LIMIT ?)`,
+      )
+      .run(Date.now() - olderThanMs, maxRows).changes;
   }
 
   /** Boot-time sweep: any run left live-ish died with the daemon. 'idle'

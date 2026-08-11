@@ -7,6 +7,7 @@ import type { CompiledRawRoute } from './raw-router.js';
 import type { Migration } from './migration-runner.js';
 import type { ServiceRegistry } from './service-registry.js';
 import type { ServerBus } from './bus.js';
+import type { MetricsRegistry } from './metrics.js';
 import type { AuditSink, ModuleSecrets, NotificationEmitter, SecretStore, SettingsRegistry } from './capabilities.js';
 import type { RbacReader, RoleOverrides } from './rbac-grid.js';
 import type { WsScopeRegistry } from './ws-hub.js';
@@ -26,6 +27,8 @@ export interface ModuleContext {
   readonly fts: { readonly available: boolean };
   readonly services: ServiceRegistry;
   readonly bus: ServerBus;
+  /** Register process-lifetime counters/gauges, served at /metrics when enabled. */
+  readonly metrics: MetricsRegistry;
   readonly broadcast: (msg: SpaServerMessage) => void;
   readonly pushToUser: (username: string, msg: SpaServerMessage) => void;
   readonly notify: NotificationEmitter;

@@ -158,4 +158,25 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    /** The reports feed had neither ordering nor lookup indexes: the page
+     * query, the retention sweep (both created_at) and latestFor's
+     * (repo, issue_number, kind) probe were all full scans. */
+    version: 7,
+    name: 'report_feed_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_reports_created
+          ON reports(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_reports_latest_for
+          ON reports(repo, issue_number, kind, created_at DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_reports_latest_for;
+        DROP INDEX IF EXISTS idx_reports_created;
+      `);
+    },
+  },
 ]);

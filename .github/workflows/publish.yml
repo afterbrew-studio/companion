@@ -348,3 +348,97 @@ jobs:
             --title "Companion $VERSION" \
             --generate-notes \
             --notes "$notes"
+
+  # The deployable image, published only after the npm release went through and
+  # the GitHub Release exists. Full profile, like CI builds and the npx package
+  # ships: a published image advertising modules whose code is absent would be
+  # the same bug the npm publish comment above guards against.
+  image:
+    name: Container image
+    needs: [gate, publish, release]
+    # `always()` because `publish` legitimately skips when every package version
+    # is already on npm; the registry check below keeps ordinary pushes no-ops.
+    if: >-
+      always() &&
+      needs.gate.result == 'success' &&
+      needs.release.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      # Attach the image SBOM to the GitHub Release.
+      contents: write
+      # Push to ghcr with the workflow token; granted on this job only.
+      packages: write
+    env:
+      IMAGE: ghcr.io/moxxy-ai/companion
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          # release-target.mjs walks first-parent history for the version commit.
+          fetch-depth: 0
+
+      - name: Resolve the product release
+        id: product
+        env:
+          RELEASE_HEAD: ${{ needs.gate.outputs.sha }}
+        run: node scripts/release-target.mjs --head "$RELEASE_HEAD" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A version already on the registry is complete and stays untouched, the
+      # same idempotency rule the npm loop applies. `latest` only ever moves as
+      # part of publishing a new stable version.
+      - name: Plan the image tags
+        id: plan
+        env:
+          PRERELEASE: ${{ steps.product.outputs.prerelease }}
+          VERSION: ${{ steps.product.outputs.version }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$VERSION is already on the registry; skipping."
+            exit 0
+          fi
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+          tags="$IMAGE:$VERSION"
+          if [ "$PRERELEASE" != true ]; then
+            tags="$tags,$IMAGE:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        if: steps.plan.outputs.exists != 'true'
+
+      - name: Build and push the full image
+        if: steps.plan.outputs.exists != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          build-args: PROFILE=full
+          push: true
+          tags: ${{ steps.plan.outputs.tags }}
+          cache-from: type=gha
+
+      - name: Generate the image SBOM
+        if: steps.plan.outputs.exists != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}:${{ steps.product.outputs.version }}
+          format: spdx-json
+          output: companion-image-${{ steps.product.outputs.version }}.spdx.json
+          timeout: 15m
+
+      - name: Attach the image SBOM to the release
+        if: steps.plan.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.product.outputs.tag }}
+          VERSION: ${{ steps.product.outputs.version }}
+        run: gh release upload "$TAG" "companion-image-$VERSION.spdx.json" --clobber

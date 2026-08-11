@@ -55,6 +55,22 @@ export default defineJobs({
         if (count > 0) ctx.log.warn(`reaped ${count} run(s) or queued job(s) whose owner lost authority`);
       },
     },
+    {
+      // The runs table had no DELETE anywhere. Terminal rows past the window
+      // have no reader (every aggregate is month-bounded); the sweep is
+      // bounded per run and a year of backlog drains over a few days.
+      id: 'operate.runs.prune',
+      everyMs: 24 * 60 * 60_000,
+      run: (ctx) => {
+        const raw = Number(ctx.moduleConfig.get('runRetentionDays') ?? 365);
+        const days = Number.isFinite(raw) && raw > 0 ? raw : 365;
+        const removed = ctx.services.get('operate').runsStore.pruneTerminal(days * 24 * 60 * 60_000);
+        if (removed > 0) {
+          ctx.log.info(`runs: pruned ${removed} terminal run(s) older than ${days} days`);
+          ctx.broadcast({ t: 'runs.changed' });
+        }
+      },
+    },
   ],
   postActivate: (ctx) => {
     const op = ctx.services.get('operate');
