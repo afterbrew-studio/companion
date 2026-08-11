@@ -16,7 +16,7 @@ export const cursorBugbotProvider: IntegrationProviderAdapter = {
     connectionMode: 'required',
     execution: 'delegated',
     fields: [],
-    docsUrl: 'https://docs.cursor.com/bugbot',
+    docsUrl: 'https://cursor.com/docs/bugbot',
     setup:
       'Install and configure the Cursor Bugbot GitHub App for the repository, then create this connection to enable delegated reviews.',
   },

@@ -35,6 +35,10 @@ declare module '@moxxy/companion-contracts' {
   }
 }
 
+/** AI Help first-prompt marker: the daemon prefixes the platform briefing up
+ * to it, the SPA folds everything before it out of the visible transcript. */
+export const USER_MARKER = '<<<USER_MESSAGE>>>';
+
 /** A durable workspace report schedule and the profile whose authority it uses. */
 export interface WorkspaceBriefingSchedule {
   readonly cadence: BriefingCadence;
