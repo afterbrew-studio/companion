@@ -81,6 +81,21 @@ test('readyz mirrors kernel readiness with module states and no config', async (
   assert.deepEqual(await response.json(), ready);
 });
 
+test('the server carries explicit timeouts instead of Node defaults', async (t) => {
+  const server = await startHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    authMode: 'password',
+    kernel: { rawRouter: { active: false } },
+    hub: { handleUpgrade() {} },
+  });
+  t.after(() => server.close());
+
+  assert.equal(server.requestTimeout, 300_000);
+  assert.equal(server.headersTimeout, 60_000);
+  assert.equal(server.keepAliveTimeout, 65_000);
+});
+
 test('readyz answers 503 while not ready', async (t) => {
   const base = await serve(t, {
     rawRouter: { active: false },

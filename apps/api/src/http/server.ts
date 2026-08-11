@@ -137,6 +137,16 @@ export function startHttpServer(opts: {
 
   server.on('upgrade', (req, socket, head) => hub.handleUpgrade(req, socket, head));
 
+  // Explicit timeouts instead of Node defaults. requestTimeout bounds RECEIVING
+  // one request (headers plus body), never the handler, so the playground's
+  // long synchronous runs (timeoutMs is capped at 10 minutes) are unaffected.
+  server.requestTimeout = 300_000;
+  // Headers must arrive promptly; this is the slowloris guard.
+  server.headersTimeout = 60_000;
+  // Just above a typical load balancer's 60s idle timeout, so the LB (not the
+  // daemon) closes idle keep-alive connections and never races a reused socket.
+  server.keepAliveTimeout = 65_000;
+
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
