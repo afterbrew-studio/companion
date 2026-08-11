@@ -147,10 +147,13 @@ Break one and the change is wrong even if it typechecks.
 pnpm install            # corepack enable first; pnpm 10, Node >= 24
 pnpm dev                # companion-api + Vite (proxies /api,/ws)
 pnpm -r build           # tsc across packages/modules (+ vite build for web, esbuild for the runner)
-pnpm -r typecheck       # THE quality gate — no linter, no test suite yet
+pnpm -r typecheck       # the type gate (no linter is configured)
+pnpm -r test            # the node:test suites across modules, packages, apps
+pnpm acl check          # the RBAC grid gate (also in CI)
+pnpm sdk:surface        # the published module ABI (also in CI)
 ```
 
-The bar is: `pnpm -r typecheck` clean and code that reads like its neighbours.
+The bar is: those gates clean and code that reads like its neighbours.
 Because modules link via `workspace:*` and all contracts are imported by both
 apps, a registry change shows up on both sides — run the root typecheck.
 

@@ -28,9 +28,12 @@ pnpm dev
 sign in with the seeded admin, or complete onboarding.
 
 Then add a GitHub token or account in Settings, and turn on whichever modules you
-want from the **Modules** page. A fresh install enables `core`, `workspace`,
-`operate`, `code` and `admin`; the planning cluster and the reactors wait under
-**Available**.
+want from the **Modules** page. A fresh install enables every module of the
+`slim` profile (all 13: the required `core` and `workspace`, plus
+`integrations`, `operate`, `code`, `coderabbit`, `jira`, `notify`, `workbench`,
+`admin`, `plan`, `board` and `automations`); the modules `full` adds
+(`refinement`, `planner`, `slop`, `playground`, `cursor-bugbot`, `oidc`,
+`runtime`) wait under **Available**.
 
 Before opening a pull request, run what CI runs:
 
@@ -68,8 +71,8 @@ The set of modules a build **contains** is named in exactly one place,
 
 | Profile | Modules | Used for |
 |---|---|---|
-| `slim` (default) | 14 modules: the required core plus integrations, execution, code/review, notification, workbench and contributor workflows | the published npx package and default OSS image |
-| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `oidc`, `runtime` | all 20 OSS modules in this repo |
+| `slim` (default) | 13 modules: the required core plus integrations, execution, code/review, notification, workbench and contributor workflows | the default OSS image and source build |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `cursor-bugbot`, `oidc`, `runtime` | all 20 OSS modules in this repo; the published npx package is built from it |
 | `cloud` | `slim` + `oidc`, `runtime` | hosted control plane with built-in execution and SSO |
 | `minimal` | `core`, `workspace` | the guard that the app shell depends on no optional module |
 
@@ -83,7 +86,7 @@ install path decides whether you can pick one at all:
 
 | Install path | Profile |
 |---|---|
-| `npx @moxxy/companion` | `slim`, fixed. The registry is baked into the published bundle. |
+| `npx @moxxy/companion` | `full`, fixed: the published bundle carries every module. A fresh install enables the slim baseline; `COMPANION_PROFILE=full` on the **first run** additionally installs the planning cluster and reactors |
 | Docker | `--build-arg PROFILE=full`, or `COMPANION_PROFILE=full` via compose |
 | From source | `COMPANION_PROFILE=full pnpm build` |
 
@@ -109,7 +112,7 @@ profile is not buildable:
   'workspace' is required and cannot be excluded from a build
 ```
 
-Being in a build is not the same as being on. Optional modules ship with
+Being in a build is not the same as being on. The modules `full` adds ship with
 `autoInstall: false`, so a fresh `full` install still boots with the slim baseline
 enabled and the rest waiting under **Available**.
 

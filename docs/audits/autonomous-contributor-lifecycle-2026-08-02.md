@@ -1,7 +1,6 @@
 # Autonomous contributor lifecycle audit
 
 Date: 2026-08-02
-Branch: `feat/autonomous-contributor-lifecycle`
 Scope: all 14 in-tree modules, with emphasis on webhook ingestion, issue triage,
 long-running Board work, large-PR review, pipelines, authorization and the
 governed/autonomous operating model.

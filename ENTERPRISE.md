@@ -6,9 +6,10 @@ and what is not built yet.
 
 This document is honest about the last part. Sections are tagged **[available]**
 or **[not built]**, and the design for anything not built is in
-[`docs/modular-distribution.md`](docs/modular-distribution.md),
-[`docs/acl-and-roles.md`](docs/acl-and-roles.md) and
-[`docs/game-plan.md`](docs/game-plan.md). For an actual evaluation, use the
+[`docs/internal/modular-distribution.md`](docs/internal/modular-distribution.md),
+[`docs/internal/acl-and-roles.md`](docs/internal/acl-and-roles.md) and
+[`docs/internal/game-plan.md`](docs/internal/game-plan.md) (internal working
+documents). For an actual evaluation, use the
 [company-pilot gate](docs/security/company-pilot.md) and retain its evidence.
 
 ---
@@ -19,9 +20,9 @@ The module set of a build is named in `profiles/*.json` and nowhere else:
 
 | Profile | Contains |
 |---|---|
-| `slim` | Core/workspaces, integrations, execution, repositories/review, CodeRabbit, Cursor Bugbot, Jira, notifications, Workbench, administration, planning, board and automations (14 modules) |
-| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `oidc`, `runtime` (20 modules) |
-| `cloud` | `slim` + `oidc`, `runtime` (16 modules) |
+| `slim` | Core/workspaces, integrations, execution, repositories/review, CodeRabbit, Jira, notifications, Workbench, administration, planning, board and automations (13 modules) |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `cursor-bugbot`, `oidc`, `runtime` (20 modules) |
+| `cloud` | `slim` + `oidc`, `runtime` (15 modules) |
 
 ```sh
 pnpm gen:modules --profile slim
@@ -43,7 +44,8 @@ A third profile, `enterprise` (slim plus modules from a private repo), is the
 intended shape for commercial modules. The build mechanism and the licence gate
 both work today (§7); what does not exist yet is a commercial module to put
 behind them. A module can also be installed **out of tree**, without being in any
-profile: see the out-of-tree section of [`README.md`](README.md).
+profile: see the
+[out-of-tree section of `docs/operating-modules.md`](docs/operating-modules.md#out-of-tree-modules).
 
 ---
 
@@ -61,8 +63,9 @@ Note that the profile changes **which code is present**, not the image size: the
 base image and the moxxy CLI dominate, so slim and full are within a megabyte of
 each other. Choose the profile for the surface you are willing to audit.
 
-See the Docker sections of [`README.md`](README.md) for compose, Coolify and
-volume details. Three things matter more here than in a single-user install:
+See the Docker sections of [`docs/install.md`](docs/install.md) for compose,
+Coolify and volume details. Three things matter more here than in a single-user
+install:
 
 - **Persist both volumes.** `/data` holds the database, clones and the isolated
   moxxy home; `/home/node/.moxxy` holds the provider credentials. Losing the
@@ -564,8 +567,9 @@ the moxxy proxy relay, which an internal network often blocks outright.
 `COMPANION_PUBLIC_URL` does not feed it; the two are set separately.
 
 The split between OSS core work and what belongs in a commercial module is in
-`docs/modular-distribution.md` §10: the seams are core work, because a separate
-module cannot change a constant inside another one.
+`docs/internal/modular-distribution.md` §10 (internal working document): the
+seams are core work, because a separate module cannot change a constant inside
+another one.
 
 ---
 
@@ -577,11 +581,15 @@ A module declares `entitlement: '<feature>'` in its manifest. The kernel then
 refuses to install or enable it without a licence granting that feature, and
 disables it at boot if the licence lapses.
 
-Install the licence at `$COMPANION_HOME/license.jwt`. Verification is **offline**:
-a detached Ed25519 signature over a JSON payload, checked against the issuer key
-the build carries. There is no licence server, no activation call and no
-phone-home, because air-gapped installs are a requirement rather than an edge
-case. It is read at boot and at most once a day, never on a request path.
+Install the licence at `$COMPANION_HOME/license.jwt` (in Docker,
+`COMPANION_LICENSE_FILE` names a mounted file the entrypoint copies there).
+Verification is **offline**: a detached Ed25519 signature over a JSON payload,
+checked against the issuer's public key supplied at runtime in the
+`COMPANION_LICENSE_KEY` environment variable
+(`packages/services/src/license.ts`). There is no licence server, no
+activation call and no phone-home, because air-gapped installs are a
+requirement rather than an edge case. It is read at boot and at most once a
+day, never on a request path.
 
 Refusals name the reason:
 
@@ -596,9 +604,14 @@ of the instance are untouched, and everyone can still sign in and administer it.
 Renewing the licence and re-enabling restores the module with its configuration
 exactly as it was. Verified by running it.
 
-An OSS build carries no issuer key and therefore satisfies no entitlement. That
-is deliberate: it contains no entitled module, and a build that cannot verify a
-licence must not pretend it can.
+The corollary is worth stating: the gate is enforced at install, enable and
+boot, so a licence that expires while the daemon is up is enforced at the
+**next boot**, not live. An already-running entitled module keeps running until
+then; only new installs and enables are refused immediately.
+
+A deployment with no `COMPANION_LICENSE_KEY` set (every OSS install) satisfies
+no entitlement. That is deliberate: an OSS build contains no entitled module,
+and a deployment that cannot verify a licence must not pretend it can.
 
 Licence enforcement in a self-hosted, source-available product is a contractual
 control with a technical speed bump, not a security boundary. It is designed for
@@ -636,10 +649,12 @@ AI agent runs reach a model provider, and repository sync reaches GitHub.
 ## 9. Getting the parts that are missing
 
 The sequencing, with what each mechanism cost, is in
-[`docs/game-plan.md`](docs/game-plan.md). Every phase P0 to P9 is built.
+[`docs/internal/game-plan.md`](docs/internal/game-plan.md) (internal working
+document). Every phase P0 to P9 is built.
 
 The full list of what is not built, with what exists in each case, is
-[`docs/open-items.md`](docs/open-items.md). Two of them appear on this page,
+[`docs/internal/open-items.md`](docs/internal/open-items.md) (internal working
+document). Two of them appear on this page,
 and neither is a mechanism: **commercial modules** to put behind the entitlement
 gate, and a **Vault or KMS backend** for the secret store. Both seams exist and
 are tested; what is missing is a module.

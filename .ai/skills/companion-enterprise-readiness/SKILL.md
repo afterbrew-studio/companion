@@ -17,8 +17,8 @@ The bar an enterprise deployment sets, and which of those things a **module**
 can carry versus which are **core** changes. Getting that split wrong produces a
 module that reaches into core and breaks the OSS build.
 
-Source of truth: `docs/acl-and-roles.md` (ACL, permissions, roles),
-`docs/modular-distribution.md` §10 and §11 (the rest), and `docs/game-plan.md`
+Source of truth: `docs/internal/acl-and-roles.md` (ACL, permissions, roles),
+`docs/internal/modular-distribution.md` §10 and §11 (the rest), and `docs/internal/game-plan.md`
 for what is scheduled when.
 
 ## Rule zero: is this a module or a core change?
@@ -33,7 +33,7 @@ even though enterprise is what pays for it.
 - **Custom roles.** Roles are instance data. Modules grant to the three built-in
   roles only; instance admins compose custom roles from the permission catalogue
   and an explicit revoke beats any module grant. Your `acl.ts` never mentions a
-  custom role. See `docs/acl-and-roles.md`.
+  custom role. See `docs/internal/acl-and-roles.md`.
 - **Audit log.** The router records every mutating request, refusals included,
   through `provideAudit`. Add `ctx.audit.record(...)` only for a decision no
   single route describes; never instrument a handler for coverage's sake.
