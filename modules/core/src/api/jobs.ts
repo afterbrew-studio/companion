@@ -1,3 +1,4 @@
+import { chmodSync } from 'node:fs';
 import { defineJobs } from '@moxxy/companion-core/server';
 import { paths, readRegularTextFile, writePrivateTextFile } from '@moxxy/companion-services';
 
@@ -66,6 +67,9 @@ export default defineJobs({
     if (!admin) return;
     const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS, 'full');
     writePrivateTextFile(file, `${token}\n`);
+    // The create mode is subject to the umask; re-assert owner-only explicitly,
+    // like readOrCreateBootstrapToken does on read.
+    chmodSync(file, 0o600);
     ctx.log.info(`CLI token for '${admin}' written to ${file}`);
   },
 });

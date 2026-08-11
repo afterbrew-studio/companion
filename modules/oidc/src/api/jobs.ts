@@ -13,7 +13,11 @@ export default defineJobs({
     unregister?.();
     unregister = ctx.services.get('core').registerProvider({
       id: 'oidc',
-      label: String(ctx.moduleConfig.get('label') ?? 'Sign in with SSO'),
+      // A getter, so the label is read live per request like the rest of the
+      // config in routes.ts: a config edit shows up without a re-enable.
+      get label(): string {
+        return String(ctx.moduleConfig.get('label') ?? 'Sign in with SSO');
+      },
       startUrl: '/api/oidc/start',
     });
   },

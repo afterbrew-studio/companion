@@ -115,10 +115,9 @@ export class RolesService {
     const known = new Set(this.rbac.catalog().map((p) => p.id as string));
     const undo = this.snapshotOf(id, permissions);
     for (const p of permissions) {
-      // A permission whose module is disabled is deliberately still settable:
-      // the row survives and takes effect when the module comes back. An id no
-      // module declares at all is a typo and is refused.
-      if (!known.has(p) && mode === 'grant') throw new AuthError(`no enabled module declares '${p}'`, 403);
+      // Grant and revoke validate alike: an id no enabled module declares is a
+      // typo, and an unvalidated revoke would persist a junk override row.
+      if (!known.has(p)) throw new AuthError(`no enabled module declares '${p}'`, 403);
       this.roles.setOverride(id, p, mode);
     }
     this.commit(undo, `${mode} of ${permissions.join(', ')} on '${id}'`);

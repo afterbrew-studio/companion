@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@companion/module-core/client';
 import type {
   EffectiveIntegrationRoute,
   IntegrationConnectionRecord,
@@ -94,6 +95,8 @@ export function useReviewTargets(scope: IntegrationScope): {
   readonly loading: boolean;
 } {
   const { catalog } = useIntegrations();
+  const { user } = useAuth();
+  const me = user?.username ?? null;
   const [route, setRoute] = useState<EffectiveIntegrationRoute | null>(null);
   const key = JSON.stringify(scope);
   useEffect(() => {
@@ -111,8 +114,18 @@ export function useReviewTargets(scope: IntegrationScope): {
     };
   }, [key, catalog]);
   const options = useMemo(
-    () => reviewTargetOptions(catalog?.providers ?? [], catalog?.connections ?? [], scope),
-    [catalog, key],
+    // Managers' catalogs also carry other users' personal connections; those
+    // can never be picked as a review target (the server resolves personal
+    // connections for their owner only), so they are filtered out here.
+    () =>
+      reviewTargetOptions(
+        catalog?.providers ?? [],
+        (catalog?.connections ?? []).filter(
+          (connection) => connection.ownerId === null || connection.ownerId === me,
+        ),
+        scope,
+      ),
+    [catalog, key, me],
   );
   return { options, route, loading: catalog === null || route === null };
 }

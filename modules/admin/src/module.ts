@@ -11,4 +11,5 @@ export default defineManifest({
   title: 'Admin',
   version: '0.1.0',
   dependsOn: ['core'],
+  messages: ['admin.changed'],
 });
