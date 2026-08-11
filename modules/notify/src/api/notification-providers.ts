@@ -171,7 +171,7 @@ function eventKinds(value: string): Set<string> {
   return new Set(value.split(',').map((kind) => kind.trim()).filter(Boolean));
 }
 
-function validateEventKinds(value: unknown): void {
+export function validateEventKinds(value: unknown): void {
   if (value === undefined || value === '') return;
   if (typeof value !== 'string') throw new Error('Event kinds must be comma-separated text');
   const unsupported = [...eventKinds(value)].filter((kind) => !NOTIFICATION_KINDS.has(kind));
@@ -220,7 +220,7 @@ function toNotification(input: IntegrationNotificationInput): NotificationRecord
   };
 }
 
-function testNotification(name: string): IntegrationNotificationInput {
+export function testNotification(name: string): IntegrationNotificationInput {
   return {
     id: `integration-test-${Date.now()}`,
     kind: 'info',

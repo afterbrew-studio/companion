@@ -38,6 +38,24 @@ export function DiscordMark(): React.JSX.Element {
   );
 }
 
+/** Email has no vendor; a plain envelope in the current text colour. */
+export function EmailMark(): React.JSX.Element {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label="Email"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <rect x="2.2" y="4.6" width="19.6" height="14.8" rx="2.4" />
+      <path d="m3.4 6.8 8.6 6.4 8.6-6.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function NtfyMark(): React.JSX.Element {
   return (
     <svg className="size-5" viewBox="0 0 24 24" role="img" aria-label="ntfy" fill="#317F6F">
