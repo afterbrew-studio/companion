@@ -20,6 +20,7 @@ import {
   PageLoading,
   PlusIcon,
   SettingRow,
+  Skeleton,
   StatusDot,
   StatusGlyph,
   Switch,
@@ -767,7 +768,7 @@ function TaskCard({
           {task.sourceIssueNumber != null ? (
             <a
               href={`#/repos/${task.repo}/issues/${task.sourceIssueNumber}`}
-              className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:underline dark:text-blue-400"
+              className="rounded bg-[#2a78d6]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#2a78d6] hover:underline dark:bg-[#5aa2f0]/10 dark:text-[#5aa2f0]"
               onClick={(e) => e.stopPropagation()}
             >
               issue #{task.sourceIssueNumber}
@@ -803,12 +804,12 @@ function TaskCard({
             </Tooltip>
           ) : null}
           {task.attachments.length > 0 ? (
-            <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600 dark:text-sky-400">
+            <span className="rounded bg-[#2a78d6]/10 px-1.5 py-0.5 text-[10px] text-[#2a78d6] dark:bg-[#5aa2f0]/10 dark:text-[#5aa2f0]">
               {task.attachments.length} image{task.attachments.length === 1 ? '' : 's'}
             </span>
           ) : null}
           {task.specId ? (
-            <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] text-indigo-500">spec</span>
+            <span className="rounded bg-[#2a78d6]/10 px-1.5 py-0.5 text-[10px] text-[#2a78d6] dark:bg-[#5aa2f0]/10 dark:text-[#5aa2f0]">spec</span>
           ) : null}
           {waitingOn.length > 0 ? (
             <Tooltip content={`waits for: ${waitingOn.join(' · ')}`}>
@@ -1198,7 +1199,35 @@ function TaskDetailDrawer({
 
   useLive(refresh, (msg) => msg.t === 'board.changed');
 
-  if (!detail) return null;
+  if (!detail) {
+    return (
+      <Drawer
+        title={allTasks.find((t) => t.id === id)?.title ?? 'Task'}
+        onClose={onClose}
+        storageKey="companion.board.task-drawer"
+        defaultWidth={350}
+        minWidth={320}
+      >
+        <div className="flex min-w-0 flex-col gap-4" aria-hidden>
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-4 w-8" />
+          </div>
+          <div className="flex items-center gap-2 border-b border-zinc-200 pb-3.5 dark:border-zinc-800">
+            <Skeleton className="h-7 w-16" />
+            <Skeleton className="h-7 w-16" />
+            <Skeleton className="h-7 w-16" />
+          </div>
+          <div className="flex flex-col gap-2.5">
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-3.5 w-11/12" />
+            <Skeleton className="h-3.5 w-2/3" />
+            <Skeleton className="h-3.5 w-3/4" />
+          </div>
+        </div>
+      </Drawer>
+    );
+  }
   const { task, events, pr, reviews, dependencies } = detail;
 
   // Chip titles: the snapshot first, then the server-resolved detail (covers
