@@ -49,6 +49,8 @@ declare module '@moxxy/companion-contracts' {
   interface BusEvents {
     /** First-boot onboarding created the installation's primary admin. */
     'auth.setup.completed': { readonly username: string };
+    /** An account was deleted; modules owning per-user data clean it up. */
+    'auth.user.deleted': { readonly username: string };
   }
 }
 

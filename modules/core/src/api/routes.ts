@@ -344,6 +344,7 @@ export default defineRoutes((ctx) => {
       handler: ({ params, user }) => {
         if (!user) throw new AuthError('authentication required', 401);
         auth.deleteUser(params.username, user);
+        ctx.bus.emit('auth.user.deleted', { username: params.username });
         ctx.broadcast({ t: 'tokens.changed' });
         ctx.broadcast({ t: 'users.changed' });
         return { ok: true };
