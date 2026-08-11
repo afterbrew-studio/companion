@@ -19,6 +19,8 @@ Companion reads real environment variables first, then `./.env`, then
 | `COMPANION_ADMIN_USER` / `COMPANION_ADMIN_EMAIL` / `COMPANION_ADMIN_PASSWORD` | unset | Seed admin account. Read only while the user store is empty. |
 | `COMPANION_MAINTAINER_USER` / `COMPANION_MAINTAINER_PASSWORD` | unset | Optional seed maintainer account. |
 | `COMPANION_BUSINESS_USER` / `COMPANION_BUSINESS_PASSWORD` | unset | Optional seed business account. |
+| `COMPANION_BACKUP_DIR` | unset | Enables daemon-scheduled daily database backups into this directory: a `VACUUM INTO` snapshot, integrity-checked, then pruned to the retention count. Unset means no scheduled backups; `companion backup` stays available either way. See [`upgrades.md`](upgrades.md). |
+| `COMPANION_BACKUP_KEEP` | `7` | How many scheduled snapshots to retain. Older ones are pruned after each successful run. |
 | `COMPANION_LOG_LEVEL` | `info` | Daemon log verbosity: `debug`, `info`, `warn`, `error` or `silent`. Anything else falls back to `info`. The npx CLI sets `warn` unless started with `--verbose`. |
 | `COMPANION_STATIC_DIR` | the built SPA beside the daemon | Directory the daemon serves the SPA from. The npx CLI and the Docker entrypoint point it at their bundled SPA; a source checkout needs no override. |
 | `COMPANION_LICENSE_KEY` | unset | The licence issuer's Ed25519 public key (SPKI PEM), used to verify `$COMPANION_HOME/license.jwt` offline. Set by enterprise deployments; with it unset (every OSS install) no entitlement is satisfied. See [`../ENTERPRISE.md`](../ENTERPRISE.md) §7. |
