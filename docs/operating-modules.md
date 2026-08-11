@@ -84,10 +84,15 @@ and SDK instead of bundling its own.
 ### Installing one
 
 ```sh
-companion module add companion-module-hello@1.0.0   # fetch, check, record
+companion module add companion-module-hello   # fetch, check, record
 # restart Companion so it rescans the modules directory
 companion module install hello && companion module enable hello
 ```
+
+`companion-module-hello` is a real published example, maintained in this
+repository under [`examples/companion-module-hello`](../examples/companion-module-hello)
+and released alongside the SDK, so the commands above work against any registry
+mirror that carries it.
 
 `add` needs no running daemon. npm resolves the spec, so a scope, a tag, a
 version range, a private registry and its credentials all work. It records what
@@ -103,12 +108,21 @@ the ABI cannot survive: a second copy of the SDK inside the module.
 
 ### Authoring one
 
+```sh
+companion module scaffold my-module   # generates ./companion-module-my-module
+```
+
+`scaffold` copies the hello-world example with the package name, module id and
+title substituted, ready for `npm install`, `npm run build` and
+`companion module verify .`. It needs no daemon; the template ships inside the
+CLI package.
+
 An out-of-tree module depends on exactly two packages:
 
 ```jsonc
 {
-  "devDependencies": { "@moxxy/companion-sdk": "^0.2.0", "@moxxy/companion-contracts": "^0.2.0" },
-  "peerDependencies": { "@moxxy/companion-sdk": "^0.2.0" },
+  "devDependencies": { "@moxxy/companion-sdk": "^0.8.2", "@moxxy/companion-contracts": "^0.6.1" },
+  "peerDependencies": { "@moxxy/companion-sdk": "^0.8.2" },
   "moxxy": {
     "id": "hello",           // must equal the install directory name
     "abi": "0.x",            // the ABI generation, checked at boot
@@ -149,5 +163,5 @@ an import map, so the module gets the host's React rather than a second one. A
 chunk that cannot resolve them fails loudly and drops only itself; the rest of
 the shell keeps working.
 
-The full authoring guide is `.ai/skills/companion-external-module/SKILL.md`, and
+The full authoring guide is [external modules](external-modules.md), and
 `pnpm sdk:surface` prints the ABI and fails on a breaking change.

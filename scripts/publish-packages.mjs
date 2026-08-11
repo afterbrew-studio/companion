@@ -14,7 +14,7 @@ const semverPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const include = [];
 
-for (const base of ['apps', 'packages', 'modules']) {
+for (const base of ['apps', 'examples', 'packages', 'modules']) {
   const entries = readdirSync(join(root, base), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .sort((left, right) => left.name.localeCompare(right.name));
