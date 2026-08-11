@@ -10,7 +10,7 @@ Companion reads real environment variables first, then `./.env`, then
 | --- | --- | --- |
 | `COMPANION_HOST` | `127.0.0.1` | HTTP and WebSocket bind host. Docker Compose sets `0.0.0.0` for published ports. |
 | `COMPANION_PORT` | `8901` | HTTP and WebSocket port. |
-| `COMPANION_AUTH_MODE` | `password` | `password` for normal/networked installs; `local` bootstraps a superadmin session and is rejected unless the bind host and browser origin are loopback. The npx CLI writes `local` unless `--with-auth` is used; Docker pins `password`. |
+| `COMPANION_AUTH_MODE` | `password` | `password` for normal/networked installs; `local` bootstraps a superadmin session and is rejected unless the bind host and browser origin are loopback; `sso` disables password sign-in so only the enabled identity providers admit browser users (see [Sign-in and sessions](#sign-in-and-sessions)). The npx CLI writes `local` unless `--with-auth` is used; Docker pins `password`. |
 | `COMPANION_HOME` | `~/.companion` | Data directory: SQLite database, clones, worktrees, isolated moxxy home. |
 | `COMPANION_PUBLIC_URL` | unset | Where this instance is reachable: the SSO redirect target, the base for links in outgoing notifications, and the daemon address a remote runner calls back on. Required behind a domain. Webhook delivery is configured separately, below. |
 | `COMPANION_BOOTSTRAP_TOKEN` | generated file | One-time capability required to create the first password-mode administrator. Must be at least 32 characters. When omitted, an owner-only token is written to `${COMPANION_HOME}/bootstrap-token`; the file is deleted after setup. |
@@ -43,6 +43,32 @@ artifact is built, not when one runs. See
 
 Advanced settings such as `maxLiveRuns` and `moxxyCliPath` live in
 `${COMPANION_HOME}/companiond.json`, written after first boot.
+
+## Sign-in and sessions
+
+Browser sessions have an absolute lifetime of 7 days from sign-in. Use never
+extends it (there is no sliding window). On top of that, an optional idle
+timeout signs out sessions that go unused:
+
+```sh
+companion module config core --set idleTimeoutMinutes=30
+```
+
+`0` (the default) disables the idle bound. It applies live, without a restart,
+to every session, including the local CLI token; the daemon re-mints that token
+at start, so a long-idle CLI recovers on the next daemon boot. Activity is
+tracked at one-minute granularity, so very small values gain nothing.
+
+`COMPANION_AUTH_MODE=sso` refuses password sign-in (HTTP 403) and the login page
+offers only the enabled identity providers. Two recovery paths are unchanged by
+design: the bootstrap token still creates the first admin on an empty instance,
+and the local CLI token in `${COMPANION_HOME}/cli-token` keeps authenticating
+the CLI. If the identity provider is down or misconfigured, those are how an
+operator gets back in.
+
+Local accounts can add a TOTP second factor from the Profile page (any
+authenticator app; the key is shown as copyable text). An administrator resets
+a lost second factor from the Users page.
 
 ## Webhook delivery
 
