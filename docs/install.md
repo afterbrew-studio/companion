@@ -124,6 +124,13 @@ that key by design, so export it to a separate protected backup or mount
 `COMPANION_SECRET_KEY_FILE` from your secret manager. A restore refuses an
 encrypted database when no matching key is available.
 
+Both container targets run the application as the unprivileged `node` account
+(uid/gid `1000`). New named volumes inherit the correct ownership. For bind
+mounts, create the directories for uid `1000` before first boot; do not make
+state or private keys world-writable as a workaround. The Compose service also
+drops every Linux capability, enables `no-new-privileges`, mounts the image
+read-only, and gives only `/tmp` an ephemeral, size-bounded writable filesystem.
+
 ```sh
 docker compose up -d --build        # background
 docker compose logs -f companion    # follow logs
@@ -161,8 +168,8 @@ fix:
    fails the fourth as well, which is the documented way to opt out.
 2. **Both volumes.** `docker-compose.yml` declares `companion-data` and
    `companion-moxxy` itself. Under the Dockerfile pack you add persistent
-   storage by hand at `/data` **and** `/root/.moxxy`, and forgetting the second
-   loses every AI provider credential on each redeploy.
+   storage by hand at `/data` **and** `/home/node/.moxxy`, and forgetting the
+   second loses every AI provider credential on each redeploy.
 3. **The module profile.** The compose file maps `COMPANION_PROFILE` to the
    image's build argument, which is the reliable way to get a `full` build.
 
@@ -253,8 +260,8 @@ separates three things that look identical from outside:
 
 | In the build log | What it means |
 |---|---|
-| `profile 'full': 15 module(s)` | The build was right. If the optional modules are still absent, a stale container is running. |
-| `profile 'slim': 9 module(s)` | The slim build was selected. |
+| `profile 'full': 20 module(s)` | The build was right. If the optional modules are still absent, a stale container is running. |
+| `profile 'slim': 14 module(s)` | The slim build was selected. |
 | no `profile '...'` line at all | Docker reused a cached layer, which also proves the argument never changed: a real change from `slim` to `full` invalidates that layer. |
 
 If you requested `full`, either of the latter two means the full-profile build

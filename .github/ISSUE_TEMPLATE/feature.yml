@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose an outcome that would make Companion more useful.
+title: "feature: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard today, for whom, and how often does it happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the successful workflow without prescribing internal architecture.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current workaround
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary area
+      options:
+        - Daily workflow and navigation
+        - GitHub and repositories
+        - Agents and runners
+        - Review and pipelines
+        - Integrations
+        - Modules and SDK
+        - Deployment, security, or enterprise
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting context
+      description: Add examples, screenshots, constraints, or links that clarify the need.

@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible problem in Companion.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Companion. Please remove tokens, repository secrets, private source, and personal data from every log and screenshot.
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not disclose a security vulnerability. I will use the private security advisory link for vulnerabilities.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Companion version
+      description: Shown in the UI footer or by `companion --version`.
+      placeholder: 0.11.7
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation
+      options:
+        - npx / local mode
+        - Docker or Coolify
+        - Source checkout
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Give the shortest sequence that reproduces the problem.
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour and evidence
+      description: Include sanitized logs, screenshots, or a small example when useful.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, browser, and agent runtime/provider when relevant.
+      placeholder: macOS 15, Node 24.4, Chrome 140, Codex

@@ -1,6 +1,7 @@
 {
   "name": "@moxxy/companion-runtime",
   "version": "0.5.0",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,9 +37,6 @@
     "@moxxy/companion-types": "workspace:*",
     "@types/node": "^22.10.0",
     "typescript": "^5.8.0"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "dist/**/*.js",

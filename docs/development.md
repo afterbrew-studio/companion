@@ -62,8 +62,9 @@ The set of modules a build **contains** is named in exactly one place,
 
 | Profile | Modules | Used for |
 |---|---|---|
-| `slim` (default) | `core`, `workspace`, `operate`, `code`, `admin`, `plan`, `board`, `automations` | the published npx package and the OSS image |
-| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `notify`, `oidc` | everything in this repo |
+| `slim` (default) | 14 modules: the required core plus integrations, execution, code/review, notification, workbench and contributor workflows | the published npx package and default OSS image |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `oidc`, `runtime` | all 20 OSS modules in this repo |
+| `cloud` | `slim` + `oidc`, `runtime` | hosted control plane with built-in execution and SSO |
 | `minimal` | `core`, `workspace` | the guard that the app shell depends on no optional module |
 
 ```sh
@@ -85,7 +86,7 @@ failure is silent, so check the build output rather than the running instance.
 The generator prints exactly what it produced:
 
 ```
-profile 'full': 13 module(s) [core, workspace, admin, oidc, operate, code, board, ...]
+profile 'full': 20 module(s) [core, workspace, integrations, admin, oidc, operate, ...]
 ```
 
 The registries (`apps/*/src/modules.generated.ts`) are **gitignored** and

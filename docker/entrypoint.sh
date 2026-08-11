@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+umask 077
 
 # Container start-up, in the order the daemon needs it. Everything here is
 # idempotent: a restart or a redeploy must be a no-op, not a re-initialisation.
@@ -16,8 +17,9 @@ mkdir -p "$COMPANION_HOME"
 # volume. Companion's isolated home symlinks to it, so losing that mount is how
 # a redeploy loses every AI provider. Fail loudly rather than silently starting
 # an instance whose agents cannot run.
-if [ ! -d /root/.moxxy ]; then
-  echo "warning: /root/.moxxy is not mounted; moxxy provider credentials will not survive a redeploy" >&2
+daily_moxxy_home="${HOME:-/home/node}/.moxxy"
+if [ ! -d "$daily_moxxy_home" ]; then
+  echo "warning: $daily_moxxy_home is not mounted; moxxy provider credentials will not survive a redeploy" >&2
 fi
 
 # The SPA is served from the bundle, not from a separate web server.

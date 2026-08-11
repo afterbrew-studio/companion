@@ -1,104 +1,350 @@
 name: Publish
 
-# Publishes on a landed change, not on a tag: main is the release branch, and a
-# version bump in package.json is the signal. Every other push is a no-op.
+# A release starts only after the exact push to main passed CI. A version bump
+# in package.json is still the signal; ordinary pushes are idempotent no-ops.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  # Same job, on demand, for a republish after a failed run.
+  # Same jobs, on demand, for a republish after a failed run. Manual releases
+  # are deliberately restricted to main by the job guard below.
   workflow_dispatch:
 
 # npm trusted publishing mints a short-lived OIDC token instead of holding a
 # long-lived NPM_TOKEN in repository secrets; `id-token: write` is what allows
 # it, and provenance is attached automatically as a result.
 permissions:
+  actions: read
   contents: read
   id-token: write
 
-# Two runs publishing the same version would race to the same registry entry.
+# Serialise main releases. Cancelling a publish halfway through can leave only
+# part of the independently-versioned package graph on npm.
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-main
   cancel-in-progress: false
 
 jobs:
-  publish:
+  gate:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
+    name: Confirm green main commit
     runs-on: ubuntu-latest
-    strategy:
-      # One package failing must not cancel the other: they version independently
-      # and a broken runner release should not hold back the CLI.
-      fail-fast: false
-      matrix:
-        include:
-          - dir: apps/companion-cli
-            package: '@moxxy/companion'
-          - dir: apps/companion-runner
-            package: '@moxxy/companion-runner'
-          # The module ABI. Ordered so a dependency publishes before anything
-          # that declares it: an out-of-tree module resolves types through this
-          # whole chain, not just through the SDK.
-          - dir: packages/types
-            package: '@moxxy/companion-types'
-          - dir: packages/services
-            package: '@moxxy/companion-services'
-          - dir: packages/contracts
-            package: '@moxxy/companion-contracts'
-          - dir: packages/core
-            package: '@moxxy/companion-core'
-          - dir: packages/ui
-            package: '@moxxy/companion-ui'
-          - dir: packages/sdk
-            package: '@moxxy/companion-sdk'
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      matrix: ${{ steps.packages.outputs.matrix }}
+      publish: ${{ steps.packages.outputs.publish }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Resolve and verify the source commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+          # A workflow_run reaches this job only after successful CI. A manual
+          # recovery must prove the same thing instead of becoming a CI bypass.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            conclusion=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow CI \
+              --branch main \
+              --commit "$SOURCE_SHA" \
+              --event push \
+              --limit 1 \
+              --json conclusion \
+              --jq '.[0].conclusion // ""')
+            if [ "$conclusion" != success ]; then
+              echo "No successful CI push run found for $SOURCE_SHA; refusing a manual release." >&2
+              exit 1
+            fi
+          fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: pnpm
 
-      # Trusted publishing needs npm 11.5.1 or newer; the npm bundled with
-      # Node 22 predates it and fails with an authentication error that says
-      # nothing about versions.
-      - run: npm install -g npm@latest
-
-      # Both packages' prepublishOnly scripts drive the pnpm workspace
-      # (typecheck, bundle, tests), so the workspace has to be installed even
-      # though npm does the publishing.
-      - run: pnpm install --frozen-lockfile
-
-      # And BUILT. The CLI's typecheck resolves `@companion/module-core/contract`
-      # through that package's dist, which does not exist after a bare install:
-      # the first real run failed with a wall of "Cannot find module" and
-      # implicit-any errors that were all the same missing build.
-      #
-      # `full` is not a preference here, it is what makes the published CLI
-      # correct. A tarball cannot be re-picked after the fact, so it carries
-      # every module and first-run setup decides which to INSTALL. Built at the
-      # default `slim`, the wizard still offers the optional ones and then the
-      # daemon answers `unknown module: plan`, because they are not in the
-      # bundle at all. prepublishOnly would have got this right, but nothing
-      # runs it: `pnpm pack` does not, and `npm publish <tarball>` uploads
-      # something already built.
-      - run: COMPANION_PROFILE=full pnpm build
-
-      - name: Publish ${{ matrix.package }} if its version is new
-        working-directory: ${{ matrix.dir }}
+      - name: Discover unpublished workspace packages
+        id: packages
         run: |
           set -euo pipefail
-          version=$(node -p "require('./package.json').version")
-          # `npm view` fails for a package that has never been published, which
-          # is also a reason to publish, so only a successful lookup is a skip.
-          if npm view "${{ matrix.package }}@$version" version >/dev/null 2>&1; then
-            echo "${{ matrix.package }}@$version is already on the registry; nothing to publish."
-            exit 0
+          matrix=$(node scripts/publish-packages.mjs --unpublished)
+          count=$(node -e 'console.log(JSON.parse(process.argv[1]).include.length)' "$matrix")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "$count package version(s) need publishing."
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Every workspace package version is already on npm."
           fi
-          echo "Publishing ${{ matrix.package }}@$version"
-          # Packed by pnpm, published by npm, and both halves are load-bearing.
-          # `npm pack` leaves `workspace:*` literal, so the tarball installs
-          # nowhere; pnpm rewrites it to the resolved version. Trusted publishing
-          # is an npm CLI feature, so npm uploads pnpm's tarball.
-          pnpm pack --pack-destination "$RUNNER_TEMP"
-          npm publish "$RUNNER_TEMP"/*.tgz
+
+  publish:
+    if: needs.gate.outputs.publish == 'true'
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # workflow_run itself points at the default branch. Publish the commit
+          # that CI actually checked, never whichever commit main has reached.
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or newer. Pin the current CLI instead of
+      # letting an unrelated future npm major alter the release environment.
+      - run: npm install -g npm@12.0.2
+
+      # Packages' prepublishOnly scripts drive the pnpm workspace (typecheck,
+      # bundle, tests), so the workspace has to be installed even though npm
+      # performs the upload.
+      - run: pnpm install --frozen-lockfile
+
+      # `full` is what makes the published CLI complete. First-run setup decides
+      # which modules to install; building a smaller profile would advertise
+      # modules whose code is absent from the tarball.
+      - run: COMPANION_PROFILE=full pnpm build
+
+      # An emitted import satisfied only by a devDependency works in this
+      # monorepo and breaks for consumers. Refuse it before any immutable npm
+      # version is uploaded.
+      - run: pnpm release:dependencies
+
+      - name: Publish the dependency-ordered package graph
+        env:
+          PACKAGE_MATRIX: ${{ needs.gate.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r entry; do
+            dir=$(jq -r '.dir' <<< "$entry")
+            package=$(jq -r '.package' <<< "$entry")
+            expected_version=$(jq -r '.version' <<< "$entry")
+            version=$(node -p "require('./$dir/package.json').version")
+            if [ "$version" != "$expected_version" ]; then
+              echo "Release plan expected $package@$expected_version, checkout declares $version." >&2
+              exit 1
+            fi
+            # `npm view` fails for a package that has never been published,
+            # which is also a reason to publish, so only a successful lookup is
+            # a skip. This makes a partial-run retry safe.
+            if npm view "$package@$version" version >/dev/null 2>&1; then
+              echo "$package@$version is already on the registry; skipping."
+              continue
+            fi
+            echo "Publishing $package@$version"
+            # Packed by pnpm, published by npm, and both halves are
+            # load-bearing. pnpm rewrites workspace:* to the resolved version;
+            # npm uploads that immutable tarball through trusted publishing.
+            safe_name=${package//@/}
+            safe_name=${safe_name//\//-}
+            pack_dir="$RUNNER_TEMP/publish-tarballs/$safe_name-$version"
+            mkdir -p "$pack_dir"
+            (
+              cd "$dir"
+              pnpm pack --pack-destination "$pack_dir"
+            )
+            tarballs=("$pack_dir"/*.tgz)
+            if [ "${#tarballs[@]}" -ne 1 ] || [ ! -f "${tarballs[0]}" ]; then
+              echo "Expected exactly one tarball for $package@$version." >&2
+              exit 1
+            fi
+            npm publish "${tarballs[0]}"
+          done < <(jq -c '.include[]' <<< "$PACKAGE_MATRIX")
+
+  release:
+    name: GitHub Release
+    needs: [gate, publish]
+    if: >-
+      always() &&
+      needs.gate.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Resolve the product release
+        id: product
+        env:
+          RELEASE_HEAD: ${{ needs.gate.outputs.sha }}
+        run: node scripts/release-target.mjs --head "$RELEASE_HEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the existing tag and release
+        id: state
+        env:
+          EXPECTED_TARGET: ${{ steps.product.outputs.target }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.product.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_exists=false
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            actual_target=$(git rev-list -n 1 "$TAG")
+            if [ "$actual_target" != "$EXPECTED_TARGET" ]; then
+              echo "$TAG already points to $actual_target, expected $EXPECTED_TARGET; refusing to move a release tag." >&2
+              exit 1
+            fi
+            tag_exists=true
+          fi
+          echo "tag=$tag_exists" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$tag_exists" != true ]; then
+              echo "$TAG has a GitHub Release but no matching remote tag." >&2
+              exit 1
+            fi
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG already has a GitHub Release at the correct commit."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify npm and build release assets
+        id: assets
+        if: steps.state.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ steps.product.outputs.package }}
+          VERSION: ${{ steps.product.outputs.version }}
+        run: |
+          set -euo pipefail
+          published=$(npm view "$PACKAGE@$VERSION" version)
+          if [ "$published" != "$VERSION" ]; then
+            echo "Expected $PACKAGE@$VERSION on npm, found '$published'." >&2
+            exit 1
+          fi
+          provenance=$(npm view "$PACKAGE@$VERSION" dist.attestations.provenance.predicateType)
+          if [ -z "$provenance" ]; then
+            echo "$PACKAGE@$VERSION has no npm provenance attestation; refusing to mark it as a product release." >&2
+            exit 1
+          fi
+
+          asset_dir="$RUNNER_TEMP/companion-release-$VERSION"
+          mkdir -p "$asset_dir"
+          npm pack "$PACKAGE@$VERSION" --pack-destination "$asset_dir" --silent
+
+          # Exercise the artifact users receive, not another workspace build.
+          install_dir="$RUNNER_TEMP/companion-release-install-$VERSION"
+          npm install \
+            --prefix "$install_dir" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            "$asset_dir"/*.tgz >/dev/null
+          reported=$("$install_dir/node_modules/.bin/companion" --version)
+          if [ "$reported" != "$VERSION" ]; then
+            echo "Registry tarball reports Companion $reported, expected $VERSION." >&2
+            exit 1
+          fi
+
+          # This is the repository dependency graph at release time. It
+          # complements the exact npm tarball; it is not presented as an SBOM
+          # of that tarball alone. GitHub generates it asynchronously, so poll
+          # the report URL rather than using the deprecated synchronous export.
+          sbom_path="$asset_dir/companion-repository-$VERSION.spdx.json"
+          sbom_error="$RUNNER_TEMP/companion-sbom-error.txt"
+          sbom_url=$(gh api "repos/$GITHUB_REPOSITORY/dependency-graph/sbom/generate-report" --jq '.sbom_url')
+          expected_prefix="https://api.github.com/repos/$GITHUB_REPOSITORY/dependency-graph/sbom/fetch-report/"
+          if [[ "$sbom_url" != "$expected_prefix"* ]]; then
+            echo "GitHub returned an unexpected SBOM report URL: $sbom_url" >&2
+            exit 1
+          fi
+          sbom_endpoint=${sbom_url#https://api.github.com/}
+          sbom_ready=false
+          for _ in $(seq 1 30); do
+            if gh api "$sbom_endpoint" > "$sbom_path" 2> "$sbom_error"; then
+              if jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type == "array")' "$sbom_path" >/dev/null 2>&1; then
+                sbom_ready=true
+                break
+              fi
+            else
+              cat "$sbom_error" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          rm -f "$sbom_error"
+          if [ "$sbom_ready" != true ]; then
+            echo "GitHub did not finish the repository SBOM within 60 seconds." >&2
+            exit 1
+          fi
+          echo "sbom=true" >> "$GITHUB_OUTPUT"
+
+          (
+            cd "$asset_dir"
+            checksum_assets=(*.tgz)
+            if compgen -G '*.spdx.json' >/dev/null; then
+              checksum_assets+=(*.spdx.json)
+            fi
+            sha256sum -- "${checksum_assets[@]}" > SHA256SUMS
+          )
+          echo "dir=$asset_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the immutable GitHub Release
+        if: steps.state.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_DIR: ${{ steps.assets.outputs.dir }}
+          EXPECTED_TARGET: ${{ steps.product.outputs.target }}
+          PACKAGE: ${{ steps.product.outputs.package }}
+          PRERELEASE: ${{ steps.product.outputs.prerelease }}
+          SBOM_INCLUDED: ${{ steps.assets.outputs.sbom }}
+          TAG: ${{ steps.product.outputs.tag }}
+          TAG_EXISTS: ${{ steps.state.outputs.tag }}
+          VERSION: ${{ steps.product.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          target_args=(--target "$EXPECTED_TARGET")
+          if [ "$TAG_EXISTS" = true ]; then
+            target_args=(--verify-tag)
+          fi
+          prerelease_args=()
+          if [ "$PRERELEASE" = true ]; then
+            prerelease_args=(--prerelease)
+          fi
+
+          if [ "$SBOM_INCLUDED" != true ]; then
+            echo "The verified repository SBOM is missing; refusing an incomplete release." >&2
+            exit 1
+          fi
+          assets=("$ASSET_DIR"/*.tgz "$ASSET_DIR"/*.spdx.json "$ASSET_DIR/SHA256SUMS")
+          asset_description='Assets include the npm package tarball, a repository SPDX SBOM generated at release time, and SHA-256 checksums.'
+          notes=$(printf 'Install with `npx %s@%s`.\n\nThis release was created only after CI passed and the exact version was available on npm. %s' "$PACKAGE" "$VERSION" "$asset_description")
+          gh release create "$TAG" \
+            "${assets[@]}" \
+            "${target_args[@]}" \
+            "${prerelease_args[@]}" \
+            --title "Companion $VERSION" \
+            --generate-notes \
+            --notes "$notes"

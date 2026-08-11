@@ -1,5 +1,10 @@
 # Security and compliance readiness audit — 2026-08-10
 
+> Historical baseline. OIDC, container and secure-SDLC findings were advanced
+> in the [company-pilot readiness review dated 2026-08-11](company-pilot-readiness-2026-08-11.md).
+> Use the newer review for the current verdict; this document preserves the
+> evidence and finding history that led to it.
+
 ## Executive verdict
 
 Companion now closes the six release blockers that triggered this review:

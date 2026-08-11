@@ -11,5 +11,6 @@ import { join } from 'node:path';
  * agent a fully separate data root, so a companiond on the same box is never
  * touched.
  */
+process.umask(0o077);
 process.env.COMPANION_HOME =
   process.env.COMPANION_RUNNER_HOME ?? join(homedir(), '.companion-runner');

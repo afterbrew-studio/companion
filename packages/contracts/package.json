@@ -16,8 +16,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
+  "dependencies": {
+    "@moxxy/companion-types": "workspace:^"
+  },
   "devDependencies": {
-    "@moxxy/companion-types": "workspace:*",
     "typescript": "^5.8.0"
   },
   "description": "The open registries Companion modules augment, and the cross-boundary envelopes.",

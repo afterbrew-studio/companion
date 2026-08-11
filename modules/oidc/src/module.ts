@@ -57,5 +57,25 @@ export default defineManifest({
       ],
     },
     { key: 'scopes', label: 'Scopes', kind: 'text', default: 'openid profile email', max: 200 },
+    {
+      key: 'requiredAcr',
+      label: 'Required authentication assurance',
+      description:
+        "Optional space-separated ACR values accepted from the identity provider. Set this to your provider's MFA assurance value to require MFA for Companion sign-in.",
+      kind: 'text',
+      default: '',
+      max: 500,
+      placeholder: 'urn:example:loa:mfa',
+    },
+    {
+      key: 'maxAuthAgeMinutes',
+      label: 'Maximum IdP authentication age (minutes)',
+      description:
+        'Zero accepts the provider session policy. A positive value requests fresh authentication and rejects a token without a recent auth_time.',
+      kind: 'number',
+      default: 0,
+      min: 0,
+      max: 1440,
+    },
   ],
 });

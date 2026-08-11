@@ -14,6 +14,10 @@ function clientFor(ctx: Parameters<Parameters<typeof defineRoutes>[0]>[0]): Oidc
     clientSecret,
     String(ctx.moduleConfig.get('scopes') ?? 'openid profile email'),
     String(ctx.moduleConfig.get('usernameClaim') ?? 'preferred_username'),
+    {
+      requiredAcr: String(ctx.moduleConfig.get('requiredAcr') ?? ''),
+      maxAuthAgeSeconds: Number(ctx.moduleConfig.get('maxAuthAgeMinutes') ?? 0) * 60,
+    },
   );
 }
 
@@ -37,6 +41,8 @@ export default defineRoutes((ctx) => {
       ctx.moduleConfig.get('clientSecret'),
       ctx.moduleConfig.get('scopes'),
       ctx.moduleConfig.get('usernameClaim'),
+      ctx.moduleConfig.get('requiredAcr'),
+      ctx.moduleConfig.get('maxAuthAgeMinutes'),
     ]);
     if (!cached || key !== cachedKey) {
       cached = clientFor(ctx);
