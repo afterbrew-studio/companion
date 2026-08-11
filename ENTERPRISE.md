@@ -8,7 +8,8 @@ This document is honest about the last part. Sections are tagged **[available]**
 or **[not built]**, and the design for anything not built is in
 [`docs/modular-distribution.md`](docs/modular-distribution.md),
 [`docs/acl-and-roles.md`](docs/acl-and-roles.md) and
-[`docs/game-plan.md`](docs/game-plan.md).
+[`docs/game-plan.md`](docs/game-plan.md). For an actual evaluation, use the
+[company-pilot gate](docs/security/company-pilot.md) and retain its evidence.
 
 ---
 
@@ -18,8 +19,9 @@ The module set of a build is named in `profiles/*.json` and nowhere else:
 
 | Profile | Contains |
 |---|---|
-| `slim` | `core`, `workspace`, `operate`, `code`, `admin`, `plan`, `board`, `automations` |
-| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `notify`, `oidc` |
+| `slim` | Core/workspaces, integrations, execution, repositories/review, CodeRabbit, Cursor Bugbot, Jira, notifications, Workbench, administration, planning, board and automations (14 modules) |
+| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `oidc`, `runtime` (20 modules) |
+| `cloud` | `slim` + `oidc`, `runtime` (16 modules) |
 
 ```sh
 pnpm gen:modules --profile slim
@@ -28,8 +30,10 @@ pnpm build
 
 Deploy `slim` for repository operations and the governed contributor lifecycle.
 Use `full` when you also want refinement, idea planning, slop scoring,
-experimentation and delivery integrations. Every module absent from a build is
-a module you never have to review, audit or explain.
+experimentation, OIDC and the built-in runtime. Use `cloud` for a hosted control
+plane with that runtime and SSO but without the experimental planning/reactor
+modules. Every module absent from a build is a module you never have to review,
+audit or explain.
 
 Being in the build is not the same as being on: optional modules land as
 **Available**, and an admin installs them per instance. So one artifact can
@@ -61,8 +65,10 @@ See the Docker sections of [`README.md`](README.md) for compose, Coolify and
 volume details. Three things matter more here than in a single-user install:
 
 - **Persist both volumes.** `/data` holds the database, clones and the isolated
-  moxxy home; `/root/.moxxy` holds the provider credentials. Losing the second
-  means losing every AI provider on the next redeploy.
+  moxxy home; `/home/node/.moxxy` holds the provider credentials. Losing the
+  second means losing every AI provider on the next redeploy. The daemon and
+  runner both execute as uid/gid `1000`, not root; bind-mounted directories and
+  secret files must be readable or writable by that identity as appropriate.
 - **Back up the database with `companion backup`.** Do NOT `cp` it: in WAL mode
   the most recent commits live in `companion.db-wal`, so copying the main file
   alone yields a database missing them, and copying both without coordination can
@@ -496,15 +502,19 @@ companion module config core --set externalSignup=true --set externalSignupRole=
 
 Protocol notes, because a security review will ask:
 
-- Authorization Code with **PKCE (S256)** and `state`, both single-use. The
-  `state` lookup is constant-time.
+- Authorization Code with **PKCE (S256)**, `state`, and `nonce`, all single-use.
+  The `state` lookup is constant-time.
 - The client secret goes in the `Authorization` header, never a query string.
-- The ID token's **signature is not verified**; its `iss`, `aud` and `exp` are.
-  This is OIDC Core 3.1.3.7: the token arrived directly from the token endpoint
-  over TLS to a confidential client. Identity is then read from **userinfo**,
-  not from the token. The alternative (JWKS fetch, `kid` matching, RS256/ES256
-  with key rotation) is a dependency and an attack surface to re-derive what TLS
-  already established.
+- A signed ID token is mandatory. RS256 and ES256 are verified against bounded,
+  cached provider JWKS with exact `kid`/algorithm/key-use matching and one forced
+  refresh for key rotation. `none`, symmetric algorithms, ambiguous keys and
+  unsupported curves are refused.
+- Issuer, subject, audience/authorised party, expiry, not-before, issued-at,
+  nonce, optional ACR and maximum authentication age are validated. Userinfo is
+  accepted only when its `sub` matches the verified token subject.
+- Set `requiredAcr` to one or more space-separated assurance values and
+  `maxAuthAgeMinutes` to bind Companion sign-in to the company's IdP MFA/session
+  policy. The IdP remains responsible for actually enforcing that assurance.
 - Every sign-in is written to the audit log with the issuer and the claimed
   username. The two routes are public GETs, so the router does not audit them
   automatically; the module records the event itself.

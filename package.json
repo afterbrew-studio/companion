@@ -12,6 +12,10 @@
     "gen:modules": "node scripts/gen-modules.mjs",
     "postinstall": "node scripts/gen-modules.mjs",
     "prod": "pnpm build && pm2 startOrRestart ecosystem.config.cjs",
+    "release:dependencies": "node scripts/publish-packages.mjs --check-built-imports",
+    "release:packages": "node scripts/publish-packages.mjs",
+    "release:target": "node scripts/release-target.mjs",
+    "security:workflow-policy": "node scripts/security-workflow-policy.mjs",
     "sdk:surface": "node scripts/sdk-surface.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm gen:modules && pnpm -r typecheck",
@@ -22,6 +26,9 @@
   },
   "packageManager": "pnpm@10.30.0",
   "pnpm": {
+    "overrides": {
+      "postcss": "8.5.18"
+    },
     "onlyBuiltDependencies": [
       "esbuild"
     ]

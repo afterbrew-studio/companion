@@ -14,6 +14,13 @@ services:
         INSTALL_MOXXY: ${INSTALL_MOXXY:-true}
     image: companion:local
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777
     ports:
       - "8901:8901"
     env_file:
@@ -37,9 +44,9 @@ services:
       # isolated home under /data symlinks to it, so this MUST persist too —
       # otherwise every redeploy wipes the vault and moxxy loses its providers
       # ("no credentials" / "No active provider").
-      - companion-moxxy:/root/.moxxy
+      - companion-moxxy:/home/node/.moxxy
       # Optional: mount your host SSH config if private Git remotes should use SSH.
-      # - ~/.ssh:/root/.ssh:ro
+      # - ~/.ssh:/home/node/.ssh:ro
 
 volumes:
   companion-data:

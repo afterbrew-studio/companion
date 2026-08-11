@@ -42,11 +42,13 @@
     "test": "pnpm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "pnpm run build"
   },
+  "dependencies": {
+    "@moxxy/companion-core": "workspace:^",
+    "@moxxy/companion-services": "workspace:^",
+    "@moxxy/companion-types": "workspace:^",
+    "@moxxy/companion-ui": "workspace:^"
+  },
   "devDependencies": {
-    "@moxxy/companion-core": "workspace:*",
-    "@moxxy/companion-services": "workspace:*",
-    "@moxxy/companion-types": "workspace:*",
-    "@moxxy/companion-ui": "workspace:*",
     "@moxxy/companion-contracts": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",

@@ -15,6 +15,8 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@moxxy/companion"><img alt="npm" src="https://img.shields.io/npm/v/%40moxxy%2Fcompanion?color=0b7285&label=npm"></a>
+  <a href="https://github.com/moxxy-ai/companion/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/moxxy-ai/companion?display_name=tag&sort=semver&label=release"></a>
+  <a href="https://github.com/moxxy-ai/companion/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/moxxy-ai/companion/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://www.npmjs.com/package/@moxxy/companion-sdk"><img alt="module SDK" src="https://img.shields.io/npm/v/%40moxxy%2Fcompanion-sdk?color=5f3dc4&label=module%20sdk"></a>
   <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A524-3c9a5f">
   <a href="LICENSE"><img alt="licence" src="https://img.shields.io/badge/licence-MIT-495057"></a>
@@ -26,10 +28,11 @@
 npx @moxxy/companion
 ```
 
-That is the whole local install. Companion carries the daemon and SPA, opens a
-trusted local superadmin session, adopts the active `gh` account when one is
-available, and opens <http://127.0.0.1:8901>. There is no login or setup wizard.
-Your SQLite database, cloned
+Companion is currently an early-preview `0.x` release and requires Node.js 24
+or newer. That command is the whole local install: Companion carries the daemon
+and SPA, opens a trusted local superadmin session, adopts the active `gh`
+account when one is available, and opens <http://127.0.0.1:8901>. There is no
+login or setup wizard. Your SQLite database, cloned
 repositories, worktrees, run history, and configuration stay in
 `~/.companion`. There is no hosted account to create and no control plane you
 must hand your code to.
@@ -313,10 +316,13 @@ installs a module from a registry, tarball, or directory.
 | [Pipelines](docs/pipelines.md) | typed automation and review workflows |
 | [Configuration](docs/configuration.md) | environment, GitHub Enterprise, and proxies |
 | [Security policy](SECURITY.md) | vulnerability reporting, supported releases, and deployment trust boundaries |
+| [Security operations](docs/security/README.md) | company-pilot gate, data lifecycle, incident response, restore drill, and current readiness evidence |
+| [Releases](docs/releases.md) | immutable versions, generated notes, npm tarballs, checksums, and required repository SBOMs |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
 | [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
 | [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |
 | [Development](docs/development.md) | local setup, profiles, and quality gates |
+| [Contributing](CONTRIBUTING.md) | issues, local development, verification, and pull requests |
 | [Writing a module](modules/README.md) | the complete module authoring guide |
 
 ## Development

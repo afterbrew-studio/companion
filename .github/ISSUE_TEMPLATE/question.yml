@@ -1,0 +1,32 @@
+name: Question
+description: Ask for help using or extending Companion.
+title: "question: "
+body:
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before asking
+      options:
+        - label: I checked the README and linked documentation.
+          required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to achieve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include sanitized commands, configuration, and output when relevant.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Companion version
+      placeholder: 0.11.7

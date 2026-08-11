@@ -502,14 +502,14 @@ None of these can be a module (see the ACL doc, and `docs/modular-distribution.m
    core file. `full` build, not installed by default.
 
    Protocol choices worth keeping:
-   - Authorization Code + **PKCE (S256)** + `state`, both single-use, `state`
-     compared in constant time.
-   - **The ID token's signature is not verified; its `iss`, `aud` and `exp` are**,
-     and the identity comes from userinfo. OIDC Core 3.1.3.7 permits this when
-     the token arrived directly from the token endpoint over TLS to a
-     confidential client, which is this path. The alternative is a JWKS fetch,
-     `kid` matching and RS256/ES256 with key rotation: a dependency and real
-     attack surface to re-derive what TLS already established.
+   - Authorization Code + **PKCE (S256)** + single-use `state` and `nonce`;
+     `state` is compared in constant time.
+   - **The ID token is mandatory and cryptographically verified** against the
+     provider's bounded, cached JWKS. Only RS256/ES256 are accepted; issuer,
+     subject, audience/authorised party, time claims, nonce and optional ACR /
+     authentication age are validated before userinfo is trusted. Userinfo
+     must then return the same `sub`. An unknown key or same-`kid` rotation
+     triggers one forced JWKS refresh, never an unsigned fallback.
    - SAML is deliberately absent. XML DSig is a far larger surface, and every
      provider Companion targets speaks OIDC.
 
@@ -682,7 +682,7 @@ npx tarball, not here.
 `docker/entrypoint.sh` runs the daemon with `exec`, so **PID 1 is node** and
 SIGTERM reaches the kernel's shutdown path. Verified: `docker stop` logs
 `shutting down…` rather than killing the process. It also warns when
-`/root/.moxxy` is unmounted (the redeploy that silently loses every AI provider),
+`/home/node/.moxxy` is unmounted (the redeploy that silently loses every AI provider),
 refuses `COMPANION_ADMIN_USER` without a password, and copies an optional
 `COMPANION_LICENSE_FILE` into place.
 
@@ -716,7 +716,7 @@ bundle, so the thing CI tests is the thing customers run.
 Add `entrypoint.sh`: ensure `$COMPANION_HOME`, seed the admin from env (already
 supported), bootstrap the moxxy provider when env is present, install external
 modules from `COMPANION_MODULES` or a mounted `/modules-in` directory (the
-air-gap path), then start. Keep the `companion-moxxy:/root/.moxxy` volume
+air-gap path), then start. Keep the `companion-moxxy:/home/node/.moxxy` volume
 exactly as it is; the comment in `docker-compose.yml` records a bug already paid
 for once.
 

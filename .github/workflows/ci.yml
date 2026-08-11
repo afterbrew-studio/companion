@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Re-run scanners against fresh advisory databases even when the source did
+  # not change. A green build from last month is not current vulnerability
+  # evidence.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 # Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
 concurrency:
@@ -14,17 +23,28 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # pnpm version comes from the "packageManager" field in package.json.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
 
+      - run: pnpm security:workflow-policy
       - run: pnpm install --frozen-lockfile
+
+      # The dependency-review job below stops a vulnerable package entering a
+      # pull request. This scan also catches a newly disclosed vulnerability in
+      # an unchanged production lockfile during the weekly run.
+      - run: pnpm audit --prod --audit-level high
+
+      # Release discovery reads the same public/private package boundary as the
+      # Version workflow. This catches a malformed public manifest in the pull
+      # request instead of after CI when Publish builds its dynamic matrix.
+      - run: pnpm release:packages
 
       # The module registries are generated from profiles/*.json and gitignored.
       # Build before typecheck (topological order: @companion/contract emits its
@@ -33,6 +53,7 @@ jobs:
       # is compiled and every dist/ the later steps need exists.
       - run: pnpm gen:modules --profile full
       - run: pnpm -r build
+      - run: pnpm release:dependencies
       - run: pnpm -r typecheck
 
       # Framework + module tests. `packages/core` and `packages/services` cover
@@ -67,12 +88,12 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build the full image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           build-args: PROFILE=full
@@ -80,6 +101,29 @@ jobs:
           tags: companion:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Keep unfixed findings visible in the run even though they cannot yet be
+      # remediated. The second pass is the release-blocking subset.
+      - name: Report all high and critical image findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: companion:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          timeout: 15m
+
+      - name: Block fixed high and critical image findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: companion:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          timeout: 15m
 
       # A build that produces an image which cannot boot is not a passing build.
       - name: Boot it and check the module set
@@ -96,9 +140,9 @@ jobs:
           # Every module of the profile has to be IN the image. How many of them
           # boot enabled is each manifest's autoInstall and says nothing about
           # the build arg, which is what a count of enabled ones was reading:
-          # the planning cluster and the reactors land as Available, so a correct
-          # full build reports "5 of 14 enabled". Take the expectation from
-          # profiles/ instead, so adding a module updates this check with it.
+          # optional modules may land as Available. Take the expectation from
+          # profiles/ rather than a count, so adding a module updates this check
+          # with it.
           expected=$(node -e '
             const read = (n) => JSON.parse(require("node:fs").readFileSync(`profiles/${n}.json`, "utf8"));
             const ids = (n) => { const p = read(n); return [...(p.extends ? ids(p.extends) : []), ...p.modules]; };
@@ -111,3 +155,43 @@ jobs:
             }
           done
           echo "all $(echo "$expected" | wc -w) modules of the full profile are in the image"
+
+  # The dependency graph is evaluated before code lands. Development
+  # dependencies count too: a compromised build tool can alter the artifact as
+  # effectively as a vulnerable runtime package.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Review changed dependencies and licences
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          license-check: true
+          deny-licenses: AGPL-1.0-only, AGPL-1.0-or-later, SSPL-1.0, BUSL-1.1
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: "3"
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyse JavaScript and TypeScript
+        uses: github/codeql-action/analyze@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4

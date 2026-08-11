@@ -29,7 +29,7 @@ running instance, and which artifact contains it.**
 
 Facts, measured, not assumed:
 
-- 15 modules under `modules/*`, including the read-only Workbench composition
+- 20 modules under `modules/*`, including the read-only Workbench composition
   layer over the existing domain services.
 - The kernel (`packages/core/src/server/kernel.ts`) already reconciles an
   installed set into a `modules` table, topo-sorts by `dependsOn`, and does
@@ -151,8 +151,9 @@ tiers, not eleven.
 
 | Profile | Modules | Artifact |
 |---|---|---|
-| `slim` | core, workspace, operate, code, workbench, admin, plan, board, automations | `@moxxy/companion` (npx), `companion:oss` image |
-| `full` | slim + refinement, planner, slop, playground, notify, oidc | `@moxxy/companion-full`, `companion:full` image |
+| `slim` | core, workspace, integrations, operate, code, coderabbit, cursor-bugbot, jira, notify, workbench, admin, plan, board, automations | `@moxxy/companion` (npx), default OSS image |
+| `full` | slim + refinement, planner, slop, playground, oidc, runtime | full-profile OSS image/build |
+| `cloud` | slim + oidc, runtime | hosted-profile image/build |
 | `enterprise` | slim + enterprise modules | `companion:enterprise` image only |
 
 The `slim` set is exactly the shell's hard-import closure (Finding 1), which is
@@ -165,8 +166,9 @@ why it compiles today and the others would not without §5.
 Replace the two hand-maintained files with generated ones.
 
 ```
-profiles/slim.json         { "name": "slim", "modules": ["core","workspace","operate","code","admin","plan","board","automations"] }
+profiles/slim.json         # the default 14-module product surface
 profiles/full.json
+profiles/cloud.json
 profiles/enterprise.json   (lives in the private repo, or is composed from an env var)
 
 scripts/gen-modules.mjs --profile slim
@@ -647,7 +649,7 @@ supported), bootstrap the moxxy provider from env when present, install any
 external modules listed in `COMPANION_MODULES` or found under a mounted
 `/modules-in` directory (this is the air-gap path), then start.
 
-Keep the `companion-moxxy:/root/.moxxy` volume exactly as it is. The comment in
+Keep the `companion-moxxy:/home/node/.moxxy` volume exactly as it is. The comment in
 `docker-compose.yml` records a bug that was already paid for once.
 
 Profiles become `docker compose --profile oss|full|enterprise` plus a

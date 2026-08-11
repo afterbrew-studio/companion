@@ -38,7 +38,7 @@ First confirm the build actually contains them, because a missed build argument
 looks exactly like a module that refuses to install:
 
 ```sh
-companion module list        # expect 13 modules, 5 enabled (not "5 of 5")
+companion module list        # expect 20 modules, 14 enabled (not "14 of 14")
 ```
 
 `Unknown module: plan` means the module is not in this build at all, so no amount

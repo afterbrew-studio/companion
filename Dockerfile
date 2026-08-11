@@ -5,11 +5,35 @@
 # therefore carries no pnpm workspace and no TypeScript, only the bundle and the
 # three runtime dependencies it declares external.
 
-FROM node:24-trixie-slim AS base
+FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d AS base
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# The Node image includes npm for installing an optional runtime. Keep that
+# capability, but do not inherit vulnerable transitive packages from the npm
+# version bundled into the base image. Dependabot tracks the image digest;
+# Trivy gates this exact npm payload in CI.
+ARG NPM_VERSION=12.0.2
+ARG NPM_BRACE_EXPANSION_VERSION=5.0.9
+ARG NPM_IP_ADDRESS_VERSION=10.3.1
+# npm 12.0.2 still vendors these two older packages. Install their patched
+# releases in isolation, then replace only npm's bundled copies. Remove this
+# override once a later npm release contains both fixes; Trivy will keep the
+# image honest in either case.
+RUN npm install --global "npm@${NPM_VERSION}" --no-audit --no-fund \
+  && npm install --prefix /tmp/npm-security --no-audit --no-fund --no-package-lock \
+    "brace-expansion@${NPM_BRACE_EXPANSION_VERSION}" \
+    "ip-address@${NPM_IP_ADDRESS_VERSION}" \
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+    /usr/local/lib/node_modules/npm/node_modules/ip-address \
+  && cp -R /tmp/npm-security/node_modules/brace-expansion \
+    /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+  && cp -R /tmp/npm-security/node_modules/ip-address \
+    /usr/local/lib/node_modules/npm/node_modules/ip-address \
+  && rm -rf /tmp/npm-security \
+  && npm cache clean --force \
+  && npm --version \
+  && corepack enable
 
 FROM base AS build
 # Which modules the image contains. `slim` is the default; `full` adds the
@@ -53,23 +77,28 @@ require('fs').writeFileSync('/app/runtime-package.json',JSON.stringify({name:'co
 FROM base AS runner
 ENV NODE_ENV=production
 ENV COMPANION_RUNNER_HOME=/data
+ENV HOME=/home/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/apps/companion-runner/dist ./dist
 # `ws` is the agent bundle's only external dependency; the child bundle inlines
 # everything it needs, which is what lets this stage carry no toolchain.
-RUN npm install --omit=dev --no-audit --no-fund ws && rm -rf /root/.npm
+RUN npm install --omit=dev --no-audit --no-fund ws \
+  && rm -rf /home/node/.npm /root/.npm
 RUN ln -s /app/dist/index.js /usr/local/bin/companion-runner && chmod +x /app/dist/index.js
+RUN mkdir -p /data && chown node:node /data
 EXPOSE 8920
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.COMPANION_RUNNER_PORT||8920)+'/agent/health',{headers:{authorization:'Bearer '+(process.env.COMPANION_RUNNER_TOKEN||'')}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+USER node
 ENTRYPOINT ["node", "/app/dist/index.js"]
 
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV COMPANION_HOME=/data
+ENV HOME=/home/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
@@ -81,7 +110,8 @@ RUN apt-get update \
 # source; the database is Node's built-in `node:sqlite` now, which is why the
 # base image is pinned to 24.
 COPY --from=build /app/runtime-package.json ./package.json
-RUN npm install --omit=dev --omit=peer --no-audit --no-fund && rm -rf /root/.npm
+RUN npm install --omit=dev --omit=peer --no-audit --no-fund \
+  && rm -rf /home/node/.npm /root/.npm
 COPY --from=build /app/apps/companion-cli/dist ./dist
 # Deliberately AFTER the dist copy, and this placement is the whole point.
 # `npm install -g @moxxy/cli` resolves `latest` when the layer is BUILT, and up
@@ -99,7 +129,8 @@ COPY --from=build /app/apps/companion-cli/dist ./dist
 # expects an operator-installed CLI.
 ARG MOXXY_VERSION=latest
 ARG INSTALL_MOXXY=true
-RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VERSION}" && rm -rf /root/.npm; fi
+RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VERSION}"; fi \
+  && rm -rf /home/node/.npm /root/.npm
 # The `companion` command every doc and runbook uses. The runtime manifest is
 # generated from the CLI's dependencies alone, so it carries no `bin` field and
 # npm installs no launcher: without this, `docker exec <c> companion module list`
@@ -108,13 +139,15 @@ RUN ln -s /app/dist/index.js /usr/local/bin/companion && chmod +x /app/dist/inde
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 # /data        Companion's own state (db, isolated moxxy home, clones).
-# /root/.moxxy moxxy's daily home holding the provider credentials (vault),
-#                which /data/moxxy-home symlinks to. Both must persist across
-#                redeploys or moxxy loses its providers.
+# /home/node/.moxxy moxxy's daily home holding the provider credentials
+#                     (vault), which /data/moxxy-home symlinks to. Both must
+#                     persist across redeploys or moxxy loses its providers.
+RUN mkdir -p /data /home/node/.moxxy && chown -R node:node /data /home/node/.moxxy
 EXPOSE 8901
-VOLUME ["/data", "/root/.moxxy"]
+VOLUME ["/data", "/home/node/.moxxy"]
 # Liveness probe (Coolify and plain Docker both honor it). The slim image has
 # no curl/wget; node's fetch does the job.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.COMPANION_PORT||8901)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+USER node
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

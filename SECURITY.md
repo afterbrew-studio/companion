@@ -38,6 +38,9 @@ fixed version and any practical workaround.
   artifacts whose source and publisher you trust.
 
 The current internal readiness review is
-[`docs/audits/security-compliance-2026-08-10.md`](docs/audits/security-compliance-2026-08-10.md).
+[`docs/audits/company-pilot-readiness-2026-08-11.md`](docs/audits/company-pilot-readiness-2026-08-11.md),
+with an operational [company-pilot gate](docs/security/company-pilot.md). The
+[2026-08-10 review](docs/audits/security-compliance-2026-08-10.md) is retained as
+the historical baseline.
 It is not a penetration test, certification, or claim of compliance with OWASP,
 SOC 2, ISO 27001, GDPR, or another framework.
