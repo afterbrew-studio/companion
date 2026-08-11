@@ -1,6 +1,7 @@
 {
   "name": "@moxxy/companion-contracts",
   "version": "0.6.1",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,6 +24,13 @@
     "typescript": "^7.0.2"
   },
   "description": "The open registries Companion modules augment, and the cross-boundary envelopes.",
+  "keywords": [
+    "github",
+    "ai",
+    "agents",
+    "moxxy",
+    "contracts"
+  ],
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts"
@@ -30,9 +38,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/moxxy-ai/companion.git",
     "directory": "packages/contracts"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
   }
 }
