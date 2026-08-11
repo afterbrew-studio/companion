@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import type { Authenticator, AuthUser, Permission, SessionAccess } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { StatusError, type RbacReader } from '@moxxy/companion-core/server';
+import { readRegularTextFile } from '@moxxy/companion-services';
 import type {
   AccountInfo,
   ApiTokenCapability,
@@ -538,13 +539,12 @@ function dummyPasswordHash(): string {
 }
 
 function readOrCreateBootstrapToken(file: string): string {
-  if (existsSync(file)) {
-    const stat = lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`refusing unsafe bootstrap token path: ${file}`);
-    chmodSync(file, 0o600);
-    const token = readFileSync(file, 'utf8').trim();
+  try {
+    const token = readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 }).trim();
     if (token.length < 32) throw new Error(`bootstrap token file is invalid: ${file}`);
     return token;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const token = randomBytes(32).toString('base64url');
   try {

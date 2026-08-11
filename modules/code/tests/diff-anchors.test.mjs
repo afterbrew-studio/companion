@@ -106,6 +106,18 @@ test('a rename resolves under either path', () => {
   assert.equal(idx.lineText('old/name.ts', 'LEFT', 2), 'drop();');
 });
 
+test('a git header with delimiter-like path text keeps the final delimiter', () => {
+  const idx = buildAnchorIndex(`diff --git a/dir b/old.ts b/new.ts
+--- a/dir b/old.ts
++++ b/new.ts
+@@ -1 +1 @@
+-old
++new
+`);
+  assert.equal(idx.lineText('dir b/old.ts', 'LEFT', 1), 'old');
+  assert.equal(idx.lineText('new.ts', 'RIGHT', 1), 'new');
+});
+
 test('"no newline at end of file" advances neither counter', () => {
   const idx = buildAnchorIndex(`diff --git a/x.txt b/x.txt
 --- a/x.txt

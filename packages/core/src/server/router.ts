@@ -338,8 +338,12 @@ function sendError(res: ServerResponse, err: unknown, method: string, path: stri
   if (status !== null) {
     const retryAfter = retryAfterOf(err);
     if (retryAfter !== null) res.setHeader('retry-after', String(retryAfter));
+    // Framework StatusErrors are deliberately public. A third-party transport
+    // only contributes a clientStatus; its Error text may carry an upstream
+    // response, URL or stack detail and must stop at the log boundary.
+    const message = err instanceof StatusError ? err.message : 'upstream service request failed';
     return json(res, status, {
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
       ...(retryAfter !== null ? { retryAfter } : {}),
     });
   }

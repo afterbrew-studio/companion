@@ -73,6 +73,14 @@ async function harness(t) {
       handler: () => { throw new Error('/private/path and SQL internals'); },
     }),
     route({
+      method: 'GET',
+      path: '/upstream-crash',
+      access: 'any',
+      handler: () => {
+        throw Object.assign(new Error('GitHub /private/path: upstream body'), { clientStatus: 502, retryAfter: 10 });
+      },
+    }),
+    route({
       method: 'POST',
       path: '/public-write',
       access: 'public',
@@ -90,7 +98,7 @@ async function harness(t) {
       method,
       headers: { authorization: `Bearer ${token}` },
     });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, body: await response.json(), retryAfter: response.headers.get('retry-after') };
   };
   return { call, calls, audited, base };
 }
@@ -164,4 +172,12 @@ test('unexpected handler errors never disclose internals to the client', async (
   const failed = await h.call('GET', '/crash', 'human');
   assert.equal(failed.status, 500);
   assert.deepEqual(failed.body, { error: 'internal server error' });
+});
+
+test('upstream status mapping does not forward the upstream error text', async (t) => {
+  const h = await harness(t);
+  const failed = await h.call('GET', '/upstream-crash', 'human');
+  assert.equal(failed.status, 502);
+  assert.equal(failed.retryAfter, '10');
+  assert.deepEqual(failed.body, { error: 'upstream service request failed', retryAfter: 10 });
 });

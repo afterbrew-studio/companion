@@ -188,7 +188,12 @@ for (const [file, source] of [
   [API_FILE, apiSource(profile.name, ordered)],
   [WEB_FILE, webSource(profile.name, ordered)],
 ]) {
-  const current = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  let current = null;
+  try {
+    current = readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
   if (current === source) continue;
   changed = true;
   if (!checkOnly) writeFileSync(file, source);

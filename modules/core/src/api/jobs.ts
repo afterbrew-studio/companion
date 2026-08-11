@@ -1,6 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { defineJobs } from '@moxxy/companion-core/server';
-import { paths } from '@moxxy/companion-services';
+import { paths, readRegularTextFile, writePrivateTextFile } from '@moxxy/companion-services';
 
 /**
  * Long enough that an unattended CLI never wakes up logged out. Revocation is
@@ -55,10 +54,10 @@ export default defineJobs({
     const file = paths.cliToken();
     // A password/role change deletes the account's sessions, which would leave a
     // live-looking file holding a dead token. Re-mint instead of trusting it.
-    if (existsSync(file)) {
-      try {
-        if (auth.verify(readFileSync(file, 'utf8').trim())) return;
-      } catch (err) {
+    try {
+      if (auth.verify(readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 }).trim())) return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         ctx.log.warn(`could not read ${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -66,7 +65,7 @@ export default defineJobs({
     // First-boot onboarding has not created an account yet; the next start writes it.
     if (!admin) return;
     const { token } = auth.mintSession(admin, CLI_TOKEN_TTL_MS, 'full');
-    writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    writePrivateTextFile(file, `${token}\n`);
     ctx.log.info(`CLI token for '${admin}' written to ${file}`);
   },
 });

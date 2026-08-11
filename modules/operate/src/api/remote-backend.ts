@@ -588,7 +588,10 @@ export class RemoteRunnerBackend implements RunnerBackend {
           this.sink.onGone(msg.runId);
           break;
         case 'exec.output':
-          this.execListeners.get(msg.execId)?.(msg.stream, msg.chunk);
+          {
+            const listener = this.execListeners.get(msg.execId);
+            if (typeof listener === 'function') listener(msg.stream, msg.chunk);
+          }
           break;
         default:
           break;

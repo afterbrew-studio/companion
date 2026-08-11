@@ -76,3 +76,24 @@ test('a finding is titled by its point, not by the preamble every one shares', (
   // whoever applies the fix, it just makes a useless title.
   assert.match(parsed.findings[0].reason, /^Verify each finding/);
 });
+
+test('a singular line location is stripped without treating malformed text as one', () => {
+  const parsed = parseAgentOutput(
+    [
+      JSON.stringify({
+        type: 'finding',
+        severity: 'major',
+        fileName: 'src/auth.ts',
+        codegenInstructions: 'In src/auth.ts around line 42, Reject an expired session before loading user data.',
+      }),
+      JSON.stringify({
+        type: 'finding',
+        severity: 'major',
+        fileName: 'src/other.ts',
+        codegenInstructions: 'In src/other.ts around lines many, Keep this complete malformed location.',
+      }),
+    ].join('\n'),
+  );
+  assert.equal(parsed.findings[0].title, 'Reject an expired session before loading user data.');
+  assert.equal(parsed.findings[1].title, 'In src/other.ts around lines many, Keep this complete malformed location.');
+});

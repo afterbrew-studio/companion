@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { paths } from '@moxxy/companion-services';
+import { paths, readRegularTextFile } from '@moxxy/companion-services';
 
 /**
  * The CLI's transport to a running daemon. Authentication is the bearer token
@@ -8,14 +7,17 @@ import { paths } from '@moxxy/companion-services';
  */
 export function readToken(): string {
   const file = paths.cliToken();
-  if (!existsSync(file)) {
+  let token: string;
+  try {
+    token = readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 }).trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     throw new Error(
       `No CLI token at ${file}.\n` +
         `The daemon writes it at boot once an admin account exists. Start Companion, complete\n` +
         `first-run setup if you have not, then restart it once.`,
     );
   }
-  const token = readFileSync(file, 'utf8').trim();
   if (!token) throw new Error(`${file} is empty. Delete it and restart Companion to mint a new token.`);
   return token;
 }

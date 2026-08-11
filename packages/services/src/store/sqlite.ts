@@ -66,11 +66,11 @@ function bindable(params: unknown[]): SQLInputValue[] {
 }
 
 function definedValues(named: Record<string, unknown>): Record<string, unknown> {
-  let copy: Record<string, unknown> | undefined;
-  for (const key of Object.keys(named)) {
-    if (named[key] === undefined) (copy ??= { ...named })[key] = null;
-  }
-  return copy ?? named;
+  // Object.fromEntries creates own data properties even for names such as
+  // `__proto__`; assigning a remotely influenced key onto `{}` would instead
+  // invoke Object.prototype's legacy setter. Named SQLite parameters are data,
+  // so there is no reason to retain the caller's prototype here.
+  return Object.fromEntries(Object.entries(named).map(([key, value]) => [key, value === undefined ? null : value]));
 }
 
 class PreparedStatement<Result> implements Statement<Result> {

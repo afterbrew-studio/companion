@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync, existsSync, lstatSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AuthMode } from '@moxxy/companion-contracts';
 import type { Role } from '@moxxy/companion-types';
 import { log } from './lib/log.js';
+import { readRegularTextFile } from './lib/files.js';
 
 export type { AuthMode } from '@moxxy/companion-contracts';
 
@@ -60,16 +61,28 @@ export function loadSecretEncryptionKey(): Buffer {
   if (inline) return decodeSecretKey(inline, 'COMPANION_SECRET_KEY');
 
   const file = customFile || paths.secretKey();
-  if (existsSync(file)) {
-    const stat = lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`refusing unsafe secret-key path: ${file}`);
-    if (!customFile) chmodSync(file, 0o600);
-    return decodeSecretKey(readFileSync(file, 'utf8').trim(), file);
+  try {
+    return decodeSecretKey(
+      readRegularTextFile(file, { maxBytes: 4_096, ...(customFile ? {} : { mode: 0o600 }) }).trim(),
+      file,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   if (customFile) throw new Error(`COMPANION_SECRET_KEY_FILE does not exist: ${file}`);
   const key = randomBytes(32);
-  writeFileSync(file, `${key.toString('base64url')}\n`, { mode: 0o600, flag: 'wx' });
-  return key;
+  try {
+    writeFileSync(file, `${key.toString('base64url')}\n`, { mode: 0o600, flag: 'wx' });
+    return key;
+  } catch (error) {
+    // Two composition roots should never race because the instance lock is
+    // acquired first, but reading an exclusively-created winner is safer than
+    // replacing it if startup order ever changes.
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return decodeSecretKey(readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 }).trim(), file);
+    }
+    throw error;
+  }
 }
 
 function decodeSecretKey(raw: string, source: string): Buffer {
@@ -176,14 +189,23 @@ export function loadDaemonConfig(): DaemonConfig {
 
   const file = paths.daemonConfig();
   let stored: StoredConfig = {};
-  if (existsSync(file)) {
-    try {
-      stored = JSON.parse(readFileSync(file, 'utf8')) as StoredConfig;
-    } catch (err) {
+  try {
+    stored = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024, mode: 0o600 })) as StoredConfig;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      try {
+        writeFileSync(file, JSON.stringify(DEFAULTS, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+      } catch (createError) {
+        if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') throw createError;
+        try {
+          stored = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024, mode: 0o600 })) as StoredConfig;
+        } catch (winnerError) {
+          log.warn('unreadable companiond.json — using defaults', { err: String(winnerError) });
+        }
+      }
+    } else {
       log.warn('unreadable companiond.json — using defaults', { err: String(err) });
     }
-  } else {
-    writeFileSync(file, JSON.stringify(DEFAULTS, null, 2) + '\n', { mode: 0o600 });
   }
 
   const env = resolveEnv();
@@ -280,10 +302,9 @@ function resolveEnv(): Record<string, string> {
 
 /** Minimal .env parser: KEY=VALUE lines, `#` comments, optional quotes. */
 export function parseEnvFile(file: string): Record<string, string> {
-  if (!existsSync(file)) return {};
   let raw: string;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = readRegularTextFile(file, { maxBytes: 1024 * 1024 });
   } catch {
     return {};
   }

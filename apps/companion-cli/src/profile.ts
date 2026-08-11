@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { paths } from '@moxxy/companion-services';
+import { paths, readRegularTextFile } from '@moxxy/companion-services';
 
 /**
  * Which modules a fresh instance turns on.
@@ -125,9 +124,11 @@ export async function waitForToken(timeoutMs = 15_000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const file = paths.cliToken();
-    if (existsSync(file)) {
-      const token = readFileSync(file, 'utf8').trim();
+    try {
+      const token = readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 }).trim();
       if (token) return token;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     if (Date.now() >= deadline) return null;
     await new Promise((resolve) => setTimeout(resolve, 250));

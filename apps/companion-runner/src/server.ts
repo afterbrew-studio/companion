@@ -179,7 +179,10 @@ async function handle(
   } catch (err) {
     if (err instanceof HttpError) return json(res, err.status, { error: err.message });
     log.warn('request failed', { method, path, err: String(err) });
-    json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    // Runtime errors can include checkout paths, command output or provider
+    // details. The daemon log is the operator boundary; the remote caller only
+    // needs a stable failure class.
+    json(res, 500, { error: 'internal runner error' });
   }
 }
 
@@ -501,13 +504,13 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
     case 'ensure-clone': {
       const { repo, githubToken } = body as AgentEnsureCloneRequest;
       requireString(repo, 'repo');
-      await checkouts.clone(repo, githubToken);
+      await checkouts.clone(repo, requireGitCredential(githubToken, repo, 'read'));
       return { ok: true };
     }
     case 'fetch': {
       const { repo, githubToken } = body as AgentFetchRequest;
       requireString(repo, 'repo');
-      await checkouts.fetch(repo, githubToken);
+      await checkouts.fetch(repo, requireGitCredential(githubToken, repo, 'read'));
       return { ok: true };
     }
     case 'worktree': {
@@ -516,7 +519,13 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       requireString(key, 'key');
       requireString(branch, 'branch');
       requireString(baseBranch, 'baseBranch');
-      const cwd = await checkouts.addWorktree(repo, key, branch, baseBranch, githubToken);
+      const cwd = await checkouts.addWorktree(
+        repo,
+        key,
+        branch,
+        baseBranch,
+        requireGitCredential(githubToken, repo, 'read'),
+      );
       return { cwd } satisfies AgentWorktreeResponse;
     }
     case 'pr-worktree': {
@@ -525,7 +534,13 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       requireString(key, 'key');
       requireString(baseBranch, 'baseBranch');
       if (!Number.isInteger(prNumber) || prNumber <= 0) throw badRequest('prNumber must be a positive integer');
-      const cwd = await checkouts.addPullRequestWorktree(repo, key, prNumber, baseBranch, githubToken);
+      const cwd = await checkouts.addPullRequestWorktree(
+        repo,
+        key,
+        prNumber,
+        baseBranch,
+        requireGitCredential(githubToken, repo, 'read'),
+      );
       return { cwd } satisfies AgentWorktreeResponse;
     }
     case 'worktree-at': {
@@ -533,7 +548,12 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       requireString(repo, 'repo');
       requireString(key, 'key');
       requireString(branch, 'branch');
-      const cwd = await checkouts.addWorktreeAtBranch(repo, key, branch, githubToken);
+      const cwd = await checkouts.addWorktreeAtBranch(
+        repo,
+        key,
+        branch,
+        requireGitCredential(githubToken, repo, 'read'),
+      );
       return { cwd } satisfies AgentWorktreeResponse;
     }
     case 'remove-worktree': {
@@ -566,12 +586,22 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       requireString(repo, 'repo');
       requireString(cwd, 'cwd');
       requireString(branch, 'branch');
-      await checkouts.push(repo, cwd, branch, githubToken);
+      await checkouts.push(repo, cwd, branch, requireGitCredential(githubToken, repo, 'write'));
       return { ok: true };
     }
     default:
       throw new HttpError(404, `no git action: ${action}`);
   }
+}
+
+function requireGitCredential(value: unknown, repo: string, access: 'read' | 'write'): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  throw new HttpError(
+    403,
+    access === 'write'
+      ? `no personal GitHub credential with push access to ${repo}`
+      : `no personal GitHub credential with access to ${repo}`,
+  );
 }
 
 // ---------- developer tools -------------------------------------------------------

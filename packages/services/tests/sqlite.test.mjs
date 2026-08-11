@@ -251,6 +251,19 @@ test('a named parameter the SQL never declared is refused, not ignored', () => {
   );
 });
 
+test('normalising named parameters cannot invoke the __proto__ setter', () => {
+  const db = memoryDb();
+  const params = Object.create(null);
+  params.a = 'safe';
+  params.__proto__ = undefined;
+
+  assert.throws(
+    () => db.prepare('INSERT INTO t (v) VALUES (@a)').run(params),
+    /Unknown named parameter '__proto__'/,
+  );
+  assert.equal(Object.prototype.polluted, undefined);
+});
+
 test('foreign keys stay off, so a schema written without them keeps its meaning', () => {
   // better-sqlite3 leaves them off and `node:sqlite` turns them on. An existing
   // database has rows that a suddenly-enforced ON DELETE CASCADE would delete.

@@ -81,10 +81,9 @@ export function parseDiff(diff: string): DiffFile[] {
   if (lines[lines.length - 1] === '') lines.pop();
 
   for (const line of lines) {
-    const fileStart = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    const fileStart = gitHeaderPaths(line);
     if (fileStart) {
-      const from = fileStart[1]!;
-      current = { path: fileStart[2] ?? from, fromPath: from, adds: 0, dels: 0, lines: [] };
+      current = { path: fileStart.to, fromPath: fileStart.from, adds: 0, dels: 0, lines: [] };
       files.push(current);
       sawHunk = false;
       continue;
@@ -124,6 +123,16 @@ export function parseDiff(diff: string): DiffFile[] {
     }
   }
   return files;
+}
+
+/** Parse the greedy `(.+) b/(.+)` git header in linear time. `lastIndexOf`
+ * preserves its behaviour for the unusual but valid path containing ` b/`. */
+function gitHeaderPaths(line: string): { from: string; to: string } | null {
+  const prefix = 'diff --git a/';
+  if (!line.startsWith(prefix)) return null;
+  const split = line.lastIndexOf(' b/');
+  if (split < prefix.length || split + 3 >= line.length) return null;
+  return { from: line.slice(prefix.length, split), to: line.slice(split + 3) };
 }
 
 const LINE_CLS: Record<DiffLine['kind'], string> = {

@@ -7,6 +7,7 @@
  */
 export * from './lib/log.js';
 export * from './lib/model-json.js';
+export * from './lib/files.js';
 export * from './http/request-context.js';
 export * from './http/outbound.js';
 export * from './store/sqlite.js';
