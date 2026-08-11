@@ -11,6 +11,7 @@ import type { Fixes } from './fixes.js';
 import type { Pipelines } from './pipelines.js';
 import type { RepoAgentContextScanner } from './repo-agent-context.js';
 import type { RepoPermission } from '../contract/index.js';
+import { mapConcurrent } from './concurrency.js';
 
 /**
  * The GitHub/code-domain bundle other modules resolve via
@@ -71,21 +72,4 @@ export class CodeService {
   async accessibleRepoNames(username: string, workspaceId: string): Promise<string[]> {
     return [...(await this.repoPermissions(username, workspaceId)).keys()];
   }
-}
-
-async function mapConcurrent<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  work: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]!, index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
-  return results;
 }

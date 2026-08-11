@@ -40,7 +40,6 @@ export default function Refinements(): React.JSX.Element {
   });
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
   const repos = useWorkspaceRepos(current?.id);
 
   if (!current) return <EmptyState title="No workspace selected" />;
@@ -97,7 +96,7 @@ export default function Refinements(): React.JSX.Element {
           </div>
         }
       />
-      <ErrorBar error={error ?? createError} className="mb-3" />
+      <ErrorBar error={error} className="mb-3" />
 
       {refinements === null ? (
         <PageLoading label="Loading refinements…" />
@@ -142,7 +141,6 @@ export default function Refinements(): React.JSX.Element {
       {creating ? (
         <NewRefinementModal
           onClose={() => setCreating(false)}
-          onError={setCreateError}
           onCreated={(id) => {
             setCreating(false);
             window.location.hash = `/refinement/${id}`;
@@ -199,11 +197,9 @@ function RefinementCard({ refinement }: { refinement: RefinementListEntry }): Re
 function NewRefinementModal({
   onClose,
   onCreated,
-  onError,
 }: {
   onClose: () => void;
   onCreated: (id: string) => void;
-  onError: (e: string | null) => void;
 }): React.JSX.Element {
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
@@ -212,6 +208,7 @@ function NewRefinementModal({
   const [title, setTitle] = useState('');
   const [story, setStory] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const effectiveRepo = repo ?? repos.find((candidate) => candidate.githubAccessible)?.fullName ?? null;
 
@@ -224,6 +221,7 @@ function NewRefinementModal({
   const submit = async (): Promise<void> => {
     if (!current || !effectiveRepo || title.trim().length < 3 || story.trim().length < 8) return;
     setBusy(true);
+    setError(null);
     try {
       const { refinement } = await refinementApi.create({
         workspaceId: current.id,
@@ -232,10 +230,10 @@ function NewRefinementModal({
         title: title.trim(),
         story: story.trim(),
       });
-      onError(null);
       onCreated(refinement.id);
     } catch (err) {
-      onError(String(err));
+      // Inline, not the page bar: that bar sits behind this open modal.
+      setError(String(err));
       setBusy(false);
     }
   };
@@ -286,6 +284,7 @@ function NewRefinementModal({
             maxLength={32_000}
           />
         </Field>
+        <ErrorBar error={error} />
         <FormActions>
           <button className="btn-ghost" onClick={onClose}>
             Cancel

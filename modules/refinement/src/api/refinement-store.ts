@@ -185,11 +185,6 @@ export class RefinementStore {
     this.db.prepare(`DELETE FROM refinements WHERE id = ?`).run(id);
   }
 
-  /** One workspace's refinements, newest activity first, with item tallies. */
-  listByWorkspace(workspaceId: string): RefinementListEntry[] {
-    return this.listWorkspacePage(workspaceId, { limit: 100 }).refinements;
-  }
-
   listWorkspacePage(
     workspaceId: string,
     opts: {

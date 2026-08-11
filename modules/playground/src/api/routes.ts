@@ -24,12 +24,16 @@ const runSchema = z
       .string()
       .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
       .optional(),
-    /** Playground runs are exploratory — bounded hard, never long-haul. */
+    /** Playground runs are exploratory: bounded hard, never long-haul. The
+     * request awaits the run, and Node's default requestTimeout (300 s;
+     * nothing in apps/api raises it) destroys the socket at five minutes, so
+     * the cap stays below that with margin for the response to flush. Longer
+     * experiments go through the durable evaluation-suite path. */
     timeoutMs: z
       .number()
       .int()
       .min(60_000)
-      .max(10 * 60_000)
+      .max(270_000)
       .default(3 * 60_000),
   })
   .strict();
@@ -62,6 +66,11 @@ export default defineRoutes((ctx) => {
         } else {
           cwd = paths.scratch();
           mkdirSync(cwd, { recursive: true });
+        }
+        // The client hides the picker without skills:manage; enforce the same
+        // boundary here so a raw request cannot preload someone else's skill.
+        if (body.skill && !ctx.rbac.allows(user!, 'skills:manage')) {
+          throw forbidden('preloading a skill requires skills:manage');
         }
         const skill = body.skill ? op.skills.get(body.skill) : null;
         if (body.skill && !skill) throw notFound(`skill ${body.skill} not found`);
