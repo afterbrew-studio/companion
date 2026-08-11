@@ -149,9 +149,15 @@ export class RolesService {
     throw new AuthError(`refusing ${what}: no enabled user would be able to manage users afterwards`, 403);
   }
 
-  /** Enabled accounts whose current role effectively holds `permission`. */
+  /**
+   * Enabled accounts whose current role effectively holds `permission`. Users
+   * hold exactly one role, so the roles are classified first (a handful) and
+   * the users counted in one query. A role the grid no longer knows holds
+   * nothing, exactly as the per-user `rbac.has` scan answered.
+   */
   usersHolding(permission: Permission): number {
-    return this.users.list().filter((u) => !u.disabled && this.rbac.has(u.role, permission)).length;
+    const holding = this.rbac.roles().filter((role) => this.rbac.has(role, permission));
+    return this.users.countEnabledByRoles(holding);
   }
 
   private requireRole(id: string): RoleRecord {

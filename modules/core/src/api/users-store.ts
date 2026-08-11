@@ -99,6 +99,17 @@ export class UsersStore {
     this.sessions.deleteForUser(username);
   }
 
+  /** Enabled accounts holding any of `roles`; one query, not a table scan. */
+  countEnabledByRoles(roles: readonly Role[]): number {
+    if (roles.length === 0) return 0;
+    const marks = roles.map(() => '?').join(', ');
+    return (
+      this.db
+        .prepare(`SELECT COUNT(*) AS n FROM users WHERE disabled = 0 AND role IN (${marks})`)
+        .get(...roles) as { n: number }
+    ).n;
+  }
+
   countActiveAdmins(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0`).get() as { n: number })
       .n;
