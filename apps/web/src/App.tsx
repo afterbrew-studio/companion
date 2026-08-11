@@ -149,7 +149,7 @@ function Shell(): React.JSX.Element {
   const hash = useHashRoute();
   const kernel = useKernel();
 
-  // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
+  // Route-aware tab title: "Pull requests · owner/repo · #12 · <instance>".
   useEffect(() => {
     const name = branding.name?.trim() || 'Companion';
     const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav, kernel.sections)
@@ -900,7 +900,7 @@ function crumbsFor(
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)(?:\/review)?$/);
-  if (m) return [{ label: 'Pull Requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
+  if (m) return [{ label: 'Pull requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   // Standalone pages outside the module registry.
   if (path === '/inbox') return [{ label: 'Inbox' }];
   if (path === '/profile') return [{ label: 'Your profile' }];
@@ -913,6 +913,8 @@ function crumbsFor(
       mod = mm;
     }
   }
+  // Alias paths (an entry's `owns` outside its hash) crumb as their owner too.
+  if (!mod) mod = nav.find((mm) => mm.owns?.some((pattern) => pattern.test(path)));
   // A settings page is "Settings / General", not a bare "General": the group it
   // sits in is the only thing that says where the user is.
   if (mod && sections.some((s) => s.id === mod!.section && s.placement === 'settings')) {

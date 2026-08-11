@@ -87,7 +87,7 @@ Small, independent, all of them things that get more expensive later.
    playground was always installed. With playground now Available by default, a
    fresh instance rendered a "Playground" group containing only Skills. The page,
    route and API were always operate's, so the entry simply belongs in Operate.
-   Installing Playground now adds a group holding Agent Lab and Pipeline Lab, and
+   Installing Playground now adds a group holding Agent lab and Pipeline lab, and
    nothing else moves.
 
 **Deferred to P1:** the CLI token. It is only consumed by the CLI, it touches

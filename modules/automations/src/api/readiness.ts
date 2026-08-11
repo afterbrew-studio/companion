@@ -346,8 +346,8 @@ function capabilityChecks(context: ContributorFlowDryRunContext): AutonomyReadin
     'Long-running task state machine',
     context.boardEnabled ? 'pass' : 'blocked',
     context.boardEnabled
-      ? 'Task Board is enabled for durable implementation, review, repair and merge stages.'
-      : 'Task Board is disabled; the end-to-end lifecycle cannot make durable progress.',
+      ? 'Task board is enabled for durable implementation, review, repair and merge stages.'
+      : 'Task board is disabled; the end-to-end lifecycle cannot make durable progress.',
   ));
   checks.push(check(
     'runtime.webhook',

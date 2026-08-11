@@ -171,7 +171,7 @@ export function EvaluationsPage(): React.JSX.Element {
           <div>
             <h2 className="text-sm font-semibold">A model never grades itself</h2>
             <p className="dim mt-1 max-w-3xl text-xs leading-relaxed">
-              Companion runs each case through the same read-only fence as Agent Lab, then deterministic checks
+              Companion runs each case through the same read-only fence as the Agent lab, then deterministic checks
               verify required evidence, forbidden claims, JSON paths/values, latency and token ceilings. Repo cases
               are shared only with that workspace; scratch cases are private.
             </p>

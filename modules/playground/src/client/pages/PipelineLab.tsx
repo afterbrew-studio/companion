@@ -69,7 +69,7 @@ export function PipelineLabPage(): React.JSX.Element {
   if (!codeEnabled) {
     return (
       <Page>
-        <PageHeader title="Pipeline Lab" subtitle="Preview what a pipeline would do — without running it" />
+        <PageHeader title="Pipeline lab" subtitle="Preview what a pipeline would do — without running it" />
         <EmptyState title="The code module is disabled" hint="Pipelines live there — enable it to preview them." />
       </Page>
     );
@@ -90,7 +90,7 @@ export function PipelineLabPage(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Pipeline Lab" subtitle="Preview what a pipeline would do — without running it" />
+      <PageHeader title="Pipeline lab" subtitle="Preview what a pipeline would do — without running it" />
       <ErrorBar error={error} className="mb-3" />
 
       {repos !== null && repos.length === 0 ? (

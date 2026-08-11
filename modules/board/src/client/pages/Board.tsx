@@ -453,7 +453,7 @@ export default function Board({ query }: RouteProps): React.JSX.Element {
     <div className="w-full py-6">
       <div className="mx-auto w-full max-w-5xl px-6">
         <PageHeader
-          title="Task Board"
+          title="Task board"
           subtitle={
             `${inFlight} in flight` + (decisions > 0 ? ` · ${decisions} need${decisions === 1 ? 's' : ''} your decision` : '')
           }
