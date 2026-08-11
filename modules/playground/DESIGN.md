@@ -40,9 +40,12 @@
   fails closed, budget refreshes are coalesced, and module shutdown joins the
   detached suite task before its stores close.
 - Exploratory/custom **run endpoints remain synchronous** (the HTTP request
-  awaits the one-shot), matching the existing generate-* endpoints and bounded
-  by a 10-minute hard timeout. The production release gate is deliberately
-  asynchronous because it contains several paid turns.
+  awaits the one-shot), matching the existing generate-* endpoints. Node's
+  default `server.requestTimeout` (300 s; nothing in apps/api raises it)
+  destroys the awaiting socket at five minutes, so the run timeout is capped
+  at 4.5 minutes to leave the response margin; anything longer must go through
+  the durable production-suite path above. The production release gate is
+  deliberately asynchronous because it contains several paid turns.
 
 ## Deferred: true pipeline step dry-run execution
 
