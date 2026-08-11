@@ -142,6 +142,16 @@ export function UsersPage(): React.JSX.Element {
           onChangeRole={(r) => void act(() => coreApi.updateUser(viewing.username, { role: r }))}
           onToggleDisabled={() => void act(() => coreApi.updateUser(viewing.username, { disabled: !viewing.disabled }))}
           onResetPassword={() => setResetting(viewing)}
+          onResetMfa={() =>
+            void (async () => {
+              const ok = await confirmDanger({
+                title: `Reset two-factor for ${viewing.username}`,
+                message:
+                  'Their authenticator and recovery codes stop working and password sign-in alone works again. Use this when someone lost their device.',
+              });
+              if (ok) await act(() => coreApi.resetUserMfa(viewing.username));
+            })()
+          }
           onDelete={() =>
             void (async () => {
               const ok = await confirmDanger({
@@ -189,6 +199,7 @@ function UserModal({
   onChangeRole,
   onToggleDisabled,
   onResetPassword,
+  onResetMfa,
   onDelete,
 }: {
   user: UserRecord;
@@ -200,6 +211,7 @@ function UserModal({
   onChangeRole: (role: Role) => void;
   onToggleDisabled: () => void;
   onResetPassword: () => void;
+  onResetMfa: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
   // Display name edits commit on blur/Enter; escape-hatch back to the stored
@@ -253,6 +265,18 @@ function UserModal({
         </DetailRow>
         <DetailRow label="Joined">
           {new Date(user.createdAt).toLocaleDateString()} · {timeAgo(user.createdAt)}
+        </DetailRow>
+        <DetailRow label="Two-factor">
+          {user.mfaEnabled ? (
+            <span className="flex items-center gap-2">
+              <span className="badge-ok">on</span>
+              <button className="linkish text-xs" type="button" onClick={onResetMfa}>
+                Reset (lost device)
+              </button>
+            </span>
+          ) : (
+            <span className="dim">off</span>
+          )}
         </DetailRow>
         <DetailRow label="Role">
           <select

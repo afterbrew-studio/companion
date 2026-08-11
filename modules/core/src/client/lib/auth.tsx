@@ -8,7 +8,7 @@ import type {
   Permission,
 } from '@moxxy/companion-contracts';
 import { connectWs, isMessage, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
-import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
+import type { AuthProvider, InstanceBranding, MfaChallenge, NotificationScope } from '../../contract/index.js';
 import { authApi, coreApi } from '../api.js';
 
 interface AuthState {
@@ -42,7 +42,10 @@ interface AuthState {
   /** Local update after saving branding in Settings — no refetch needed. */
   readonly setBranding: (b: InstanceBranding) => void;
   readonly can: (permission: Permission) => boolean;
-  readonly login: (username: string, password: string) => Promise<void>;
+  /** Resolves to the second-step challenge when the account has MFA; null = signed in. */
+  readonly login: (username: string, password: string) => Promise<MfaChallenge | null>;
+  /** Complete an MFA challenge with a TOTP or recovery code. */
+  readonly completeMfa: (mfaToken: string, code: string) => Promise<void>;
   readonly logout: () => Promise<void>;
 }
 
@@ -136,8 +139,13 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     };
   }, [resolve]);
 
-  const login = useCallback(async (username: string, password: string) => {
-    await authApi.login(username, password);
+  const login = useCallback(async (username: string, password: string): Promise<MfaChallenge | null> => {
+    const result = await authApi.login(username, password);
+    return 'mfaRequired' in result ? result : null;
+  }, []);
+
+  const completeMfa = useCallback(async (mfaToken: string, code: string) => {
+    await authApi.completeMfa(mfaToken, code);
   }, []);
 
   const logout = useCallback(async () => {
@@ -197,6 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
         providers,
         can,
         login,
+        completeMfa,
         logout,
       }}
     >

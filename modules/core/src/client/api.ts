@@ -25,6 +25,9 @@ import type {
   CreateApiTokenResponse,
   CreateUserRequest,
   ExternalModulesResponse,
+  MfaChallenge,
+  MfaEnrollment,
+  MfaRecoveryCodes,
   RemoveModuleResponse,
   RestartResponse,
   RoleDetail,
@@ -60,8 +63,18 @@ export const authApi = {
     return session;
   },
 
-  async login(username: string, password: string): Promise<LoginResponse> {
-    const session = await publicPost<LoginResponse>('/api/auth/login', { username, password });
+  /** Either a signed-in session or, when the account has MFA, the second-step challenge. */
+  async login(username: string, password: string): Promise<LoginResponse | MfaChallenge> {
+    const result = await publicPost<LoginResponse | MfaChallenge>('/api/auth/login', { username, password });
+    if ('mfaRequired' in result) return result;
+    markBrowserSession(true);
+    emitAuthChanged();
+    return result;
+  },
+
+  /** Second login step: the pending token plus a TOTP or recovery code. */
+  async completeMfa(mfaToken: string, code: string): Promise<LoginResponse> {
+    const session = await publicPost<LoginResponse>('/api/auth/mfa', { mfaToken, code });
     markBrowserSession(true);
     emitAuthChanged();
     return session;
@@ -113,6 +126,13 @@ export const coreApi = {
   updateProfile: (body: UpdateProfileRequest) => put<ProfileResponse>('/api/profile', body),
   getAccount: () => request<{ account: AccountInfo }>('/api/account'),
   updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
+
+  // MFA: enrollment is self-service; the raw secret and recovery codes appear once.
+  enrollMfa: () => post<MfaEnrollment>('/api/mfa/enroll'),
+  confirmMfa: (code: string) => post<MfaRecoveryCodes>('/api/mfa/confirm', { code }),
+  regenerateRecoveryCodes: (code: string) => post<MfaRecoveryCodes>('/api/mfa/recovery-codes', { code }),
+  disableMfa: (code: string) => post<{ ok: true }>('/api/mfa/disable', { code }),
+  resetUserMfa: (username: string) => del<{ user: UserRecord }>(`/api/users/${username}/mfa`),
 
   // API credentials: the raw secret exists only in the create response.
   listApiTokens: () =>

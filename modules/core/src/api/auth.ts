@@ -10,9 +10,11 @@ import type {
   ApiTokenRecord,
   AuthProvider,
   CreateApiTokenResponse,
+  MfaChallenge,
   SessionInfo,
   UserRecord,
 } from '../contract/index.js';
+import type { Mfa } from './mfa.js';
 import type { UsersStore } from './users-store.js';
 import type { SessionsStore } from './sessions-store.js';
 import type { ApiTokensStore } from './api-tokens-store.js';
@@ -32,6 +34,9 @@ const MAX_API_TOKENS_PER_USER = 50;
 const TOKEN_MANAGEMENT_PERMISSIONS = new Set<Permission>(['tokens:manage', 'tokens:admin']);
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const MAX_LOGIN_KEYS = 10_000;
+/** A pending second factor is a pause in one sign-in, not a parking space. */
+const MFA_PENDING_TTL_MS = 5 * 60_000;
+const MAX_PENDING_MFA = 10_000;
 
 /** A legacy `.env` account, seeded once into an empty user store. */
 export interface SeedUser {
@@ -68,6 +73,8 @@ export class Auth implements Authenticator {
   private readonly loginThrottle = new LoginThrottle();
   private bootstrapDigest: Buffer | null = null;
   private bootstrapFile: string | null = null;
+  /** Password-verified logins awaiting their second factor, keyed by token hash. */
+  private readonly pendingMfa = new Map<string, { username: string; expiresAt: number }>();
 
   constructor(
     private readonly users: UsersStore,
@@ -76,6 +83,7 @@ export class Auth implements Authenticator {
     private readonly settings: SettingsStore,
     private readonly rbac: RbacReader,
     private readonly roles: RolesService,
+    private readonly mfa: Mfa | null = null,
   ) {
     this.sessions.pruneExpired();
     this.apiTokens.pruneExpired();
@@ -232,12 +240,18 @@ export class Auth implements Authenticator {
     return this.startSession(this.users.get(username)!, SESSION_TTL_MS);
   }
 
-  login(identifier: string, password: string, clientAddress = 'unknown'): { token: string; user: AuthUser; expiresAt: number } {
+  login(
+    identifier: string,
+    password: string,
+    clientAddress = 'unknown',
+  ): { token: string; user: AuthUser; expiresAt: number } | MfaChallenge {
     const throttleKey = `${clientAddress}\0${createHash('sha256').update(identifier.trim().toLowerCase()).digest('hex')}`;
     this.loginThrottle.assertAllowed(throttleKey, clientAddress);
     const account = this.users.get(identifier) ?? this.users.getByEmail(identifier);
     // Do one real scrypt operation even for an unknown/disabled account. That
-    // keeps the response from becoming a username enumeration oracle.
+    // keeps the response from becoming a username enumeration oracle. The MFA
+    // branch below runs only AFTER this refusal, so a wrong-password attempt is
+    // byte-identical whether or not the account has a second factor.
     const valid = verifyPassword(password, account?.passwordHash ?? dummyPasswordHash());
     if (!account || account.disabled || !valid) {
       this.loginThrottle.failed(throttleKey, clientAddress);
@@ -247,7 +261,52 @@ export class Auth implements Authenticator {
     if (passwordNeedsRehash(account.passwordHash)) {
       this.users.update(account.username, { passwordHash: hashPassword(password) });
     }
+    if (account.mfaEnabled && this.mfa) return this.beginMfaChallenge(account.username);
     return this.startSession(account, SESSION_TTL_MS);
+  }
+
+  /**
+   * Trade a pending login plus a TOTP/recovery code for the real session. The
+   * pending token is single-use and expires in minutes; code guesses share the
+   * login throttle so the second factor cannot be brute-forced faster than the
+   * first.
+   */
+  completeMfaLogin(
+    mfaToken: string,
+    code: string,
+    clientAddress = 'unknown',
+  ): { token: string; user: AuthUser; expiresAt: number } {
+    const pending = this.pendingMfa.get(hashToken(mfaToken));
+    if (!pending || pending.expiresAt <= Date.now()) {
+      throw new AuthError('sign-in expired; enter your password again', 401);
+    }
+    const throttleKey = `${clientAddress}\0mfa\0${createHash('sha256').update(pending.username).digest('hex')}`;
+    this.loginThrottle.assertAllowed(throttleKey, clientAddress);
+    const account = this.users.get(pending.username);
+    if (!account || account.disabled || !this.mfa?.verifyCode(pending.username, code)) {
+      this.loginThrottle.failed(throttleKey, clientAddress);
+      throw new AuthError('invalid verification code', 401);
+    }
+    this.loginThrottle.succeeded(throttleKey);
+    this.pendingMfa.delete(hashToken(mfaToken));
+    return this.startSession(account, SESSION_TTL_MS);
+  }
+
+  private beginMfaChallenge(username: string): MfaChallenge {
+    const now = Date.now();
+    for (const [key, pending] of this.pendingMfa) {
+      if (pending.expiresAt <= now) this.pendingMfa.delete(key);
+    }
+    // Same overflow stance as the throttle: forgetting the oldest pending
+    // logins under pressure fails toward re-entering a password.
+    if (this.pendingMfa.size >= MAX_PENDING_MFA) {
+      const oldest = [...this.pendingMfa.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+      for (const [key] of oldest.slice(0, this.pendingMfa.size - MAX_PENDING_MFA + 1)) this.pendingMfa.delete(key);
+    }
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = now + MFA_PENDING_TTL_MS;
+    this.pendingMfa.set(hashToken(token), { username, expiresAt });
+    return { mfaRequired: true, mfaToken: token, expiresAt };
   }
 
   logout(token: string): void {
@@ -433,7 +492,13 @@ export class Auth implements Authenticator {
   ownAccount(username: string): AccountInfo {
     const account = this.users.get(username);
     if (!account) throw new AuthError(`user ${username} not found`, 403);
-    return { username: account.username, displayName: account.displayName, email: account.email, role: account.role };
+    return {
+      username: account.username,
+      displayName: account.displayName,
+      email: account.email,
+      role: account.role,
+      mfaEnabled: account.mfaEnabled,
+    };
   }
 
   updateOwnAccount(
@@ -508,6 +573,14 @@ export class Auth implements Authenticator {
     return sanitize(this.users.get(username)!);
   }
 
+  /** Admin recovery for a lost authenticator; audited by the router like every user mutation. */
+  resetUserMfa(username: string): UserRecord {
+    const existing = this.users.get(username);
+    if (!existing) throw new AuthError(`user ${username} not found`, 403);
+    this.mfa?.reset(username);
+    return sanitize(this.users.get(username)!);
+  }
+
   deleteUser(username: string, actor: AuthUser): void {
     const existing = this.users.get(username);
     if (!existing) throw new AuthError(`user ${username} not found`, 403);
@@ -515,6 +588,7 @@ export class Auth implements Authenticator {
     this.guardLastAdmin(existing, undefined, true);
     this.users.delete(username);
     this.apiTokens.deleteForUser(username);
+    this.mfa?.reset(username);
   }
 
   /** The unique index would refuse a duplicate as a raw constraint failure;

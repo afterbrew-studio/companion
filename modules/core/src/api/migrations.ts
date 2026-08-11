@@ -244,4 +244,30 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_sessions_user; DROP INDEX IF EXISTS idx_sessions_expiry;`);
     },
   },
+  {
+    version: 9,
+    name: 'totp_mfa',
+    // The enabled flag lives on the user row; the TOTP secret itself lives in
+    // the module secret store (encrypted at rest), never in this table.
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0`);
+      } catch {
+        // column already exists
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+          username   TEXT NOT NULL,
+          code_hash  TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (username, code_hash)
+        );
+      `);
+    },
+    down: (db) => {
+      // The users column stays (SQLite cannot drop it on older builds and the
+      // flag is inert without the module code); the codes table is droppable.
+      db.exec(`DROP TABLE IF EXISTS mfa_recovery_codes`);
+    },
+  },
 ]);

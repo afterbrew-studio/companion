@@ -9,6 +9,7 @@ import type {
 import type { ModuleArtifact, ModuleProvenance } from '@moxxy/companion-core/server';
 import type { Supervisor } from '@moxxy/companion-services';
 import type { Auth } from '../api/auth.js';
+import type { Mfa } from '../api/mfa.js';
 import type { RolesService } from '../api/roles-service.js';
 import type { AuditStore } from '../api/audit-store.js';
 import type { AuditForwarder } from '../api/audit-forwarder.js';
@@ -45,6 +46,8 @@ declare module '@moxxy/companion-contracts' {
     /** The outbound audit stream; its state feeds the trail page's health line. */
     auditForwarder: AuditForwarder;
     settings: SettingsStore;
+    /** TOTP second factor for local accounts (enrollment, codes, admin reset). */
+    mfa: Mfa;
   }
   interface BusEvents {
     /** First-boot onboarding created the installation's primary admin. */
@@ -164,6 +167,8 @@ export interface UserRecord {
   readonly email: string;
   readonly role: Role;
   readonly disabled: boolean;
+  /** TOTP second factor confirmed and enforced at login. */
+  readonly mfaEnabled: boolean;
   readonly createdAt: number;
 }
 
@@ -249,6 +254,30 @@ export interface LoginResponse {
   readonly expiresAt: number;
 }
 
+/**
+ * The password was right but the account demands a second factor. `mfaToken`
+ * is a short-lived, single-use handle on the pending login and not a session:
+ * it authenticates nothing except `POST /api/auth/mfa`.
+ */
+export interface MfaChallenge {
+  readonly mfaRequired: true;
+  readonly mfaToken: string;
+  /** Epoch ms when the pending login expires and the password must be re-entered. */
+  readonly expiresAt: number;
+}
+
+/** Provisioned secret awaiting confirmation; shown once, entered into an authenticator app. */
+export interface MfaEnrollment {
+  /** Unpadded base32, the form authenticator apps take for manual entry. */
+  readonly secret: string;
+  readonly otpauthUri: string;
+}
+
+/** The only response that carries recovery codes in the clear; shown once. */
+export interface MfaRecoveryCodes {
+  readonly recoveryCodes: readonly string[];
+}
+
 /** How the inbox is scoped: the active workspace only, or every accessible workspace. */
 export type NotificationScope = 'workspace' | 'global';
 
@@ -290,6 +319,7 @@ export interface AccountInfo {
   readonly displayName: string;
   readonly email: string;
   readonly role: Role;
+  readonly mfaEnabled: boolean;
 }
 
 export interface UpdateAccountRequest {
