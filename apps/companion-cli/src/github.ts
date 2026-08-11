@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { readRegularTextFile, writePrivateTextFile } from '@moxxy/companion-services';
 const PENDING_FILE = 'pending-gh-import.json';
 
 interface PendingGhImport {
@@ -46,15 +47,13 @@ export function parseGhLogin(raw: string): string | null {
 export function scheduleGhImport(home: string, login: string): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, PENDING_FILE);
-  writeFileSync(file, `${JSON.stringify({ login } satisfies PendingGhImport, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(file, 0o600);
+  writePrivateTextFile(file, `${JSON.stringify({ login } satisfies PendingGhImport, null, 2)}\n`);
 }
 
 export function pendingGhLogin(home: string): string | null {
   const file = join(home, PENDING_FILE);
-  if (!existsSync(file)) return null;
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8')) as Partial<PendingGhImport>;
+    const value = JSON.parse(readRegularTextFile(file, { maxBytes: 4_096, mode: 0o600 })) as Partial<PendingGhImport>;
     return typeof value.login === 'string' && value.login.trim() ? value.login.trim() : null;
   } catch {
     return null;

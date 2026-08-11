@@ -592,7 +592,13 @@ async function cmdSync(opts) {
   }
 
   const snapshot = gridSnapshot(mods, grid, roles);
-  if (!existsSync(SNAPSHOT_FILE) || readFileSync(SNAPSHOT_FILE, 'utf8') !== snapshot) {
+  let currentSnapshot = null;
+  try {
+    currentSnapshot = readFileSync(SNAPSHOT_FILE, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (currentSnapshot !== snapshot) {
     changed.push(SNAPSHOT_FILE);
     if (!opts.dry) writeFileSync(SNAPSHOT_FILE, snapshot);
   }
@@ -632,15 +638,16 @@ async function cmdAdd(args, opts) {
   const aclFile = join(mod.dir, 'src/api/acl.ts');
   let acl = readFileSync(aclFile, 'utf8');
   const entry =
-    `    { id: '${permission}', title: '${opts.title.replace(/'/g, "\\'")}'` +
+    `    { id: '${permission}', title: ${JSON.stringify(opts.title)}` +
     `${implies.length ? `, implies: [${implies.map((i) => `'${i}'`).join(', ')}]` : ''} },\n`;
   const permsAnchor = /(permissions:\s*\[\n)([\s\S]*?)(\n?\s*\],)/;
   if (!permsAnchor.test(acl)) fail(`${moduleId}: could not find the \`permissions: [\` array in acl.ts`);
   acl = acl.replace(permsAnchor, (_m, open, body, close) => `${open}${body}\n${entry.replace(/\n$/, '')}${close}`);
 
   for (const role of grantRoles) {
-    const listRe = new RegExp(`(${role}:\\s*\\[)([\\s\\S]*?)(\\],)`);
-    const starRe = new RegExp(`${role}:\\s*'\\*'`);
+    const safeRole = role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const listRe = new RegExp(`(${safeRole}:\\s*\\[)([\\s\\S]*?)(\\],)`);
+    const starRe = new RegExp(`${safeRole}:\\s*'\\*'`);
     if (starRe.test(acl)) continue; // '*' already covers every permission this module declares
     if (listRe.test(acl)) {
       acl = acl.replace(listRe, (_m, open, body, close) => `${open}${body.replace(/,?\s*$/, ',')}\n      '${permission}',\n    ${close}`);

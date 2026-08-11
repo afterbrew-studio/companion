@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
+import { homedir, networkInterfaces } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AuthMode } from '@moxxy/companion-services';
+import { readRegularTextFile, type AuthMode } from '@moxxy/companion-services';
 import {
   applyPendingAdminSetup,
   consumePendingAdminSetup,
@@ -647,9 +648,11 @@ function resolveAddress(options: CliOptions): { host: string; port: number } {
 
 function readStoredAddress(home: string): { host?: string; port?: number } {
   const file = join(home, 'companiond.json');
-  if (!existsSync(file)) return {};
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8')) as { host?: unknown; port?: unknown };
+    const value = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024 })) as {
+      host?: unknown;
+      port?: unknown;
+    };
     return {
       host: typeof value.host === 'string' && value.host.trim() ? value.host : undefined,
       port: typeof value.port === 'number' && Number.isInteger(value.port) ? value.port : undefined,
@@ -669,9 +672,28 @@ function envPort(value: string | undefined): number | undefined {
 }
 
 function localUrl(host: string, port: number): string {
-  const browserHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+  const requested = host.trim().replace(/^\[|\]$/g, '');
+  const browserHost = localInterfaceAddress(requested);
   const formattedHost = browserHost.includes(':') ? `[${browserHost}]` : browserHost;
-  return `http://${formattedHost}:${port}`;
+  return new URL(`http://${formattedHost}:${validPort(String(port))}`).origin;
+}
+
+/** `--host` is a bind address, not an arbitrary remote API target. Returning
+ * the matched interface value (rather than the config-file string) prevents a
+ * changed companiond.json from turning the admin CLI into an SSRF/token sink. */
+function localInterfaceAddress(requested: string): string {
+  const lower = requested.toLowerCase();
+  if (lower === '0.0.0.0' || lower === '::' || lower === 'localhost') return '127.0.0.1';
+  const family = isIP(requested);
+  if (lower === '::1' || (family === 4 && lower.startsWith('127.'))) return lower;
+  if (family === 0) {
+    throw new Error(`Invalid bind host: ${requested}. Use localhost or a local interface IP address.`);
+  }
+  for (const entries of Object.values(networkInterfaces())) {
+    const match = entries?.find((entry) => entry.address.toLowerCase() === lower);
+    if (match) return match.address;
+  }
+  throw new Error(`${requested} is not an address of this machine; --host configures the local bind address.`);
 }
 
 async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<boolean> {
@@ -689,10 +711,14 @@ async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<boolea
 }
 
 function openBrowser(url: string): void {
-  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  const target = new URL(url);
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('browser URL must use HTTP or HTTPS');
+  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'rundll32.exe' : 'xdg-open';
+  // Avoid `cmd /c start`: even with shell:false, cmd reparses its remaining
+  // arguments as command text. Each platform helper receives one URL argument.
+  const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', target.href] : [target.href];
   const child = spawn(command, args, { detached: true, stdio: 'ignore' });
-  child.once('error', () => process.stderr.write(`Could not open a browser automatically. Open ${url}\n`));
+  child.once('error', () => process.stderr.write(`Could not open a browser automatically. Open ${target.href}\n`));
   child.unref();
 }
 

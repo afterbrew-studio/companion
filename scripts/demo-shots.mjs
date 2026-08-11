@@ -15,7 +15,8 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -23,11 +24,14 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9333;
 const OUT = 'docs/media';
 /** Tour frames are intermediates: they become tour.gif, so they stay out of the repo. */
-const FRAMES = '/tmp/companion-demo/frames';
+const TEMP = mkdtempSync(join(tmpdir(), 'companion-demo-shots-'));
+const FRAMES = join(TEMP, 'frames');
 const LOGIN = { username: 'admin', password: 'admin1234' };
 const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 2 };
 /** Every step key the modules declare: marking them seen keeps the first-run tour off the shots. */
 const ONBOARDING_STEPS = ['welcome', 'connect', 'code', 'workspaces', 'runners', 'assistant', 'ideas', 'plan'];
+
+process.once('exit', () => rmSync(TEMP, { recursive: true, force: true }));
 
 /**
  * Each shot: the hash route, the file, and what proves the page has rendered.
@@ -66,7 +70,7 @@ const chrome = spawn(
     '--lang=en-US',
     '--no-first-run',
     '--disable-extensions',
-    `--user-data-dir=/tmp/companion-demo/chrome-profile`,
+    `--user-data-dir=${join(TEMP, 'chrome-profile')}`,
     'about:blank',
   ],
   { stdio: 'ignore' },

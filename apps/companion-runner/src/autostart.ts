@@ -48,6 +48,37 @@ function sh(cmd: string, args: string[]): { ok: boolean; out: string } {
   }
 }
 
+function withInput(cmd: string, args: string[], input: string): { ok: boolean; out: string } {
+  try {
+    return {
+      ok: true,
+      out: execFileSync(cmd, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }),
+    };
+  } catch (err) {
+    return { ok: false, out: String(err instanceof Error ? err.message : err) };
+  }
+}
+
+function oneLine(value: string, context: string): string {
+  if (value.includes('\0') || value.includes('\n') || value.includes('\r')) {
+    throw new Error(`${context} contains a line break or NUL byte`);
+  }
+  return value;
+}
+
+/** systemd expands `%` specifiers even inside quotes. */
+function systemdQuote(value: string): string {
+  return `"${oneLine(value, 'systemd value')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('%', '%%')}"`;
+}
+
+/** A literal POSIX-shell word for the command cron will execute later. */
+function cronQuote(value: string): string {
+  return `'${oneLine(value, 'cron value').replaceAll("'", `'"'"'`)}'`;
+}
+
 export async function autostart(action: 'install' | 'off' | 'status'): Promise<number> {
   if (process.platform === 'darwin') return macos(action);
   if (process.platform === 'linux') return linux(action);
@@ -145,13 +176,13 @@ function linux(action: 'install' | 'off' | 'status'): number {
   }
   const [node, script] = entry();
   const env = bakedEnv()
-    .map(([k, v]) => `Environment="${k}=${v.replaceAll('"', '\\"')}"`)
+    .map(([k, v]) => `Environment=${systemdQuote(`${k}=${v}`)}`)
     .join('\n');
   const unit = `[Unit]
 Description=Companion runner agent
 
 [Service]
-ExecStart=${node} ${script}
+ExecStart=${systemdQuote(node)} ${systemdQuote(script)}
 Restart=on-failure
 RestartSec=5
 ${env}
@@ -193,11 +224,11 @@ function linuxCron(action: 'install' | 'off' | 'status'): number {
   if (action === 'install') {
     const [node, script] = entry();
     const env = bakedEnv()
-      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .map(([k, v]) => `${k}=${cronQuote(v)}`)
       .join(' ');
-    kept.push(`@reboot ${env} ${JSON.stringify(node)} ${JSON.stringify(script)} --background ${CRON_MARK}`);
+    kept.push(`@reboot ${env} ${cronQuote(node)} ${cronQuote(script)} --background ${CRON_MARK}`);
   }
-  const write = sh('sh', ['-c', `printf '%s\n' ${JSON.stringify(kept.join('\n'))} | crontab -`]);
+  const write = withInput('crontab', ['-'], `${kept.join('\n')}\n`);
   if (!write.ok) {
     process.stderr.write(`could not update crontab: ${write.out}\n`);
     return 1;

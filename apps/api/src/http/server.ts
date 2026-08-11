@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { close, constants, createReadStream, fstat, open, readFileSync, readdirSync } from 'node:fs';
+import { extname, join, relative, resolve, sep } from 'node:path';
 import { isTrustedLocalHttpRequest, log } from '@moxxy/companion-services';
 import type { AuthMode } from '@moxxy/companion-contracts';
 import type { ModuleKernel, WsHub } from '@moxxy/companion-core/server';
@@ -39,6 +39,7 @@ export function startHttpServer(opts: {
 }): Promise<Server> {
   const { host, port, authMode, kernel, hub, staticDir, moduleChunks, publicUrl } = opts;
   const inlineScriptHashes = staticDir ? cspInlineScriptHashes(join(staticDir, 'index.html')) : [];
+  const staticFiles = staticDir ? indexStaticFiles(staticDir) : undefined;
 
   const server = createServer((req, res) => {
     setSecurityHeaders(req, res, publicUrl, inlineScriptHashes);
@@ -81,14 +82,14 @@ export function startHttpServer(opts: {
     if (kernel.rawRouter.active) {
       void kernel.rawRouter.tryDispatch(req, res).then((handled) => {
         if (handled) return;
-        if (staticDir) return serveStatic(staticDir, path, res);
+        if (staticFiles) return serveStatic(staticFiles, path, res);
         res.writeHead(404, { 'content-type': 'text/plain' });
         res.end('companion api: no static bundle (use the Vite dev server)');
       });
       return;
     }
-    if (staticDir) {
-      serveStatic(staticDir, path, res);
+    if (staticFiles) {
+      serveStatic(staticFiles, path, res);
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain' });
@@ -141,8 +142,12 @@ function setSecurityHeaders(
 /** Vite injects one inline import map. Hash the exact built bytes instead of
  * weakening script-src with unsafe-inline. */
 function cspInlineScriptHashes(indexFile: string): string[] {
-  if (!existsSync(indexFile)) return [];
-  const html = readFileSync(indexFile, 'utf8');
+  let html: string;
+  try {
+    html = readFileSync(indexFile, 'utf8');
+  } catch {
+    return [];
+  }
   const hashes: string[] = [];
   for (const match of html.matchAll(/<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     hashes.push(`sha256-${createHash('sha256').update(match[1] ?? '').digest('base64')}`);
@@ -154,23 +159,50 @@ function singleHeader(value: string | readonly string[] | undefined): string | u
   return typeof value === 'string' ? value : value?.[0];
 }
 
-function serveStatic(root: string, path: string, res: import('node:http').ServerResponse): void {
-  let file = normalize(join(root, path === '/' ? 'index.html' : path));
-  if (!file.startsWith(root)) {
+function indexStaticFiles(root: string): ReadonlyMap<string, string> {
+  const base = resolve(root);
+  const files = new Map<string, string>();
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const absolute = join(dir, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) files.set(`/${relative(base, absolute).split(sep).join('/')}`, absolute);
+      // A production bundle has no symlinks. Ignoring one keeps a replaced
+      // artifact from escaping the indexed root later through a request.
+    }
+  };
+  walk(base);
+  return files;
+}
+
+function serveStatic(
+  files: ReadonlyMap<string, string>,
+  path: string,
+  res: import('node:http').ServerResponse,
+): void {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+  // The request only selects an entry from the boot-time index; it never
+  // contributes a filesystem path. Still reject traversal-shaped URLs rather
+  // than disguising them as an ordinary SPA fallback.
+  if (decoded.includes('\0') || decoded.includes('\\') || decoded.split('/').includes('..')) {
     res.writeHead(403);
     res.end();
     return;
   }
-  if (!existsSync(file) || statSync(file).isDirectory()) {
-    file = join(root, 'index.html'); // SPA fallback
-    if (!existsSync(file)) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
+  const file = files.get(decoded === '/' ? '/index.html' : decoded) ?? files.get('/index.html');
+  if (!file) {
+    res.writeHead(404);
+    res.end();
+    return;
   }
-  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-  createReadStream(file).pipe(res);
+  serveFileDescriptor(file, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' }, res);
 }
 
 /**
@@ -189,11 +221,46 @@ function serveModuleChunk(
 ): void {
   const [, , id, file] = path.split('/');
   const abs = id && file === 'client.js' ? chunks?.get(id) : undefined;
-  if (!abs || !existsSync(abs)) {
+  if (!abs) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('no such module chunk');
     return;
   }
-  res.writeHead(200, { 'content-type': MIME['.js']!, 'cache-control': 'no-cache' });
-  createReadStream(abs).pipe(res);
+  serveFileDescriptor(abs, { 'content-type': MIME['.js']!, 'cache-control': 'no-cache' }, res);
+}
+
+/**
+ * Open without following a last-minute symlink, validate that exact inode,
+ * then stream from the already-open descriptor.
+ */
+function serveFileDescriptor(
+  file: string,
+  headers: Readonly<Record<string, string>>,
+  res: import('node:http').ServerResponse,
+): void {
+  open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0), (openError, fd) => {
+    if (openError) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    fstat(fd, (statError, stat) => {
+      if (statError || !stat.isFile()) {
+        close(fd, () => undefined);
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const stream = createReadStream(file, { fd, autoClose: true });
+      stream.once('error', (error) => {
+        if (res.headersSent) res.destroy(error);
+        else {
+          res.writeHead(500);
+          res.end();
+        }
+      });
+      res.writeHead(200, headers);
+      stream.pipe(res);
+    });
+  });
 }

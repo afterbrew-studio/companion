@@ -225,7 +225,23 @@ function severityOf(value: unknown): IntegrationReviewFinding['severity'] {
  */
 function pointOf(instructions: string): string {
   const last = instructions.split(/\n\s*\n/).pop()?.trim() ?? '';
-  return last.replace(/^in\s+@?\S+\s+around\s+lines?\s+[\d\s,–-]+,\s*/i, '').trim();
+  const lower = last.toLowerCase();
+  if (!lower.startsWith('in ')) return last;
+  const singular = lower.indexOf(' around line ');
+  const plural = lower.indexOf(' around lines ');
+  const around = singular >= 0 && (plural < 0 || singular < plural) ? singular : plural;
+  if (around < 0) return last;
+  const numbersFrom = around + (around === singular ? ' around line '.length : ' around lines '.length);
+  const comma = last.indexOf(',', numbersFrom);
+  if (comma < 0) return last;
+  const location = last.slice(numbersFrom, comma);
+  let hasDigit = false;
+  for (const char of location) {
+    if (char >= '0' && char <= '9') hasDigit = true;
+    else if (!' -–'.includes(char)) return last;
+  }
+  if (!hasDigit) return last;
+  return last.slice(comma + 1).trim();
 }
 
 function titleOf(reason: string, file: string | null): string {

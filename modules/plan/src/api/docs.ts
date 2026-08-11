@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
@@ -270,8 +270,7 @@ export class Docs {
       if (!/\.(md|mdx)$/i.test(abs)) continue;
       let content: string;
       try {
-        if (statSync(abs).size > MAX_IMPORT_BYTES) continue;
-        content = readFileSync(abs, 'utf8');
+        content = readRepoMarkdown(root, abs);
       } catch {
         continue;
       }
@@ -323,6 +322,32 @@ export class Docs {
     });
     const draft = draftSchema.parse(extractModelJson(finalMessage ?? ''));
     return this.create(workspaceId, { repo: opts.repo ?? null, storage: opts.storage, ...draft }, 'generated');
+  }
+}
+
+/** Read a checked-out document without following a repository symlink or
+ * approving one inode and then opening another. */
+function readRepoMarkdown(root: string, file: string): string {
+  const realRoot = realpathSync(root);
+  const relativeFile = relative(root, file);
+  const expected = resolve(realRoot, relativeFile);
+  const realFile = realpathSync(file);
+  if (realFile !== expected) throw new Error(`refusing repository symlink: ${relativeFile}`);
+
+  const fd = openSync(realFile, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_IMPORT_BYTES) throw new Error(`invalid repository document: ${relativeFile}`);
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (read === 0) break;
+      offset += read;
+    }
+    return bytes.subarray(0, offset).toString('utf8');
+  } finally {
+    closeSync(fd);
   }
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -37,3 +38,47 @@ test('every response carries a hashed CSP and baseline browser hardening', async
   assert.match(response.headers.get('permissions-policy') ?? '', /camera=\(\)/);
   assert.equal(response.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
 });
+
+test('static requests select only boot-indexed files and reject traversal-shaped paths', async (t) => {
+  const container = mkdtempSync(join(tmpdir(), 'companion-static-'));
+  const root = join(container, 'web');
+  mkdirSync(root);
+  writeFileSync(join(root, 'index.html'), '<main>app</main>');
+  writeFileSync(join(root, 'asset.js'), 'console.log("safe")');
+  writeFileSync(join(container, 'outside.txt'), 'must not be served');
+  const server = await startHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    authMode: 'password',
+    kernel: { rawRouter: { active: false } },
+    hub: { handleUpgrade() {} },
+    staticDir: root,
+  });
+  t.after(() => {
+    server.close();
+    rmSync(container, { recursive: true, force: true });
+  });
+  const port = server.address().port;
+
+  assert.equal((await rawGet(port, '/ordinary/spa/route')).status, 200);
+  assert.equal((await rawGet(port, '/%2e%2e/outside.txt')).status, 403);
+  assert.equal((await rawGet(port, '/..%5coutside.txt')).status, 403);
+  assert.equal((await rawGet(port, '/bad%zz')).status, 400);
+
+  // The path was safe when indexed, but becomes a symlink before it is read.
+  // The server must validate the opened descriptor instead of following it.
+  rmSync(join(root, 'asset.js'));
+  symlinkSync(join(container, 'outside.txt'), join(root, 'asset.js'));
+  assert.equal((await rawGet(port, '/asset.js')).status, 404);
+});
+
+function rawGet(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path }, (res) => {
+      res.resume();
+      res.once('end', () => resolve({ status: res.statusCode }));
+    });
+    req.once('error', reject);
+    req.end();
+  });
+}

@@ -96,6 +96,18 @@ test('a rename records both paths so either resolves', () => {
   assert.equal(sideLines(file, 'LEFT').get(2), 'drop();');
 });
 
+test('a git header with delimiter-like path text keeps the final delimiter', () => {
+  const [file] = parseDiff(`diff --git a/dir b/old.ts b/new.ts
+--- a/dir b/old.ts
++++ b/new.ts
+@@ -1 +1 @@
+-old
++new
+`);
+  assert.equal(file.fromPath, 'dir b/old.ts');
+  assert.equal(file.path, 'new.ts');
+});
+
 test('"no newline at end of file" consumes no line number', () => {
   const [file] = parseDiff(`diff --git a/x.txt b/x.txt
 --- a/x.txt

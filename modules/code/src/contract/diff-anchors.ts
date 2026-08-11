@@ -43,13 +43,15 @@ const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
  * either, and refusing the one it happened to pick would drop a real finding.
  */
 function headerPaths(line: string): { display: string; aliases: string[] } | null {
-  const git = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-  if (git) {
-    const from = git[1]!;
-    const to = git[2]!;
-    return { display: to, aliases: from === to ? [to] : [to, from] };
-  }
-  return null;
+  const prefix = 'diff --git a/';
+  if (!line.startsWith(prefix)) return null;
+  // The former greedy regexp chose the final ` b/`. Finding that delimiter
+  // directly gives identical path handling without adversarial backtracking.
+  const split = line.lastIndexOf(' b/');
+  if (split < prefix.length || split + 3 >= line.length) return null;
+  const from = line.slice(prefix.length, split);
+  const to = line.slice(split + 3);
+  return { display: to, aliases: from === to ? [to] : [to, from] };
 }
 
 export function buildAnchorIndex(unifiedDiff: string): AnchorIndex {

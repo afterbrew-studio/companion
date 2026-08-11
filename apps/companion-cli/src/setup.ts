@@ -1,7 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEnvFile, type AuthMode } from '@moxxy/companion-services';
+import {
+  parseEnvFile,
+  readRegularTextFile,
+  writePrivateTextFile,
+  type AuthMode,
+} from '@moxxy/companion-services';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
 const DEFAULT_EMAIL = 'admin@companion.local';
@@ -57,18 +62,20 @@ export function setupExists(home: string, env: NodeJS.ProcessEnv = process.env):
   if (existsSync(join(home, PENDING_SETUP_FILE))) return true;
   if (readStoredAuthMode(home) !== null) return true;
   const file = join(home, '.env');
-  if (!existsSync(file)) return false;
-  const raw = readFileSync(file, 'utf8');
-  return /^\s*COMPANION_ADMIN_USER\s*=.+$/m.test(raw) && /^\s*COMPANION_ADMIN_PASSWORD\s*=.+$/m.test(raw);
+  try {
+    const raw = readRegularTextFile(file, { maxBytes: 1024 * 1024 });
+    return /^\s*COMPANION_ADMIN_USER\s*=.+$/m.test(raw) && /^\s*COMPANION_ADMIN_PASSWORD\s*=.+$/m.test(raw);
+  } catch {
+    return false;
+  }
 }
 
 /** An explicit field doubles as the npx install marker; old/networked homes
  * without it remain on the daemon's safe password default. */
 export function readStoredAuthMode(home: string): AuthMode | null {
   const file = join(home, 'companiond.json');
-  if (!existsSync(file)) return null;
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8')) as { authMode?: unknown };
+    const value = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024 })) as { authMode?: unknown };
     return value.authMode === 'local' || value.authMode === 'password' ? value.authMode : null;
   } catch {
     return null;
@@ -81,17 +88,14 @@ export function writeStoredAuthMode(home: string, authMode: AuthMode): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, 'companiond.json');
   let stored: Record<string, unknown> = {};
-  if (existsSync(file)) {
-    try {
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) stored = parsed as Record<string, unknown>;
-    } catch {
-      // A malformed file is replaced with the one setting the CLI owns. The
-      // daemon would otherwise ignore it and silently choose a different mode.
-    }
+  try {
+    const parsed = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024 })) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) stored = parsed as Record<string, unknown>;
+  } catch {
+    // A missing or malformed file is replaced with the one setting the CLI
+    // owns. The daemon would otherwise ignore it and silently choose another mode.
   }
-  writeFileSync(file, `${JSON.stringify({ ...stored, authMode }, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(file, 0o600);
+  writePrivateTextFile(file, `${JSON.stringify({ ...stored, authMode }, null, 2)}\n`);
 }
 
 /** Credentials are needed once to authenticate the bootstrap API request. */
@@ -119,15 +123,16 @@ const PENDING_PROFILE_FILE = 'pending-profile.json';
  */
 export function writePendingProfile(home: string, modules: readonly string[]): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  writeFileSync(join(home, PENDING_PROFILE_FILE), `${JSON.stringify({ modules }, null, 2)}\n`, { mode: 0o600 });
+  writePrivateTextFile(join(home, PENDING_PROFILE_FILE), `${JSON.stringify({ modules }, null, 2)}\n`);
 }
 
 /** Read and clear: installing is a first-run act, not something to repeat. */
 export function takePendingProfile(home: string): readonly string[] {
   const file = join(home, PENDING_PROFILE_FILE);
-  if (!existsSync(file)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { modules?: unknown };
+    const parsed = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024, mode: 0o600 })) as {
+      modules?: unknown;
+    };
     rmSync(file, { force: true });
     return Array.isArray(parsed.modules) ? parsed.modules.filter((m): m is string => typeof m === 'string') : [];
   } catch {
@@ -140,20 +145,17 @@ export function takePendingProfile(home: string): readonly string[] {
 export function writePendingAdminSetup(home: string, setup: AdminSetup): string {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, PENDING_SETUP_FILE);
-  writeFileSync(
+  writePrivateTextFile(
     file,
     `${JSON.stringify({ username: setup.username, email: setup.email, password: setup.password }, null, 2)}\n`,
-    { mode: 0o600 },
   );
-  chmodSync(file, 0o600);
   return file;
 }
 
 export function readPendingAdminSetup(home: string): AdminSetup | null {
   const file = join(home, PENDING_SETUP_FILE);
-  if (!existsSync(file)) return null;
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8')) as Partial<AdminSetup>;
+    const value = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024, mode: 0o600 })) as Partial<AdminSetup>;
     if (typeof value.username !== 'string' || typeof value.email !== 'string' || typeof value.password !== 'string') {
       return null;
     }

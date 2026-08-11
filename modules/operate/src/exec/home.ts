@@ -140,7 +140,6 @@ export function healCredentialLinks(): void {
  */
 export function seedPermissionDenyRules(): void {
   const file = join(paths.moxxyHome(), 'permissions.json');
-  if (existsSync(file)) return; // user-owned once created; don't clobber edits
   // moxxy PermissionPolicy shape: name = tool-name glob, inputMatches = field → unanchored regex.
   const rules = {
     allow: [],
@@ -152,7 +151,13 @@ export function seedPermissionDenyRules(): void {
       },
     ],
   };
-  writeFileSync(file, JSON.stringify(rules, null, 2) + '\n');
+  try {
+    // Exclusive creation makes "user-owned once created" one filesystem
+    // operation; a concurrent editor can win without being overwritten.
+    writeFileSync(file, JSON.stringify(rules, null, 2) + '\n', { flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
 }
 
 /** Read a file from the companion moxxy home if present (helper for status endpoints). */
