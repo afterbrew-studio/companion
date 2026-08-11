@@ -73,7 +73,12 @@ const variableSchema = z
   .refine((v) => v.hidden || noInlineCredential(v.value ?? ''), {
     message: 'that looks like a credential; tick "hidden" so it goes to the secret store instead',
   })
-  .refine((v) => v.hidden || (v.value ?? '') !== '', { message: 'a visible variable needs a value' });
+  .refine((v) => v.hidden || (v.value ?? '') !== '', { message: 'a visible variable needs a value' })
+  // The output scrubber cannot redact a 1-3 char value without mangling normal
+  // text, so a secret that short would run unprotected; refuse it at the door.
+  .refine((v) => !v.hidden || v.value === undefined || v.value.length >= 4, {
+    message: 'a hidden value shorter than 4 characters cannot be redacted from step output',
+  });
 
 /** A variable that must be hidden, for a slot whose whole purpose is a credential. */
 const hiddenVariableSchema = variableSchema.refine((v) => v.hidden, {
