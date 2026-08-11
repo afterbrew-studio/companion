@@ -14,9 +14,11 @@ import { useAuth } from '../lib/auth.js';
  * own compile-checked permission) via `defineOnboarding`, and the shell hands us
  * `useKernel().onboarding` — already ordered and covering only enabled modules.
  * Steps are role-aware (a step whose declared permission the user lacks is
- * dropped), and the finish button deep-links to the most useful next action.
- * Seen step keys are remembered in localStorage, but the shell never opens a
- * tour automatically; empty states provide contextual guidance instead.
+ * dropped, and a step declaring `withoutPermission` shows only to viewers who
+ * lack that permission), and the finish button deep-links to the most useful
+ * next action. Seen step keys are remembered in localStorage; the shell opens
+ * the full tour automatically on a browser's first visit (gated on
+ * `hasOnboarded`) and never again after dismissal.
  */
 
 const SEEN_KEY = 'companion.onboarding.seen';
@@ -38,7 +40,9 @@ export type OnboardingMode = 'full' | 'whatsnew';
 
 /** Steps this role can see. */
 function visibleSteps(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): OnboardingStep[] {
-  return steps.filter((s) => !s.permission || can(s.permission));
+  return steps.filter(
+    (s) => (!s.permission || can(s.permission)) && (!s.withoutPermission || !can(s.withoutPermission)),
+  );
 }
 
 /** The best first action for the role: the lowest-order visible step that
@@ -46,13 +50,6 @@ function visibleSteps(steps: readonly OnboardingStep[], can: (p: Permission) => 
 function finishCta(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): { label: string; href: string } {
   const step = visibleSteps(steps, can).find((s) => s.cta);
   return step?.cta ?? { label: 'Go to Overview', href: '#/overview' };
-}
-
-/** Role-visible steps a returning user hasn't been shown yet (new features). */
-export function hasUnseenOnboarding(steps: readonly OnboardingStep[], can: (p: Permission) => boolean): boolean {
-  if (!hasOnboarded()) return false;
-  const seen = seenKeys();
-  return visibleSteps(steps, can).some((s) => !seen.has(s.key));
 }
 
 export function Onboarding({
@@ -67,8 +64,8 @@ export function Onboarding({
   const { can, user } = useAuth();
   const all = visibleSteps(steps, can);
   const seen = seenKeys();
-  // Full tour shows everything; "what's new" shows only the unseen steps (and
-  // never renders empty — App gates on hasUnseenOnboarding first).
+  // Full tour shows everything; "what's new" shows only the unseen steps (a
+  // host using it must gate on unseen steps existing, or it renders empty).
   const shown = mode === 'whatsnew' ? all.filter((s) => !seen.has(s.key)) : all;
   const [i, setI] = useState(0);
   const [playing, setPlaying] = useState(true);
