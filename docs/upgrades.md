@@ -14,7 +14,15 @@ forward-only and the runner protocol is strict.
    [`configuration.md`](configuration.md#common-variables)); take a manual one
    anyway so the pre-upgrade state has an unambiguous file. Remember that a
    database snapshot deliberately excludes the `secret-key` file: keep that
-   backed up through a separate secret path.
+   backed up through a separate secret path. The moxxy credential home is a
+   second artifact for the same reason: `~/.moxxy` (in Docker the
+   `companion-moxxy` volume at `/home/node/.moxxy`) holds the provider vault
+   (`vault.json`, `vault.key`, `providers.json`) that agent runs authenticate
+   with, and none of it lives in the database, so restoring a snapshot alone
+   leaves an instance with no AI providers. The scheduled job archives it as a
+   timestamped `moxxy-home-<stamp>.tar.gz` beside each snapshot, pruned to the
+   same retention count; without scheduled backups, copy that directory
+   yourself in the same maintenance window.
 2. **Note the versions you are on.** The daemon version is in the UI footer and
    in `companion --version`; runner machines report theirs on the Runners page.
    A rollback needs the exact number, not "whatever was there before".

@@ -1,4 +1,5 @@
 import { chmodSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -109,7 +110,16 @@ async function main(): Promise<void> {
   await kernel.boot();
 
   const stopBackups = config.backup
-    ? startScheduledBackups({ dbPath, dir: config.backup.dir, keep: config.backup.keep, log })
+    ? startScheduledBackups({
+        dbPath,
+        dir: config.backup.dir,
+        keep: config.backup.keep,
+        // The daily moxxy home holding the credential vault, the same
+        // resolution operate's provider import uses (in Docker: the
+        // companion-moxxy volume at /home/node/.moxxy).
+        moxxyDir: join(homedir(), '.moxxy'),
+        log,
+      })
     : undefined;
 
   // Serve the built SPA when present (production); dev uses Vite + proxy.
