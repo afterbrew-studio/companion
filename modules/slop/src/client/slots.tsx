@@ -49,7 +49,7 @@ function SlopRadarWidget(): React.JSX.Element | null {
       description={
         <>
           Actionable PR assessments, ranked by technical risk and missing evidence — not by who or what authored them.{' '}
-          <a className="linkish" href="#/slop">
+          <a className="linkish" href="#/contribution-quality">
             View all assessments
           </a>
         </>
@@ -57,7 +57,7 @@ function SlopRadarWidget(): React.JSX.Element | null {
     >
       <ListCard ariaLabel="Contribution assessments awaiting review">
         {hot.map((d) => (
-          <a key={d.id} className="row-link" href={`#/slop/${d.id}`}>
+          <a key={d.id} className="row-link" href={`#/contribution-quality/${d.id}`}>
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{d.prTitle}</span>
               <span className="dim mt-0.5 block truncate font-mono text-xs">

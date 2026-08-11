@@ -34,11 +34,11 @@ import { ACTION_LABEL, STATUS_META } from '../detection-meta.js';
 import { useSlopDetections } from '../hooks/useSlopDetections.js';
 
 /**
- * The workspace's slop detections: a filterable list (RunsPage-style rows);
- * each row links to the detection's own page (#/slop/:id) with the full
- * verdict + apply/dismiss actions. Detection is review-then-apply: a verdict
- * never touches GitHub until someone applies it there (or a pipeline gates on
- * the score).
+ * The workspace's contribution assessments: a filterable list (RunsPage-style
+ * rows); each row links to the detection's page (#/contribution-quality/:id)
+ * with the full verdict + apply/dismiss actions. Detection is
+ * review-then-apply: a verdict never touches GitHub until someone applies it
+ * there (or a pipeline gates on the score).
  */
 export default function Slop(): React.JSX.Element {
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['status', 'repo', 'quality'] as const);
@@ -69,7 +69,7 @@ export default function Slop(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Contribution Quality"
+        title="Contribution quality"
         subtitle={`${current.name}: assess value, evidence, risk and reviewability; provenance never decides quality by itself`}
         actions={
           <div className="flex items-center gap-1.5">
@@ -127,7 +127,7 @@ export default function Slop(): React.JSX.Element {
               <IconButton
                 label="Quality rules"
                 className="flex size-9 items-center justify-center"
-                onClick={() => (window.location.hash = '/slop/rules')}
+                onClick={() => (window.location.hash = '/contribution-quality/rules')}
               >
                 <NavIcon>
                   <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
@@ -198,7 +198,7 @@ function DetectionRow({ detection: d }: { detection: SlopDetectionResult }): Rea
     ...(d.status === 'running' ? ['the agent is reading the diff and rules'] : []),
   ];
   return (
-    <a className="row-link" href={`#/slop/${d.id}`}>
+    <a className="row-link" href={`#/contribution-quality/${d.id}`}>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
           <span className="dim shrink-0 font-mono text-xs">
