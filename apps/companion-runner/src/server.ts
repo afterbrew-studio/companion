@@ -129,7 +129,10 @@ export function startAgentServer(opts: {
   hub: EventHub;
 }): Promise<Server> {
   const { host, port, tokens, deps, hub } = opts;
-  const wss = new WebSocketServer({ noServer: true });
+  // /agent/events is push-only (the daemon listens; commands go over REST), so
+  // inbound frames are protocol chatter at most; 1 MiB bounds what a peer can
+  // make the runner buffer per message.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
   const server = createServer((req, res) => {
     void handle(req, res, tokens, deps, hub);

@@ -35,7 +35,10 @@ export interface WsScopeRegistry {
 }
 
 export class WsHub implements WsScopeRegistry {
-  private readonly wss = new WebSocketServer({ noServer: true });
+  // This socket is strictly server-to-browser push (browser mutations go over
+  // REST), so a large inbound frame is never legitimate; 1 MiB bounds what an
+  // authenticated client can make the daemon buffer per message.
+  private readonly wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   /** Which user each socket authenticated as — for per-user directives. */
   private readonly owner = new WeakMap<WebSocket, string>();
   private readonly resolvers = new Map<string, ScopeResolver>();
@@ -51,6 +54,11 @@ export class WsHub implements WsScopeRegistry {
 
   unregisterScopeResolver(id: string): void {
     this.resolvers.delete(id);
+  }
+
+  /** Open SPA sockets, for the ws_connections gauge. */
+  connectionCount(): number {
+    return this.wss.clients.size;
   }
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -69,6 +77,10 @@ export class WsHub implements WsScopeRegistry {
       return;
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => {
+      // A protocol violation (an over-maxPayload frame included) surfaces as
+      // 'error'; without a listener that one frame would crash the process
+      // instead of just closing the offending socket.
+      ws.on('error', (err) => log.warn('SPA ws error', { err: String(err) }));
       this.owner.set(ws, user.username);
       this.wss.emit('connection', ws, req);
       this.send(ws, { t: 'hello', version: this.appVersion });
