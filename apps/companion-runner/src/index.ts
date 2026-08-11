@@ -106,8 +106,10 @@ async function main(): Promise<void> {
   const tokens = new RunnerTokens(config.home, config.tokenEnv);
   if (!tokens.usable) {
     const { token, secret } = tokens.issue('first boot');
-    log.info(`issued the first runner token ${token.id}: ${secret}`);
-    log.info('register this machine in Companion with that token; rotate it with "companion-runner token"');
+    // This log may be persisted (background mode, service managers), so it
+    // carries a fingerprint, never the credential itself.
+    log.info(`issued the first runner token ${token.id} (${secret.slice(0, 4)}..., ${secret.length} chars)`);
+    log.info('register this machine in Companion with a token from "companion-runner token rotate"');
   }
 
   // Same moxxy-home bootstrap companiond does: deny rules fence unattended
