@@ -6,7 +6,7 @@ test('fresh approval publishes one clean, templated, repo-shaped draft PR', asyn
   const calls = [];
   const run = {
     id: 'fix-568',
-    repo: 'octanejs/octane',
+    repo: 'example-org/example-repo',
     branch: 'test/harden-probes-abcd',
     cwd: '/tmp/fix-568',
     runner_id: null,
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`,
     viewer: async () => ({ login: 'alice' }),
     createPr: async (_repo, args) => {
       created.push(args);
-      return { html_url: 'https://github.com/octanejs/octane/pull/999', number: 999 };
+      return { html_url: 'https://github.com/example-org/example-repo/pull/999', number: 999 };
     },
   };
   const store = {
@@ -90,7 +90,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`,
 
   const result = await fixes.approve(run.id, {}, 'alice');
 
-  assert.equal(result.prUrl, 'https://github.com/octanejs/octane/pull/999');
+  assert.equal(result.prUrl, 'https://github.com/example-org/example-repo/pull/999');
   assert.deepEqual(calls[0], [
     'commit',
     run.cwd,
