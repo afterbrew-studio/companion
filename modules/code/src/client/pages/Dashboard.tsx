@@ -96,13 +96,13 @@ export function DashboardPage(): React.JSX.Element {
           tone={liveRuns && liveRuns.length > 0 ? 'ok' : 'default'}
           href="#/runs"
         />
-        {/* plan owns proposals; without it there is no page to link to. */}
-        {planEnabled ? (
+        {/* plan owns proposals; without it there is no page to link to, and an
+            empty archive is not worth a tile. */}
+        {planEnabled && actionableProposals && actionableProposals.length > 0 ? (
           <StatTile
-            label="Legacy proposals"
-            loading={actionableProposals === null}
-            value={actionableProposals?.length ?? 0}
-            tone={actionableProposals && actionableProposals.length > 0 ? 'warn' : 'default'}
+            label="Archived proposals"
+            value={actionableProposals.length}
+            tone="warn"
             href="#/legacy-proposals"
           />
         ) : null}
@@ -184,7 +184,7 @@ export function DashboardPage(): React.JSX.Element {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{p.title}</span>
                   <span className="dim block truncate text-xs">
-                    legacy proposal {p.status === 'review' ? 'ready for review' : 'awaiting approval'}
+                    archived proposal {p.status === 'review' ? 'ready for review' : 'awaiting approval'}
                   </span>
                 </span>
                 <span className="dim shrink-0">{timeAgo(p.updatedAt)}</span>

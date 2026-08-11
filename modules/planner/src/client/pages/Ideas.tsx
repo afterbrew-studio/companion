@@ -226,7 +226,7 @@ export default function Ideas(): React.JSX.Element {
 
         {legacyActiveCount > 0 ? (
           <a href="#/legacy-proposals" className="mx-auto mt-6 block max-w-3xl rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60">
-            {legacyActiveCount} legacy proposal{legacyActiveCount === 1 ? '' : 's'} still need attention. Open legacy proposals.
+            {legacyActiveCount} archived proposal{legacyActiveCount === 1 ? '' : 's'} still need attention. Open archived proposals.
           </a>
         ) : null}
       </div>
