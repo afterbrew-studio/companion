@@ -1,0 +1,56 @@
+{
+  "name": "companion-module-hello",
+  "version": "0.1.0",
+  "description": "A minimal out-of-tree Companion module: one permission, one route, one table, one page.",
+  "type": "module",
+  "license": "MIT",
+  "moxxy": {
+    "id": "hello",
+    "abi": "0.x",
+    "manifest": "./dist/module.js",
+    "api": "./dist/api.js",
+    "client": "./dist/client.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "moxxy",
+    "companion",
+    "module",
+    "example"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "tsc -p tsconfig.json && node build.mjs"
+  },
+  "devDependencies": {
+    "@moxxy/companion-contracts": "workspace:^",
+    "@moxxy/companion-sdk": "workspace:^",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "esbuild": "^0.28.1",
+    "react": "^19.2.8",
+    "typescript": "^7.0.2",
+    "zod": "^3.24.0"
+  },
+  "peerDependencies": {
+    "@moxxy/companion-contracts": "^0.6.1",
+    "@moxxy/companion-sdk": "^0.8.2",
+    "react": "^19.2.8",
+    "zod": "^3.24.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moxxy-ai/companion.git",
+    "directory": "examples/companion-module-hello"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
+  }
+}
