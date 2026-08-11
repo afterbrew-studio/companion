@@ -108,3 +108,31 @@ test('the under-gated lane model route is gone', () => {
   const { routes } = fixture();
   assert.equal(routes.find((c) => c.path === '/api/me/lane/model'), undefined);
 });
+
+test('a disabled shared machine is not choosable either', async () => {
+  const { store, orchestrator, run } = fixture();
+  store.runners.update('runner-shared', { enabled: false });
+  await assert.rejects(
+    () => run('PUT', '/api/me/lane', {}, { runnerId: 'runner-shared', harness: null }, bob),
+    (err) => err.status === 404,
+  );
+  assert.deepEqual(orchestrator.userLane('bob'), { runnerId: null, harness: null });
+});
+
+test('a stale stored lane renders as auto instead of a machine the picker no longer offers', async () => {
+  const { store, orchestrator, run } = fixture();
+  // Stored before the guard existed (or before the machine changed hands):
+  // written directly, bypassing the route.
+  orchestrator.setUserLane('bob', { runnerId: 'runner-ana', harness: null });
+  const snapshot = await run('GET', '/api/me/lane', {}, undefined, bob);
+  assert.deepEqual(snapshot.lane, { runnerId: null, harness: null });
+  // The owner's own view of the same machine stays intact.
+  orchestrator.setUserLane('ana', { runnerId: 'runner-ana', harness: null });
+  const own = await run('GET', '/api/me/lane', {}, undefined, ana);
+  assert.equal(own.lane.runnerId, 'runner-ana');
+  // A machine that got disabled after being chosen degrades the same way.
+  orchestrator.setUserLane('bob', { runnerId: 'runner-shared', harness: null });
+  store.runners.update('runner-shared', { enabled: false });
+  const disabled = await run('GET', '/api/me/lane', {}, undefined, bob);
+  assert.deepEqual(disabled.lane, { runnerId: null, harness: null });
+});

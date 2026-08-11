@@ -86,10 +86,12 @@ export class PipelinesStore {
     this.db.prepare(`DELETE FROM pipelines WHERE id = ?`).run(id);
   }
 
-  /** Workspace-delete cleanup: every pipeline and library step the workspace owns. */
+  /** Workspace-delete cleanup: every pipeline, library step and run history row
+   *  the workspace owns; a deleted workspace must not keep invisible history. */
   deleteByWorkspace(workspaceId: string): void {
     this.db.prepare(`DELETE FROM pipelines WHERE workspace_id = ?`).run(workspaceId);
     this.db.prepare(`DELETE FROM step_definitions WHERE workspace_id = ?`).run(workspaceId);
+    this.db.prepare(`DELETE FROM pipeline_runs WHERE workspace_id = ?`).run(workspaceId);
   }
 
   // ---------- step definitions (custom step library) --------------------------------

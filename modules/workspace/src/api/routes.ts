@@ -17,14 +17,6 @@ type CodeReportAccess = {
   };
 };
 
-// pipelines/step_definitions are code-owned; a workspace delete asks their
-// owner to clean up, and skips silently when the module is absent.
-type CodePipelinesCleanup = {
-  readonly pipelines: {
-    removeForWorkspace(workspaceId: string): void;
-  };
-};
-
 const workspaceSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(500).default(''),
@@ -196,11 +188,10 @@ export default defineRoutes((ctx) => {
         if (workspaces.list().length === 1) {
           throw badRequest('cannot delete the last workspace');
         }
-        const code = (ctx.services.tryGet.bind(ctx.services) as (key: string) => unknown)('code') as
-          | CodePipelinesCleanup
-          | undefined;
-        code?.pipelines.removeForWorkspace(params.id);
         workspaces.delete(params.id);
+        // Owners of workspace-scoped tables in other modules (code's pipelines)
+        // clean up on this signal; typed, and soft by construction.
+        ctx.bus.emit('workspace.deleted', { workspaceId: params.id });
         ctx.broadcast({ t: 'workspaces.changed' });
         return { ok: true };
       },

@@ -197,7 +197,15 @@ export default defineRoutes((ctx) => {
    * and the models set on the chosen lane.
    */
   const laneSnapshot = (user: AuthUser | null) => {
-    const lane = user ? op.orchestrator.userLane(user.username) : { runnerId: null, harness: null };
+    const stored = user ? op.orchestrator.userLane(user.username) : { runnerId: null, harness: null };
+    // A stored lane can outlive its machine (deleted, disabled, or a pre-guard
+    // foreign id): placement already refuses it, so present it as auto instead
+    // of a selection the picker below does not offer.
+    const choosable = (id: string): boolean => {
+      const runner = op.runners.get(id);
+      return !!runner && runner.enabled && (runner.ownerId === null || runner.ownerId === user?.username);
+    };
+    const lane = stored.runnerId !== null && !choosable(stored.runnerId) ? { runnerId: null, harness: null } : stored;
     return {
       lane,
       // Personal machines belonging to somebody else are not choices this
