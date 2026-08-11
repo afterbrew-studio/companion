@@ -39,17 +39,17 @@
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
     "@moxxy/companion-ui": "workspace:*",
-    "@moxxy/plugin-tunnel-proxy": "^0.29.0",
-    "@moxxy/sdk": "^0.29.0",
-    "ws": "^8.18.0",
-    "zod": "^3.24.0",
+    "@moxxy/plugin-tunnel-proxy": "^0.36.1",
+    "@moxxy/sdk": "^0.36.1",
+    "ws": "^8.21.3",
+    "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.2.18",
     "@types/ws": "^8.5.13",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "typescript": "^5.8.0"
   },
   "sideEffects": false

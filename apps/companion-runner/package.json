@@ -32,7 +32,7 @@
     "prepublishOnly": "pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.21.3"
   },
   "peerDependencies": {
     "@moxxy/cli": "*"
@@ -47,7 +47,7 @@
     "@moxxy/companion-runtime": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
-    "@moxxy/plugin-tunnel-proxy": "^0.29.0",
+    "@moxxy/plugin-tunnel-proxy": "^0.36.1",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.25.12",
