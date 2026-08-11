@@ -44,11 +44,11 @@
     "@moxxy/companion-core": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.13.3",
     "companion-api": "workspace:*",
     "companion-web": "workspace:*",
-    "esbuild": "^0.25.12",
-    "typescript": "^5.8.0"
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public"

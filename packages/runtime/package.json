@@ -35,8 +35,8 @@
   },
   "devDependencies": {
     "@moxxy/companion-types": "workspace:*",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^24.13.3",
+    "typescript": "^7.0.2"
   },
   "files": [
     "dist/**/*.js",
