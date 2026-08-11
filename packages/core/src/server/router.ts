@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import type { AuthUser, Authenticator, Permission, RouteAccess } from '@moxxy/companion-contracts';
-import { withRequestUser, type Logger } from '@moxxy/companion-services';
+import { createRequestContext, runWithRequestContext, type Logger, type RequestContext } from '@moxxy/companion-services';
 import type { AuditEvent } from './capabilities.js';
 import { clientAddressFrom, TrustedProxies } from './client-address.js';
 
@@ -251,8 +251,17 @@ export class DynamicRouter {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const method = (req.method ?? 'GET') as HttpMethod;
     const path = url.pathname;
+    const clientAddress = clientAddressFrom(
+      req.socket.remoteAddress ?? 'unknown',
+      req.headers['x-forwarded-for'],
+      this.trustedProxies,
+    );
+    const agent = (req.headers['user-agent'] ?? '').slice(0, 256) || undefined;
     /** The route we committed to, so the catch block can audit a refusal. */
     let matched: CompiledRoute | null = null;
+    /** Kept outside the storage scope so the audit paths (success AND catch)
+     *  can read the actor a public-route handler claimed. */
+    let reqCtx: RequestContext | null = null;
     if (this.observe) {
       const observe = this.observe;
       // 'finish' = the response was fully written; an aborted connection is
@@ -304,19 +313,15 @@ export class DynamicRouter {
           params[key] = decodeURIComponent(match[i + 1] ?? '');
         });
         const rawBody = method === 'GET' ? {} : await readBody(req);
-        const clientAddress = clientAddressFrom(
-          req.socket.remoteAddress ?? 'unknown',
-          req.headers['x-forwarded-for'],
-          this.trustedProxies,
-        );
-        const result = await withRequestUser(user, () =>
+        reqCtx = createRequestContext(user);
+        const result = await runWithRequestContext(reqCtx, () =>
           r.run(params, url.searchParams, rawBody, user, token, clientAddress),
         );
         const status = result instanceof Reply ? result.status : 200;
         // AFTER the handler: recording an attempt that then threw would claim
         // changes that never happened. Failures are audited in sendError, with
         // their real status.
-        this.recordIfMutating(r, user, status);
+        this.recordIfMutating(r, user?.username ?? reqCtx.auditActor ?? null, status, clientAddress, agent);
         if (result instanceof Reply) {
           await send(res, result);
           return;
@@ -333,21 +338,32 @@ export class DynamicRouter {
       // A refused mutation is exactly what an auditor wants to see, so record it
       // with the status the client got. `matched` is null when nothing matched.
       const status = statusOf(err) ?? (err instanceof z.ZodError ? 400 : 500);
-      if (matched) this.recordIfMutating(matched, this.actorOf(req), status);
+      if (matched) {
+        const actor = this.actorOf(req)?.username ?? reqCtx?.auditActor ?? null;
+        this.recordIfMutating(matched, actor, status, clientAddress, agent);
+      }
       return sendError(res, err, method, path, this.log);
     }
   }
 
   /** Reads are not audited: they would bury the writes and the table is append-only. */
-  private recordIfMutating(route: CompiledRoute, user: AuthUser | null, status: number): void {
+  private recordIfMutating(
+    route: CompiledRoute,
+    actor: string | null,
+    status: number,
+    ip: string,
+    agent: string | undefined,
+  ): void {
     if (route.method === 'GET') return;
     this.audit({
       at: Date.now(),
-      actor: user?.username ?? null,
+      actor,
       action: `${route.method} ${route.path}`,
       access: Array.isArray(route.access) ? route.access.join(' & ') : route.access as string,
       status,
       module: route.moduleId ?? null,
+      ip,
+      ...(agent ? { agent } : {}),
     });
   }
 

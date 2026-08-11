@@ -162,7 +162,9 @@ function scanUsage(mods) {
       const rel = file.slice(root.length + 1);
       const add = (permission, kind) => uses.push({ module: m.id, permission, kind, at: rel });
       for (const [, p] of src.matchAll(/\baccess:\s*'([^']+)'/g)) {
-        if (p !== 'public' && p !== 'any') add(p, 'route');
+        // 'system' and 'raw' are AuditEvent.access vocabulary (job- and
+        // raw-route-emitted records), not route gates.
+        if (p !== 'public' && p !== 'any' && p !== 'system' && p !== 'raw') add(p, 'route');
       }
       for (const [, body] of src.matchAll(/\baccess:\s*\[([^\]]+)\]/g)) {
         for (const [, p] of body.matchAll(/'([^']+)'/g)) add(p, 'route');

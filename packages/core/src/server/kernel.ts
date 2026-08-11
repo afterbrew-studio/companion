@@ -177,7 +177,9 @@ export class ModuleKernel {
       },
       isEnabled: (id) => this.isEnabled(id),
     };
-    this.rawRouter = new RawRouter(this.log);
+    this.rawRouter = new RawRouter(this.log, (e) => this.recordAudit(e), {
+      trustedProxies: opts.config.trustedProxies,
+    });
     const httpRequests = this.metrics.counter(
       'companion_http_requests_total',
       'HTTP requests answered by the API router, by route pattern and status class',

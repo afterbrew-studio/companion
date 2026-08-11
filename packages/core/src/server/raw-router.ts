@@ -1,6 +1,8 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '@moxxy/companion-services';
 import { readRawBody, StatusError, type HttpMethod, type PathParams } from './router.js';
+import { clientAddressFrom, TrustedProxies } from './client-address.js';
+import type { AuditEvent } from './capabilities.js';
 
 /**
  * Raw-body routes: the escape hatch for endpoints that must NOT go through the
@@ -96,8 +98,18 @@ export class RawRouter {
   private flat: readonly CompiledRawRoute[] = [];
   private readonly disabled = new Map<string, readonly CompiledRawRoute[]>();
   private disabledFlat: readonly CompiledRawRoute[] = [];
+  private readonly trustedProxies: TrustedProxies;
 
-  constructor(private readonly log: Logger) {}
+  constructor(
+    private readonly log: Logger,
+    /** Same sink the JSON router feeds. Raw routes are the unauthenticated
+     *  webhook surface, so a rejected signature is exactly what an auditor
+     *  wants to see; the actor is always null (a webhook has no session). */
+    private readonly audit: (event: AuditEvent) => void = () => {},
+    options: { trustedProxies?: readonly string[] } = {},
+  ) {
+    this.trustedProxies = new TrustedProxies(options.trustedProxies ?? []);
+  }
 
   mount(moduleId: string, routes: readonly CompiledRawRoute[]): void {
     if (!routes.length) return;
@@ -161,6 +173,7 @@ export class RawRouter {
       try {
         const body = await readRawBody(req, r.maxBytes);
         const reply = await r.run(params, url.searchParams, req.headers, body);
+        this.recordIfMutating(r, req, reply.status);
         res.writeHead(reply.status, { 'content-type': reply.contentType ?? 'text/plain' });
         res.end(reply.body);
       } catch (err) {
@@ -169,6 +182,7 @@ export class RawRouter {
         // 413), but never reflect an arbitrary handler/SQLite error to an
         // unauthenticated webhook caller.
         const status = err instanceof StatusError ? err.status : 500;
+        this.recordIfMutating(r, req, status);
         res.writeHead(status, { 'content-type': 'text/plain' });
         res.end(err instanceof StatusError ? err.message : 'raw route failed');
       }
@@ -188,5 +202,22 @@ export class RawRouter {
       }
     }
     return false;
+  }
+
+  /** Mirrors the JSON router's rule: only writes are recorded, with the status
+   *  the caller got, so a refused webhook signature leaves a trail. */
+  private recordIfMutating(route: CompiledRawRoute, req: IncomingMessage, status: number): void {
+    if (route.method === 'GET') return;
+    const agent = (req.headers['user-agent'] ?? '').slice(0, 256);
+    this.audit({
+      at: Date.now(),
+      actor: null,
+      action: `${route.method} ${route.path}`,
+      access: 'raw',
+      status,
+      module: route.moduleId ?? null,
+      ip: clientAddressFrom(req.socket?.remoteAddress ?? 'unknown', req.headers['x-forwarded-for'], this.trustedProxies),
+      ...(agent ? { agent } : {}),
+    });
   }
 }

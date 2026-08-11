@@ -95,6 +95,7 @@ export {
   likeArg,
   safeParse,
   currentUser,
+  claimAuditActor,
   log,
   assertPublicHttpTarget,
   isPublicAddress,
