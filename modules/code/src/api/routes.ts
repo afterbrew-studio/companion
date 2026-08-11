@@ -13,6 +13,7 @@ import { PrReviewFindingsStore, PrReviewsStore } from './pr-reviews-store.js';
 import { PipelinesStore } from './pipelines-store.js';
 import { toStat } from './quality.js';
 import { GitHubError } from './github-client.js';
+import { mapConcurrent } from './concurrency.js';
 import { gradeRepoPermissions } from './github-accounts.js';
 
 // ---------- repos ----------
@@ -724,17 +725,6 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    route({
-      method: 'GET',
-      path: '/api/repos/:owner/:name/triage',
-      access: 'issues:read',
-      handler: async ({ params, user }) => {
-        const { fullName } = requireRepo(user, params.owner, params.name);
-        await requirePersonalRepoAccess(user, fullName);
-        return { results: triageStore.list(fullName) };
-      },
-    }),
-
     // ---------- issues -----------------------------------------------------------
 
     route({
@@ -1089,6 +1079,7 @@ export default defineRoutes((ctx) => {
           { username: user!.username },
         );
         if (!result) throw badRequest(`your connected GitHub accounts cannot update ${fullName}`);
+        await code.sync.syncIssue(fullName, issue.number, user!.username);
         return { ok: true as const };
       },
     }),
@@ -1272,17 +1263,6 @@ export default defineRoutes((ctx) => {
         if (pipeline.type !== 'pr') throw badRequest(`"${pipeline.name}" is a ${pipeline.type} pipeline`);
         const run = code.pipelines.start(params.pipelineId, fullName, pr.number, 'manual', user!.username, mayExecute(user));
         return created({ run });
-      },
-    }),
-
-    route({
-      method: 'GET',
-      path: '/api/repos/:owner/:name/prs/:number/pipeline-runs',
-      access: 'prs:read',
-      handler: async ({ params, user }) => {
-        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
-        await requirePersonalRepoAccess(user, fullName);
-        return { runs: pipelinesStore.listRunsForPr(fullName, pr.number) };
       },
     }),
 
@@ -1544,13 +1524,13 @@ export default defineRoutes((ctx) => {
           throw badRequest('a workspace-selected account needs at least one workspace');
         }
         if (nextScope === 'selected') requireAccessibleWorkspaceIds(user, nextWorkspaceIds);
-        return {
-          account: code.githubAccounts.update(params.id, {
-            ...(body.purposes === undefined ? {} : { purposes: body.purposes }),
-            ...(body.scope === undefined ? {} : { scope: nextScope }),
-            ...(body.workspaceIds === undefined ? {} : { workspaceIds: body.workspaceIds }),
-          }),
-        };
+        const updated = code.githubAccounts.update(params.id, {
+          ...(body.purposes === undefined ? {} : { purposes: body.purposes }),
+          ...(body.scope === undefined ? {} : { scope: nextScope }),
+          ...(body.workspaceIds === undefined ? {} : { workspaceIds: body.workspaceIds }),
+        });
+        ctx.broadcast({ t: 'repos.changed' });
+        return { account: updated };
       },
     }),
 
@@ -2022,19 +2002,3 @@ function pick<T extends string>(value: string | null, allowed: readonly T[]): T 
   return allowed.includes(value as T) ? (value as T) : undefined;
 }
 
-async function mapConcurrent<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  work: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]!, index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
-  return results;
-}
