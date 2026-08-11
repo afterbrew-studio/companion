@@ -178,6 +178,7 @@ export class ModuleKernel {
       },
       this.log,
       (e) => this.recordAudit(e),
+      { trustedProxies: opts.config.trustedProxies },
     );
   }
 

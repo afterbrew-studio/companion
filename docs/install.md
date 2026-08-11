@@ -303,6 +303,24 @@ run. Two ways out.
   plane (UI, GitHub sync, orchestration) and attach [runners](runners.md) that
   already have moxxy configured.
 
+## Behind a reverse proxy (TLS)
+
+Companion expects TLS to terminate at a reverse proxy (Coolify above, or your
+own nginx, Caddy or Traefik). Two settings make that topology behave:
+
+- `COMPANION_PUBLIC_URL=https://companion.example.com` enables Secure cookies
+  and HSTS and gives SSO, notifications and remote runners their outward
+  address.
+- `COMPANION_TRUSTED_PROXIES=<proxy IP or CIDR>` names the proxy. Behind a
+  proxy every TCP connection arrives from the proxy's own address, so without
+  this setting the login throttle keys every sign-in attempt to that one
+  address and `X-Forwarded-For` is (correctly) ignored. With it, requests
+  arriving from a listed address take the client address from
+  `X-Forwarded-For`, using the rightmost hop that is not itself a trusted
+  proxy, so a client cannot dodge the throttle by prepending fake hops.
+  Connections from any other peer keep ignoring the header entirely. See
+  [`configuration.md`](configuration.md#common-variables).
+
 ## From source, without Docker
 
 ```sh

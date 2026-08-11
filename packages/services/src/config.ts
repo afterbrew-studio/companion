@@ -147,6 +147,12 @@ export interface DaemonConfig {
   users: readonly UserCredential[];
   /** Optional operator-supplied first-admin capability; never returned by HTTP. */
   bootstrapToken?: string;
+  /**
+   * Reverse proxies (IPs or CIDRs) whose X-Forwarded-For identifies the real
+   * client. From any other peer the header is ignored, so the login throttle
+   * cannot be steered by a spoofed header.
+   */
+  trustedProxies?: readonly string[];
 }
 
 const DEFAULTS = {
@@ -231,7 +237,17 @@ export function loadDaemonConfig(): DaemonConfig {
     },
     users,
     bootstrapToken: env.COMPANION_BOOTSTRAP_TOKEN?.trim() || undefined,
+    trustedProxies: listFrom(env.COMPANION_TRUSTED_PROXIES),
   };
+}
+
+/** Comma-separated list; syntax of each entry is validated where it is used. */
+function listFrom(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
 }
 
 /** Only these bind names guarantee that another machine cannot connect. */
