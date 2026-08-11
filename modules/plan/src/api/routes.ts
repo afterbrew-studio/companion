@@ -169,15 +169,6 @@ export default defineRoutes((ctx) => {
     // ---------- proposals ----------------------------------------------------------
 
     route({
-      method: 'GET',
-      path: '/api/proposals',
-      access: 'proposals:read',
-      handler: ({ user }) => ({
-        proposals: proposalsStore.list().filter((proposal) => workspace.canAccessWorkspace(user!, proposal.workspaceId)),
-      }),
-    }),
-
-    route({
       method: 'POST',
       path: '/api/proposals',
       access: 'proposals:create',
@@ -218,20 +209,6 @@ export default defineRoutes((ctx) => {
         requireProposal(user, params.id);
         try {
           return { proposal: plan.proposals.update(params.id, body) };
-        } catch (err) {
-          throw badRequest(String(err instanceof Error ? err.message : err));
-        }
-      },
-    }),
-
-    route({
-      method: 'POST',
-      path: '/api/proposals/:id/accept-plan',
-      access: 'proposals:act',
-      handler: ({ params, user }) => {
-        requireProposal(user, params.id);
-        try {
-          return { proposal: plan.proposals.acceptPlan(params.id) };
         } catch (err) {
           throw badRequest(String(err instanceof Error ? err.message : err));
         }
@@ -478,8 +455,8 @@ export default defineRoutes((ctx) => {
       access: 'docs:read',
       handler: ({ params, query, user }) => {
         requireWorkspace(user, params.id);
-        const q = query.get('q') ?? '';
-        const limit = Math.min(Number(query.get('limit')) || 8, 25);
+        const q = queryText(query.get('q'), 200, 'q') ?? '';
+        const limit = pageInteger(query.get('limit'), 8, 1, 25, 'limit');
         return { hits: plan.docs.search(params.id, q, limit) };
       },
     }),

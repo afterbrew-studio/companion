@@ -21,7 +21,7 @@ export const onboarding = defineOnboarding([
     permission: 'specs:read',
     title: 'Plan and build from an outcome',
     body: 'Describe a feature as an outcome, keep lasting behavior in Specifications, and give agents shared context in Documentation. Each surface starts with one clear next step.',
-    chips: ['Feature planning', 'Specifications', 'Documentation', 'Task Board'],
+    chips: ['Feature planning', 'Specifications', 'Documentation', 'Task board'],
     art: (playing) => <PlanArt playing={playing} />,
     cta: { label: 'Browse specifications', href: '#/specs' },
   },

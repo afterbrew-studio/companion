@@ -1223,7 +1223,6 @@ export class Orchestrator implements RunnerEventSink {
         } else {
           this.setStatus(run.id, 'completed');
         }
-        this.resultSchemas.delete(run.id);
         return { runId: run.id, finalMessage };
       } catch (err) {
         this.setStatus(run.id, 'failed', String(err));
@@ -1231,6 +1230,7 @@ export class Orchestrator implements RunnerEventSink {
       } finally {
         await this.stopRun(run.id).catch(() => undefined);
         this.usageObservers.delete(run.id);
+        this.resultSchemas.delete(run.id);
       }
     };
     return this.scheduleOneShot(

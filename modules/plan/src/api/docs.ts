@@ -298,28 +298,42 @@ export class Docs {
     opts: { repo?: string; instructions: string; storage?: AreaStorage },
     userId: string,
   ): Promise<DocRecord> {
-    let cwd: string | null = null;
-    if (opts.repo) {
-      if (!this.checkouts.hasClone(opts.repo)) throw new Error(`repo ${opts.repo} has no clone yet`);
-      cwd = this.checkouts.cloneDir(opts.repo);
-    }
     // Resolve up front so a repo request against an unconfigured workspace
     // fails before any agent time is spent.
     this.resolveStorage(workspaceId, opts.repo ?? null, opts.storage);
-    const { finalMessage } = await this.orchestrator.runOneShot({
-      kind: 'analysis',
-      task: 'plan.analyses',
-      title: `Write documentation: ${opts.instructions.slice(0, 60)}`,
-      // The orchestrator mkdirs whatever cwd it gets.
-      cwd: cwd ?? join(paths.scratch(), 'docs'),
-      repo: opts.repo ?? null,
-      // Scratch generation is still a person's action. Keeping the owner on
-      // the run makes live RBAC revocation and transcript visibility uniform.
-      userId,
-      prompt: generatePrompt(opts.instructions, Boolean(cwd)),
-      resultSchema: resultSchemaOf(draftSchema),
-      timeoutMs: 8 * 60_000,
-    });
+    const run = (cwd: string): Promise<{ runId: string; finalMessage: string | null }> =>
+      this.orchestrator.runOneShot({
+        kind: 'analysis',
+        task: 'plan.analyses',
+        title: `Write documentation: ${opts.instructions.slice(0, 60)}`,
+        // The orchestrator mkdirs whatever cwd it gets.
+        cwd,
+        repo: opts.repo ?? null,
+        // Scratch generation is still a person's action. Keeping the owner on
+        // the run makes live RBAC revocation and transcript visibility uniform.
+        userId,
+        prompt: generatePrompt(opts.instructions, Boolean(opts.repo)),
+        resultSchema: resultSchemaOf(draftSchema),
+        timeoutMs: 8 * 60_000,
+      });
+    let finalMessage: string | null;
+    if (opts.repo) {
+      if (!this.checkouts.hasClone(opts.repo)) throw new Error(`repo ${opts.repo} has no clone yet`);
+      const repoRow = this.store.repos.get(opts.repo);
+      if (!repoRow) throw new Error(`unknown repo ${opts.repo}`);
+      // A disposable worktree, like spec generation and proposal analysis:
+      // the shared clone must never host an agent.
+      ({ finalMessage } = await this.checkouts.withBaseWorktree(
+        opts.repo,
+        `doc-${randomUUID().slice(0, 12)}`,
+        repoRow.default_branch,
+        run,
+        undefined,
+        userId,
+      ));
+    } else {
+      ({ finalMessage } = await run(join(paths.scratch(), 'docs')));
+    }
     const draft = draftSchema.parse(extractModelJson(finalMessage ?? ''));
     return this.create(workspaceId, { repo: opts.repo ?? null, storage: opts.storage, ...draft }, 'generated');
   }

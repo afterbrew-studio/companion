@@ -7,4 +7,5 @@ export default defineManifest({
   dependsOn: ['integrations', 'code', 'workspace'],
   autoInstall: true,
   permissions: ['jira:read', 'jira:act'],
+  messages: ['jira.changed'],
 });

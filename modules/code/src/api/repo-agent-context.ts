@@ -4,6 +4,7 @@ import type {
   RepoAgentContextPolicies,
 } from '../contract/index.js';
 import { GitHubError, type GhTreeEntry, type GitHubClient } from './github-client.js';
+import { mapConcurrent } from './concurrency.js';
 
 const CACHE_TTL_MS = 60_000;
 const MAX_CACHE_ENTRIES = 64;
@@ -543,23 +544,6 @@ function shellQuote(value: string): string {
 
 function truncateUtf8(value: string, maxBytes: number): string {
   return Buffer.from(value, 'utf8').subarray(0, maxBytes).toString('utf8');
-}
-
-async function mapConcurrent<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  work: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]!, index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
-  return results;
 }
 
 /** REST is a compatibility path, not a retry storm after auth/rate/network failures. */

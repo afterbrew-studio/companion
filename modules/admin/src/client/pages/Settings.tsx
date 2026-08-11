@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ApiError, refreshAuth } from '@moxxy/companion-core/client';
+import { useCallback, useRef, useState } from 'react';
+import { ApiError, refreshAuth, useLive } from '@moxxy/companion-core/client';
 import { useAuth } from '@companion/module-core/client';
 import {
   Avatar,
@@ -60,16 +60,18 @@ export function SettingsPage(): React.JSX.Element {
   // Instance-wide inbox default. Each user can override it in their profile;
   // this is only the fallback for anyone who hasn't.
   const [defaultScope, setDefaultScope] = useState<NotificationScope | null>(null);
-  useEffect(() => {
-    let alive = true;
-    api
-      .getNotificationSettings()
-      .then((s) => alive && setDefaultScope(s.defaultScope))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const loadScope = useCallback(async (): Promise<void> => {
+    try {
+      const s = await api.getNotificationSettings();
+      setDefaultScope(s.defaultScope);
+      setScopeError(null);
+    } catch (err) {
+      setScopeError(err instanceof Error ? err.message : String(err));
+    }
   }, []);
+  // Another admin's edit (branding or the default scope) lands live.
+  useLive(loadScope, (message) => message.t === 'admin.changed');
 
   const saveScope = async (next: NotificationScope): Promise<void> => {
     const prev = defaultScope;
@@ -215,17 +217,26 @@ export function SettingsPage(): React.JSX.Element {
         description="The default inbox scope for everyone. Each user can override it under their own profile."
       >
         <div className="card">
-          <SettingRow
-            title="Show notifications from all workspaces by default"
-            description="Off — the inbox is scoped to the workspace you have open (plus instance-wide events). On — it aggregates every workspace a user can access."
-          >
-            <Switch
-              label="Show notifications from all workspaces by default"
-              checked={defaultScope === 'global'}
-              disabled={defaultScope === null}
-              onChange={(v) => void saveScope(v ? 'global' : 'workspace')}
-            />
-          </SettingRow>
+          {scopeError !== null && defaultScope === null ? (
+            <div className="flex items-center gap-3">
+              <ErrorBar error={`Could not load notification settings: ${scopeError}`} className="flex-1" />
+              <button className="btn-ghost" onClick={() => void loadScope()}>
+                Retry
+              </button>
+            </div>
+          ) : (
+            <SettingRow
+              title="Show notifications from all workspaces by default"
+              description="Off — the inbox is scoped to the workspace you have open (plus instance-wide events). On — it aggregates every workspace a user can access."
+            >
+              <Switch
+                label="Show notifications from all workspaces by default"
+                checked={defaultScope === 'global'}
+                disabled={defaultScope === null}
+                onChange={(v) => void saveScope(v ? 'global' : 'workspace')}
+              />
+            </SettingRow>
+          )}
         </div>
       </Section>
 

@@ -293,9 +293,16 @@ export default defineRoutes((ctx) => {
       access: 'workspaces:read',
       handler: async ({ query, user }) => {
         const s = scope(user, query.get('workspace'));
+        const before = cursorFrom(query);
         // The reader, so a notification addressed to somebody else stays theirs.
-        const items = notifications.list(s.workspaceId, 100, s.accessibleIds, user?.username);
-        return { notifications: await visibleNotifications(items, user!) };
+        const items = notifications.list(s.workspaceId, INBOX_PAGE, s.accessibleIds, user?.username, before);
+        // Cursor from the raw page, not the visible one: the repo-access filter
+        // may shrink a page, and paging must resume after the last row SCANNED.
+        const last = items.length === INBOX_PAGE ? items[items.length - 1]! : null;
+        return {
+          notifications: await visibleNotifications(items, user!),
+          nextCursor: last ? { createdAt: last.createdAt, id: last.id } : null,
+        };
       },
     }),
 
@@ -356,16 +363,26 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/reports',
       access: 'reports:read',
-      handler: async ({ user }) => {
-        const scoped = reports.list().filter((report) => {
-          if (report.workspaceId) return workspaces.canAccessWorkspace(user!, report.workspaceId);
-          // Legacy briefings predate workspace_id; hiding them is safer than
-          // guessing their scope from a non-unique workspace name in the title.
-          if (report.kind === 'briefing') return false;
-          return !report.repo || workspaces.canAccessRepo(user!, report.repo);
+      handler: async ({ query, user }) => {
+        // Access scope applied IN the query (workspace membership; unscoped
+        // legacy briefings hidden; repo rows via their repo's workspaces), so
+        // the page is drawn from the viewer's rows: the old shape fetched the
+        // newest 100 overall and filtered after, silently losing anything
+        // older whose access the viewer actually had.
+        const before = cursorFrom(query);
+        const scoped = reports.listPage({
+          limit: REPORTS_PAGE,
+          ...(before ? { before } : {}),
+          scope: { username: user!.username, accessibleWorkspaceIds: [...workspaces.accessibleIds(user!)] },
         });
+        // Cursor from the SQL page: the per-repo credential check below may
+        // shrink it, and paging must resume after the last row scanned.
+        const last = scoped.length === REPORTS_PAGE ? scoped[scoped.length - 1]! : null;
+        const nextCursor = last ? { createdAt: last.createdAt, id: last.id } : null;
         const code = codeAccess();
-        if (!code) return { reports: scoped.filter((report) => !report.repo && !report.workspaceId) };
+        if (!code) {
+          return { reports: scoped.filter((report) => !report.repo && !report.workspaceId), nextCursor };
+        }
 
         const repoChecks = new Map<string, Promise<boolean>>();
         const canAccessRepo = (repo: string, workspaceId?: string): Promise<boolean> => {
@@ -401,11 +418,21 @@ export default defineRoutes((ctx) => {
             return access.every(Boolean);
           },
         );
-        return { reports: scoped.filter((_, index) => visible[index]) };
+        return { reports: scoped.filter((_, index) => visible[index]), nextCursor };
       },
     }),
   ];
 });
+
+const INBOX_PAGE = 100;
+const REPORTS_PAGE = 100;
+
+/** Keyset cursor from `before`/`beforeId` query params; absent or malformed = first page. */
+function cursorFrom(query: URLSearchParams): { createdAt: number; id: string } | undefined {
+  const createdAt = Number(query.get('before'));
+  const id = query.get('beforeId');
+  return Number.isFinite(createdAt) && id ? { createdAt, id } : undefined;
+}
 
 function slugify(name: string, fallback: string): string {
   const slug = name

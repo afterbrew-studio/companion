@@ -110,8 +110,6 @@ export const codeApi = {
     request<{ runs: PipelineRunRecord[] }>(`/api/workspaces/${id}/pipeline-runs`),
 
   // issues + triage
-  listIssues: (fullName: string, state?: 'open' | 'closed') =>
-    request<{ issues: IssueRecord[] }>(`/api/repos/${fullName}/issues${state ? `?state=${state}` : ''}`),
   getIssue: (fullName: string, number: number) =>
     request<{ issue: IssueRecord; triage: TriageResult | null }>(`/api/repos/${fullName}/issues/${number}`),
   issueComments: (fullName: string, number: number) =>
@@ -241,8 +239,6 @@ export const codeApi = {
     post<{ run: PipelineRunRecord }>(`/api/repos/${repo}/pipelines/${pipelineId}/run`),
   issuePipelineRuns: (repo: string, issueNumber: number) =>
     request<{ runs: PipelineRunRecord[] }>(`/api/repos/${repo}/issues/${issueNumber}/pipeline-runs`),
-  prPipelineRuns: (repo: string, prNumber: number) =>
-    request<{ runs: PipelineRunRecord[] }>(`/api/repos/${repo}/prs/${prNumber}/pipeline-runs`),
   pipelineRun: (id: string) => request<{ run: PipelineRunRecord }>(`/api/pipeline-runs/${id}`),
 
   // AI generation (bounded companion runner turns)
@@ -274,5 +270,4 @@ export const codeApi = {
     fields: { purposes?: readonly GitHubPurpose[]; scope?: GitHubAccountScope; workspaceIds?: readonly string[] },
   ) => patch<{ account: GitHubAccountRecord }>(`/api/github/accounts/${id}`, fields),
   removeGithubAccount: (id: string) => del<{ ok: true }>(`/api/github/accounts/${id}`),
-  setGithubToken: (t: string) => post<{ login: string }>('/api/settings/github', { token: t }),
 };

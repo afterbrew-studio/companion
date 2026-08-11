@@ -675,4 +675,25 @@ export default defineMigrations([
       // review/audit table just to remove it would be destructive.
     },
   },
+  {
+    /** The daily retention sweeps select stale rows by age; without these each
+     * sweep is a full scan of a table that only grows (EXPLAIN showed SCAN,
+     * with them SEARCH created_at<?). Hot list paths keep their v15/v19 indexes. */
+    version: 23,
+    name: 'history_retention_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_created ON pr_reviews(created_at);
+        CREATE INDEX IF NOT EXISTS idx_triage_created ON triage_results(created_at);
+        CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON pipeline_runs(created_at);
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_pipeline_runs_created;
+        DROP INDEX IF EXISTS idx_triage_created;
+        DROP INDEX IF EXISTS idx_pr_reviews_created;
+      `);
+    },
+  },
 ]);

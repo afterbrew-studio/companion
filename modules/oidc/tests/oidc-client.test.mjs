@@ -82,8 +82,21 @@ async function idp(overrides = {}) {
       req.on('data', (chunk) => (body += chunk));
       return req.on('end', () => {
         const auth = req.headers.authorization ?? '';
-        const [id, secret] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-        if (id !== 'client-1' || secret !== 'shh') return json(401, { error: 'invalid_client' });
+        // RFC 6749 2.3.1 / RFC 7617: split on the first ':', then form-decode
+        // each half. A client that skips the encoding fails here, as it would
+        // against a compliant provider.
+        const decoded = Buffer.from(auth.slice(6), 'base64').toString();
+        const sep = decoded.indexOf(':');
+        let id = '';
+        let secret = '';
+        try {
+          const formDecode = (part) => decodeURIComponent(part.replace(/\+/g, '%20'));
+          id = formDecode(sep < 0 ? decoded : decoded.slice(0, sep));
+          secret = formDecode(sep < 0 ? '' : decoded.slice(sep + 1));
+        } catch {
+          // malformed escapes: fall through to the mismatch below
+        }
+        if (id !== 'client-1' || secret !== (overrides.secret ?? 'shh')) return json(401, { error: 'invalid_client' });
         const form = new URLSearchParams(body);
         const code = form.get('code');
         const entry = codes.get(code);
@@ -231,6 +244,16 @@ test('a state the client never issued is refused', async (t) => {
   await assert.rejects(() => client.complete(code, 'forged-state', `${provider.base}/back`), /unknown or expired/);
 });
 
+test('a client secret with a colon and non-ASCII survives the Basic header form-encoded', async (t) => {
+  const secret = 'p@ss:wörd +/%';
+  const provider = await idp({ secret });
+  t.after(provider.close);
+  const client = new OidcClient(provider.base, 'client-1', secret, 'openid profile email', 'preferred_username');
+  const { code, state } = await handshake(client, provider.base);
+  const { identity } = await client.complete(code, state, `${provider.base}/back`);
+  assert.equal(identity.username, 'alice.sso');
+});
+
 test('a code issued to one client cannot be redeemed with another client secret', async (t) => {
   const provider = await idp();
   t.after(provider.close);
@@ -347,6 +370,45 @@ test('chunked OIDC metadata is rejected while it crosses the response-size limit
     () => clientFor(provider.base).authorizeUrl(`${provider.base}/back`, '/'),
     /OIDC discovery is too large/,
   );
+});
+
+test("usernameClaim 'email' fails closed when the provider does not assert email_verified", async (t) => {
+  const provider = await idp();
+  t.after(provider.close);
+  const client = clientFor(provider.base, 'email');
+  const { code, state } = await handshake(client, provider.base);
+  await assert.rejects(() => client.complete(code, state, `${provider.base}/back`), /email_verified/);
+});
+
+test("usernameClaim 'email' signs in when the provider asserts email_verified: true", async (t) => {
+  const provider = await idp({ userinfo: { email_verified: true } });
+  t.after(provider.close);
+  const client = clientFor(provider.base, 'email');
+  const { code, state } = await handshake(client, provider.base);
+  const { identity } = await client.complete(code, state, `${provider.base}/back`);
+  assert.equal(identity.username, 'alice@corp.test');
+});
+
+test('spam from one address cannot evict another address pending sign-in', async (t) => {
+  const provider = await idp();
+  t.after(provider.close);
+  const client = clientFor(provider.base);
+  // The legitimate attempt (default address) starts first.
+  const { code, state } = await handshake(client, provider.base);
+  // More /start hits than the global cap, all from one spamming address: with
+  // pure FIFO eviction these would push the legitimate state out.
+  for (let i = 0; i < 1_005; i++) {
+    await client.authorizeUrl(`${provider.base}/back`, '/', '203.0.113.9');
+  }
+  const { identity } = await client.complete(code, state, `${provider.base}/back`);
+  assert.equal(identity.username, 'alice.sso');
+});
+
+test('an issuer mismatch that is only a trailing slash says so', async (t) => {
+  const provider = await idp();
+  t.after(provider.close);
+  const client = new OidcClient(`${provider.base}/`, 'client-1', 'shh', 'openid', 'preferred_username');
+  await assert.rejects(() => client.authorizeUrl(`${provider.base}/back`, '/'), /only by a trailing slash/);
 });
 
 test('a missing username claim fails the sign-in rather than inventing one', async (t) => {

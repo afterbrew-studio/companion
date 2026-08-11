@@ -38,10 +38,11 @@ export interface ForwarderState {
  *   an array; every network concern happens on a timer.
  * - **It is bounded.** A dead collector drops oldest and counts, rather than
  *   growing without limit behind an outage nobody noticed.
- * - **Order is preserved within a batch**, and a failed batch is retried once on
- *   the next tick before being dropped, because an audit stream that silently
- *   reorders or loses the middle of a sequence is worse than one with a gap you
- *   can see in the counter.
+ * - **Order is preserved within a batch**, and a failed batch goes back to the
+ *   front and is retried on every following tick; only buffer overflow trims
+ *   (newest first, counted), because an audit stream that silently reorders or
+ *   loses the middle of a sequence is worse than one with a gap you can see in
+ *   the counter.
  */
 export class AuditForwarder {
   private buffer: AuditEvent[] = [];

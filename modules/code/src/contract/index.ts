@@ -111,8 +111,6 @@ export interface RepoRecord {
   readonly webhookConfigured: boolean;
   /** Profile responsible for unattended repo automation; null means paused/unclaimed. */
   readonly automationOwnerId: string | null;
-  /** @deprecated Always null; account resolution is personal per profile. */
-  readonly githubAccountId: string | null;
   /** Preferred runner for this repo's agent work; null = auto-place among eligible. */
   readonly runnerId: string | null;
 }

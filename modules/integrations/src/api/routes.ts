@@ -13,7 +13,9 @@ const scopeSchema = z.discriminatedUnion('kind', [
     repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).max(300),
   }),
 ]);
-const configValue = z.union([z.string().max(4_000), z.boolean(), z.number().finite()]);
+// No z.number(): the field validator accepts only text and boolean values, so
+// a number would pass the schema only to be rejected one layer down.
+const configValue = z.union([z.string().max(4_000), z.boolean()]);
 const connectionCreateSchema = z.object({
   providerId: z.string().min(3).max(120),
   name: z.string().trim().min(1).max(80),
@@ -117,8 +119,10 @@ export default defineRoutes((ctx) => {
       path: '/api/integrations/catalog',
       access: 'integrations:read',
       handler: ({ user }) => {
-        const catalog = integrations.catalog(user?.username ?? null);
         const canManage = !!user && ctx.rbac.allows(user, 'integrations:manage');
+        // Managers also see other users' personal connections (owner shown in
+        // the UI) so orphans and policy violations are visible and removable.
+        const catalog = integrations.catalog(user?.username ?? null, canManage);
         return {
           ...catalog,
           connections: catalog.connections
@@ -182,7 +186,13 @@ export default defineRoutes((ctx) => {
       path: '/api/integrations/connections/:id',
       access: 'integrations:manage',
       handler: ({ params, user }) => {
-        shared(user, params.id);
+        // Unlike the other shared-connection routes, managers may also delete
+        // ANY personal connection (cleanup of orphans and policy violations).
+        // Non-managers never reach here, so the 404-hiding of personal
+        // connections from them is unchanged.
+        const connection = integrations.getConnection(params.id);
+        if (!connection) throw notFound('integration connection not found');
+        requireScope(user, connection.scope);
         integrations.removeConnection(params.id);
         return { ok: true };
       },

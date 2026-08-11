@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Role } from '@moxxy/companion-types';
+import { onServerMessage } from '@moxxy/companion-core/client';
 import { PAGE_SIZE, useDebounced, useInfiniteList } from '@moxxy/companion-ui';
 import type { UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
@@ -42,6 +43,10 @@ export function useUsers(): {
     [q, role],
   );
   const { items: users, total, loading, hasMore, loadMore, reload, error: listError } = useInfiniteList(fetchPage);
+
+  useEffect(() => onServerMessage((message) => {
+    if (message.t === 'users.changed') reload();
+  }), [reload]);
 
   const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setError(null);

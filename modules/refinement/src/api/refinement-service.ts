@@ -139,10 +139,6 @@ export class RefinementService {
     this.changed();
   }
 
-  listByWorkspace(workspaceId: string): RefinementListEntry[] {
-    return this.store.listByWorkspace(workspaceId);
-  }
-
   listPage(
     workspaceId: string,
     opts: Parameters<RefinementStore['listWorkspacePage']>[1] = {},
@@ -603,17 +599,22 @@ export class RefinementService {
   /** Import every proposed item in build order; returns how many were imported. */
   importAll(id: string, user: string | null, queue: boolean, targetBranch?: string): number {
     let imported = 0;
-    while (true) {
-      const items = this.store.listItems(id);
-      const proposed = items.filter((item) => item.status === 'proposed');
-      if (proposed.length === 0) break;
-      const byOrd = new Map(items.map((item) => [item.ord, item]));
-      const next = proposed.find((item) => item.dependsOn.every((ord) => byOrd.get(ord)?.status !== 'proposed'));
-      if (!next) throw new Error('proposed task dependencies contain a cycle');
-      this.importOne(id, next.id, user, queue, targetBranch);
-      imported++;
+    // A mid-loop failure surfaces to the caller, but the items already
+    // imported must still broadcast or every other client stays stale.
+    try {
+      while (true) {
+        const items = this.store.listItems(id);
+        const proposed = items.filter((item) => item.status === 'proposed');
+        if (proposed.length === 0) break;
+        const byOrd = new Map(items.map((item) => [item.ord, item]));
+        const next = proposed.find((item) => item.dependsOn.every((ord) => byOrd.get(ord)?.status !== 'proposed'));
+        if (!next) throw new Error('proposed task dependencies contain a cycle');
+        this.importOne(id, next.id, user, queue, targetBranch);
+        imported++;
+      }
+    } finally {
+      if (imported > 0) this.changed();
     }
-    if (imported > 0) this.changed();
     return imported;
   }
 
