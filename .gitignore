@@ -14,3 +14,7 @@ dist/
 
 # Module registries generated from profiles/*.json (pnpm gen:modules)
 apps/*/src/modules.generated.ts
+
+# Playwright output (pnpm e2e)
+test-results/
+playwright-report/
