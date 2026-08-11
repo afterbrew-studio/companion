@@ -89,8 +89,9 @@ the extension point is the registry array, which is enough.
   service, store, routes, and contract types form one vertical slice. When you
   touch a feature you touch a predictable, small set of files.
 - **Low coupling**: layers talk through narrow contracts — DTOs and callbacks,
-  not shared mutable state. The SPA and daemon are coupled *only* through
-  `@companion/contract`. Introducing a new back-channel (a global, a duplicated
+  not shared mutable state. The SPA and daemon are coupled *only* through the
+  module contract slices built on `@moxxy/companion-contracts`. Introducing a
+  new back-channel (a global, a duplicated
   type, a direct import across an unintended boundary) raises coupling and is a
   smell — route it through the existing seam instead.
 
