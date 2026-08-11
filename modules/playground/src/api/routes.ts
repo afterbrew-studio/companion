@@ -24,7 +24,7 @@ const runSchema = z
       .string()
       .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
       .optional(),
-    /** Playground runs are exploratory — bounded hard, never long-haul. The
+    /** Playground runs are exploratory: bounded hard, never long-haul. The
      * request awaits the run, and Node's default requestTimeout (300 s;
      * nothing in apps/api raises it) destroys the socket at five minutes, so
      * the cap stays below that with margin for the response to flush. Longer

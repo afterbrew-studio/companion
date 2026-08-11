@@ -6,7 +6,7 @@ import { RefinementStore } from '../dist/api/refinement-store.js';
 
 /**
  * importAll imports in build order and a mid-loop failure surfaces to the
- * caller, but the items that DID import must still broadcast — otherwise
+ * caller, but the items that DID import must still broadcast; otherwise
  * every other client keeps showing them as proposed.
  */
 function fixture(board) {

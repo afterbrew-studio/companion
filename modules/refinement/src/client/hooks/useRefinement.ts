@@ -16,9 +16,9 @@ export interface RefinementActions {
   mergeItems(itemIds: string[]): Promise<void>;
   /** Resolves true when deleted (the caller navigates away). */
   remove(): Promise<boolean>;
-  /** Throws on failure — the methods modal keeps the editor open with the error inline. */
+  /** Throws on failure; the methods modal keeps the editor open with the error inline. */
   saveMethod(fields: { name: string; description: string; instructions: string }): Promise<void>;
-  /** Throws on failure — the methods modal keeps the editor open with the error inline. */
+  /** Throws on failure; the methods modal keeps the editor open with the error inline. */
   updateMethod(id: string, fields: { name?: string; description?: string; instructions?: string }): Promise<void>;
   deleteMethod(id: string): Promise<void>;
   /** Throws on failure — the methods modal shows the error inline, not in the page bar. */
