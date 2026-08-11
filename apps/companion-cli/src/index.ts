@@ -40,7 +40,14 @@ import { withTerminal } from './terminal.js';
 import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
 import { RUN_HELP, parseRunCommand, runRunCommand } from './runs.js';
-import { connectGhAccount, detectGhLogin, importPendingGhAccount, pendingGhLogin, scheduleGhImport } from './github.js';
+import {
+  connectGhAccount,
+  detectGhLogin,
+  importPendingGhAccount,
+  pendingGhLogin,
+  resolveGithubHost,
+  scheduleGhImport,
+} from './github.js';
 import { MODULE_HELP, parseModuleCommand, runModuleCommand } from './modules.js';
 import { ACL_HELP, parseAclCommand, runAclCommand } from './acl.js';
 import { daemonLog, runningPid, startDetached, stopDaemon, tailLog, waitUntilServing } from './daemon.js';
@@ -211,6 +218,9 @@ async function main(): Promise<void> {
     await connectGithub(options);
     return;
   }
+  // Before initialize below: gh host resolution and the daemon both read
+  // stored config and .env layers from COMPANION_HOME.
+  process.env.COMPANION_HOME = options.home;
   // Decoration, so only when a person is watching: piped output stays clean.
   // NO_COLOR still gets the mark, just without the emerald on the dot.
   if (process.stdout.isTTY) {
@@ -253,8 +263,9 @@ async function connectGithub(options: CliOptions): Promise<void> {
     throw new Error(`Companion is not running at ${url}. Start it first, then retry.`);
   }
 
-  const ghLogin = detectGhLogin();
-  if (!ghLogin) throw new Error('gh is not authenticated for github.com. Run `gh auth login` and retry.');
+  const ghHost = resolveGithubHost();
+  const ghLogin = detectGhLogin(ghHost);
+  if (!ghLogin) throw new Error(`gh is not authenticated for ${ghHost}. Run \`gh auth login\` and retry.`);
   const localToken = await waitForToken();
   if (localToken) {
     process.stdout.write(`Connecting active gh account ${ghLogin} to Companion at ${url}...\n`);
