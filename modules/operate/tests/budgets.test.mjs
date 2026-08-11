@@ -28,8 +28,12 @@ function configOf(values) {
 /** 1M output tokens of opus-4-8 ($25/MTok) = $25. */
 const OPUS_25 = [{ model: 'claude-opus-4-8', runs: 1, input: 0, output: 1_000_000 }];
 
-function budgets(rows, config, alerts = []) {
-  return new Budgets(rows, configOf(config), (title, body) => alerts.push({ title, body }));
+function settingsOf(values = new Map()) {
+  return { get: (k) => values.get(k) ?? null, set: (k, v) => values.set(k, v) };
+}
+
+function budgets(rows, config, alerts = [], settings = settingsOf()) {
+  return new Budgets(rows, configOf(config), settings, (title, body) => alerts.push({ title, body }));
 }
 
 test('no configured ceiling lets every run through', () => {
@@ -93,6 +97,24 @@ test('crossing the alert threshold notifies once, not on every run', () => {
   assert.match(alerts[0].title, /83%|84%/);
 });
 
+test('an announced threshold stays announced across a restart, and a new month starts clean', () => {
+  const values = new Map();
+  const alerts = [];
+  const config = { monthlyBudgetUsd: 30, budgetAlertPercent: 80 };
+  budgets(storeOf(OPUS_25), config, alerts, settingsOf(values)).check('alice');
+  assert.equal(alerts.length, 1);
+
+  // The same settings store, a fresh service: a daemon restart must not re-fire.
+  budgets(storeOf(OPUS_25), config, alerts, settingsOf(values)).check('alice');
+  assert.equal(alerts.length, 1);
+
+  // A record from a past month neither suppresses this month nor lingers.
+  values.set('budget:announced', JSON.stringify({ period: monthStart() - 1, announced: ['80:instance'] }));
+  budgets(storeOf(OPUS_25), config, alerts, settingsOf(values)).check('alice');
+  assert.equal(alerts.length, 2);
+  assert.equal(JSON.parse(values.get('budget:announced')).period, monthStart());
+});
+
 test('spend under the alert threshold notifies nobody', () => {
   const alerts = [];
   const b = budgets(storeOf(OPUS_25), { monthlyBudgetUsd: 1000, budgetAlertPercent: 80 }, alerts);
@@ -101,7 +123,7 @@ test('spend under the alert threshold notifies nobody', () => {
 });
 
 test('an alert sink that throws does not take the run down with it', () => {
-  const b = new Budgets(storeOf(OPUS_25), configOf({ monthlyBudgetUsd: 30 }), () => {
+  const b = new Budgets(storeOf(OPUS_25), configOf({ monthlyBudgetUsd: 30 }), settingsOf(), () => {
     throw new Error('inbox unavailable');
   });
   assert.doesNotThrow(() => b.check('alice'));

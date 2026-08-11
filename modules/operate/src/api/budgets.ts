@@ -93,16 +93,25 @@ function scopeStatus(limitUsd: number, spentUsd: number): BudgetScopeStatus {
  *   worse, so its tokens are surfaced separately and the operator can see the
  *   ceiling is looking at less than the whole bill.
  */
+/** Durable key/value store; announced crossings survive a daemon restart in it. */
+interface AnnouncementSettings {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+}
+
+const ANNOUNCED_KEY = 'budget:announced';
+
 export class Budgets {
   private cached: { at: number; instance: PricedTotals } | null = null;
   private readonly perUser = new Map<string, { at: number; totals: PricedTotals }>();
-  /** Alert percentages already announced this period, so one crossing notifies once. */
+  /** `<percent>:<scope>` entries announced this period, so one crossing notifies once. */
   private announced = new Set<string>();
   private announcedPeriod = 0;
 
   constructor(
     private readonly runs: RunsStore,
     private readonly moduleConfig: ModuleConfigAccessor,
+    private readonly settings: AnnouncementSettings,
     /** Raises the operator-facing alert; wired to ctx.notify by services.ts. */
     private readonly alert: (title: string, body: string) => void,
     /**
@@ -183,16 +192,23 @@ export class Budgets {
     }
   }
 
-  /** Announce a threshold crossing once per scope per period. */
+  /**
+   * Announce a threshold crossing once per scope per period. The announced set
+   * is mirrored to the settings store so a daemon restart does not re-fire
+   * every crossing already told; a record from a past month is dropped when the
+   * period rolls over.
+   */
   private maybeAlert(scope: string, spent: number, limit: number, subject: string): void {
     const period = monthStart();
     if (period !== this.announcedPeriod) {
-      this.announced = new Set();
+      this.announced = this.loadAnnounced(period);
       this.announcedPeriod = period;
     }
     const percent = this.alertPercent();
-    if (spent < (limit * percent) / 100 || this.announced.has(scope)) return;
-    this.announced.add(scope);
+    const entry = `${percent}:${scope}`;
+    if (spent < (limit * percent) / 100 || this.announced.has(entry)) return;
+    this.announced.add(entry);
+    this.saveAnnounced(period);
     const title = `${subject} has used ${Math.round((spent / limit) * 100)}% of the monthly agent budget`;
     const body = `${formatUsd(spent)} of ${formatUsd(limit)}. Runs are refused once the ceiling is reached.`;
     log.warn('agent budget threshold crossed', { scope, spent, limit });
@@ -201,6 +217,27 @@ export class Budgets {
     } catch (err) {
       // An alert that cannot be delivered must never take the run down with it.
       log.warn('budget alert could not be raised', { err: String(err) });
+    }
+  }
+
+  private loadAnnounced(period: number): Set<string> {
+    try {
+      const raw = this.settings.get(ANNOUNCED_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw) as { period?: number; announced?: string[] };
+      if (parsed.period !== period || !Array.isArray(parsed.announced)) return new Set();
+      return new Set(parsed.announced.filter((entry) => typeof entry === 'string'));
+    } catch {
+      return new Set();
+    }
+  }
+
+  private saveAnnounced(period: number): void {
+    try {
+      this.settings.set(ANNOUNCED_KEY, JSON.stringify({ period, announced: [...this.announced] }));
+    } catch (err) {
+      // Best-effort persistence: the gate must never refuse a run over it.
+      log.warn('budget announcement could not be persisted', { err: String(err) });
     }
   }
 
