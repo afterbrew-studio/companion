@@ -47,6 +47,7 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 COPY modules ./modules
+COPY examples ./examples
 RUN pnpm install --frozen-lockfile
 RUN pnpm gen:modules --profile "$PROFILE"
 # Builds every workspace package, then bundles the daemon + SPA into
