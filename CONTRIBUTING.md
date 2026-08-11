@@ -22,6 +22,7 @@ version declared by the repository):
 ```sh
 corepack enable
 pnpm install
+pnpm build
 pnpm dev
 ```
 
@@ -49,6 +50,7 @@ request:
 pnpm build
 pnpm typecheck
 pnpm test
+pnpm acl check
 ```
 
 Types are not enough for behaviour or UI work. Start `pnpm dev`, drive the real
