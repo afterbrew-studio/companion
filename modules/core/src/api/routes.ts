@@ -18,7 +18,7 @@ import {
   sessionCookie,
   clearSessionCookie,
 } from '@moxxy/companion-core/server';
-import { isLoopbackHost, paths, planRestart, restartDaemon } from '@moxxy/companion-services';
+import { claimAuditActor, isLoopbackHost, paths, planRestart, restartDaemon } from '@moxxy/companion-services';
 import { NAV_AUDIENCES, NAV_PERSPECTIVES, type Permission } from '@moxxy/companion-contracts';
 import { AuthError } from './auth.js';
 import type {
@@ -197,6 +197,8 @@ export default defineRoutes((ctx) => {
       access: 'public',
       body: setupSchema,
       handler: ({ body }): Reply => {
+        // Before the attempt: a refused setup audits against the tried name too.
+        claimAuditActor(body.username);
         const session = auth.setup(body.username, body.email, body.password, body.bootstrapToken);
         ctx.bus.emit('auth.setup.completed', { username: session.user.username });
         return browserSession(session);
@@ -211,6 +213,10 @@ export default defineRoutes((ctx) => {
         if (ctx.config.authMode === 'sso') {
           throw new AuthError('password sign-in is disabled: this instance requires single sign-on', 403);
         }
+        // The router cannot attribute a public route; claiming the attempted
+        // identity up front records success AND refusal against a name instead
+        // of `actor: null` (the audit gap every reviewer asks about first).
+        claimAuditActor(body.username);
         const result = auth.login(body.username, body.password, clientAddress);
         // An MFA challenge is not a session: no cookie until the second step.
         return 'mfaRequired' in result
@@ -223,8 +229,13 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/mfa',
       access: 'public',
       body: mfaCompleteSchema,
-      handler: ({ body, clientAddress }): Reply =>
-        browserSession(auth.completeMfaLogin(body.mfaToken, body.code, clientAddress)),
+      handler: ({ body, clientAddress }): Reply => {
+        const session = auth.completeMfaLogin(body.mfaToken, body.code, clientAddress);
+        // Only after success: the pending token is opaque, so a failed second
+        // step has no name to claim without leaking which token maps to whom.
+        claimAuditActor(session.user.username);
+        return browserSession(session);
+      },
     }),
     route({
       method: 'POST',

@@ -84,7 +84,21 @@ export default defineRoutes((ctx) => {
         const state = query.get('state');
         if (!code || !state) throw badRequest('the provider returned no code');
 
-        const { identity, returnTo } = await client().complete(code, state, redirectUri());
+        // The route is a public GET, so the router records neither outcome. A
+        // failed SSO attempt is as audit-worthy as a successful one; record the
+        // refusal (bounded, no token material) and rethrow for the normal page.
+        const { identity, returnTo } = await client().complete(code, state, redirectUri()).catch((err: unknown) => {
+          ctx.audit.record({
+            at: Date.now(),
+            actor: null,
+            action: 'GET /api/oidc/callback',
+            access: 'public',
+            status: 401,
+            module: 'oidc',
+            detail: `sign-in failed: ${err instanceof Error ? err.message.slice(0, 200) : 'error'}`,
+          });
+          throw err;
+        });
         const auth = ctx.services.get('core');
         // Policy lives in module-core, not here: an identity module must not
         // get to decide how generous provisioning is.

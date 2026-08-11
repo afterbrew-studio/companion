@@ -71,5 +71,16 @@ export default defineJobs({
     // like readOrCreateBootstrapToken does on read.
     chmodSync(file, 0o600);
     ctx.log.info(`CLI token for '${admin}' written to ${file}`);
+    // A full-access credential materialized outside any request; the router
+    // cannot see it, so the trail records it here.
+    ctx.audit.record({
+      at: Date.now(),
+      actor: admin,
+      action: 'job core.cli-token.remint',
+      access: 'system',
+      status: 200,
+      module: 'core',
+      detail: 'minted the local CLI session token at boot',
+    });
   },
 });
