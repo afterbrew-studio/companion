@@ -23,3 +23,22 @@ test('a short secret split across stream chunks is still scrubbed', () => {
   const out = scrubber.push('pin is 73') + scrubber.push('51 done') + scrubber.flush();
   assert.equal(out, 'pin is *** done');
 });
+
+test('a hidden pipeline variable shorter than 4 chars is refused at validation', async () => {
+  const { pipelineStepSchema } = await import('../dist/api/pipelines.js');
+  const step = (value) => ({
+    kind: 'executable',
+    name: 'publish',
+    onFailure: 'halt',
+    config: {
+      command: 'echo ok',
+      workdir: 'clone',
+      timeoutMs: 60_000,
+      variables: [{ name: 'NPM_TOKEN', hidden: true, value }],
+    },
+  });
+  const short = pipelineStepSchema.safeParse(step('abc'));
+  assert.equal(short.success, false);
+  assert.match(JSON.stringify(short.error.issues), /cannot be redacted/);
+  assert.equal(pipelineStepSchema.safeParse(step('abcd')).success, true);
+});

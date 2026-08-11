@@ -299,6 +299,19 @@ footer.top {
   overflow: hidden;
   min-width: 0;
 }
+
+.app-shot {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.app-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 .terminal-bar {
   display: flex;
   gap: 7px;
