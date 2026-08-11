@@ -45,7 +45,7 @@ function releasedVersion(dir, fallback) {
 /** Every workspace package, by name, with the directory it lives in. */
 function workspace() {
   const out = new Map();
-  for (const base of ['apps', 'packages', 'modules']) {
+  for (const base of ['apps', 'examples', 'packages', 'modules']) {
     for (const entry of readdirSync(join(root, base))) {
       const dir = `${base}/${entry}`;
       const manifest = join(root, dir, 'package.json');

@@ -239,8 +239,10 @@ companion provider add "Anthropic" --kind anthropic --key sk-… --model claude-
 companion provider test <id> --model claude-sonnet-5   # does it answer, can it call a tool
 ```
 
-The `runtime` module ships only in the `full` and `cloud` builds, so this needs
-a Docker or source install: the slim npx CLI does not include it.
+The `runtime` module ships in the `full` and `cloud` profiles. The published
+npx CLI is a full build, so the commands above work there as-is; the default
+Docker image is `slim`, so build it with `--build-arg PROFILE=full` (or
+`cloud`) to carry the module.
 
 Four kinds cover the field: `anthropic`, `openai`, `azure` (deployment names and
 api-version), and `openai-compatible` for any gateway, so LiteLLM, Portkey,
@@ -323,6 +325,7 @@ installs a module from a registry, tarball, or directory.
 | [Releases](docs/releases.md) | immutable versions, generated notes, npm tarballs, checksums, and required repository SBOMs |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
 | [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
+| [External modules](docs/external-modules.md) | authoring, verifying, and publishing out-of-tree modules |
 | [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |
 | [Development](docs/development.md) | local setup, profiles, and quality gates |
 | [Contributing](CONTRIBUTING.md) | issues, local development, verification, and pull requests |

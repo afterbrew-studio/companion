@@ -30,7 +30,8 @@ Read [`AGENTS.md`](AGENTS.md) before changing code. It routes to the verified
 skills in `.ai/skills/` and records Companion's load-bearing invariants. The
 short version is:
 
-- shared HTTP and WebSocket types belong in `@companion/contract`;
+- shared HTTP and WebSocket types belong in the owning module's contract slice,
+  augmenting the registries in `@moxxy/companion-contracts`;
 - route metadata owns RBAC enforcement;
 - GitHub remains authoritative for issues and pull requests;
 - state mutations broadcast one matching change event;

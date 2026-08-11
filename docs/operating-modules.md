@@ -30,29 +30,32 @@ the directory already holds the database, so it does not widen that blast radius
 
 ## Turning on everything a `full` build contains
 
-A `full` build is not a full instance. Every optional module declares
-`autoInstall: false`, so straight after a deploy the running surface is identical
-to `slim`. The difference is what you can turn on without rebuilding.
+A `full` build is not a full instance. Every module `full` adds over `slim`
+declares `autoInstall: false`, so straight after a deploy the running surface is
+identical to `slim`. The difference is what you can turn on without rebuilding.
 
 First confirm the build actually contains them, because a missed build argument
 looks exactly like a module that refuses to install:
 
 ```sh
-companion module list        # expect 20 modules, 14 enabled (not "14 of 14")
+companion module list        # expect 20 modules, 13 enabled (not "13 of 13")
 ```
 
-`Unknown module: plan` means the module is not in this build at all, so no amount
+`Unknown module: slop` means the module is not in this build at all, so no amount
 of installing will help. Rebuild with the right profile.
 
-Then adopt them. The order satisfies `dependsOn` (`refinement` and `planner` need
-`plan` and `board`), and the kernel refuses an out-of-order install rather than
-half-enabling anything:
+Then adopt them. The order satisfies `dependsOn` (`planner` needs `refinement`;
+their other dependencies are already enabled in `slim`), and the kernel refuses
+an out-of-order install rather than half-enabling anything:
 
 ```sh
-for m in plan board refinement planner automations slop playground; do
+for m in refinement planner slop playground cursor-bugbot runtime; do
   companion module install "$m"
 done
 ```
+
+`runtime` installs cleanly but runs nothing until a model provider is
+configured: see [`model-providers.md`](model-providers.md).
 
 `oidc` is deliberately not in that list. It needs its provider configured first,
 and `COMPANION_PUBLIC_URL` set to the address the provider redirects back to:
@@ -81,10 +84,15 @@ and SDK instead of bundling its own.
 ### Installing one
 
 ```sh
-companion module add companion-module-hello@1.0.0   # fetch, check, record
+companion module add companion-module-hello   # fetch, check, record
 # restart Companion so it rescans the modules directory
 companion module install hello && companion module enable hello
 ```
+
+`companion-module-hello` is a real published example, maintained in this
+repository under [`examples/companion-module-hello`](../examples/companion-module-hello)
+and released alongside the SDK, so the commands above work against any registry
+mirror that carries it.
 
 `add` needs no running daemon. npm resolves the spec, so a scope, a tag, a
 version range, a private registry and its credentials all work. It records what
@@ -100,12 +108,21 @@ the ABI cannot survive: a second copy of the SDK inside the module.
 
 ### Authoring one
 
+```sh
+companion module scaffold my-module   # generates ./companion-module-my-module
+```
+
+`scaffold` copies the hello-world example with the package name, module id and
+title substituted, ready for `npm install`, `npm run build` and
+`companion module verify .`. It needs no daemon; the template ships inside the
+CLI package.
+
 An out-of-tree module depends on exactly two packages:
 
 ```jsonc
 {
-  "devDependencies": { "@moxxy/companion-sdk": "^0.2.0", "@moxxy/companion-contracts": "^0.2.0" },
-  "peerDependencies": { "@moxxy/companion-sdk": "^0.2.0" },
+  "devDependencies": { "@moxxy/companion-sdk": "^0.8.2", "@moxxy/companion-contracts": "^0.6.1" },
+  "peerDependencies": { "@moxxy/companion-sdk": "^0.8.2" },
   "moxxy": {
     "id": "hello",           // must equal the install directory name
     "abi": "0.x",            // the ABI generation, checked at boot
@@ -146,5 +163,5 @@ an import map, so the module gets the host's React rather than a second one. A
 chunk that cannot resolve them fails loudly and drops only itself; the rest of
 the shell keeps working.
 
-The full authoring guide is `.ai/skills/companion-external-module/SKILL.md`, and
+The full authoring guide is [external modules](external-modules.md), and
 `pnpm sdk:surface` prints the ABI and fails on a breaking change.

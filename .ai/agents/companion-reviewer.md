@@ -38,7 +38,8 @@ usually live in an unchanged caller's assumption.
    - RBAC enforced only centrally in the router — not re-checked, and never
      *skipped*; permission threaded through union + `ALL_PERMISSIONS` +
      `ROLE_PERMISSIONS` + route `access` + module + `App.tsx` guard.
-   - Cross-boundary types come from `@companion/contract`, not redefined.
+   - Cross-boundary types come from the module's contract slice (augmenting
+     `@moxxy/companion-contracts`), not redefined.
    - `issues`/`prs` treated as a GitHub cache, not a record of truth.
    - Every mutation broadcasts its `*.changed`; exactly one hook consumes it.
    - Migrations additive + idempotent (no `DROP`, no one-shot backfill).

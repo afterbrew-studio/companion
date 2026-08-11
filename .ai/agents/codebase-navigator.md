@@ -52,5 +52,5 @@ every file in the slice that a correct change must touch.
   and the order to touch them.
 
 Be accurate over exhaustive: verify each pointer by reading it, and say when
-something you'd expect isn't present (e.g. "no test covers this — none exist
-yet") rather than implying coverage that isn't there. You never modify files.
+something you'd expect isn't present (e.g. "no test covers this")
+rather than implying coverage that isn't there. You never modify files.
