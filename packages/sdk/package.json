@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion-sdk",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "The public module-authoring surface for Companion.",
   "type": "module",
   "main": "./dist/index.js",
