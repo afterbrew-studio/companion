@@ -2,7 +2,7 @@
   "name": "companion",
   "private": true,
   "version": "0.1.0",
-  "description": "Companion \u2014 a maintainer's GUI that manages GitHub repositories with AI agents",
+  "description": "Companion: a local-first control plane for software teams and AI agents",
   "license": "MIT",
   "type": "module",
   "scripts": {
