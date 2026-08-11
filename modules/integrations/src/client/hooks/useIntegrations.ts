@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { readCached, useLive, writeCached } from '@moxxy/companion-sdk/client';
 import type {
   IntegrationCatalog,
   IntegrationConnectionDraft,
@@ -8,6 +8,30 @@ import type {
   IntegrationScope,
 } from '../../contract/index.js';
 import { integrationsApi, type IntegrationConnectionPatch } from '../api.js';
+
+const CATALOG_KEY = 'integrations:catalog';
+
+/**
+ * Singleton in-flight fetch: a PR page mounts this hook more than once, and
+ * every instance refreshes on the same integrations.changed — they must share
+ * one request per event instead of refetching the catalog per mount. The
+ * result is retained in the auth-cleared render cache so a new mount paints
+ * instantly while it revalidates.
+ */
+let inflightCatalog: Promise<IntegrationCatalog> | null = null;
+
+function fetchCatalog(): Promise<IntegrationCatalog> {
+  inflightCatalog ??= integrationsApi
+    .catalog()
+    .then((catalog) => {
+      writeCached(CATALOG_KEY, catalog);
+      return catalog;
+    })
+    .finally(() => {
+      inflightCatalog = null;
+    });
+  return inflightCatalog;
+}
 
 export interface IntegrationsState {
   readonly catalog: IntegrationCatalog | null;
@@ -28,13 +52,13 @@ export interface IntegrationsState {
 /** The single live consumer for `integrations.changed`. Mutations refetch the
  * catalog rather than patching secrets/health/routing into parallel client state. */
 export function useIntegrations(): IntegrationsState {
-  const [catalog, setCatalog] = useState<IntegrationCatalog | null>(null);
+  const [catalog, setCatalog] = useState<IntegrationCatalog | null>(() => readCached<IntegrationCatalog>(CATALOG_KEY));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      setCatalog(await integrationsApi.catalog());
+      setCatalog(await fetchCatalog());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
