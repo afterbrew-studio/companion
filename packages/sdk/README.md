@@ -1,6 +1,6 @@
 # @moxxy/companion-sdk
 
-The module-authoring surface for [Companion](https://github.com/moxxy-ai/companion), a self-hosted maintainer's GUI for running AI agents against your GitHub repositories.
+The module-authoring surface for [Companion](https://github.com/moxxy-ai/companion), a local-first control plane for software teams and AI agents.
 
 A Companion module is an npm package that the daemon loads at boot. It can add pages to the sidebar, routes to the API, tables to the database, permissions to the role model, and jobs to the scheduler. This package is everything such a module is allowed to import.
 
