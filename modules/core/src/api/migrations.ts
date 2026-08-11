@@ -270,4 +270,31 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS mfa_recovery_codes`);
     },
   },
+  {
+    version: 10,
+    name: 'session_inventory',
+    // Sessions become listable and individually revocable, so each row needs a
+    // public id (the token hash must never leave the server) and an activity
+    // timestamp for the idle timeout. Both additive; existing rows get an id.
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE sessions ADD COLUMN id TEXT`,
+        `ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+      db.exec(`
+        UPDATE sessions SET id = 'ses-' || lower(hex(randomblob(6))) WHERE id IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions (id);
+      `);
+    },
+    down: (db) => {
+      // Additive columns stay; the index is the reversible half.
+      db.exec(`DROP INDEX IF EXISTS idx_sessions_id`);
+    },
+  },
 ]);

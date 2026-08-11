@@ -12,6 +12,7 @@ import type {
   CreateApiTokenResponse,
   MfaChallenge,
   SessionInfo,
+  SessionRecord,
   UserRecord,
 } from '../contract/index.js';
 import type { Mfa } from './mfa.js';
@@ -25,9 +26,13 @@ import { hashPassword, passwordNeedsRehash, verifyPassword } from './passwords.j
 /** The capability the install must never lose: without it nobody can fix roles. */
 const MANAGE_USERS = 'users:manage' as Permission;
 
-/** Fixed session lifetime: a session expires this long after sign-in. Nothing
- *  renews it on use; sliding expiry is a separate planned change. */
+/** Absolute session lifetime: a session ends this long after sign-in, full
+ *  stop. Use never renews it (there is no sliding window). The opt-in idle
+ *  timeout (core config `idleTimeoutMinutes`) can only end a session sooner. */
 const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
+/** last_seen_at write throttle: one UPDATE per session per minute, so activity
+ *  tracking costs nothing measurable on the per-request hot path. */
+const SESSION_TOUCH_INTERVAL_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 const API_TOKEN_TOUCH_INTERVAL_MS = 5 * 60_000;
 const MAX_API_TOKENS_PER_USER = 50;
@@ -84,6 +89,8 @@ export class Auth implements Authenticator {
     private readonly rbac: RbacReader,
     private readonly roles: RolesService,
     private readonly mfa: Mfa | null = null,
+    /** Live idle bound in ms; 0 disables. A thunk so config edits apply without restart. */
+    private readonly idleTimeoutMs: () => number = () => 0,
   ) {
     this.sessions.pruneExpired();
     this.apiTokens.pruneExpired();
@@ -313,6 +320,31 @@ export class Auth implements Authenticator {
     this.sessions.delete(hashToken(token));
   }
 
+  // ---------- session inventory -----------------------------------------------
+
+  /** A user's live sessions, flagging the one behind `currentToken`. Hashes stay inside. */
+  listSessions(username: string, currentToken: string | null): SessionRecord[] {
+    const currentHash = currentToken ? hashToken(currentToken) : null;
+    return this.sessions.listForUser(username).map((session) => ({
+      id: session.id,
+      createdAt: session.createdAt,
+      lastSeenAt: session.lastSeenAt,
+      expiresAt: session.expiresAt,
+      access: session.access,
+      current: session.tokenHash === currentHash,
+    }));
+  }
+
+  /** Revoke one of your own sessions. Revoking the current one logs you out; that is allowed. */
+  revokeOwnSession(username: string, id: string): boolean {
+    return this.sessions.deleteByIdForUser(username, id);
+  }
+
+  /** users:manage "sign out everywhere": the same internal revoke-all a password change runs. */
+  revokeAllSessions(username: string): number {
+    return this.sessions.deleteForUser(username);
+  }
+
   /** Mint for a trusted internal consumer; access is explicit to avoid an accidental full delegate. */
   mintSession(username: string, ttlMs: number, access: SessionAccess): { token: string; expiresAt: number } {
     const account = this.users.get(username);
@@ -398,6 +430,7 @@ export class Auth implements Authenticator {
     const token = randomBytes(32).toString('hex');
     const expiresAt = Date.now() + ttlMs;
     this.sessions.insert({
+      id: `ses-${randomUUID().slice(0, 12)}`,
       tokenHash: hashToken(token),
       username: account.username,
       role: account.role,
@@ -420,15 +453,26 @@ export class Auth implements Authenticator {
   /** Resolve a bearer token to its user, or null. Role reads live from the account. */
   verify(token: string | null): AuthUser | null {
     if (!token) return null;
+    const now = Date.now();
     const tokenHash = hashToken(token);
     const session = this.sessions.get(tokenHash);
-    if (session && session.expiresAt <= Date.now()) {
+    if (session && session.expiresAt <= now) {
       this.sessions.delete(session.tokenHash);
       return null;
     }
+    // Idle bound on top of the absolute lifetime: a session unused for longer
+    // than the configured window is signed out. Creation counts as activity.
+    const lastSeen = session ? (session.lastSeenAt ?? session.createdAt) : 0;
+    if (session) {
+      const idleMs = this.idleTimeoutMs();
+      if (idleMs > 0 && lastSeen <= now - idleMs) {
+        this.sessions.delete(session.tokenHash);
+        return null;
+      }
+    }
     const apiToken = session ? null : this.apiTokens.getByHash(tokenHash);
     if (!session && !apiToken) return null;
-    if (apiToken && apiToken.expiresAt <= Date.now()) {
+    if (apiToken && apiToken.expiresAt <= now) {
       this.apiTokens.deleteByHash(tokenHash);
       return null;
     }
@@ -439,8 +483,13 @@ export class Auth implements Authenticator {
       else this.apiTokens.deleteByHash(tokenHash);
       return null;
     }
-    if (apiToken && (apiToken.lastUsedAt === null || apiToken.lastUsedAt < Date.now() - API_TOKEN_TOUCH_INTERVAL_MS)) {
-      this.apiTokens.touch(tokenHash, Date.now());
+    // Activity stamps are throttled to one write per minute per credential:
+    // cheap enough for the hot path, precise enough for idle timeout and UI.
+    if (session && lastSeen <= now - SESSION_TOUCH_INTERVAL_MS) {
+      this.sessions.touch(tokenHash, now);
+    }
+    if (apiToken && (apiToken.lastUsedAt === null || apiToken.lastUsedAt < now - API_TOKEN_TOUCH_INTERVAL_MS)) {
+      this.apiTokens.touch(tokenHash, now);
     }
     return {
       username: account.username,

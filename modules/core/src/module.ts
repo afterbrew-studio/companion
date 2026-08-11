@@ -62,5 +62,15 @@ export default defineManifest({
       min: 7,
       max: 3650,
     },
+    {
+      key: 'idleTimeoutMinutes',
+      label: 'Idle session timeout (minutes)',
+      description:
+        'Sign sessions out after this much inactivity. 0 disables the idle bound; the absolute 7-day session lifetime always applies. Applies to every session, including the local CLI token (re-minted at daemon start). Activity is tracked at one-minute granularity.',
+      kind: 'number',
+      default: 0,
+      min: 0,
+      max: 10080,
+    },
   ],
 });

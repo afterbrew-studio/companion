@@ -39,6 +39,7 @@ import type {
   RemoveModuleResponse,
   RestartResponse,
   SessionInfo,
+  SessionRecord,
 } from '../contract/index.js';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,39}$/i;
@@ -741,6 +742,44 @@ export default defineRoutes((ctx) => {
         ctx.broadcast({ t: 'users.changed' });
         return { account };
       },
+    }),
+
+    // ---------- session inventory (self-service; admin under /api/users) ----------
+    route({
+      method: 'GET',
+      path: '/api/me/sessions',
+      access: 'any',
+      handler: ({ user, token }): { sessions: SessionRecord[] } => {
+        if (!user) throw new AuthError('authentication required', 401);
+        return { sessions: auth.listSessions(user.username, token) };
+      },
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/me/sessions/:id',
+      access: 'any',
+      handler: ({ user, params }) => {
+        if (!user) throw new AuthError('authentication required', 401);
+        // Revoking the session serving this request is allowed: it logs you out.
+        if (!auth.revokeOwnSession(user.username, params.id)) throw notFound(`session ${params.id} not found`);
+        return { ok: true };
+      },
+    }),
+    route({
+      method: 'GET',
+      path: '/api/users/:username/sessions',
+      access: 'users:manage',
+      handler: ({ params, token }): { sessions: SessionRecord[] } => ({
+        sessions: auth.listSessions(params.username, token),
+      }),
+    }),
+    route({
+      // Sessions are not broadcast state: the signed-out user simply 401s on
+      // their next request, so no message accompanies this.
+      method: 'DELETE',
+      path: '/api/users/:username/sessions',
+      access: 'users:manage',
+      handler: ({ params }) => ({ ok: true, revoked: auth.revokeAllSessions(params.username) }),
     }),
 
     // ---------- MFA (self-service enrollment; admin reset lives with /api/users) ----------

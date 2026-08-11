@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AuthMode, NavigationPerspective } from '@moxxy/companion-contracts';
 import {
   navigationEntryVisible,
@@ -21,8 +21,9 @@ import {
   SettingRow,
   Skeleton,
   Switch,
+  timeAgo,
 } from '@moxxy/companion-ui';
-import type { AccountInfo, MfaEnrollment, NotificationScope } from '../../contract/index.js';
+import type { AccountInfo, MfaEnrollment, NotificationScope, SessionRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
@@ -171,6 +172,8 @@ export function ProfilePage(): React.JSX.Element {
       <AccountSection authMode={authMode} onError={setError} />
 
       {authMode === 'password' ? <MfaSection onError={setError} /> : null}
+
+      <SessionsSection onError={setError} />
 
       <Section title="Appearance" description="How Companion looks on this browser.">
         <SettingRow className="card" title="Theme">
@@ -567,6 +570,77 @@ function MfaSection({ onError }: { onError: (e: string | null) => void }): React
           </div>
         )}
       </div>
+    </Section>
+  );
+}
+
+/** Every live session for this account; revoking the current one signs you out. */
+function SessionsSection({ onError }: { onError: (e: string | null) => void }): React.JSX.Element {
+  const { logout } = useAuth();
+  const [sessions, setSessions] = useState<readonly SessionRecord[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    coreApi
+      .listOwnSessions()
+      .then(({ sessions: list }) => setSessions(list))
+      .catch((e) => onError(String(e)));
+  }, [onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const revoke = async (session: SessionRecord): Promise<void> => {
+    setBusy(session.id);
+    onError(null);
+    try {
+      await coreApi.revokeOwnSession(session.id);
+      // The server row is already gone; logout clears the cookie and socket.
+      if (session.current) await logout();
+      else load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section
+      title="Your sessions"
+      description="Everywhere this account is signed in. Revoke anything you don't recognise; revoking this browser's session signs you out."
+    >
+      {sessions === null ? (
+        <Skeleton className="h-20 w-full" />
+      ) : sessions.length === 0 ? (
+        <p className="dim text-[13px]">No live sessions.</p>
+      ) : (
+        <ListCard ariaLabel="Your sessions">
+          {sessions.map((session) => (
+            <div key={session.id} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-1.5 text-[13px]">
+                  <span className="font-medium">Signed in {timeAgo(session.createdAt)}</span>
+                  {session.current ? <span className="badge-ok shrink-0">this browser</span> : null}
+                  {session.access === 'read-only' ? <span className="badge shrink-0">read-only</span> : null}
+                </span>
+                <span className="dim mt-0.5 block text-xs">
+                  Last seen {session.lastSeenAt ? timeAgo(session.lastSeenAt) : 'at sign-in'} · expires{' '}
+                  {new Date(session.expiresAt).toLocaleDateString()}
+                </span>
+              </span>
+              <button
+                className="btn-danger-ghost shrink-0"
+                disabled={busy !== null}
+                onClick={() => void revoke(session)}
+              >
+                {session.current ? 'Sign out' : 'Revoke'}
+              </button>
+            </div>
+          ))}
+        </ListCard>
+      )}
     </Section>
   );
 }

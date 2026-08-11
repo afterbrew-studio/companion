@@ -22,7 +22,7 @@ import {
   timeAgo,
   useConfirm,
 } from '@moxxy/companion-ui';
-import type { UserRecord } from '../../contract/index.js';
+import type { SessionRecord, UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { useUsers } from '../hooks/useUsers.js';
@@ -278,6 +278,7 @@ function UserModal({
             <span className="dim">off</span>
           )}
         </DetailRow>
+        <UserSessionsRow username={user.username} />
         <DetailRow label="Role">
           <select
             className="input input-sm"
@@ -316,6 +317,59 @@ function UserModal({
         </button>
       </FormActions>
     </Modal>
+  );
+}
+
+/** Active-session count with "sign out everywhere"; the user's next request 401s. */
+function UserSessionsRow({ username }: { username: string }): React.JSX.Element {
+  const [sessions, setSessions] = useState<readonly SessionRecord[] | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setSessions(null);
+    coreApi
+      .listUserSessions(username)
+      .then(({ sessions: list }) => alive && setSessions(list))
+      .catch((e) => alive && setError(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, [username, generation]);
+
+  const revokeAll = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await coreApi.revokeUserSessions(username);
+      setGeneration((g) => g + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DetailRow label="Sessions">
+      {error ? (
+        <span className="dim">{error}</span>
+      ) : sessions === null ? (
+        '…'
+      ) : sessions.length === 0 ? (
+        <span className="dim">none active</span>
+      ) : (
+        <span className="flex items-center gap-2">
+          {sessions.length} active · last seen{' '}
+          {timeAgo(Math.max(...sessions.map((s) => s.lastSeenAt ?? s.createdAt)))}
+          <button className="linkish text-xs" type="button" disabled={busy} onClick={() => void revokeAll()}>
+            Sign out everywhere
+          </button>
+        </span>
+      )}
+    </DetailRow>
   );
 }
 

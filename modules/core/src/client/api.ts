@@ -35,6 +35,7 @@ import type {
   LoginResponse,
   ProfileResponse,
   SessionInfo,
+  SessionRecord,
   UpdateAccountRequest,
   UpdateProfileRequest,
   UpdateUserRequest,
@@ -126,6 +127,14 @@ export const coreApi = {
   updateProfile: (body: UpdateProfileRequest) => put<ProfileResponse>('/api/profile', body),
   getAccount: () => request<{ account: AccountInfo }>('/api/account'),
   updateAccount: (body: UpdateAccountRequest) => put<{ account: AccountInfo }>('/api/account', body),
+
+  // sessions: self-service inventory plus the users:manage admin surface
+  listOwnSessions: () => request<{ sessions: SessionRecord[] }>('/api/me/sessions'),
+  revokeOwnSession: (id: string) => del<{ ok: true }>(`/api/me/sessions/${id}`),
+  listUserSessions: (username: string) =>
+    request<{ sessions: SessionRecord[] }>(`/api/users/${username}/sessions`),
+  revokeUserSessions: (username: string) =>
+    del<{ ok: true; revoked: number }>(`/api/users/${username}/sessions`),
 
   // MFA: enrollment is self-service; the raw secret and recovery codes appear once.
   enrollMfa: () => post<MfaEnrollment>('/api/mfa/enroll'),

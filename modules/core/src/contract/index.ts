@@ -5,6 +5,7 @@ import type {
   NavigationPageOverride,
   NavigationPerspective,
   Permission,
+  SessionAccess,
 } from '@moxxy/companion-contracts';
 import type { ModuleArtifact, ModuleProvenance } from '@moxxy/companion-core/server';
 import type { Supervisor } from '@moxxy/companion-services';
@@ -276,6 +277,18 @@ export interface MfaEnrollment {
 /** The only response that carries recovery codes in the clear; shown once. */
 export interface MfaRecoveryCodes {
   readonly recoveryCodes: readonly string[];
+}
+
+/** One live login session in the inventory views. Never the token or its hash. */
+export interface SessionRecord {
+  readonly id: string;
+  readonly createdAt: number;
+  /** Null until the session's first use after the upgrade that added activity tracking. */
+  readonly lastSeenAt: number | null;
+  readonly expiresAt: number;
+  readonly access: SessionAccess;
+  /** True for the session making this request. */
+  readonly current: boolean;
 }
 
 /** How the inbox is scoped: the active workspace only, or every accessible workspace. */
