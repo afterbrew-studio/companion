@@ -385,3 +385,59 @@ test('a multiselect field registers and stores only the values it offered', () =
   );
   db.close();
 });
+
+// ---------- personal-connection ownership (deleted users, managers' view) ----------
+
+function personalProvider() {
+  const base = provider();
+  return { ...base, descriptor: { ...base.descriptor, supportsPersonal: true } };
+}
+
+function personalConnection(service, name, ownerId) {
+  return service.createConnection({
+    providerId: 'vendor.review',
+    name,
+    scope: { kind: 'instance' },
+    enabled: true,
+    config: { region: 'eu', token: `${name}-secret` },
+  }, ownerId);
+}
+
+test('deleting a user cascades to their personal connections and their secrets', () => {
+  const { db, service, values, messages } = fixture();
+  service.registerProvider(personalProvider());
+  const shared = personalConnection(service, 'shared', null);
+  const anaOne = personalConnection(service, 'ana-one', 'ana');
+  const anaTwo = personalConnection(service, 'ana-two', 'ana');
+  const bobOne = personalConnection(service, 'bob-one', 'bob');
+
+  messages.length = 0;
+  assert.equal(service.removeConnectionsOwnedBy('ana'), 2);
+  assert.deepEqual(messages, [{ t: 'integrations.changed' }], 'one broadcast for the whole cascade');
+
+  const remaining = service.connectionsVisibleTo(null, true).map((connection) => connection.id).sort();
+  assert.deepEqual(remaining, [bobOne.id, shared.id].sort());
+  assert.equal(values.has(`connection:${anaOne.id}:token`), false);
+  assert.equal(values.has(`connection:${anaTwo.id}:token`), false);
+  assert.equal(values.get(`connection:${bobOne.id}:token`), 'bob-one-secret');
+  assert.equal(values.get(`connection:${shared.id}:token`), 'shared-secret');
+
+  messages.length = 0;
+  assert.equal(service.removeConnectionsOwnedBy('nobody'), 0);
+  assert.deepEqual(messages, [], 'nothing owned means nothing changed');
+  db.close();
+});
+
+test("the manager flag reveals other users' personal connections; without it they stay hidden", () => {
+  const { db, service } = fixture();
+  service.registerProvider(personalProvider());
+  const shared = personalConnection(service, 'shared', null);
+  const mine = personalConnection(service, 'mine', 'ana');
+  const theirs = personalConnection(service, 'theirs', 'bob');
+
+  const ids = (connections) => connections.map((connection) => connection.id).sort();
+  assert.deepEqual(ids(service.connectionsVisibleTo('ana')), ids([shared, mine]));
+  assert.deepEqual(ids(service.connectionsVisibleTo('ana', true)), ids([shared, mine, theirs]));
+  assert.deepEqual(ids(service.catalog('ana', true).connections), ids([shared, mine, theirs]));
+  db.close();
+});

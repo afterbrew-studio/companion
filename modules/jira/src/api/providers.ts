@@ -116,45 +116,79 @@ export const jiraAutomationProvider: IntegrationProviderAdapter = {
   },
 };
 
-async function sendAutomation(
+/** A transient failure is retried once, after this pause. */
+const RETRY_DELAY_MS = 2_000;
+
+/** 429 and 5xx are the receiver having a moment; 4xx is us being wrong. */
+function retryable(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+interface AutomationOutcome {
+  readonly ok: boolean;
+  readonly httpStatus: number | null;
+  readonly error: string | null;
+  readonly attempts: number;
+}
+
+/**
+ * Same retry semantics as the notify providers (see
+ * modules/notify/src/api/delivery.ts `deliver`): one retry on 429/5xx or a
+ * network error; a 4xx is final; never throws. The transport is injectable so
+ * the retry behaviour is asserted in tests without a network.
+ */
+export async function sendAutomation(
   connection: IntegrationConnectionAccess,
   notification: IntegrationNotificationInput,
-) {
+  transport: typeof withPublicHttpResponse = withPublicHttpResponse,
+): Promise<AutomationOutcome> {
   const url = connection.secret('url');
   if (!url) return { ok: false, httpStatus: null, error: 'webhook URL is not configured', attempts: 0 };
   const token = connection.secret('token');
+  let target: URL;
   try {
-    const target = jiraAutomationTarget(url);
-    return await withPublicHttpResponse(
-      target,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(token ? { 'x-automation-webhook-token': token } : {}),
-        },
-        body: JSON.stringify(notification),
-        signal: AbortSignal.timeout(10_000),
-        redirect: 'manual',
-      },
-      async (response) => {
-        await response.body?.cancel().catch(() => undefined);
-        return {
-          ok: response.ok,
-          httpStatus: response.status,
-          error: response.ok ? null : `Jira Automation returned ${response.status}`,
-          attempts: 1,
-        };
-      },
-    );
+    target = jiraAutomationTarget(url);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: null,
-      error: String(error instanceof Error ? error.message : error).slice(0, 1_000),
-      attempts: 1,
-    };
+    return { ok: false, httpStatus: null, error: errorText(error), attempts: 0 };
   }
+  let last: AutomationOutcome = { ok: false, httpStatus: null, error: 'not attempted', attempts: 0 };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      last = await transport(
+        target,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(token ? { 'x-automation-webhook-token': token } : {}),
+          },
+          body: JSON.stringify(notification),
+          signal: AbortSignal.timeout(10_000),
+          redirect: 'manual',
+        },
+        async (response) => {
+          await response.body?.cancel().catch(() => undefined);
+          return {
+            ok: response.ok,
+            httpStatus: response.status,
+            error: response.ok ? null : `Jira Automation returned ${response.status}`,
+            attempts: attempt,
+          };
+        },
+      );
+      if (last.ok || (last.httpStatus !== null && !retryable(last.httpStatus))) return last;
+    } catch (error) {
+      last = { ok: false, httpStatus: null, error: errorText(error), attempts: attempt };
+      // An SSRF-guard refusal is deterministic; retrying it is pure delay.
+      if (/public address/i.test(last.error ?? '')) return last;
+    }
+    if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  }
+  return last;
+}
+
+function errorText(error: unknown): string {
+  return String(error instanceof Error ? error.message : error).slice(0, 1_000);
 }
 
 function jiraAutomationTarget(rawUrl: string | null): URL {

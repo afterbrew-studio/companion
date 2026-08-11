@@ -19,7 +19,7 @@ export default defineManifest({
     'tokens:manage',
     'tokens:admin',
   ],
-  messages: ['tokens.changed'],
+  messages: ['tokens.changed', 'users.changed', 'roles.changed'],
   config: [
     {
       key: 'externalSignup',

@@ -314,6 +314,9 @@ importers:
       '@companion/module-core':
         specifier: workspace:*
         version: link:../core
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@moxxy/companion-core':
         specifier: workspace:*
         version: link:../../packages/core
