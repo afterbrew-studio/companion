@@ -15,6 +15,7 @@ function retentionDays(ctx: ModuleContext, key: string, fallback: number): numbe
 
 let offSetupCompleted: (() => void) | null = null;
 let offNativeReviewProvider: (() => void) | null = null;
+let offWorkspaceDeleted: (() => void) | null = null;
 
 /**
  * Surface a credential going bad, and coming back.
@@ -135,6 +136,13 @@ export default defineJobs({
       void code.importLocalGhAccount();
     });
 
+    // These tables are code-owned, so their workspace-delete cleanup lives with
+    // their owner; the signal is soft, so a disabled code module just leaves
+    // rows that its own retention or a later delete would remove.
+    offWorkspaceDeleted = ctx.bus.on('workspace.deleted', ({ workspaceId }) => {
+      code.pipelines.removeForWorkspace(workspaceId);
+    });
+
     // Replay unattended work that was still queued when the daemon last
     // stopped (legacy index.ts resumers). Each resumer rebuilds the prompt
     // from stored args and re-enqueues fresh; operate's postActivate calls
@@ -223,6 +231,8 @@ export default defineJobs({
     offSetupCompleted = null;
     offNativeReviewProvider?.();
     offNativeReviewProvider = null;
+    offWorkspaceDeleted?.();
+    offWorkspaceDeleted = null;
     // Unplug our account-aware resolver; operate then fails network Git closed.
     ctx.services.get('operate').resetGithubTokenSource();
   },

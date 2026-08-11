@@ -9,11 +9,11 @@ const ana = { username: 'ana', displayName: 'Ana', role: 'user' };
 const admin = { username: 'root', displayName: 'Root', role: 'admin' };
 
 /**
- * The workspace routes over a real store and schema. `code` is what
- * `ctx.services.tryGet('code')` answers: undefined simulates module-code
- * absent or disabled, exactly what the route sees then.
+ * The workspace routes over a real store and schema. Cross-module cleanup is a
+ * bus signal now, so `emitted` records what a subscriber (module-code) would
+ * see; an empty subscriber set is exactly the module-absent case.
  */
-function fixture({ code } = {}) {
+function fixture() {
   const db = new Database(':memory:');
   for (const m of migrations) m.up(db);
   // Core-owned table the member listing LEFT JOINs for display names.
@@ -28,18 +28,20 @@ function fixture({ code } = {}) {
     visibility: 'private',
     ownerId: 'ana',
   });
+  const emitted = [];
   const services = { workspace: workspaces, core: {}, notifications: {}, reports: {} };
   const routes = routeFactory({
-    services: { get: (id) => services[id], tryGet: (id) => (id === 'code' ? code : undefined) },
+    services: { get: (id) => services[id], tryGet: () => undefined },
     rbac: { allows: () => true },
     broadcast: () => {},
+    bus: { emit: (name, payload) => emitted.push({ name, payload }), on: () => () => {} },
   });
   const run = (method, path, params, body, user) => {
     const target = routes.find((c) => c.method === method && c.path === path);
     assert.ok(target, `${method} ${path} route exists`);
     return target.run(params, new URLSearchParams(), body ?? {}, user, null, '127.0.0.1');
   };
-  return { db, workspaces, run };
+  return { db, workspaces, run, emitted };
 }
 
 test('deleting a workspace succeeds when module-code is absent', async () => {
@@ -79,11 +81,13 @@ test('deleting a workspace removes its reports, notifications and read receipts'
   );
 });
 
-test("code's pipeline cleanup runs when the module is present", async () => {
-  const cleaned = [];
-  const fx = fixture({ code: { pipelines: { removeForWorkspace: (id) => cleaned.push(id) } } });
+test('deleting a workspace announces workspace.deleted for owner-module cleanup', async () => {
+  const fx = fixture();
   await fx.run('DELETE', '/api/workspaces/:id', { id: 'ws-2' }, undefined, ana);
-  assert.deepEqual(cleaned, ['ws-2']);
+  assert.deepEqual(
+    fx.emitted.filter((e) => e.name === 'workspace.deleted'),
+    [{ name: 'workspace.deleted', payload: { workspaceId: 'ws-2' } }],
+  );
 });
 
 test('removing the owner answers 400 instead of a silent no-op', async () => {

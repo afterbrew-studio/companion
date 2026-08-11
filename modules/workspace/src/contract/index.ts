@@ -41,6 +41,13 @@ declare module '@moxxy/companion-contracts' {
      * downstream may fail the emit.
      */
     'notification.raised': NotificationRecord;
+    /**
+     * A workspace was deleted. Owner modules of workspace-scoped tables (code's
+     * pipelines and their history) clean up on this signal, soft: with the
+     * subscriber disabled the rows merely linger, invisible behind access
+     * checks, exactly as if the cleanup had raced the module toggle.
+     */
+    'workspace.deleted': { readonly workspaceId: string };
   }
 }
 
