@@ -8,6 +8,7 @@ import {
   matchRoute,
   navigationEntryVisible,
   onServerMessage,
+  onWsState,
   passesFreshFilters,
   canUseQuickAction,
   runQuickAction,
@@ -23,6 +24,7 @@ import {
   LoginPage,
   SetupPage,
   Onboarding,
+  hasOnboarded,
   type OnboardingMode,
 } from '@companion/module-core/client';
 // module-core and module-workspace are `required: true`: every build contains
@@ -282,9 +284,13 @@ function Shell(): React.JSX.Element {
   );
   const { helpOpen, setHelpOpen, chordPending } = useAppShortcuts(shortcutTargets);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // The optional tour is available from shortcut help. First-time guidance is
-  // contextual inside empty states; entering the product never opens a wizard.
+  // The tour opens itself once per browser: after auth resolves (Shell mounts
+  // post-login) and the modules are ready, gated on the persisted dismissal
+  // marker so it never auto-reopens. It stays replayable from shortcut help.
   const [tour, setTour] = useState<OnboardingMode | null>(null);
+  useEffect(() => {
+    if (kernel.ready && kernel.onboarding.length > 0 && !hasOnboarded()) setTour('full');
+  }, [kernel.ready, kernel.onboarding.length]);
   // Areas with unseen activity, badged in the nav. Scoped and persisted PER
   // workspace: issues/prs activity in another workspace's repos must not light
   // up the one you're looking at, and the marks survive a reload.
@@ -612,6 +618,7 @@ function Shell(): React.JSX.Element {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <ReconnectBanner />
         <Slot name="shell.banner" can={can} />
         <TopBar
           hash={hash}
@@ -1058,6 +1065,37 @@ function QuickActionsMenu({ actions }: { actions: readonly QuickAction[] }): Rea
           })}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Shell-owned live-stream notice: shown only after the socket drops having been
+ * connected once (a fresh tab connecting must not flash it), hidden again the
+ * moment the net layer's backoff loop reconnects.
+ */
+function ReconnectBanner(): React.JSX.Element | null {
+  const [lost, setLost] = useState(false);
+  useEffect(() => {
+    let wasConnected = false;
+    return onWsState((state) => {
+      if (state === 'connected') {
+        wasConnected = true;
+        setLost(false);
+      } else if (wasConnected) {
+        setLost(true);
+      }
+    });
+  }, []);
+  if (!lost) return null;
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+      role="status"
+      aria-live="polite"
+    >
+      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" aria-hidden />
+      <span>Connection lost, reconnecting…</span>
     </div>
   );
 }

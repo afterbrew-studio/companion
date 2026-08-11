@@ -14,15 +14,15 @@ function RunnersArt({ playing }: { playing: boolean }): React.JSX.Element {
   );
 }
 
-/** module-operate's slice of the welcome tour (scaling runs across machines). */
+/** module-operate's slice of the welcome tour (where agent work executes). */
 export const onboarding = defineOnboarding([
   {
     key: 'runners',
     order: 60,
     permission: 'runners:connect',
-    title: 'Scale across machines',
-    body: 'Agent work uses the shared runner pool by default, so most people need no setup. Attach a private machine from Settings only when you need your own runtime or models.',
-    chips: ['Agents → Agent Runs', 'Settings → Runners'],
+    title: 'Give agents a machine to run on',
+    body: 'Agent runs need somewhere to execute: a runtime CLI installed on the machine hosting Companion, or another machine you attach as a runner. The Runners page shows what this instance has and is where you add capacity.',
+    chips: ['Settings → Runners'],
     art: (playing) => <RunnersArt playing={playing} />,
   },
 ]);
