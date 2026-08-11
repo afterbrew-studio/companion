@@ -532,6 +532,13 @@ export class Runners {
   refusalFor(runnerId: string | null, opts: { task?: string | null; repo?: string | null; userId?: string | null } = {}): string | null {
     const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
     if (!row) return 'that machine is no longer connected';
+    // Ownership before anything that names the machine: a foreign personal
+    // runner must refuse without confirming whose it is or that it exists.
+    // An omitted userId is treated as foreign, so a personal machine refuses
+    // even its owner unless the caller threads the acting user through.
+    if (row.owner_id !== null && row.owner_id !== (opts.userId ?? null)) {
+      return 'that machine is not available to you';
+    }
     if (row.enabled !== 1) return `${row.name} is disabled`;
     if (!this.allows(row, opts.task ?? null)) return `${row.name} does not accept ${opts.task ?? 'this work'}`;
     if (!this.servesRepo(row, opts.repo ?? null)) return `${row.name} is not cleared for this repository`;
