@@ -34,7 +34,7 @@ export function ChannelsPage(): React.JSX.Element {
     <Page>
       <PageHeader
         title="Notification delivery"
-        subtitle="Recent attempts across Slack, Discord, email, Jira Automation, ntfy and webhooks"
+        subtitle="Recent attempts across Slack, Teams, Discord, email, Jira Automation, ntfy and webhooks"
         actions={<a className="btn" href="#/integrations">Manage integrations</a>}
       />
       <ErrorBar error={error} />

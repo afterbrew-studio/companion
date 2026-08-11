@@ -40,6 +40,16 @@ const DEFINITIONS: ReadonlyArray<{
     supportsPersonal: true,
   },
   {
+    id: 'teams.webhook',
+    kind: 'teams',
+    vendor: 'Microsoft Teams',
+    title: 'Microsoft Teams webhook',
+    description: 'Deliver Companion activity into a Teams channel through an incoming webhook or Power Automate workflow.',
+    docsUrl: 'https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook',
+    signingSecret: false,
+    supportsPersonal: true,
+  },
+  {
     id: 'ntfy.http',
     kind: 'ntfy',
     vendor: 'ntfy',
@@ -133,8 +143,8 @@ function notificationTarget(rawUrl: string | null, kind: ProviderKind): URL {
   if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.username || target.password) {
     throw new Error('Notification destination must use HTTP(S) without embedded credentials');
   }
-  if ((kind === 'slack' || kind === 'discord') && target.protocol !== 'https:') {
-    throw new Error(`${kind === 'slack' ? 'Slack' : 'Discord'} webhooks must use HTTPS`);
+  if ((kind === 'slack' || kind === 'discord' || kind === 'teams') && target.protocol !== 'https:') {
+    throw new Error(`${kind === 'slack' ? 'Slack' : kind === 'discord' ? 'Discord' : 'Teams'} webhooks must use HTTPS`);
   }
   if (
     kind === 'slack' &&
@@ -149,6 +159,20 @@ function notificationTarget(rawUrl: string | null, kind: ProviderKind): URL {
       !target.pathname.startsWith('/api/webhooks/'))
   ) {
     throw new Error('Discord webhook must be an official discord.com API webhook URL');
+  }
+  if (kind === 'teams') {
+    // Tenant subdomains vary, so these are suffix matches; the path pin keeps
+    // an unrelated Office or Logic Apps endpoint from qualifying.
+    const host = target.hostname.toLowerCase();
+    const connector =
+      (host === 'webhook.office.com' || host.endsWith('.webhook.office.com')) &&
+      target.pathname.startsWith('/webhookb2/');
+    const workflow = host.endsWith('.logic.azure.com') && target.pathname.startsWith('/workflows/');
+    if (!connector && !workflow) {
+      throw new Error(
+        'Teams webhook must be a webhook.office.com incoming webhook or a Power Automate logic.azure.com workflow URL',
+      );
+    }
   }
   return target;
 }
