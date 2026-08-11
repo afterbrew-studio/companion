@@ -26,12 +26,6 @@ const laneSchema = z.object({
   runnerId: z.string().min(1).nullable(),
   harness: z.string().min(1).nullable(),
 });
-const laneModelSchema = z.object({
-  lane: laneSchema,
-  /** Omitted task sets the lane default; present pins that task. */
-  task: z.string().min(1).max(64).optional(),
-  model: z.string().max(200).nullable(),
-});
 const askRespondSchema = z.object({
   requestId: z.string(),
   response: z.object({
@@ -264,6 +258,16 @@ export default defineRoutes((ctx) => {
       .sort((a, b) => a.moduleTitle.localeCompare(b.moduleTitle));
   };
 
+  // The lane picker offers exactly the machines laneSnapshot lists: enabled,
+  // and shared or the caller's own. A write must accept no more than the
+  // picker offers, or runs:act reaches somebody else's private machine.
+  const requireChoosableRunner = (user: AuthUser | null, id: string): void => {
+    const runner = op.runners.get(id);
+    if (!runner || !runner.enabled || (runner.ownerId !== null && runner.ownerId !== user?.username)) {
+      throw notFound(`runner ${id} not found`);
+    }
+  };
+
   // Personal runners stay private to their owner. Admins additionally manage
   // shared instance runners, without inheriting other users' machines.
   const requireManageableRunner = (user: AuthUser | null, id: string): void => {
@@ -483,20 +487,8 @@ export default defineRoutes((ctx) => {
       access: 'runs:act',
       body: laneSchema,
       handler: ({ body, user }) => {
+        if (body.runnerId !== null) requireChoosableRunner(user, body.runnerId);
         op.orchestrator.setUserLane(user!.username, body);
-        return laneSnapshot(user);
-      },
-    }),
-
-    /** A model on a lane: the lane's default, or its pin for one task. */
-    route({
-      method: 'PUT',
-      path: '/api/me/lane/model',
-      access: 'runs:act',
-      body: laneModelSchema,
-      handler: ({ body, user }) => {
-        if (body.task === undefined) op.orchestrator.setLaneDefaultModel(body.lane, body.model);
-        else op.orchestrator.setLaneTaskPin(body.lane, body.task, body.model);
         return laneSnapshot(user);
       },
     }),

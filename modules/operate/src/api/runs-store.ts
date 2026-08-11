@@ -414,11 +414,13 @@ export class RunsStore {
       .run().changes;
   }
 
-  /** Boot-time sweep: any run left live-ish died with the daemon. */
+  /** Boot-time sweep: any run left live-ish died with the daemon. 'idle'
+   *  belongs here too: an attended chat between turns still counts against
+   *  scheduler capacity, and its gateway is just as gone. */
   markInterrupted(): number {
     const result = this.db
       .prepare(
-        `UPDATE runs SET status = 'interrupted', updated_at = ? WHERE status IN ('running', 'provisioning', 'queued')`,
+        `UPDATE runs SET status = 'interrupted', updated_at = ? WHERE status IN ('running', 'provisioning', 'queued', 'idle')`,
       )
       .run(Date.now());
     return result.changes;
