@@ -1,4 +1,4 @@
-import type { Database } from '@moxxy/companion-services';
+import { log, type Database } from '@moxxy/companion-services';
 import type {
   RunnerCatalog,
   RunnerKind,
@@ -58,12 +58,33 @@ export interface RunnerRow {
  * live in side tables so a runner can serve many of each (and vice versa).
  */
 export class RunnersStore {
+  /** Runners whose stored credential could not be read, and why. */
+  private readonly secretErrors = new Map<string, string>();
+
   constructor(
     private readonly db: Database,
     private readonly secrets: RunnerSecrets,
   ) {
     this.migratePlaintextTokens();
     this.ensureLocal();
+  }
+
+  /** Why this runner's credential is unreadable, or null when it is fine. */
+  secretError(id: string): string | null {
+    return this.secretErrors.get(id) ?? null;
+  }
+
+  /**
+   * A lost or corrupt secret must not brick boot: the runner it belongs to is
+   * switched off with the reason kept for the Runners page, and everything else
+   * carries on. Re-entering the token brings it back.
+   */
+  private degrade(id: string, name: string, error: unknown): void {
+    if (this.secretErrors.has(id)) return;
+    const reason = error instanceof Error ? error.message : String(error);
+    this.secretErrors.set(id, reason);
+    this.db.prepare(`UPDATE runners SET enabled = 0 WHERE id = ?`).run(id);
+    log.error(`credential for runner ${name} is unreadable; it is disabled until its token is re-entered`, error);
   }
 
   private ensureLocal(): void {
@@ -96,7 +117,8 @@ export class RunnersStore {
     const repoScope: RunnerRepoScope = row.repo_scope === 'selected' ? 'selected' : 'all';
     return {
       ...row,
-      token: row.token === null ? null : this.requiredToken(row.id),
+      token: row.token === null ? null : this.tokenOrDegrade(row.id, row.name),
+      enabled: this.secretErrors.has(row.id) ? 0 : row.enabled,
       blocked_tasks: parseJson<string[]>(row.blocked_tasks, []),
       task_policy_mode: row.task_policy_mode === 'allow' ? 'allow' : 'deny',
       policy_modules: parseJson<string[]>(row.policy_modules, []),
@@ -209,7 +231,10 @@ export class RunnersStore {
     if (!current) return;
     const policy = fields.taskPolicy;
     const roles = fields.allowedRoles ?? current.allowed_roles;
-    if (fields.token !== undefined) this.secrets.set(tokenKey(id), fields.token);
+    if (fields.token !== undefined) {
+      this.secrets.set(tokenKey(id), fields.token);
+      this.secretErrors.delete(id);
+    }
     this.db
       .prepare(
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
@@ -221,7 +246,7 @@ export class RunnersStore {
         id,
         name: fields.name ?? current.name,
         endpoint: fields.endpoint === undefined ? current.endpoint : fields.endpoint,
-        token: fields.token !== undefined || current.token !== null ? SECRET_MARKER : null,
+        token: fields.token !== undefined || current.token !== null || this.secretErrors.has(id) ? SECRET_MARKER : null,
         scope: fields.scope ?? current.scope,
         maxRuns: fields.maxRuns ?? current.max_runs,
         enabled: fields.enabled === undefined ? current.enabled : fields.enabled ? 1 : 0,
@@ -272,6 +297,7 @@ export class RunnersStore {
     this.db.prepare(`DELETE FROM runner_repos WHERE runner_id = ?`).run(id);
     this.db.prepare(`DELETE FROM runners WHERE id = ?`).run(id);
     this.secrets.delete(tokenKey(id));
+    this.secretErrors.delete(id);
   }
 
   /** Token for a remote runner (never leaves the daemon). */
@@ -285,16 +311,32 @@ export class RunnersStore {
     return token;
   }
 
+  private tokenOrDegrade(id: string, name: string): string | null {
+    if (this.secretErrors.has(id)) return null;
+    try {
+      return this.requiredToken(id);
+    } catch (error) {
+      this.degrade(id, name, error);
+      return null;
+    }
+  }
+
   /** Move remote-runner bearer credentials from pre-encryption rows. */
   private migratePlaintextTokens(): void {
     const rows = this.db
-      .prepare(`SELECT id, token FROM runners WHERE token IS NOT NULL`)
-      .all() as Array<{ id: string; token: string }>;
+      .prepare(`SELECT id, name, token FROM runners WHERE token IS NOT NULL`)
+      .all() as Array<{ id: string; name: string; token: string }>;
     const mark = this.db.prepare(`UPDATE runners SET token = ? WHERE id = ?`);
     for (const row of rows) {
-      if (row.token !== SECRET_MARKER) this.secrets.set(tokenKey(row.id), row.token);
-      else this.requiredToken(row.id);
-      mark.run(SECRET_MARKER, row.id);
+      try {
+        if (row.token !== SECRET_MARKER) this.secrets.set(tokenKey(row.id), row.token);
+        else this.requiredToken(row.id);
+        // Only after the secret store holds the credential: marking a row whose
+        // write failed would erase the one copy left.
+        mark.run(SECRET_MARKER, row.id);
+      } catch (error) {
+        this.degrade(row.id, row.name, error);
+      }
     }
   }
 }
