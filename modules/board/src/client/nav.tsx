@@ -14,7 +14,7 @@ export const sections = defineSections([
 export const nav = defineNav([
   {
     key: 'board',
-    label: 'Task Board',
+    label: 'Task board',
     hash: '#/board',
     shortcut: 'b',
     permission: 'board:read',

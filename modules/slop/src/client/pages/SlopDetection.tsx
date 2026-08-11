@@ -37,7 +37,8 @@ import { ACTION_BUTTON, ACTION_LABEL, STATUS_META } from '../detection-meta.js';
  *
  * The header holds two controls only: the recommended action, named so the
  * button says what it will do, and one menu for every other outcome (the other
- * GitHub actions, refinement, dismissal). Deep-linkable as #/slop/:id.
+ * GitHub actions, refinement, dismissal). Deep-linkable as
+ * #/contribution-quality/:id.
  */
 export default function SlopDetection({ params }: RouteProps): React.JSX.Element {
   const id = params.id!;
@@ -59,7 +60,7 @@ export default function SlopDetection({ params }: RouteProps): React.JSX.Element
   useLive(refresh, (msg) => msg.t === 'slop.changed');
 
   const crumbs = (label: string): React.JSX.Element => (
-    <Breadcrumb items={[{ label: 'Contribution Quality', href: '#/slop' }, { label }]} />
+    <Breadcrumb items={[{ label: 'Contribution quality', href: '#/contribution-quality' }, { label }]} />
   );
 
   if (detection === undefined) {

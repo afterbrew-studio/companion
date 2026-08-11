@@ -48,7 +48,7 @@ export function DigestLivePage({ repo }: { repo: string }): React.JSX.Element {
 
       <p className="dim mt-4 text-xs">
         <a className="linkish" href="#/digest">
-          ← Back to Daily Digest
+          ← Back to Daily digest
         </a>
       </p>
     </Page>
@@ -243,11 +243,11 @@ function FailedStage({ run }: { run: DigestRun | null }): React.JSX.Element {
       </div>
       <p className="dim mt-2 text-sm">
         {run?.outcome ?? 'The run ended before the digest was written.'} Companion falls back to a plain fact-sheet
-        digest — it lands on the Daily Digest page in a moment.
+        digest — it lands on the Daily digest page in a moment.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <a className="btn-ghost" href="#/digest">
-          Back to Daily Digest
+          Back to Daily digest
         </a>
         {run ? (
           <a className="btn-ghost" href={`#/runs/${run.id}`}>

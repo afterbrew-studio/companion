@@ -1,6 +1,11 @@
 import { useCallback, useState } from 'react';
 import { useLive } from '@moxxy/companion-sdk/client';
-import type { CreateProviderRequest, ModelProviderRecord, ProbeResult } from '../../contract/index.js';
+import type {
+  CreateProviderRequest,
+  ModelProviderRecord,
+  ProbeResult,
+  UpdateProviderRequest,
+} from '../../contract/index.js';
 import { runtimeApi } from '../api.js';
 
 export interface ProvidersState {
@@ -8,9 +13,10 @@ export interface ProvidersState {
   readonly ready: boolean;
   readonly error: string | null;
   readonly busy: boolean;
-  create(draft: CreateProviderRequest): Promise<void>;
-  update(id: string, fields: Partial<CreateProviderRequest>): Promise<void>;
-  remove(id: string): Promise<void>;
+  /** Resolves false on failure (the message lands in `error`) so a form can stay open. */
+  create(draft: CreateProviderRequest): Promise<boolean>;
+  update(id: string, fields: UpdateProviderRequest): Promise<boolean>;
+  remove(id: string): Promise<boolean>;
   probe(id: string, model: string): Promise<ProbeResult | null>;
   discover(id: string): Promise<string[] | null>;
 }
@@ -34,14 +40,16 @@ export function useProviders(): ProvidersState {
 
   useLive(load, (msg) => msg.t === 'runtime.changed');
 
-  const guard = async (work: () => Promise<unknown>): Promise<void> => {
+  const guard = async (work: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     try {
       await work();
       await load();
       setError(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusy(false);
     }

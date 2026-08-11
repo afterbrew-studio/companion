@@ -1,17 +1,18 @@
 import { defineNav, NavIcon } from '@moxxy/companion-sdk/client';
 
 /**
- * Attaches to core's Integrations settings group rather than opening one of its
- * own: which endpoints an instance may spend money against is configuration,
- * not a daily work surface.
+ * Attaches to core's settings groups rather than opening one of its own: which
+ * endpoints an instance may spend money against is configuration, not a daily
+ * work surface. Model endpoints sit in the AI group beside operate's
+ * Machines & models page; MCP servers stay under Integrations.
  */
 export const nav = defineNav([
   {
     key: 'model-providers',
-    label: 'Model providers',
+    label: 'Model endpoints',
     hash: '#/model-providers',
     permission: 'runtime:read',
-    section: 'admin-integrations',
+    section: 'admin-ai',
     order: 4,
     icon: (
       <NavIcon>
