@@ -46,6 +46,27 @@ test('ntfy posts to the origin with the topic taken from the path', () => {
   assert.equal(body.title, NOTIFICATION.title);
 });
 
+test('teams gets an adaptive card in a message attachment envelope', () => {
+  const req = buildRequest('teams', 'https://acme.webhook.office.com/webhookb2/x', NOTIFICATION, {
+    publicUrl: 'https://companion.corp',
+  });
+  const body = JSON.parse(req.body);
+  assert.equal(body.type, 'message');
+  assert.equal(body.attachments.length, 1);
+  const [attachment] = body.attachments;
+  assert.equal(attachment.contentType, 'application/vnd.microsoft.card.adaptive');
+  assert.equal(attachment.content.type, 'AdaptiveCard');
+  assert.equal(attachment.content.body[0].text, NOTIFICATION.title);
+  assert.match(attachment.content.body[1].text, /slop detection/);
+  assert.equal(attachment.content.actions[0].type, 'Action.OpenUrl');
+  assert.equal(attachment.content.actions[0].url, 'https://companion.corp/#/slop/slop-abc');
+});
+
+test('a teams card without a public URL carries no open action', () => {
+  const body = JSON.parse(buildRequest('teams', 'https://acme.webhook.office.com/webhookb2/x', NOTIFICATION).body);
+  assert.equal(body.attachments[0].content.actions, undefined);
+});
+
 test('a webhook carries the whole record', () => {
   const body = JSON.parse(buildRequest('webhook', 'https://example.com/hook', NOTIFICATION).body);
   assert.equal(body.id, 'n1');
@@ -101,6 +122,18 @@ test('provider connections reject unsafe destinations before a secret is stored'
   assert.throws(() => validate('discord.webhook', 'file:///tmp/hook'), /must use HTTP\(S\)/);
   assert.throws(() => validate('webhook.generic', 'https://user:pass@example.test/hook'), /embedded credentials/);
   assert.doesNotThrow(() => validate('webhook.generic', 'http://internal.example.test/hook'));
+  assert.throws(() => validate('teams.webhook', 'http://acme.webhook.office.com/webhookb2/a/IncomingWebhook/b/c'), /must use HTTPS/);
+  assert.throws(() => validate('teams.webhook', 'https://evil.example/webhookb2/a/IncomingWebhook/b/c'), /Teams webhook must be/);
+  assert.throws(
+    () => validate('teams.webhook', 'https://acme.webhook.office.com.evil.example/webhookb2/a/IncomingWebhook/b/c'),
+    /Teams webhook must be/,
+  );
+  assert.throws(() => validate('teams.webhook', 'https://acme.webhook.office.com/other/path'), /Teams webhook must be/);
+  assert.throws(() => validate('teams.webhook', 'https://prod-27.westus.logic.azure.com/other/path'), /Teams webhook must be/);
+  assert.doesNotThrow(() => validate('teams.webhook', 'https://acme.webhook.office.com/webhookb2/a@b/IncomingWebhook/c/d'));
+  assert.doesNotThrow(
+    () => validate('teams.webhook', 'https://prod-27.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=x'),
+  );
 });
 
 test('provider connections reject misspelled notification filters before storage', () => {
