@@ -21,7 +21,8 @@ const nodeBanner = [
 
 await build({
   entryPoints: {
-    index: join(here, 'src/index.ts'),
+    index: join(here, 'src/bootstrap.ts'),
+    main: join(here, 'src/index.ts'),
     setup: join(here, 'src/setup.ts'),
     github: join(here, 'src/github.ts'),
     modules: join(here, 'src/modules.ts'),
@@ -34,6 +35,7 @@ await build({
     profile: join(here, 'src/profile.ts'),
     harnesses: join(here, 'src/harnesses.ts'),
     mcp: join(here, 'src/mcp.ts'),
+    doctor: join(here, 'src/doctor.ts'),
     version: join(here, 'src/version.ts'),
   },
   outdir: dist,

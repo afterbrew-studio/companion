@@ -46,10 +46,11 @@ import { daemonLog, runningPid, startDetached, stopDaemon, tailLog, waitUntilSer
 import type { Detached } from './daemon.js';
 import { apiClient } from './client.js';
 import { MCP_HELP, resolveMcpBaseUrl, runMcpServer } from './mcp.js';
+import { assertSupportedNode, DOCTOR_HELP, parseDoctorArgs, runDoctor } from './doctor.js';
 import { COMPANION_VERSION } from './version.js';
 
 /** Commands that talk to a running daemon instead of starting one. */
-const CLIENT_COMMANDS = ['module', 'provider', 'acl', 'role', 'user', 'run', 'mcp'] as const;
+const CLIENT_COMMANDS = ['module', 'provider', 'acl', 'role', 'user', 'run', 'mcp', 'doctor'] as const;
 type ClientCommand = (typeof CLIENT_COMMANDS)[number];
 
 interface CliOptions {
@@ -104,6 +105,7 @@ Usage:
   npx @moxxy/companion connect-github   Connect active gh to an existing Companion user
   npx @moxxy/companion run list         Runs awaiting you; also show/diff/approve/discard
   npx @moxxy/companion mcp              Safe stdio MCP: read state, prepare reviewed actions
+  npx @moxxy/companion doctor           Redacted local installation diagnostics
   npx @moxxy/companion backup [file]    Snapshot the database (safe while running)
   npx @moxxy/companion restore <file>   Replace the database from a snapshot (stop first)
   npx @moxxy/companion module ...       Inspect and toggle modules (see: module --help)
@@ -144,9 +146,12 @@ async function main(): Promise<void> {
     return;
   }
   const group = CLIENT_COMMANDS.find((c) => c === argv[0]);
+  if (group !== 'doctor' && !argv.includes('--help') && !argv.includes('-h') && !argv.includes('help')) {
+    assertSupportedNode();
+  }
   if (group) {
     const { cli, rest } = splitClientArgs(argv);
-    if ((group !== 'mcp' && !rest.length) || rest.includes('--help') || rest.includes('-h')) {
+    if ((group !== 'mcp' && group !== 'doctor' && !rest.length) || rest.includes('--help') || rest.includes('-h')) {
       process.stdout.write(
         group === 'module'
           ? MODULE_HELP
@@ -156,6 +161,8 @@ async function main(): Promise<void> {
               ? RUN_HELP
               : group === 'mcp'
                 ? MCP_HELP
+                : group === 'doctor'
+                  ? DOCTOR_HELP
                 : ACL_HELP,
       );
       return;
@@ -165,7 +172,9 @@ async function main(): Promise<void> {
     process.env.COMPANION_HOME = options.home;
     const { host, port } = resolveAddress(options);
     const url = localUrl(host, port);
-    if (group === 'mcp') {
+    if (group === 'doctor') {
+      await runDoctor({ home: options.home, baseUrl: url, host, port, ...parseDoctorArgs(rest) });
+    } else if (group === 'mcp') {
       if (rest.length) throw new Error(`Unknown argument: ${rest[0]}\n\n${MCP_HELP}`);
       const baseUrl = resolveMcpBaseUrl(url);
       await runMcpServer(apiClient(baseUrl, process.env.COMPANION_TOKEN, 30_000));
