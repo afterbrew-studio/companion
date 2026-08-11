@@ -207,7 +207,7 @@ export function EvaluationsPage(): React.JSX.Element {
             aria-valuenow={suiteProgress.done}
           >
             <div
-              className="h-full bg-blue-500 transition-[width] duration-300"
+              className="h-full bg-[#2a78d6] transition-[width] duration-300 dark:bg-[#5aa2f0]"
               style={{ width: `${suiteProgress.total ? (suiteProgress.done / suiteProgress.total) * 100 : 0}%` }}
             />
           </div>
