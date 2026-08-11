@@ -135,7 +135,9 @@ companion mcp                        # safe stdio tools for an IDE agent
 - **Node.js 24 or newer** for the dashboard. Nothing is compiled at install time:
   the database is Node's built-in SQLite.
 - **git** on `PATH` for repository work.
-- **[moxxy](https://www.npmjs.com/package/@moxxy/cli)** for agent runs.
+- **A supported agent runtime** for agent runs: one of the runtime CLIs
+  ([moxxy](https://www.npmjs.com/package/@moxxy/cli), Codex, or Claude Code) on
+  this machine, or a remote runner.
 
 ## Data and privacy
 
