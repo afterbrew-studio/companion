@@ -138,29 +138,6 @@ export type SpecListRecord = Omit<SpecRecord, 'content'> & {
   readonly contentLength: number;
 };
 
-export interface CreateSpecRequest {
-  readonly repo: string;
-  readonly title: string;
-  readonly content: string;
-  /** Defaults to 'repo' when the workspace configured a directory. */
-  readonly storage?: AreaStorage;
-}
-
-export interface GenerateSpecRequest {
-  readonly repo: string;
-  /** What the spec should cover, in plain language. */
-  readonly instructions: string;
-  readonly storage?: AreaStorage;
-}
-
-/** Turn a spec into an actionable feature: files a proposal carrying the spec. */
-export interface SpecCreateFeatureRequest {
-  /** Proposal title; defaults to the spec title. */
-  readonly title?: string;
-  /** Extra scoping notes appended to the proposal body. */
-  readonly notes?: string;
-}
-
 // ---------- Documentation ---------------------------------------------------------
 
 /**
@@ -193,20 +170,6 @@ export interface DocRecord {
 export type DocListRecord = Omit<DocRecord, 'content'> & {
   readonly contentLength: number;
 };
-
-export interface SaveDocRequest {
-  readonly repo?: string | null;
-  readonly title: string;
-  readonly content: string;
-  /** Defaults to 'repo' when the workspace configured a directory (repo docs only). */
-  readonly storage?: AreaStorage;
-}
-
-export interface GenerateDocRequest {
-  /** Repo whose clone the writer agent reads; omit for workspace-wide docs. */
-  readonly repo?: string;
-  readonly instructions: string;
-}
 
 /** A markdown file inside a repo clone, offered for one-click import. */
 export interface RepoDocFile {

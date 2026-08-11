@@ -41,6 +41,9 @@ const DELIVERY_COMMENT_CHARS = 32_000;
 const DELIVERY_LIST_ITEMS = 100;
 const AUTO_MERGE_REPO_CONCURRENCY = 4;
 const AUTO_MERGE_CANDIDATES_PER_TICK = 20;
+/** Schedule failure backoff: doubling delay from 10 minutes up to 6 hours. */
+const FAILURE_BACKOFF_BASE_MS = 10 * 60_000;
+const FAILURE_BACKOFF_MAX_MS = 6 * 60 * 60_000;
 const DIGEST_PERMISSIONS = ['automations:manage', 'issues:read', 'prs:read', 'runs:read', 'runs:act'] as const;
 const STALE_PERMISSIONS = ['automations:manage', 'issues:read'] as const;
 const AUTO_MERGE_PERMISSIONS = ['automations:manage', 'prs:read', 'prs:act'] as const;
@@ -713,7 +716,12 @@ export class Automations {
       // webhook/Board/pipeline work drains through its own state machine.
       if (this.store.isAdmissionPaused(repo.full_name)) continue;
       const ownerId = repo.automation_owner_id ?? null;
-      if (ownerId && repo.digest_enabled === 1 && this.due(`digest:${repo.full_name}`, now)) {
+      if (
+        ownerId &&
+        repo.digest_enabled === 1 &&
+        this.due(`digest:${repo.full_name}`, now) &&
+        this.retryDue(`digest:${repo.full_name}`, now)
+      ) {
         const missing = this.missingAuthority(ownerId, DIGEST_PERMISSIONS, repo.full_name);
         if (missing.length === 0) {
           // Fire-and-forget: startDigest's in-flight set prevents overlap while
@@ -775,10 +783,11 @@ export class Automations {
         continue;
       }
       const period = schedule.cadence === 'weekly' ? 7 * 24 * 60 * 60_000 : 24 * 60 * 60_000;
-      if (this.due(`briefing:${ws.id}`, now, period)) {
-        await this.runBriefing(ws.id).catch((err) =>
-          log.warn('briefing failed', { workspace: ws.id, err: String(err) }),
-        );
+      if (this.due(`briefing:${ws.id}`, now, period) && this.retryDue(`briefing:${ws.id}`, now)) {
+        await this.runBriefing(ws.id).catch((err) => {
+          this.recordFailure(`briefing:${ws.id}`, Date.now());
+          log.warn('briefing failed', { workspace: ws.id, err: String(err) });
+        });
       }
     }
   }
@@ -1071,6 +1080,7 @@ export class Automations {
     // The schedule cursor is a success cursor. Advancing it before persistence
     // made a transient database failure suppress the briefing for a whole day.
     this.store.settings.set(`lastRun:briefing:${workspaceId}`, String(Date.now()));
+    this.clearFailures(`briefing:${workspaceId}`);
   }
 
   private readonly digestsInFlight = new Set<string>();
@@ -1091,7 +1101,7 @@ export class Automations {
     if (this.digestsInFlight.has(repo)) return false;
     this.digestsInFlight.add(repo);
     void this.runDigest(repo, userId)
-      .catch((err) => this.automationFailed(repo, `Digest failed for ${repo}`, err, '#/digest'))
+      .catch((err) => this.digestFailed(repo, err))
       .finally(() => this.digestsInFlight.delete(repo));
     return true;
   }
@@ -1233,6 +1243,7 @@ export class Automations {
       );
     }
     this.store.settings.set(`lastRun:digest:${repo}`, String(Date.now()));
+    this.clearFailures(`digest:${repo}`);
   }
 
   runStaleSweep(repo: string, staleDays = 30): void {
@@ -1258,6 +1269,41 @@ export class Automations {
   private due(key: string, now: number, periodMs = 24 * 60 * 60_000): boolean {
     const last = Number(this.store.settings.get(`lastRun:${key}`) ?? 0);
     return now - last >= periodMs;
+  }
+
+  /** A persistently failing schedule retries with a bounded doubling delay
+   * instead of re-firing on every minute tick until its success cursor moves. */
+  private retryDue(key: string, now: number): boolean {
+    const count = Number(this.store.settings.get(`failCount:${key}`) ?? 0);
+    if (count <= 0) return true;
+    const lastFail = Number(this.store.settings.get(`lastFail:${key}`) ?? 0);
+    const delay = Math.min(FAILURE_BACKOFF_BASE_MS * 2 ** (count - 1), FAILURE_BACKOFF_MAX_MS);
+    return now - lastFail >= delay;
+  }
+
+  private recordFailure(key: string, now: number): void {
+    const count = Number(this.store.settings.get(`failCount:${key}`) ?? 0) + 1;
+    this.store.settings.set(`failCount:${key}`, String(count));
+    this.store.settings.set(`lastFail:${key}`, String(now));
+  }
+
+  private clearFailures(key: string): void {
+    if (Number(this.store.settings.get(`failCount:${key}`) ?? 0) > 0) {
+      this.store.settings.set(`failCount:${key}`, '0');
+    }
+  }
+
+  /** Backoff bookkeeping plus at most one inbox error per repo per day
+   * (the authorityPaused/runtimePaused rate limit); every failure still logs. */
+  private digestFailed(repo: string, err: unknown): void {
+    const now = Date.now();
+    this.recordFailure(`digest:${repo}`, now);
+    if (!this.due(`digest-failure:${repo}`, now)) {
+      log.warn(`Digest failed for ${repo}`, { err: String(err) });
+      return;
+    }
+    this.store.settings.set(`lastRun:digest-failure:${repo}`, String(now));
+    this.automationFailed(repo, `Digest failed for ${repo}`, err, '#/digest');
   }
 
   private missingAuthority(

@@ -26,7 +26,6 @@ interface AgentEvent {
   readonly status?: unknown;
   readonly message?: unknown;
   readonly error?: unknown;
-  readonly findings?: unknown;
 }
 
 export const coderabbitProvider: IntegrationProviderAdapter = {
@@ -209,8 +208,10 @@ function severityOf(value: unknown): IntegrationReviewFinding['severity'] {
     case 'major': return 'major';
     case 'minor': return 'minor';
     case 'trivial':
-    case 'info':
-    default: return 'nit';
+    case 'info': return 'nit';
+    // A vendor value this mapping does not know ("high", "blocker") must not
+    // be silently demoted to nit; land it mid-scale where a human still looks.
+    default: return 'major';
   }
 }
 
