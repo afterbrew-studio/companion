@@ -133,7 +133,7 @@ export function NeedsAttentionPage(): React.JSX.Element {
           </Group>
 
           {planEnabled ? (
-            <Group title="Legacy proposals" count={o.actionableProposals?.length ?? 0}>
+            <Group title="Archived proposals" count={o.actionableProposals?.length ?? 0}>
               {o.actionableProposals?.map((p) => (
                 <Row
                   key={p.id}
