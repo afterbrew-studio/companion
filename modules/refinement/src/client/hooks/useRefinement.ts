@@ -16,7 +16,9 @@ export interface RefinementActions {
   mergeItems(itemIds: string[]): Promise<void>;
   /** Resolves true when deleted (the caller navigates away). */
   remove(): Promise<boolean>;
+  /** Throws on failure — the methods modal keeps the editor open with the error inline. */
   saveMethod(fields: { name: string; description: string; instructions: string }): Promise<void>;
+  /** Throws on failure — the methods modal keeps the editor open with the error inline. */
   updateMethod(id: string, fields: { name?: string; description?: string; instructions?: string }): Promise<void>;
   deleteMethod(id: string): Promise<void>;
   /** Throws on failure — the methods modal shows the error inline, not in the page bar. */
@@ -60,17 +62,18 @@ export function useRefinement(id: string): {
       else setError(String(err));
       return;
     }
-    // Secondary panels are best-effort — the page renders without them.
+    // Secondary panels: the page renders without them, but a failure must
+    // surface instead of silently leaving the pickers empty.
     void refinementApi
       .contextOptions(id)
       .then(setContext)
-      .catch(() => undefined);
+      .catch((err) => setError(String(err)));
     // Methods belong to the refinement's workspace, not the switcher's.
     if (fetched.workspaceId) {
       void refinementApi
         .methods(fetched.workspaceId)
         .then((r) => setMethods(r.methods))
-        .catch(() => undefined);
+        .catch((err) => setError(String(err)));
     }
   }, [id]);
 
@@ -109,12 +112,16 @@ export function useRefinement(id: string): {
           return false;
         }
       },
-      saveMethod: (fields) => {
+      saveMethod: async (fields) => {
         const workspaceId = detail?.workspaceId;
-        if (!workspaceId) return Promise.resolve();
-        return act(() => refinementApi.saveMethod(workspaceId, fields));
+        if (!workspaceId) return;
+        await refinementApi.saveMethod(workspaceId, fields);
+        await refresh();
       },
-      updateMethod: (methodId, fields) => act(() => refinementApi.updateMethod(methodId, fields)),
+      updateMethod: async (methodId, fields) => {
+        await refinementApi.updateMethod(methodId, fields);
+        await refresh();
+      },
       deleteMethod: (methodId) => act(() => refinementApi.deleteMethod(methodId)),
       generateMethod: async (prompt) => {
         const workspaceId = detail?.workspaceId;
@@ -122,7 +129,7 @@ export function useRefinement(id: string): {
         return (await refinementApi.generateMethod(workspaceId, prompt)).draft;
       },
     }),
-    [act, id, detail?.workspaceId],
+    [act, refresh, id, detail?.workspaceId],
   );
 
   return { current, detail, methods, context, missing, error, setError, refresh, actions };
