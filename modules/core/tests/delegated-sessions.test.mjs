@@ -14,8 +14,11 @@ test('existing sessions migrate as full access while delegated access persists',
   const delegated = migrations.find((item) => item.version === 5);
   delegated.up(db);
   delegated.up(db);
+  // The store speaks the head schema (session ids arrived in v10); finish the ladder.
+  for (const migration of migrations.filter((item) => item.version > 5)) migration.up(db);
   const sessions = new SessionsStore(db);
   sessions.insert({
+    id: 'ses-assistant',
     tokenHash: 'assistant',
     username: 'maintainer',
     role: 'maintainer',
@@ -23,9 +26,9 @@ test('existing sessions migrate as full access while delegated access persists',
     createdAt: 2,
     expiresAt: Date.now() + 60_000,
   });
-  db.prepare(`INSERT INTO sessions (token_hash, username, role, access, created_at, expires_at)
-              VALUES (?, ?, ?, ?, ?, ?)`)
-    .run('malformed', 'maintainer', 'maintainer', 'unexpected', 3, Date.now() + 60_000);
+  db.prepare(`INSERT INTO sessions (id, token_hash, username, role, access, created_at, expires_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run('ses-malformed', 'malformed', 'maintainer', 'maintainer', 'unexpected', 3, Date.now() + 60_000);
 
   assert.equal(sessions.get('legacy').access, 'full');
   assert.equal(sessions.get('assistant').access, 'read-only');

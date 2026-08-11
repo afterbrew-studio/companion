@@ -597,7 +597,8 @@ function Shell(): React.JSX.Element {
                   <GearIcon className="size-4" />
                 </a>
               ) : null}
-              {authMode === 'password' ? (
+              {/* Local mode has nothing to sign out of; password and sso sessions do. */}
+              {authMode !== 'local' ? (
                 <button
                   className="dim flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                   onClick={() => void logout()}

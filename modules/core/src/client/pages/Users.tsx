@@ -22,7 +22,7 @@ import {
   timeAgo,
   useConfirm,
 } from '@moxxy/companion-ui';
-import type { UserRecord } from '../../contract/index.js';
+import type { SessionRecord, UserRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { useUsers } from '../hooks/useUsers.js';
@@ -142,6 +142,16 @@ export function UsersPage(): React.JSX.Element {
           onChangeRole={(r) => void act(() => coreApi.updateUser(viewing.username, { role: r }))}
           onToggleDisabled={() => void act(() => coreApi.updateUser(viewing.username, { disabled: !viewing.disabled }))}
           onResetPassword={() => setResetting(viewing)}
+          onResetMfa={() =>
+            void (async () => {
+              const ok = await confirmDanger({
+                title: `Reset two-factor for ${viewing.username}`,
+                message:
+                  'Their authenticator and recovery codes stop working and password sign-in alone works again. Use this when someone lost their device.',
+              });
+              if (ok) await act(() => coreApi.resetUserMfa(viewing.username));
+            })()
+          }
           onDelete={() =>
             void (async () => {
               const ok = await confirmDanger({
@@ -189,6 +199,7 @@ function UserModal({
   onChangeRole,
   onToggleDisabled,
   onResetPassword,
+  onResetMfa,
   onDelete,
 }: {
   user: UserRecord;
@@ -200,6 +211,7 @@ function UserModal({
   onChangeRole: (role: Role) => void;
   onToggleDisabled: () => void;
   onResetPassword: () => void;
+  onResetMfa: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
   // Display name edits commit on blur/Enter; escape-hatch back to the stored
@@ -254,6 +266,19 @@ function UserModal({
         <DetailRow label="Joined">
           {new Date(user.createdAt).toLocaleDateString()} · {timeAgo(user.createdAt)}
         </DetailRow>
+        <DetailRow label="Two-factor">
+          {user.mfaEnabled ? (
+            <span className="flex items-center gap-2">
+              <span className="badge-ok">on</span>
+              <button className="linkish text-xs" type="button" onClick={onResetMfa}>
+                Reset (lost device)
+              </button>
+            </span>
+          ) : (
+            <span className="dim">off</span>
+          )}
+        </DetailRow>
+        <UserSessionsRow username={user.username} />
         <DetailRow label="Role">
           <select
             className="input input-sm"
@@ -292,6 +317,59 @@ function UserModal({
         </button>
       </FormActions>
     </Modal>
+  );
+}
+
+/** Active-session count with "sign out everywhere"; the user's next request 401s. */
+function UserSessionsRow({ username }: { username: string }): React.JSX.Element {
+  const [sessions, setSessions] = useState<readonly SessionRecord[] | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setSessions(null);
+    coreApi
+      .listUserSessions(username)
+      .then(({ sessions: list }) => alive && setSessions(list))
+      .catch((e) => alive && setError(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, [username, generation]);
+
+  const revokeAll = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await coreApi.revokeUserSessions(username);
+      setGeneration((g) => g + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DetailRow label="Sessions">
+      {error ? (
+        <span className="dim">{error}</span>
+      ) : sessions === null ? (
+        '…'
+      ) : sessions.length === 0 ? (
+        <span className="dim">none active</span>
+      ) : (
+        <span className="flex items-center gap-2">
+          {sessions.length} active · last seen{' '}
+          {timeAgo(Math.max(...sessions.map((s) => s.lastSeenAt ?? s.createdAt)))}
+          <button className="linkish text-xs" type="button" disabled={busy} onClick={() => void revokeAll()}>
+            Sign out everywhere
+          </button>
+        </span>
+      )}
+    </DetailRow>
   );
 }
 

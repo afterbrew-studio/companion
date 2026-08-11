@@ -1490,8 +1490,12 @@ const CREDENTIAL_PATTERNS = [
 export function redact(text: string, injected: readonly string[]): string {
   let out = text;
   for (const value of injected) {
-    // A short or empty value would turn the whole output into asterisks.
-    if (value.length < 8) continue;
+    // Four chars is a deliberate trade: a 4-7 char secret (a PIN, a short API
+    // key) leaking verbatim is worse than the occasional ordinary substring
+    // being starred out. Below four the false positives would asterisk normal
+    // output wholesale, so 1-3 char values are never redacted; a value that
+    // short is not protectable and should be refused when it is stored.
+    if (value.length < 4) continue;
     out = out.replaceAll(value, '***');
   }
   for (const re of CREDENTIAL_PATTERNS) out = out.replace(re, '***');

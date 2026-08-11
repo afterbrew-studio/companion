@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AuthMode, NavigationPerspective } from '@moxxy/companion-contracts';
 import {
   navigationEntryVisible,
@@ -8,6 +8,7 @@ import {
   type NavSection,
 } from '@moxxy/companion-core/client';
 import {
+  CopyText,
   DetailGrid,
   DetailRow,
   Dropdown,
@@ -20,8 +21,9 @@ import {
   SettingRow,
   Skeleton,
   Switch,
+  timeAgo,
 } from '@moxxy/companion-ui';
-import type { AccountInfo, NotificationScope } from '../../contract/index.js';
+import type { AccountInfo, MfaEnrollment, NotificationScope, SessionRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme.js';
@@ -168,6 +170,10 @@ export function ProfilePage(): React.JSX.Element {
       </Section>
 
       <AccountSection authMode={authMode} onError={setError} />
+
+      {authMode === 'password' ? <MfaSection onError={setError} /> : null}
+
+      <SessionsSection onError={setError} />
 
       <Section title="Appearance" description="How Companion looks on this browser.">
         <SettingRow className="card" title="Theme">
@@ -380,6 +386,261 @@ function AccountSection({
           </div>
         </form>
       ) : null}
+    </Section>
+  );
+}
+
+/**
+ * TOTP second factor: enroll (secret shown as copyable text, no QR; every
+ * authenticator app accepts manual entry), confirm, recovery codes, turn off.
+ */
+function MfaSection({ onError }: { onError: (e: string | null) => void }): React.JSX.Element {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [enrollment, setEnrollment] = useState<MfaEnrollment | null>(null);
+  const [confirmCode, setConfirmCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<readonly string[] | null>(null);
+  const [manageCode, setManageCode] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    coreApi
+      .getAccount()
+      .then(({ account }) => alive && setEnabled(account.mfaEnabled))
+      .catch((e) => alive && onError(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, [onError]);
+
+  const run = async (fn: () => Promise<void>): Promise<void> => {
+    setBusy(true);
+    onError(null);
+    try {
+      await fn();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Two-factor authentication"
+      description="A one-time code from an authenticator app, required at every password sign-in."
+    >
+      <div className="card flex flex-col gap-3">
+        {enabled === null ? (
+          <Skeleton className="h-9 w-64" />
+        ) : recoveryCodes ? (
+          <>
+            <div className="text-[13px] font-medium">Recovery codes</div>
+            <p className="dim text-xs">
+              Each signs you in once if you lose the authenticator. They are shown only now; store them
+              somewhere safe.
+            </p>
+            <ul className="grid gap-1 font-mono text-xs sm:grid-cols-2">
+              {recoveryCodes.map((code) => (
+                <li key={code}>
+                  <CopyText value={code} ariaLabel={`Copy recovery code ${code}`}>
+                    <code>{code}</code>
+                  </CopyText>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center gap-2">
+              <CopyText value={recoveryCodes.join('\n')} ariaLabel="Copy all recovery codes">
+                <span className="linkish text-xs">Copy all</span>
+              </CopyText>
+              <button className="btn" type="button" onClick={() => setRecoveryCodes(null)}>
+                I saved them
+              </button>
+            </div>
+          </>
+        ) : enrollment ? (
+          <>
+            <div className="text-[13px] font-medium">Add to your authenticator app</div>
+            <p className="dim text-xs">
+              Enter this key manually (Companion shows it as text rather than a QR code), or paste the
+              full otpauth link if your app takes one. Then confirm with the 6-digit code it produces.
+            </p>
+            <DetailGrid>
+              <DetailRow label="Key">
+                <CopyText value={enrollment.secret} ariaLabel="Copy the setup key">
+                  <code className="break-all">{enrollment.secret}</code>
+                </CopyText>
+              </DetailRow>
+              <DetailRow label="otpauth link">
+                <CopyText value={enrollment.otpauthUri} ariaLabel="Copy the otpauth link">
+                  <code className="break-all text-[11px]">{enrollment.otpauthUri}</code>
+                </CopyText>
+              </DetailRow>
+            </DetailGrid>
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run(async () => {
+                  const { recoveryCodes: codes } = await coreApi.confirmMfa(confirmCode.trim());
+                  setRecoveryCodes(codes);
+                  setEnrollment(null);
+                  setConfirmCode('');
+                  setEnabled(true);
+                });
+              }}
+            >
+              <Field label="Code from the app">
+                <input
+                  className="input"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  required
+                  value={confirmCode}
+                  onChange={(e) => setConfirmCode(e.target.value)}
+                />
+              </Field>
+              <button className="btn" type="submit" disabled={busy || confirmCode.trim().length < 6}>
+                Turn on
+              </button>
+              <button className="btn-ghost" type="button" onClick={() => setEnrollment(null)}>
+                Cancel
+              </button>
+            </form>
+          </>
+        ) : enabled ? (
+          <>
+            <div className="flex items-center gap-2 text-[13px]">
+              <span className="badge-ok">on</span>
+              Signing in requires your password and a code.
+            </div>
+            <form className="flex items-end gap-2" onSubmit={(e) => e.preventDefault()}>
+              <Field label="Current code (or a recovery code)">
+                <input
+                  className="input"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={manageCode}
+                  onChange={(e) => setManageCode(e.target.value)}
+                />
+              </Field>
+              <button
+                className="btn-ghost"
+                type="button"
+                disabled={busy || manageCode.trim().length < 6}
+                onClick={() =>
+                  void run(async () => {
+                    const { recoveryCodes: codes } = await coreApi.regenerateRecoveryCodes(manageCode.trim());
+                    setRecoveryCodes(codes);
+                    setManageCode('');
+                  })
+                }
+              >
+                New recovery codes
+              </button>
+              <button
+                className="btn-danger-ghost"
+                type="button"
+                disabled={busy || manageCode.trim().length < 6}
+                onClick={() =>
+                  void run(async () => {
+                    await coreApi.disableMfa(manageCode.trim());
+                    setManageCode('');
+                    setEnabled(false);
+                  })
+                }
+              >
+                Turn off
+              </button>
+            </form>
+            <p className="dim text-xs">
+              Regenerating replaces every previous recovery code. Lost the authenticator and the codes?
+              An administrator can reset two-factor from the Users page.
+            </p>
+          </>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <p className="dim text-[13px]">
+              Off. Protect this account with one-time codes from an authenticator app.
+            </p>
+            <button className="btn" type="button" disabled={busy} onClick={() => void run(async () => setEnrollment(await coreApi.enrollMfa()))}>
+              Set up
+            </button>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/** Every live session for this account; revoking the current one signs you out. */
+function SessionsSection({ onError }: { onError: (e: string | null) => void }): React.JSX.Element {
+  const { logout } = useAuth();
+  const [sessions, setSessions] = useState<readonly SessionRecord[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    coreApi
+      .listOwnSessions()
+      .then(({ sessions: list }) => setSessions(list))
+      .catch((e) => onError(String(e)));
+  }, [onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const revoke = async (session: SessionRecord): Promise<void> => {
+    setBusy(session.id);
+    onError(null);
+    try {
+      await coreApi.revokeOwnSession(session.id);
+      // The server row is already gone; logout clears the cookie and socket.
+      if (session.current) await logout();
+      else load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section
+      title="Your sessions"
+      description="Everywhere this account is signed in. Revoke anything you don't recognise; revoking this browser's session signs you out."
+    >
+      {sessions === null ? (
+        <Skeleton className="h-20 w-full" />
+      ) : sessions.length === 0 ? (
+        <p className="dim text-[13px]">No live sessions.</p>
+      ) : (
+        <ListCard ariaLabel="Your sessions">
+          {sessions.map((session) => (
+            <div key={session.id} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-1.5 text-[13px]">
+                  <span className="font-medium">Signed in {timeAgo(session.createdAt)}</span>
+                  {session.current ? <span className="badge-ok shrink-0">this browser</span> : null}
+                  {session.access === 'read-only' ? <span className="badge shrink-0">read-only</span> : null}
+                </span>
+                <span className="dim mt-0.5 block text-xs">
+                  Last seen {session.lastSeenAt ? timeAgo(session.lastSeenAt) : 'at sign-in'} · expires{' '}
+                  {new Date(session.expiresAt).toLocaleDateString()}
+                </span>
+              </span>
+              <button
+                className="btn-danger-ghost shrink-0"
+                disabled={busy !== null}
+                onClick={() => void revoke(session)}
+              >
+                {session.current ? 'Sign out' : 'Revoke'}
+              </button>
+            </div>
+          ))}
+        </ListCard>
+      )}
     </Section>
   );
 }

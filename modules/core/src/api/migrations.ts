@@ -244,4 +244,80 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_sessions_user; DROP INDEX IF EXISTS idx_sessions_expiry;`);
     },
   },
+  {
+    version: 9,
+    name: 'totp_mfa',
+    // The enabled flag lives on the user row; the TOTP secret itself lives in
+    // the module secret store (encrypted at rest), never in this table.
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0`);
+      } catch {
+        // column already exists
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+          username   TEXT NOT NULL,
+          code_hash  TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (username, code_hash)
+        );
+      `);
+    },
+    down: (db) => {
+      // The users column stays (SQLite cannot drop it on older builds and the
+      // flag is inert without the module code); the codes table is droppable.
+      db.exec(`DROP TABLE IF EXISTS mfa_recovery_codes`);
+    },
+  },
+  {
+    version: 10,
+    name: 'session_inventory',
+    // Sessions become listable and individually revocable, so each row needs a
+    // public id (the token hash must never leave the server) and an activity
+    // timestamp for the idle timeout. Both additive; existing rows get an id.
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE sessions ADD COLUMN id TEXT`,
+        `ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+      db.exec(`
+        UPDATE sessions SET id = 'ses-' || lower(hex(randomblob(6))) WHERE id IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions (id);
+      `);
+    },
+    down: (db) => {
+      // Additive columns stay; the index is the reversible half.
+      db.exec(`DROP INDEX IF EXISTS idx_sessions_id`);
+    },
+  },
+  {
+    version: 11,
+    name: 'audit_request_origin',
+    // Who did what FROM WHERE: the router records the trust-proxy-derived
+    // client address and the User-Agent with every mutation. Both nullable;
+    // rows written outside a request (jobs) leave them empty.
+    up: (db) => {
+      for (const ddl of [
+        `ALTER TABLE audit_log ADD COLUMN ip TEXT`,
+        `ALTER TABLE audit_log ADD COLUMN agent TEXT`,
+      ]) {
+        try {
+          db.exec(ddl);
+        } catch {
+          // column already exists
+        }
+      }
+    },
+    down: () => {
+      // Additive columns stay: the audit trail is append-only and dropping
+      // origin data from historical rows would itself be an audit event.
+    },
+  },
 ]);

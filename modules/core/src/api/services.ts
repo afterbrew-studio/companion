@@ -9,6 +9,8 @@ import { AuditStore } from './audit-store.js';
 import { AuditForwarder } from './audit-forwarder.js';
 import { RolesService } from './roles-service.js';
 import { Auth } from './auth.js';
+import { Mfa } from './mfa.js';
+import { MfaStore } from './mfa-store.js';
 
 /**
  * Construct module-core's stores + Auth and register them. `settings` is what
@@ -25,7 +27,14 @@ export default defineServices((ctx) => {
   // Before Auth, so the very first request already sees the stored roles rather
   // than the built-in-only grid the kernel starts with.
   roles.publish();
-  const auth = new Auth(users, sessions, apiTokens, settings, ctx.rbac, roles);
+  // TOTP secrets go through ctx.secrets: encrypted at rest by the SecretStore
+  // seam, so a Vault-backed instance keeps them there too.
+  const mfa = new Mfa(ctx.secrets, new MfaStore(ctx.db), users);
+  const idleTimeoutMs = (): number => {
+    const minutes = Number(ctx.moduleConfig.get('idleTimeoutMinutes') ?? 0);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 0;
+  };
+  const auth = new Auth(users, sessions, apiTokens, settings, ctx.rbac, roles, mfa, idleTimeoutMs);
   // Legacy .env accounts seed an EMPTY user store once; afterwards the Users
   // module owns accounts. A clean install with no .env runs SPA onboarding.
   auth.seedFromEnv(ctx.config.users);
@@ -63,5 +72,6 @@ export default defineServices((ctx) => {
   ctx.services.register('audit', new AuditStore(ctx.db, (event) => forwarder.enqueue(event)));
   ctx.services.register('auditForwarder', forwarder);
   ctx.services.register('settings', settings);
+  ctx.services.register('mfa', mfa);
   ctx.services.register('core', auth);
 });

@@ -147,6 +147,29 @@ Two properties worth knowing:
   role while the module is off and comes back exactly as configured when it is
   re-enabled. Nothing is silently discarded.
 
+### Multi-factor authentication **[available]**
+
+Local accounts can carry a TOTP second factor: RFC 6238 (SHA-1, 30-second step,
+6 digits, one step of clock skew), self-service enrollment confirmed with a live
+code before it turns on, ten single-use recovery codes shown once and stored
+hashed, and code attempts rate-limited like password attempts. The secret is
+encrypted at rest through the same secret-store seam as every other credential,
+so a Vault-backed instance keeps it there. `users:manage` can reset a lost
+device from the Users page; the reset is audited like any user mutation. A
+wrong-password attempt reads identically with or without MFA, so the login
+response does not reveal which accounts are protected. Accounts arriving
+through SSO are deliberately not covered: their MFA belongs to the identity
+provider (see SSO-only mode in section 6).
+
+### Session administration **[available]**
+
+Sessions have an absolute 7-day lifetime that use never extends, plus an
+optional idle timeout (`companion module config core --set idleTimeoutMinutes=30`;
+0, the default, disables it). Every user sees and revokes their own sessions on
+the Profile page (the current one is flagged; revoking it signs you out), and
+`users:manage` can list a user's sessions and sign them out everywhere from the
+Users page, which is the same revoke-all a password change already runs.
+
 ### Auditing an access decision
 
 ```
@@ -477,6 +500,16 @@ module) and **can never create an administrator**: provisioning into any role
 that holds `users:manage` is refused. A misconfigured identity provider should
 lock people out rather than hand over the instance. Accounts created this way get
 a password nobody holds, so they are reachable only through their provider.
+
+#### SSO-only mode **[available]**
+
+With providers enabled, password login stays open beside them by default, which
+means IdP policy (MFA, offboarding) can be walked around with a local password.
+`COMPANION_AUTH_MODE=sso` closes that: password sign-in answers 403, the login
+page shows only the provider buttons, and the recovery paths stay what they
+were, meaning the bootstrap token still creates the first admin on an empty
+instance and the local CLI token keeps working (see
+[`docs/configuration.md`](docs/configuration.md)).
 
 #### The OIDC module
 

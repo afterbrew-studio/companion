@@ -90,6 +90,10 @@ export class UsersStore {
       });
   }
 
+  setMfaEnabled(username: string, enabled: boolean): void {
+    this.db.prepare(`UPDATE users SET mfa_enabled = ? WHERE username = ?`).run(enabled ? 1 : 0, username);
+  }
+
   delete(username: string): void {
     this.db.prepare(`DELETE FROM users WHERE username = ?`).run(username);
     this.sessions.deleteForUser(username);
@@ -108,6 +112,7 @@ interface UserRow {
   password_hash: string;
   role: Role;
   disabled: number;
+  mfa_enabled: number;
   created_at: number;
 }
 
@@ -118,6 +123,7 @@ function userRowToRecord(row: UserRow): UserRecord {
     email: row.email,
     role: row.role,
     disabled: row.disabled === 1,
+    mfaEnabled: row.mfa_enabled === 1,
     createdAt: row.created_at,
   };
 }

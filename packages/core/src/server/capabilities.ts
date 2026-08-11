@@ -101,6 +101,11 @@ export interface AuditEvent {
   readonly module: string | null;
   /** Free-form detail for events a service emits that no single route describes. */
   readonly detail?: string;
+  /** Client address as the router derived it (trust-proxy aware); absent for
+   *  events emitted outside a request (jobs, boot). */
+  readonly ip?: string;
+  /** The request's User-Agent header, bounded; absent outside a request. */
+  readonly agent?: string;
 }
 
 /**
