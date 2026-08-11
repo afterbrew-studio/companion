@@ -9,7 +9,7 @@ import { NotificationRow } from './NotificationRow.js';
  * a quick "what needs me right now". The full history (read included) lives on
  * the Inbox page, one click away via "View all".
  */
-export function Inbox(): JSX.Element {
+export function Inbox(): React.JSX.Element {
   const { items, unread, markRead, markAllRead } = useNotifications();
   const [open, setOpen] = useState(false);
   // The bell is a triage surface: only what still needs a look.

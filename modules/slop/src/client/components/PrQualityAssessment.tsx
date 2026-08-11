@@ -10,7 +10,7 @@ export const QUALITY_META: Record<PrQualityClass, { label: string; tone: StatusT
 };
 
 /** The merge-decision axes, kept separate from the AI-authorship score. */
-export function PrQualityAssessment({ verdict }: { verdict: SlopVerdict }): JSX.Element {
+export function PrQualityAssessment({ verdict }: { verdict: SlopVerdict }): React.JSX.Element {
   const quality = QUALITY_META[verdict.qualityClass];
   const riskTone: StatusTone =
     verdict.technicalRisk === 'low'
@@ -43,7 +43,7 @@ export function PrQualityAssessment({ verdict }: { verdict: SlopVerdict }): JSX.
   );
 }
 
-function Score({ value }: { value: number }): JSX.Element {
+function Score({ value }: { value: number }): React.JSX.Element {
   return (
     <span className="flex max-w-52 items-center gap-2">
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">

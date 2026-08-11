@@ -1,6 +1,6 @@
 /** Shared stroked glyphs. One drawing per concept — pages must not re-trace these paths. */
 
-export function ChevronDown({ open, className = '' }: { open?: boolean; className?: string }): JSX.Element {
+export function ChevronDown({ open, className = '' }: { open?: boolean; className?: string }): React.JSX.Element {
   return (
     <svg
       viewBox="0 0 16 16"
@@ -14,7 +14,7 @@ export function ChevronDown({ open, className = '' }: { open?: boolean; classNam
 }
 
 /** Small stroked padlock — marks private workspaces. */
-export function LockIcon({ className = 'size-3.5' }: { className?: string }): JSX.Element {
+export function LockIcon({ className = 'size-3.5' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" aria-hidden className={`shrink-0 ${className}`}>
       <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
@@ -24,7 +24,7 @@ export function LockIcon({ className = 'size-3.5' }: { className?: string }): JS
 }
 
 /** ✦ sparkle — the mark for anything AI-driven. Pair with `aiAccentClass`. */
-export function SparkleIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function SparkleIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 20 20" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path
@@ -39,7 +39,7 @@ export function SparkleIcon({ className = 'size-4' }: { className?: string }): J
 }
 
 /** Close ✕ for modals, panels, and dismissable chrome. */
-export function CloseIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function CloseIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -48,7 +48,7 @@ export function CloseIcon({ className = 'size-4' }: { className?: string }): JSX
 }
 
 /** Check mark for successful states and completed steps. */
-export function CheckIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function CheckIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path d="m3.5 8.2 3 3 6-6.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -57,7 +57,7 @@ export function CheckIcon({ className = 'size-4' }: { className?: string }): JSX
 }
 
 /** Friendly success face for completed flows and positive empty states. */
-export function SmileIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function SmileIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
@@ -69,7 +69,7 @@ export function SmileIcon({ className = 'size-4' }: { className?: string }): JSX
 }
 
 /** Clock face for pending or in-progress states. */
-export function ClockIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function ClockIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="8" cy="8" r="5.8" stroke="currentColor" strokeWidth="1.4" />
@@ -79,7 +79,7 @@ export function ClockIcon({ className = 'size-4' }: { className?: string }): JSX
 }
 
 /** Question mark for states whose outcome could not be determined. */
-export function QuestionIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function QuestionIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path
@@ -94,7 +94,7 @@ export function QuestionIcon({ className = 'size-4' }: { className?: string }): 
 }
 
 /** Magnifier for search inputs and search-triggering buttons. */
-export function SearchIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function SearchIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" />
@@ -104,7 +104,7 @@ export function SearchIcon({ className = 'size-4' }: { className?: string }): JS
 }
 
 /** ⋯ overflow trigger for row-level quick actions. */
-export function KebabIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function KebabIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" className={`shrink-0 fill-current ${className}`} aria-hidden>
       <circle cx="3" cy="8" r="1.4" />
@@ -115,7 +115,7 @@ export function KebabIcon({ className = 'size-4' }: { className?: string }): JSX
 }
 
 /** Plus — the mark on any "create a new thing" primary button. */
-export function PlusIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function PlusIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -124,7 +124,7 @@ export function PlusIcon({ className = 'size-4' }: { className?: string }): JSX.
 }
 
 /** Two figures — a pool of workers/people and its capacity. */
-export function WorkersIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function WorkersIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="6" cy="5.6" r="2.4" stroke="currentColor" strokeWidth="1.3" />
@@ -135,7 +135,7 @@ export function WorkersIcon({ className = 'size-4' }: { className?: string }): J
 }
 
 /** Fork of nodes — an automated flow branching into its outcomes. */
-export function FlowIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function FlowIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="3.4" cy="8" r="1.7" stroke="currentColor" strokeWidth="1.3" />
@@ -152,7 +152,7 @@ export function FlowIcon({ className = 'size-4' }: { className?: string }): JSX.
 }
 
 /** Cog: the way into instance configuration. */
-export function GearIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function GearIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.3" />
@@ -167,7 +167,7 @@ export function GearIcon({ className = 'size-4' }: { className?: string }): JSX.
 }
 
 /** Open eye: this entry shows in the sidebar. */
-export function EyeIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function EyeIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path d="M1.6 8S4 3.9 8 3.9 14.4 8 14.4 8 12 12.1 8 12.1 1.6 8 1.6 8z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -177,7 +177,7 @@ export function EyeIcon({ className = 'size-4' }: { className?: string }): JSX.E
 }
 
 /** Struck-through eye: this entry is hidden from the sidebar (still reachable). */
-export function EyeOffIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function EyeOffIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path
@@ -193,7 +193,7 @@ export function EyeOffIcon({ className = 'size-4' }: { className?: string }): JS
 }
 
 /** Sliders: the sidebar's customize affordance. */
-export function SlidersIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function SlidersIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path d="M2.5 5h7M12.5 5h1M2.5 11h1M6.5 11h7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
@@ -204,7 +204,7 @@ export function SlidersIcon({ className = 'size-4' }: { className?: string }): J
 }
 
 /** Flask — experiments and dry runs (the Playground's mark). */
-export function FlaskIcon({ className = 'size-4' }: { className?: string }): JSX.Element {
+export function FlaskIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
       <path

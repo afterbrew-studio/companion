@@ -23,7 +23,7 @@ const KIND_LABEL: Record<RunKind, string> = {
 };
 
 /** Persistent shell banner while the viewer's whole eligible pool is full. */
-export function RunnerCapacityBanner(): JSX.Element | null {
+export function RunnerCapacityBanner(): React.JSX.Element | null {
   const { active, capacity } = useRunnerCapacity();
   if (active < capacity) return null;
   return (
@@ -44,7 +44,7 @@ export function RunnerCapacityBanner(): JSX.Element | null {
   );
 }
 
-export function RunQueueIndicator(): JSX.Element | null {
+export function RunQueueIndicator(): React.JSX.Element | null {
   const { active, capacity, entries } = useRunQueue();
   const [open, setOpen] = useState(false);
 
@@ -99,7 +99,7 @@ export function RunQueueIndicator(): JSX.Element | null {
   );
 }
 
-function QueueRow({ entry, first, last }: { entry: QueuedRunEntry; first: boolean; last: boolean }): JSX.Element {
+function QueueRow({ entry, first, last }: { entry: QueuedRunEntry; first: boolean; last: boolean }): React.JSX.Element {
   const target = entry.repo ? `${entry.repo}${entry.issueNumber ? ` #${entry.issueNumber}` : ''}` : null;
   return (
     <div
@@ -144,7 +144,7 @@ function QueueRow({ entry, first, last }: { entry: QueuedRunEntry; first: boolea
 }
 
 /** Reorder chevrons — direction-only variants, so not worth a shared glyph. */
-function ChevronGlyph({ d }: { d: string }): JSX.Element {
+function ChevronGlyph({ d }: { d: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className="size-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d={d} />
@@ -152,7 +152,7 @@ function ChevronGlyph({ d }: { d: string }): JSX.Element {
   );
 }
 
-function ClockIcon(): JSX.Element {
+function ClockIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className="size-3.5" stroke="currentColor" strokeWidth="1.3" aria-hidden>
       <circle cx="8" cy="8" r="6" />

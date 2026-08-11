@@ -26,11 +26,11 @@
     "test": "pnpm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.33",
-    "@ai-sdk/azure": "^4.0.33",
-    "@ai-sdk/openai": "^4.0.32",
-    "@ai-sdk/openai-compatible": "^3.0.25",
-    "ai": "^7.0.55",
+    "@ai-sdk/anthropic": "^4.0.36",
+    "@ai-sdk/azure": "^4.0.37",
+    "@ai-sdk/openai": "^4.0.36",
+    "@ai-sdk/openai-compatible": "^3.0.27",
+    "ai": "^7.0.58",
     "zod": "^3.24.0"
   },
   "devDependencies": {

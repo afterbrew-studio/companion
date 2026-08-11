@@ -133,7 +133,7 @@ export function ReviewProviderSelect({
   /** Shared configuration (for example a reusable pipeline) must never pin a
    * personal connection that another maintainer cannot use. */
   readonly sharedOnly?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const state = useReviewTargets(scope);
   const options = sharedOnly ? state.options.filter((option) => !option.personal) : state.options;
   const { route } = state;

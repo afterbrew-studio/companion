@@ -65,7 +65,7 @@ export function EvaluationCaseEditor({
   readonly skills: ReadonlyArray<string>;
   readonly onClose: () => void;
   readonly onSaved: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [form, setForm] = useState<CaseFormState>(() => record ? formFromRecord(record) : EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -8,7 +8,7 @@ import { defineSlots } from '@moxxy/companion-sdk/client';
  * module is disabled. It deep-links into the Agent Lab with the skill
  * preselected: one test surface, no duplicated run UI.
  */
-function DryRunSkillButton(props: Record<string, unknown>): JSX.Element | null {
+function DryRunSkillButton(props: Record<string, unknown>): React.JSX.Element | null {
   const skill = typeof props.skill === 'string' ? props.skill : null;
   if (!skill) return null;
   return (

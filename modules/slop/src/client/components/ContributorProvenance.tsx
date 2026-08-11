@@ -22,7 +22,7 @@ function isFreshAccount(p: SlopProvenance): boolean {
  * can weigh the agent's provenance reasoning against its inputs rather than
  * taking the score on trust. Everything here was snapshotted at detection time.
  */
-export function ContributorProvenance({ provenance }: { provenance: SlopProvenance | null }): JSX.Element {
+export function ContributorProvenance({ provenance }: { provenance: SlopProvenance | null }): React.JSX.Element {
   if (!provenance) {
     return (
       <div className="card">

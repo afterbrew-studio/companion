@@ -63,7 +63,7 @@ export function Onboarding({
   steps: readonly OnboardingStep[];
   mode: OnboardingMode;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can, user } = useAuth();
   const all = visibleSteps(steps, can);
   const seen = seenKeys();

@@ -10,7 +10,7 @@ import { useLane } from '../hooks/useLane.js';
  * Silent on `Auto`, which is the default and says nothing worth a line of
  * chrome. It only speaks when someone has chosen something.
  */
-export function LaneNote({ className = '' }: { className?: string }): JSX.Element | null {
+export function LaneNote({ className = '' }: { className?: string }): React.JSX.Element | null {
   const { lane, label, defaultModel, loading } = useLane();
   if (loading || lane === null || lane.runnerId === null) return null;
   return (

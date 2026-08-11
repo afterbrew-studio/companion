@@ -26,7 +26,7 @@ export function StepOutput({
   stepIndex: number;
   initialLog?: PipelineStepLog | null;
   running: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [log, setLog] = useState<PipelineStepLog | null>(initialLog ?? null);
   const [error, setError] = useState<string | null>(null);
   const [showFullTail, setShowFullTail] = useState(false);

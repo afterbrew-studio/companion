@@ -55,7 +55,7 @@ import { DOT_TONE, normalizeEndpoint, TokenHelp } from './Runners.js';
  * work uses is Task models': a machine carries capability and policy, never
  * model policy.
  */
-export function RunnerSettingsPage({ id }: { id: string }): JSX.Element {
+export function RunnerSettingsPage({ id }: { id: string }): React.JSX.Element {
   const { runners, workspaces, error, setError, refresh } = useRunners();
   const options = useRunnerOptions();
   const { user, can } = useAuth();
@@ -119,7 +119,7 @@ function SettingsForm({
   error: string | null;
   setError: (e: string | null) => void;
   refresh: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const local = runner.kind === 'local';
   // A daemon still serving the previous dist during a restart omits the policy
   // fields; seed from the open default rather than blanking the form.
@@ -554,7 +554,7 @@ function ReachRow({
   allLabel: string;
   someLabel: string;
   children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="px-4 py-3">
       <SettingRow title={title} description={description}>
@@ -595,7 +595,7 @@ function HarnessPicker({
   editable: boolean;
   selected: readonly string[];
   onChange: (next: readonly string[]) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [options, setOptions] = useState<readonly HarnessOption[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -725,7 +725,7 @@ function CheckList({
   warn: string | null;
   /** What narrowing this list costs; the warning supersedes it. */
   hint?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex w-full flex-col gap-1 text-sm">
       <div

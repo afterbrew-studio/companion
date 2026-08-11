@@ -12,7 +12,7 @@ export function PreparedActions({
 }: {
   readonly workspaceId?: string;
   readonly compact?: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { can } = useAuth();
   const mayRead = can('workbench:read');
   const feed = useWorkbenchActions(workspaceId, mayRead);
@@ -27,7 +27,7 @@ export function PreparedActionsView({
 }: {
   readonly feed: WorkbenchActionsFeed;
   readonly compact?: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,7 +90,7 @@ function ActionCard({
   readonly busy: boolean;
   readonly onExecute: () => void;
   readonly onCancel: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const content = proposedContent(action);
   const runApproval = action.request.action === 'run.approve' ? action.request : null;
   return (
@@ -136,7 +136,7 @@ function ProposedPullRequest({
 }: {
   readonly title?: string;
   readonly body?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <details className="mt-2 rounded-md border border-zinc-200 px-2.5 py-2 dark:border-zinc-800">
       <summary className="cursor-pointer text-xs font-medium">Review proposed pull request text</summary>
@@ -158,7 +158,7 @@ function ProposedPullRequest({
   );
 }
 
-function ProposedContent({ text }: { readonly text: string }): JSX.Element {
+function ProposedContent({ text }: { readonly text: string }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <details

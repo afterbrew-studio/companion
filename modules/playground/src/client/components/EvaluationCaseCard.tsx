@@ -17,7 +17,7 @@ export function EvaluationCaseCard({
   readonly onRun: () => void;
   readonly onEdit: () => void;
   readonly onDelete: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const failedChecks = latest?.checks.filter((check) => !check.passed) ?? [];
   const tone = latest?.status === 'passed' ? 'green' : latest?.status === 'error' ? 'red' : latest ? 'amber' : 'zinc';
   return (

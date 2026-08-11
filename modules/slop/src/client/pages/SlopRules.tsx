@@ -24,7 +24,7 @@ import { useSlopRules } from '../hooks/useSlopRules.js';
  * rules are full CRUD. A rule's instructions are fed verbatim to the one-shot
  * detection agent alongside every other enabled rule.
  */
-export default function SlopRules(): JSX.Element {
+export default function SlopRules(): React.JSX.Element {
   const { current, rules, error, setError } = useSlopRules();
   const { can } = useAuth();
   const { confirmDanger, confirmElement } = useConfirm();
@@ -143,7 +143,7 @@ function RuleEditor({
   canGenerate: boolean;
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState(rule?.name ?? '');
   const [description, setDescription] = useState(rule?.description ?? '');
   const [instructions, setInstructions] = useState(rule?.instructions ?? '');

@@ -35,7 +35,7 @@ import { AssigneeNote, ChecksIcon, CommentCount, GitHubUser, LabelChips, PrState
  * Pull requests across every repo of the active workspace. Server-paged: only
  * the visible window is loaded; search and filters run in the database.
  */
-export function PrsAreaPage(): JSX.Element {
+export function PrsAreaPage(): React.JSX.Element {
   const { can } = useAuth();
   const s = useWorkspacePrs();
   // A skeleton that appears and vanishes inside a blink reads as a glitch.

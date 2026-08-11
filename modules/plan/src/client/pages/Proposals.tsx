@@ -31,7 +31,7 @@ import { useProposals } from '../hooks/useProposals.js';
  * PR. Lifecycle: draft → analyzing → analyzed → implementing → review →
  * implemented.
  */
-export function ProposalsPage(): JSX.Element {
+export function ProposalsPage(): React.JSX.Element {
   const {
     current,
     repos,
@@ -163,7 +163,7 @@ function CreateProposalModal({
   autoAnalyze: boolean;
   onClose: () => void;
   onCreated: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [repo, setRepo] = useState(repos.find((candidate) => candidate.githubAccessible)?.fullName ?? '');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -234,7 +234,7 @@ function CreateProposalModal({
 }
 
 /** Leading state at a glance: spinner while agents work, colored glyph otherwise. */
-function ProposalStateIcon({ status, failedImplementing }: { status: ProposalRecord['status']; failedImplementing: boolean }): JSX.Element {
+function ProposalStateIcon({ status, failedImplementing }: { status: ProposalRecord['status']; failedImplementing: boolean }): React.JSX.Element {
   if (status === 'analyzing' || status === 'implementing') {
     return (
       <Tooltip content={status === 'analyzing' ? 'Agent is analyzing feasibility' : 'Agent is implementing'}>
@@ -263,7 +263,7 @@ function ProposalCard({
 }: {
   proposal: ProposalListRecord;
   onChange: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<ProposalRecord | null>(null);

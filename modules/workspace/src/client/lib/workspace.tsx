@@ -25,7 +25,7 @@ interface WorkspaceState {
 
 const WorkspaceContext = createContext<WorkspaceState | null>(null);
 
-export function WorkspaceProvider({ children }: { children: ReactNode }): JSX.Element {
+export function WorkspaceProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceRecord[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(localStorage.getItem(CURRENT_KEY));
 

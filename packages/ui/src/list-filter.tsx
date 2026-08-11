@@ -72,7 +72,7 @@ export function ListFilterToolbar<T>({
   total: number;
   placeholder: string;
   searchLabel: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="mb-3 flex items-center gap-2">
       <input

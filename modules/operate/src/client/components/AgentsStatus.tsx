@@ -10,7 +10,7 @@ import { operateApi } from '../api.js';
  * healthy, amber when partially degraded, red when the daemon is unreachable.
  * Hover or focus expands the popover with the individual statuses.
  */
-export function AgentsStatus(): JSX.Element | null {
+export function AgentsStatus(): React.JSX.Element | null {
   // Contributed to the shell's top bar. It renders only while operate is
   // enabled, so the status endpoint cannot disappear underneath it.
   const { user } = useAuth();
@@ -148,7 +148,7 @@ function StatusDot({
   degraded?: boolean;
   label: string;
   title: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <span className="dim flex items-center gap-1.5 text-xs" title={title} role="status" aria-label={title}>
       <Dot tone={ok ? (degraded ? 'amber' : 'green') : 'red'} />

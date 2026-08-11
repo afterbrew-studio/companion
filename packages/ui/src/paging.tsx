@@ -158,7 +158,7 @@ export function ListFooter({
   total: number;
   noun: string;
   onVisible: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;

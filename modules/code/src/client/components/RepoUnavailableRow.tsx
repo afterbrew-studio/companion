@@ -1,5 +1,5 @@
 /** Non-interactive placeholder for a workspace repo the current GitHub accounts cannot read. */
-export function RepoUnavailableRow({ repo }: { repo: string }): JSX.Element {
+export function RepoUnavailableRow({ repo }: { repo: string }): React.JSX.Element {
   return (
     <div
       className="flex min-h-16 items-center gap-3 border-b border-zinc-200 px-4 py-3 text-zinc-500 last:border-b-0 dark:border-zinc-800 dark:text-zinc-500"

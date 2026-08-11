@@ -12,7 +12,7 @@ import { RequiresRepo, RequiresWorkspace } from './components/SetupGate.js';
 const gated = (load: () => Promise<{ default: ComponentType<RouteProps> }>, what: string) =>
   lazyView(async () => {
     const { default: Inner } = await load();
-    const Wrapped = (props: RouteProps): JSX.Element => (
+    const Wrapped = (props: RouteProps): React.JSX.Element => (
       <RequiresRepo what={what}>
         <Inner {...props} />
       </RequiresRepo>
@@ -24,21 +24,21 @@ const gated = (load: () => Promise<{ default: ComponentType<RouteProps> }>, what
 // with the legacy key-remount semantics (switching targets remounts the page).
 const IssueDetailRoute = gated(async () => {
   const { IssueDetail } = await import('./pages/IssueDetail.js');
-  const Wrapped = ({ params }: RouteProps): JSX.Element => (
+  const Wrapped = ({ params }: RouteProps): React.JSX.Element => (
     <IssueDetail key={`${params.repo}#${params.number}`} repo={params.repo!} number={Number(params.number)} />
   );
   return { default: Wrapped };
 }, 'Issues');
 const PrViewRoute = gated(async () => {
   const { PrView } = await import('./pages/pr/PrView.js');
-  const Wrapped = ({ params }: RouteProps): JSX.Element => (
+  const Wrapped = ({ params }: RouteProps): React.JSX.Element => (
     <PrView key={`${params.repo}#${params.number}#${params.mode ?? ''}`} repo={params.repo!} number={Number(params.number)} mode={params.mode === 'review' ? 'review' : undefined} />
   );
   return { default: Wrapped };
 }, 'Pull requests');
 const PrBuildRoute = gated(async () => {
   const { PrBuild } = await import('./pages/pr/PrBuild.js');
-  const Wrapped = ({ params }: RouteProps): JSX.Element => <PrBuild key={params.runId} runId={params.runId!} />;
+  const Wrapped = ({ params }: RouteProps): React.JSX.Element => <PrBuild key={params.runId} runId={params.runId!} />;
   return { default: Wrapped };
 }, 'Pull requests');
 
@@ -104,7 +104,7 @@ export const routes = defineClientRoutes([
       // Repository membership is foundational workspace context, so readers
       // can inspect it without holding the mutation permission or connecting a
       // personal GitHub account. ReposPage gates every management control.
-      const Wrapped = (): JSX.Element => (
+      const Wrapped = (): React.JSX.Element => (
         <RequiresWorkspace what="Repositories">
           <ReposPage />
         </RequiresWorkspace>

@@ -24,7 +24,7 @@ export function PrSelectionProvider({
 }: {
   value: PrSelection;
   children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

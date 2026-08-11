@@ -30,7 +30,7 @@ import { ReportCard } from '../components/ReportCard.js';
 
 /** Workspace-wide automation health. Repository policy is configured from the
  * repository that owns it, not from this aggregate surface. */
-export function AutomationsPage(): JSX.Element {
+export function AutomationsPage(): React.JSX.Element {
   const { current, repos, reports, error, setError, refresh } = useAutomations();
 
   if (!current) {
@@ -111,7 +111,7 @@ export function AutomationsPage(): JSX.Element {
 /** The repository is the natural configuration boundary for webhook-driven
  * and scheduled work. This route is contributed by Automations into Code's
  * repository hub, keeping module ownership one-way. */
-export function RepositoryAutomationsPage({ repo: fullName }: { repo: string }): JSX.Element {
+export function RepositoryAutomationsPage({ repo: fullName }: { repo: string }): React.JSX.Element {
   const { current, repos, reposLoaded, reports, error, setError, refresh } = useAutomations();
   const { can } = useAuth();
   const {
@@ -290,7 +290,7 @@ function WorkspaceBriefingCard({
   workspaceId: string;
   onError: (e: string) => void;
   onSent: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can, user } = useAuth();
   const [schedule, setSchedule] = useState<WorkspaceBriefingSchedule | null>(null);
   const [busy, setBusy] = useState(false);
@@ -409,7 +409,7 @@ function WorkspaceBriefingCard({
  * Instance-wide tunnel status + its directly relevant module-config toggle.
  * State changes broadcast `modules.changed`, so relay failure/retry stays live.
  */
-function WebhookTunnelCard(): JSX.Element | null {
+function WebhookTunnelCard(): React.JSX.Element | null {
   const { can } = useAuth();
   const [tunnel, setTunnel] = useState<WebhookTunnelState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -518,7 +518,7 @@ function WebhookTunnelCard(): JSX.Element | null {
 }
 
 /** Durable webhook work, including the stage a long triage/review is in. */
-function DeliveryHealthCard({ workspaceId }: { workspaceId: string }): JSX.Element {
+function DeliveryHealthCard({ workspaceId }: { workspaceId: string }): React.JSX.Element {
   const [health, setHealth] = useState<AutomationDeliveryHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -681,7 +681,7 @@ function RepoAutomation({
   onFlowChange: () => Promise<void>;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { user, can } = useAuth();
   const boardEnabled = useModuleEnabled('board');
   const [webhook, setWebhook] = useState<WebhookInfo | null>(null);
@@ -1074,7 +1074,7 @@ function ContributorFlowEditor({
   onError: (message: string) => void;
   missingPermissions: readonly Permission[];
   githubAccessible: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [mode, setMode] = useState<ContributorFlowMode>(flow?.mode ?? 'off');
   const [kinds, setKinds] = useState<ActionableIssueKind[]>([...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)]);
   const [queueIssues, setQueueIssues] = useState(flow?.queueIssues ?? true);
@@ -1306,7 +1306,7 @@ function ContributorFlowDryRunModal({
   error: string | null;
   onRetry: () => void;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Modal title="Contributor lifecycle dry run" onClose={onClose} xl>
       {loading && report === null ? (
@@ -1428,7 +1428,7 @@ function ContributorFlowDryRunModal({
   );
 }
 
-function DryRunMetric({ label, value, detail }: { label: string; value: number; detail: string }): JSX.Element {
+function DryRunMetric({ label, value, detail }: { label: string; value: number; detail: string }): React.JSX.Element {
   return (
     <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
       <div className="dim text-[11px]">{label}</div>
@@ -1475,7 +1475,7 @@ function PresetPicker({
   onApplied: () => Promise<void> | void;
   onError: (message: string) => void;
   setBusy: (busy: boolean) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [presets, setPresets] = useState<RepoPreset[] | null>(null);
   const [applied, setApplied] = useState<RepoPresetResult | null>(null);
 
@@ -1528,7 +1528,7 @@ function PresetPicker({
 }
 
 /** What actually happened, in the words of the server rather than the button. */
-function PresetOutcome({ result }: { result: RepoPresetResult }): JSX.Element {
+function PresetOutcome({ result }: { result: RepoPresetResult }): React.JSX.Element {
   const notes: string[] = [];
   if (result.skippedSteps.includes('slop-check')) {
     notes.push('The slop screen was left out because Slop Detection is not enabled on this instance.');

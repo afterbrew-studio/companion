@@ -3,7 +3,7 @@ import type { JiraSubjectKind } from '../contract/index.js';
 import { JiraLinks } from './JiraLinks.js';
 import { JiraMark } from './provider-icons.js';
 
-function WorkItemLinks(props: Record<string, unknown>): JSX.Element | null {
+function WorkItemLinks(props: Record<string, unknown>): React.JSX.Element | null {
   const kind = props.kind;
   const repo = props.repo;
   const number = props.number;

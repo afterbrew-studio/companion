@@ -51,7 +51,7 @@ export class ErrorBoundary extends Component<
 }
 
 /** Scoped fallback: the rest of the app keeps working around it. */
-function FeatureCrash({ area, error, onReset }: { area: string; error: Error; onReset: () => void }): JSX.Element {
+function FeatureCrash({ area, error, onReset }: { area: string; error: Error; onReset: () => void }): React.JSX.Element {
   return (
     <div className="mx-auto max-w-lg px-6 py-12 text-center" role="alert">
       <CrashGlyph />
@@ -76,7 +76,7 @@ function FeatureCrash({ area, error, onReset }: { area: string; error: Error; on
 }
 
 /** The SPA's "500": only rendered when the shell itself is unrecoverable. */
-function CrashPage({ error }: { error: Error }): JSX.Element {
+function CrashPage({ error }: { error: Error }): React.JSX.Element {
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="max-w-lg text-center" role="alert">
@@ -104,7 +104,7 @@ function CrashPage({ error }: { error: Error }): JSX.Element {
 }
 
 /** Unknown route: a friendly dead end instead of silently showing the dashboard. */
-export function NotFoundPage({ path }: { path: string }): JSX.Element {
+export function NotFoundPage({ path }: { path: string }): React.JSX.Element {
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="max-w-md text-center">
@@ -126,7 +126,7 @@ export function NotFoundPage({ path }: { path: string }): JSX.Element {
 }
 
 /** A sad little bot — same family as the assistant's mascot, minus the wag. */
-function CrashGlyph(): JSX.Element {
+function CrashGlyph(): React.JSX.Element {
   return (
     <svg viewBox="0 0 64 64" fill="none" className="mx-auto size-16 text-zinc-400 dark:text-zinc-500" aria-hidden>
       <rect x="14" y="16" width="36" height="28" rx="9" stroke="currentColor" strokeWidth="2" />
@@ -141,7 +141,7 @@ function CrashGlyph(): JSX.Element {
   );
 }
 
-function LostGlyph(): JSX.Element {
+function LostGlyph(): React.JSX.Element {
   return (
     <svg viewBox="0 0 64 64" fill="none" className="mx-auto size-16 text-zinc-400 dark:text-zinc-500" aria-hidden>
       <rect x="14" y="16" width="36" height="28" rx="9" stroke="currentColor" strokeWidth="2" />

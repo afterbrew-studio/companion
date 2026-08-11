@@ -14,7 +14,7 @@ export function CommentsSection({
   load: () => Promise<{ comments: CommentRecord[] }>;
   post?: (body: string) => Promise<unknown>;
   canComment: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [comments, setComments] = useState<CommentRecord[] | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);

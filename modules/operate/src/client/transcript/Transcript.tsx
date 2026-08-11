@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Eyebrow, Markdown, Spinner } from '@moxxy/companion-ui';
 import type { Block } from './fold.js';
 
-export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
+export function Transcript({ blocks }: { blocks: Block[] }): React.JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -24,7 +24,7 @@ export function Transcript({ blocks }: { blocks: Block[] }): JSX.Element {
   );
 }
 
-function BlockView({ block }: { block: Block }): JSX.Element | null {
+function BlockView({ block }: { block: Block }): React.JSX.Element | null {
   switch (block.kind) {
     case 'user':
       // Prompts are often long generated instructions — collapsed by default,
@@ -113,7 +113,7 @@ const NOTICE_TONE = {
  * still working and must not be dressed as a corpse. Red is reserved for the
  * fatal kind, which is the one that actually ends the run.
  */
-function NoticeBlock({ block }: { block: Extract<Block, { kind: 'notice' }> }): JSX.Element {
+function NoticeBlock({ block }: { block: Extract<Block, { kind: 'notice' }> }): React.JSX.Element {
   const tone = NOTICE_TONE[block.level === 'error' ? 'error' : 'warn'];
   return (
     <div className={`flex shrink-0 items-start gap-2.5 self-stretch rounded-lg border px-3.5 py-2.5 ${tone.box}`}>
@@ -139,7 +139,7 @@ const TOOL_STATUS: Record<Extract<Block, { kind: 'tool' }>['status'], { label: s
   denied: { label: 'denied', cls: 'text-red-600 dark:text-red-400' },
 };
 
-function ToolBlock({ block }: { block: Extract<Block, { kind: 'tool' }> }): JSX.Element {
+function ToolBlock({ block }: { block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
   const status = TOOL_STATUS[block.status];
   const busy = block.status === 'pending' || block.status === 'running';
   const summary = toolSummary(block.input);
@@ -219,7 +219,7 @@ function humanizeKey(key: string): string {
  * Structured agent replies (analysis verdicts etc.) rendered as labeled
  * sections instead of a raw JSON wall; the raw payload stays one click away.
  */
-function StructuredReply({ data }: { data: Record<string, unknown> }): JSX.Element {
+function StructuredReply({ data }: { data: Record<string, unknown> }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3">
       {Object.entries(data).map(([key, value]) => (
@@ -236,7 +236,7 @@ function StructuredReply({ data }: { data: Record<string, unknown> }): JSX.Eleme
   );
 }
 
-function StructuredValue({ value, ordered }: { value: unknown; ordered: boolean }): JSX.Element {
+function StructuredValue({ value, ordered }: { value: unknown; ordered: boolean }): React.JSX.Element {
   if (typeof value === 'string') {
     return value.length <= 40 && !value.includes('\n') ? (
       <span className="badge normal-case">{value}</span>

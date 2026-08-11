@@ -24,7 +24,7 @@ export function AreaStorageSetup({
   onSave: (dir: string | null) => Promise<void>;
   /** Present when reconfiguring (a choice already exists). */
   onCancel?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [mode, setMode] = useState<'repo' | 'virtual'>(state.config?.dir === null ? 'virtual' : 'repo');
   const [dir, setDir] = useState(state.config?.dir ?? defaultDir);
   const [busy, setBusy] = useState(false);
@@ -123,7 +123,7 @@ export function StorageSummary({
   config: { dir: string | null } | null;
   canManage: boolean;
   onChange: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <button
       type="button"

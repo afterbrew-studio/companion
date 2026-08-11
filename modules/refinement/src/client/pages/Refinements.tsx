@@ -30,7 +30,7 @@ import { useRefinements } from '../hooks/useRefinements.js';
  * board-ready tasks. Click-through to the detail (`#/refinement/<id>`) to run
  * the decomposition and import the results.
  */
-export default function Refinements(): JSX.Element {
+export default function Refinements(): React.JSX.Element {
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['repo', 'status'] as const);
   const { search, setSearch, q } = useHashSearch();
   const { current, refinements, total, loading, hasMore, loadMore, error, refresh } = useRefinements({
@@ -153,7 +153,7 @@ export default function Refinements(): JSX.Element {
   );
 }
 
-export function StatusBadge({ status }: { status: RefinementListEntry['status'] }): JSX.Element {
+export function StatusBadge({ status }: { status: RefinementListEntry['status'] }): React.JSX.Element {
   switch (status) {
     case 'draft':
       return <span className="badge opacity-70">draft</span>;
@@ -170,7 +170,7 @@ export function StatusBadge({ status }: { status: RefinementListEntry['status'] 
   }
 }
 
-function RefinementCard({ refinement }: { refinement: RefinementListEntry }): JSX.Element {
+function RefinementCard({ refinement }: { refinement: RefinementListEntry }): React.JSX.Element {
   const counts = [
     ...(refinement.proposedCount > 0 ? [`${refinement.proposedCount} proposed`] : []),
     ...(refinement.importedCount > 0 ? [`${refinement.importedCount} imported`] : []),
@@ -204,7 +204,7 @@ function NewRefinementModal({
   onClose: () => void;
   onCreated: (id: string) => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
   const [repo, setRepo] = useState<string | null>(null);

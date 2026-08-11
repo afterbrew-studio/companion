@@ -8,7 +8,7 @@ export const routes = defineClientRoutes([
     component: lazyView(async () => {
       const { default: RefinementView } = await import('./pages/RefinementView.js');
       return {
-        default: ({ params }: RouteProps): JSX.Element => <RefinementView key={params.id} id={params.id!} />,
+        default: ({ params }: RouteProps): React.JSX.Element => <RefinementView key={params.id} id={params.id!} />,
       };
     }),
   },

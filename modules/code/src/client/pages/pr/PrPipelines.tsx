@@ -12,7 +12,7 @@ export function PrPipelines({
   runs,
 }: {
   runs: PipelineRunRecord[];
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   return runs.length > 0 ? (
     <section aria-label="Pipelines">
       <PipelineRunList runs={runs} />
@@ -29,7 +29,7 @@ export function RunPipelineModal({
   pipelines: PipelineRecord[];
   onRun: (pipelineId: string) => Promise<void>;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [selected, setSelected] = useState(pipelines[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

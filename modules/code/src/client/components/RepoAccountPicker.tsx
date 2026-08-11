@@ -25,7 +25,7 @@ export function RepoAccountPicker({
   /** Fires after a successful change, with the freshly graded list. */
   onChange?: (accounts: readonly RepoAccountOption[]) => void;
   className?: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [accounts, setAccounts] = useState<readonly RepoAccountOption[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -34,7 +34,7 @@ const describe = (roles: readonly RoleRecord[], id: Role): string =>
   roles.find((r) => r.id === id)?.description || 'No description.';
 
 /** User management (admin): accounts, roles/scopes, resets, disable/delete. */
-export function UsersPage(): JSX.Element {
+export function UsersPage(): React.JSX.Element {
   const { user: me } = useAuth();
   const { search, setSearch, role, setRole, users, total, loading, hasMore, loadMore, reload, error, listError, act } = useUsers();
   const { roles } = useRoles();
@@ -201,7 +201,7 @@ function UserModal({
   onToggleDisabled: () => void;
   onResetPassword: () => void;
   onDelete: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   // Display name edits commit on blur/Enter; escape-hatch back to the stored
   // value when left empty.
   const [name, setName] = useState(user.displayName);
@@ -303,7 +303,7 @@ function AddUserModal({
   roles: readonly RoleRecord[];
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -407,7 +407,7 @@ function ResetPasswordModal({
   user: UserRecord;
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

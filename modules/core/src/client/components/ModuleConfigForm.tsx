@@ -45,7 +45,7 @@ export function ModuleConfigForm({
   submitLabel: string;
   onSubmit: (patch: Record<string, ModuleConfigValue | null>) => void;
   onCancel: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   // Recomputed per render, but only ever read against the CURRENT draft — the
   // form remounts (keyed modal) when the target module changes.
   const initial = seed(fields, state);
@@ -133,7 +133,7 @@ function ConfigField({
   secretSet: boolean;
   onChange: (v: ModuleConfigValue) => void;
   onClearSecret: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const label = field.required ? `${field.label} *` : field.label;
 
   switch (field.kind) {

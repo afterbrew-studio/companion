@@ -1,7 +1,7 @@
 import { defineSlots } from '@moxxy/companion-sdk/client';
 import { DiscordMark, NtfyMark, SlackMark } from './provider-icons.js';
 
-function NotificationDeliveryLink(): JSX.Element {
+function NotificationDeliveryLink(): React.JSX.Element {
   return <a className="btn-ghost" href="#/notify">Delivery history</a>;
 }
 

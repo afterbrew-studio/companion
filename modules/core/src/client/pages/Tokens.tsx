@@ -32,7 +32,7 @@ const EXPIRIES = [
 ] as const;
 
 /** Personal API credentials, plus instance-wide revocation for administrators. */
-export function TokensPage(): JSX.Element {
+export function TokensPage(): React.JSX.Element {
   const { can, user } = useAuth();
   const admin = can('tokens:admin');
   const state = useApiTokens(admin);
@@ -138,7 +138,7 @@ function TokenList({
   busy: string | null;
   showOwner?: boolean;
   onRevoke: (token: ApiTokenRecord) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <ListCard ariaLabel="API tokens">
       {tokens.map((token) => (
@@ -186,7 +186,7 @@ function CreateTokenModal({
     readonly permissions: readonly Permission[];
     readonly expiresInDays: number;
   }) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const readOnly = useMemo(
     () => capabilities.filter((capability) => capability.id.endsWith(':read')).map((capability) => capability.id),
     [capabilities],
@@ -321,7 +321,7 @@ function TokenSecretModal({
 }: {
   created: CreateApiTokenResponse;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const config = JSON.stringify(
     {
       command: 'companion',

@@ -35,7 +35,7 @@ import { KnowledgeToolbar } from '../components/KnowledgeToolbar.js';
  * agent that reads the actual codebase; one click turns a spec into a feature
  * (a proposal carrying the spec rides the normal analyze → implement flow).
  */
-export function SpecsPage(): JSX.Element {
+export function SpecsPage(): React.JSX.Element {
   const {
     current,
     repos,
@@ -212,7 +212,7 @@ export function SpecsPage(): JSX.Element {
 }
 
 /** Spinner while an agent drafts; colored glyph for the settled states. */
-function SpecStateIcon({ status, drifted }: { status: SpecListRecord['status']; drifted?: boolean }): JSX.Element {
+function SpecStateIcon({ status, drifted }: { status: SpecListRecord['status']; drifted?: boolean }): React.JSX.Element {
   if (status === 'generating') {
     return (
       <Tooltip content="Agent is drafting this spec from the codebase">
@@ -225,7 +225,7 @@ function SpecStateIcon({ status, drifted }: { status: SpecListRecord['status']; 
   return <StatusGlyph tone="ok" label="Ready" />;
 }
 
-function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Promise<void> }): JSX.Element {
+function SpecCard({ spec, onChange }: { spec: SpecListRecord; onChange: () => Promise<void> }): React.JSX.Element {
   const { can } = useAuth();
   const canReadRuns = can('runs:read');
   const [expanded, setExpanded] = useState(false);
@@ -416,7 +416,7 @@ function SpecEditorModal({
   configDir: string | null;
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [repo, setRepo] = useState(repos.find((candidate) => candidate.githubAccessible)?.fullName ?? '');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -526,7 +526,7 @@ function EditSpecModal({
   spec: SpecRecord;
   onClose: () => void;
   onSaved: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [title, setTitle] = useState(spec.title);
   const [content, setContent] = useState(spec.content);
   const [busy, setBusy] = useState(false);
@@ -589,7 +589,7 @@ function CreateFeatureModal({
   spec: SpecRecord;
   onClose: () => void;
   onFiled: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [title, setTitle] = useState(spec.title);
   const [notes, setNotes] = useState('');
   const submit = (e: React.FormEvent): void => {

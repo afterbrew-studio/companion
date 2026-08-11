@@ -29,18 +29,18 @@
     "@moxxy/companion-contracts": "workspace:*",
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
-    "ws": "^8.18.0",
+    "ws": "^8.21.3",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.2.18",
     "@types/ws": "^8.5.13",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "react": "^18.3.1"
+    "react": "^19.2.8"
   },
   "peerDependenciesMeta": {
     "react": {

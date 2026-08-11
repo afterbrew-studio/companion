@@ -34,7 +34,7 @@ export const DOT_TONE: Record<RunnerStatus, StatusTone> = {
  * of other users' private machines. Health is polled by the daemon and pushed
  * over WS.
  */
-export function RunnersPage(): JSX.Element {
+export function RunnersPage(): React.JSX.Element {
   const { runners, tasks, error, setError, refresh } = useRunners();
   const { user, can } = useAuth();
   const admin = can('runners:manage');
@@ -122,7 +122,7 @@ function RunnerCard({
   onEdit: () => void;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [probe, setProbe] = useState<'busy' | { ok: boolean; note: string } | null>(null);
   const probeTimer = useRef<number | undefined>(undefined);
@@ -347,7 +347,7 @@ companion-runner stop && companion-runner --background`}
 }
 
 /** Collapsible "how to attach a machine" primer above the runner list. */
-function AttachGuide(): JSX.Element {
+function AttachGuide(): React.JSX.Element {
   return (
     <details className="banner-info mb-4 block">
       <summary className="cursor-pointer list-none font-medium">
@@ -405,7 +405,7 @@ companion-runner stop && companion-runner --background`}
 }
 
 /** Where the runner token comes from — shown under the token field. */
-export function TokenHelp(): JSX.Element {
+export function TokenHelp(): React.JSX.Element {
   return (
     <details className="mt-1">
       <summary className="dim cursor-pointer text-xs hover:text-zinc-700 dark:hover:text-zinc-300">
@@ -455,7 +455,7 @@ function RunnerModal({
   admin: boolean;
   onClose: () => void;
   onCreated: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');

@@ -35,9 +35,9 @@
     "prepublishOnly": "pnpm run typecheck && pnpm run bundle:full && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@inquirer/prompts": "^7.10.1",
-    "undici": "^7.16.0",
-    "ws": "^8.18.0"
+    "@inquirer/prompts": "^8.5.2",
+    "undici": "^8.10.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@companion/module-workbench": "workspace:*",

@@ -23,7 +23,7 @@ export function ProductionEvaluationCard({
   readonly disabled: boolean;
   readonly onRun: () => void;
   readonly onCancel: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const failedChecks = latest?.checks.filter((check) => !check.passed) ?? [];
   const tone = gate.status === 'passed'
     ? 'green'

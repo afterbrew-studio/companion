@@ -184,7 +184,7 @@ function AttachmentEditor({
   attachments: readonly TaskAttachmentInput[];
   onChange: (attachments: TaskAttachmentInput[]) => void;
   onError: (error: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [reading, setReading] = useState(false);
   const addFiles = useCallback(async (files: FileList | readonly File[] | null): Promise<void> => {
     const selected = files ? [...files] : [];
@@ -266,7 +266,7 @@ function AttachmentEditor({
   );
 }
 
-function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachments'] }): JSX.Element | null {
+function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachments'] }): React.JSX.Element | null {
   if (attachments.length === 0) return null;
   return (
     <section>
@@ -287,7 +287,7 @@ function AttachmentGallery({ attachments }: { attachments: TaskRecord['attachmen
   );
 }
 
-export default function Board({ query }: RouteProps): JSX.Element {
+export default function Board({ query }: RouteProps): React.JSX.Element {
   const { can } = useAuth();
   const { current } = useWorkspace();
   const repos = useWorkspaceRepos(current?.id);
@@ -700,7 +700,7 @@ function TaskCard({
   onOpen: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const signal = cardSignal(task, attention ?? false);
   const hasChips =
     task.sourceIssueNumber != null ||
@@ -856,7 +856,7 @@ function NewTaskModal({
   defaultRepo: string | null;
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [repo, setRepo] = useState<string | null>(null);
   const [targetBranch, setTargetBranch] = useState('main');
   const [title, setTitle] = useState('');
@@ -1039,7 +1039,7 @@ function ModelField({
   options: TaskModelOptions | null;
   value: string | null;
   onChange: (model: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const inherited = options?.workerModel ?? null;
   const offered = options?.models ?? [];
   // A card holding a model the pool cannot serve right now keeps it and stays
@@ -1074,7 +1074,7 @@ function ModelField({
 }
 
 /** Recommendation pill shared by the card footer and the review history. */
-function VerdictChip({ recommendation }: { recommendation: 'approve' | 'request_changes' | 'comment' }): JSX.Element {
+function VerdictChip({ recommendation }: { recommendation: 'approve' | 'request_changes' | 'comment' }): React.JSX.Element {
   return (
     <span
       className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
@@ -1097,11 +1097,11 @@ const RISK_CLS = {
 } as const;
 
 /** Mini section header inside the task detail's left column. */
-function DetailHeading({ children }: { children: ReactNode }): JSX.Element {
+function DetailHeading({ children }: { children: ReactNode }): React.JSX.Element {
   return <h4 className="mb-1.5 text-xs font-semibold tracking-wide uppercase">{children}</h4>;
 }
 
-function ChecksLine({ checks }: { checks: ChecksSnapshot | null }): JSX.Element {
+function ChecksLine({ checks }: { checks: ChecksSnapshot | null }): React.JSX.Element {
   if (!checks || checks.state === 'none') {
     return (
       <span className="flex items-center gap-1.5">
@@ -1144,7 +1144,7 @@ function TaskDetailDrawer({
   workerName: (id: string | null) => string | null;
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState('');
@@ -1642,7 +1642,7 @@ function WorkersModal({
   repoLabel: (full: string) => string;
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState('');
   const [role, setRole] = useState<WorkerRole>('developer');
   const { confirmDanger, confirmElement } = useConfirm();
@@ -1736,7 +1736,7 @@ function WorkersModal({
 }
 
 /** Draft locally, persist on blur/Enter — typing "10" must not transiently save "1". */
-function MaxAttemptsInput({ value, onCommit }: { value: number; onCommit: (n: number) => void }): JSX.Element {
+function MaxAttemptsInput({ value, onCommit }: { value: number; onCommit: (n: number) => void }): React.JSX.Element {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = (): void => {
@@ -1772,7 +1772,7 @@ function ConfigModal({
   workers: WorkerView[];
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const reviewers = workers.filter((w) => w.role === 'reviewer');
   const save = (fields: Partial<BoardConfig>): void => {
     void boardApi

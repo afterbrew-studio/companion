@@ -1,6 +1,6 @@
 import { defineOnboarding, OnboardingArt } from '@moxxy/companion-sdk/client';
 
-function IdeasArt(): JSX.Element {
+function IdeasArt(): React.JSX.Element {
   return (
     <OnboardingArt>
       <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

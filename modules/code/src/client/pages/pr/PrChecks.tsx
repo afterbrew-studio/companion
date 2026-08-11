@@ -24,7 +24,7 @@ export function PrChecks({
   ciAnalysis: ReportRecord | null;
   /** Starts the repair agent; null when the PR can't take one (closed, no rights). */
   onFixChecks: (() => void) | null;
-}): JSX.Element {
+}): React.JSX.Element {
   const [checks, setChecks] = useState<ChecksSummary | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [open, setOpen] = useState(false);

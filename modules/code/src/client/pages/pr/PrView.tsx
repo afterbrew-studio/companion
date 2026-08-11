@@ -51,7 +51,7 @@ type Mode = 'detail' | 'review';
  * reuses the same building blocks but leads with the AI review's reasoning and
  * folds the code away. Both are fed entirely by {@link usePr}.
  */
-export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): JSX.Element {
+export function PrView({ repo, number, mode = 'detail' }: { repo: string; number: number; mode?: Mode }): React.JSX.Element {
   const { can } = useAuth();
   const pr = usePr(repo, number);
   const fetchFiles = useCallback((page: number) => api.prFiles(repo, number, page), [repo, number]);
@@ -193,7 +193,7 @@ function ReviewLauncher({
   workspaceId: string | null;
   onRun: (opts: ReviewOptions) => void;
   busy?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [depth, setDepth] = useState<ReviewDepth>('in-depth');
   const [strictness, setStrictness] = useState<ReviewStrictness>('balanced');
   const [providerValue, setProviderValue] = useState('');
@@ -247,7 +247,7 @@ function ReviewLead({
   onRun: (opts?: ReviewOptions) => void;
   focusedFinding: string | null;
   onFocusFinding: (id: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   if (pr.review) {
     // A manual draft is not an answer to "has this been reviewed" — the button
     // to actually run one stays offered underneath it.
@@ -312,7 +312,7 @@ function ReviewLead({
   );
 }
 
-function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode }): JSX.Element {
+function PrHeader({ pr, data, mode }: { pr: PrRecord; data: UsePr; mode: Mode }): React.JSX.Element {
   const { confirmDanger, confirmElement } = useConfirm();
   const [runningPipeline, setRunningPipeline] = useState(false);
   const [runningAgent, setRunningAgent] = useState(false);
@@ -474,7 +474,7 @@ function RunAgentModal({
 }: {
   onRun: (instructions: string) => Promise<void>;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -532,7 +532,7 @@ function RunAgentModal({
 }
 
 /** Right-hand metadata rail: status, branch, people and labels. */
-function PrSidebar({ pr }: { pr: PrRecord }): JSX.Element {
+function PrSidebar({ pr }: { pr: PrRecord }): React.JSX.Element {
   return (
     <aside className="flex flex-col gap-4 text-[13px] lg:sticky lg:top-4" aria-label="Pull request details">
       {/* Short scalar facts read best as an aligned label/value grid. */}

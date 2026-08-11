@@ -17,7 +17,7 @@ const STALE_MS = 7 * 24 * 60 * 60 * 1000;
  * It reads the Overview's feeds rather than adding its own: every item here is
  * already on the wire for the dashboard.
  */
-export function NeedsAttentionPage(): JSX.Element {
+export function NeedsAttentionPage(): React.JSX.Element {
   const o = useOverview();
   const planEnabled = useModuleEnabled('plan');
 
@@ -155,7 +155,7 @@ const repoName = (repo: string): string => repo.split('/')[1] ?? repo;
 const where = (pr: PrListRecord): string => `#${pr.number} · ${repoName(pr.repo)}`;
 
 /** A queue, or nothing at all — an empty group is not news, it is noise. */
-function Group({ title, count, children }: { title: string; count: number; children: ReactNode }): JSX.Element | null {
+function Group({ title, count, children }: { title: string; count: number; children: ReactNode }): React.JSX.Element | null {
   if (count === 0) return null;
   return (
     <section>
@@ -180,7 +180,7 @@ function Row({
   detail: string;
   at: number;
   icon?: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <a href={href} className="row-link">
       {icon ?? <StatusDot tone="amber" />}

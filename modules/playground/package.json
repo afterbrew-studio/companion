@@ -38,9 +38,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.2.18",
     "@moxxy/companion-services": "workspace:*",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "typescript": "^7.0.2"
   },
   "sideEffects": false

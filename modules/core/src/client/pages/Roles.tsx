@@ -26,7 +26,7 @@ import { useRoles } from '../hooks/useRoles.js';
  * beats it. Toggling therefore has to know the default, or turning a permission
  * off would write a `revoke` row for a custom role that never had it.
  */
-export function RolesPage(): JSX.Element {
+export function RolesPage(): React.JSX.Element {
   const { roles, reload } = useRoles();
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<RoleDetail | null>(null);
@@ -171,7 +171,7 @@ function PermissionEditor({
   catalog: AclMap;
   busy: string | null;
   onToggle: (permission: Permission, want: boolean) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const held = new Set<string>(detail.permissions);
   const defaults = new Set<string>(detail.defaults);
   const owners = [...new Set(catalog.permissions.map((p) => p.owner))].sort();
@@ -227,7 +227,7 @@ function CreateRoleModal({
   roles: readonly RoleRecord[];
   onClose: () => void;
   onDone: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [id, setId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -296,7 +296,7 @@ function CreateRoleModal({
   );
 }
 
-function TrashIcon(): JSX.Element {
+function TrashIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
       <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />

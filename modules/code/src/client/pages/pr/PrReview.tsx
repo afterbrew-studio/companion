@@ -43,7 +43,7 @@ export function PrReview({
   focusedFinding?: string | null;
   onFocusFinding?: (id: string | null) => void;
   emphasis?: 'auto' | 'hero';
-}): JSX.Element {
+}): React.JSX.Element {
   const [actAs, setActAs] = useState('');
   const [mode, setMode] = useState<ReviewPostMode>('full');
   const delegated = review.reviewMode === 'delegated';
@@ -273,7 +273,7 @@ export function ReviewingStage({
   canCancel?: boolean;
   busy?: boolean;
   onCancel?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const progress = review?.progress;
   const budget = progress?.budget;
   // A bar only means something once the provider counts something. Companion's
@@ -341,7 +341,7 @@ export function ReviewingStage({
 }
 
 /** Minutes on the clock, ticking, so a quiet provider still looks alive. */
-function Elapsed({ since }: { since: number }): JSX.Element {
+function Elapsed({ since }: { since: number }): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1_000);
@@ -358,7 +358,7 @@ function ReviewBudgetSummary({
 }: {
   budget: PrReviewBudgetProgress;
   panel?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const usage = budget.tokenUsage;
   const totalTokens = usage ? usage.inputTokens + usage.outputTokens : 0;
   const cost = usage ? reviewCost(usage.estimatedCostUsd, usage.costPartial, usage.reportedRuns) : null;

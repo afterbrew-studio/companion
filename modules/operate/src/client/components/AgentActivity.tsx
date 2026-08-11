@@ -28,7 +28,7 @@ export function AgentActivity({
 }: {
   repo: string;
   issueNumber: number;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [run, setRun] = useState<RunListRecord | null>(null);
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const toolNames = useRef(new Map<string, string>());

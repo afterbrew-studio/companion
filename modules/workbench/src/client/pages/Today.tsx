@@ -39,7 +39,7 @@ interface DecisionTriageState {
 const EMPTY_TRIAGE: DecisionTriageState = { focus: [], snoozed: {} };
 
 /** The front door: approvals first, then a lightweight queue of human decisions. */
-export default function TodayPage(): JSX.Element {
+export default function TodayPage(): React.JSX.Element {
   const { current } = useWorkspace();
   const { can, user } = useAuth();
   const hasAiHelp = useModuleEnabled('automations') && can('runs:read') && can('runs:act');
@@ -121,7 +121,7 @@ function DecisionQueue({
 }: {
   readonly triage: DecisionTriage;
   readonly hasMore: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section aria-label="Decisions to review">
       {triage.reviewable.length > 0 ? (
@@ -187,7 +187,7 @@ function DecisionRow({
   readonly item: DecisionItem;
   readonly onFocus: () => void;
   readonly onSnooze: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <article className="flex flex-col gap-3 px-3.5 py-3.5 md:flex-row md:items-center">
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -236,7 +236,7 @@ function FocusedDecisionRow({
 }: {
   readonly item: DecisionItem;
   readonly onReturn: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-start">
       <StatusDot tone={toneOf(item.kind)} className="mt-1.5" />

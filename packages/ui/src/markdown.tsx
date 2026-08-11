@@ -16,7 +16,7 @@ import { decodeEntities, renderHtml, renderHtmlBlock, safeUrl, startsHtmlBlock }
  * a tag, works.
  */
 
-function CodeBlock({ lang, code }: { lang: string; code: string }): JSX.Element {
+function CodeBlock({ lang, code }: { lang: string; code: string }): React.JSX.Element {
   const html = highlightCode(code, lang);
   if (html !== null) {
     return (
@@ -32,7 +32,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }): JSX.Element 
   );
 }
 
-export function Markdown({ text }: { text: string }): JSX.Element {
+export function Markdown({ text }: { text: string }): React.JSX.Element {
   return <div className="markdown">{renderBlocks(text)}</div>;
 }
 

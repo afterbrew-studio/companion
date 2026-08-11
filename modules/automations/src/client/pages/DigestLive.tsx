@@ -10,7 +10,7 @@ import { useDigestLive, type DigestRun } from '../hooks/useDigestLive.js';
  * a hand-off to the Daily Digest page the moment the report lands. The raw
  * transcript still lives at #/runs/:id for auditing.
  */
-export function DigestLivePage({ repo }: { repo: string }): JSX.Element {
+export function DigestLivePage({ repo }: { repo: string }): React.JSX.Element {
   const { run, blocks, phase, report } = useDigestLive(repo);
 
   // Celebrate briefly, then take the reader to the digest itself.
@@ -80,7 +80,7 @@ function WorkingStage({
   run: DigestRun | null;
   blocks: Block[];
   starting: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const activity = recentActivity(blocks);
   // No granular phase data, so infer loosely: exploring once the run executes,
   // writing once the agent's own prose (not a tool echo) grows past a blurb.
@@ -176,7 +176,7 @@ function WorkingStage({
 }
 
 /** While there is nothing real to show, rotate through what the agent is up to. */
-function CyclingHint(): JSX.Element {
+function CyclingHint(): React.JSX.Element {
   const [i, setI] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => setI((v) => v + 1), 2600);
@@ -215,7 +215,7 @@ function firstLine(text: string): string {
 
 // ---------- done / failed ---------------------------------------------------------
 
-function DoneStage({ repo, report }: { repo: string; report: ReportRecord | null }): JSX.Element {
+function DoneStage({ repo, report }: { repo: string; report: ReportRecord | null }): React.JSX.Element {
   return (
     <section className="anim-in rounded-2xl border border-emerald-500/40 bg-gradient-to-b from-emerald-500/10 to-transparent p-8 text-center">
       <div className="ppv-pop mx-auto flex size-16 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
@@ -230,7 +230,7 @@ function DoneStage({ repo, report }: { repo: string; report: ReportRecord | null
   );
 }
 
-function FailedStage({ run }: { run: DigestRun | null }): JSX.Element {
+function FailedStage({ run }: { run: DigestRun | null }): React.JSX.Element {
   return (
     <section className="anim-in rounded-2xl border border-red-500/40 p-6">
       <div className="flex items-center gap-2.5">
@@ -261,7 +261,7 @@ function FailedStage({ run }: { run: DigestRun | null }): JSX.Element {
 
 // ---------- icons -----------------------------------------------------------------
 
-function DigestIcon(): JSX.Element {
+function DigestIcon(): React.JSX.Element {
   // The Daily Digest nav glyph, enlarged for the hero orb.
   return (
     <svg
@@ -280,7 +280,7 @@ function DigestIcon(): JSX.Element {
     </svg>
   );
 }
-function CheckIcon({ large }: { large?: boolean } = {}): JSX.Element {
+function CheckIcon({ large }: { large?: boolean } = {}): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={large ? 'size-7' : 'size-3.5'} aria-hidden>
       <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

@@ -14,7 +14,7 @@ export function KnowledgeToolbar({
   readonly ariaLabel: string;
   readonly leading?: ReactNode;
   readonly children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="mb-4 flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/70 p-2 sm:flex-row sm:items-center dark:border-zinc-800 dark:bg-zinc-900/50">
       {leading ? <div className="shrink-0">{leading}</div> : null}

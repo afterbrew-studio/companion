@@ -14,7 +14,7 @@ import type { ChecksSnapshot, IssueRecord, PipelineRunStatus, StepResultStatus }
  * CI snapshot as a compact SVG icon — shape + color, never color alone; the
  * counts live in the tooltip and aria-label.
  */
-export function ChecksIcon({ checks }: { checks: ChecksSnapshot | null }): JSX.Element | null {
+export function ChecksIcon({ checks }: { checks: ChecksSnapshot | null }): React.JSX.Element | null {
   if (!checks || checks.state === 'none') return null;
   const spec =
     checks.state === 'passing'
@@ -122,7 +122,7 @@ export function PrStateIcon({
   draft?: boolean;
   decision?: 'approved' | 'changes_requested' | null;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const spec =
     state === 'open' && decision === 'changes_requested'
       ? { label: 'Changes requested', cls: 'text-red-600 dark:text-red-400', glyph: PR_STATE_GLYPHS.diff }
@@ -210,7 +210,7 @@ const TRIAGE_STATE_SPECS = {
 
 type TriageIconState = keyof typeof TRIAGE_STATE_SPECS;
 
-function TriageGlyph({ state, className = 'size-4' }: { state: TriageIconState; className?: string }): JSX.Element {
+function TriageGlyph({ state, className = 'size-4' }: { state: TriageIconState; className?: string }): React.JSX.Element {
   const spec = TRIAGE_STATE_SPECS[state];
   return (
     <svg
@@ -234,7 +234,7 @@ function TriageGlyph({ state, className = 'size-4' }: { state: TriageIconState; 
  * space-eating pill. The label lives in the tooltip; TriageLegend spells the
  * states out under the list.
  */
-export function TriageStateIcon({ triage, className = '' }: { triage: IssueRecord['triage']; className?: string }): JSX.Element {
+export function TriageStateIcon({ triage, className = '' }: { triage: IssueRecord['triage']; className?: string }): React.JSX.Element {
   const state: TriageIconState = triage ?? 'none';
   return (
     <Tooltip content={TRIAGE_STATE_SPECS[state].label} className={className}>
@@ -244,7 +244,7 @@ export function TriageStateIcon({ triage, className = '' }: { triage: IssueRecor
 }
 
 /** What the issue-row triage icons mean; sits under the issue list. */
-export function TriageLegend(): JSX.Element {
+export function TriageLegend(): React.JSX.Element {
   return (
     <div className="dim mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
       {(Object.keys(TRIAGE_STATE_SPECS) as TriageIconState[]).map((state) => (
@@ -261,7 +261,7 @@ export function TriageLegend(): JSX.Element {
  * Clickable GitHub handle: opens the profile in a new tab. Rendered as a
  * role=link span so it can sit inside list-row anchors without nesting <a>s.
  */
-export function GitHubUser({ login, className = '' }: { login: string; className?: string }): JSX.Element {
+export function GitHubUser({ login, className = '' }: { login: string; className?: string }): React.JSX.Element {
   const { githubHost } = useAuth();
   const open = (): void => {
     window.open(`https://${githubHost}/${encodeURIComponent(login)}`, '_blank', 'noopener');
@@ -292,7 +292,7 @@ export function GitHubUser({ login, className = '' }: { login: string; className
 }
 
 /** Compact label display for list rows: first label + "+N more" (rest on hover). */
-export function LabelChips({ labels }: { labels: ReadonlyArray<string> }): JSX.Element | null {
+export function LabelChips({ labels }: { labels: ReadonlyArray<string> }): React.JSX.Element | null {
   if (labels.length === 0) return null;
   return (
     <Tooltip content={labels.join(', ')}>
@@ -305,7 +305,7 @@ export function LabelChips({ labels }: { labels: ReadonlyArray<string> }): JSX.E
 }
 
 /** "assigned a +2 more" for list rows; the rest of the names on hover. */
-export function AssigneeNote({ assignees }: { assignees: ReadonlyArray<string> }): JSX.Element | null {
+export function AssigneeNote({ assignees }: { assignees: ReadonlyArray<string> }): React.JSX.Element | null {
   if (assignees.length === 0) return null;
   return (
     <span className="dim shrink-0 text-xs">
@@ -320,7 +320,7 @@ export function AssigneeNote({ assignees }: { assignees: ReadonlyArray<string> }
 }
 
 /** Speech-bubble + count for list rows; hidden when there are no comments. */
-export function CommentCount({ count }: { count: number }): JSX.Element {
+export function CommentCount({ count }: { count: number }): React.JSX.Element {
   return (
     <Tooltip content={`${count} comment${count === 1 ? '' : 's'}`}>
     <span className={`dim flex shrink-0 items-center gap-1 text-xs ${count === 0 ? 'opacity-50' : ''}`}>

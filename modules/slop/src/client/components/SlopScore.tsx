@@ -15,7 +15,7 @@ export function SlopScore({
 }: {
   verdict: SlopVerdict;
   appliedAction: SlopAppliedAction | null;
-}): JSX.Element {
+}): React.JSX.Element {
   const band = slopBand(verdict.aiLikelihood);
   return (
     <div className="card">
@@ -46,7 +46,7 @@ export function SlopScore({
  * heights, so nothing moves when the verdict lands. The scale is known before
  * the score is, so the legend renders for real.
  */
-export function SlopScoreSkeleton(): JSX.Element {
+export function SlopScoreSkeleton(): React.JSX.Element {
   return (
     <div className="card">
       <Eyebrow>AI likelihood</Eyebrow>
@@ -65,7 +65,7 @@ export function SlopScoreSkeleton(): JSX.Element {
 }
 
 /** The scale, one click away: where each band starts and what it means. */
-function SlopBandLegend(): JSX.Element {
+function SlopBandLegend(): React.JSX.Element {
   return (
     <details className="mt-2.5">
       <summary className="dim cursor-pointer select-none">What the bands mean</summary>

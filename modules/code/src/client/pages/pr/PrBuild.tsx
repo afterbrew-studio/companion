@@ -13,7 +13,7 @@ import { PrChanges } from './PrChanges.js';
  * agent works, the proposed change once it's ready, then a link to the opened
  * PR. The raw transcript still lives at #/runs/:id.
  */
-export function PrBuild({ runId }: { runId: string }): JSX.Element {
+export function PrBuild({ runId }: { runId: string }): React.JSX.Element {
   const build = usePrBuild(runId);
   const fetchDiff = useCallback(() => api.runDiff(runId).then((r) => r.diff), [runId]);
 
@@ -67,7 +67,7 @@ const STEPS = [
   { label: 'Preparing the pull request', desc: 'Bundling the change into a PR' },
 ] as const;
 
-function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): JSX.Element {
+function BuildingStage({ run, blocks }: { run: RunRecord; blocks: Block[] }): React.JSX.Element {
   // No granular phase data, so infer loosely: step 0 done once the agent starts
   // thinking, step 1 active while it works, step 2 lights up at review.
   const started = blocks.some((b) => b.kind !== 'user');
@@ -196,7 +196,7 @@ function ReadyStage({
   build: UsePrBuild;
   run: RunRecord;
   fetchDiff: () => Promise<string>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [prompt, setPrompt] = useState('');
   const { confirmDanger, confirmElement } = useConfirm();
 
@@ -286,7 +286,7 @@ function ReadyStage({
 
 // ---------- shipped / failed ----------------------------------------------------
 
-function ShippedStage({ run }: { run: RunRecord }): JSX.Element {
+function ShippedStage({ run }: { run: RunRecord }): React.JSX.Element {
   return (
     <section className="anim-in rounded-2xl border border-emerald-500/40 bg-gradient-to-b from-emerald-500/10 to-transparent p-8 text-center">
       <div className="ppv-pop mx-auto flex size-16 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
@@ -306,7 +306,7 @@ function ShippedStage({ run }: { run: RunRecord }): JSX.Element {
   );
 }
 
-function FailedStage({ build, run }: { build: UsePrBuild; run: RunRecord }): JSX.Element {
+function FailedStage({ build, run }: { build: UsePrBuild; run: RunRecord }): React.JSX.Element {
   const [gone, setGone] = useState(false);
   const cancelled =
     run.status === 'stopped' || run.status === 'abandoned' || /abort|cancel/i.test(run.outcome ?? '');
@@ -357,7 +357,7 @@ function FailedStage({ build, run }: { build: UsePrBuild; run: RunRecord }): JSX
 
 // ---------- build metadata rail -------------------------------------------------
 
-function BuildSidebar({ run, phase }: { run: RunRecord; phase: BuildPhase }): JSX.Element {
+function BuildSidebar({ run, phase }: { run: RunRecord; phase: BuildPhase }): React.JSX.Element {
   const status =
     phase === 'building'
       ? { label: 'Building', cls: 'badge-warn' }
@@ -408,14 +408,14 @@ function BuildSidebar({ run, phase }: { run: RunRecord; phase: BuildPhase }): JS
 
 // ---------- icons ---------------------------------------------------------------
 
-function SparkIcon(): JSX.Element {
+function SparkIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="size-7" aria-hidden>
       <path d="M12 3l1.8 5L19 9.8 14 12l-2 5-2-5-5-2.2L10 8l2-5z" fill="currentColor" fillOpacity="0.9" />
     </svg>
   );
 }
-function CheckIcon({ large }: { large?: boolean } = {}): JSX.Element {
+function CheckIcon({ large }: { large?: boolean } = {}): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={large ? 'size-7' : 'size-3.5'} aria-hidden>
       <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

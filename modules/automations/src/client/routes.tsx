@@ -3,7 +3,7 @@ import { defineClientRoutes, lazyView, type RouteProps } from '@moxxy/companion-
 
 const AutomationsRoute = lazyView(async () => {
   const { AutomationsPage } = await import('./pages/Automations.js');
-  const Gated = (_props: RouteProps): JSX.Element => (
+  const Gated = (_props: RouteProps): React.JSX.Element => (
     <RequiresRepo what="Automations"><AutomationsPage /></RequiresRepo>
   );
   return { default: Gated };
@@ -11,7 +11,7 @@ const AutomationsRoute = lazyView(async () => {
 
 const RepositoryAutomationsRoute = lazyView(async () => {
   const { RepositoryAutomationsPage } = await import('./pages/Automations.js');
-  const Gated = ({ params }: RouteProps): JSX.Element => (
+  const Gated = ({ params }: RouteProps): React.JSX.Element => (
     <RequiresRepo what="Repository automations">
       <RepositoryAutomationsPage key={params.repo} repo={params.repo!} />
     </RequiresRepo>
@@ -21,7 +21,7 @@ const RepositoryAutomationsRoute = lazyView(async () => {
 
 const DigestRoute = lazyView(async () => {
   const { DigestPage } = await import('./pages/Digest.js');
-  const Gated = (_props: RouteProps): JSX.Element => (
+  const Gated = (_props: RouteProps): React.JSX.Element => (
     <RequiresRepo what="Daily Digest"><DigestPage /></RequiresRepo>
   );
   return { default: Gated };
@@ -31,7 +31,7 @@ const DigestRoute = lazyView(async () => {
 // /digest prefix on specificity, so ordering here doesn't matter).
 const DigestLiveRoute = lazyView(async () => {
   const { DigestLivePage } = await import('./pages/DigestLive.js');
-  const Wrapped = ({ params }: RouteProps): JSX.Element => (
+  const Wrapped = ({ params }: RouteProps): React.JSX.Element => (
     <RequiresRepo what="Daily Digest">
       <DigestLivePage key={params.repo} repo={params.repo!} />
     </RequiresRepo>

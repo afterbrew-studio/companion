@@ -25,7 +25,7 @@ export function LineComposer({
   busy: boolean;
   onCancel: () => void;
   onSubmit: (body: string, severity: FindingSeverity) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [body, setBody] = useState('');
   const [severity, setSeverity] = useState<FindingSeverity>('major');
   const [error, setError] = useState<string | null>(null);

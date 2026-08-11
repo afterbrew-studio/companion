@@ -10,7 +10,7 @@ import { ReportCard } from '../components/ReportCard.js';
  * what matters now, and where the project is heading. One digest per repo per
  * run; generated on demand here or on the repository's daily schedule.
  */
-export function DigestPage(): JSX.Element {
+export function DigestPage(): React.JSX.Element {
   const { current, repos, reports, runs, selected, setSelected, loaded, error, setError, refresh } = useDigest();
   const { can } = useAuth();
   const [sending, setSending] = useState(false);

@@ -45,7 +45,7 @@ async function fileToLogoDataUrl(file: File): Promise<string> {
 }
 
 /** Instance administration: branding, notifications, and destructive maintenance. */
-export function SettingsPage(): JSX.Element {
+export function SettingsPage(): React.JSX.Element {
   const { branding, setBranding, logout } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();

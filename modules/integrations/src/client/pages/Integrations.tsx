@@ -48,7 +48,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   'developer-tools': 'Developer tools',
 };
 
-export function IntegrationsPage(): JSX.Element {
+export function IntegrationsPage(): React.JSX.Element {
   const { can } = useAuth();
   const { current } = useWorkspace();
   const state = useIntegrations();
@@ -297,7 +297,7 @@ function ReviewDefaultsModal({
   saving: boolean;
   onSave: (targets: IntegrationTargetRef[]) => Promise<void>;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const scope: IntegrationScope = workspaceId
     ? { kind: 'workspace', workspaceId }
     : { kind: 'instance' };
@@ -413,7 +413,7 @@ function ReviewDefaultsModal({
   );
 }
 
-function FilterButton({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }): JSX.Element {
+function FilterButton({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }): React.JSX.Element {
   return (
     <button className={selected ? 'btn' : 'btn-ghost'} onClick={onClick} aria-pressed={selected}>
       {children}
@@ -442,7 +442,7 @@ function ProviderMark({
   providerId: string;
   label: string;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className={`flex ${className} shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200`}
@@ -478,7 +478,7 @@ function ConnectionCard({
   actions: MenuAction[];
   onToggle: (enabled: boolean) => void;
   onMenu: (menu: ContextMenuState) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="card flex flex-col gap-3">
       <div className="flex items-start gap-3">
@@ -572,7 +572,7 @@ function CatalogTile({
   /** This scope can hold one: some providers are workspace-only. */
   canConnectHere: boolean;
   onConnect: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const builtIn = provider.connectionMode === 'none';
   const live = connections.filter((connection) => connection.enabled).length;
   return (
@@ -653,7 +653,7 @@ export function ConnectionModal({
     connection: IntegrationConnectionRecord,
     input: { name: string; scope: IntegrationScope; config: Readonly<Record<string, IntegrationFieldValue | null>> },
   ) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const availableScopes: Array<'instance' | 'workspace' | 'repository'> = fixedScope
     ? [fixedScope.kind]
     : provider.scopes.filter(
@@ -802,7 +802,7 @@ function ConnectionField({
   clear: boolean;
   onClear: (value: boolean) => void;
   onChange: (value: IntegrationFieldValue) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const hint = field.kind === 'secret' && configured
     ? `${field.description ?? ''}${field.description ? ' ' : ''}A credential is stored; leave blank to keep it.`
     : field.description;
@@ -867,7 +867,7 @@ function MultiSelectField({
   value: IntegrationFieldValue | null | undefined;
   hint: ReactNode;
   onChange: (value: IntegrationFieldValue) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const selected = new Set(
     (typeof value === 'string' ? value : '')
       .split(',')

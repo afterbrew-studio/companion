@@ -15,7 +15,7 @@ import { OutOfTree } from '../components/OutOfTree.js';
  * compiled catalog, not adopted) install here — collecting their declared
  * config first when they have one.
  */
-export function ModulesPage(): JSX.Element {
+export function ModulesPage(): React.JSX.Element {
   const modules = useKernel().descriptors;
   const { can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
@@ -185,7 +185,7 @@ export function ModulesPage(): JSX.Element {
   );
 }
 
-function ModuleInfo({ mod }: { mod: ModuleDescriptor }): JSX.Element {
+function ModuleInfo({ mod }: { mod: ModuleDescriptor }): React.JSX.Element {
   return (
     <span className="min-w-0 flex-1">
       <span className="flex items-baseline gap-1.5">
@@ -203,7 +203,7 @@ function ModuleInfo({ mod }: { mod: ModuleDescriptor }): JSX.Element {
   );
 }
 
-function SlidersIcon(): JSX.Element {
+function SlidersIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="size-4" aria-hidden>
       <path d="M4 6h8M16 6h4M4 12h2M10 12h10M4 18h12" />
@@ -214,7 +214,7 @@ function SlidersIcon(): JSX.Element {
   );
 }
 
-function TrashIcon(): JSX.Element {
+function TrashIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="size-4" aria-hidden>
       <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6" />

@@ -14,7 +14,7 @@ import { useTaskModels } from '../hooks/useTaskModels.js';
  * would fall back (or refuse) on every unattended run of that task. The
  * Providers page is where that set is widened.
  */
-export function TaskModelsPage({ query }: { query?: URLSearchParams }): JSX.Element {
+export function TaskModelsPage({ query }: { query?: URLSearchParams }): React.JSX.Element {
   // Which layer is being edited. Instance governs unattended work; a lane
   // governs what a person starts while that lane is selected. Seeded from the
   // link so the picker's per-runtime cog lands on the right one.
@@ -222,7 +222,7 @@ function ModelPicker({
   inherited: string | null;
   busy: boolean;
   onChange: (model: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const pinned = lane ? (entry.laneModel ?? null) : entry.model;
   // A pin nothing can serve right now is shown rather than silently read as
   // unpinned: the select would otherwise display "default" and the next edit

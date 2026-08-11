@@ -37,8 +37,8 @@
   "devDependencies": {
     "@moxxy/companion-services": "workspace:*",
     "@types/node": "^24.13.3",
-    "@types/react": "^18.3.12",
-    "react": "^18.3.1",
+    "@types/react": "^19.2.18",
+    "react": "^19.2.8",
     "typescript": "^7.0.2"
   },
   "sideEffects": false

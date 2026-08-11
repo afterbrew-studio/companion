@@ -38,7 +38,7 @@ import { useReposAdmin } from '../hooks/useReposAdmin.js';
  * Repository management, scoped to the active workspace. A repository may be
  * connected to several workspaces; transfer moves only this membership.
  */
-export function ReposPage(): JSX.Element {
+export function ReposPage(): React.JSX.Element {
   const { can, user } = useAuth();
   const { workspaces, current, setCurrent, refresh: refreshWorkspaces } = useWorkspace();
   const canManageRepos = can('repos:manage');
@@ -171,7 +171,7 @@ function RepoCard({
   canManage: boolean;
   onChange: () => Promise<void>;
   onError: (e: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can, githubHost } = useAuth();
   const [busy, setBusy] = useState(false);
   const [transferring, setTransferring] = useState(false);
@@ -394,7 +394,7 @@ function RepoCard({
 type AgentContextTab = 'rules' | 'skills' | 'template';
 
 /** Inspect the exact base-branch guidance Companion applies to this repo. */
-function AgentContextModal({ repo, onClose }: { repo: RepoRecord; onClose: () => void }): JSX.Element {
+function AgentContextModal({ repo, onClose }: { repo: RepoRecord; onClose: () => void }): React.JSX.Element {
   const [context, setContext] = useState<RepoAgentContext | null>(null);
   const [tab, setTab] = useState<AgentContextTab>('rules');
   const [loading, setLoading] = useState(true);
@@ -503,7 +503,7 @@ function AgentContextModal({ repo, onClose }: { repo: RepoRecord; onClose: () =>
   );
 }
 
-function AgentContextResource({ file }: { file: RepoAgentContextFile }): JSX.Element {
+function AgentContextResource({ file }: { file: RepoAgentContextFile }): React.JSX.Element {
   return (
     <details className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
       <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-3 outline-none hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 dark:hover:bg-zinc-950/40 [&::-webkit-details-marker]:hidden">
@@ -540,7 +540,7 @@ function TransferRepoModal({
   onClose: () => void;
   onDone: () => void;
   onError: (e: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const targets = workspaces.filter((w) => w.id !== repo.workspaceId);
   const from = workspaces.find((w) => w.id === repo.workspaceId);
   const [target, setTarget] = useState(targets[0]?.id ?? '');
@@ -607,7 +607,7 @@ function AddRepoModal({
   existing: readonly RepoRecord[];
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { githubHost } = useAuth();
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -755,7 +755,7 @@ function WorkspaceSettingsModal({
   onClose: () => void;
   onChanged: () => void;
   onDeleted: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState(workspace.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -886,7 +886,7 @@ function WorkspaceSettingsModal({
 }
 
 /** Invite/remove members of a private workspace (owner + admins). */
-function MembersSection({ workspace }: { workspace: WorkspaceRecord }): JSX.Element {
+function MembersSection({ workspace }: { workspace: WorkspaceRecord }): React.JSX.Element {
   const { members, error, setError, add, remove } = useWorkspaceMembers(workspace.id);
   const count = members?.length ?? 0;
 
@@ -946,7 +946,7 @@ function UserPicker({
   workspaceId: string;
   onAdd: (username: string) => Promise<void>;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<WorkspaceMemberCandidate[]>([]);

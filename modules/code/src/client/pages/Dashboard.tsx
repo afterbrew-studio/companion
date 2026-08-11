@@ -13,7 +13,7 @@ import { ChecksIcon } from '../widgets.js';
  * fix/implement runs waiting for review, PRs with failing CI, proposals ready
  * to approve.
  */
-export function DashboardPage(): JSX.Element {
+export function DashboardPage(): React.JSX.Element {
   const o = useOverview();
 
   if (!o.hasWorkspace) {
@@ -220,7 +220,7 @@ export function DashboardPage(): JSX.Element {
  * render their own dashboard sections here — inversion of control, so this
  * module never imports theirs. Each contribution is gated on its own permission.
  */
-function DashboardSlots(): JSX.Element | null {
+function DashboardSlots(): React.JSX.Element | null {
   const kernel = useKernel();
   const { can } = useAuth();
   const widgets = kernel.slots('dashboard.widgets').filter((s) => s.permission === undefined || can(s.permission));
@@ -267,7 +267,7 @@ function ActivityFeed({
   runs: RunListRecord[];
   pipelineRuns: PipelineRunRecord[];
   reports: ReportRecord[];
-}): JSX.Element {
+}): React.JSX.Element {
   const entries: ActivityEntry[] = [
     ...runs.map(
       (r): ActivityEntry => ({
@@ -344,7 +344,7 @@ function formatTokens(n: number): string {
  * Sessions + token spend for this workspace. The gateway does not report money,
  * so tokens are the cost proxy; per-session bars use dataviz sequential slot 1.
  */
-function UsageSection({ runs }: { runs: RunListRecord[] | null }): JSX.Element | null {
+function UsageSection({ runs }: { runs: RunListRecord[] | null }): React.JSX.Element | null {
   if (runs === null) {
     return (
       <section className="mt-6" aria-labelledby="usage-heading" aria-busy>
@@ -423,7 +423,7 @@ const CLOSED = 'fill-[#1baf7a] dark:fill-[#199e70]';
 const OPENED_SWATCH = 'bg-[#2a78d6] dark:bg-[#3987e5]';
 const CLOSED_SWATCH = 'bg-[#1baf7a] dark:bg-[#199e70]';
 
-function MetricsSection({ metrics }: { metrics: WorkspaceMetrics | null }): JSX.Element {
+function MetricsSection({ metrics }: { metrics: WorkspaceMetrics | null }): React.JSX.Element {
   if (metrics === null) {
     return (
       <section className="mt-6" aria-labelledby="metrics-heading" aria-busy>
@@ -520,7 +520,7 @@ function VelocityChart({
   weekly: ReadonlyArray<WeeklyCounts>;
   opened: (w: WeeklyCounts) => number;
   closed: (w: WeeklyCounts) => number;
-}): JSX.Element {
+}): React.JSX.Element {
   const [hover, setHover] = useState<number | null>(null);
   const width = 520;
   const height = 150;

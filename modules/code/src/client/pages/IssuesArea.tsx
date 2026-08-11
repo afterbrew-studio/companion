@@ -34,7 +34,7 @@ import { AssigneeNote, CommentCount, GitHubUser, LabelChips, TriageLegend, Triag
  * Issues across every repo of the active workspace. Server-paged: only the
  * visible window is loaded; search and filters run in the database.
  */
-export function IssuesAreaPage(): JSX.Element {
+export function IssuesAreaPage(): React.JSX.Element {
   const { can } = useAuth();
   const s = useWorkspaceIssues();
   // A skeleton that appears and vanishes inside a blink reads as a glitch.

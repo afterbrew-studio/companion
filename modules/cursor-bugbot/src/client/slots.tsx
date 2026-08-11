@@ -7,7 +7,7 @@ import { defineSlots } from '@moxxy/companion-sdk/client';
  * colour is black, so it follows the theme instead — a black mark disappears on
  * the dark tile it sits in.
  */
-function CursorMark(): JSX.Element {
+function CursorMark(): React.JSX.Element {
   return (
     <svg
       className="size-5 fill-zinc-900 dark:fill-zinc-100"

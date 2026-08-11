@@ -63,7 +63,7 @@ export function FindingChat({
   reviewId: string;
   finding: ReviewFinding;
   canChat: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);

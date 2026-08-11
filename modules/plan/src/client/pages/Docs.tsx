@@ -37,7 +37,7 @@ import { KnowledgeToolbar } from '../components/KnowledgeToolbar.js';
  * an agent that reads the codebase. The search box previews exactly what
  * retrieval returns.
  */
-export function DocsPage(): JSX.Element {
+export function DocsPage(): React.JSX.Element {
   const { can } = useAuth();
   const {
     current,
@@ -239,7 +239,7 @@ export function DocsPage(): JSX.Element {
 }
 
 /** Live retrieval preview — the same query path agents and the assistant use. */
-function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element {
+function RetrievalSearch({ workspaceId }: { workspaceId: string }): React.JSX.Element {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<DocSearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -311,7 +311,7 @@ function RetrievalSearch({ workspaceId }: { workspaceId: string }): JSX.Element 
 }
 
 /** Indexed docs are retrievable; a 0-chunk doc is invisible to search. */
-function DocStateIcon({ indexed }: { indexed: boolean }): JSX.Element {
+function DocStateIcon({ indexed }: { indexed: boolean }): React.JSX.Element {
   return indexed ? (
     <StatusGlyph tone="ok" label="Indexed for retrieval" />
   ) : (
@@ -319,7 +319,7 @@ function DocStateIcon({ indexed }: { indexed: boolean }): JSX.Element {
   );
 }
 
-function DocCard({ doc, onChange }: { doc: DocListRecord; onChange: () => Promise<void> }): JSX.Element {
+function DocCard({ doc, onChange }: { doc: DocListRecord; onChange: () => Promise<void> }): React.JSX.Element {
   const { can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -461,7 +461,7 @@ function WriteDocModal({
   configDir: string | null;
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [title, setTitle] = useState(doc?.title ?? '');
   const [repo, setRepo] = useState(doc?.repo ?? '');
   const [content, setContent] = useState(doc?.content ?? '');
@@ -562,7 +562,7 @@ function ImportDocsModal({
   repos: RepoRecord[];
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [repo, setRepo] = useState(repos.find((r) => r.cloneReady)?.fullName ?? repos[0]?.fullName ?? '');
   const [files, setFiles] = useState<RepoDocFile[] | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -667,7 +667,7 @@ function GenerateDocModal({
   configDir: string | null;
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [repo, setRepo] = useState(repos.find((r) => r.cloneReady)?.fullName ?? '');
   const [instructions, setInstructions] = useState('');
   const [storage, setStorage] = useState<AreaStorage>(configDir ? 'repo' : 'virtual');

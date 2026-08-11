@@ -66,7 +66,7 @@ export function BulkBar({
   /** Bulk verbs contributed by other modules (a slot), kept as rendered controls
    *  because a slot contributes components, not menu items. */
   children?: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const [prompt, setPrompt] = useState<'label' | 'comment' | null>(null);
   const [draft, setDraft] = useState('');
   const { confirmDanger, confirmElement } = useConfirm();

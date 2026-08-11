@@ -2,7 +2,7 @@ import { defineClientRoutes, lazyView, page, type RouteProps } from '@moxxy/comp
 
 const RepositoryIntegrationsRoute = lazyView(async () => {
   const { RepositoryIntegrationsPage } = await import('./pages/RepositoryIntegrations.js');
-  const Wrapped = ({ params }: RouteProps): JSX.Element => (
+  const Wrapped = ({ params }: RouteProps): React.JSX.Element => (
     <RepositoryIntegrationsPage key={params.repo} repo={params.repo!} />
   );
   return { default: Wrapped };

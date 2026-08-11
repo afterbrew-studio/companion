@@ -21,7 +21,7 @@ import { ProductionEvaluationSuite } from '../components/ProductionEvaluationSui
 import { useEvaluationCases } from '../hooks/useEvaluationCases.js';
 
 /** Saved, replayable prompt cases: the release gate missing from Agent Lab. */
-export function EvaluationsPage(): JSX.Element {
+export function EvaluationsPage(): React.JSX.Element {
   const kernel = useKernel();
   const { can } = useAuth();
   const { snapshot, production, loading, error: loadError, refresh } = useEvaluationCases();
@@ -266,7 +266,7 @@ function SummaryTile({
   readonly value: number;
   readonly hint: string;
   readonly tone?: 'green' | 'amber' | 'red';
-}): JSX.Element {
+}): React.JSX.Element {
   const colour = tone === 'green'
     ? 'text-emerald-600 dark:text-emerald-400'
     : tone === 'amber'

@@ -17,7 +17,7 @@ export function Field({
   hint?: ReactNode;
   children: ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <label className={`flex flex-col gap-1 text-sm ${className}`}>
       <span className="dim">{label}</span>
@@ -38,7 +38,7 @@ export function AccentField({
 }: {
   children: ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return <span className={`accent-field block rounded-lg ${className}`}>{children}</span>;
 }
 
@@ -54,7 +54,7 @@ export function FormActions({
   children: ReactNode;
   divider?: boolean;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className={`flex flex-wrap items-center justify-end gap-2 ${
@@ -80,7 +80,7 @@ export function Checkbox({
   onToggle: () => void;
   label: string;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <span
       role="checkbox"
@@ -125,7 +125,7 @@ export function SearchInput({
   placeholder?: string;
   ariaLabel?: string;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <input
       className={`input ${className}`}
@@ -167,7 +167,7 @@ export function SegmentedControl<T extends string>({
   name: string;
   disabled?: boolean;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <fieldset
       className={`flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900 ${
@@ -224,7 +224,7 @@ export function SettingRow({
   description?: ReactNode;
   children?: ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className={`flex flex-wrap items-center gap-3 ${className}`}>
       <div className="min-w-0 flex-1">
@@ -237,7 +237,7 @@ export function SettingRow({
 }
 
 /** Render-if-present error line; `role="alert"` so screen readers announce it. */
-export function ErrorBar({ error, className = '' }: { error: string | null | undefined; className?: string }): JSX.Element | null {
+export function ErrorBar({ error, className = '' }: { error: string | null | undefined; className?: string }): React.JSX.Element | null {
   if (!error) return null;
   return (
     <p role="alert" className={`error-bar ${className}`}>

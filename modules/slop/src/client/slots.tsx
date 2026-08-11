@@ -24,7 +24,7 @@ const QUALITY_PRIORITY = {
 
 const RISK_PRIORITY = { critical: 4, high: 3, medium: 2, low: 1 } as const;
 
-function SlopRadarWidget(): JSX.Element | null {
+function SlopRadarWidget(): React.JSX.Element | null {
   const { detections } = useSlopDetections();
   const hot = (detections ?? [])
     .filter(
@@ -89,7 +89,7 @@ function SlopRadarWidget(): JSX.Element | null {
  * the built-in surfaces: a contributed panel that looks different reads as an
  * afterthought.
  */
-function SlopQualityPanel({ days }: { days?: number }): JSX.Element | null {
+function SlopQualityPanel({ days }: { days?: number }): React.JSX.Element | null {
   const { current } = useWorkspace();
   const [stat, setStat] = useState<AgentQualityStat | null>(null);
   const window = days ?? 30;
@@ -117,7 +117,7 @@ function SlopQualityPanel({ days }: { days?: number }): JSX.Element | null {
  * this module: slop depends on code, so the arrow only points one way. The
  * selection arrives through code's published context.
  */
-function BulkSlopCheck(): JSX.Element | null {
+function BulkSlopCheck(): React.JSX.Element | null {
   const selection = usePrSelection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

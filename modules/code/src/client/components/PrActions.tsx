@@ -73,7 +73,7 @@ export function StepRemedies({
   remedies: ReadonlyArray<StepRemedy>;
   repo: string;
   number: number;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { can } = useAuth();
   const [busy, setBusy] = useState<PrActionId | null>(null);
   const [done, setDone] = useState<PrActionId | null>(null);
