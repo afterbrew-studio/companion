@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -83,4 +83,32 @@ if (readFileSync(join(root, 'apps/api/src/modules.generated.ts'), 'utf8').includ
 }
 
 cpSync(join(root, 'apps/web/dist'), join(dist, 'web'), { recursive: true });
+
+// `module scaffold` copies the hello-world example, sources only: the scaffold
+// is a starting point, never a prebuilt artifact.
+const templateSrc = join(root, 'examples/companion-module-hello');
+const templateDst = join(dist, 'templates/hello');
+cpSync(templateSrc, templateDst, {
+  recursive: true,
+  filter: (src) => {
+    const rel = src.slice(templateSrc.length);
+    return !rel.startsWith('/node_modules') && !rel.startsWith('/dist');
+  },
+});
+// A scaffolded module lives outside this workspace: resolve the workspace
+// ranges to the published ones and drop this repository's own metadata.
+const templatePkgFile = join(templateDst, 'package.json');
+const templatePkg = JSON.parse(readFileSync(templatePkgFile, 'utf8'));
+for (const [name, dir] of [
+  ['@moxxy/companion-sdk', 'packages/sdk'],
+  ['@moxxy/companion-contracts', 'packages/contracts'],
+]) {
+  const { version } = JSON.parse(readFileSync(join(root, dir, 'package.json'), 'utf8'));
+  templatePkg.devDependencies[name] = `^${version}`;
+}
+delete templatePkg.homepage;
+delete templatePkg.repository;
+delete templatePkg.bugs;
+writeFileSync(templatePkgFile, JSON.stringify(templatePkg, null, 2) + '\n');
+
 chmodSync(join(dist, 'index.js'), 0o755);

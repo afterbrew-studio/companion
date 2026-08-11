@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ModuleConfigField, ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
 import type { ModuleListing } from '@moxxy/companion-core/server';
 import { addModule, installedModuleDirs, verifyModuleDir } from '@moxxy/companion-core/server';
@@ -20,6 +23,8 @@ export const MODULE_HELP = `Usage: companion module <command> [options]
   remove <id> [--yes]        Uninstall an out-of-tree module and delete its files
   verify [dir]               Static ABI check on an out-of-tree module. With no
                              argument, checks every module installed in <home>/modules.
+  scaffold <name>            Generate a new out-of-tree module in
+                             ./companion-module-<name>, ready to build and verify
 
 Options:
   --force                    Let add replace a module that is already there
@@ -28,7 +33,8 @@ Options:
   --home <path>              Data directory (default: COMPANION_HOME or ~/.companion)
   --host <host> --port <n>   Address of the running daemon
 
-Companion must be running, except for add and verify, which only touch files.
+Companion must be running, except for add, verify and scaffold, which only
+touch files.
 Commands authenticate with the token in <home>/cli-token, which the daemon
 mints at boot.
 `;
@@ -45,7 +51,8 @@ export interface ModuleCommand {
     | 'config'
     | 'add'
     | 'remove'
-    | 'verify';
+    | 'verify'
+    | 'scaffold';
   readonly id?: string;
   readonly set: readonly (readonly [string, string])[];
   readonly unset: readonly string[];
@@ -65,6 +72,7 @@ const ACTIONS = [
   'add',
   'remove',
   'verify',
+  'scaffold',
 ] as const;
 
 export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
@@ -101,6 +109,9 @@ export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
   if (action === 'add' && !id) {
     throw new Error('companion module add requires a package spec, for example: companion module add my-module@1.2.0');
   }
+  if (action === 'scaffold' && !id) {
+    throw new Error('companion module scaffold requires a name, for example: companion module scaffold reports');
+  }
   if (action !== 'list' && action !== 'verify' && action !== 'add' && !id) {
     throw new Error(`companion module ${action} requires a module id.`);
   }
@@ -108,14 +119,16 @@ export function parseModuleCommand(argv: readonly string[]): ModuleCommand {
 }
 
 export async function runModuleCommand(cmd: ModuleCommand, baseUrl: string): Promise<void> {
-  const api = apiClient(baseUrl);
-  const out = (value: unknown): void => void process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-
-  // Before the daemon call, because these two deliberately need no daemon: an
-  // author checks a build on a laptop that has never run Companion, and adding
-  // files is what makes a module visible to a daemon in the first place.
+  // Before the client is built, because these deliberately need no daemon and
+  // no CLI token: an author checks a build on a laptop that has never run
+  // Companion, and adding files is what makes a module visible to a daemon in
+  // the first place.
   if (cmd.action === 'verify') return runVerify(cmd);
   if (cmd.action === 'add') return runAdd(cmd);
+  if (cmd.action === 'scaffold') return runScaffold(cmd);
+
+  const api = apiClient(baseUrl);
+  const out = (value: unknown): void => void process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 
   if (cmd.action === 'list') {
     const { modules } = await api<{ modules: ModuleListing[] }>('GET', '/api/modules');
@@ -353,4 +366,87 @@ function runVerify(cmd: ModuleCommand): void {
     process.stdout.write('\n');
   }
   if (results.some((r) => !r.ok)) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------- scaffold
+
+export interface ScaffoldResult {
+  readonly dir: string;
+  readonly id: string;
+  readonly packageName: string;
+  readonly title: string;
+  readonly files: readonly string[];
+}
+
+/**
+ * Generate a new out-of-tree module from the hello-world template that ships
+ * inside this package (a copy of examples/companion-module-hello, with its
+ * workspace ranges resolved at build time). Pure file work, exported so the
+ * generator is testable without a terminal.
+ */
+export function scaffoldModule(rawName: string, parentDir: string): ScaffoldResult {
+  const id = rawName.startsWith('companion-module-') ? rawName.slice('companion-module-'.length) : rawName;
+  // The daemon's moxxy.id rule at scan time, minus empty segments: a repeated
+  // or trailing dash would produce an empty title word and an ugly table name.
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(id)) {
+    throw new Error(`Module names are lower-case kebab-case (got: ${rawName}).`);
+  }
+  const packageName = `companion-module-${id}`;
+  const title = id
+    .split('-')
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(' ');
+  const template = join(dirname(fileURLToPath(import.meta.url)), 'templates', 'hello');
+  if (!existsSync(template)) {
+    throw new Error(`The scaffold template is missing at ${template}; reinstall @moxxy/companion.`);
+  }
+  const dir = join(parentDir, packageName);
+  if (existsSync(dir)) {
+    throw new Error(`${dir} already exists. Move it aside or pick another name.`);
+  }
+
+  // Ordered: the longest identity-bearing strings first, so the bare module id
+  // never eats a piece of them. The table name gets an underscore id because a
+  // dash is not valid in an unquoted SQL identifier.
+  const substitute = (source: string): string =>
+    source
+      .replaceAll('companion-module-hello', packageName)
+      .replaceAll('hello_greetings', `${id.replaceAll('-', '_')}_greetings`)
+      .replaceAll('Hello World', title)
+      .replaceAll('hello', id);
+
+  const files: string[] = [];
+  for (const rel of filesUnder(template)) {
+    const target = join(dir, rel);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, substitute(readFileSync(join(template, rel), 'utf8')));
+    files.push(rel);
+  }
+  return { dir, id, packageName, title, files };
+}
+
+function filesUnder(root: string, prefix = ''): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...filesUnder(root, rel));
+    else files.push(rel);
+  }
+  return files.sort();
+}
+
+function runScaffold(cmd: ModuleCommand): void {
+  const result = scaffoldModule(cmd.id!, process.cwd());
+  if (cmd.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Created ${result.packageName}/ (module id: ${result.id}, ${result.files.length} files)\n\n`);
+  process.stdout.write('Next steps:\n');
+  process.stdout.write(`  cd ${result.packageName}\n`);
+  process.stdout.write('  npm install\n');
+  process.stdout.write('  npm run build\n');
+  process.stdout.write('  companion module verify .     # static ABI check, no daemon needed\n');
+  process.stdout.write('  companion module add .        # stage it, then restart Companion\n');
+  process.stdout.write(`  companion module install ${result.id}\n`);
 }
