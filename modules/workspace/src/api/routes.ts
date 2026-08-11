@@ -149,14 +149,21 @@ export default defineRoutes((ctx) => {
         const taken = new Set(workspaces.list().map((w) => w.slug));
         let slug = slugify(body.name, id);
         if (taken.has(slug)) slug = `${slug}-${id.slice(3, 7)}`;
-        workspaces.insert({
-          id,
-          name: body.name,
-          slug,
-          description: body.description,
-          visibility,
-          ownerId: visibility === 'private' ? user!.username : null,
-        });
+        try {
+          workspaces.insert({
+            id,
+            name: body.name,
+            slug,
+            description: body.description,
+            visibility,
+            ownerId: visibility === 'private' ? user!.username : null,
+          });
+        } catch (err) {
+          if (/UNIQUE constraint failed/i.test(String(err))) {
+            throw badRequest('a workspace with that name already exists; pick another name');
+          }
+          throw err;
+        }
         ctx.broadcast({ t: 'workspaces.changed' });
         return created({ workspace: workspaces.get(id) });
       },
