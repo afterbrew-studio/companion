@@ -36,8 +36,8 @@
     "zod": "^3.24.0"
   },
   "peerDependencies": {
-    "@moxxy/companion-contracts": "^0.6.1",
-    "@moxxy/companion-sdk": "^0.8.2",
+    "@moxxy/companion-contracts": "^0.7.0",
+    "@moxxy/companion-sdk": "^0.9.0",
     "react": "^19.2.8",
     "zod": "^3.24.0"
   },
