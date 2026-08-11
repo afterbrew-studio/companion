@@ -38,6 +38,35 @@ export function DiscordMark(): React.JSX.Element {
   );
 }
 
+/** Not the trademarked mark, which is not freely redistributable: a plain tile
+ * in Microsoft's published Teams brand colour identifies the provider. */
+export function TeamsMark(): React.JSX.Element {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" role="img" aria-label="Microsoft Teams">
+      <rect x="1" y="1" width="22" height="22" rx="4.5" fill="#6264A7" />
+      <path d="M6.6 7.6h10.8v2.3h-4.2V17h-2.4V9.9H6.6z" fill="#fff" />
+    </svg>
+  );
+}
+
+/** Email has no vendor; a plain envelope in the current text colour. */
+export function EmailMark(): React.JSX.Element {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label="Email"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <rect x="2.2" y="4.6" width="19.6" height="14.8" rx="2.4" />
+      <path d="m3.4 6.8 8.6 6.4 8.6-6.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /** The generic webhook has no vendor: a neutral stroke glyph in currentColor. */
 export function WebhookMark(): React.JSX.Element {
   return (

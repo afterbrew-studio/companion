@@ -69,6 +69,22 @@ visible changes and verify both the empty and populated state when applicable.
 - Do not mix generated artifacts or unrelated formatting into the patch.
 - Update user documentation when observable behaviour changes.
 
+## Developer Certificate of Origin
+
+Contributions are accepted under the
+[Developer Certificate of Origin](https://developercertificate.org/). Sign off
+every commit to certify that you wrote the change, or otherwise have the right
+to submit it under the project license:
+
+```sh
+git commit -s
+```
+
+This appends a `Signed-off-by: Your Name <you@example.com>` trailer from your
+git identity, which must be your real information. If a commit on your branch
+is missing the trailer, `git commit --amend -s` or `git rebase --signoff` adds
+it before you push.
+
 Maintainers merge a version pull request to publish. The Publish workflow waits
 for CI, uploads new package versions through npm trusted publishing, then creates
 the immutable `vX.Y.Z` GitHub Release. Do not create or move release tags by

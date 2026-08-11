@@ -9,7 +9,7 @@ import {
 
 export { isPublicAddress };
 
-export type NotificationProviderKind = 'webhook' | 'slack' | 'discord' | 'ntfy';
+export type NotificationProviderKind = 'webhook' | 'slack' | 'discord' | 'teams' | 'ntfy';
 
 /** One attempt gets this long before it is abandoned as unreachable. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -75,6 +75,29 @@ export function buildRequest(
       return json(url, { text: plainText(notification, link) });
     case 'discord':
       return json(url, { content: plainText(notification, link).slice(0, 1900) });
+    case 'teams': {
+      // Both Teams webhook generations, the legacy *.webhook.office.com
+      // connectors and their Power Automate Workflows replacement on
+      // *.logic.azure.com, accept an Adaptive Card wrapped in a `message`
+      // attachment envelope, so one payload serves either URL.
+      const card: Record<string, unknown> = {
+        $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+        type: 'AdaptiveCard',
+        version: '1.4',
+        msteams: { width: 'Full' },
+        body: [
+          { type: 'TextBlock', size: 'Medium', weight: 'Bolder', text: notification.title, wrap: true },
+          ...(notification.body.trim()
+            ? [{ type: 'TextBlock', text: notification.body, wrap: true }]
+            : []),
+        ],
+        ...(link ? { actions: [{ type: 'Action.OpenUrl', title: 'Open in Companion', url: link }] } : {}),
+      };
+      return json(url, {
+        type: 'message',
+        attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: card }],
+      });
+    }
     case 'ntfy': {
       // ntfy takes the topic in the URL path; posting JSON to the origin with an
       // explicit `topic` avoids putting the title in a header, where non-ASCII

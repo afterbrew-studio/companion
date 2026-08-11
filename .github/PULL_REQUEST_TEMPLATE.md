@@ -17,6 +17,7 @@
 - [ ] Mutations broadcast the matching change event
 - [ ] No secret or credential can cross to the browser or logs
 - [ ] User-facing behaviour and release notes/docs are updated where needed
+- [ ] Every commit is signed off (`git commit -s`, see the DCO section in CONTRIBUTING.md)
 
 ## Screenshots
 

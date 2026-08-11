@@ -1,5 +1,6 @@
 import { defineJobs, log } from '@moxxy/companion-sdk/server';
 import { notificationProviders } from './notification-providers.js';
+import { smtpNotificationProvider } from './smtp-provider.js';
 
 let unsubscribe: (() => void) | null = null;
 let unregisterProviders: Array<() => void> = [];
@@ -22,7 +23,8 @@ export default defineJobs({
     for (const unregister of unregisterProviders) unregister();
     unregisterProviders = [];
     try {
-      for (const provider of notificationProviders(() => ctx.config.publicUrl ?? null)) {
+      const providers = [...notificationProviders(() => ctx.config.publicUrl ?? null), smtpNotificationProvider()];
+      for (const provider of providers) {
         unregisterProviders.push(ctx.services.get('integrations').registerProvider(provider));
       }
     } catch (error) {
