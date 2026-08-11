@@ -2,7 +2,7 @@ import { defineManifest } from '@moxxy/companion-sdk';
 
 export default defineManifest({
   id: 'board',
-  title: 'Task Board',
+  title: 'Task board',
   version: '0.1.0',
   // Hard deps: tasks live on repos (code), execute as agent runs (operate),
   // and scope through workspaces. plan is a SOFT dep (spec attachment via

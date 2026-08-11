@@ -41,7 +41,7 @@ export function ProvidersPage(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Providers"
+        title="Machines & models"
         subtitle="Which runtimes, providers, and models agents can select on each machine"
         actions={
           <button className="btn-ghost" disabled={refetching} onClick={() => void refetchFromMachines()}>

@@ -12,9 +12,12 @@ import type {
   CreateProviderRequest,
   McpCheckResult,
   McpServerRecord,
+  ModelProbe,
   ModelProviderRecord,
   ModelRecord,
   ProbeResult,
+  UpdateMcpServerRequest,
+  UpdateProviderRequest,
 } from '../contract/index.js';
 import { rowToMcpServer, type McpServerRow, type McpServersStore } from './mcp-store.js';
 import { rowToProvider, type ProviderRow, type ProvidersStore } from './providers-store.js';
@@ -67,7 +70,28 @@ export class RuntimeService {
     private readonly secrets: ProviderSecrets,
     private readonly config: () => RuntimeConfig,
     private readonly broadcast: () => void,
+    /** Injectable so tests can drive probe timing; production uses the real one. */
+    private readonly probeFn: typeof probeModel = probeModel,
   ) {}
+
+  /**
+   * Per-provider write lane over the models JSON column, which probe results
+   * and operator edits both read-modify-write. Chaining them through one
+   * promise per provider keeps each sequence atomic even when a step awaits,
+   * and an idle provider holds no entry: a lane deletes itself once its last
+   * job settles.
+   */
+  private readonly lanes = new Map<string, Promise<unknown>>();
+
+  private withProvider<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const next = (this.lanes.get(id) ?? Promise.resolve()).then(work, work);
+    const settled = next.catch(() => undefined);
+    this.lanes.set(id, settled);
+    void settled.then(() => {
+      if (this.lanes.get(id) === settled) this.lanes.delete(id);
+    });
+    return next;
+  }
 
   // ---------- records ---------------------------------------------------------
 
@@ -89,15 +113,30 @@ export class RuntimeService {
     return rowToProvider(row, request.apiKey !== undefined);
   }
 
-  /** An empty `apiKey` leaves the stored credential alone: the form never sees it. */
-  update(id: string, patch: Partial<CreateProviderRequest>): ModelProviderRecord | null {
-    const existing = this.store.get(id);
-    if (!existing) return null;
-    const merged = toRow(id, { ...rowToRequest(existing), ...patch }, existing.created_at);
-    this.store.update(merged);
-    if (patch.apiKey) this.secrets.set(keyOf(id), patch.apiKey);
-    this.broadcast();
-    return rowToProvider(merged, this.secrets.get(keyOf(id)) !== null);
+  /**
+   * The credential is tri-state: absent (or empty, which is what a form whose
+   * key field was left alone sends) keeps the stored one, a string replaces
+   * it, null clears it.
+   */
+  update(id: string, patch: UpdateProviderRequest): Promise<ModelProviderRecord | null> {
+    return this.withProvider(id, async () => {
+      const existing = this.store.get(id);
+      if (!existing) return null;
+      const current = rowToRequest(existing);
+      // `probed` is what a probe observed, never what a patch claims: an edit
+      // built from a stale read (or a declared provider re-adopted at boot)
+      // must not erase or invent an observation, so the stored value wins for
+      // every id that survives the patch.
+      const observed = new Map((current.models ?? []).map((model) => [model.id, model.probed]));
+      const { apiKey, models, ...fields } = patch;
+      const kept = models?.map((model) => ({ ...model, probed: observed.get(model.id) ?? null }));
+      const merged = toRow(id, { ...current, ...fields, ...(kept ? { models: kept } : {}) }, existing.created_at);
+      this.store.update(merged);
+      if (apiKey === null) this.secrets.delete(keyOf(id));
+      else if (apiKey) this.secrets.set(keyOf(id), apiKey);
+      this.broadcast();
+      return rowToProvider(merged, this.secrets.get(keyOf(id)) !== null);
+    });
   }
 
   delete(id: string): void {
@@ -194,11 +233,11 @@ export class RuntimeService {
    * and the key arrives by environment indirection so it can be a mounted
    * secret. The daemon reads the variable; the runtime never does.
    */
-  adopt(declared: readonly DeclaredProvider[]): void {
+  async adopt(declared: readonly DeclaredProvider[]): Promise<void> {
     for (const entry of declared) {
       const key = entry.apiKeyEnv ? (process.env[entry.apiKeyEnv] ?? '') : '';
       const request: CreateProviderRequest = { ...entry, ...(key ? { apiKey: key } : {}) };
-      if (this.store.get(entry.id)) this.update(entry.id, request);
+      if (this.store.get(entry.id)) await this.update(entry.id, request);
       else {
         const row = toRow(entry.id, request, Date.now());
         this.store.insert(row);
@@ -268,13 +307,15 @@ export class RuntimeService {
     return rowToMcpServer(row, Boolean(request.secret));
   }
 
-  /** An empty `secret` leaves the stored one alone: the form is never shown it. */
-  updateMcp(id: string, patch: Partial<CreateMcpServerRequest>): McpServerRecord | null {
+  /** `secret` is tri-state: absent or empty keeps the stored one, a string replaces it, null clears it. */
+  updateMcp(id: string, patch: UpdateMcpServerRequest): McpServerRecord | null {
     const existing = this.mcpStore.get(id);
     if (!existing) return null;
-    const merged = toMcpRow(id, { ...mcpRowToRequest(existing), ...patch }, existing.created_at);
+    const { secret, ...fields } = patch;
+    const merged = toMcpRow(id, { ...mcpRowToRequest(existing), ...fields }, existing.created_at);
     this.mcpStore.update(merged);
-    if (patch.secret) this.secrets.set(mcpKeyOf(id), patch.secret);
+    if (secret === null) this.secrets.delete(mcpKeyOf(id));
+    else if (secret) this.secrets.set(mcpKeyOf(id), secret);
     this.broadcast();
     return rowToMcpServer(merged, this.secrets.get(mcpKeyOf(id)) !== null);
   }
@@ -362,14 +403,25 @@ export class RuntimeService {
   async probe(providerId: string, modelId: string): Promise<ProbeResult> {
     const spec = this.resolve(`${providerId}:${modelId}`);
     if (!spec) throw new Error(`model ${modelId} is not configured on ${providerId}`);
-    const probe = await probeModel(spec);
-    const provider = this.get(providerId);
-    if (provider) {
-      this.update(providerId, {
-        models: provider.models.map((model) => (model.id === modelId ? { ...model, probed: probe } : model)),
-      });
-    }
+    const probe = await this.probeFn(spec);
+    await this.recordProbe(providerId, modelId, probe);
     return { model: modelId, probe };
+  }
+
+  /**
+   * The one write path allowed to set `probed`, re-reading inside the lane so
+   * the result lands on the models as they are NOW, not as they were when the
+   * probe left. A model the operator removed mid-probe records nothing.
+   */
+  private recordProbe(providerId: string, modelId: string, probe: ModelProbe): Promise<void> {
+    return this.withProvider(providerId, async () => {
+      const existing = this.store.get(providerId);
+      if (!existing) return;
+      const record = rowToProvider(existing, false);
+      const models = record.models.map((model) => (model.id === modelId ? { ...model, probed: probe } : model));
+      this.store.update({ ...existing, models: JSON.stringify(models) });
+      this.broadcast();
+    });
   }
 
   private inScope(provider: ModelProviderRecord, workspaceId?: string | null): boolean {

@@ -4,7 +4,7 @@ import { defineClientRoutes, lazyView, type RouteProps } from '@moxxy/companion-
 const BoardPage = lazyView(async () => {
   const { default: Board } = await import('./pages/Board.js');
   const GatedBoard = (props: RouteProps): React.JSX.Element => (
-    <RequiresRepo what="Task Board">
+    <RequiresRepo what="Task board">
       <Board {...props} />
     </RequiresRepo>
   );

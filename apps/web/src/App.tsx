@@ -105,9 +105,7 @@ export function App(): React.JSX.Element {
 /** Login wall: onboarding on clean installs, else login, else the app. */
 function Gate(): React.JSX.Element {
   const { user, needsSetup } = useAuth();
-  if (user === undefined) {
-    return <div className="dim flex h-full items-center justify-center">Loading…</div>;
-  }
+  if (user === undefined) return <PageLoading />;
   if (needsSetup) return <SetupPage />;
   if (user === null) return <LoginPage />;
   return (
@@ -151,7 +149,7 @@ function Shell(): React.JSX.Element {
   const hash = useHashRoute();
   const kernel = useKernel();
 
-  // Route-aware tab title: "Pull Requests · owner/repo · #12 · <instance>".
+  // Route-aware tab title: "Pull requests · owner/repo · #12 · <instance>".
   useEffect(() => {
     const name = branding.name?.trim() || 'Companion';
     const labels = crumbsFor(hash.replace(/^#/, '').split('?')[0] ?? '/', kernel.nav, kernel.sections)
@@ -191,23 +189,6 @@ function Shell(): React.JSX.Element {
     () => kernel.nav.filter((m) => can(m.permission) && (!m.authModes || m.authModes.includes(authMode))),
     [authMode, kernel.nav, can],
   );
-
-  // One route winner feeds highlight, breadcrumbs and active-group unfolding.
-  const activeNavKey = useMemo(() => {
-    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    let claimed: string | null = null;
-    let best: { key: string; len: number } | null = null;
-    for (const m of kernel.nav) {
-      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
-      const matches =
-        hash === m.hash ||
-        hash.startsWith(`${m.hash}/`) ||
-        hash.startsWith(`${m.hash}?`) ||
-        (m.key === 'overview' && hash === '#/');
-      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
-    }
-    return claimed ?? best?.key ?? null;
-  }, [kernel.nav, hash]);
 
   const activePerspective = navigationAudience;
 
@@ -275,6 +256,32 @@ function Shell(): React.JSX.Element {
     [activePerspective, navOverrides, sidebarEntries, sidebarSections],
   );
   const navEntries = perspectiveEntries;
+
+  // The landing pick: lowest `home` among what this viewer kept visible. Shared
+  // by the '#/' redirect and the transient '#/' highlight, so no module name is
+  // ever hardcoded and builds without any given module still land somewhere.
+  const landingEntry = useMemo(() => {
+    const pool = navEntries.length > 0 ? navEntries : visibleModules;
+    return [...pool].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+  }, [navEntries, visibleModules]);
+
+  // One route winner feeds highlight, breadcrumbs and active-group unfolding.
+  const activeNavKey = useMemo(() => {
+    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
+    let claimed: string | null = null;
+    let best: { key: string; len: number } | null = null;
+    for (const m of kernel.nav) {
+      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
+      const matches =
+        hash === m.hash ||
+        hash.startsWith(`${m.hash}/`) ||
+        hash.startsWith(`${m.hash}?`) ||
+        (hash === '#/' && m.key === landingEntry?.key);
+      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
+    }
+    return claimed ?? best?.key ?? null;
+  }, [kernel.nav, hash, landingEntry]);
+
   const shortcutTargets = useMemo(
     () =>
       visibleModules
@@ -390,10 +397,8 @@ function Shell(): React.JSX.Element {
   useEffect(() => {
     const path = hash.replace(/^#/, '');
     if (path !== '/' && path !== '') return;
-    const pool = navEntries.length > 0 ? navEntries : visibleModules;
-    const landing = [...pool].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
-    if (landing) location.hash = landing.hash;
-  }, [hash, navEntries, visibleModules]);
+    if (landingEntry) location.hash = landingEntry.hash;
+  }, [hash, landingEntry]);
 
   const sections = useMemo(() => groupSections(kernel.sections, navEntries), [kernel.sections, navEntries]);
   const settingsSections = useMemo(
@@ -895,7 +900,7 @@ function crumbsFor(
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)$/);
   if (m) return [{ label: 'Issues', href: listBackHref('#/issues') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   m = path.match(/^\/repos\/([\w.-]+)\/([\w.-]+)\/prs\/(\d+)(?:\/review)?$/);
-  if (m) return [{ label: 'Pull Requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
+  if (m) return [{ label: 'Pull requests', href: listBackHref('#/prs') }, { label: `${m[1]}/${m[2]}` }, { label: `#${m[3]}` }];
   // Standalone pages outside the module registry.
   if (path === '/inbox') return [{ label: 'Inbox' }];
   if (path === '/profile') return [{ label: 'Your profile' }];
@@ -908,6 +913,8 @@ function crumbsFor(
       mod = mm;
     }
   }
+  // Alias paths (an entry's `owns` outside its hash) crumb as their owner too.
+  if (!mod) mod = nav.find((mm) => mm.owns?.some((pattern) => pattern.test(path)));
   // A settings page is "Settings / General", not a bare "General": the group it
   // sits in is the only thing that says where the user is.
   if (mod && sections.some((s) => s.id === mod!.section && s.placement === 'settings')) {

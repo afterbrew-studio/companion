@@ -338,7 +338,7 @@ export class Automations {
 
   setContributorFlow(policy: ContributorFlowPolicy): ContributorFlowPolicy {
     const board = this.board();
-    if (!board) throw new Error('enable the Task Board module before enabling a contributor flow');
+    if (!board) throw new Error('enable the Task board module before enabling a contributor flow');
     if (!this.store.repos.inWorkspace(policy.repo, policy.workspaceId)) {
       throw new Error(`${policy.repo} does not belong to contributor-flow workspace ${policy.workspaceId}`);
     }
@@ -547,7 +547,7 @@ export class Automations {
     this.requireAuthorized(owner, 'runs:read', 'observe contributor agents', job.repo);
     this.requireAuthorized(owner, 'runs:act', 'run contributor agents', job.repo);
     const board = this.board();
-    if (!board) throw new Error('the Task Board module is disabled');
+    if (!board) throw new Error('the Task board module is disabled');
     board.ensureAutomationWorkers(flow.workspaceId);
     const automationPolicy: TaskAutomationPolicy = {
       autoReview: true,
@@ -813,7 +813,7 @@ export class Automations {
         'action_required',
         `Contributor flow disabled because its runtime is unavailable — ${flow.repo}`,
         boardUnavailable
-          ? 'The Task Board module is disabled. Companion removed the end-to-end flow and disabled automatic merging; enable Task Board and configure the flow again deliberately.'
+          ? 'The Task board module is disabled. Companion removed the end-to-end flow and disabled automatic merging; enable Task board and configure the flow again deliberately.'
           : workspaceDetached
             ? `The repository no longer belongs to workspace ${flow.workspaceId}. Companion removed its end-to-end flow and disabled automatic merging; choose a new workspace deliberately if work should continue.`
             : 'The repository webhook receiver is no longer configured. Companion removed the end-to-end flow and disabled automatic merging; restore delivery before enabling it again.',
@@ -829,7 +829,7 @@ export class Automations {
             : 'contributor-flow.webhook-disabled',
         status: 409,
         detail: boardUnavailable
-          ? `${flow.repo}: Task Board unavailable; flow removed and auto-merge disabled`
+          ? `${flow.repo}: Task board unavailable; flow removed and auto-merge disabled`
           : workspaceDetached
             ? `${flow.repo} no longer belongs to ${flow.workspaceId}; flow removed and auto-merge disabled`
             : `${flow.repo}: webhook unavailable; flow removed and auto-merge disabled`,

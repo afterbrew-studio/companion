@@ -1377,8 +1377,8 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
             {canManageBoard ? <a className="text-xs font-medium text-emerald-600 outline-none hover:text-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400" href="#/board">Configure</a> : null}
           </div>
           <p className="dim mt-1 text-xs leading-5">
-            These settings are inherited from Task Board and cannot be changed from Ideas.
-            {canManageBoard ? ' Open Task Board and choose Flow to edit them.' : ' A workspace maintainer can change them in Task Board under Flow.'}
+            These settings are inherited from Task board and cannot be changed from Ideas.
+            {canManageBoard ? ' Open Task board and choose Flow to edit them.' : ' A workspace maintainer can change them in Task board under Flow.'}
           </p>
           <ul className="mt-3 space-y-2 text-sm"><Setting label="Auto review" enabled={board.config.autoReview} /><Setting label="Auto-fix CI" enabled={board.config.autoFixCi} /><Setting label={`Auto merge (${board.config.mergeMethod})`} enabled={board.config.autoMerge} /></ul>
           {board.config.autoMerge ? <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">Auto-merge is enabled. Approved work with green checks may merge without another manual confirmation.</p> : null}
@@ -1692,7 +1692,7 @@ function Launched({ session, onReviewHistory }: { session: FeaturePlanningSessio
               className="inline-flex h-10 cursor-pointer items-center justify-center whitespace-nowrap rounded-md bg-emerald-600 px-5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-px dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400 dark:focus-visible:ring-offset-zinc-900"
               href="#/board"
             >
-              Open Task Board
+              Open Task board
             </a>
             <button type="button" className="btn-ghost h-10 justify-center whitespace-nowrap px-5 active:translate-y-px" onClick={onReviewHistory}>Review planning history</button>
           </div>
@@ -1904,7 +1904,7 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
           ) : (
             <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
               {session.step === 'launched' || session.status === 'completed'
-                ? 'This session is read-only. Continue implementation discussions from the Task Board.'
+                ? 'This session is read-only. Continue implementation discussions from the Task board.'
                 : 'Discussion becomes available after clarification, at each review checkpoint.'}
             </p>
           )}

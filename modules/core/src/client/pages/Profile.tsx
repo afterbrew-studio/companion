@@ -18,6 +18,7 @@ import {
   PageHeader,
   Section,
   SettingRow,
+  Skeleton,
   Switch,
 } from '@moxxy/companion-ui';
 import type { AccountInfo, NotificationScope } from '../../contract/index.js';
@@ -445,7 +446,7 @@ function NotificationSection({ onError }: { onError: (e: string | null) => void 
         }
       >
         {choice === null ? (
-          <span className="dim text-[13px]">Loading…</span>
+          <Skeleton className="h-9 w-64" />
         ) : (
           <Dropdown<ScopeChoice>
             ariaLabel="Inbox scope"
