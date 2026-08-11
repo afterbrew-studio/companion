@@ -4,7 +4,7 @@
 
 # Companion
 
-**A self-hosted maintainer's dashboard that runs your repositories with AI agents.**
+**A local-first control plane for software teams and AI agents.**
 
 [![npm](https://img.shields.io/npm/v/@moxxy/companion?color=111&label=npm)](https://www.npmjs.com/package/@moxxy/companion)
 [![downloads](https://img.shields.io/npm/dm/@moxxy/companion?color=111&label=downloads)](https://www.npmjs.com/package/@moxxy/companion)
