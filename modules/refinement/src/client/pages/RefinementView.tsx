@@ -496,6 +496,8 @@ function ItemCard({
   const [acceptance, setAcceptance] = useState(item.acceptance);
   const [priority, setPriority] = useState(item.priority);
   const byOrd = useMemo(() => new Map(items.map((entry) => [entry.ord, entry.id])), [items]);
+  // The same filtered list the server reorders: imported/dismissed rows do not bound moving.
+  const proposed = useMemo(() => items.filter((entry) => entry.status === 'proposed'), [items]);
   const [dependsOnIds, setDependsOnIds] = useState<string[]>(item.dependsOn.flatMap((ord) => byOrd.get(ord) ? [byOrd.get(ord)!] : []));
   return (
     <article
@@ -520,8 +522,8 @@ function ItemCard({
         ) : null}
         {item.status === 'proposed' && canManage ? (
           <span className="flex shrink-0 items-center gap-1.5">
-            <button className="btn-ghost h-8 px-2" disabled={busy || item === items[0]} aria-label="Move up" onClick={() => onMove('up')}>↑</button>
-            <button className="btn-ghost h-8 px-2" disabled={busy || item === items[items.length - 1]} aria-label="Move down" onClick={() => onMove('down')}>↓</button>
+            <button className="btn-ghost h-8 px-2" disabled={busy || item.id === proposed[0]?.id} aria-label="Move up" onClick={() => onMove('up')}>↑</button>
+            <button className="btn-ghost h-8 px-2" disabled={busy || item.id === proposed[proposed.length - 1]?.id} aria-label="Move down" onClick={() => onMove('down')}>↓</button>
             <button className="btn-ghost" disabled={busy} onClick={() => setEditing((value) => !value)}>{editing ? 'Close' : 'Edit'}</button>
             <button className="btn" disabled={busy} onClick={onImport}>
               Import
@@ -596,6 +598,7 @@ function MethodsModal({
   const [aiPrompt, setAiPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Bumped whenever the editor target changes — an in-flight generate that
   // resolves for an older session is dropped instead of clobbering the form.
   const editSessionRef = useRef(0);
@@ -609,11 +612,13 @@ function MethodsModal({
     setInstructions(method === 'new' ? '' : method.instructions);
     setAiPrompt('');
     setGenError(null);
+    setSaveError(null);
   };
 
   const closeEditor = (): void => {
     editSessionRef.current += 1;
     setEditing(null);
+    setSaveError(null);
   };
 
   const generate = async (): Promise<void> => {
@@ -637,11 +642,18 @@ function MethodsModal({
 
   const save = async (): Promise<void> => {
     setBusy(true);
+    setSaveError(null);
     const fields = { name: name.trim(), description: description.trim(), instructions: instructions.trim() };
-    if (editing === 'new') await onSave(fields);
-    else if (editing) await onUpdate(editing.id, fields);
-    setBusy(false);
-    closeEditor();
+    try {
+      if (editing === 'new') await onSave(fields);
+      else if (editing) await onUpdate(editing.id, fields);
+      closeEditor();
+    } catch (err) {
+      // Closing here would strand the error behind the modal; stay open.
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -690,6 +702,7 @@ function MethodsModal({
                 maxLength={8_000}
               />
             </Field>
+            <ErrorBar error={saveError} />
             <FormActions>
               <button className="btn-ghost" onClick={closeEditor}>
                 Cancel

@@ -350,8 +350,6 @@ export interface RepoRow {
 
 export function rowToRepo(row: RepoRow): RepoRecord {
   return {
-    // Global repo pins belonged to the removed shared-account model.
-    githubAccountId: null,
     runnerId: row.runner_id ?? null,
     fullName: row.full_name,
     owner: row.owner,
