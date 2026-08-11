@@ -29,6 +29,7 @@ export function fixture({
   performForRepo,
   trySummary = async () => null,
   authorized = () => true,
+  canAccessWorkspace = () => true,
 } = {}) {
   const db = new Database(':memory:');
   db.exec(`
@@ -115,7 +116,7 @@ export function fixture({
       runners: { hasFreeCapacity, servableModels },
       orchestrator: { taskModelPin },
     },
-    { canAccessRepo: () => true, requireAccessible: () => undefined },
+    { canAccessRepo: () => true, canAccessWorkspace, requireAccessible: () => undefined },
     () => undefined,
     authorized,
     () => undefined,

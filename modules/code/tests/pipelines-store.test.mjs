@@ -136,3 +136,40 @@ test('boot recovery preserves evidence and marks unfinished work honestly', () =
   assert.equal(recovered.steps[0].status, 'error');
   assert.deepEqual(recovered.steps[0].log, log);
 });
+
+test('a deleted workspace takes its pipelines and library steps, and only its own', () => {
+  const store = fixture();
+  const pipeline = (id, workspaceId) => ({
+    id,
+    workspaceId,
+    type: 'pr',
+    name: id,
+    description: '',
+    steps: [],
+    autoRunOnPrOpen: false,
+    autoRunOnPrUpdate: false,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const stepDefinition = (id, workspaceId) => ({
+    id,
+    workspaceId,
+    name: id,
+    description: '',
+    step: { kind: 'label', name: id, config: { labels: ['x'] } },
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  store.insert(pipeline('pl-doomed', 'ws-doomed'));
+  store.insert(pipeline('pl-kept', 'ws-kept'));
+  store.insertStepDefinition(stepDefinition('sd-doomed', 'ws-doomed'));
+  store.insertStepDefinition(stepDefinition('sd-kept', 'ws-kept'));
+
+  store.deleteByWorkspace('ws-doomed');
+
+  assert.equal(store.get('pl-doomed'), undefined);
+  assert.equal(store.getStepDefinition('sd-doomed'), undefined);
+  assert.equal(store.get('pl-kept').id, 'pl-kept');
+  assert.equal(store.getStepDefinition('sd-kept').id, 'sd-kept');
+  assert.deepEqual(store.workspaceIds(), ['ws-kept']);
+});

@@ -102,9 +102,9 @@ export class WorkspacesStore {
       .run(fields.name ?? null, fields.description ?? null, id);
   }
 
+  // Owned tables only. pipelines/step_definitions are code-owned; the delete
+  // route asks their owner (when present) to clean up.
   delete(id: string): void {
-    this.db.prepare(`DELETE FROM pipelines WHERE workspace_id = ?`).run(id);
-    this.db.prepare(`DELETE FROM step_definitions WHERE workspace_id = ?`).run(id);
     this.db.prepare(`DELETE FROM workspace_members WHERE workspace_id = ?`).run(id);
     this.db.prepare(`DELETE FROM workspaces WHERE id = ?`).run(id);
   }

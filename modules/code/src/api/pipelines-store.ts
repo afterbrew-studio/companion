@@ -86,6 +86,12 @@ export class PipelinesStore {
     this.db.prepare(`DELETE FROM pipelines WHERE id = ?`).run(id);
   }
 
+  /** Workspace-delete cleanup: every pipeline and library step the workspace owns. */
+  deleteByWorkspace(workspaceId: string): void {
+    this.db.prepare(`DELETE FROM pipelines WHERE workspace_id = ?`).run(workspaceId);
+    this.db.prepare(`DELETE FROM step_definitions WHERE workspace_id = ?`).run(workspaceId);
+  }
+
   // ---------- step definitions (custom step library) --------------------------------
 
   insertStepDefinition(d: StepDefinitionRecord): void {

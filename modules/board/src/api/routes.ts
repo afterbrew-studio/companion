@@ -85,7 +85,9 @@ export default defineRoutes((ctx) => {
       handler: ({ user, query }) => {
         const workspaceId = query.get('workspace') ?? '';
         if (!workspaceId) throw badRequest('workspace is required');
-        if (!workspace.canAccessWorkspace(user!, workspaceId)) throw forbidden('no access to that workspace');
+        // Inaccessible reads as not-found (the house convention): a private
+        // workspace's existence must not leak through this module's routes.
+        workspace.requireAccessible(user, workspaceId);
         const rawLimit = query.get('doneLimit');
         if (rawLimit !== null && !/^\d+$/.test(rawLimit)) throw badRequest('doneLimit must be an integer');
         const doneLimit = rawLimit === null ? 100 : Number(rawLimit);
@@ -121,7 +123,7 @@ export default defineRoutes((ctx) => {
       access: 'board:manage',
       body: createTaskSchema,
       handler: ({ body, user }) => {
-        if (!workspace.canAccessWorkspace(user!, body.workspaceId)) throw forbidden('no access to that workspace');
+        workspace.requireAccessible(user, body.workspaceId);
         if (!code.repos.inWorkspace(body.repo, body.workspaceId)) {
           throw forbidden('repository is not connected to that workspace');
         }
@@ -200,9 +202,8 @@ export default defineRoutes((ctx) => {
       handler: ({ params, query, user }) => {
         const repo = `${params.owner}/${params.name}`;
         const workspaceId = query.get('workspace') ?? '';
-        if (!workspaceId || !workspace.canAccessWorkspace(user!, workspaceId)) {
-          throw forbidden('no access to that workspace');
-        }
+        if (!workspaceId) throw badRequest('workspace is required');
+        workspace.requireAccessible(user, workspaceId);
         if (!code.repos.inWorkspace(repo, workspaceId)) {
           throw forbidden('repository is not connected to that workspace');
         }
@@ -228,7 +229,7 @@ export default defineRoutes((ctx) => {
       access: 'board:manage',
       body: workerSchema,
       handler: ({ body, user }) => {
-        if (!workspace.canAccessWorkspace(user!, body.workspaceId)) throw forbidden('no access to that workspace');
+        workspace.requireAccessible(user, body.workspaceId);
         return created({ worker: board.createWorker(body.workspaceId, body.name, body.role) });
       },
     }),
@@ -238,7 +239,8 @@ export default defineRoutes((ctx) => {
       path: '/api/board/workers/:id',
       access: 'board:manage',
       body: updateWorkerSchema,
-      handler: ({ params, body }) => {
+      handler: ({ params, body, user }) => {
+        if (!board.getWorker(user!, params.id)) throw notFound('worker not found');
         try {
           return { worker: board.updateWorker(params.id, body) };
         } catch (err) {
@@ -251,7 +253,8 @@ export default defineRoutes((ctx) => {
       method: 'DELETE',
       path: '/api/board/workers/:id',
       access: 'board:manage',
-      handler: ({ params }) => {
+      handler: ({ params, user }) => {
+        if (!board.getWorker(user!, params.id)) throw notFound('worker not found');
         try {
           board.deleteWorker(params.id);
         } catch (err) {
@@ -268,7 +271,7 @@ export default defineRoutes((ctx) => {
       body: configSchema,
       handler: ({ body, user }) => {
         const { workspaceId, ...patch } = body;
-        if (!workspace.canAccessWorkspace(user!, workspaceId)) throw forbidden('no access to that workspace');
+        workspace.requireAccessible(user, workspaceId);
         try {
           return { config: board.setConfig(workspaceId, patch) };
         } catch (err) {

@@ -566,6 +566,13 @@ export class BoardService {
 
   // ---------- worker CRUD -----------------------------------------------------------------
 
+  /** Same access rule as getTask: a worker out of workspace reach reads as absent. */
+  getWorker(user: AuthUser, id: string): WorkerRecord | null {
+    const worker = this.store.getWorker(id);
+    if (!worker || !this.workspace.canAccessWorkspace(user, worker.workspaceId)) return null;
+    return worker;
+  }
+
   createWorker(workspaceId: string, name: string, role: WorkerRole): WorkerRecord {
     const worker: WorkerRecord = {
       id: `wkr-${randomUUID().slice(0, 12)}`,

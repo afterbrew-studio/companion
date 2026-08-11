@@ -103,8 +103,6 @@ export const operateApi = {
   // ---- the lane: which machine + runtime this person's own actions run on ----
   lane: () => request<LaneSnapshot>('/api/me/lane'),
   setLane: (lane: RunLane) => put<LaneSnapshot>('/api/me/lane', lane),
-  setLaneModel: (lane: RunLane, model: string | null, task?: string) =>
-    put<LaneSnapshot>('/api/me/lane/model', { lane, model, ...(task ? { task } : {}) }),
 
   probeRunner: (id: string) => post<RunnerProbeResult>(`/api/runners/${id}/probe`),
   // providers + models (grouped per machine; machines fetch their own catalog)
