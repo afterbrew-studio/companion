@@ -240,8 +240,9 @@ companion provider test <id> --model claude-sonnet-5   # does it answer, can it 
 ```
 
 The `runtime` module ships in the `full` and `cloud` profiles. The published
-npx CLI is a full build, so the commands above work there as-is; the default
-Docker image is `slim`, so build it with `--build-arg PROFILE=full` (or
+npx CLI and the published image (`docker pull ghcr.io/moxxy-ai/companion`) are
+full builds, so the commands above work there as-is; an image built from
+source defaults to `slim`, so build it with `--build-arg PROFILE=full` (or
 `cloud`) to carry the module.
 
 Four kinds cover the field: `anthropic`, `openai`, `azure` (deployment names and

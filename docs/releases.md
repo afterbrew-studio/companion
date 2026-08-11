@@ -32,7 +32,10 @@ The public Companion product version is the version of `@moxxy/companion` in
 - the exact package tarball downloaded back from npm;
 - a repository SPDX 2.3 SBOM generated asynchronously from GitHub's dependency
   graph at release time;
-- `SHA256SUMS` for every attached integrity asset.
+- `SHA256SUMS` for every attached integrity asset;
+- a `full`-profile container image pushed to `ghcr.io/moxxy-ai/companion`,
+  tagged with the release version (and `latest` for stable releases), with an
+  SPDX SBOM of that image attached to the release.
 
 The release job also requires the npm package to expose a provenance
 attestation and installs the downloaded tarball before asking its executable
