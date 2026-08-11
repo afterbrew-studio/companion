@@ -44,4 +44,5 @@ companion role repair --grant-admin <username>
 ## Design
 
 The reasoning behind this model, including what it replaced and why, is in
-[`acl-and-roles.md`](acl-and-roles.md).
+[`internal/acl-and-roles.md`](internal/acl-and-roles.md) (internal working
+document).
