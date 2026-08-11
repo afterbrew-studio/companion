@@ -8,21 +8,58 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Warsaw
-    # One production and one development proposal is reviewable; five
-    # unrelated upgrades all rebuilding the monorepo are not. Security updates
-    # remain independent and are never ignored by these version-update groups.
-    open-pull-requests-limit: 2
+    # Keep routine updates compact, but never hide unrelated major migrations
+    # in one PR. Coupled toolchains stay together; every other major remains an
+    # individual decision. Security updates are unaffected by these groups.
+    open-pull-requests-limit: 6
     groups:
-      production-dependencies:
+      react-toolchain:
+        applies-to: version-updates
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      vite-toolchain:
+        applies-to: version-updates
+        patterns:
+          - vite
+          - "@vitejs/plugin-react"
+      moxxy-toolchain:
+        applies-to: version-updates
+        patterns:
+          - "@moxxy/*"
+      production-minor-and-patch:
         applies-to: version-updates
         dependency-type: production
         patterns:
           - "*"
-      development-dependencies:
+        exclude-patterns:
+          - "@moxxy/*"
+        update-types:
+          - minor
+          - patch
+      development-minor-and-patch:
         applies-to: version-updates
         dependency-type: development
         patterns:
           - "*"
+        exclude-patterns:
+          - esbuild
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Runtime declarations follow the supported Node LTS, not the newest
+      # Current release. Upgrade these together with the production image.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
+      # Moxxy SDK 0.36 still peers on Zod 3; a Zod 4 PR cannot be correct until
+      # that boundary moves or Companion adds an explicit compatibility seam.
+      - dependency-name: zod
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: github-actions
     directory: /
@@ -53,3 +90,8 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+    # Runtime majors are deployment migrations, not unattended image refreshes.
+    ignore:
+      - dependency-name: node
+        update-types:
+          - "version-update:semver-major"
