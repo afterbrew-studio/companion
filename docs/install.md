@@ -1,7 +1,9 @@
 # Installing and running Companion
 
 Three ways to run it, in order of how quickly they get you into the application.
-Configuration for all of them is in [`configuration.md`](configuration.md).
+Configuration for all of them is in [`configuration.md`](configuration.md);
+upgrading and rolling back an existing install is covered in
+[`upgrades.md`](upgrades.md).
 
 ## Prerequisites
 

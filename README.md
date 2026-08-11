@@ -323,6 +323,7 @@ installs a module from a registry, tarball, or directory.
 | [Security policy](SECURITY.md) | vulnerability reporting, supported releases, and deployment trust boundaries |
 | [Security operations](docs/security/README.md) | company-pilot gate, data lifecycle, incident response, restore drill, and current readiness evidence |
 | [Releases](docs/releases.md) | immutable versions, generated notes, npm tarballs, checksums, and required repository SBOMs |
+| [Upgrades](docs/upgrades.md) | order of operations, the downgrade guard, scheduled backups, and rollback |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
 | [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
 | [External modules](docs/external-modules.md) | authoring, verifying, and publishing out-of-tree modules |
