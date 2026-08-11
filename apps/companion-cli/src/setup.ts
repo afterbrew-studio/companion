@@ -76,7 +76,9 @@ export function readStoredAuthMode(home: string): AuthMode | null {
   const file = join(home, 'companiond.json');
   try {
     const value = JSON.parse(readRegularTextFile(file, { maxBytes: 1024 * 1024 })) as { authMode?: unknown };
-    return value.authMode === 'local' || value.authMode === 'password' ? value.authMode : null;
+    return value.authMode === 'local' || value.authMode === 'password' || value.authMode === 'sso'
+      ? value.authMode
+      : null;
   } catch {
     return null;
   }

@@ -104,7 +104,16 @@ export async function connectGhAccount(
     });
     if (!login.ok) throw new Error(await responseError(login, 'Companion sign-in failed.'));
     const setCookie = login.headers.get('set-cookie');
-    if (!setCookie) throw new Error('Companion sign-in returned no session cookie.');
+    if (!setCookie) {
+      // The one 200-without-cookie shape is the MFA challenge; a password alone
+      // cannot finish that sign-in, so say what actually works instead.
+      const body = (await login.json().catch(() => null)) as { mfaRequired?: boolean } | null;
+      throw new Error(
+        body?.mfaRequired
+          ? 'This account requires a verification code. Use an API token (Settings, API tokens) or run this on the daemon host, whose CLI session needs no password.'
+          : 'Companion sign-in returned no session cookie.',
+      );
+    }
     sessionHeaders = { cookie: setCookie.split(';', 1)[0]!, 'x-companion-csrf': '1' };
   }
   try {
