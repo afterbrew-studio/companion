@@ -27,7 +27,7 @@ import { useSkills } from '../hooks/useSkills.js';
  * editor modal with a rendered preview, delete with confirm. Other modules
  * (playground's dry-run) extend each row via the `skills.item-actions` slot.
  */
-export function SkillsPage(): JSX.Element {
+export function SkillsPage(): React.JSX.Element {
   const { skills, error, setError, refresh } = useSkills();
   const [editing, setEditing] = useState<SkillFile | 'new' | null>(null);
   const { confirmDanger, confirmElement } = useConfirm();
@@ -113,7 +113,7 @@ export function SkillsPage(): JSX.Element {
 
 /** The `skills.item-actions` slot: other modules add per-skill actions (e.g.
  *  playground's dry-run) without operate importing them. */
-function SkillSlotActions({ skill }: { skill: string }): JSX.Element | null {
+function SkillSlotActions({ skill }: { skill: string }): React.JSX.Element | null {
   const kernel = useKernel();
   const { can } = useAuth();
   const actions = kernel.slots('skills.item-actions').filter((s) => s.permission === undefined || can(s.permission));
@@ -168,7 +168,7 @@ function SkillEditorModal({
   existingNames: ReadonlySet<string>;
   onClose: () => void;
   onSaved: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState(skill?.name ?? '');
   const [content, setContent] = useState(
     skill?.content ?? '# When to use\n\nDescribe when and how agents should use this skill.\n',

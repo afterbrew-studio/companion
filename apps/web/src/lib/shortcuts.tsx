@@ -102,7 +102,7 @@ export function ShortcutHelp({
   targets: readonly ShortcutTarget[];
   onClose: () => void;
   onReplayTour?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
@@ -141,7 +141,7 @@ export function ShortcutHelp({
   );
 }
 
-function ShortcutRow({ keys, label }: { keys: string[]; label: string }): JSX.Element {
+function ShortcutRow({ keys, label }: { keys: string[]; label: string }): React.JSX.Element {
   return (
     <>
       <dt className="flex gap-1">

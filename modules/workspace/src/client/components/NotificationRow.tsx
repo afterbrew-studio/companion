@@ -24,7 +24,7 @@ export function NotificationRow({
   compact?: boolean;
   onClick: () => void;
   role?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const meta = KIND_META[n.kind];
   const unread = n.readAt === null;
 

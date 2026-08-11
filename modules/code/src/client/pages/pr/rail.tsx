@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 /** Metadata-rail rows shared by the PR sidebars (PrView, PrBuild). */
 
 /** Inline label/value row — for short scalar facts. */
-export function RailRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+export function RailRow({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-start gap-3">
       <span className="dim w-16 shrink-0 pt-0.5 text-xs font-medium tracking-wide uppercase">{label}</span>
@@ -13,7 +13,7 @@ export function RailRow({ label, children }: { label: string; children: ReactNod
 }
 
 /** Stacked label-above-value block — for wide values (branches, chips, people). */
-export function RailBlock({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+export function RailBlock({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <div className="min-w-0">
       <div className="dim mb-1 text-[11px] font-medium tracking-wide uppercase">{label}</div>

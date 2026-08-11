@@ -14,7 +14,7 @@ const EXAMPLES = [
   'Let customers pay for promoted listings',
 ];
 
-export default function Ideas(): JSX.Element {
+export default function Ideas(): React.JSX.Element {
   const { current } = useWorkspace();
   const { can } = useAuth();
   const repos = useWorkspaceRepos(current?.id);
@@ -234,7 +234,7 @@ export default function Ideas(): JSX.Element {
   );
 }
 
-function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSessionSummary; tabIndex?: number }): JSX.Element {
+function IdeaCard({ session, tabIndex }: { session: FeaturePlanningSessionSummary; tabIndex?: number }): React.JSX.Element {
   const currentStage = session.progress.stages[session.progress.currentIndex];
   return (
     <a href={`#/ideas/${session.id}`} tabIndex={tabIndex} className="group flex cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 dark:hover:bg-zinc-800/50 sm:flex-row sm:items-center">

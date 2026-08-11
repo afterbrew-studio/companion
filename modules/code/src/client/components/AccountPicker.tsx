@@ -15,7 +15,7 @@ export function AccountPicker({
   value: string;
   onChange: (id: string) => void;
   className?: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [accounts, setAccounts] = useState<GitHubAccountRecord[]>([]);
   useEffect(() => {
     api

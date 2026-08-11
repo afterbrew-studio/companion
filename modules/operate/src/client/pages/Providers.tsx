@@ -28,7 +28,7 @@ import { useProviders } from '../hooks/useProviders.js';
  * capabilities on demand; the page never asks a person to locate a config file.
  */
 
-export function ProvidersPage(): JSX.Element {
+export function ProvidersPage(): React.JSX.Element {
   const { catalog, error, refetchFromMachines, refetching, toggleProvider, toggleModel, enableStranded } =
     useProviders();
 
@@ -110,7 +110,7 @@ export function ProvidersPage(): JSX.Element {
  * `settings:manage`. A custom role may hold one without the other, so the CTA
  * is hidden rather than left to land on "no access".
  */
-function NothingConfigured(): JSX.Element {
+function NothingConfigured(): React.JSX.Element {
   const { can } = useAuth();
   return (
     <EmptyState
@@ -138,7 +138,7 @@ function EffectiveRow({
   provider: CatalogProvider;
   machines: readonly CatalogMachine[];
   read: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const models = provider.models.length;
   const description =
     provider.kind === 'runtime' && provider.machines.length > 0
@@ -178,7 +178,7 @@ function MachineSection({
   onToggleProvider: (machine: CatalogMachine, name: string) => void;
   onToggleModel: (machine: CatalogMachine, provider: string, id: string) => void;
   onEnableStranded: (machine: CatalogMachine, id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   // Before a machine has reported, its whole catalog is unknown, so every
   // disabled id would look stranded. Only judge once something was listed.
   const listed = new Set(machine.providers.flatMap((p) => p.models.flatMap((m) => [m.id, `${p.name}/${m.id}`])));

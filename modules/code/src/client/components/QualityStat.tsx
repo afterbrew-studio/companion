@@ -53,7 +53,7 @@ const TEXT: Record<'ok' | 'warn' | 'danger' | 'muted', string> = {
  * contributing through the `quality.panels` slot renders identically instead of
  * inventing its own layout.
  */
-export function QualityStat({ stat }: { stat: AgentQualityStat }): JSX.Element {
+export function QualityStat({ stat }: { stat: AgentQualityStat }): React.JSX.Element {
   const decided = stat.accepted + stat.rejected;
   const rate = stat.acceptanceRate;
   const { tone, word } = band(rate);

@@ -43,7 +43,7 @@ const PURPOSE_META: Record<GitHubPurpose, { label: string; hint: string }> = {
  * that user's workspaces it may serve. Credentials are never shared between
  * Companion profiles.
  */
-export function GithubAccountsPage(): JSX.Element {
+export function GithubAccountsPage(): React.JSX.Element {
   const { user } = useAuth();
   const canManage = (a: GitHubAccountRecord): boolean => a.ownerId === user?.username;
   const { accounts, workspaces, status, error, setError, refresh } = useGithubAccounts();
@@ -208,7 +208,7 @@ function ScopeEditor({
   workspaces: readonly WorkspaceRecord[];
   onError: (e: string | null) => void;
   onSaved: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const selected = account.scope === 'selected';
   const [pendingSelected, setPendingSelected] = useState(false);
   const showWorkspaces = selected || pendingSelected;
@@ -279,7 +279,7 @@ function ConnectAccountModal({
   workspaces: readonly WorkspaceRecord[];
   onClose: () => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [kind, setKind] = useState<GitHubCredentialKind>('pat');
   const [token, setToken] = useState('');
   const [appId, setAppId] = useState('');
@@ -451,7 +451,7 @@ function ConnectAccountModal({
 }
 
 /** A titled form group with a small uppercase section header. */
-function FieldGroup({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <Eyebrow>{label}</Eyebrow>
@@ -485,7 +485,7 @@ function PurposeRow({
   checked: boolean;
   switchLabel: string;
   onChange: (on: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <SettingRow className="px-3.5 py-2.5" title={PURPOSE_META[purpose].label} description={PURPOSE_META[purpose].hint}>
       <Switch label={switchLabel} checked={checked} onChange={onChange} />
@@ -504,7 +504,7 @@ function WorkspaceChecklist({
   selected: readonly string[];
   onToggle: (id: string, checked: boolean) => void;
   note?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
       {workspaces.length === 0 ? <span className="dim px-1 py-2 text-sm">No workspaces found.</span> : null}
@@ -523,7 +523,7 @@ function WorkspaceChecklist({
   );
 }
 
-function GitHubIcon(): JSX.Element {
+function GitHubIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" className="size-4 fill-current" aria-hidden>
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />

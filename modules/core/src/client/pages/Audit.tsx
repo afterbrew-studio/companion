@@ -32,7 +32,7 @@ const WINDOWS = [
  * the last id it saw. An OFFSET-based page control would have looked identical
  * and quietly scanned the whole table on page 40.
  */
-export function AuditPage(): JSX.Element {
+export function AuditPage(): React.JSX.Element {
   const [entries, setEntries] = useState<AuditRecord[] | null>(null);
   const [nextBefore, setNextBefore] = useState<number | null>(null);
   const [actor, setActor] = useState('');
@@ -149,7 +149,7 @@ export function AuditPage(): JSX.Element {
 }
 
 /** Whether the outbound stream is keeping up. Only rendered when one is configured. */
-function ForwardingLine({ state }: { state: ForwarderState }): JSX.Element {
+function ForwardingLine({ state }: { state: ForwarderState }): React.JSX.Element {
   const healthy = state.lastError === null;
   return (
     <div className={healthy ? 'banner-info mb-3 text-xs' : 'error-bar mb-3 text-xs'} role="status">

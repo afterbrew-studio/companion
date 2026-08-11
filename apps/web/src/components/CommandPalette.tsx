@@ -26,7 +26,7 @@ const MAX_PER_GROUP = 6;
 const MAX_PAGES = 24;
 const ACTION_GROUPS = ['Create', 'Connect', 'Help'] as const;
 
-export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Element {
+export function CommandPalette({ onClose }: { onClose: () => void }): React.JSX.Element {
   const { can } = useAuth();
   const kernel = useKernel();
   const { workspaces, current, setCurrent } = useWorkspace();

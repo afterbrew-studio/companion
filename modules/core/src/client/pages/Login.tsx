@@ -3,7 +3,7 @@ import { ErrorBar, Field, Spinner } from '@moxxy/companion-ui';
 import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 
-export function LoginPage(): JSX.Element {
+export function LoginPage(): React.JSX.Element {
   const { login, branding, providers } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
 

@@ -12,7 +12,7 @@ type Filter = 'all' | 'unread';
  * user's preference resolves to. The header bell is the unread-only shortcut;
  * this is the archive.
  */
-export function InboxPage(): JSX.Element {
+export function InboxPage(): React.JSX.Element {
   const { items, unread, scope, markRead, markAllRead } = useNotifications();
   const { current } = useWorkspace();
   const [filter, setFilter] = useState<Filter>('all');

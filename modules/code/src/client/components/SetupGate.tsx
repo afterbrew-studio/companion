@@ -125,7 +125,7 @@ function RepoGate({ children, what }: { children: React.ReactNode; what?: string
   );
 }
 
-function GateLoading({ heading, label }: { heading: string; label: string }): JSX.Element {
+function GateLoading({ heading, label }: { heading: string; label: string }): React.JSX.Element {
   return (
     <Page>
       <PageHeader title={heading} />
@@ -146,7 +146,7 @@ function Gate({
   hint: string;
   intent?: Intent;
   cta?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Page>
       {/* The header keeps naming the page you asked for, so the gate reads as a

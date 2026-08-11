@@ -88,7 +88,7 @@ function useHashRoute(): string {
   return hash;
 }
 
-export function App(): JSX.Element {
+export function App(): React.JSX.Element {
   return (
     // The app-root boundary is the SPA's 500 page; everything below also has
     // feature-scoped boundaries so one broken area never sinks the shell.
@@ -101,7 +101,7 @@ export function App(): JSX.Element {
 }
 
 /** Login wall: onboarding on clean installs, else login, else the app. */
-function Gate(): JSX.Element {
+function Gate(): React.JSX.Element {
   const { user, needsSetup } = useAuth();
   if (user === undefined) {
     return <div className="dim flex h-full items-center justify-center">Loading…</div>;
@@ -119,7 +119,7 @@ function Gate(): JSX.Element {
 
 /** Sidebar brand block: instance logo + name. A branded instance with no logo
  *  falls back to its own letter tile; an unbranded one gets the Companion mark. */
-function Brand({ rail }: { rail: boolean }): JSX.Element {
+function Brand({ rail }: { rail: boolean }): React.JSX.Element {
   const { branding, version } = useAuth();
   const custom = branding.name?.trim();
   const name = custom || 'Companion';
@@ -144,7 +144,7 @@ function Brand({ rail }: { rail: boolean }): JSX.Element {
   );
 }
 
-function Shell(): JSX.Element {
+function Shell(): React.JSX.Element {
   const { user, can, logout, authMode, branding, navOverrides, navigationAudience } = useAuth();
   const hash = useHashRoute();
   const kernel = useKernel();
@@ -667,7 +667,7 @@ function Shell(): JSX.Element {
  * searchable workspace menu. Rail mode renders an empty slot of the same
  * vertical footprint, so collapsing never makes the nav below jump.
  */
-function WorkspaceSwitcher({ rail }: { rail: boolean }): JSX.Element {
+function WorkspaceSwitcher({ rail }: { rail: boolean }): React.JSX.Element {
   const { workspaces, current, setCurrent, refresh } = useWorkspace();
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
@@ -743,7 +743,7 @@ function NewWorkspaceModal({
   canPublic: boolean;
   onClose: () => void;
   onCreated: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState('');
   // Admins default to public (their historic shared workspaces); everyone else
   // gets a private workspace they own.
@@ -832,7 +832,7 @@ function SettingsNav({
 }: {
   sections: ReadonlyArray<readonly [NavSection, readonly NavEntry[]]>;
   activeKey: string | null;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <nav
       aria-label="Settings"
@@ -921,7 +921,7 @@ function TopBar({
   collapsed: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can } = useAuth();
   const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
@@ -995,7 +995,7 @@ function TopBar({
 const QUICK_ACTION_GROUPS: readonly QuickAction['group'][] = ['Create', 'Connect'];
 
 /** One predictable entry point for outcomes contributed by enabled modules. */
-function QuickActionsMenu({ actions }: { actions: readonly QuickAction[] }): JSX.Element {
+function QuickActionsMenu({ actions }: { actions: readonly QuickAction[] }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -1062,7 +1062,7 @@ function QuickActionsMenu({ actions }: { actions: readonly QuickAction[] }): JSX
   );
 }
 
-function SignOutIcon(): JSX.Element {
+function SignOutIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
       <path
@@ -1083,7 +1083,7 @@ function SignOutIcon(): JSX.Element {
  * irrelevant), guards by permission, and lazy-loads the page chunk under
  * Suspense. A path no enabled module claims is a 404.
  */
-function RouterView({ hash }: { hash: string }): JSX.Element {
+function RouterView({ hash }: { hash: string }): React.JSX.Element {
   const { can } = useAuth();
   const kernel = useKernel();
   const path = hash.replace(/^#/, '').split('?')[0] ?? '/';
@@ -1102,7 +1102,7 @@ function RouterView({ hash }: { hash: string }): JSX.Element {
   );
 }
 
-function NoAccess(): JSX.Element {
+function NoAccess(): React.JSX.Element {
   return (
     <div className="mx-auto max-w-md px-6 py-16 text-center">
       <h1 className="text-lg font-semibold">No access</h1>

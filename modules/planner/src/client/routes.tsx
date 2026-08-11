@@ -5,7 +5,7 @@ import { defineClientRoutes, lazyView, type RouteProps } from '@moxxy/companion-
 const gated = (load: () => Promise<{ default: ComponentType<RouteProps> }>) =>
   lazyView(async () => {
     const { default: Inner } = await load();
-    const Gated = (props: RouteProps): JSX.Element => (
+    const Gated = (props: RouteProps): React.JSX.Element => (
       <RequiresRepo what="Ideas">
         <Inner {...props} />
       </RequiresRepo>
@@ -21,7 +21,7 @@ export const routes = defineClientRoutes([
     permission: 'planner:read',
     component: gated(async () => {
       const { default: Idea } = await import('./pages/Idea.js');
-      return { default: ({ params }: RouteProps): JSX.Element => <Idea key={params.id} id={params.id!} /> };
+      return { default: ({ params }: RouteProps): React.JSX.Element => <Idea key={params.id} id={params.id!} /> };
     }),
   },
   { match: { exact: '/ideas' }, permission: 'planner:read', component: list },

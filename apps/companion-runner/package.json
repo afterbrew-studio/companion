@@ -52,7 +52,8 @@
     "@types/ws": "^8.5.13",
     "esbuild": "^0.25.12",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "zod": "^3.24.0"
   },
   "publishConfig": {
     "access": "public"

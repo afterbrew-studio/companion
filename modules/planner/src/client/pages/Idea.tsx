@@ -27,7 +27,7 @@ interface StoredQuestionDraft {
   readonly savedAt: number;
 }
 
-export default function Idea({ id }: { id: string }): JSX.Element {
+export default function Idea({ id }: { id: string }): React.JSX.Element {
   const { can } = useAuth();
   const { confirmDanger, confirmElement } = useConfirm();
   const state = useIdeas(id);
@@ -360,7 +360,7 @@ export default function Idea({ id }: { id: string }): JSX.Element {
   );
 }
 
-function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; onDiscuss: () => void }): JSX.Element {
+function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; onDiscuss: () => void }): React.JSX.Element {
   const [showOriginal, setShowOriginal] = useState(false);
   const panelId = `original-idea-${session.id}`;
   return (
@@ -414,7 +414,7 @@ function IdeaHeader({ session, onDiscuss }: { session: FeaturePlanningSession; o
   );
 }
 
-function Stepper({ session }: { session: FeaturePlanningSession }): JSX.Element {
+function Stepper({ session }: { session: FeaturePlanningSession }): React.JSX.Element {
   const { stages, currentIndex, completed } = session.progress;
   const currentStep = stages[currentIndex] ?? stages[0]!;
   const nextStep = stages[currentIndex + 1];
@@ -458,7 +458,7 @@ function Clarification({ round, answersSaved, questions, answers, setAnswers, di
   setAnswers: (answers: Record<string, { optionId: string | null; value: string }>) => void;
   disabled: boolean;
   onSubmit: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const allAnswered = questions.length > 0 && questions.every((question) => {
     const answer = answers[question.id];
     return answer !== undefined && (answer.optionId !== null || answer.value.trim().length > 0);
@@ -533,7 +533,7 @@ function StaleQuestionDraftNotice({ draft, onLatest, onCopy }: {
   draft: StoredQuestionDraft;
   onLatest: () => void;
   onCopy: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -552,7 +552,7 @@ function StaleQuestionDraftNotice({ draft, onLatest, onCopy }: {
 
 type BriefSectionKey = 'outcome' | 'scope' | 'guardrails';
 
-function BriefReview({ brief, onChange, disabled, onConfirm }: { brief: FeatureBrief; onChange: (brief: FeatureBrief) => void; disabled: boolean; onConfirm: () => Promise<void> }): JSX.Element {
+function BriefReview({ brief, onChange, disabled, onConfirm }: { brief: FeatureBrief; onChange: (brief: FeatureBrief) => void; disabled: boolean; onConfirm: () => Promise<void> }): React.JSX.Element {
   const [editing, setEditing] = useState<BriefSectionKey | null>(null);
   const [showAllMvp, setShowAllMvp] = useState(false);
   const updateList = (key: BriefListKey, value: string): void => onChange({ ...brief, [key]: lines(value) });
@@ -656,7 +656,7 @@ function BriefReviewSection({ title, description, editing, disabled, onToggle, s
   onToggle: () => void;
   summary: ReactNode;
   children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="border-b border-zinc-200 px-5 py-5 last:border-b-0 dark:border-zinc-800 sm:px-7 sm:py-6">
       <div className="flex items-start justify-between gap-4">
@@ -682,7 +682,7 @@ function BriefReviewSection({ title, description, editing, disabled, onToggle, s
   );
 }
 
-function BriefText({ label, value }: { label: string; value: string }): JSX.Element {
+function BriefText({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
     <div className="px-4 py-4 sm:px-5 sm:py-5">
       <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</p>
@@ -691,7 +691,7 @@ function BriefText({ label, value }: { label: string; value: string }): JSX.Elem
   );
 }
 
-function BriefAudience({ items }: { items: ReadonlyArray<string> }): JSX.Element {
+function BriefAudience({ items }: { items: ReadonlyArray<string> }): React.JSX.Element {
   return (
     <div className="rounded-xl bg-zinc-50 px-4 py-4 dark:bg-zinc-950/40 sm:px-5">
       <div className="flex items-center justify-between gap-3">
@@ -716,7 +716,7 @@ function BriefRequirements({ items, expanded, onToggle }: {
   items: ReadonlyArray<string>;
   expanded: boolean;
   onToggle: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const visibleItems = expanded ? items : items.slice(0, 6);
   const hiddenCount = items.length - visibleItems.length;
   return (
@@ -760,7 +760,7 @@ function BriefDisclosure({ title, description, items, empty = 'Nothing added yet
   items: ReadonlyArray<string>;
   empty?: string;
   defaultOpen?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <details className="border-t border-zinc-200 first:border-t-0 dark:border-zinc-800" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -794,7 +794,7 @@ function ArtifactReview({ artifacts, dirty, tab, preview, disabled, onTab, onPre
   artifacts: ArtifactBundle; dirty: boolean; tab: keyof ArtifactBundle; preview: boolean; disabled: boolean;
   onTab: (tab: keyof ArtifactBundle) => void; onPreview: (preview: boolean) => void; onChange: (bundle: ArtifactBundle) => void;
   onSave: () => Promise<void>; onCreate: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const labels: Record<keyof ArtifactBundle, string> = { documentation: 'Documentation', specification: 'Specification', implementationPlan: 'Implementation plan' };
   const draft = artifacts[tab];
   return (
@@ -829,7 +829,7 @@ function CheckpointRevisionReview({ revision, currentBrief, currentArtifacts, cu
   disabled: boolean;
   onApply: () => Promise<void>;
   onDiscard: () => Promise<void>;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   if (revision.kind === 'plan') return null;
   const taskChanges = revision.kind === 'tasks' && revision.tasks
     ? revision.tasks.filter((task) => {
@@ -903,7 +903,7 @@ function CheckpointRevisionReview({ revision, currentBrief, currentArtifacts, cu
   );
 }
 
-function RevisionMetric({ label, current, next }: { label: string; current: number; next: number }): JSX.Element {
+function RevisionMetric({ label, current, next }: { label: string; current: number; next: number }): React.JSX.Element {
   return (
     <div className="border-b border-emerald-200/70 px-5 py-4 last:border-b-0 dark:border-emerald-900/70 sm:border-b-0 sm:border-r sm:last:border-r-0">
       <dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt>
@@ -916,7 +916,7 @@ function AnalysisReview({ analysis, artifacts, pending, disabled, focusedContext
   analysis: ProposalAnalysis; artifacts: ArtifactBundle | null; pending: PlannerRevision | null; disabled: boolean;
   focusedContext: PlannerDiscussionContext;
   onDiscuss: (context?: PlannerDiscussionContext) => void; onApply: () => Promise<void>; onDiscard: () => Promise<void>; onApprove: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [activeChapterTitle, setActiveChapterTitle] = useState('Architecture and integration');
   const chapters: ReadonlyArray<AnalysisChapter> = [
     {
@@ -1069,7 +1069,7 @@ interface AnalysisChapter {
   readonly alwaysVisible?: boolean;
 }
 
-function AnalysisMetric({ label, value, description, onDiscuss }: { label: string; value: number; description: string; onDiscuss: () => void }): JSX.Element {
+function AnalysisMetric({ label, value, description, onDiscuss }: { label: string; value: number; description: string; onDiscuss: () => void }): React.JSX.Element {
   return (
     <Tooltip content={description} side="bottom" className="w-full min-w-0 border-r border-zinc-200 last:border-r-0 dark:border-zinc-800">
       <button
@@ -1093,7 +1093,7 @@ function AnalysisChapterView({ chapter, focusedContext, onDiscuss }: {
   chapter: AnalysisChapter;
   focusedContext: PlannerDiscussionContext;
   onDiscuss: (context: PlannerDiscussionContext) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const groups = chapter.groups.filter((group) => group.values.length > 0 || group.empty !== undefined);
   const [activeGroupLabel, setActiveGroupLabel] = useState(groups[0]!.label);
   const focusedGroupLabel = groups.find((group) => group.context === focusedContext)?.label ?? null;
@@ -1140,7 +1140,7 @@ function AnalysisChapterView({ chapter, focusedContext, onDiscuss }: {
   );
 }
 
-function AnalysisGroupView({ group }: { group: AnalysisGroup }): JSX.Element {
+function AnalysisGroupView({ group }: { group: AnalysisGroup }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? group.values : group.values.slice(0, 5);
   const remaining = group.values.length - visible.length;
@@ -1179,7 +1179,7 @@ function analysisChapterCount(chapter: AnalysisChapter): number {
   return chapter.groups.reduce((total, group) => total + group.values.length, 0);
 }
 
-function TaskReviewGuide(): JSX.Element {
+function TaskReviewGuide(): React.JSX.Element {
   return (
     <section className="mt-5 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" aria-labelledby="task-review-guide-title">
       <div className="px-4 py-4 sm:px-5">
@@ -1217,7 +1217,7 @@ function TaskReview({ session, items, board, mergeIds, setMergeIds, disabled, on
   board: NonNullable<ReturnType<typeof useIdeas>['detail']>['board']; mergeIds: string[]; setMergeIds: (ids: string[]) => void; disabled: boolean;
   onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<string | null>; onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
   onDismiss: (itemId: string) => Promise<void>; onMerge: () => Promise<void>; onLaunch: (targetBranch: string) => Promise<void>; canExecute: boolean; canManageBoard: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const proposed = useMemo(() => items.filter((item) => item.status === 'proposed'), [items]);
   const developers = board.workers.filter((worker) => worker.enabled && worker.role === 'developer');
   const [openItemId, setOpenItemId] = useState<string | null>(() => proposed[0]?.id ?? items[0]?.id ?? null);
@@ -1419,7 +1419,7 @@ function TaskEditor({ item, index, items, open, selected, mergeMode, disabled, o
   onToggle: () => void;
   onSelect: (selected: boolean) => void; onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<string | null>;
   onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>; onDismiss: (itemId: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [title, setTitle] = useState(item.title);
   const [description, setDescription] = useState(item.description);
   const [acceptance, setAcceptance] = useState(item.acceptance);
@@ -1655,7 +1655,7 @@ function taskLines(value: string): string[] {
   return lines(value).map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, ''));
 }
 
-function Launched({ session, onReviewHistory }: { session: FeaturePlanningSession; onReviewHistory: () => void }): JSX.Element {
+function Launched({ session, onReviewHistory }: { session: FeaturePlanningSession; onReviewHistory: () => void }): React.JSX.Element {
   const taskLabel = `${session.taskIds.length} ${session.taskIds.length === 1 ? 'task' : 'tasks'}`;
   return (
     <>
@@ -1784,7 +1784,7 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
   onReference: (context: PlannerDiscussionContext) => void;
   onSend: (message: string, context?: PlannerDiscussionContext) => Promise<void>;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const followLatest = useRef(true);
@@ -1914,7 +1914,7 @@ function DiscussionPanel({ open, session, context, draft, streamingText, setDraf
   );
 }
 
-function StreamingDiscussionMessage({ text }: { text: string }): JSX.Element {
+function StreamingDiscussionMessage({ text }: { text: string }): React.JSX.Element {
   return (
     <article className="mr-auto max-w-[92%]" aria-label="Planner response streaming">
       <div className="mb-1.5 px-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Planner</div>
@@ -1932,7 +1932,7 @@ function DiscussionMessage({ message, canRespond, onChoose, onCustom, onReferenc
   onChoose: (value: string) => void;
   onCustom: () => void;
   onReference: (context: PlannerDiscussionContext) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const user = message.role === 'user';
   const system = message.role === 'system';
   return (
@@ -2144,7 +2144,7 @@ function GrowingTextarea({ value, onChange, disabled, className = '' }: {
   onChange: (value: string) => void;
   disabled: boolean;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     const textarea = ref.current;
@@ -2166,11 +2166,11 @@ function GrowingTextarea({ value, onChange, disabled, className = '' }: {
   );
 }
 
-function Panel({ children }: { children: ReactNode }): JSX.Element {
+function Panel({ children }: { children: ReactNode }): React.JSX.Element {
   return <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">{children}</section>;
 }
 
-function Setting({ label, enabled }: { label: string; enabled: boolean }): JSX.Element {
+function Setting({ label, enabled }: { label: string; enabled: boolean }): React.JSX.Element {
   return <li className="flex items-center justify-between"><span>{label}</span><span className={enabled ? 'badge-ok' : 'badge'}>{enabled ? 'On' : 'Off'}</span></li>;
 }
 

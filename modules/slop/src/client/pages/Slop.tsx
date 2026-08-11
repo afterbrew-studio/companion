@@ -40,7 +40,7 @@ import { useSlopDetections } from '../hooks/useSlopDetections.js';
  * never touches GitHub until someone applies it there (or a pipeline gates on
  * the score).
  */
-export default function Slop(): JSX.Element {
+export default function Slop(): React.JSX.Element {
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['status', 'repo', 'quality'] as const);
   const { search, setSearch, q } = useHashSearch();
   const { current, detections, total, loading, hasMore, loadMore, error, setError, refresh } = useSlopDetections({
@@ -179,7 +179,7 @@ export default function Slop(): JSX.Element {
   );
 }
 
-function DetectionRow({ detection: d }: { detection: SlopDetectionResult }): JSX.Element {
+function DetectionRow({ detection: d }: { detection: SlopDetectionResult }): React.JSX.Element {
   const meta = STATUS_META[d.status];
   const verdict = d.verdict;
   const detailBits = [
@@ -230,7 +230,7 @@ function DetectModal({
   workspaceId: string;
   onClose: () => void;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const repos = useWorkspaceRepos(workspaceId);
   const [repo, setRepo] = useState<string | null>(null);
   const [prs, setPrs] = useState<Array<{ number: number; title: string }>>([]);

@@ -8,7 +8,7 @@ import { defineOnboarding, OnboardingArt } from '@moxxy/companion-core/client';
  * module's illustration on-brand.
  */
 
-function MascotArt({ playing }: { playing: boolean }): JSX.Element {
+function MascotArt({ playing }: { playing: boolean }): React.JSX.Element {
   return (
     <OnboardingArt>
       <g className={playing ? 'ob-float' : ''} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -24,7 +24,7 @@ function MascotArt({ playing }: { playing: boolean }): JSX.Element {
   );
 }
 
-function LinkArt({ playing }: { playing: boolean }): JSX.Element {
+function LinkArt({ playing }: { playing: boolean }): React.JSX.Element {
   return (
     <OnboardingArt>
       <g stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -37,7 +37,7 @@ function LinkArt({ playing }: { playing: boolean }): JSX.Element {
   );
 }
 
-function SparkArt({ playing }: { playing: boolean }): JSX.Element {
+function SparkArt({ playing }: { playing: boolean }): React.JSX.Element {
   return (
     <OnboardingArt>
       <g className={playing ? 'ob-pulse' : ''} stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round">

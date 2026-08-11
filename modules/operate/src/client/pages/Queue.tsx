@@ -49,7 +49,7 @@ const ORIGIN_LABEL: Record<ReturnType<typeof originOf>, string> = {
  * requests, not machine work, and making them wait behind an agent run would be
  * a delay with nothing on the other side of it.
  */
-export function QueuePage(): JSX.Element {
+export function QueuePage(): React.JSX.Element {
   const queue = useRunQueue();
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<string>('all');

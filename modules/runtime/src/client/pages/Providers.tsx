@@ -35,7 +35,7 @@ const KIND_OPTIONS: ReadonlyArray<{ value: ProviderKind; label: string; hint: st
  * A credential is never sent back to a browser, so an existing provider shows
  * only whether one is stored and an empty key field means "keep what is there".
  */
-export function ProvidersPage(): JSX.Element {
+export function ProvidersPage(): React.JSX.Element {
   const { can } = useAuth();
   const { providers, ready, error, busy, create, update, remove, probe, discover } = useProviders();
   const [adding, setAdding] = useState(false);
@@ -149,7 +149,7 @@ function ProviderRow({
   onProbe: (model: string) => void;
   onDiscover: () => void;
   onRemove: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="p-4">
       <div className="flex items-start justify-between gap-3">
@@ -222,7 +222,7 @@ function AddProvider({
   onCancel: () => void;
   onCreate: (draft: CreateProviderRequest) => Promise<void>;
   busy: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [kind, setKind] = useState<ProviderKind>('anthropic');
   const [label, setLabel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');

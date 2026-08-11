@@ -14,7 +14,7 @@ import { operateApi as api } from '../api.js';
  * survives that card's "no usage in the last 14 days" early return. A month
  * whose spend landed early is exactly when a ceiling matters most.
  */
-export function BudgetBar(): JSX.Element | null {
+export function BudgetBar(): React.JSX.Element | null {
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const refresh = useCallback(async (): Promise<void> => {
     // A budget the viewer may not read is not an error worth a banner; the
@@ -62,7 +62,7 @@ function Meter({
   label: string;
   scope: BudgetScopeStatus;
   alertPercent: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const percent = scope.percent ?? 0;
   // Three states, because "80% of budget" and "budget spent" are different news.
   const tone = scope.exceeded

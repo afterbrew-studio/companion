@@ -115,7 +115,7 @@ function defaultStep(kind: PipelineStepKind): PipelineStep {
   }
 }
 
-export function PipelinesPage(): JSX.Element {
+export function PipelinesPage(): React.JSX.Element {
   const { current, pipelines, runs, stepDefs, loaded, definitionsFailed, error, setError, refresh } = usePipelines();
   // A skeleton that appears and vanishes inside a blink reads as a glitch.
   const settling = useSettledFlag(!loaded);
@@ -412,7 +412,7 @@ function GenerateModal({
   onClose: () => void;
   onPipeline: (p: PipelineRecord) => void;
   onStepDefinition: (d: StepDefinitionRecord) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [target, setTarget] = useState<'pipeline' | 'step'>('pipeline');
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
@@ -482,7 +482,7 @@ function GenerateModal({
  * Skills live in the moxxy home and are auto-discovered by every agent run —
  * mentioning one by name in a step prompt is enough to apply it.
  */
-function SkillsHint(): JSX.Element | null {
+function SkillsHint(): React.JSX.Element | null {
   const [names, setNames] = useState<string[] | null>(null);
   useEffect(() => {
     operateApi
@@ -506,7 +506,7 @@ function PlatformRunButton({
 }: {
   pipeline: PipelineRecord;
   onError: (e: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { current } = useWorkspace();
   const [repos, setRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState('');
@@ -569,7 +569,7 @@ function PipelineEditor({
   stepDefs: StepDefinitionRecord[];
   onClose: () => void;
   onSaved: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState(pipeline?.name ?? '');
   const [description, setDescription] = useState(pipeline?.description ?? '');
   const [type, setType] = useState<PipelineType>(pipeline?.type ?? 'pr');
@@ -789,7 +789,7 @@ function RefForm({
   spec: Extract<PipelineStepSpec, { type: 'ref' }>;
   stepDefs: StepDefinitionRecord[];
   onChange: (spec: PipelineStepSpec) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const def = stepDefs.find((d) => d.id === spec.stepDefinitionId);
   return (
     <div className="grid gap-2 md:grid-cols-2">
@@ -849,7 +849,7 @@ function StepForm({
   workspaceId: string;
   step: PipelineStep;
   onChange: (s: PipelineStep) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 md:grid-cols-2">
@@ -880,7 +880,7 @@ function StepConfigForm({
   workspaceId: string;
   step: PipelineStep;
   onChange: (s: PipelineStep) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   switch (step.kind) {
     case 'checks-gate':
       return (
@@ -1121,7 +1121,7 @@ function NpmBootstrapConfigForm({
 }: {
   step: Extract<PipelineStep, { kind: 'npm-bootstrap' }>;
   onChange: (s: PipelineStep) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const cfg = step.config;
   const set = (patch: Partial<typeof cfg>): void => onChange({ ...step, config: { ...cfg, ...patch } });
   return (
@@ -1210,7 +1210,7 @@ function ImportModal({
   fileName?: string;
   onClose: () => void;
   onImported: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [text, setText] = useState(initialText);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -1366,7 +1366,7 @@ function VariablesEditor({
   label?: string;
   /** The slot exists to carry a credential, so hidden is not a choice here. */
   fixedHidden?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const patch = (i: number, next: Partial<StepVariable>): void =>
     onChange(variables.map((v, j) => (i === j ? { ...v, ...next } : v)));
 
@@ -1456,7 +1456,7 @@ function ExecutableConfigForm({
 }: {
   step: Extract<PipelineStep, { kind: 'executable' }>;
   onChange: (s: PipelineStep) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const cfg = step.config;
   const set = (patch: Partial<typeof cfg>): void => onChange({ ...step, config: { ...cfg, ...patch } });
   return (
@@ -1513,7 +1513,7 @@ function StepDefinitionEditor({
   definition: StepDefinitionRecord | null;
   onClose: () => void;
   onSaved: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [name, setName] = useState(definition?.name ?? '');
   const [description, setDescription] = useState(definition?.description ?? '');
   const [step, setStep] = useState<PipelineStep>(definition?.step ?? defaultStep('agent'));

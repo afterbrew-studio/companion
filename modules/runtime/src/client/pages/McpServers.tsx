@@ -35,7 +35,7 @@ const ACCESS_OPTIONS: ReadonlyArray<{ value: RuntimeAccess; label: string; hint:
  * A server's one secret is never sent back to a browser: an existing record
  * shows only whether one is stored, and an empty field means "keep it".
  */
-export function McpServersPage(): JSX.Element {
+export function McpServersPage(): React.JSX.Element {
   const { can } = useAuth();
   const { servers, error, busy, create, update, remove, check } = useMcpServers();
   const [adding, setAdding] = useState(false);
@@ -133,7 +133,7 @@ function ServerRow({
   onCheck: () => void;
   onToggle: () => void;
   onRemove: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="p-4">
       <div className="flex items-start justify-between gap-3">
@@ -184,7 +184,7 @@ function AddServer({
   onCancel: () => void;
   onCreate: (draft: CreateMcpServerRequest) => Promise<void>;
   busy: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [transport, setTransport] = useState<'stdio' | 'http'>('http');
   const [label, setLabel] = useState('');
   const [url, setUrl] = useState('');

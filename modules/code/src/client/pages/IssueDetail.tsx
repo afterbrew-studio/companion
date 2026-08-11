@@ -11,7 +11,7 @@ import { CommentsSection } from '../components/Comments.js';
 import { PipelineRunList } from '../components/PipelineRunList.js';
 import { GitHubUser } from '../widgets.js';
 
-export function IssueDetail({ repo, number }: { repo: string; number: number }): JSX.Element {
+export function IssueDetail({ repo, number }: { repo: string; number: number }): React.JSX.Element {
   const { can } = useAuth();
   const {
     issue,
@@ -176,7 +176,7 @@ function TriageCard({
   canAct: boolean;
   canReadRuns: boolean;
   onChange: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [comment, setComment] = useState(true);
   const [actAs, setActAs] = useState('');
   const [error, setError] = useState<string | null>(null);

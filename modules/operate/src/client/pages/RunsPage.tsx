@@ -56,7 +56,7 @@ const STATUS_OPTIONS = [
   { value: 'stopped', label: 'Stopped / abandoned' },
 ] as const;
 
-export function RunsPage(): JSX.Element {
+export function RunsPage(): React.JSX.Element {
   const { can } = useAuth();
   const { filters, setFilter, clearFilters, activeFilters } = useHashFilters(['kind', 'status', 'repo'] as const);
   const { search, setSearch, q } = useHashSearch();

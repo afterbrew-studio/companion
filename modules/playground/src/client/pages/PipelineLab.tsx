@@ -13,7 +13,7 @@ import { playgroundApi } from '../api.js';
  * flagged. Nothing executes; true step dry-run execution is deferred (see the
  * module's DESIGN.md).
  */
-export function PipelineLabPage(): JSX.Element {
+export function PipelineLabPage(): React.JSX.Element {
   const kernel = useKernel();
   const codeEnabled = kernel.descriptors.some((d) => d.id === 'code' && d.enabled);
 
@@ -186,7 +186,7 @@ function stepChipLabel(spec: PipelineStepSpec): string {
 }
 
 /** The evaluation result as a step timeline: what would run, in order, and why not. */
-function PreviewTimeline({ preview }: { preview: PipelinePreview }): JSX.Element {
+function PreviewTimeline({ preview }: { preview: PipelinePreview }): React.JSX.Element {
   const running = preview.steps.filter((s) => s.willRun).length;
   return (
     <section aria-label="Evaluation result" className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">

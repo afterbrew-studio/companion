@@ -24,7 +24,7 @@ import { useIntegrations } from '../hooks/useIntegrations.js';
 import { decodeIntegrationTarget, encodeIntegrationTarget, reviewTargetOptions } from '../review-targets.js';
 import { ConnectionModal } from './Integrations.js';
 
-export function RepositoryIntegrationsPage({ repo }: { repo: string }): JSX.Element {
+export function RepositoryIntegrationsPage({ repo }: { repo: string }): React.JSX.Element {
   const { can } = useAuth();
   const { current } = useWorkspace();
   const state = useIntegrations();

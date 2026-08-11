@@ -17,7 +17,7 @@ import { useExternalModules } from '../hooks/useExternalModules.js';
  * read the provenance ledger back, so "where did this module come from" needed
  * a shell on the host.
  */
-export function OutOfTree({ modules }: { modules: readonly ModuleDescriptor[] }): JSX.Element {
+export function OutOfTree({ modules }: { modules: readonly ModuleDescriptor[] }): React.JSX.Element {
   const { can } = useAuth();
   const { state, error: loadError, reload } = useExternalModules();
   const { confirmDanger, confirmElement } = useConfirm();
@@ -246,7 +246,7 @@ function Artifact({
   busy: boolean;
   mayDeploy: boolean;
   onRemove: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const p = a.provenance;
   // The kernel refuses to uninstall a running module, so say so on the control
   // rather than after the click.

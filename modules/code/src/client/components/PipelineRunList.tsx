@@ -28,7 +28,7 @@ export function PipelineRunList({
   runs: ReadonlyArray<PipelineRunRecord>;
   title?: string;
   showTarget?: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { can } = useAuth();
   const canRead = can('pipelines:read');
   const [expanded, setExpanded] = useState<string | null>(null);

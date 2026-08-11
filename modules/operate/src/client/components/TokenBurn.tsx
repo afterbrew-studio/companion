@@ -20,7 +20,7 @@ const OUT_KEY = 'bg-[#1baf7a] dark:bg-[#199e70]';
  * daily chart with crosshair readout, and a per-model spend table. Self-
  * contained: fetches its own aggregates and stays live over the WS loop.
  */
-export function TokenBurnWidget(): JSX.Element | null {
+export function TokenBurnWidget(): React.JSX.Element | null {
   const { usage, error, retry } = useTokenUsage();
 
   // A failed load renders as a visible failure with a retry — hiding the
@@ -87,7 +87,7 @@ function StatStrip({
   days: ReadonlyArray<TokenUsageDay>;
   models: ReadonlyArray<TokenUsageModel>;
   total: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const last7 = days.slice(-7);
   const prev7 = days.slice(-14, -7);
   const sum = (list: ReadonlyArray<TokenUsageDay>): number =>
@@ -167,7 +167,7 @@ function niceCeil(max: number): number {
   return 10 * pow;
 }
 
-function BurnChart({ days }: { days: ReadonlyArray<TokenUsageDay> }): JSX.Element {
+function BurnChart({ days }: { days: ReadonlyArray<TokenUsageDay> }): React.JSX.Element {
   const [hover, setHover] = useState<number | null>(null);
   const width = 520;
   const height = 190;
@@ -398,7 +398,7 @@ const foldRest = (rest: readonly SpendRow[]): SpendRow => ({
  * Unknown models show tokens with cost "—" and flip the total to "≥" — the
  * estimate never pretends to be complete.
  */
-function ModelSpendCard({ models }: { models: ReadonlyArray<TokenUsageModel> }): JSX.Element {
+function ModelSpendCard({ models }: { models: ReadonlyArray<TokenUsageModel> }): React.JSX.Element {
   const all = models.map(toSpendRow);
   const rows = all.length <= 8 ? all : [...all.slice(0, 7), foldRest(all.slice(7))];
   const totalTokens = all.reduce((acc, r) => acc + r.inputTokens + r.outputTokens, 0);

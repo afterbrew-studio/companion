@@ -5,7 +5,7 @@ import { AuthLayout } from '../components/AuthLayout.js';
 import { useAuth } from '../lib/auth.js';
 
 /** First-boot onboarding: a clean install creates its admin account here. */
-export function SetupPage(): JSX.Element {
+export function SetupPage(): React.JSX.Element {
   const { branding } = useAuth();
   const brandName = branding.name?.trim() || 'Companion';
 

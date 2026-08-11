@@ -9,7 +9,7 @@ export const routes = defineClientRoutes([
     component: lazyView(async () => {
       const { RunDetail } = await import('./pages/RunDetail.js');
       return {
-        default: ({ params }: RouteProps): JSX.Element => <RunDetail key={params.runId} runId={params.runId!} />,
+        default: ({ params }: RouteProps): React.JSX.Element => <RunDetail key={params.runId} runId={params.runId!} />,
       };
     }),
   },
@@ -20,7 +20,7 @@ export const routes = defineClientRoutes([
     component: lazyView(async () => {
       const { RunnerSettingsPage } = await import('./pages/RunnerSettings.js');
       return {
-        default: ({ params }: RouteProps): JSX.Element => <RunnerSettingsPage key={params.id} id={params.id!} />,
+        default: ({ params }: RouteProps): React.JSX.Element => <RunnerSettingsPage key={params.id} id={params.id!} />,
       };
     }),
   },

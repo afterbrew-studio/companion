@@ -48,7 +48,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
+export function AuthProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('password');

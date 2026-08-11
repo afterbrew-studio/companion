@@ -33,7 +33,7 @@ const TIMEOUTS = [
   { ms: 600_000, label: '10 min' },
 ] as const;
 
-export function AgentLabPage({ query }: RouteProps): JSX.Element {
+export function AgentLabPage({ query }: RouteProps): React.JSX.Element {
   const kernel = useKernel();
   const { can } = useAuth();
   const codeEnabled = kernel.descriptors.some((d) => d.id === 'code' && d.enabled);
@@ -179,7 +179,7 @@ export function AgentLabPage({ query }: RouteProps): JSX.Element {
   );
 }
 
-function ResultCard({ result }: { result: PlaygroundRunResult }): JSX.Element {
+function ResultCard({ result }: { result: PlaygroundRunResult }): React.JSX.Element {
   return (
     <div className="card mt-4 p-4">
       <div className="mb-3 flex items-center justify-between gap-2">

@@ -50,7 +50,7 @@ const SUGGESTIONS = [
  * wags its tail, blinks, glances around, twitches an ear, and keeps its chest
  * light pulsing — pure CSS keyframes, stilled for reduced-motion.
  */
-function RobotPet(): JSX.Element {
+function RobotPet(): React.JSX.Element {
   return (
     <div className="flex justify-center pt-3 pb-1" aria-hidden>
       <svg viewBox="0 0 120 120" fill="none" className="ai-pet h-auto w-1/2 max-w-[13rem] text-zinc-400 dark:text-zinc-500">
@@ -96,7 +96,7 @@ function RobotPet(): JSX.Element {
   );
 }
 
-export function AssistantButton({ onClick, open }: { onClick: () => void; open: boolean }): JSX.Element {
+export function AssistantButton({ onClick, open }: { onClick: () => void; open: boolean }): React.JSX.Element {
   return (
     <button
       type="button"
@@ -111,7 +111,7 @@ export function AssistantButton({ onClick, open }: { onClick: () => void; open: 
   );
 }
 
-export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () => void }): React.JSX.Element {
   const { current } = useWorkspace();
   const [run, setRun] = useState<RunRecord | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);

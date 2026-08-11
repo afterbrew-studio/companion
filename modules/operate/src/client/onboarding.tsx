@@ -1,6 +1,6 @@
 import { defineOnboarding, OnboardingArt } from '@moxxy/companion-core/client';
 
-function RunnersArt({ playing }: { playing: boolean }): JSX.Element {
+function RunnersArt({ playing }: { playing: boolean }): React.JSX.Element {
   return (
     <OnboardingArt>
       <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

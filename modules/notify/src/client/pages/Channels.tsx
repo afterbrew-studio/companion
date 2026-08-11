@@ -14,7 +14,7 @@ import type { NotifyDeliveryRecord } from '../../contract/index.js';
 import { notifyApi } from '../api.js';
 
 /** Operational history; destinations themselves are managed in Integrations. */
-export function ChannelsPage(): JSX.Element {
+export function ChannelsPage(): React.JSX.Element {
   const [deliveries, setDeliveries] = useState<readonly NotifyDeliveryRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async (): Promise<void> => {

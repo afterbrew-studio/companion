@@ -17,7 +17,7 @@ import {
 import type { JiraLinkRecord, JiraSubjectRef, JiraTransition } from '../contract/index.js';
 import { jiraApi } from './api.js';
 
-export function JiraLinks({ subject }: { subject: JiraSubjectRef }): JSX.Element | null {
+export function JiraLinks({ subject }: { subject: JiraSubjectRef }): React.JSX.Element | null {
   const { can } = useAuth();
   const { current } = useWorkspace();
   const integrations = useIntegrations();
@@ -199,7 +199,7 @@ function JiraLinkRow({
   onComment: () => void;
   onMove: () => void;
   onUnlink: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const usable = connection?.enabled === true;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
@@ -239,7 +239,7 @@ function LinkTicketModal({
   busy: boolean;
   onClose: () => void;
   onSubmit: (connectionId: string, issueKey: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [connectionId, setConnectionId] = useState(connections[0]?.id ?? '');
   const [issueKey, setIssueKey] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -276,7 +276,7 @@ function CommentModal({
   busy: boolean;
   onClose: () => void;
   onSubmit: (body: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
   return (
@@ -307,7 +307,7 @@ function TransitionModal({
   busy: boolean;
   onClose: () => void;
   onSubmit: (transitionId: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`Move ${link.issue.key}`} onClose={onClose}>

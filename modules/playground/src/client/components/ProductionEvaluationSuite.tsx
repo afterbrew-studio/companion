@@ -21,7 +21,7 @@ export function ProductionEvaluationSuite({
   readonly refresh: () => Promise<void>;
   readonly reportError: (message: string | null) => void;
   readonly canRun: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [startingSuite, setStartingSuite] = useState(false);
   const [cancellingSuite, setCancellingSuite] = useState(false);
   const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(new Set());
@@ -246,7 +246,7 @@ function GateMetric({
   readonly label: string;
   readonly value: number;
   readonly tone?: 'green' | 'amber' | 'red';
-}): JSX.Element {
+}): React.JSX.Element {
   const colour = tone === 'green'
     ? 'text-emerald-600 dark:text-emerald-400'
     : tone === 'amber'

@@ -65,7 +65,7 @@ export function Dropdown<T extends string>({
   disabled?: boolean;
   /** Cap rendered options; searchable lists disclose how many remain. */
   maxVisible?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -328,7 +328,7 @@ export function Dropdown<T extends string>({
 }
 
 /** Standard page container — every page shares the same content width. */
-export function Page({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+export function Page({ children, className = '' }: { children: ReactNode; className?: string }): React.JSX.Element {
   return <div className={`mx-auto w-full max-w-5xl px-6 py-6 ${className}`}>{children}</div>;
 }
 
@@ -343,7 +343,7 @@ export function Section({
   description?: ReactNode;
   children: ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className={`mt-8 ${className}`} aria-label={title}>
       <h2 className="mb-2 text-sm font-semibold">{title}</h2>
@@ -361,7 +361,7 @@ export function PageHeader({
   title: string;
   subtitle?: ReactNode;
   actions?: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
@@ -384,7 +384,7 @@ export interface StatDelta {
 }
 
 /** Compact pill: direction + amount; the named period lives in the tooltip. */
-function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
+function DeltaChip({ delta }: { delta: StatDelta }): React.JSX.Element {
   const diff = delta.current - delta.previous;
   // Percent only against a real base; from zero the absolute count is honest.
   const pct = delta.previous > 0 ? Math.round((diff / delta.previous) * 100) : null;
@@ -411,7 +411,7 @@ function DeltaChip({ delta }: { delta: StatDelta }): JSX.Element {
  * The tile's foot: a full-bleed trend strip below the content — the line and
  * fill never sit behind text. Decorative; the delta pill carries the reading.
  */
-function TrendStrip({ points }: { points: ReadonlyArray<number> }): JSX.Element | null {
+function TrendStrip({ points }: { points: ReadonlyArray<number> }): React.JSX.Element | null {
   if (points.length < 2) return null;
   const w = 100;
   const h = 28;
@@ -457,7 +457,7 @@ export function StatTile({
   trend?: ReadonlyArray<number>;
   /** The tile's own feed hasn't landed yet: label renders, value is a skeleton. */
   loading?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const toneClass =
     tone === 'danger'
       ? 'text-red-600 dark:text-red-400'
@@ -508,7 +508,7 @@ export function StatTile({
   );
 }
 
-export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }): JSX.Element {
+export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }): React.JSX.Element {
   return (
     <div className="card my-4 flex flex-col items-center gap-1.5 py-10 text-center">
       <div className="text-sm font-medium">{title}</div>
@@ -531,7 +531,7 @@ export function Modal({
   wide?: boolean;
   /** Detail-heavy dialogs (side rails, review histories); supersedes `wide`. */
   xl?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   // Portaled to <body>: a transformed ancestor (e.g. the animated sidebar)
   // would otherwise become the containing block and trap the overlay.
   return createPortal(
@@ -586,7 +586,7 @@ export function Drawer({
   storageKey?: string;
   defaultWidth?: number;
   minWidth?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const [width, setWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem(storageKey));
     return Number.isFinite(stored) && stored >= minWidth ? stored : defaultWidth;
@@ -719,7 +719,7 @@ export function Tabs<T extends string>({
   value: T;
   onChange: (v: T) => void;
   options: ReadonlyArray<{ value: T; label: string; count?: number }>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div role="tablist" className="flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900">
       {options.map((o) => (
@@ -745,7 +745,7 @@ export function Tabs<T extends string>({
   );
 }
 
-export function Spinner(): JSX.Element {
+export function Spinner(): React.JSX.Element {
   return (
     <span
       className="inline-block size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent align-middle opacity-70 motion-reduce:animate-none"
@@ -756,12 +756,12 @@ export function Spinner(): JSX.Element {
 }
 
 /** Shimmering placeholder line for content that is still loading. */
-export function Skeleton({ className = '' }: { className?: string }): JSX.Element {
+export function Skeleton({ className = '' }: { className?: string }): React.JSX.Element {
   return <span className={`skeleton ${className}`} aria-hidden />;
 }
 
 /** N placeholder rows for a list still waiting on its feed (drop inside ListCard). */
-export function RowsSkeleton({ rows = 4 }: { rows?: number }): JSX.Element {
+export function RowsSkeleton({ rows = 4 }: { rows?: number }): React.JSX.Element {
   return (
     <div aria-hidden className="flex flex-col">
       {Array.from({ length: rows }, (_, i) => (
@@ -792,7 +792,7 @@ export function rowDelay(index: number, cap = 12): Record<string, string> {
 const CHART_SKELETON_BARS = [35, 60, 45, 80, 55, 70, 40, 65, 50, 75, 45, 60];
 
 /** Placeholder for a chart card still waiting on its feed. */
-export function ChartSkeleton({ title }: { title: string }): JSX.Element {
+export function ChartSkeleton({ title }: { title: string }): React.JSX.Element {
   return (
     <figure className="card" aria-hidden>
       <figcaption className="dim text-[13px] font-medium">{title}</figcaption>
@@ -806,7 +806,7 @@ export function ChartSkeleton({ title }: { title: string }): JSX.Element {
 }
 
 /** Spinner + label for inline loading moments (list refresh, side panels). */
-export function InlineLoading({ label = 'Loading…', className = '' }: { label?: string; className?: string }): JSX.Element {
+export function InlineLoading({ label = 'Loading…', className = '' }: { label?: string; className?: string }): React.JSX.Element {
   return (
     <div className={`dim flex items-center gap-2.5 text-sm ${className}`}>
       <Spinner /> {label}
@@ -841,7 +841,7 @@ export function useSettledFlag(flag: boolean, delayMs = LOADING_GRACE_MS): boole
   return settled;
 }
 
-export function PageLoading({ label = 'Loading…' }: { label?: string }): JSX.Element | null {
+export function PageLoading({ label = 'Loading…' }: { label?: string }): React.JSX.Element | null {
   const show = useSettledFlag(true);
   if (!show) return null;
   return (
@@ -871,7 +871,7 @@ export function Switch({
   /** Why it cannot be toggled. Shown on hover and to a screen reader, because a
    *  control that is off with no explanation reads as a bug. */
   reason?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <button
       type="button"
@@ -908,7 +908,7 @@ export function CopyText({
   className?: string;
   title?: string;
   ariaLabel?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -948,7 +948,7 @@ export function Tooltip({
   children: ReactNode;
   className?: string;
   side?: 'top' | 'bottom';
-}): JSX.Element {
+}): React.JSX.Element {
   const position = side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5';
   return (
     <span className={`group/tip relative inline-flex ${className}`}>
@@ -975,7 +975,7 @@ export function FiltersPopover({
   active: number;
   onClear: () => void;
   children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -1046,7 +1046,7 @@ export function FiltersPopover({
 }
 
 /** Labeled row inside a FiltersPopover. */
-export function FilterField({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+export function FilterField({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <label className="flex flex-col gap-1 text-xs">
       <span className="dim">{label}</span>
@@ -1075,12 +1075,12 @@ const MENU_ITEM_CLASS =
  * menu row. Rendered for every item once ANY item has one: a gutter on some
  * rows and not others reads as one label being wrong, not as a missing icon.
  */
-function MenuItemIcon({ icon }: { icon?: ReactNode }): JSX.Element {
+function MenuItemIcon({ icon }: { icon?: ReactNode }): React.JSX.Element {
   return <span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">{icon}</span>;
 }
 
 /** Shared item list for ActionMenu and ContextMenu. */
-function MenuItems({ actions, onClose }: { actions: MenuAction[]; onClose: () => void }): JSX.Element {
+function MenuItems({ actions, onClose }: { actions: MenuAction[]; onClose: () => void }): React.JSX.Element {
   const marks = actions.some((a) => a.icon);
   return (
     <>
@@ -1132,7 +1132,7 @@ export interface ContextMenuState {
  * open it too, anchored to the button). Controlled: the owner holds
  * {x, y, actions} and clears it on close.
  */
-export function ContextMenu({ menu, onClose }: { menu: ContextMenuState | null; onClose: () => void }): JSX.Element | null {
+export function ContextMenu({ menu, onClose }: { menu: ContextMenuState | null; onClose: () => void }): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -1203,7 +1203,7 @@ function AnchoredMenu({
   actions: MenuAction[];
   width?: number;
   label?: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -1286,7 +1286,7 @@ export function ActionMenu({
   label?: string;
   /** Visible button text. Separate from `label` precisely because the two differ. */
   trigger?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   return (
@@ -1321,7 +1321,7 @@ export function AiActionMenu({
   /** An action is in flight — the sparkle becomes a spinner. */
   busy?: boolean;
   label?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   return (
@@ -1386,7 +1386,7 @@ export function StatusDot({
   /** Screen-reader text without a native tooltip — for dots already wrapped in Tooltip. */
   label?: string;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const sizeClass = size === 'sm' ? 'size-1.5' : size === 'lg' ? 'size-2.5' : 'size-2';
   const name = title ?? label;
   return (
@@ -1412,7 +1412,7 @@ export function MetaSignal({
   label: string;
   pulse?: boolean;
   title?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${TONE_TEXT[tone]}`} title={title}>
       <StatusDot tone={tone} pulse={pulse} size="sm" />
@@ -1422,7 +1422,7 @@ export function MetaSignal({
 }
 
 /** In-progress / queued agent action marker for a row's meta line. */
-export function AiActivityChip({ activity }: { activity: 'running' | 'queued' }): JSX.Element {
+export function AiActivityChip({ activity }: { activity: 'running' | 'queued' }): React.JSX.Element {
   return activity === 'running' ? (
     <MetaSignal tone="blue" label="AI running" pulse title="An agent is working on this" />
   ) : (
@@ -1431,7 +1431,7 @@ export function AiActivityChip({ activity }: { activity: 'running' | 'queued' })
 }
 
 /** One `label: value` cell in a detail view's metadata strip. */
-export function MetaItem({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+export function MetaItem({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <span className="flex items-center gap-1.5 text-[13px]">
       <span className="dim">{label}</span>
@@ -1487,7 +1487,7 @@ export function IconButton({
   disabled?: boolean;
   className?: string;
   children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <button
       type="button"
@@ -1521,7 +1521,7 @@ const GLYPH: Record<GlyphTone, { cls: string; path: string }> = {
  * icon on cards and rows. Domain code maps its states to a tone + label; the
  * drawing lives here.
  */
-export function StatusGlyph({ tone, label, className = '' }: { tone: GlyphTone; label: string; className?: string }): JSX.Element {
+export function StatusGlyph({ tone, label, className = '' }: { tone: GlyphTone; label: string; className?: string }): React.JSX.Element {
   const spec = GLYPH[tone];
   return (
     <Tooltip content={label}>
@@ -1544,7 +1544,7 @@ export function StatusGlyph({ tone, label, className = '' }: { tone: GlyphTone; 
 }
 
 /** Filled ✓/✕ circle for dense timeline nodes where a stroked glyph is too quiet. */
-export function OutcomeDot({ ok }: { ok: boolean }): JSX.Element {
+export function OutcomeDot({ ok }: { ok: boolean }): React.JSX.Element {
   return (
     <span
       className={`flex size-3.5 items-center justify-center rounded-full text-[8px] leading-none font-bold text-white ${
@@ -1589,7 +1589,7 @@ export function Avatar({
   size?: keyof typeof AVATAR_SIZE;
   brand?: boolean;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const shape = `${AVATAR_SIZE[size]} shrink-0 ${className}`;
   if (src) return <img src={src} alt={name} className={`${shape} object-cover`} />;
   return (
@@ -1621,7 +1621,7 @@ export function ListCard({
   className?: string;
   /** Names the list for assistive tech (renders as role="group"). */
   ariaLabel?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       role={ariaLabel ? 'group' : undefined}
@@ -1636,7 +1636,7 @@ export function ListCard({
 }
 
 /** Right-aligned action footer inside a card, above its own top rule. */
-export function CardActions({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+export function CardActions({ children, className = '' }: { children: ReactNode; className?: string }): React.JSX.Element {
   return (
     <div
       className={`mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800 ${className}`}
@@ -1647,7 +1647,7 @@ export function CardActions({ children, className = '' }: { children: ReactNode;
 }
 
 /** Corner count bubble for a trigger (active filters, unread items). */
-export function CountBadge({ count, tone = 'default' }: { count: number; tone?: 'default' | 'danger' }): JSX.Element | null {
+export function CountBadge({ count, tone = 'default' }: { count: number; tone?: 'default' | 'danger' }): React.JSX.Element | null {
   if (count <= 0) return null;
   return (
     <span
@@ -1662,18 +1662,18 @@ export function CountBadge({ count, tone = 'default' }: { count: number; tone?: 
 }
 
 /** Tiny uppercase caption above a block (the "eyebrow"). */
-export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }): React.JSX.Element {
   return <div className={`dim text-[11px] font-medium tracking-widest uppercase ${className}`}>{children}</div>;
 }
 
 /** Two-column label/value grid for detail views; fill with DetailRow. */
-export function DetailGrid({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
+export function DetailGrid({ children, className = '' }: { children: ReactNode; className?: string }): React.JSX.Element {
   return (
     <dl className={`grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-[13px] ${className}`}>{children}</dl>
   );
 }
 
-export function DetailRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+export function DetailRow({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <>
       <dt className="dim">{label}</dt>
@@ -1689,7 +1689,7 @@ export function Breadcrumb({
 }: {
   items: ReadonlyArray<{ label: string; href?: string }>;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <nav className={`dim text-[13px] ${className}`} aria-label="Breadcrumb">
       {items.map((item, i) => (

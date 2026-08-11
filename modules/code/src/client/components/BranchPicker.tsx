@@ -22,7 +22,7 @@ export function BranchPicker({
   disabled?: boolean;
   compact?: boolean;
   ariaLabel?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const [branches, setBranches] = useState<RepoBranchRecord[]>([]);
   const [remoteDefault, setRemoteDefault] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

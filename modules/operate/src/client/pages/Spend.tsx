@@ -14,7 +14,7 @@ import { operateApi as api } from '../api.js';
  * prices, and a bucket that used an unpriced model is marked as a floor rather
  * than being quietly under-reported.
  */
-export function SpendPage(): JSX.Element {
+export function SpendPage(): React.JSX.Element {
   const [breakdown, setBreakdown] = useState<SpendBreakdown | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async (): Promise<void> => {
@@ -72,7 +72,7 @@ function Table({
   title: string;
   caption?: string;
   entries: readonly SpendEntry[];
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   if (entries.length === 0) return null;
   const total = entries.reduce((acc, e) => acc + e.costUsd, 0);
   const partial = entries.some((e) => e.partial);

@@ -15,7 +15,7 @@ export function ProviderIcon({
   providerId: string;
   /** Drawn when the owning module contributes no mark (or is disabled). */
   fallback?: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const { can } = useAuth();
   return <Slot name={`integrations.provider.${providerId}.icon`} can={can} fallback={fallback} />;
 }

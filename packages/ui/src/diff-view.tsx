@@ -134,7 +134,7 @@ const LINE_CLS: Record<DiffLine['kind'], string> = {
   meta: 'text-zinc-400 dark:text-zinc-500',
 };
 
-function Counts({ adds, dels }: { adds: number; dels: number }): JSX.Element {
+function Counts({ adds, dels }: { adds: number; dels: number }): React.JSX.Element {
   return (
     <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium tabular-nums">
       {adds > 0 ? <span className="text-emerald-600 dark:text-emerald-400">+{adds}</span> : null}
@@ -215,7 +215,7 @@ function flattenTree(nodes: TreeNode[], collapsed: ReadonlySet<string>, depth = 
   return out;
 }
 
-function Caret({ open }: { open: boolean }): JSX.Element {
+function Caret({ open }: { open: boolean }): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" className={`size-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
       <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -253,7 +253,7 @@ function FileLines({
   onFocusAnnotation?: (id: string) => void;
   onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
   onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const lang = useMemo(() => languageForPath(file.path), [file.path]);
   const anchored = useMemo(() => annotationsByLine(file, annotations), [file, annotations]);
   const focusedRef = useRef<HTMLDivElement>(null);
@@ -316,7 +316,7 @@ function FileLines({
   /** Last new-file line the diff itself shows; 0 when it shows none. */
   const lastLine = lastShownLine(file.lines, file.lines.length);
 
-  const gutter = (line: DiffLine): JSX.Element => {
+  const gutter = (line: DiffLine): React.JSX.Element => {
     // A deletion is addressable on the LEFT, everything else on the RIGHT —
     // the same rule GitHub applies to where a comment may hang.
     const side: 'LEFT' | 'RIGHT' = line.kind === 'del' ? 'LEFT' : 'RIGHT';
@@ -490,7 +490,7 @@ function Browser({
   onFocusAnnotation?: (id: string) => void;
   onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
   onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const file = files[Math.min(selected, files.length - 1)]!;
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -607,7 +607,7 @@ export function DiffView({
   onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
   /** Fetch lines of the new file so hunks can be expanded beyond their context. */
   onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const truncated = diff.length > MAX_DIFF_CHARS;
   const files = useMemo(() => parseDiff(truncated ? diff.slice(0, MAX_DIFF_CHARS) : diff), [diff, truncated]);
   const [selected, setSelected] = useState(0);

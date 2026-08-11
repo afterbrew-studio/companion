@@ -47,7 +47,7 @@ export function PrChanges({
   onFocusAnnotation?: (id: string) => void;
   onAddComment?: (path: string, side: 'LEFT' | 'RIGHT', line: number) => void;
   onExpandContext?: (path: string, from: number, to: number) => Promise<string[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);

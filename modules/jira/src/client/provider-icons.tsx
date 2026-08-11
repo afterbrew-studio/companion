@@ -4,7 +4,7 @@
  * their integration. Gradient ids are module-scoped: two inline SVGs sharing an
  * id in one document resolve to whichever the browser saw first.
  */
-export function JiraMark(): JSX.Element {
+export function JiraMark(): React.JSX.Element {
   return (
     <svg
       className="size-5"

@@ -32,7 +32,7 @@ export function TaskPolicyEditor({
   groups: readonly RunTaskGroup[];
   policy: RunnerTaskPolicy;
   onChange: (next: RunnerTaskPolicy) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [opened, setOpened] = useState<Record<string, boolean>>({});
   const known = new Set(groups.flatMap((g) => [g.moduleId, ...g.tasks.map((t) => t.id)]));
   const orphans = [...policy.modules, ...policy.tasks].filter((id) => !known.has(id));
@@ -134,7 +134,7 @@ export function TaskPolicyEditor({
  * The state chip still shows the policy's answer, because a few of these do
  * reach placement (the ones that work from a shared snapshot).
  */
-function DaemonBoundRow({ task, allowed }: { task: RunTaskDescriptor; allowed: boolean }): JSX.Element {
+function DaemonBoundRow({ task, allowed }: { task: RunTaskDescriptor; allowed: boolean }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2.5 px-2 py-1.5 text-sm" title={task.hint}>
       <span className="size-3.5 shrink-0" aria-hidden />
@@ -154,7 +154,7 @@ function TriCheckbox({
   label: string;
   state: ModuleState;
   onChange: (allowed: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <input
       type="checkbox"

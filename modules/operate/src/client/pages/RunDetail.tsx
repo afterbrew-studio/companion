@@ -7,7 +7,7 @@ import { Transcript } from '../transcript/Transcript.js';
 import { AskSheet } from '../components/AskSheet.js';
 import { statusBadge } from './RunsPage.js';
 
-export function RunDetail({ runId }: { runId: string }): JSX.Element {
+export function RunDetail({ runId }: { runId: string }): React.JSX.Element {
   const { run, setRun, asks, fold, historyState, activeTurn, error, runnerNames, lifecycle, busy, refresh, lifecycleAction, sendPrompt, respondAsk, abort } =
     useRun(runId);
   const [draft, setDraft] = useState('');
@@ -160,7 +160,7 @@ export function RunDetail({ runId }: { runId: string }): JSX.Element {
  * picker degrades to the read-only badge rather than offering a list nothing
  * would fill.
  */
-function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunRecord) => void }): JSX.Element {
+function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunRecord) => void }): React.JSX.Element {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -238,7 +238,7 @@ function ModelPicker({ run, onChanged }: { run: RunRecord; onChanged: (run: RunR
   );
 }
 
-function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promise<void> }): JSX.Element {
+function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promise<void> }): React.JSX.Element {
   const [diff, setDiff] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -346,7 +346,7 @@ function ReviewPanel({ run, onChange }: { run: RunRecord; onChange: () => Promis
  * as anything resembling a pass: a missing command is a configuration gap, and
  * dressing it up as a green tick would make the whole feature a lie.
  */
-function VerificationLine({ verification }: { verification: RunVerification | null }): JSX.Element | null {
+function VerificationLine({ verification }: { verification: RunVerification | null }): React.JSX.Element | null {
   if (verification === null) return null;
   if (verification.status === 'running') {
     return <InlineLoading label={`Verifying: ${verification.command}`} className="mb-2.5" />;

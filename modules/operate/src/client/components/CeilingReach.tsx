@@ -13,7 +13,7 @@ import { useRunners } from '../hooks/useRunners.js';
  * Silent when every machine's runtimes report usage, which is every instance
  * until a second harness is chosen anywhere.
  */
-export function CeilingReach(): JSX.Element | null {
+export function CeilingReach(): React.JSX.Element | null {
   const { runners } = useRunners();
   if (runners === null) return null;
   const blind = unmeteredHarnesses(runners.flatMap((r) => r.harnesses));

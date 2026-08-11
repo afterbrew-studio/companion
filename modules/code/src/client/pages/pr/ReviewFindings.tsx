@@ -100,7 +100,7 @@ export function ReviewFindings({
   /** Shared with the diff viewer; both surfaces point at the same finding. */
   focusedFinding?: string | null;
   onFocusFinding?: (id: string | null) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [showRefuted, setShowRefuted] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [renderLimit, setRenderLimit] = useState(INITIAL_FINDINGS);
@@ -245,7 +245,7 @@ function FindingCard({
   onFocus: () => void;
   onToggle: (id: string, include: boolean) => void;
   onReject: (id: string, reason: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const [discussing, setDiscussing] = useState(false);

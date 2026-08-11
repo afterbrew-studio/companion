@@ -39,7 +39,7 @@ function durationOf(s: PipelineStepResult): string | null {
  * coloured by the step BEFORE it, so a broken run shows exactly where the
  * colour stops.
  */
-export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: string; number: number }): JSX.Element {
+export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: string; number: number }): React.JSX.Element {
   const [, setClock] = useState(0);
   useEffect(() => {
     if (run.status !== 'running') return;
@@ -124,7 +124,7 @@ export function StepRail({ run, repo, number }: { run: PipelineRunRecord; repo: 
 }
 
 /** The two answers a held step accepts. Declining halts the rest of the run. */
-function ApprovalPrompt({ runId, stepIndex }: { runId: string; stepIndex: number }): JSX.Element {
+function ApprovalPrompt({ runId, stepIndex }: { runId: string; stepIndex: number }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const answer = (approved: boolean): void => {

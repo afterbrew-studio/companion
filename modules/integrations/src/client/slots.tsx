@@ -1,6 +1,6 @@
 import { defineSlots } from '@moxxy/companion-sdk/client';
 
-function RepositoryIntegrationsLink(props: Record<string, unknown>): JSX.Element | null {
+function RepositoryIntegrationsLink(props: Record<string, unknown>): React.JSX.Element | null {
   const repo = typeof props.repo === 'string' ? props.repo : null;
   if (!repo) return null;
   return (

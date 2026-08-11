@@ -1,7 +1,7 @@
 import { defineOnboarding, OnboardingArt } from '@moxxy/companion-sdk/client';
 
 /** A workspace folder gathering three repo tiles that settle in. */
-function WorkspaceArt({ playing }: { playing: boolean }): JSX.Element {
+function WorkspaceArt({ playing }: { playing: boolean }): React.JSX.Element {
   return (
     <OnboardingArt>
       <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

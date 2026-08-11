@@ -14,7 +14,7 @@ import { operateApi as api, type LaneSnapshot } from '../api.js';
  * schedule has nobody's session to inherit — and the wording says so rather
  * than letting people assume otherwise.
  */
-export function LanePicker({ rail }: { rail?: boolean }): JSX.Element | null {
+export function LanePicker({ rail }: { rail?: boolean }): React.JSX.Element | null {
   const [snapshot, setSnapshot] = useState<LaneSnapshot | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -227,7 +227,7 @@ function Option({
   /** Where this lane's model pins are set; absent on Auto, which has none. */
   configureHref?: string;
   onNavigate?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className={`group/opt flex items-center transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
@@ -255,7 +255,7 @@ function Option({
   );
 }
 
-function LaneIcon({ className = '' }: { className?: string }): JSX.Element {
+function LaneIcon({ className = '' }: { className?: string }): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={`size-4 shrink-0 ${className}`} aria-hidden>
       <rect x="3" y="4" width="18" height="7" rx="2" stroke="currentColor" strokeWidth="1.6" />

@@ -7,7 +7,7 @@ export function AskSheet({
 }: {
   ask: AskRequest;
   onRespond: (response: Record<string, unknown>) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [text, setText] = useState('');
 
   if (ask.kind === 'permission') {

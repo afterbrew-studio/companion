@@ -25,7 +25,7 @@ const WINDOWS = [
  * Surfaces owned by modules that depend on code contribute through the
  * `quality.panels` slot, because code cannot import them.
  */
-export function AgentQualityPage(): JSX.Element {
+export function AgentQualityPage(): React.JSX.Element {
   const { current } = useWorkspace();
   const [days, setDays] = useState<'7' | '30' | '90'>('30');
   const [quality, setQuality] = useState<AgentQuality | null>(null);
@@ -110,7 +110,7 @@ export function AgentQualityPage(): JSX.Element {
  * they render into this page, this module never imports theirs, and each
  * contribution is gated on its own permission.
  */
-function QualityPanels({ days }: { days: number }): JSX.Element | null {
+function QualityPanels({ days }: { days: number }): React.JSX.Element | null {
   const kernel = useKernel();
   const { can } = useAuth();
   const panels = kernel.slots('quality.panels').filter((s) => s.permission === undefined || can(s.permission));

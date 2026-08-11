@@ -39,7 +39,7 @@ import { ACTION_BUTTON, ACTION_LABEL, STATUS_META } from '../detection-meta.js';
  * button says what it will do, and one menu for every other outcome (the other
  * GitHub actions, refinement, dismissal). Deep-linkable as #/slop/:id.
  */
-export default function SlopDetection({ params }: RouteProps): JSX.Element {
+export default function SlopDetection({ params }: RouteProps): React.JSX.Element {
   const id = params.id!;
   const { can } = useAuth();
   const { current } = useWorkspace();
@@ -58,7 +58,7 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
   }, [id]);
   useLive(refresh, (msg) => msg.t === 'slop.changed');
 
-  const crumbs = (label: string): JSX.Element => (
+  const crumbs = (label: string): React.JSX.Element => (
     <Breadcrumb items={[{ label: 'Contribution Quality', href: '#/slop' }, { label }]} />
   );
 
@@ -313,7 +313,7 @@ export default function SlopDetection({ params }: RouteProps): JSX.Element {
  * will take. The PR, the contributor facts and the timings are already known
  * and stay real; only the agent's own output is a placeholder.
  */
-function PendingVerdict(): JSX.Element {
+function PendingVerdict(): React.JSX.Element {
   return (
     <>
       <InlineLoading

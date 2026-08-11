@@ -18,7 +18,7 @@ export function ListLoadFailure({
   noun: string;
   error: string;
   onRetry: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <EmptyState
       title={`Could not load ${noun}`}

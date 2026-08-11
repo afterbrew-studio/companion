@@ -9,7 +9,7 @@ import { AssistantButton, AssistantPanel } from './components/Assistant.js';
  * slots would push that state back into the shell, which is exactly what this
  * module is being lifted out of.
  */
-function Assistant(): JSX.Element {
+function Assistant(): React.JSX.Element {
   const { can } = useAuth();
   const [open, setOpen] = useState(false);
   // Mounted on first open and kept alive afterwards, so the conversation and
@@ -43,7 +43,7 @@ function Assistant(): JSX.Element {
 
 /** Repository-owned configuration belongs beside the repository, while this
  * module remains optional and owns the route that actually edits it. */
-function RepositoryAutomationsLink(props: Record<string, unknown>): JSX.Element | null {
+function RepositoryAutomationsLink(props: Record<string, unknown>): React.JSX.Element | null {
   const { can } = useAuth();
   const repo = typeof props.repo === 'string' ? props.repo : null;
   const githubAccessible = props.githubAccessible === true;
@@ -57,7 +57,7 @@ function RepositoryAutomationsLink(props: Record<string, unknown>): JSX.Element 
 
 /** Workspace/instance health is the exception to per-repo configuration. It
  * stays one click away from the repository hub without occupying the sidebar. */
-function AutomationHealthLink(): JSX.Element {
+function AutomationHealthLink(): React.JSX.Element {
   return (
     <a className="btn-ghost" href="#/repos/automation-health">
       Automation health

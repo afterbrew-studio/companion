@@ -19,7 +19,7 @@ export function AuthLayout({
   footer?: ReactNode;
   children: ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { branding, version } = useAuth();
   const custom = branding.name?.trim();
   const brandName = custom || 'Companion';

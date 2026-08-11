@@ -6,7 +6,7 @@ import type { ReportRecord } from '@companion/module-workspace/contract';
  * Automations feed and the Digest history. Both render inside a repo-scoped
  * context, so the row shows kind + title, never the repo.
  */
-export function ReportCard({ report }: { report: ReportRecord }): JSX.Element {
+export function ReportCard({ report }: { report: ReportRecord }): React.JSX.Element {
   return (
     <details className="card">
       <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm select-none">

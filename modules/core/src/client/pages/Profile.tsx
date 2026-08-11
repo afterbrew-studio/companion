@@ -33,7 +33,7 @@ type ScopeChoice = NotificationScope | 'default';
  * account (name, email, password) is theirs to edit; role stays admin-managed.
  * Appearance is per-browser; an unset inbox scope inherits the instance default.
  */
-export function ProfilePage(): JSX.Element {
+export function ProfilePage(): React.JSX.Element {
   const {
     authMode,
     can,
@@ -198,7 +198,7 @@ function AccountSection({
 }: {
   authMode: AuthMode;
   onError: (e: string | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -384,7 +384,7 @@ function AccountSection({
 }
 
 /** Inbox scope preference (per-user override of the instance default). */
-function NotificationSection({ onError }: { onError: (e: string | null) => void }): JSX.Element {
+function NotificationSection({ onError }: { onError: (e: string | null) => void }): React.JSX.Element {
   const [choice, setChoice] = useState<ScopeChoice | null>(null);
   const [defaultScope, setDefaultScope] = useState<NotificationScope>('workspace');
   const [saving, setSaving] = useState(false);

@@ -35,7 +35,7 @@ const MAX_CONTEXT_PICKS = 5;
  * specs/docs + the agent trigger), the agent's enriched summary, and the
  * proposed tasks the user imports into the board — one by one or all at once.
  */
-export default function RefinementView({ id }: { id: string }): JSX.Element {
+export default function RefinementView({ id }: { id: string }): React.JSX.Element {
   const { detail, methods, context, missing, error, setError, actions } = useRefinement(id);
   const { can } = useAuth();
   const { confirmDanger, confirmElement } = useConfirm();
@@ -163,7 +163,7 @@ function StoryCard({
   refinement: RefinementRecord;
   disabled: boolean;
   onSave: (fields: { title?: string; story?: string; branch?: string }) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [title, setTitle] = useState(refinement.title);
   const [branch, setBranch] = useState(refinement.branch);
   const [story, setStory] = useState(refinement.story);
@@ -245,7 +245,7 @@ function DecomposePanel({
   onUpdateMethod: (id: string, fields: { name?: string; description?: string; instructions?: string }) => Promise<void>;
   onDeleteMethod: (id: string) => Promise<void>;
   onGenerateMethod: (prompt: string) => Promise<RefineMethodDraft>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [methodId, setMethodId] = useState<string | null>(refinement.methodId);
   const [specIds, setSpecIds] = useState<string[]>([...refinement.specIds]);
   const [docIds, setDocIds] = useState<string[]>([...refinement.docIds]);
@@ -335,7 +335,7 @@ function ContextPicker({
   selected: string[];
   onToggle: (id: string) => void;
   disabled: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const full = selected.length >= MAX_CONTEXT_PICKS;
   return (
     <Field label={label}>
@@ -385,7 +385,7 @@ function ItemsSection({
   onUpdate: (itemId: string, fields: RefineItemUpdate) => Promise<void>;
   onMove: (itemId: string, direction: 'up' | 'down') => Promise<void>;
   onMerge: (itemIds: string[]) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [queue, setQueue] = useState(false);
   const [targetBranch, setTargetBranch] = useState(defaultTargetBranch);
   const [busy, setBusy] = useState(false);
@@ -488,7 +488,7 @@ function ItemCard({
   onMove: (direction: 'up' | 'down') => void;
   onImport: () => void;
   onDismiss: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const dimmed = item.status === 'dismissed';
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
@@ -585,7 +585,7 @@ function MethodsModal({
   onDelete: (id: string) => Promise<void>;
   onGenerate: (prompt: string) => Promise<RefineMethodDraft>;
   canGenerate: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const custom = methods.filter((m) => !m.builtin);
   const builtins = methods.filter((m) => m.builtin);
   const [editing, setEditing] = useState<RefineMethodRecord | 'new' | null>(null);

@@ -35,7 +35,7 @@
     "@companion/module-refinement": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@moxxy/companion-services": "workspace:*",

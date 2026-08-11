@@ -8,7 +8,7 @@ import { STRENGTH_TONE, rankSignals } from '../detection-meta.js';
  * the scan is the strengths, the reading is whichever rows earn it. The page
  * titles the block, so this renders the list alone.
  */
-export function SlopSignals({ signals }: { signals: ReadonlyArray<SlopSignal> }): JSX.Element {
+export function SlopSignals({ signals }: { signals: ReadonlyArray<SlopSignal> }): React.JSX.Element {
   return (
     <ListCard ariaLabel="Signals, strongest first">
       {rankSignals(signals).map((signal, i) => (
@@ -43,7 +43,7 @@ export function SlopSignals({ signals }: { signals: ReadonlyArray<SlopSignal> })
 }
 
 /** Signals while the agent is still scoring: the count is unknown too. */
-export function SlopSignalsSkeleton(): JSX.Element {
+export function SlopSignalsSkeleton(): React.JSX.Element {
   return (
     <ListCard>
       <RowsSkeleton rows={3} />
