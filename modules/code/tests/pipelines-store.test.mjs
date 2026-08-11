@@ -164,12 +164,16 @@ test('a deleted workspace takes its pipelines and library steps, and only its ow
   store.insert(pipeline('pl-kept', 'ws-kept'));
   store.insertStepDefinition(stepDefinition('sd-doomed', 'ws-doomed'));
   store.insertStepDefinition(stepDefinition('sd-kept', 'ws-kept'));
+  store.insertRun({ ...run('plr-doomed'), pipelineId: 'pl-doomed', workspaceId: 'ws-doomed', status: 'success' });
+  store.insertRun({ ...run('plr-kept'), pipelineId: 'pl-kept', workspaceId: 'ws-kept', status: 'success' });
 
   store.deleteByWorkspace('ws-doomed');
 
   assert.equal(store.get('pl-doomed'), undefined);
   assert.equal(store.getStepDefinition('sd-doomed'), undefined);
+  assert.equal(store.getRun('plr-doomed'), undefined, 'run history leaves with its workspace');
   assert.equal(store.get('pl-kept').id, 'pl-kept');
   assert.equal(store.getStepDefinition('sd-kept').id, 'sd-kept');
+  assert.equal(store.getRun('plr-kept').id, 'plr-kept');
   assert.deepEqual(store.workspaceIds(), ['ws-kept']);
 });
