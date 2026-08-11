@@ -36,7 +36,7 @@ Repo conventions — how Companion is built:
   threading a `Permission` / DTO / WS event end-to-end.
 - **companion-store-and-migrations** — SQLite store classes, additive
   migrations, row⇄DTO mappers.
-- **companion-add-backend-area** / **companion-add-web-area** — superseded
+- **companion-add-backend-area** / **companion-add-web-area**: superseded
   redirect stubs; use **companion-build-module** below.
 
 Modules and distribution — what ships, and how it gets there:
@@ -72,7 +72,7 @@ Craft & quality — how to build well:
   indexing & paging, bounded memory, React re-render/refetch hygiene.
 - **critical-thinking** — adversarial self-review, edge/failure/concurrency
   enumeration, verified-vs-assumed honesty, invariant checking.
-- **companion-verification** — how to verify: the typecheck gate, the node:test
+- **companion-verification**: how to verify: the typecheck gate, the node:test
   suites, `acl check` / `sdk:surface`, driving the app, tracing a run,
   inspecting the DB.
 - **companion-security** — secret & trust boundaries: tokens never crossing to
