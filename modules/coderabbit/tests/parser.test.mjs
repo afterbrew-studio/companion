@@ -97,3 +97,15 @@ test('a singular line location is stripped without treating malformed text as on
   assert.equal(parsed.findings[0].title, 'Reject an expired session before loading user data.');
   assert.equal(parsed.findings[1].title, 'In src/other.ts around lines many, Keep this complete malformed location.');
 });
+
+test('unknown vendor severities land mid-scale instead of demoting to nit', () => {
+  const finding = (severity) =>
+    JSON.stringify({ type: 'finding', severity, fileName: 'src/x.ts', comment: 'Something worth a look.' });
+  const parsed = parseAgentOutput(
+    [finding('high'), finding('blocker'), finding('trivial'), finding('info')].join('\n'),
+  );
+  assert.deepEqual(
+    parsed.findings.map((entry) => entry.severity),
+    ['major', 'major', 'nit', 'nit'],
+  );
+});
