@@ -3,6 +3,7 @@
   "version": "0.8.2",
   "description": "The public module-authoring surface for Companion.",
   "type": "module",
+  "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -34,6 +35,14 @@
     "src/index.ts",
     "src/client.tsx",
     "src/ui.ts"
+  ],
+  "keywords": [
+    "github",
+    "ai",
+    "agents",
+    "moxxy",
+    "sdk",
+    "modules"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.types.json",
@@ -68,9 +77,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/moxxy-ai/companion.git",
     "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
   }
 }

@@ -1,6 +1,7 @@
 {
   "name": "@moxxy/companion-types",
   "version": "0.5.4",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,9 +27,20 @@
     "dist/**/*.d.ts"
   ],
   "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",
+  "keywords": [
+    "github",
+    "ai",
+    "agents",
+    "moxxy",
+    "types"
+  ],
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/moxxy-ai/companion.git",
     "directory": "packages/types"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
   }
 }
