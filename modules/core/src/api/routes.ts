@@ -295,10 +295,16 @@ export default defineRoutes((ctx) => {
       access: 'users:manage',
       handler: ({ query }) => {
         const role = query.get('role');
+        if (role !== null && !ctx.rbac.hasRole(role)) throw badRequest(`unknown role: ${role}`);
+        const limitParam = query.get('limit');
+        const limit = limitParam === null ? undefined : Number(limitParam);
+        if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+          throw badRequest('limit must be a positive integer');
+        }
         return auth.searchUsers({
           q: query.get('q') ?? undefined,
-          role: role && ctx.rbac.hasRole(role) ? role : undefined,
-          limit: Number(query.get('limit')) || undefined,
+          role: role ?? undefined,
+          limit,
           offset: Number(query.get('offset')) || undefined,
         });
       },
@@ -310,7 +316,9 @@ export default defineRoutes((ctx) => {
       body: createUserSchema,
       handler: ({ body }) => {
         requireRole(body.role);
-        return created({ user: auth.createUser(body) });
+        const user = auth.createUser(body);
+        ctx.broadcast({ t: 'users.changed' });
+        return created({ user });
       },
     }),
     route({
@@ -325,6 +333,7 @@ export default defineRoutes((ctx) => {
         if (body.role !== undefined || body.disabled === true || body.password !== undefined) {
           ctx.broadcast({ t: 'tokens.changed' });
         }
+        ctx.broadcast({ t: 'users.changed' });
         return { user: updated };
       },
     }),
@@ -336,6 +345,7 @@ export default defineRoutes((ctx) => {
         if (!user) throw new AuthError('authentication required', 401);
         auth.deleteUser(params.username, user);
         ctx.broadcast({ t: 'tokens.changed' });
+        ctx.broadcast({ t: 'users.changed' });
         return { ok: true };
       },
     }),
@@ -409,7 +419,11 @@ export default defineRoutes((ctx) => {
       path: '/api/roles',
       access: 'users:manage',
       body: createRoleSchema,
-      handler: ({ body, user }) => created({ role: roles.create(user!.username, body) }),
+      handler: ({ body, user }) => {
+        const role = roles.create(user!.username, body);
+        ctx.broadcast({ t: 'roles.changed' });
+        return created({ role });
+      },
     }),
     route({
       method: 'DELETE',
@@ -417,6 +431,7 @@ export default defineRoutes((ctx) => {
       access: 'users:manage',
       handler: ({ params, user }) => {
         roles.delete(user!.username, params.id);
+        ctx.broadcast({ t: 'roles.changed' });
         return { ok: true };
       },
     }),
@@ -430,7 +445,9 @@ export default defineRoutes((ctx) => {
       handler: ({ params, body, user }) => {
         const actor = user!.username;
         const apply = { grant: roles.grant, revoke: roles.revoke, reset: roles.reset }[body.mode];
-        return { role: apply.call(roles, actor, params.id, body.permissions) };
+        const role = apply.call(roles, actor, params.id, body.permissions);
+        ctx.broadcast({ t: 'roles.changed' });
+        return { role };
       },
     }),
 
@@ -695,6 +712,7 @@ export default defineRoutes((ctx) => {
         if (!user) throw new AuthError('authentication required', 401);
         const account = auth.updateOwnAccount(user.username, body);
         if (body.newPassword !== undefined) ctx.broadcast({ t: 'tokens.changed' });
+        ctx.broadcast({ t: 'users.changed' });
         return { account };
       },
     }),
