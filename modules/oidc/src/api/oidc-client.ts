@@ -38,6 +38,8 @@ interface Pending {
   readonly nonce: string;
   readonly createdAt: number;
   readonly returnTo: string;
+  /** Client address that started the attempt, for the per-address pending cap. */
+  readonly address: string;
 }
 
 interface IdTokenClaims {
@@ -62,6 +64,8 @@ interface IdTokenHeader {
 const PENDING_TTL_MS = 10 * 60_000;
 const CACHE_TTL_MS = 60 * 60_000;
 const MAX_PENDING = 1_000;
+/** One address exhausts its own budget long before it can touch anyone else's. */
+const MAX_PENDING_PER_ADDRESS = 20;
 const MAX_METADATA_BYTES = 1_000_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const CLOCK_SKEW_SECONDS = 60;
@@ -114,7 +118,14 @@ export class OidcClient {
       if (typeof value[key] !== 'string') throw new Error(`OIDC discovery is missing ${key}`);
       if (key !== 'issuer') assertSecureEndpoint(value[key], key);
     }
-    if (value.issuer !== this.issuer) throw new Error('OIDC discovery issuer does not exactly match the configured issuer');
+    if (value.issuer !== this.issuer) {
+      const slashOnly = value.issuer.replace(/\/+$/, '') === this.issuer.replace(/\/+$/, '');
+      throw new Error(
+        slashOnly
+          ? 'OIDC discovery issuer differs from the configured issuer only by a trailing slash; adjust the configured issuer to match it exactly'
+          : 'OIDC discovery issuer does not exactly match the configured issuer',
+      );
+    }
     if (
       !Array.isArray(value.id_token_signing_alg_values_supported) ||
       !value.id_token_signing_alg_values_supported.every((alg) => typeof alg === 'string')
@@ -130,18 +141,30 @@ export class OidcClient {
   }
 
   /** Where to send the browser, plus the state/nonce the callback must prove. */
-  async authorizeUrl(redirectUri: string, returnTo: string): Promise<string> {
+  async authorizeUrl(redirectUri: string, returnTo: string, address = 'unknown'): Promise<string> {
     const { authorization_endpoint } = await this.discover();
     const state = base64url(randomBytes(24));
     const verifier = base64url(randomBytes(32));
     const nonce = base64url(randomBytes(24));
     this.sweep();
+    // /start is unauthenticated, so a spammer must not be able to evict other
+    // people's pending states through the global FIFO below. A per-address cap
+    // (evicting that address's own oldest attempt) keeps one source contained;
+    // the global cap stays as the memory backstop.
+    let mine = 0;
+    let oldestMine: string | null = null;
+    for (const [known, entry] of this.pending) {
+      if (entry.address !== address) continue;
+      mine += 1;
+      oldestMine ??= known;
+    }
+    if (mine >= MAX_PENDING_PER_ADDRESS && oldestMine !== null) this.pending.delete(oldestMine);
     while (this.pending.size >= MAX_PENDING) {
       const oldest = this.pending.keys().next().value as string | undefined;
       if (!oldest) break;
       this.pending.delete(oldest);
     }
-    this.pending.set(state, { verifier, nonce, createdAt: Date.now(), returnTo });
+    this.pending.set(state, { verifier, nonce, createdAt: Date.now(), returnTo, address });
     const url = new URL(authorization_endpoint);
     for (const [key, value] of Object.entries({
       response_type: 'code',
@@ -170,8 +193,12 @@ export class OidcClient {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        // Client credentials in the header, never the query string.
-        authorization: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`,
+        // Client credentials in the header, never the query string. RFC 6749
+        // 2.3.1: both halves are form-encoded before the ':' join, so a secret
+        // containing ':' or non-ASCII cannot corrupt the header.
+        authorization: `Basic ${Buffer.from(
+          `${formEncode(this.clientId)}:${formEncode(this.clientSecret)}`,
+        ).toString('base64')}`,
       },
       body: new URLSearchParams({
         grant_type: 'authorization_code',
@@ -209,6 +236,13 @@ export class OidcClient {
     const raw = claims[this.usernameClaim];
     const username = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     if (!username) throw new Error(`the provider returned no '${this.usernameClaim}' claim to use as a username`);
+    // An unverified email is an attacker-choosable identifier at some IdPs.
+    // When it IS the account key, require the provider's explicit assertion.
+    if (this.usernameClaim === 'email' && claims.email_verified !== true) {
+      throw new Error(
+        "the provider did not assert email_verified: true, which is required when 'email' is the username claim",
+      );
+    }
     return {
       identity: {
         username,
@@ -335,6 +369,11 @@ export class OidcClient {
     const cutoff = Date.now() - PENDING_TTL_MS;
     for (const [state, entry] of this.pending) if (entry.createdAt < cutoff) this.pending.delete(state);
   }
+}
+
+/** application/x-www-form-urlencoded encoding of one credential half. */
+function formEncode(value: string): string {
+  return encodeURIComponent(value).replace(/%20/g, '+');
 }
 
 function verifyTokenSignature(algorithm: string, key: KeyObject, signed: Buffer, signature: Buffer): boolean {

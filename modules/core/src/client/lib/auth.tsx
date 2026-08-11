@@ -7,7 +7,7 @@ import type {
   NavigationPerspective,
   Permission,
 } from '@moxxy/companion-contracts';
-import { connectWs, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
+import { connectWs, isMessage, onAuthChanged, onServerMessage } from '@moxxy/companion-core/client';
 import type { AuthProvider, InstanceBranding, NotificationScope } from '../../contract/index.js';
 import { authApi, coreApi } from '../api.js';
 
@@ -121,11 +121,14 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   useEffect(() => {
     void resolve();
     const offAuth = onAuthChanged(() => void resolve());
-    // Enabling/disabling a module rebuilds the server RBAC grid; re-resolve the
-    // session so can() reflects the new permissions (a just-enabled module's nav
-    // + routes appear) without a manual reload.
+    // Enabling/disabling a module rebuilds the server RBAC grid, and a role
+    // edit changes what the signed-in user may do; re-resolve the session so
+    // can() reflects the new permissions (a just-enabled module's nav + routes
+    // appear, a role edit propagates) without a manual reload. admin.changed is
+    // another module's message (soft reaction): branding rides the auth state,
+    // so a branding edit refreshes the shell chrome everywhere.
     const offModules = onServerMessage((msg) => {
-      if (msg.t === 'modules.changed') void resolve();
+      if (msg.t === 'modules.changed' || msg.t === 'roles.changed' || isMessage(msg, 'admin.changed')) void resolve();
     });
     return () => {
       offAuth();

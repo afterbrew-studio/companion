@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { onServerMessage } from '@moxxy/companion-core/client';
 import type { RoleRecord } from '../../contract/index.js';
 import { coreApi } from '../api.js';
 
@@ -25,6 +26,10 @@ export function useRoles(): { roles: readonly RoleRecord[]; loading: boolean; re
       alive = false;
     };
   }, [attempt]);
+
+  useEffect(() => onServerMessage((message) => {
+    if (message.t === 'roles.changed') setAttempt((n) => n + 1);
+  }), []);
 
   return { roles, loading, reload: () => setAttempt((n) => n + 1) };
 }
