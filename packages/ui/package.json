@@ -1,6 +1,7 @@
 {
   "name": "@moxxy/companion-ui",
   "version": "0.5.8",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": {
@@ -36,9 +37,21 @@
     "src"
   ],
   "description": "Internal Companion framework package. Modules import @moxxy/companion-sdk instead.",
+  "keywords": [
+    "github",
+    "ai",
+    "agents",
+    "moxxy",
+    "ui",
+    "react"
+  ],
+  "homepage": "https://github.com/moxxy-ai/companion#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/moxxy-ai/companion.git",
     "directory": "packages/ui"
+  },
+  "bugs": {
+    "url": "https://github.com/moxxy-ai/companion/issues"
   }
 }
