@@ -239,6 +239,9 @@ companion provider add "Anthropic" --kind anthropic --key sk-… --model claude-
 companion provider test <id> --model claude-sonnet-5   # does it answer, can it call a tool
 ```
 
+The `runtime` module ships only in the `full` and `cloud` builds, so this needs
+a Docker or source install: the slim npx CLI does not include it.
+
 Four kinds cover the field: `anthropic`, `openai`, `azure` (deployment names and
 api-version), and `openai-compatible` for any gateway, so LiteLLM, Portkey,
 OpenRouter, Azure AI Foundry's inference endpoint, vLLM and Ollama are a record
@@ -332,6 +335,7 @@ Companion is a pnpm monorepo, strict TypeScript, all ESM:
 
 ```sh
 pnpm install
+pnpm build
 pnpm dev
 pnpm typecheck
 ```

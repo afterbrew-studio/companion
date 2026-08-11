@@ -112,7 +112,7 @@ workspace, the runtime stage carries only `dist/` plus three runtime
 dependencies.
 
 ```sh
-cp .env.example .env      # change the default password before exposing the port
+cp .env.example .env      # optional overrides; first login uses the bootstrap token above
 docker compose up --build
 ```
 
