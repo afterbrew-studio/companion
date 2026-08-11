@@ -20,7 +20,7 @@ body:
     attributes:
       label: Companion version
       description: Shown in the UI footer or by `companion --version`.
-      placeholder: 0.11.7
+      placeholder: Output of companion --version
     validations:
       required: true
 
@@ -69,3 +69,10 @@ body:
       label: Environment
       description: OS, Node version, browser, and agent runtime/provider when relevant.
       placeholder: macOS 15, Node 24.4, Chrome 140, Codex
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Companion doctor
+      description: Paste `companion doctor --json` when the CLI, daemon, GitHub connection, or runtime is involved. It is redacted by design, but review it before posting.
+      render: json
