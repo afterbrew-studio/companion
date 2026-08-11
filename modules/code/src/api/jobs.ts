@@ -26,7 +26,7 @@ function announceCredentialHealth(ctx: ModuleContext, result: TokenRefreshResult
       body:
         `${fault.error ?? 'the refresh failed'}. Agent runs and sync using this account will start failing when the ` +
         'current token expires. Check the app is still installed on the organisation and that its private key is current.',
-      href: '#/github-accounts',
+      href: '#/github',
     });
   }
   for (const fault of result.recovered) {
@@ -35,7 +35,7 @@ function announceCredentialHealth(ctx: ModuleContext, result: TokenRefreshResult
       kind: 'info',
       title: `GitHub App '${fault.login}' is refreshing again`,
       body: 'Its installation token was re-minted successfully.',
-      href: '#/github-accounts',
+      href: '#/github',
     });
   }
 }
