@@ -39,6 +39,14 @@ export function RunnersPage(): React.JSX.Element {
   const { user, can } = useAuth();
   const admin = can('runners:manage');
   const [creating, setCreating] = useState(false);
+  // The seeded "This machine" row keeps the list from ever being literally
+  // empty, so "nothing attached yet" means no listed machine can take agent
+  // work: the same enabled + agent + ready-runtime test /api/status applies.
+  const noneReady =
+    runners !== null &&
+    runners.every(
+      (r) => !r.enabled || r.health.agentOutdated === true || r.health.runtimes[0]?.state !== 'ready',
+    );
 
   return (
     <Page>
@@ -53,7 +61,7 @@ export function RunnersPage(): React.JSX.Element {
       />
       <ErrorBar error={error} />
 
-      <AttachGuide />
+      <AttachGuide open={noneReady} />
 
       {runners === null ? (
         <InlineLoading label="Loading runners…" className="py-8" />
@@ -346,10 +354,12 @@ companion-runner stop && companion-runner --background`}
   );
 }
 
-/** Collapsible "how to attach a machine" primer above the runner list. */
-function AttachGuide(): React.JSX.Element {
+/** Collapsible "how to attach a machine" primer above the runner list. Starts
+ *  open while no machine is ready (the guide IS the next step in that state);
+ *  React only re-syncs `open` when the value changes, so manual toggling wins. */
+function AttachGuide({ open }: { open: boolean }): React.JSX.Element {
   return (
-    <details className="banner-info mb-4 block">
+    <details className="banner-info mb-4 block" open={open}>
       <summary className="cursor-pointer list-none font-medium">
         How to attach a machine
         <span className="dim ml-1.5 font-normal">— three steps</span>

@@ -3,6 +3,7 @@ import { TokenBurnWidget } from './components/TokenBurn.js';
 import { BudgetBar } from './components/BudgetBar.js';
 import { AgentsStatus } from './components/AgentsStatus.js';
 import { CeilingReach } from './components/CeilingReach.js';
+import { NoExecutionBanner } from './components/ExecutionNudge.js';
 import { RunnerCapacityBanner, RunQueueIndicator } from './components/RunQueue.js';
 import { LanePicker } from './components/LanePicker.js';
 
@@ -21,6 +22,14 @@ export const slots = defineSlots([
     order: 0,
     permission: 'runners:connect',
     component: CeilingReach,
+  },
+  {
+    // "You cannot run agents at all" outranks "the pool is momentarily full".
+    slot: 'shell.banner',
+    key: 'operate-no-execution',
+    order: -10,
+    permission: 'runners:connect',
+    component: NoExecutionBanner,
   },
   {
     slot: 'shell.banner',

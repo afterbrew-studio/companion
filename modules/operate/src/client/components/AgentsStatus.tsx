@@ -13,7 +13,7 @@ import { operateApi } from '../api.js';
 export function AgentsStatus(): React.JSX.Element | null {
   // Contributed to the shell's top bar. It renders only while operate is
   // enabled, so the status endpoint cannot disappear underneath it.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const me = user?.username ?? null;
   const [status, setStatus] = useState<OperateStatus | null>(null);
   const [ws, setWs] = useState<WsState>('offline');
@@ -119,6 +119,19 @@ export function AgentsStatus(): React.JSX.Element | null {
       >
         <div className="dim text-[10px] font-medium tracking-widest uppercase">{overall}</div>
         <StatusDot ok={executionOk} label="Execution" title={executionTitle} />
+        {status && !executionOk ? (
+          // The fix lives on the Runners page, not in the run list. A viewer
+          // who cannot reach it gets the explanation without the dead link.
+          can('runners:connect') ? (
+            <a href="#/runners" className="linkish text-xs">
+              Attach a runner or install a runtime CLI
+            </a>
+          ) : (
+            <span className="dim text-xs">
+              Agent runs need an attached runner or a runtime CLI on the daemon host; ask an admin.
+            </span>
+          )
+        ) : null}
         <StatusDot
           ok={Boolean(status?.githubConfigured)}
           label="GitHub"
