@@ -47,7 +47,7 @@ export function ProvidersPage(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Model providers"
+        title="Model endpoints"
         subtitle="Bring your own key: the endpoints and models Companion's built-in runtime may call"
         actions={
           manage && !adding ? (
