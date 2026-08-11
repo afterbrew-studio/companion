@@ -78,6 +78,27 @@ export class TriageStore {
     );
   }
 
+  /**
+   * Age-bound triage history. Never an issue's newest verdict: queues decorate
+   * from the latest row per issue regardless of age (latestByIssue/latest).
+   * Bounded per sweep; the daily job catches up over a few runs.
+   */
+  prune(olderThanMs: number, maxRows = 5_000): number {
+    return this.db
+      .prepare(
+        `DELETE FROM triage_results WHERE id IN (
+           SELECT id FROM triage_results t
+            WHERE t.created_at < ? AND t.status <> 'running'
+              AND EXISTS (
+                SELECT 1 FROM triage_results n
+                 WHERE n.repo = t.repo AND n.issue_number = t.issue_number
+                   AND (n.created_at > t.created_at OR (n.created_at = t.created_at AND n.id > t.id))
+              )
+            ORDER BY t.created_at LIMIT ?)`,
+      )
+      .run(Date.now() - olderThanMs, maxRows).changes;
+  }
+
   latestByIssue(repo: string, issueNumbers?: readonly number[]): Map<number, TriageResult['status']> {
     if (issueNumbers?.length === 0) return new Map();
     const numberClause = issueNumbers ? ` AND issue_number IN (${issueNumbers.map(() => '?').join(', ')})` : '';
