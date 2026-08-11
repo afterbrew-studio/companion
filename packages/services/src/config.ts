@@ -143,6 +143,8 @@ export interface DaemonConfig {
    * `operate` clones over git, and operate cannot read a dependent's config.
    */
   github: { readonly apiUrl: string; readonly host: string };
+  /** Daemon-scheduled database backups; absent = disabled. */
+  backup?: { readonly dir: string; readonly keep: number };
   /** Accounts sourced from the .env files. */
   users: readonly UserCredential[];
   /** Optional operator-supplied first-admin capability; never returned by HTTP. */
@@ -166,6 +168,8 @@ interface StoredConfig {
   githubHost?: string;
   maxLiveRuns?: number;
   publicUrl?: string;
+  backupDir?: string;
+  backupKeep?: number;
 }
 
 /**
@@ -210,6 +214,7 @@ export function loadDaemonConfig(): DaemonConfig {
 
   const env = resolveEnv();
   const users = resolveUsers(env);
+  const backupDir = env.COMPANION_BACKUP_DIR?.trim() || stored.backupDir?.trim() || undefined;
   const host = env.COMPANION_HOST?.trim() || stored.host || DEFAULTS.host;
   const authMode = authModeFrom(env.COMPANION_AUTH_MODE, stored.authMode);
   if (authMode === 'local' && !isLoopbackHost(host)) {
@@ -229,6 +234,9 @@ export function loadDaemonConfig(): DaemonConfig {
       apiUrl: (env.COMPANION_GITHUB_API_URL?.trim() || stored.githubApiUrl || DEFAULTS.githubApiUrl).replace(/\/+$/, ''),
       host: env.COMPANION_GITHUB_HOST?.trim() || stored.githubHost || DEFAULTS.githubHost,
     },
+    backup: backupDir
+      ? { dir: backupDir, keep: numberFrom(env.COMPANION_BACKUP_KEEP) ?? stored.backupKeep ?? 7 }
+      : undefined,
     users,
     bootstrapToken: env.COMPANION_BOOTSTRAP_TOKEN?.trim() || undefined,
   };
