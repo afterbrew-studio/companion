@@ -1,6 +1,7 @@
 {
   "name": "@moxxy/companion-runtime",
   "version": "0.5.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
