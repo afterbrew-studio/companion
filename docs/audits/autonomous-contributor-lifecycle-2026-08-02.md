@@ -1,7 +1,6 @@
 # Autonomous contributor lifecycle audit
 
 Date: 2026-08-02
-Branch: `feat/autonomous-contributor-lifecycle`
 Scope: all 14 in-tree modules, with emphasis on webhook ingestion, issue triage,
 long-running Board work, large-PR review, pipelines, authorization and the
 governed/autonomous operating model.
@@ -279,7 +278,7 @@ inline or library-referenced steps. The critical invariants are:
   is inserted, so an early label cannot succeed before a later unauthorized
   agent/merge step fails;
 - live authority is checked again before every delayed side effect;
-- agent, AI-review and Contribution Quality steps require both domain rights
+- agent, AI-review and Contribution quality steps require both domain rights
   and `runs:read`/`runs:act`;
 - webhook/background invocations refuse executable and npm-publish steps;
 - an auto-run pipeline cannot be saved with executable/publish steps, including
@@ -292,7 +291,7 @@ inline or library-referenced steps. The critical invariants are:
 - list records stay light; detailed evidence/logs are fetched only for the
   expanded execution.
 
-When Contribution Quality is enabled, the OSS preset screens it before paying
+When Contribution quality is enabled, the OSS preset screens it before paying
 for review and does not post automatically. The internal preset orders quality,
 current CI and an evidence-backed review. If an optional step owner is absent,
 the step is omitted and the UI reports that explicitly rather than implying the
@@ -313,7 +312,7 @@ hidden policy.
 | `automations` | HMAC receiver, durable reactor, schedules and AI Help | Owns the contributor-flow policy, subject-laned delivery inbox, retries/dead letters, hard ceilings, repository circuit breaker, read-only readiness simulation, health UI and fail-closed reconciliation when Board/workspace/webhook disappears. Audited break-glass disable/takeover cover repository work and workspace briefings without identity borrowing. Delivery health batches very large workspace scopes; account probes are bounded/single-flight; auto-merge uses a fair 20-candidate window across at most four repositories concurrently. Webhook secrets stay server-side; enterprise may supply its own HTTPS public URL, while an active flow requires a confirmed GitHub-side hook. Remaining: sustained load/chaos evidence, richer SLO dashboards and narrower typed AI Help capabilities. |
 | `refinement` | Human-reviewed epic decomposition | Useful governed staging before Board: read-only decomposition, uncertainty, dependencies and explicit import. It is intentionally not forced into every issue flow. Remaining: optionally route high-risk/large triage into refinement automatically and score task-size/dependency quality. |
 | `planner` | Guided idea discovery into proposal/refinement/Board | Valuable before code exists; agent actions now align with run permissions and recover durable sessions. Remaining: step-level retry/cancel and compaction-quality measurement. |
-| `slop` / Contribution Quality | Cheap evidence/value/risk/reviewability screen | AI provenance is separated from value. Partial evidence cannot become a confident close recommendation; positive and negative factors stay inspectable. Pipeline permission preflight includes Slop rights. Remaining: calibrate on labelled repositories and post-merge outcomes; finish neutral internal naming. |
+| `slop` / Contribution quality | Cheap evidence/value/risk/reviewability screen | AI provenance is separated from value. Partial evidence cannot become a confident close recommendation; positive and negative factors stay inspectable. Pipeline permission preflight includes Slop rights. Remaining: calibrate on labelled repositories and post-merge outcomes; finish neutral internal naming. |
 | `playground` | Prompt/model regression and pipeline preview | Exact production adapters, immutable adversarial cases and a durable budgeted release gate make prompt changes testable instead of intuitive. Agent actions now require run capabilities. Remaining: gate prompt/model promotion automatically and add repository-specific labelled corpora. |
 | `notify` | Deliver durable inbox events to external channels | Source operations never depend on delivery success, which is correct for autonomy. Remaining: pin validated DNS addresses through connect to close rebinding, then add bounded delivery concurrency/dead letters and SLOs. |
 | `oidc` | Enterprise identity provider | Provides governed account lifecycle without adding per-request auth paths. Remaining defense in depth: nonce/JWKS signature verification, discovery cache/rotation policy and clock-skew tests. |
@@ -350,7 +349,7 @@ The maintainer should not need an agent transcript to understand work:
    progress, retry/cancel and terminal error state.
 8. AI actions appear only with domain plus run authority. Read-only users may
    inspect authorized run evidence without receiving Cancel/Ask controls.
-9. Contribution Quality explains value/evidence/risk separately from AI
+9. Contribution quality explains value/evidence/risk separately from AI
    provenance, reducing the chance that maintainers automate prejudice instead
    of quality control.
 10. Oversized review results are marked “guidance only”, name inspected versus
@@ -402,7 +401,7 @@ does not yet orchestrate that follow-up automatically.
 
 ### P2 learning and product refinement
 
-- Calibrate Contribution Quality and review confidence against maintainer
+- Calibrate Contribution quality and review confidence against maintainer
   overrides, post-merge regressions, reverts and security incidents. Acceptance
   alone is not ground truth.
 - Make a current green Playground release gate a configurable prerequisite for

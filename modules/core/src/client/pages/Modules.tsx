@@ -1,7 +1,18 @@
 import { useState } from 'react';
 import { Slot, useKernel, type ModuleDescriptor } from '@moxxy/companion-core/client';
 import type { ModuleConfigState, ModuleConfigValue } from '@moxxy/companion-core';
-import { ErrorBar, IconButton, ListCard, Modal, Page, PageHeader, Section, Switch, useConfirm } from '@moxxy/companion-ui';
+import {
+  ErrorBar,
+  IconButton,
+  ListCard,
+  Modal,
+  Page,
+  PageHeader,
+  Section,
+  Skeleton,
+  Switch,
+  useConfirm,
+} from '@moxxy/companion-ui';
 import { modulesApi } from '../api.js';
 import { useAuth } from '../lib/auth.js';
 import { ModuleConfigForm } from '../components/ModuleConfigForm.js';
@@ -166,7 +177,12 @@ export function ModulesPage(): React.JSX.Element {
               changes what they mean, not what they are. */}
           <Slot name={`modules.config.${target.mod.id}`} can={can} />
           {target.mode === 'configure' && targetState === undefined && modalError === null ? (
-            <p className="dim py-4 text-center text-sm">Loading…</p>
+            <div className="flex flex-col gap-3 py-1" aria-hidden>
+              <Skeleton className="h-3.5 w-1/3" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-3.5 w-1/4" />
+              <Skeleton className="h-9 w-full" />
+            </div>
           ) : (
             <ModuleConfigForm
               fields={target.mod.config}

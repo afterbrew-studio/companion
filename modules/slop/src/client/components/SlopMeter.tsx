@@ -12,7 +12,7 @@ const BAND_FILL: Record<SlopBandId, string> = {
  *  the lazy page chunk). `lg` is the detection page's headline reading: the
  *  score leads, and the bar takes whatever width it is given. */
 export function SlopMeter({ value, size = 'sm' }: { value: number; size?: 'sm' | 'lg' }): React.JSX.Element {
-  const title = `AI likelihood ${value}/100: the agent's estimate of how likely this PR is AI-generated slop`;
+  const title = `Signal score ${value}/100: an aggregate of the contribution quality signals the enabled rules reported. Context for review, never a judgement of the author.`;
   const fill = (
     <span className={`block h-full rounded-full ${BAND_FILL[slopBand(value).id]}`} style={{ width: `${value}%` }} />
   );
@@ -21,7 +21,7 @@ export function SlopMeter({ value, size = 'sm' }: { value: number; size?: 'sm' |
       <span className="flex items-center gap-3" title={title}>
         <span className="text-4xl leading-none font-semibold tabular-nums">{value}</span>
         <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">{fill}</span>
-        <span className="sr-only">out of 100 AI likelihood</span>
+        <span className="sr-only">out of 100 signal score</span>
       </span>
     );
   }
@@ -29,7 +29,7 @@ export function SlopMeter({ value, size = 'sm' }: { value: number; size?: 'sm' |
     <span className="inline-flex items-center gap-2" title={title}>
       <span className="h-1.5 w-20 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">{fill}</span>
       <span className="w-6 text-right text-xs font-semibold tabular-nums">{value}</span>
-      <span className="sr-only">out of 100 AI likelihood</span>
+      <span className="sr-only">out of 100 signal score</span>
     </span>
   );
 }

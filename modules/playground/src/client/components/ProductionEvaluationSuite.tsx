@@ -164,7 +164,7 @@ export function ProductionEvaluationSuite({
               aria-valuenow={activeSuite.completed}
             >
               <div
-                className="h-full bg-blue-500 transition-[width] duration-300"
+                className="h-full bg-[#2a78d6] transition-[width] duration-300 dark:bg-[#5aa2f0]"
                 style={{ width: `${activeSuite.total ? (activeSuite.completed / activeSuite.total) * 100 : 0}%` }}
               />
             </div>

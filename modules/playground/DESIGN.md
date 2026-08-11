@@ -2,13 +2,13 @@
 
 ## What shipped (first cut)
 
-- **Agent Lab** (`#/playground`): one-shot test runs through
+- **Agent lab** (`#/playground`): one-shot test runs through
   `operate.orchestrator.runOneShot` — always prompt-fenced read-only
   (`buildPlaygroundPrompt`), cwd = the repo's Companion-owned clone or a scratch
   dir, bounded timeout, result rendered as markdown with a transcript link.
   Skill dry-runs are the same endpoint with the skill's content inlined into the
   prompt (deterministic load — no reliance on moxxy discovery order).
-- **Pipeline Lab** (`#/playground/pipelines`): *evaluation only*. It calls
+- **Pipeline lab** (`#/playground/pipelines`): *evaluation only*. It calls
   `code.pipelines.resolveSteps` (made public for exactly this) so the preview
   shows the very snapshot `start()` would execute — refs resolved, overrides
   applied, unresolvable refs flagged with the engine's conservative pre-halt.

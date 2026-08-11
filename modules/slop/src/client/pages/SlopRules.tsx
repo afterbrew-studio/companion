@@ -59,7 +59,7 @@ export default function SlopRules(): React.JSX.Element {
 
   return (
     <Page>
-      <Breadcrumb items={[{ label: 'Contribution Quality', href: '#/slop' }, { label: 'Rules' }]} />
+      <Breadcrumb items={[{ label: 'Contribution quality', href: '#/contribution-quality' }, { label: 'Rules' }]} />
       <PageHeader
         title="Quality Rules"
         subtitle={current.name}

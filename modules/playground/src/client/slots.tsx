@@ -12,7 +12,7 @@ function DryRunSkillButton(props: Record<string, unknown>): React.JSX.Element | 
   const skill = typeof props.skill === 'string' ? props.skill : null;
   if (!skill) return null;
   return (
-    <Tooltip content="Dry-run in the Agent Lab — read-only, nothing is applied">
+    <Tooltip content="Dry-run in the Agent lab — read-only, nothing is applied">
       <IconButton
         label={`Dry-run skill ${skill}`}
         onClick={() => {

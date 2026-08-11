@@ -1,15 +1,21 @@
 import { useCallback, useState } from 'react';
 import { useLive } from '@moxxy/companion-sdk/client';
-import type { CreateMcpServerRequest, McpCheckResult, McpServerRecord } from '../../contract/index.js';
+import type {
+  CreateMcpServerRequest,
+  McpCheckResult,
+  McpServerRecord,
+  UpdateMcpServerRequest,
+} from '../../contract/index.js';
 import { mcpApi } from '../api.js';
 
 export interface McpServersState {
   readonly servers: McpServerRecord[] | null;
   readonly error: string | null;
   readonly busy: boolean;
-  create(draft: CreateMcpServerRequest): Promise<void>;
-  update(id: string, fields: Partial<CreateMcpServerRequest>): Promise<void>;
-  remove(id: string): Promise<void>;
+  /** Resolves false on failure (the message lands in `error`) so a form can stay open. */
+  create(draft: CreateMcpServerRequest): Promise<boolean>;
+  update(id: string, fields: UpdateMcpServerRequest): Promise<boolean>;
+  remove(id: string): Promise<boolean>;
   check(id: string): Promise<McpCheckResult | null>;
 }
 
@@ -29,14 +35,16 @@ export function useMcpServers(): McpServersState {
 
   useLive(load, (msg) => msg.t === 'runtime.changed');
 
-  const guard = async (work: () => Promise<unknown>): Promise<void> => {
+  const guard = async (work: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     try {
       await work();
       await load();
       setError(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusy(false);
     }

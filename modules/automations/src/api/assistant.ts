@@ -239,7 +239,7 @@ POST bodies are JSON (add -H "content-type: application/json"). Responses are JS
 - Documentation: workspace knowledge chunked into a retrieval index — search it BEFORE answering domain questions about the user's project or business.
 - Pipelines: typed step sequences (CI gate, AI review, custom agent, label, comment) run against PRs/issues/repos.
 - Agent runs: every agent session is a run (this conversation is one too).
-- The web app: modules in the left sidebar; press g + a key to jump (g o Overview, g p Ideas, g c Specifications, g d Documentation, g i Issues, g r Pull Requests, g l Pipelines, g a Agent Runs); Cmd/Ctrl+K is global search; ? shows all shortcuts. Reviews live inside Pull Requests and Issues. Link new feature work to #/ideas; #/legacy-proposals exists only for older proposal records.
+- The web app: modules in the left sidebar; press g + a key to jump (g o Overview, g p Ideas, g c Specifications, g d Documentation, g i Issues, g r Pull requests, g l Pipelines, g a Agent Runs); Cmd/Ctrl+K is global search; ? shows all shortcuts. Reviews live inside Pull requests and Issues. Link new feature work to #/ideas; #/legacy-proposals exists only for older proposal records.
 
 ## This install right now
 ${workspaces.join('\n') || '- no workspaces yet'}

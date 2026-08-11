@@ -111,4 +111,4 @@ absent.
   thing* you may do; workspace access says *whose data* you see. Keep them apart.
 
 For the design behind instance-defined roles and grant overrides, read
-`docs/acl-and-roles.md`.
+`docs/internal/acl-and-roles.md`.

@@ -22,7 +22,7 @@ export const onboarding = defineOnboarding([
     permission: 'prs:read',
     title: 'Review issues and pull requests',
     body: 'The Code & review group keeps daily issue and pull-request decisions together, with Pipelines alongside when you need to configure or investigate them.',
-    chips: ['Code & review → Issues', 'Code & review → Pull Requests', 'Code & review → Pipelines'],
+    chips: ['Code & review → Issues', 'Code & review → Pull requests', 'Code & review → Pipelines'],
     art: (playing) => <CodeArt playing={playing} />,
   },
 ]);

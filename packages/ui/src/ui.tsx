@@ -518,6 +518,9 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
   );
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Modal({
   title,
   onClose,
@@ -532,21 +535,69 @@ export function Modal({
   /** Detail-heavy dialogs (side rails, review histories); supersedes `wide`. */
   xl?: boolean;
 }): React.JSX.Element {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Captured during render, before commit moves focus into the dialog.
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    // Respect an autoFocus child (e.g. useConfirm's Cancel), already focused by commit.
+    if (panel && !panel.contains(document.activeElement)) panel.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [opener]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      // Only the dialog owning the focused element reacts (a palette or confirm
+      // stacked above must not chain-close this one); when focus is loose, the
+      // topmost dialog in the DOM claims the key.
+      const owner = e.target instanceof Element ? e.target.closest('[aria-modal="true"]') : null;
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (owner ? owner !== overlayRef.current : modals[modals.length - 1] !== overlayRef.current) return;
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusables.length === 0) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement;
+      const inside = active instanceof HTMLElement && panel.contains(active);
+      if (e.shiftKey ? active === first || !inside : active === last || !inside) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   // Portaled to <body>: a transformed ancestor (e.g. the animated sidebar)
   // would otherwise become the containing block and trap the overlay.
   return createPortal(
     <div
+      ref={overlayRef}
       className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/50 p-6"
       role="dialog"
       aria-modal="true"
       aria-label={title}
       onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
     >
       <div
-        className={`anim-in my-6 w-full ${xl ? 'max-w-5xl' : wide ? 'max-w-3xl' : 'max-w-lg'} overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900`}
+        ref={panelRef}
+        tabIndex={-1}
+        className={`anim-in my-6 w-full ${xl ? 'max-w-5xl' : wide ? 'max-w-3xl' : 'max-w-lg'} overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-700 dark:bg-zinc-900`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
@@ -720,8 +771,26 @@ export function Tabs<T extends string>({
   onChange: (v: T) => void;
   options: ReadonlyArray<{ value: T; label: string; count?: number }>;
 }): React.JSX.Element {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // WAI-ARIA tabs: roving tabindex, arrows move and select, Home/End jump.
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    const index = options.findIndex((o) => o.value === value);
+    let next: number;
+    if (e.key === 'ArrowLeft') next = (index - 1 + options.length) % options.length;
+    else if (e.key === 'ArrowRight') next = (index + 1) % options.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = options.length - 1;
+    else return;
+    e.preventDefault();
+    const option = options[next];
+    if (!option) return;
+    onChange(option.value);
+    listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+  };
+
   return (
-    <div role="tablist" className="flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900">
+    <div ref={listRef} role="tablist" className="flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900" onKeyDown={onKeyDown}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -730,6 +799,7 @@ export function Tabs<T extends string>({
           type="button"
           role="tab"
           aria-selected={value === o.value}
+          tabIndex={value === o.value ? 0 : -1}
           className={`rounded-md px-3 py-1 text-[13px] transition-colors ${
             value === o.value
               ? 'bg-white font-medium shadow-sm dark:bg-zinc-700'

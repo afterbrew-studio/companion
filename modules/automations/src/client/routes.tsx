@@ -22,7 +22,7 @@ const RepositoryAutomationsRoute = lazyView(async () => {
 const DigestRoute = lazyView(async () => {
   const { DigestPage } = await import('./pages/Digest.js');
   const Gated = (_props: RouteProps): React.JSX.Element => (
-    <RequiresRepo what="Daily Digest"><DigestPage /></RequiresRepo>
+    <RequiresRepo what="Daily digest"><DigestPage /></RequiresRepo>
   );
   return { default: Gated };
 });
@@ -32,7 +32,7 @@ const DigestRoute = lazyView(async () => {
 const DigestLiveRoute = lazyView(async () => {
   const { DigestLivePage } = await import('./pages/DigestLive.js');
   const Wrapped = ({ params }: RouteProps): React.JSX.Element => (
-    <RequiresRepo what="Daily Digest">
+    <RequiresRepo what="Daily digest">
       <DigestLivePage key={params.repo} repo={params.repo!} />
     </RequiresRepo>
   );

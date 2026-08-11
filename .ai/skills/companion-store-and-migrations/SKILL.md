@@ -20,7 +20,7 @@ camelCase DTOs.
 
 ```ts
 import type { Database } from '@moxxy/companion-sdk/server';
-import type { WidgetRecord } from '@companion/contract';
+import type { WidgetRecord } from '../contract/index.js';
 
 /** One-line statement of what this store owns. */
 export class WidgetsStore {
