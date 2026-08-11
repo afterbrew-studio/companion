@@ -17,6 +17,14 @@ type CodeReportAccess = {
   };
 };
 
+// pipelines/step_definitions are code-owned; a workspace delete asks their
+// owner to clean up, and skips silently when the module is absent.
+type CodePipelinesCleanup = {
+  readonly pipelines: {
+    removeForWorkspace(workspaceId: string): void;
+  };
+};
+
 const workspaceSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(500).default(''),
@@ -188,6 +196,10 @@ export default defineRoutes((ctx) => {
         if (workspaces.list().length === 1) {
           throw badRequest('cannot delete the last workspace');
         }
+        const code = (ctx.services.tryGet.bind(ctx.services) as (key: string) => unknown)('code') as
+          | CodePipelinesCleanup
+          | undefined;
+        code?.pipelines.removeForWorkspace(params.id);
         workspaces.delete(params.id);
         ctx.broadcast({ t: 'workspaces.changed' });
         return { ok: true };
@@ -248,6 +260,11 @@ export default defineRoutes((ctx) => {
         requireManage(user, params.id);
         if (params.username === user!.username && !ctx.rbac.allows(user!, 'workspaces:manage')) {
           throw badRequest('the owner cannot remove themselves — delete the workspace instead');
+        }
+        // The store skips owner rows; a 200 here would report a removal that
+        // never happened.
+        if (workspaces.members(params.id).some((m) => m.username === params.username && m.role === 'owner')) {
+          throw badRequest('the workspace owner cannot be removed: delete the workspace instead');
         }
         workspaces.removeMember(params.id, params.username);
         ctx.broadcast({ t: 'workspaces.changed' });

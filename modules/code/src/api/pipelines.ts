@@ -1702,6 +1702,17 @@ export class Pipelines {
     this.broadcast({ t: 'pipelines.changed' });
   }
 
+  /**
+   * Drop every pipeline and library step a workspace owns. Called by
+   * module-workspace when the workspace itself is deleted; these tables are
+   * code-owned, so the cleanup lives with their owner.
+   */
+  removeForWorkspace(workspaceId: string): void {
+    this.deps.store.pipelines.deleteByWorkspace(workspaceId);
+    this.collectSecrets();
+    this.broadcast({ t: 'pipelines.changed' });
+  }
+
   private assertAutoRunSafe(
     type: PipelineType,
     specs: ReadonlyArray<PipelineStepSpec>,
