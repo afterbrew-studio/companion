@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { runIntent, useIntent } from '@moxxy/companion-sdk/client';
+import { runIntent, useIntent, useModuleEnabled } from '@moxxy/companion-sdk/client';
 import {
   AiActionMenu,
   CardActions,
@@ -580,7 +580,7 @@ function EditSpecModal({
   );
 }
 
-/** Spec → Ideas: open the guided planner with the specification prefilled. */
+/** Spec → feature: hand off to the guided planner when present, else file the proposal directly. */
 function CreateFeatureModal({
   spec,
   onClose,
@@ -590,26 +590,48 @@ function CreateFeatureModal({
   onClose: () => void;
   onFiled: () => void;
 }): React.JSX.Element {
+  // planner owns #/ideas and may be absent from the build; without it, plan's
+  // own create-feature route files the proposal and starts its analysis.
+  const plannerEnabled = useModuleEnabled('planner');
   const [title, setTitle] = useState(spec.title);
   const [notes, setNotes] = useState('');
-  const submit = (e: React.FormEvent): void => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    const idea = [
-      `Plan and implement the feature described by the existing specification "${title.trim() || spec.title}".`,
-      notes.trim() ? `Additional scope:\n${notes.trim()}` : '',
-      `Specification:\n${spec.content}`,
-    ].filter(Boolean).join('\n\n').slice(0, 8_000);
-    sessionStorage.setItem('companion.idea.prefill', JSON.stringify({ repo: spec.repo, idea }));
-    onFiled();
-    window.location.hash = '/ideas';
+    if (plannerEnabled) {
+      const idea = [
+        `Plan and implement the feature described by the existing specification "${title.trim() || spec.title}".`,
+        notes.trim() ? `Additional scope:\n${notes.trim()}` : '',
+        `Specification:\n${spec.content}`,
+      ].filter(Boolean).join('\n\n').slice(0, 8_000);
+      sessionStorage.setItem('companion.idea.prefill', JSON.stringify({ repo: spec.repo, idea }));
+      onFiled();
+      window.location.hash = '/ideas';
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.createFeatureFromSpec(spec.id, {
+        title: title.trim() || spec.title,
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      });
+      onFiled();
+      window.location.hash = '/legacy-proposals';
+    } catch (err) {
+      setError(String(err));
+      setBusy(false);
+    }
   };
 
   return (
     <Modal title={`Create feature from spec — ${spec.title}`} onClose={onClose}>
-      <form className="flex flex-col gap-3" onSubmit={submit}>
+      <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <p className="dim text-[13px]">
-          Opens Ideas with this specification prefilled. The guided planner confirms scope, builds the
-          remaining artifacts, prepares tasks and asks before any agent starts coding.
+          {plannerEnabled
+            ? 'Opens Ideas with this specification prefilled. The guided planner confirms scope, builds the remaining artifacts, prepares tasks and asks before any agent starts coding.'
+            : 'Files a proposal that embeds this specification as the source of truth and starts its feasibility analysis right away.'}
         </p>
         <Field label="Feature title">
           <input
@@ -629,12 +651,13 @@ function CreateFeatureModal({
             placeholder="e.g. only the first two sections for now; skip the admin surface"
           />
         </Field>
+        <ErrorBar error={error} />
         <FormActions>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" type="submit" disabled={!title.trim()}>
-            Continue in Ideas
+          <button className="btn" type="submit" disabled={busy || !title.trim()}>
+            {plannerEnabled ? 'Continue in Ideas' : busy ? 'Filing…' : 'Create feature'}
           </button>
         </FormActions>
       </form>
