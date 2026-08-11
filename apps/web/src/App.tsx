@@ -105,9 +105,7 @@ export function App(): React.JSX.Element {
 /** Login wall: onboarding on clean installs, else login, else the app. */
 function Gate(): React.JSX.Element {
   const { user, needsSetup } = useAuth();
-  if (user === undefined) {
-    return <div className="dim flex h-full items-center justify-center">Loading…</div>;
-  }
+  if (user === undefined) return <PageLoading />;
   if (needsSetup) return <SetupPage />;
   if (user === null) return <LoginPage />;
   return (
@@ -192,23 +190,6 @@ function Shell(): React.JSX.Element {
     [authMode, kernel.nav, can],
   );
 
-  // One route winner feeds highlight, breadcrumbs and active-group unfolding.
-  const activeNavKey = useMemo(() => {
-    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
-    let claimed: string | null = null;
-    let best: { key: string; len: number } | null = null;
-    for (const m of kernel.nav) {
-      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
-      const matches =
-        hash === m.hash ||
-        hash.startsWith(`${m.hash}/`) ||
-        hash.startsWith(`${m.hash}?`) ||
-        (m.key === 'overview' && hash === '#/');
-      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
-    }
-    return claimed ?? best?.key ?? null;
-  }, [kernel.nav, hash]);
-
   const activePerspective = navigationAudience;
 
   // Collapse choices are per browser AND per menu preset. Switching from a
@@ -275,6 +256,32 @@ function Shell(): React.JSX.Element {
     [activePerspective, navOverrides, sidebarEntries, sidebarSections],
   );
   const navEntries = perspectiveEntries;
+
+  // The landing pick: lowest `home` among what this viewer kept visible. Shared
+  // by the '#/' redirect and the transient '#/' highlight, so no module name is
+  // ever hardcoded and builds without any given module still land somewhere.
+  const landingEntry = useMemo(() => {
+    const pool = navEntries.length > 0 ? navEntries : visibleModules;
+    return [...pool].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
+  }, [navEntries, visibleModules]);
+
+  // One route winner feeds highlight, breadcrumbs and active-group unfolding.
+  const activeNavKey = useMemo(() => {
+    const path = hash.replace(/^#/, '').split('?')[0] ?? '';
+    let claimed: string | null = null;
+    let best: { key: string; len: number } | null = null;
+    for (const m of kernel.nav) {
+      if (claimed === null && m.owns?.some((pattern) => pattern.test(path))) claimed = m.key;
+      const matches =
+        hash === m.hash ||
+        hash.startsWith(`${m.hash}/`) ||
+        hash.startsWith(`${m.hash}?`) ||
+        (hash === '#/' && m.key === landingEntry?.key);
+      if (matches && (best === null || m.hash.length > best.len)) best = { key: m.key, len: m.hash.length };
+    }
+    return claimed ?? best?.key ?? null;
+  }, [kernel.nav, hash, landingEntry]);
+
   const shortcutTargets = useMemo(
     () =>
       visibleModules
@@ -390,10 +397,8 @@ function Shell(): React.JSX.Element {
   useEffect(() => {
     const path = hash.replace(/^#/, '');
     if (path !== '/' && path !== '') return;
-    const pool = navEntries.length > 0 ? navEntries : visibleModules;
-    const landing = [...pool].sort((a, b) => (a.home ?? Infinity) - (b.home ?? Infinity))[0];
-    if (landing) location.hash = landing.hash;
-  }, [hash, navEntries, visibleModules]);
+    if (landingEntry) location.hash = landingEntry.hash;
+  }, [hash, landingEntry]);
 
   const sections = useMemo(() => groupSections(kernel.sections, navEntries), [kernel.sections, navEntries]);
   const settingsSections = useMemo(
