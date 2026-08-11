@@ -13,6 +13,27 @@ const REVIEW_TIMEOUT_MS = 45 * 60_000;
 const PROBE_TIMEOUT_MS = 15_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 512 * 1024;
+// The integrations boundary schema bounds (integrations-service.ts). Vendor
+// output past them must be clamped here, or the whole review dies at zod.
+const MAX_FINDINGS = 500;
+const MAX_SUMMARY_CHARS = 20_000;
+const MAX_FILE_CHARS = 1_000;
+const MAX_TITLE_CHARS = 180;
+
+/**
+ * Availability loss (fall back to another provider) as distinct from a
+ * substantive review failure. Word-anchored so a message that merely contains
+ * the letters ("reconnect strategy failed") does not silently fall back; a
+ * structured error code, when the CLI provides one, is judged instead of the
+ * wording.
+ */
+const AVAILABILITY_PATTERN =
+  /\b(?:auth\w*|unauth\w*|credential\w*|log(?:ged)?[\s-]?in|sign(?:ed)?[\s-]?in|network|connect\w*|offline)\b/i;
+
+function availabilityError(code: string | null, message: string): boolean {
+  if (code) return AVAILABILITY_PATTERN.test(code.replace(/[_-]/g, ' '));
+  return AVAILABILITY_PATTERN.test(message);
+}
 
 interface AgentEvent {
   readonly type?: unknown;
@@ -26,6 +47,8 @@ interface AgentEvent {
   readonly status?: unknown;
   readonly message?: unknown;
   readonly error?: unknown;
+  /** Machine-readable failure class, when the CLI provides one. */
+  readonly code?: unknown;
 }
 
 export const coderabbitProvider: IntegrationProviderAdapter = {
@@ -103,7 +126,7 @@ export const coderabbitProvider: IntegrationProviderAdapter = {
     const parsed = parseAgentOutput(result.stdout);
     if (result.code !== 0) {
       const message = parsed.error ?? (result.stderr.trim() || `CodeRabbit exited with ${result.code}`);
-      if (/auth|credential|log\s*in|sign(?:ed)?\s*in|network|connect/i.test(message)) {
+      if (availabilityError(parsed.errorCode, message)) {
         throw new IntegrationUnavailableError(message);
       }
       throw new Error(message);
@@ -153,24 +176,38 @@ export function parseAgentOutput(output: string): {
   readonly skipped: boolean;
   readonly summary: string | null;
   readonly error: string | null;
+  readonly errorCode: string | null;
 } {
-  const findings: IntegrationReviewFinding[] = [];
+  let findings: IntegrationReviewFinding[] = [];
   let complete = false;
   let skipped = false;
   let summary: string | null = null;
   let error: string | null = null;
+  let errorCode: string | null = null;
   for (const line of output.split(/\r?\n/)) {
     const event = parseEvent(line);
     if (!event) continue;
     if (event.type === 'finding') findings.push(toFinding(event));
-    if (event.type === 'error') error = stringValue(event.message) || stringValue(event.error) || 'CodeRabbit review failed';
+    if (event.type === 'error') {
+      error = stringValue(event.message) || stringValue(event.error) || 'CodeRabbit review failed';
+      errorCode = stringValue(event.code) || stringValue(event.status) || null;
+    }
     if (event.type === 'complete') {
       complete = true;
       skipped = event.status === 'review_skipped';
       summary = stringValue(event.message) || summary;
     }
   }
-  return { findings, complete, skipped, summary, error };
+  if (summary !== null && summary.length > MAX_SUMMARY_CHARS) summary = summary.slice(0, MAX_SUMMARY_CHARS);
+  if (findings.length > MAX_FINDINGS) {
+    const note = `CodeRabbit reported ${findings.length} findings; only the first ${MAX_FINDINGS} are shown.`;
+    findings = findings.slice(0, MAX_FINDINGS);
+    summary =
+      summary === null
+        ? `${summaryFor(findings)} ${note}`
+        : `${summary.slice(0, MAX_SUMMARY_CHARS - note.length - 1)}\n${note}`;
+  }
+  return { findings, complete, skipped, summary, error, errorCode };
 }
 
 function parseEvent(line: string): AgentEvent | null {
@@ -189,7 +226,7 @@ function toFinding(event: AgentEvent): IntegrationReviewFinding {
   const instructions = stringValue(event.codegenInstructions);
   const reason = instructions || comment || 'CodeRabbit reported a finding.';
   const suggestion = suggestionsText(event.suggestions);
-  const file = stringValue(event.fileName) || null;
+  const file = stringValue(event.fileName).slice(0, MAX_FILE_CHARS) || null;
   return {
     severity: severityOf(event.severity),
     title: titleOf(comment || pointOf(instructions) || reason, file),
@@ -247,8 +284,8 @@ function pointOf(instructions: string): string {
 
 function titleOf(reason: string, file: string | null): string {
   const first = reason.split(/\n|(?<=[.!?])\s/)[0]?.replace(/^[-*#\s]+/, '').trim();
-  if (first) return first.slice(0, 180);
-  return file ? `Review finding in ${file}` : 'CodeRabbit review finding';
+  if (first) return first.slice(0, MAX_TITLE_CHARS);
+  return (file ? `Review finding in ${file}` : 'CodeRabbit review finding').slice(0, MAX_TITLE_CHARS);
 }
 
 function suggestionsText(value: unknown): string {
