@@ -28,7 +28,7 @@ boundary-safe stream scrubber, detection parsing, secret ownership, the remedy
 vocabulary). Nothing has yet published a real package, merged a real PR, or been
 rendered in a browser.
 
-The goal is narrow and concrete: make `~/.claude/scripts/octane-merge-pr.sh` a
+The goal is narrow and concrete: make a maintainer's local merge script a
 Companion pipeline, so landing a PR that adds an npm package stops being a
 terminal session. Everything here follows from that one target.
 
@@ -222,7 +222,7 @@ run, live for one invocation only, and never present in the audit trail.
 
 ### 4.1 Which token
 
-An npm **granular access token**, scoped to the `@octanejs` scope only, with
+An npm **granular access token**, scoped to the project's npm scope only, with
 publish permission, with an expiry set (30 or 90 days) and a rotation reminder.
 Not a classic token: classic tokens are all-or-nothing and require an OTP per
 write, which cannot be serviced without a tty.
@@ -430,7 +430,7 @@ else's package and no amount of env hygiene changes it.
 
 For this repository it is closeable. Bindings ship raw `src` with
 `files: ["src","README.md","LICENSE"]` and have no build, so there is nothing for
-a prepack to legitimately do. `octane` itself has a `prepack`, but `octane` is not
+a prepack to legitimately do. The root package itself has a `prepack`, but it is not
 what gets bootstrapped. So: **`--ignore-scripts` on the bootstrap publish**, with
 the step failing loudly rather than silently dropping a script if a package that
 genuinely needs one ever appears.
@@ -686,7 +686,7 @@ Blocks: everything below.
 
 Output lands in `detail` for now, tail-clipped at the raised cap.
 
-Verify: a `platform` pipeline running `pnpm packages:inventory` on octane.
+Verify: a `platform` pipeline running `pnpm packages:inventory` on the target repository.
 
 ### PR 3b. Streamed step output
 
@@ -734,7 +734,7 @@ Split by concern, in order:
 The step from §5, with the count cross-check in TypeScript. Land the whole
 `land-new-package` pipeline as a preset once it is green.
 
-Retires `~/.claude/scripts/octane-merge-pr.sh`. Keep the script until the pipeline
+Retires the maintainer's local merge script. Keep the script until the pipeline
 has landed a real PR; the script is the reference implementation and the fallback.
 
 ### Deferred

@@ -43,3 +43,12 @@ and `codex-adapter.test.mjs` asserts those record types are ignored by removing
 them entirely and requiring the transcript not to move. Its working directory
 was renamed to `/capture`, which is the one machine-specific string an adapter
 genuinely reads, since it appears inside the commands that were run.
+
+The three Claude Code files carry one further edit of the same kind: the
+capture's working directory and memory paths were renamed to neutral ones
+(preserving the `alpha.txt`/`beta.txt`/`gamma.txt` names the transcript keys
+on, including inside the streamed `input_json_delta` fragments), the session
+ids and the init frames' uuids were regenerated, and the init frames' tool,
+slash-command, agent, skill and MCP-server inventories were replaced with
+minimal generic lists. The tests assert the tools list is non-empty, never
+what any inventory contains.

@@ -44,9 +44,9 @@ is materially safer for unattended operation, but the remaining P0/P1 items at
 the end of this document still matter before advertising arbitrary-repository,
 high-volume enterprise autonomy as hands-off.
 
-## Why the Octane workload is a useful target
+## Why the pilot workload is a useful target
 
-[`octanejs/octane`](https://github.com/octanejs/octane/pulls) is a deliberately
+The pilot repository is a deliberately
 difficult fixture: its queue changes while it is being measured and mixes
 drafts, conflicts, generated/agent-labelled contributions and very large
 cross-cutting changes. Two snapshots are kept separate here:
@@ -359,7 +359,7 @@ The maintainer should not need an agent transcript to understand work:
 11. AI Help is a right-side drawer and remains a secondary surface rather than
    displacing primary navigation/content.
 
-The remaining UX gap for Octane-scale outliers is turning the review map into an
+The remaining UX gap for pilot-scale outliers is turning the review map into an
 interactive execution plan: let the maintainer approve/reorder slices, run a
 bounded review for one slice, and carry verified evidence forward without
 rerunning the whole PR. The current map makes the outlier actionable, but it
@@ -440,7 +440,7 @@ Checks completed while producing this audit:
   `off → daily(owner) → send now → off`.
 - a second isolated slim-profile daemon installed Plan, Board and Automations
   through their real authenticated module APIs, created a local workspace,
-  connected and cloned `octanejs/octane`, and returned a complete live governed
+  connected and cloned the pilot repository, and returned a complete live governed
   dry-run at `2026-08-02T22:20:31.737Z`: 50 PRs, four issues, 349,587 known
   changed lines, eight current cached passing heads, 17 failing and 25 unknown.
   It correctly reported `blocked` solely because public confirmed webhook
