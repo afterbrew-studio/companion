@@ -323,6 +323,7 @@ installs a module from a registry, tarball, or directory.
 | [Releases](docs/releases.md) | immutable versions, generated notes, npm tarballs, checksums, and required repository SBOMs |
 | [Permissions and roles](docs/permissions.md) | custom RBAC, API access, and audit decisions |
 | [Operating modules](docs/operating-modules.md) | lifecycle and out-of-tree modules |
+| [External modules](docs/external-modules.md) | authoring, verifying, and publishing out-of-tree modules |
 | [Companion for enterprise](ENTERPRISE.md) | deployment, governance, and honest limitations |
 | [Development](docs/development.md) | local setup, profiles, and quality gates |
 | [Contributing](CONTRIBUTING.md) | issues, local development, verification, and pull requests |
