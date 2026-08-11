@@ -154,6 +154,9 @@ export interface OnboardingStep {
   readonly order: number;
   /** Hide unless the viewer holds this permission (the contributing module's own). */
   readonly permission?: Permission;
+  /** Hide when the viewer HOLDS this permission: the read-only counterpart of a
+   *  `permission`-gated step, so the pair covers every role exactly once. */
+  readonly withoutPermission?: Permission;
   readonly title: string;
   readonly body: string;
   readonly chips?: readonly string[];

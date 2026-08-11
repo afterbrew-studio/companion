@@ -67,6 +67,17 @@ export const onboarding = defineOnboarding([
     cta: { label: 'Connect GitHub', href: '#/github' },
   },
   {
+    // Read-only variant of `connect` for roles without settings:manage, so the
+    // setup-critical step does not silently vanish from their tour.
+    key: 'connect-maintainer',
+    order: 20,
+    withoutPermission: 'settings:manage',
+    title: 'Connect GitHub, add repositories',
+    body: 'Repositories arrive when an admin connects GitHub and adds them from Settings. Once that is done, issues and pull requests sync into the active workspace automatically.',
+    chips: ['Ask an admin'],
+    art: (playing) => <LinkArt playing={playing} />,
+  },
+  {
     key: 'assistant',
     order: 50,
     title: 'AI Help — your platform copilot',
