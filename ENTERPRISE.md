@@ -6,9 +6,10 @@ and what is not built yet.
 
 This document is honest about the last part. Sections are tagged **[available]**
 or **[not built]**, and the design for anything not built is in
-[`docs/modular-distribution.md`](docs/modular-distribution.md),
-[`docs/acl-and-roles.md`](docs/acl-and-roles.md) and
-[`docs/game-plan.md`](docs/game-plan.md). For an actual evaluation, use the
+[`docs/internal/modular-distribution.md`](docs/internal/modular-distribution.md),
+[`docs/internal/acl-and-roles.md`](docs/internal/acl-and-roles.md) and
+[`docs/internal/game-plan.md`](docs/internal/game-plan.md) (internal working
+documents). For an actual evaluation, use the
 [company-pilot gate](docs/security/company-pilot.md) and retain its evidence.
 
 ---
@@ -564,8 +565,9 @@ the moxxy proxy relay, which an internal network often blocks outright.
 `COMPANION_PUBLIC_URL` does not feed it; the two are set separately.
 
 The split between OSS core work and what belongs in a commercial module is in
-`docs/modular-distribution.md` §10: the seams are core work, because a separate
-module cannot change a constant inside another one.
+`docs/internal/modular-distribution.md` §10 (internal working document): the
+seams are core work, because a separate module cannot change a constant inside
+another one.
 
 ---
 
@@ -636,10 +638,12 @@ AI agent runs reach a model provider, and repository sync reaches GitHub.
 ## 9. Getting the parts that are missing
 
 The sequencing, with what each mechanism cost, is in
-[`docs/game-plan.md`](docs/game-plan.md). Every phase P0 to P9 is built.
+[`docs/internal/game-plan.md`](docs/internal/game-plan.md) (internal working
+document). Every phase P0 to P9 is built.
 
 The full list of what is not built, with what exists in each case, is
-[`docs/open-items.md`](docs/open-items.md). Two of them appear on this page,
+[`docs/internal/open-items.md`](docs/internal/open-items.md) (internal working
+document). Two of them appear on this page,
 and neither is a mechanism: **commercial modules** to put behind the entitlement
 gate, and a **Vault or KMS backend** for the secret store. Both seams exist and
 are tested; what is missing is a module.

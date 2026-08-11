@@ -22,7 +22,7 @@ daemon. The browser half was verified in a real browser: the module's nav entry
 and page render, its `request()` calls carry the host's session, and the console
 is clean.
 
-`docs/modular-distribution.md` §6 is the design; this skill is the built shape.
+`docs/internal/modular-distribution.md` §6 is the design; this skill is the built shape.
 
 An out-of-tree module is still the expensive option. Prefer:
 
