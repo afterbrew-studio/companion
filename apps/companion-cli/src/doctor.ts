@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { readToken } from './client.js';
 import { runningPid } from './daemon.js';
-import { detectGhLogin } from './github.js';
+import { detectGhLogin, resolveGithubHost } from './github.js';
 import { readHarnessOptions } from './harnesses.js';
 import { readStoredAuthMode } from './setup.js';
 import { assertSupportedNode, MIN_NODE_MAJOR } from './preflight.js';
@@ -206,6 +206,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
   }
 
   const gh = probeCommand('gh', ['--version']);
+  const ghHost = resolveGithubHost();
   if (!gh.installed) {
     checks.push({
       id: 'github-cli',
@@ -213,11 +214,11 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
       message: 'GitHub CLI is not installed; automatic account adoption is unavailable.',
       fix: 'Install gh, then run gh auth login.',
     });
-  } else if (!gh.ready || !detectGhLogin()) {
+  } else if (!gh.ready || !detectGhLogin(ghHost)) {
     checks.push({
       id: 'github-cli',
       status: 'warn',
-      message: 'GitHub CLI is installed but has no active authenticated github.com account.',
+      message: `GitHub CLI is installed but has no active authenticated ${ghHost} account.`,
       fix: 'Run gh auth login.',
     });
   } else {

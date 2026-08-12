@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { readRegularTextFile, writePrivateTextFile } from '@moxxy/companion-services';
+import { readRegularTextFile, resolveGithubHost, writePrivateTextFile } from '@moxxy/companion-services';
+export { resolveGithubHost };
 const PENDING_FILE = 'pending-gh-import.json';
 
 interface PendingGhImport {
@@ -15,26 +16,26 @@ export interface CompanionCredentials {
 
 export type CompanionAuth = CompanionCredentials | { readonly bearerToken: string };
 
-/** Active github.com identity from gh's local auth metadata. Never reads the token. */
-export function detectGhLogin(): string | null {
+/** Active identity for the configured GitHub host from gh's local auth metadata. Never reads the token. */
+export function detectGhLogin(host: string = resolveGithubHost()): string | null {
   try {
     const raw = execFileSync(
       'gh',
-      ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'],
+      ['auth', 'status', '--active', '--hostname', host, '--json', 'hosts'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 },
     );
-    return parseGhLogin(raw);
+    return parseGhLogin(raw, host);
   } catch {
     return null;
   }
 }
 
-export function parseGhLogin(raw: string): string | null {
+export function parseGhLogin(raw: string, host: string = resolveGithubHost()): string | null {
   try {
     const parsed = JSON.parse(raw) as {
       hosts?: Record<string, Array<{ active?: unknown; login?: unknown; state?: unknown }>>;
     };
-    const account = parsed.hosts?.['github.com']?.find(
+    const account = parsed.hosts?.[host]?.find(
       (candidate) => candidate.active === true && candidate.state === 'success' && typeof candidate.login === 'string',
     );
     return account && typeof account.login === 'string' && account.login.trim() ? account.login.trim() : null;
@@ -85,13 +86,14 @@ export async function connectGhAccount(
   auth: CompanionAuth,
   expectedLogin?: string,
 ): Promise<string> {
-  const active = detectGhLogin();
-  if (!active) throw new Error('gh is not authenticated for github.com. Run `gh auth login` and retry.');
+  const host = resolveGithubHost();
+  const active = detectGhLogin(host);
+  if (!active) throw new Error(`gh is not authenticated for ${host}. Run \`gh auth login\` and retry.`);
   if (expectedLogin && active !== expectedLogin) {
     throw new Error(`GitHub import expects gh account ${expectedLogin}, but ${active} is active. Switch accounts and retry.`);
   }
 
-  const token = readGhToken();
+  const token = readGhToken(host);
   const borrowedSession = 'bearerToken' in auth;
   let sessionHeaders: Record<string, string>;
   if (borrowedSession) {
@@ -141,9 +143,9 @@ export async function connectGhAccount(
   }
 }
 
-function readGhToken(): string {
+function readGhToken(host: string): string {
   try {
-    const token = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], {
+    const token = execFileSync('gh', ['auth', 'token', '--hostname', host], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 5_000,
@@ -151,7 +153,7 @@ function readGhToken(): string {
     if (!token) throw new Error('empty token');
     return token;
   } catch {
-    throw new Error('Could not read the active github.com token from gh. Run `gh auth login` and retry.');
+    throw new Error(`Could not read the active ${host} token from gh. Run \`gh auth login\` and retry.`);
   }
 }
 

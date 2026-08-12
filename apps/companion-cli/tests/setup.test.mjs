@@ -16,7 +16,7 @@ import {
   writePendingAdminSetup,
   writeStoredAuthMode,
 } from '../dist/setup.js';
-import { parseGhLogin, pendingGhLogin, scheduleGhImport } from '../dist/github.js';
+import { parseGhLogin, pendingGhLogin, resolveGithubHost, scheduleGhImport } from '../dist/github.js';
 
 const cli = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 
@@ -97,11 +97,49 @@ test('gh bootstrap stores consent and expected identity without a token', () => 
 
 test('active gh login parser fails closed on malformed or inactive metadata', () => {
   assert.equal(
-    parseGhLogin(JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'octocat' }] } })),
+    parseGhLogin(
+      JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'octocat' }] } }),
+      'github.com',
+    ),
     'octocat',
   );
-  assert.equal(parseGhLogin(JSON.stringify({ hosts: { 'github.com': [{ active: false, login: 'octocat' }] } })), null);
-  assert.equal(parseGhLogin('not-json'), null);
+  assert.equal(
+    parseGhLogin(JSON.stringify({ hosts: { 'github.com': [{ active: false, login: 'octocat' }] } }), 'github.com'),
+    null,
+  );
+  assert.equal(parseGhLogin('not-json', 'github.com'), null);
+});
+
+test('active gh login parser reads the entry for a GHES host, not github.com', () => {
+  const raw = JSON.stringify({
+    hosts: {
+      'github.com': [{ active: true, state: 'success', login: 'personal' }],
+      'ghe.corp': [{ active: true, state: 'success', login: 'corp-octocat' }],
+    },
+  });
+  assert.equal(parseGhLogin(raw, 'ghe.corp'), 'corp-octocat');
+  assert.equal(parseGhLogin(raw, 'github.com'), 'personal');
+  assert.equal(parseGhLogin(JSON.stringify({ hosts: { 'ghe.corp': [] } }), 'ghe.corp'), null);
+});
+
+test('the gh host resolves like the daemon: env, then stored config, then github.com', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'companion-cli-gh-host-'));
+  const saved = { home: process.env.COMPANION_HOME, host: process.env.COMPANION_GITHUB_HOST };
+  process.env.COMPANION_HOME = home;
+  delete process.env.COMPANION_GITHUB_HOST;
+  t.after(() => {
+    if (saved.home === undefined) delete process.env.COMPANION_HOME;
+    else process.env.COMPANION_HOME = saved.home;
+    if (saved.host === undefined) delete process.env.COMPANION_GITHUB_HOST;
+    else process.env.COMPANION_GITHUB_HOST = saved.host;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  assert.equal(resolveGithubHost(), 'github.com');
+  writeFileSync(join(home, 'companiond.json'), JSON.stringify({ githubHost: 'stored.ghe.corp' }));
+  assert.equal(resolveGithubHost(), 'stored.ghe.corp');
+  process.env.COMPANION_GITHUB_HOST = 'env.ghe.corp';
+  assert.equal(resolveGithubHost(), 'env.ghe.corp');
 });
 
 test('confirmation box exposes generated credentials but never a chosen password', () => {

@@ -238,7 +238,7 @@ export function loadDaemonConfig(): DaemonConfig {
     publicUrl: env.COMPANION_PUBLIC_URL?.trim() || stored.publicUrl || undefined,
     github: {
       apiUrl: (env.COMPANION_GITHUB_API_URL?.trim() || stored.githubApiUrl || DEFAULTS.githubApiUrl).replace(/\/+$/, ''),
-      host: env.COMPANION_GITHUB_HOST?.trim() || stored.githubHost || DEFAULTS.githubHost,
+      host: githubHostFrom(env, stored),
     },
     backup: backupDir
       ? { dir: backupDir, keep: numberFrom(env.COMPANION_BACKUP_KEEP) ?? stored.backupKeep ?? 7 }
@@ -247,6 +247,25 @@ export function loadDaemonConfig(): DaemonConfig {
     bootstrapToken: env.COMPANION_BOOTSTRAP_TOKEN?.trim() || undefined,
     trustedProxies: listFrom(env.COMPANION_TRUSTED_PROXIES),
   };
+}
+
+const githubHostFrom = (env: Record<string, string>, stored: StoredConfig): string =>
+  env.COMPANION_GITHUB_HOST?.trim() || stored.githubHost || DEFAULTS.githubHost;
+
+/**
+ * The GitHub host this install talks to, resolved exactly as loadDaemonConfig
+ * resolves `github.host` but without its boot side effects (no directory
+ * creation, no config seeding). CLI callers use it for `gh --hostname` identity
+ * work so a GHES instance imports the matching gh account.
+ */
+export function resolveGithubHost(): string {
+  let stored: StoredConfig = {};
+  try {
+    stored = JSON.parse(readRegularTextFile(paths.daemonConfig(), { maxBytes: 1024 * 1024 })) as StoredConfig;
+  } catch {
+    // An uninitialized home has no stored config; env layers and the default apply.
+  }
+  return githubHostFrom(resolveEnv(), stored);
 }
 
 /** Comma-separated list; syntax of each entry is validated where it is used. */

@@ -126,7 +126,11 @@ and `latest`; an SPDX SBOM of the image is attached to the matching GitHub
 release. Pin the version tag in anything long-lived, and see
 [`upgrades.md`](upgrades.md) for moving between versions. Both volumes matter:
 `/data` holds Companion's state and `/home/node/.moxxy` holds moxxy's provider
-credentials.
+credentials (the vault agent runs authenticate with), which live outside the
+database and are lost with the volume. With `COMPANION_BACKUP_DIR` set, the
+daemon's scheduled job covers both: verified database snapshots plus a
+`moxxy-home-<stamp>.tar.gz` archive of the credential home beside them; see
+[`upgrades.md`](upgrades.md).
 
 Building from source stays fully supported and is the path for a custom module
 profile. The image runs the same bundle as the npx package: the build stage
