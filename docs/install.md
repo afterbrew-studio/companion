@@ -162,11 +162,12 @@ that key by design, so export it to a separate protected backup or mount
 encrypted database when no matching key is available.
 
 Both container targets run the application as the unprivileged `node` account
-(uid/gid `1000`). New named volumes inherit the correct ownership. For bind
-mounts, create the directories for uid `1000` before first boot; do not make
-state or private keys world-writable as a workaround. The Compose service also
+(uid/gid `1000`). Compose first runs a finite init service which assigns only
+the two persisted roots to that account; this also handles Coolify's root-owned
+persistent mounts and upgrades from older images. The long-running service
 drops every Linux capability, enables `no-new-privileges`, mounts the image
 read-only, and gives only `/tmp` an ephemeral, size-bounded writable filesystem.
+Do not make state or private keys world-writable as a workaround.
 
 ```sh
 docker compose up -d --build        # background

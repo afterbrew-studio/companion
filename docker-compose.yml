@@ -15,6 +15,9 @@ services:
         - INSTALL_MOXXY=${INSTALL_MOXXY:-true}
     image: companion:local
     restart: unless-stopped
+    depends_on:
+      companion-init:
+        condition: service_completed_successfully
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -28,12 +31,18 @@ services:
       # Optional — Coolify and friends inject env through their own UI instead.
       - path: .env
         required: false
+    # Coolify augments environment as a list. Keep the same representation so
+    # its generated Compose never mixes numeric and string mapping keys.
     environment:
-      COMPANION_HOME: /data
-      COMPANION_HOST: 0.0.0.0
-      COMPANION_PORT: 8901
+      - COMPANION_HOME=/data
+      - COMPANION_HOST=0.0.0.0
+      - COMPANION_PORT=8901
       # Networked deployments fail closed even if /data once came from a local run.
-      COMPANION_AUTH_MODE: password
+      - COMPANION_AUTH_MODE=password
+      # Optional non-interactive first-admin seed. Unset variables are omitted;
+      # interactive installs should use the one-time bootstrap token instead.
+      - COMPANION_ADMIN_USER
+      - COMPANION_ADMIN_PASSWORD
       # A clean volume writes a one-time first-admin capability to
       # /data/bootstrap-token. For unattended provisioning inject
       # COMPANION_BOOTSTRAP_TOKEN from a secret manager; never hard-code it here.
@@ -48,6 +57,27 @@ services:
       - companion-moxxy:/home/node/.moxxy
       # Optional: mount your host SSH config if private Git remotes should use SSH.
       # - ~/.ssh:/home/node/.ssh:ro
+
+  # Coolify creates persistent mounts as root. Repair their ownership in a
+  # finite, capability-limited init container, while the long-running service
+  # stays uid 1000 with no Linux capabilities.
+  companion-init:
+    image: companion:local
+    user: "0:0"
+    entrypoint:
+      - /usr/local/bin/init-volumes.sh
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    volumes:
+      - companion-data:/data
+      - companion-moxxy:/home/node/.moxxy
 
 volumes:
   companion-data:

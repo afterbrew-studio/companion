@@ -145,7 +145,8 @@ RUN if [ "$INSTALL_MOXXY" = "true" ]; then npm install -g "@moxxy/cli@${MOXXY_VE
 # fails with "executable file not found".
 RUN ln -s /app/dist/index.js /usr/local/bin/companion && chmod +x /app/dist/index.js
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/init-volumes.sh /usr/local/bin/init-volumes.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/init-volumes.sh
 # /data        Companion's own state (db, isolated moxxy home, clones).
 # /home/node/.moxxy moxxy's daily home holding the provider credentials
 #                     (vault), which /data/moxxy-home symlinks to. Both must
