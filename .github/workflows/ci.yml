@@ -125,18 +125,51 @@ jobs:
           exit-code: "1"
           timeout: 15m
 
-      # A build that produces an image which cannot boot is not a passing build.
-      - name: Boot it and check the module set
+      # Coolify may create persistent mounts as root. Exercise the real Compose
+      # path, including its one-shot ownership repair, before inspecting the
+      # built artifact. This also keeps the source Compose syntax parseable.
+      - name: Boot Compose from root-owned volumes and check the module set
         run: |
-          docker run -d --name companion-ci -p 8901:8901 \
-            -e COMPANION_ADMIN_USER=ci -e COMPANION_ADMIN_PASSWORD='CorrectHorse1!' companion:ci
+          project=companion-ci-compose
+          trap 'docker compose -p "$project" down -v' EXIT
+          export COMPANION_ADMIN_USER=ci
+          export COMPANION_ADMIN_PASSWORD='CorrectHorse1!'
+
+          docker tag companion:ci companion:local
+          docker compose config --quiet
+          docker compose -p "$project" create --no-build
+          docker run --rm --user 0:0 \
+            -v "${project}_companion-data:/data" \
+            -v "${project}_companion-moxxy:/home/node/.moxxy" \
+            --entrypoint /bin/sh companion:ci -c \
+            'mkdir -p /data/moxxy-home/sockets /home/node/.moxxy/providers &&
+             touch /data/moxxy-home/root-owned /home/node/.moxxy/providers/root-owned &&
+             chown -hR 0:0 /data /home/node/.moxxy &&
+             chmod 0700 /data /data/moxxy-home /data/moxxy-home/sockets /home/node/.moxxy /home/node/.moxxy/providers'
+          docker compose -p "$project" start
+
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8901/healthz >/dev/null && break
             sleep 2
           done
-          curl -sf http://127.0.0.1:8901/healthz >/dev/null || { docker logs companion-ci; exit 1; }
+          curl -sf http://127.0.0.1:8901/healthz >/dev/null || {
+            docker compose -p "$project" logs
+            exit 1
+          }
+
+          app_id=$(docker compose -p "$project" ps --quiet companion)
+          init_id=$(docker compose -p "$project" ps --all --quiet companion-init)
+          test "$(docker inspect "$init_id" --format '{{.State.ExitCode}}')" = 0
+          test "$(docker exec "$app_id" id -u)" = 1000
+          docker exec "$app_id" sh -ec '
+            test -w /data/moxxy-home/sockets
+            test -w /home/node/.moxxy/providers
+            test "$(stat -c %u /data/moxxy-home/root-owned)" = 1000
+            test "$(stat -c %u /home/node/.moxxy/providers/root-owned)" = 1000
+          '
+
           # `companion` must be on PATH: every runbook in the README uses it.
-          docker exec companion-ci companion module list | tee /tmp/modules.txt
+          docker exec "$app_id" companion module list | tee /tmp/modules.txt
           # Every module of the profile has to be IN the image. How many of them
           # boot enabled is each manifest's autoInstall and says nothing about
           # the build arg, which is what a count of enabled ones was reading:
