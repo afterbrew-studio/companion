@@ -767,7 +767,7 @@ export default defineRoutes((ctx) => {
       path: '/api/status',
       access: 'any',
       allowScopedToken: true,
-      handler: async (): Promise<OperateStatus> => {
+      handler: async ({ user }): Promise<OperateStatus> => {
         const runners = op.runners.list().filter((runner) => runner.enabled);
         const ready = runners.find(
           (runner) =>
@@ -775,6 +775,11 @@ export default defineRoutes((ctx) => {
             runner.health.runtimes[0]?.state === 'ready',
         );
         const tokens = op.githubTokens();
+        // The health dots are for everyone; the identity behind them is not.
+        // The module that owns the accounts owns the disclosure rule, because
+        // operate cannot name a permission belonging to a module it must not
+        // import. No source, no disclosure.
+        const maySeeIdentity = user !== null && (tokens.canSeeLogin?.(user) ?? false);
         return {
           executionReady: ready !== undefined,
           executionDetail:
@@ -787,7 +792,7 @@ export default defineRoutes((ctx) => {
           githubConfigured:
             tokens.hasAccounts?.() ??
             ((tokens.login?.() ?? null) !== null || (await tokens.tokenFor()) !== null),
-          githubUser: tokens.login?.() ?? null,
+          githubUser: maySeeIdentity ? tokens.login?.() ?? null : null,
         };
       },
     }),

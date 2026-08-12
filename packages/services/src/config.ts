@@ -220,6 +220,7 @@ export function loadDaemonConfig(): DaemonConfig {
 
   const env = resolveEnv();
   const users = resolveUsers(env);
+  scrubSeedPasswordEnvironment();
   const backupDir = env.COMPANION_BACKUP_DIR?.trim() || stored.backupDir?.trim() || undefined;
   const host = env.COMPANION_HOST?.trim() || stored.host || DEFAULTS.host;
   const authMode = authModeFrom(env.COMPANION_AUTH_MODE, stored.authMode);
@@ -385,6 +386,19 @@ const ROLE_ENV: ReadonlyArray<{ role: Role; user: string; email: string; pass: s
     pass: 'COMPANION_BUSINESS_PASSWORD',
   },
 ];
+
+/**
+ * Drop the seed passwords from the process environment once they have been read
+ * into `users`.
+ *
+ * Everything the daemon spawns (git, moxxy agent runs, hooks) inherits this
+ * environment, and an agent run is the last place an admin credential belongs.
+ * The .env layers are deliberately left alone: they are the operator's file,
+ * and a re-seed on a later boot is a no-op against a populated user store.
+ */
+function scrubSeedPasswordEnvironment(): void {
+  for (const { pass } of ROLE_ENV) delete process.env[pass];
+}
 
 /**
  * .env accounts are SEEDS: imported once into an empty user store, after which

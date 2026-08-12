@@ -64,6 +64,35 @@ pnpm sdk:surface                         # the published module ABI (also runs i
 `pnpm build` and `pnpm typecheck` run `gen:modules` first, so a fresh clone works
 with no extra step.
 
+## Tests, and why there is no coverage gate
+
+`pnpm test` runs over 1,250 `node:test` cases across 186 files. There is no
+coverage report and no percentage threshold, and that is a decision rather than
+an omission.
+
+A line-coverage floor would measure the wrong thing here. These tests are
+behavioural on purpose: routes are driven over a real socket, stores over a real
+SQLite file, the router over a real HTTP server. A percentage rewards touching
+row mappers and getters, and says nothing about whether the RBAC gate, the
+webhook HMAC check or the seed path is actually exercised. Set the floor low
+enough to pass today and it gates nothing; set it high enough to bite and the
+cheapest way to pass is a test that asserts nothing.
+
+What guards the codebase instead:
+
+- **A red-first test wherever behaviour changes.** Write the test, watch it fail
+  against the unfixed code, then fix. A regression test whose failure you never
+  saw is a test you have not verified.
+- **Gates that fail the build on the invariants that matter**: `pnpm acl check`
+  (the RBAC grid), `pnpm sdk:surface` (the published module ABI), `pnpm smoke`
+  (the documented first-run path over real HTTP) and `pnpm e2e` (the SPA shell
+  and the live socket).
+
+Revisit this if a class of regression starts escaping the suite repeatedly, or
+if contribution volume outgrows reviewers judging test adequacy by reading the
+diff. Either would be evidence a blunt instrument beats none. Neither is true
+today.
+
 ## Build profiles: what ships
 
 The set of modules a build **contains** is named in exactly one place,

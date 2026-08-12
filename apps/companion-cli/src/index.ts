@@ -12,6 +12,7 @@ import {
   readAdminSetup,
   readStoredAuthMode,
   renderSetupBox,
+  scrubSeedPasswordEnvironment,
   setupExists,
   validateEmail,
   validatePassword,
@@ -415,7 +416,7 @@ async function start(options: CliOptions): Promise<void> {
   // and errors still surface; developers running `pnpm dev` keep full logs.
   if (options.verbose) process.env.COMPANION_LOG_LEVEL = 'info';
   else process.env.COMPANION_LOG_LEVEL ??= 'warn';
-  const pendingAdmin = applyPendingAdminSetup(options.home);
+  const hasPendingAdmin = applyPendingAdminSetup(options.home) !== null;
   // A pending import is completed synchronously through the CLI token below;
   // keep the module's opportunistic boot import from racing the same account.
   process.env.COMPANION_IMPORT_LOCAL_GH = pendingGhLogin(options.home) ? 'false' : 'true';
@@ -426,13 +427,16 @@ async function start(options: CliOptions): Promise<void> {
   const note = options.background ? `Logs: ${daemonLog(options.home)}` : 'Press Ctrl+C to stop.';
   process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\n${note}\n\n`);
   const pendingModules = takePendingProfile(options.home);
-  const firstRun = pendingModules.length > 0 || pendingAdmin !== null;
+  const firstRun = pendingModules.length > 0 || hasPendingAdmin;
   // Either way this process stays in the foreground until the questions below
   // are answered; what --background changes is who owns the server afterwards.
   let detached: Detached | null = null;
   let outcome: 'ready' | 'timeout' | 'exited';
   if (options.background) {
     detached = startDetached(server, options.home);
+    // spawn() has already copied the seed into the daemon. Do not let the CLI
+    // retain it while it subsequently invokes gh, git or the system browser.
+    scrubSeedPasswordEnvironment();
     outcome = await waitUntilServing(detached, options.home, url, 30_000);
   } else {
     process.chdir(options.home);
@@ -472,7 +476,7 @@ async function start(options: CliOptions): Promise<void> {
       );
     }
   }
-  if (pendingAdmin) consumePendingAdminSetup(options.home);
+  if (hasPendingAdmin) consumePendingAdminSetup(options.home);
   await settleRepo(url, options);
   if (options.open) openBrowser(url);
   if (detached) {

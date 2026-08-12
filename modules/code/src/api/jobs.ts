@@ -116,6 +116,10 @@ export default defineJobs({
             })
           : (code.githubAccounts.tokenFor('runs', username === undefined ? undefined : { username }) ?? null),
       login: () => code.githubAccounts.loginFor('fetch'),
+      // Everyone gets the health dot; only whoever may manage GitHub accounts
+      // gets the name behind it. /api/status is open to every role, so without
+      // this the instance posting identity leaks to business profiles.
+      canSeeLogin: (viewer) => ctx.rbac.allows(viewer, 'github:connect'),
       // Catalogue, not resolution: a workspace-scoped account is still an
       // account, and the instance health dot must not turn red because of how
       // one is scoped.

@@ -43,6 +43,55 @@ test('trusted local auth accepts loopback and rejects a network bind', () => {
   });
 });
 
+/**
+ * Seed credentials arrive through the environment, and every process the daemon
+ * spawns (git, agent runs) inherits that environment. They must survive exactly
+ * long enough to reach `users` and no longer.
+ */
+test('seed passwords reach users and then leave the environment', () => {
+  withHome(() => {
+    process.env.COMPANION_ADMIN_USER = 'ada';
+    process.env.COMPANION_ADMIN_PASSWORD = 'seed-admin-pw';
+    process.env.COMPANION_MAINTAINER_USER = 'mel';
+    process.env.COMPANION_MAINTAINER_PASSWORD = 'seed-maintainer-pw';
+    process.env.COMPANION_BUSINESS_USER = 'bea';
+    process.env.COMPANION_BUSINESS_PASSWORD = 'seed-business-pw';
+    try {
+      const config = loadDaemonConfig();
+
+      assert.deepEqual(
+        config.users.map((u) => [u.username, u.password, u.role]),
+        [
+          ['ada', 'seed-admin-pw', 'admin'],
+          ['mel', 'seed-maintainer-pw', 'maintainer'],
+          ['bea', 'seed-business-pw', 'business'],
+        ],
+      );
+      for (const key of [
+        'COMPANION_ADMIN_PASSWORD',
+        'COMPANION_MAINTAINER_PASSWORD',
+        'COMPANION_BUSINESS_PASSWORD',
+      ]) {
+        assert.equal(process.env[key], undefined, `${key} is gone from the environment`);
+      }
+      // Usernames are not credentials and stay: the CLI reads them to tell an
+      // operator which account was seeded.
+      assert.equal(process.env.COMPANION_ADMIN_USER, 'ada');
+    } finally {
+      for (const key of [
+        'COMPANION_ADMIN_USER',
+        'COMPANION_ADMIN_PASSWORD',
+        'COMPANION_MAINTAINER_USER',
+        'COMPANION_MAINTAINER_PASSWORD',
+        'COMPANION_BUSINESS_USER',
+        'COMPANION_BUSINESS_PASSWORD',
+      ]) {
+        delete process.env[key];
+      }
+    }
+  });
+});
+
 test('only explicit loopback bind names qualify', () => {
   assert.equal(isLoopbackHost('127.0.0.1'), true);
   assert.equal(isLoopbackHost('::1'), true);

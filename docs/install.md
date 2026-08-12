@@ -350,8 +350,16 @@ own nginx, Caddy or Traefik). Two settings make that topology behave:
   arriving from a listed address take the client address from
   `X-Forwarded-For`, using the rightmost hop that is not itself a trusted
   proxy, so a client cannot dodge the throttle by prepending fake hops.
-  Connections from any other peer keep ignoring the header entirely. See
+  Connections from any other peer keep ignoring the header entirely. It also
+  lets `X-Forwarded-Proto: https` from that proxy mark the session cookie
+  `Secure`, so the browser session is not silently downgraded when
+  `COMPANION_PUBLIC_URL` was never set. See
   [`configuration.md`](configuration.md#common-variables).
+
+Configure the edge proxy to replace client-supplied `X-Forwarded-Proto` rather
+than passing it through. Companion verifies who sent a forwarded header; the
+proxy remains responsible for making the header describe the connection it
+actually accepted.
 
 Probe endpoints for the proxy or orchestrator: `/healthz` answers 200 as soon
 as the process serves HTTP (liveness), and `/readyz` answers 200 only once the

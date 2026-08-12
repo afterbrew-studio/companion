@@ -77,7 +77,7 @@ export default defineRoutes((ctx) => {
       method: 'GET',
       path: '/api/oidc/callback',
       access: 'public',
-      handler: async ({ query }) => {
+      handler: async ({ query, secureConnection }) => {
         const error = query.get('error');
         if (error) return html(`<p>Sign-in was refused by the provider: ${escapeHtml(error)}</p>`);
         const code = query.get('code');
@@ -128,7 +128,11 @@ export default defineRoutes((ctx) => {
           'text/plain; charset=utf-8',
           {
             location: returnTo,
-            'set-cookie': sessionCookie(session.token, session.expiresAt, redirectUri().startsWith('https://')),
+            'set-cookie': sessionCookie(
+              session.token,
+              session.expiresAt,
+              redirectUri().startsWith('https://') || secureConnection,
+            ),
             'cache-control': 'no-store',
           },
         );

@@ -138,13 +138,24 @@ export default defineRoutes((ctx) => {
   const audit = ctx.services.get('audit');
   const settings = ctx.services.get('settings');
   const mfa = ctx.services.get('mfa');
-  const secureCookie = ctx.config.publicUrl?.startsWith('https://') === true;
-  const browserSession = (session: { token: string; user: LoginResponse['user']; expiresAt: number }): Reply =>
+  // The config states the canonical URL; the request states what the browser
+  // actually spoke. Either one saying https earns `Secure`, so an operator who
+  // never set COMPANION_PUBLIC_URL still gets the flag behind a TLS proxy, and
+  // a request arriving over plain http cannot strip it from an https instance.
+  const secureCookie = (secureConnection: boolean): boolean =>
+    ctx.config.publicUrl?.startsWith('https://') === true || secureConnection;
+  const browserSession = (
+    session: { token: string; user: LoginResponse['user']; expiresAt: number },
+    secureConnection: boolean,
+  ): Reply =>
     new Reply(
       200,
       { user: session.user, expiresAt: session.expiresAt } satisfies LoginResponse,
       undefined,
-      { 'set-cookie': sessionCookie(session.token, session.expiresAt, secureCookie), 'cache-control': 'no-store' },
+      {
+        'set-cookie': sessionCookie(session.token, session.expiresAt, secureCookie(secureConnection)),
+        'cache-control': 'no-store',
+      },
     );
   /** Serialises `add`: two of them would interleave a delete and a copy in one
    *  directory, and the loser would leave half a module on disk. */
@@ -181,14 +192,14 @@ export default defineRoutes((ctx) => {
       method: 'POST',
       path: '/api/auth/local-session',
       access: 'public',
-      handler: (): Reply => {
+      handler: ({ secureConnection }): Reply => {
         // Defense in depth: config loading already refuses this combination,
         // but this route owns an admin-equivalent credential and rechecks both
         // halves at the point of issuance.
         if (ctx.config.authMode !== 'local' || !isLoopbackHost(ctx.config.host)) {
           throw new AuthError('local session bootstrap is disabled', 403);
         }
-        return browserSession(auth.localSession());
+        return browserSession(auth.localSession(), secureConnection);
       },
     }),
     route({
@@ -196,12 +207,12 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/setup',
       access: 'public',
       body: setupSchema,
-      handler: ({ body }): Reply => {
+      handler: ({ body, secureConnection }): Reply => {
         // Before the attempt: a refused setup audits against the tried name too.
         claimAuditActor(body.username);
         const session = auth.setup(body.username, body.email, body.password, body.bootstrapToken);
         ctx.bus.emit('auth.setup.completed', { username: session.user.username });
-        return browserSession(session);
+        return browserSession(session, secureConnection);
       },
     }),
     route({
@@ -209,7 +220,7 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/login',
       access: 'public',
       body: loginSchema,
-      handler: ({ body, clientAddress }): Reply => {
+      handler: ({ body, clientAddress, secureConnection }): Reply => {
         if (ctx.config.authMode === 'sso') {
           throw new AuthError('password sign-in is disabled: this instance requires single sign-on', 403);
         }
@@ -221,7 +232,7 @@ export default defineRoutes((ctx) => {
         // An MFA challenge is not a session: no cookie until the second step.
         return 'mfaRequired' in result
           ? new Reply(200, result satisfies MfaChallenge, undefined, { 'cache-control': 'no-store' })
-          : browserSession(result);
+          : browserSession(result, secureConnection);
       },
     }),
     route({
@@ -229,22 +240,22 @@ export default defineRoutes((ctx) => {
       path: '/api/auth/mfa',
       access: 'public',
       body: mfaCompleteSchema,
-      handler: ({ body, clientAddress }): Reply => {
+      handler: ({ body, clientAddress, secureConnection }): Reply => {
         const session = auth.completeMfaLogin(body.mfaToken, body.code, clientAddress);
         // Only after success: the pending token is opaque, so a failed second
         // step has no name to claim without leaking which token maps to whom.
         claimAuditActor(session.user.username);
-        return browserSession(session);
+        return browserSession(session, secureConnection);
       },
     }),
     route({
       method: 'POST',
       path: '/api/auth/logout',
       access: 'any',
-      handler: ({ token }): Reply => {
+      handler: ({ token, secureConnection }): Reply => {
         if (token) auth.logout(token);
         return new Reply(200, { ok: true }, undefined, {
-          'set-cookie': clearSessionCookie(secureCookie),
+          'set-cookie': clearSessionCookie(secureCookie(secureConnection)),
           'cache-control': 'no-store',
         });
       },

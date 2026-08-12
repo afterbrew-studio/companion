@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { AuthUser, Authenticator, Permission, RouteAccess } from '@moxxy/companion-contracts';
 import { createRequestContext, runWithRequestContext, type Logger, type RequestContext } from '@moxxy/companion-services';
 import type { AuditEvent } from './capabilities.js';
-import { clientAddressFrom, TrustedProxies } from './client-address.js';
+import { clientAddressFrom, forwardedHttps, TrustedProxies } from './client-address.js';
 
 /**
  * The typed route factory + the dynamic router. A `route({...})` value declares
@@ -91,6 +91,10 @@ export interface RouteContext<P extends string, B> {
    *  or the X-Forwarded-For client when the peer is a trusted proxy
    *  (COMPANION_TRUSTED_PROXIES). From any other peer the header is ignored. */
   readonly clientAddress: string;
+  /** The browser reached the edge over HTTPS, asserted by a trusted proxy's
+   *  X-Forwarded-Proto. False whenever nothing trustworthy said otherwise, so a
+   *  route deciding cookie flags must OR it with what the config claims. */
+  readonly secureConnection: boolean;
 }
 
 export interface RouteDef<P extends string, B> {
@@ -123,6 +127,7 @@ export interface CompiledRoute {
     user: AuthUser | null,
     token: string | null,
     clientAddress: string,
+    secureConnection: boolean,
   ) => Promise<unknown>;
 }
 
@@ -137,9 +142,17 @@ export function route<P extends string, B = Record<string, never>>(def: RouteDef
     access: def.access,
     allowDelegatedWrite: def.allowDelegatedWrite === true,
     allowScopedToken: def.allowScopedToken === true,
-    run: async (params, query, rawBody, user, token, clientAddress) => {
+    run: async (params, query, rawBody, user, token, clientAddress, secureConnection) => {
       const body = (def.body ? def.body.parse(rawBody) : {}) as B;
-      return def.handler({ params: params as PathParams<P>, query, body, user, token, clientAddress });
+      return def.handler({
+        params: params as PathParams<P>,
+        query,
+        body,
+        user,
+        token,
+        clientAddress,
+        secureConnection,
+      });
     },
   };
 }
@@ -256,6 +269,11 @@ export class DynamicRouter {
       req.headers['x-forwarded-for'],
       this.trustedProxies,
     );
+    const secureConnection = forwardedHttps(
+      req.socket.remoteAddress ?? 'unknown',
+      req.headers['x-forwarded-proto'],
+      this.trustedProxies,
+    );
     const agent = (req.headers['user-agent'] ?? '').slice(0, 256) || undefined;
     /** The route we committed to, so the catch block can audit a refusal. */
     let matched: CompiledRoute | null = null;
@@ -315,7 +333,7 @@ export class DynamicRouter {
         const rawBody = method === 'GET' ? {} : await readBody(req);
         reqCtx = createRequestContext(user);
         const result = await runWithRequestContext(reqCtx, () =>
-          r.run(params, url.searchParams, rawBody, user, token, clientAddress),
+          r.run(params, url.searchParams, rawBody, user, token, clientAddress, secureConnection),
         );
         const status = result instanceof Reply ? result.status : 200;
         // AFTER the handler: recording an attempt that then threw would claim
