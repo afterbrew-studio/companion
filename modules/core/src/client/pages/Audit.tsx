@@ -21,6 +21,11 @@ const WINDOWS = [
   { value: '0', label: 'Everything' },
 ];
 
+/** Resolved at request time, so a long-lived tab never filters on a stale now. */
+function sinceFor(days: string): number | undefined {
+  return days === '0' ? undefined : Date.now() - Number(days) * 24 * 60 * 60_000;
+}
+
 /**
  * The audit trail, read.
  *
@@ -42,13 +47,11 @@ export function AuditPage(): React.JSX.Element {
   const [loading, setLoading] = useState(false);
   const [forwarding, setForwarding] = useState<ForwarderState | null>(null);
 
-  const since = days === '0' ? undefined : Date.now() - Number(days) * 24 * 60 * 60_000;
-
   const load = useCallback(
     async (before?: number): Promise<void> => {
       setLoading(true);
       try {
-        const page = await api.audit({ actor: actor.trim() || undefined, since, before, limit: 100 });
+        const page = await api.audit({ actor: actor.trim() || undefined, since: sinceFor(days), before, limit: 100 });
         setEntries((current) => (before === undefined ? page.entries : [...(current ?? []), ...page.entries]));
         // A short page means the end; nextBefore from the server would otherwise
         // offer a "load more" that returns nothing.
@@ -60,8 +63,7 @@ export function AuditPage(): React.JSX.Element {
         setLoading(false);
       }
     },
-    // `since` is derived from days and would change every render if included.
-    [actor, days], // eslint-disable-line react-hooks/exhaustive-deps
+    [actor, days],
   );
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export function AuditPage(): React.JSX.Element {
         title="Audit trail"
         subtitle="Every mutating call, including the ones that were refused"
         actions={
-          <button className="btn-ghost" onClick={() => void downloadExport(since, setError)}>
+          <button className="btn-ghost" onClick={() => void downloadExport(sinceFor(days), setError)}>
             Export NDJSON
           </button>
         }

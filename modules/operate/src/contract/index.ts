@@ -1050,8 +1050,9 @@ export interface TaskModelPin {
   /**
    * The pin on the lane being configured, when one is; null means the task
    * inherits. Kept apart from `model` because they are different layers: this
-   * one governs a person's own work in that lane, `model` governs the
-   * unattended runs nobody is watching.
+   * one governs attended work started in that lane and is stored per lane,
+   * shared by everyone who selects it (only the lane CHOICE is per person);
+   * `model` governs the unattended runs nobody is watching.
    */
   readonly laneModel?: string | null;
   /**

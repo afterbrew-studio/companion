@@ -16,8 +16,9 @@ import { useTaskModels } from '../hooks/useTaskModels.js';
  */
 export function TaskModelsPage({ query }: { query?: URLSearchParams }): React.JSX.Element {
   // Which layer is being edited. Instance governs unattended work; a lane
-  // governs what a person starts while that lane is selected. Seeded from the
-  // link so the picker's per-runtime cog lands on the right one.
+  // governs attended runs started while it is selected, shared by everyone
+  // using that lane. Seeded from the link so the picker's per-runtime cog
+  // lands on the right one.
   const [lane, setLane] = useState<RunLane | null>(() => {
     const runnerId = query?.get('runner');
     const harness = query?.get('harness');
@@ -59,7 +60,7 @@ export function TaskModelsPage({ query }: { query?: URLSearchParams }): React.JS
           title="Applies to"
           description={
             lane
-              ? 'What you start yourself while this lane is selected. Unattended work is unaffected.'
+              ? 'Attended runs started while this lane is selected, by everyone who uses it. Unattended work is unaffected.'
               : 'Every run with no lane of its own, which is all unattended work: webhooks, schedules, pipelines.'
           }
         >

@@ -633,6 +633,8 @@ export class Runners {
   }
 
   healthFor(id: string): RunnerHealth {
+    const secretError = this.store.runners.secretError(id);
+    if (secretError) return { ...UNKNOWN_HEALTH, status: 'offline', detail: `${secretError}; re-enter its token` };
     const health = this.health.get(id) ?? UNKNOWN_HEALTH;
     const tools = this.tools.get(id)?.list;
     return tools && tools.length > 0 ? { ...health, tools } : health;

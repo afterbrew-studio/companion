@@ -89,6 +89,7 @@ export default defineServices(async (ctx) => {
   const budgets = new Budgets(
     store.runs,
     ctx.moduleConfig,
+    settings,
     (title, body) =>
       ctx.notify.emit({ workspaceId: null, kind: 'action_required', title, body, href: '#/settings/modules' }),
     (model) => modelPrice.current(model),

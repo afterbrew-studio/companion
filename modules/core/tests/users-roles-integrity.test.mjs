@@ -113,6 +113,35 @@ test('revoke validates the permission id against the catalog exactly like grant'
   db.close();
 });
 
+test('usersHolding matches the per-user scan, disabled admins included, without running one', () => {
+  const db = new Database(':memory:');
+  for (const migration of migrations) migration.up(db);
+  const sessions = new SessionsStore(db);
+  const users = new UsersStore(db, sessions);
+  const rbac = {
+    ...rbacStub,
+    has: (role) => role === 'admin' || role === 'maintainer',
+  };
+  const roles = new RolesService(new RolesStore(db), users, rbac, () => {}, { record() {} }, noopLog);
+  const seed = (username, role) =>
+    users.insert({ username, email: '', passwordHash: 'x', role });
+  seed('root', 'admin');
+  seed('off', 'admin');
+  users.update('off', { disabled: true });
+  seed('mia', 'maintainer');
+  seed('biz', 'business');
+  // A role the grid no longer knows holds nothing, in either approach.
+  seed('ghost', 'phantom');
+
+  const legacy = users.list().filter((u) => !u.disabled && rbac.has(u.role, 'users:manage')).length;
+  assert.equal(legacy, 2);
+  users.list = () => {
+    throw new Error('usersHolding must not scan the whole user table');
+  };
+  assert.equal(roles.usersHolding('users:manage'), legacy);
+  db.close();
+});
+
 async function routeHarness(t) {
   const h = harness();
   const broadcasts = [];
