@@ -136,7 +136,11 @@ export function AgentsStatus(): React.JSX.Element | null {
           ok={Boolean(status?.githubConfigured)}
           label="GitHub"
           title={
-            status?.githubConfigured ? `GitHub connected as ${status.githubUser ?? '…'}` : 'GitHub PAT not configured'
+            status?.githubConfigured
+              ? status.githubUser
+                ? `GitHub connected as ${status.githubUser}`
+                : 'GitHub connected'
+              : 'GitHub PAT not configured'
           }
         />
         <StatusDot

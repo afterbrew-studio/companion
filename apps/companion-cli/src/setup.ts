@@ -177,6 +177,13 @@ export function applyPendingAdminSetup(home: string): AdminSetup | null {
   return setup;
 }
 
+/** The daemon child has its own environment copy; keep no seed in the CLI. */
+export function scrubSeedPasswordEnvironment(): void {
+  delete process.env.COMPANION_ADMIN_PASSWORD;
+  delete process.env.COMPANION_MAINTAINER_PASSWORD;
+  delete process.env.COMPANION_BUSINESS_PASSWORD;
+}
+
 export function consumePendingAdminSetup(home: string): void {
   rmSync(join(home, PENDING_SETUP_FILE), { force: true });
 }

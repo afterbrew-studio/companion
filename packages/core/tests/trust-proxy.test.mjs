@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   clientAddressFrom,
   DynamicRouter,
+  forwardedHttps,
   isLoopbackAddress,
   route,
   TrustedProxies,
@@ -96,6 +97,24 @@ test('a malformed trust entry refuses to boot instead of failing open', () => {
   assert.throws(() => new TrustedProxies(['10.0.0.0/33']), /not an IP address or CIDR/);
   assert.throws(() => new TrustedProxies(['proxy.internal']), /not an IP address or CIDR/);
   assert.throws(() => new TrustedProxies(['10.0.0.0/8/1']), /not an IP address or CIDR/);
+});
+
+test('the forwarded protocol is read only from a trusted peer', () => {
+  const trusted = new TrustedProxies(['10.0.0.0/8']);
+  assert.equal(forwardedHttps('10.0.0.1', 'https', trusted), true);
+  assert.equal(forwardedHttps('10.0.0.1', 'HTTPS', trusted), true);
+  assert.equal(forwardedHttps('10.0.0.1', 'http', trusted), false);
+  assert.equal(forwardedHttps('10.0.0.1', undefined, trusted), false);
+  // The peer is the client itself: its own claim of https buys it nothing.
+  assert.equal(forwardedHttps('203.0.113.7', 'https', trusted), false);
+});
+
+test('the leftmost forwarded protocol hop is the one the client spoke', () => {
+  const trusted = new TrustedProxies(['10.0.0.0/8']);
+  // An inner proxy re-terminated on http; the browser still used TLS.
+  assert.equal(forwardedHttps('10.0.0.1', 'https, http', trusted), true);
+  assert.equal(forwardedHttps('10.0.0.1', ['https', 'http'], trusted), true);
+  assert.equal(forwardedHttps('10.0.0.1', 'http, https', trusted), false);
 });
 
 test('loopback detection covers IPv4, IPv6 and mapped forms', () => {

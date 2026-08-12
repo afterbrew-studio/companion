@@ -54,6 +54,25 @@ export function clientAddressFrom(
   return hops[0] ?? socketAddress;
 }
 
+/**
+ * Whether the browser reached the edge over HTTPS. Only a trusted proxy may
+ * assert this: from any other peer X-Forwarded-Proto is attacker-controlled,
+ * and a client must not be allowed to steer cookie policy with its own header.
+ * The leftmost hop is the one the client actually spoke, so a proxy chain
+ * re-terminating on http cannot downgrade the answer.
+ */
+export function forwardedHttps(
+  socketAddress: string,
+  forwardedProto: string | readonly string[] | undefined,
+  trusted: TrustedProxies,
+): boolean {
+  if (!trusted.has(socketAddress)) return false;
+  const header = Array.isArray(forwardedProto)
+    ? (forwardedProto[0] ?? '')
+    : ((forwardedProto as string | undefined) ?? '');
+  return header.split(',')[0]!.trim().toLowerCase() === 'https';
+}
+
 /** Loopback socket peer: 127.0.0.0/8, ::1, and the IPv4-mapped forms. */
 export function isLoopbackAddress(address: string): boolean {
   const ip = parseIp(address);

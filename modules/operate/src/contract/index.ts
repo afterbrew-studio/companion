@@ -1,6 +1,7 @@
 // Brings module-core's + module-workspace's augmentations (operate dependsOn both).
 import '@companion/module-core/contract';
 import '@companion/module-workspace/contract';
+import type { AuthUser } from '@moxxy/companion-contracts';
 import type { AskRequest, HarnessCapabilities, MoxxyEvent } from '@moxxy/companion-types';
 import type { OperateService } from '../api/operate-service.js';
 
@@ -64,6 +65,14 @@ export interface GithubTokenSource {
   tokenFor(repo?: string, username?: string | null, access?: GitAccess): string | null | Promise<string | null>;
   /** Login of the default posting account, when known (feeds /api/status). */
   login?(): string | null;
+  /**
+   * May this viewer be told that login? The instance identity is a fact about
+   * the operator, not about the viewer's own health, so /api/status reports it
+   * only to whoever the filling module says may see it. Absent means withheld:
+   * operate owns neither the accounts nor the permission that guards them, and
+   * a source that does not answer must not have an answer assumed for it.
+   */
+  canSeeLogin?(viewer: AuthUser): boolean;
   /**
    * Does the instance have ANY GitHub account at all?
    *
@@ -850,6 +859,8 @@ export interface OperateStatus {
   /** Human diagnosis when no machine can currently accept work. */
   readonly executionDetail: string | null;
   readonly githubConfigured: boolean;
+  /** The instance posting login, or null when unset OR withheld: the route is
+   *  open to every role, but only `github:connect` holders are told the name. */
   readonly githubUser: string | null;
 }
 

@@ -12,6 +12,7 @@ import {
   readAdminSetup,
   readStoredAuthMode,
   renderSetupBox,
+  scrubSeedPasswordEnvironment,
   setupExists,
   writePendingAdminSetup,
   writeStoredAuthMode,
@@ -38,6 +39,18 @@ test('generated defaults are held in a one-time owner-only bootstrap file', () =
     delete process.env.COMPANION_ADMIN_PASSWORD;
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('a detached hand-off can scrub every seed password from the CLI environment', () => {
+  process.env.COMPANION_ADMIN_PASSWORD = 'admin-seed';
+  process.env.COMPANION_MAINTAINER_PASSWORD = 'maintainer-seed';
+  process.env.COMPANION_BUSINESS_PASSWORD = 'business-seed';
+
+  scrubSeedPasswordEnvironment();
+
+  assert.equal(process.env.COMPANION_ADMIN_PASSWORD, undefined);
+  assert.equal(process.env.COMPANION_MAINTAINER_PASSWORD, undefined);
+  assert.equal(process.env.COMPANION_BUSINESS_PASSWORD, undefined);
 });
 
 test('an explicit auth mode initializes npx without inventing an admin password', () => {
