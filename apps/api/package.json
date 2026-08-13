@@ -23,6 +23,7 @@
     "@companion/module-cursor-bugbot": "workspace:*",
     "@companion/module-integrations": "workspace:*",
     "@companion/module-jira": "workspace:*",
+    "@companion/module-model-router": "workspace:*",
     "@companion/module-notify": "workspace:*",
     "@companion/module-oidc": "workspace:*",
     "@companion/module-operate": "workspace:*",

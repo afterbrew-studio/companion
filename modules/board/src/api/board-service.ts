@@ -938,6 +938,11 @@ export class BoardService {
       const dispatch = {
         task: 'board.worker',
         preferredModel: task.model,
+        routing: {
+          phase: stage === 'build' ? 'implement' : 'repair',
+          workUnitId: task.id,
+          risk: stage === 'build' ? 'medium' as const : 'high' as const,
+        },
         onCreated: (runId: string) => {
           const current = this.store.getTask(task.id);
           if (

@@ -88,6 +88,11 @@ test("the unit of work's own preference still outranks the lane", () => {
   assert.equal(resolveModel({ ...NOTHING, preferred: 'a', lanePin: 'b', laneDefault: 'c' }), 'a');
 });
 
+test('the stage route sits below an explicit/card choice and above lane defaults', () => {
+  assert.equal(resolveModel({ ...NOTHING, preferred: 'card', routed: 'economy', lanePin: 'lane' }), 'card');
+  assert.equal(resolveModel({ ...NOTHING, routed: 'economy', lanePin: 'lane', taskPin: 'task' }), 'economy');
+});
+
 test('nothing decided is null, which dispatch answers with its own defaults', () => {
   assert.equal(resolveModel(NOTHING), null);
 });

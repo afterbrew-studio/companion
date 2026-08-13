@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { readCached, useLive, writeCached } from '@moxxy/companion-sdk/client';
 import type { RepoRecord } from '@companion/module-code/contract';
-import { useWorkspaceRepos } from '@companion/module-code/client';
+import { useWorkspaceReposState } from '@companion/module-code/client';
 import type { RunListRecord } from '@companion/module-operate/contract';
 import { operateApi } from '@companion/module-operate/client';
 import type { ReportRecord, WorkspaceRecord } from '@companion/module-workspace/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
+
+interface DigestSnapshot {
+  readonly reports: ReportRecord[];
+  readonly runs: RunListRecord[];
+}
 
 /**
  * The Daily Digest page's data: the workspace repos (the digest is per-repo),
@@ -27,15 +32,37 @@ export function useDigest(): {
   refresh: () => Promise<void>;
 } {
   const { current } = useWorkspace();
-  const repos = useWorkspaceRepos(current?.id);
-  const [reports, setReports] = useState<ReportRecord[]>([]);
-  const [runs, setRuns] = useState<RunListRecord[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const workspaceId = current?.id;
+  const { repos, loaded: reposLoaded } = useWorkspaceReposState(workspaceId);
+  const cacheKey = workspaceId ? `digest:${workspaceId}` : null;
+  const retained = cacheKey === null ? null : readCached<DigestSnapshot>(cacheKey);
+  const [snapshot, setSnapshot] = useState<{
+    readonly workspaceId: string | null;
+    readonly data: DigestSnapshot;
+    readonly loaded: boolean;
+  }>({
+    workspaceId: workspaceId ?? null,
+    data: retained ?? { reports: [], runs: [] },
+    loaded: retained !== null,
+  });
+  const [preferred, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const sequence = useRef(0);
+
+  useEffect(() => {
+    sequence.current += 1;
+    const next = cacheKey === null ? null : readCached<DigestSnapshot>(cacheKey);
+    setSnapshot({
+      workspaceId: workspaceId ?? null,
+      data: next ?? { reports: [], runs: [] },
+      loaded: workspaceId === undefined || next !== null,
+    });
+    setError(null);
+  }, [workspaceId, cacheKey]);
 
   const refresh = useCallback(async () => {
     if (!current) return;
+    const requestId = ++sequence.current;
     try {
       const [rep, r] = await Promise.all([
         workspaceApi.listReports().catch(() => ({ reports: [] as ReportRecord[] })),
@@ -43,26 +70,43 @@ export function useDigest(): {
           .listRunsPage({ workspace: current.id, status: 'active', limit: 100 })
           .catch(() => ({ runs: [] as RunListRecord[], total: 0 })),
       ]);
-      setReports(rep.reports);
-      setRuns(r.runs);
+      if (requestId !== sequence.current) return;
+      const next = { reports: rep.reports, runs: r.runs };
+      if (cacheKey !== null) writeCached(cacheKey, next);
+      setSnapshot({ workspaceId: current.id, data: next, loaded: true });
       setError(null);
     } catch (err) {
+      if (requestId !== sequence.current) return;
       setError(String(err));
-    } finally {
-      setLoaded(true);
+      setSnapshot((value) => value.workspaceId === current.id ? { ...value, loaded: true } : value);
     }
-  }, [current]);
+  }, [current, cacheKey]);
 
   useLive(refresh, (msg) => msg.t === 'reports.changed' || msg.t === 'runs.changed' || msg.t === 'run.changed');
 
-  // Default to the first repo; keep the pick valid as the repo list changes.
-  useEffect(() => {
-    setSelected((prev) =>
-      prev && repos.some((x) => x.fullName === prev && x.githubAccessible)
-        ? prev
-        : (repos.find((x) => x.githubAccessible)?.fullName ?? null),
-    );
-  }, [repos]);
+  // Derive the default in the render that receives cached repos. Waiting for an
+  // effect would briefly render "No digest yet" for a repository that has one.
+  const selected = preferred && repos.some((repo) => repo.fullName === preferred && repo.githubAccessible)
+    ? preferred
+    : (repos.find((repo) => repo.githubAccessible)?.fullName ?? null);
 
-  return { current, repos, reports, runs, selected, setSelected, loaded, error, setError, refresh };
+  const visible = snapshot.workspaceId === workspaceId
+    ? snapshot
+    : {
+        workspaceId: workspaceId ?? null,
+        data: retained ?? { reports: [], runs: [] },
+        loaded: workspaceId === undefined || retained !== null,
+      };
+  return {
+    current,
+    repos,
+    reports: visible.data.reports,
+    runs: visible.data.runs,
+    selected,
+    setSelected,
+    loaded: reposLoaded && visible.loaded,
+    error: snapshot.workspaceId === workspaceId ? error : null,
+    setError,
+    refresh,
+  };
 }

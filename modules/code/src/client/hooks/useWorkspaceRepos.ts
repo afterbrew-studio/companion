@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { readCached, useLive, writeCached } from '@moxxy/companion-sdk/client';
 import type { RepoRecord } from '../../contract/index.js';
 import { codeApi as api } from '../api.js';
 
@@ -26,13 +26,15 @@ export function useWorkspaceReposState(workspaceId: string | undefined): {
   repos: RepoRecord[];
   loaded: boolean;
 } {
+  const cacheKey = workspaceId ? `workspace-repos:${workspaceId}` : null;
+  const retained = cacheKey === null ? null : readCached<RepoRecord[]>(cacheKey);
   const workspaceRef = useRef(workspaceId);
   workspaceRef.current = workspaceId;
   const [state, setState] = useState<{
     workspaceId: string | undefined;
     repos: RepoRecord[];
     loaded: boolean;
-  }>({ workspaceId, repos: [], loaded: false });
+  }>({ workspaceId, repos: retained ?? [], loaded: retained !== null });
   const load = useCallback(async () => {
     if (!workspaceId) {
       setState({ workspaceId, repos: [], loaded: true });
@@ -40,7 +42,10 @@ export function useWorkspaceReposState(workspaceId: string | undefined): {
     }
     try {
       const { repos } = await api.workspaceRepos(workspaceId);
-      if (workspaceRef.current === workspaceId) setState({ workspaceId, repos, loaded: true });
+      if (workspaceRef.current === workspaceId) {
+        if (cacheKey !== null) writeCached(cacheKey, repos);
+        setState({ workspaceId, repos, loaded: true });
+      }
     } catch {
       // A failed read is not an empty workspace; keep whatever is on screen and
       // let the gate stay quiet rather than accuse the instance of being unset up.
@@ -52,7 +57,9 @@ export function useWorkspaceReposState(workspaceId: string | undefined): {
         }));
       }
     }
-  }, [workspaceId]);
+  }, [workspaceId, cacheKey]);
   useLive(load, (msg) => msg.t === 'repos.changed');
-  return state.workspaceId === workspaceId ? state : { repos: [], loaded: false };
+  return state.workspaceId === workspaceId
+    ? state
+    : { repos: retained ?? [], loaded: retained !== null };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpaServerMessage } from '@moxxy/companion-contracts';
-import { onServerMessage, request, useLive, useModuleEnabled } from '@moxxy/companion-sdk/client';
+import { onServerMessage, readCached, request, useLive, useModuleEnabled, writeCached } from '@moxxy/companion-sdk/client';
 import { operateApi } from '@companion/module-operate/client';
 import type { RunListRecord } from '@companion/module-operate/contract';
 import { useWorkspace, workspaceApi } from '@companion/module-workspace/client';
@@ -36,10 +36,10 @@ interface Delta {
 
 /**
  * All of the workspace Overview's data — the raw feeds, the live refresh, and
- * every derived "needs a human" queue and backlog trend. Every feed is `null`
- * until its own request lands, so the page renders per-section loaders and
- * fills in as responses arrive instead of popping in whole once the slowest
- * request resolves. The page is pure presentation over this.
+ * every derived "needs a human" queue and backlog trend. A first visit fills
+ * each independent feed as it lands; revisits paint the last auth-scoped
+ * snapshot immediately and revalidate it in the background. The page is pure
+ * presentation over this.
  */
 export interface UseOverview {
   readonly hasWorkspace: boolean;
@@ -113,6 +113,7 @@ const fetchPendingTriage = (id: string): Promise<IssueListRecord[]> =>
  */
 function useFeed<T>(
   id: string | null,
+  name: string,
   fetcher: (ws: string) => Promise<T>,
   when: (msg: SpaServerMessage) => boolean,
 ): {
@@ -120,33 +121,61 @@ function useFeed<T>(
   error: string | null;
   patch: (update: (current: T) => T) => void;
 } {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const cacheKey = id === null ? null : `overview:${id}:${name}`;
+  const [snapshot, setSnapshot] = useState<{
+    readonly key: string | null;
+    readonly data: T | null;
+    readonly error: string | null;
+  }>(() => ({
+    key: cacheKey,
+    data: cacheKey === null ? null : readCached<T>(cacheKey),
+    error: null,
+  }));
   const requestSequence = useRef(0);
-  // Workspace switch: back to the loader.
+  // A revisit paints the last truthful snapshot while the live feed quietly
+  // revalidates it. A different workspace can only use its own retained copy.
   useEffect(() => {
     requestSequence.current += 1;
-    setData(null);
-    setError(null);
-  }, [id]);
+    setSnapshot({
+      key: cacheKey,
+      data: cacheKey === null ? null : readCached<T>(cacheKey),
+      error: null,
+    });
+  }, [cacheKey]);
   const refresh = useCallback(async () => {
-    if (!id) return;
+    if (!id || cacheKey === null) return;
     const requestId = ++requestSequence.current;
     try {
       const next = await fetcher(id);
       if (requestId !== requestSequence.current) return;
-      setData(next);
-      setError(null);
+      writeCached(cacheKey, next);
+      setSnapshot({ key: cacheKey, data: next, error: null });
     } catch (err) {
       if (requestId !== requestSequence.current) return;
-      setError(String(err));
+      setSnapshot((current) => ({
+        key: cacheKey,
+        data: current.key === cacheKey ? current.data : readCached<T>(cacheKey),
+        error: String(err),
+      }));
     }
-  }, [id, fetcher]);
+  }, [id, cacheKey, fetcher]);
   useLive(refresh, when);
   const patch = useCallback((update: (current: T) => T): void => {
-    setData((current) => current === null ? null : update(current));
-  }, []);
-  return { data, error, patch };
+    setSnapshot((current) => {
+      if (current.key !== cacheKey || current.data === null) return current;
+      const next = update(current.data);
+      if (cacheKey !== null) writeCached(cacheKey, next);
+      return { ...current, data: next };
+    });
+  }, [cacheKey]);
+  const visible = snapshot.key === cacheKey
+    ? snapshot
+    : {
+        key: cacheKey,
+        data: cacheKey === null ? null : readCached<T>(cacheKey),
+        error: null,
+      };
+  return { data: visible.data, error: visible.error, patch };
 }
 
 export function useOverview(): UseOverview {
@@ -156,25 +185,26 @@ export function useOverview(): UseOverview {
   // Ten independent feeds, each with a precise refresh predicate — a
   // reports.changed no longer refetches issues, and a slow metrics query
   // never holds back the queues.
-  const issues = useFeed(id, fetchOpenIssues, (m) => m.t === 'issues.changed' || m.t === 'triage.changed');
-  const prs = useFeed(id, fetchPrs, (m) => m.t === 'prs.changed');
+  const issues = useFeed(id, 'issues', fetchOpenIssues, (m) => m.t === 'issues.changed' || m.t === 'triage.changed');
+  const prs = useFeed(id, 'prs', fetchPrs, (m) => m.t === 'prs.changed');
   // FLAG: plan's message literal — not in code's visible union (plan depends on us).
   // Optional cross-module read: plan owns this route and may not be in the
   // build, installed, or enabled. Skipping the fetch is the fix; catching the
   // 404 afterwards would hide a real one.
   const planEnabled = useModuleEnabled('plan');
-  const proposals = useFeed(planEnabled ? id : null, fetchProposals, (m) => (m.t as string) === 'proposals.changed');
-  const runs = useFeed(id, fetchRuns, (m) => m.t === 'runs.changed' || m.t === 'run.changed');
-  const pipelineRuns = useFeed(id, fetchPipelineRuns, (m) => m.t === 'pipelineRuns.changed');
-  const repos = useFeed(id, fetchRepos, (m) => m.t === 'repos.changed');
+  const proposals = useFeed(planEnabled ? id : null, 'proposals', fetchProposals, (m) => (m.t as string) === 'proposals.changed');
+  const runs = useFeed(id, 'runs', fetchRuns, (m) => m.t === 'runs.changed' || m.t === 'run.changed');
+  const pipelineRuns = useFeed(id, 'pipeline-runs', fetchPipelineRuns, (m) => m.t === 'pipelineRuns.changed');
+  const repos = useFeed(id, 'repos', fetchRepos, (m) => m.t === 'repos.changed');
   const metrics = useFeed(
     id,
+    'metrics',
     fetchMetrics,
     (m) => m.t === 'issues.changed' || m.t === 'prs.changed' || m.t === 'repos.changed',
   );
-  const reports = useFeed(id, fetchReports, (m) => m.t === 'reports.changed');
-  const pendingReviews = useFeed(id, fetchPendingReviews, (m) => m.t === 'prs.changed');
-  const pendingTriage = useFeed(id, fetchPendingTriage, (m) => m.t === 'triage.changed' || m.t === 'issues.changed');
+  const reports = useFeed(id, 'reports', fetchReports, (m) => m.t === 'reports.changed');
+  const pendingReviews = useFeed(id, 'pending-reviews', fetchPendingReviews, (m) => m.t === 'prs.changed');
+  const pendingTriage = useFeed(id, 'pending-triage', fetchPendingTriage, (m) => m.t === 'triage.changed' || m.t === 'issues.changed');
 
   // CI/review warm-up can land dozens of snapshots in quick succession. Fold
   // each one into the already loaded Overview feed instead of refetching the

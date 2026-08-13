@@ -556,6 +556,61 @@ export interface RunTaskDescriptor {
   readonly hint?: string;
 }
 
+// ---------- model routing --------------------------------------------------------
+
+/** Coarse risk signal supplied by the workflow that owns a run. */
+export type RunRoutingRisk = 'low' | 'medium' | 'high';
+
+/**
+ * Optional semantic context for one run. `task` remains the stable placement,
+ * runner-policy and cost-attribution key; `phase` is deliberately separate so
+ * a cost policy can distinguish planning from summarising without weakening a
+ * machine's task fence.
+ */
+export interface RunRoutingContext {
+  /** Stable, low-cardinality stage name such as `plan`, `implement`, `review`. */
+  readonly phase?: string;
+  /** Parent unit whose child runs should be read as one workflow in audit. */
+  readonly workUnitId?: string;
+  readonly risk?: RunRoutingRisk;
+}
+
+/** Input passed to the optional model-policy provider before placement. */
+export interface RunRoutingRequest extends RunRoutingContext {
+  readonly task: string | null;
+  readonly kind: RunKind;
+  readonly repo: string | null;
+  readonly userId: string | null;
+}
+
+/** A versioned policy match. Candidates are tried in order. */
+export interface RunRoutingResolution {
+  readonly policyRevision: number;
+  readonly ruleId: string;
+  readonly profileId: string;
+  readonly candidateModels: readonly string[];
+  /** `fail` is for gates where silently weakening the model is worse than
+   * delaying the work, for example an independent final review. */
+  readonly unavailable: 'fallback' | 'fail';
+}
+
+/** Durable evidence handed back once the run has landed on its final machine. */
+export interface RunRoutingDecision extends RunRoutingRequest, RunRoutingResolution {
+  readonly runId: string;
+  readonly selectedModel: string | null;
+  readonly outcome: 'routed' | 'overridden' | 'fallback';
+}
+
+/**
+ * Optional inversion-of-control seam implemented by Model Router. Operate owns
+ * scheduling and calls this provider; the provider never creates or queues a
+ * run, which keeps one lifecycle and one budget authority.
+ */
+export interface RunRoutingProvider {
+  resolve(request: RunRoutingRequest): RunRoutingResolution | null;
+  record(decision: RunRoutingDecision): void;
+}
+
 /**
  * How a machine's task policy is read. `deny` is OPEN by default — everything
  * except the listed entries — so a module update that registers a new task

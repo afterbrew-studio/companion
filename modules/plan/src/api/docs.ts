@@ -305,6 +305,7 @@ export class Docs {
       this.orchestrator.runOneShot({
         kind: 'analysis',
         task: 'plan.analyses',
+        routing: { phase: 'draft', workUnitId: `doc:${workspaceId}`, risk: 'medium' },
         title: `Write documentation: ${opts.instructions.slice(0, 60)}`,
         // The orchestrator mkdirs whatever cwd it gets.
         cwd,

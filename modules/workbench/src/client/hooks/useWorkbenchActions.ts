@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { readCached, useLive, writeCached } from '@moxxy/companion-sdk/client';
 import type { PreparedWorkbenchAction } from '../../contract/index.js';
 import { workbenchApi } from '../api.js';
 
@@ -12,20 +12,25 @@ export interface WorkbenchActionsFeed {
 }
 
 export function useWorkbenchActions(workspaceId?: string, enabled = true): WorkbenchActionsFeed {
-  const [actions, setActions] = useState<readonly PreparedWorkbenchAction[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const cacheKey = enabled ? `workbench:actions:${workspaceId ?? 'all'}` : null;
+  const retained = cacheKey === null ? null : readCached<readonly PreparedWorkbenchAction[]>(cacheKey);
+  const [actions, setActions] = useState<readonly PreparedWorkbenchAction[]>(retained ?? []);
+  const [loaded, setLoaded] = useState(retained !== null);
+  const [snapshotKey, setSnapshotKey] = useState<string | null>(cacheKey);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
 
   useEffect(() => {
     sequence.current += 1;
-    setActions([]);
-    setLoaded(false);
+    const snapshot = cacheKey === null ? null : readCached<readonly PreparedWorkbenchAction[]>(cacheKey);
+    setActions(snapshot ?? []);
+    setLoaded(!enabled || snapshot !== null);
+    setSnapshotKey(cacheKey);
     setError(null);
     return () => {
       sequence.current += 1;
     };
-  }, [workspaceId, enabled]);
+  }, [workspaceId, enabled, cacheKey]);
 
   const refresh = useCallback(async () => {
     const requestId = ++sequence.current;
@@ -38,23 +43,29 @@ export function useWorkbenchActions(workspaceId?: string, enabled = true): Workb
     try {
       const result = await workbenchApi.actions(workspaceId, 'pending');
       if (sequence.current !== requestId) return;
+      if (cacheKey !== null) writeCached(cacheKey, result.actions);
       setActions(result.actions);
       setError(null);
     } catch (err) {
       if (sequence.current !== requestId) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (sequence.current === requestId) setLoaded(true);
+      if (sequence.current === requestId) {
+        setSnapshotKey(cacheKey);
+        setLoaded(true);
+      }
     }
-  }, [workspaceId, enabled]);
+  }, [workspaceId, enabled, cacheKey]);
 
+  const visibleActions = snapshotKey === cacheKey ? actions : (retained ?? []);
+  const visibleLoaded = !enabled || (snapshotKey === cacheKey ? loaded : retained !== null);
   useEffect(() => {
-    if (actions.length === 0) return;
-    const nearest = Math.min(...actions.map((action) => action.expiresAt));
+    if (visibleActions.length === 0) return;
+    const nearest = Math.min(...visibleActions.map((action) => action.expiresAt));
     const timer = window.setTimeout(() => void refresh(), Math.max(0, nearest - Date.now()) + 100);
     return () => window.clearTimeout(timer);
-  }, [actions, refresh]);
+  }, [visibleActions, refresh]);
 
   useLive(refresh, (msg) => msg.t === 'workbench.actions.changed' || msg.t === 'modules.changed');
-  return { actions, loaded, error, refresh };
+  return { actions: visibleActions, loaded: visibleLoaded, error: snapshotKey === cacheKey ? error : null, refresh };
 }

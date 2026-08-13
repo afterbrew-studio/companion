@@ -294,6 +294,7 @@ export class Specs {
           this.orchestrator.runOneShot({
             kind: 'analysis',
             task: 'plan.analyses',
+            routing: { phase: 'draft', workUnitId: id, risk: 'medium' },
             title: `Draft spec: ${instructions.slice(0, 60)}`,
             cwd,
             repo,
@@ -390,6 +391,7 @@ export class Specs {
         return this.orchestrator.runOneShot({
             kind: 'analysis',
             task: 'plan.analyses',
+            routing: { phase: 'drift', workUnitId: `${repo}#${prNumber}`, risk: 'medium' },
             title: `Spec drift check — PR #${prNumber}`,
             cwd,
             repo,

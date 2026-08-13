@@ -1048,6 +1048,7 @@ export class PrReviews {
           const { finalMessage } = await this.runReviewTurn(reviewId, execution, {
             kind: 'analysis',
             task: 'code.pr-review',
+            routing: { phase: 'review', workUnitId: reviewId, risk: 'high' },
             title: `Review PR #${prNumber}: ${pr.title.slice(0, 60)}`,
             cwd,
             repo,
@@ -1240,6 +1241,7 @@ export class PrReviews {
     const { finalMessage } = await this.runReviewTurn(reviewId, execution, {
       kind: 'analysis',
       task: 'code.pr-review',
+      routing: { phase: 'review', workUnitId: reviewId, risk: 'high' },
       title: `Map oversized PR #${prNumber}`,
       cwd,
       repo,
@@ -1376,6 +1378,7 @@ export class PrReviews {
           const { finalMessage } = await this.runReviewTurn(reviewId, execution, {
             kind: 'analysis',
             task: 'code.pr-review',
+            routing: { phase: 'review', workUnitId: reviewId, risk: 'high' },
             title: `Review PR #${prNumber} (${at + 1}/${chunks.length})`,
             cwd,
             repo,
@@ -1510,6 +1513,7 @@ export class PrReviews {
       const { finalMessage } = await this.runReviewTurn(reviewId, execution, {
         kind: 'analysis',
         task: 'code.pr-review',
+        routing: { phase: 'summarize', workUnitId: reviewId, risk: 'medium' },
         title: `Review PR #${prNumber} — summary`,
         cwd,
         repo,
@@ -1574,6 +1578,7 @@ export class PrReviews {
           const { finalMessage } = await this.runReviewTurn(reviewId, execution, {
             kind: 'analysis',
             task: 'code.review-verify',
+            routing: { phase: 'verify', workUnitId: reviewId, risk: 'high' },
             title: `Verify: ${finding.title.slice(0, 60)}`,
             cwd,
             repo,
@@ -2131,6 +2136,7 @@ export class PrReviews {
         return this.orchestrator.runOneShot({
             kind: 'analysis',
             task: 'code.ci-analysis',
+            routing: { phase: 'analyze', workUnitId: `${repo}#${prNumber}`, risk: 'medium' },
             title: `CI failure analysis — PR #${prNumber}`,
             cwd,
             repo,
