@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { readCached, useLive, writeCached } from '@moxxy/companion-sdk/client';
 import type { DecisionItem } from '../../contract/index.js';
 import { workbenchApi } from '../api.js';
 
@@ -11,20 +11,27 @@ export function useDecisions(workspaceId: string | undefined): {
   readonly error: string | null;
   readonly refresh: () => Promise<void>;
 } {
-  const [items, setItems] = useState<readonly DecisionItem[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [snapshotWorkspace, setSnapshotWorkspace] = useState<string | null>(null);
+  const cacheKey = workspaceId ? `workbench:decisions:${workspaceId}` : null;
+  const retained = cacheKey === null
+    ? null
+    : readCached<{ readonly items: readonly DecisionItem[]; readonly hasMore: boolean }>(cacheKey);
+  const [items, setItems] = useState<readonly DecisionItem[]>(retained?.items ?? []);
+  const [hasMore, setHasMore] = useState(retained?.hasMore ?? false);
+  const [snapshotWorkspace, setSnapshotWorkspace] = useState<string | null>(retained ? (workspaceId ?? null) : null);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
 
   // Never render one workspace's decisions under another workspace's name.
   useEffect(() => {
     sequence.current += 1;
-    setItems([]);
-    setHasMore(false);
-    setSnapshotWorkspace(null);
+    const snapshot = cacheKey === null
+      ? null
+      : readCached<{ readonly items: readonly DecisionItem[]; readonly hasMore: boolean }>(cacheKey);
+    setItems(snapshot?.items ?? []);
+    setHasMore(snapshot?.hasMore ?? false);
+    setSnapshotWorkspace(snapshot ? (workspaceId ?? null) : null);
     setError(null);
-  }, [workspaceId]);
+  }, [workspaceId, cacheKey]);
 
   const refresh = useCallback(async () => {
     const requestId = ++sequence.current;
@@ -38,6 +45,7 @@ export function useDecisions(workspaceId: string | undefined): {
     try {
       const snapshot = await workbenchApi.decisions(workspaceId);
       if (sequence.current !== requestId) return;
+      if (cacheKey !== null) writeCached(cacheKey, snapshot);
       setItems(snapshot.items);
       setHasMore(snapshot.hasMore);
       setSnapshotWorkspace(workspaceId);
@@ -47,7 +55,7 @@ export function useDecisions(workspaceId: string | undefined): {
       setError(err instanceof Error ? err.message : String(err));
       setSnapshotWorkspace(workspaceId);
     }
-  }, [workspaceId]);
+  }, [workspaceId, cacheKey]);
 
   useLive(
     refresh,
@@ -62,11 +70,14 @@ export function useDecisions(workspaceId: string | undefined): {
       msg.t === 'modules.changed',
   );
 
+  const current = snapshotWorkspace === workspaceId
+    ? { items, hasMore, loaded: true }
+    : { items: retained?.items ?? [], hasMore: retained?.hasMore ?? false, loaded: retained !== null };
   return {
-    items,
-    hasMore,
-    loaded: workspaceId === undefined || snapshotWorkspace === workspaceId,
-    error,
+    items: current.items,
+    hasMore: current.hasMore,
+    loaded: workspaceId === undefined || current.loaded,
+    error: snapshotWorkspace === workspaceId ? error : null,
     refresh,
   };
 }

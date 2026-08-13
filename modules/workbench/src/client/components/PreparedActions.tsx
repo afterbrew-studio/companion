@@ -47,7 +47,7 @@ export function PreparedActionsView({
     }
   };
 
-  if (feed.loaded && feed.actions.length === 0 && !feed.error && !error) return null;
+  if (feed.actions.length === 0 && !feed.error && !error) return null;
 
   const content = (
     <>

@@ -11,7 +11,6 @@ import {
   ListCard,
   Page,
   PageHeader,
-  RowsSkeleton,
   StatusDot,
   timeAgo,
   type StatusTone,
@@ -84,11 +83,7 @@ export default function TodayPage(): React.JSX.Element {
       <ErrorBar error={decisions.error} />
       <PreparedActionsView feed={prepared} />
 
-      {!loaded ? (
-        <ListCard>
-          <RowsSkeleton rows={5} />
-        </ListCard>
-      ) : error && domainCount === 0 ? null : domainCount === 0 && current.repoCount === 0 ? (
+      {!loaded ? null : error && domainCount === 0 ? null : domainCount === 0 && current.repoCount === 0 ? (
         <EmptyState
           title="Connect your first repository"
           hint="Today becomes useful as soon as Companion can see the issues, pull requests, and agent work in this workspace."
