@@ -61,6 +61,8 @@ export interface ModelInputs {
   readonly explicit?: string | null;
   /** The unit of work's standing preference, already narrowed to this machine. */
   readonly preferred: string | null;
+  /** Model Router's stage profile, already narrowed to this machine. */
+  readonly routed?: string | null;
   /** This lane's pin for this task, already narrowed to this machine. */
   readonly lanePin: string | null;
   /** This lane's default, already narrowed to this machine. */
@@ -81,7 +83,13 @@ export interface ModelInputs {
  */
 export function resolveModel(inputs: ModelInputs): string | null {
   return (
-    inputs.explicit ?? inputs.preferred ?? inputs.lanePin ?? inputs.laneDefault ?? inputs.taskPin ?? null
+    inputs.explicit ??
+    inputs.preferred ??
+    inputs.routed ??
+    inputs.lanePin ??
+    inputs.laneDefault ??
+    inputs.taskPin ??
+    null
   );
 }
 

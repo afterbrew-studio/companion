@@ -16,6 +16,8 @@
       "issues:read",
       "jira:act",
       "jira:read",
+      "model-router:manage",
+      "model-router:read",
       "modules:deploy",
       "modules:manage",
       "notify:read",
@@ -73,6 +75,7 @@
       "issues:read",
       "jira:act",
       "jira:read",
+      "model-router:read",
       "notify:read",
       "pipelines:execute",
       "pipelines:manage",
@@ -255,6 +258,21 @@
         "admin",
         "maintainer",
         "business"
+      ]
+    },
+    "model-router:manage": {
+      "owner": "model-router",
+      "title": "Manage model routing policy",
+      "grants": [
+        "admin"
+      ]
+    },
+    "model-router:read": {
+      "owner": "model-router",
+      "title": "View model routing policy and decisions",
+      "grants": [
+        "admin",
+        "maintainer"
       ]
     },
     "modules:deploy": {

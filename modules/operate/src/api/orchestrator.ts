@@ -16,6 +16,11 @@ import type {
   RunQueueSnapshot,
   RunListRecord,
   RunRecord,
+  RunRoutingContext,
+  RunRoutingDecision,
+  RunRoutingProvider,
+  RunRoutingRequest,
+  RunRoutingResolution,
 } from '../contract/index.js';
 import { laneKey } from '../contract/index.js';
 import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
@@ -170,6 +175,8 @@ export class Orchestrator implements RunnerEventSink {
    * after construction.
    */
   private runAuthority: (username: string) => boolean = () => true;
+  /** Optional cost/quality policy. It advises scheduling; it never owns a run. */
+  private runRoutingProvider: RunRoutingProvider | null = null;
 
   constructor(
     private readonly store: OperateStore,
@@ -247,6 +254,14 @@ export class Orchestrator implements RunnerEventSink {
   /** Registered by module-code at enable; see OperateService.setVerifyCommandResolver. */
   setVerifyCommandResolver(resolve: (repo: string) => string | null): void {
     this.verifyCommandFor = resolve;
+  }
+
+  setRunRoutingProvider(provider: RunRoutingProvider): void {
+    this.runRoutingProvider = provider;
+  }
+
+  clearRunRoutingProvider(provider: RunRoutingProvider): void {
+    if (this.runRoutingProvider === provider) this.runRoutingProvider = null;
   }
 
   /**
@@ -540,7 +555,7 @@ export class Orchestrator implements RunnerEventSink {
 
   /**
    * Provider-aware placement: resolve the model the run will actually ride
-   * (explicit > standing preference > task pin) to the
+   * (explicit > standing preference > routed profile > task pin) to the
    * providers that serve it, and prefer a runner advertising one of them.
    * Callers that provision a worktree before createRun (fixes, pipelines) use
    * this so the worktree lands on the runner the run will execute on.
@@ -548,6 +563,35 @@ export class Orchestrator implements RunnerEventSink {
    * Throws when no machine's policy accepts the task and the instance's
    * fallback refuses — better here, before a worktree exists, than after.
    */
+  prepareRunPlacement(
+    repo: string | null,
+    opts: {
+      readonly kind: RunKind;
+      readonly model?: string | null;
+      readonly preferredModel?: string | null;
+      readonly userId?: string | null;
+      readonly task?: string | null;
+      readonly routing?: RunRoutingContext;
+    },
+  ): { readonly runnerId: string | null; readonly routingResolution: RunRoutingResolution | null } {
+    const request = this.routingRequest({
+      kind: opts.kind,
+      repo,
+      userId: opts.userId,
+      task: opts.task,
+      routing: opts.routing,
+    });
+    const routingResolution = this.resolveRunRouting(request);
+    const runnerId = this.placeRun(repo, { ...opts, routingResolution });
+    const routed = this.routedModel(routingResolution, { runnerId });
+    const preferred = this.servableHere(runnerId, opts.preferredModel ?? null);
+    this.assertRequiredRoute(routingResolution, routed, opts.model ?? preferred);
+    return {
+      runnerId,
+      routingResolution,
+    };
+  }
+
   placeRun(
     repo: string | null,
     opts: {
@@ -560,11 +604,31 @@ export class Orchestrator implements RunnerEventSink {
       /** Feature-level task id ('board.worker'): runners can block it, and it
        *  carries the instance model pin. */
       task?: string | null;
+      /** Semantic stage for the optional Model Router policy. */
+      routing?: RunRoutingContext;
+      /** Internal snapshot used by createRun so placement and dispatch cannot
+       * observe two policy revisions during one provisioning attempt. */
+      routingResolution?: RunRoutingResolution | null;
+      kind?: RunKind;
     } = {},
   ): string | null {
+    const request = this.routingRequest({
+      kind: opts.kind ?? 'interactive',
+      repo,
+      userId: opts.userId,
+      task: opts.task,
+      routing: opts.routing,
+    });
+    const resolution = opts.routingResolution !== undefined
+      ? opts.routingResolution
+      : this.resolveRunRouting(request);
+    const preferred = this.servableAnywhere(opts.preferredModel ?? null);
+    const routed = this.routedModel(resolution);
+    this.assertRequiredRoute(resolution, routed, opts.model ?? preferred);
     const effective =
       opts.model ??
-      this.servableAnywhere(opts.preferredModel ?? null) ??
+      preferred ??
+      routed ??
       this.pinnedModel(opts.task ?? null);
     return this.runners.place(repo, opts.task ?? null, effective, opts.userId ?? null, opts.exclude);
   }
@@ -597,6 +661,10 @@ export class Orchestrator implements RunnerEventSink {
     /** Feature-level task id (RunTaskDescriptor) — always server-assigned by
      *  the owning feature, never client input, so filters can't be dodged. */
     task?: string | null;
+    /** Semantic stage and parent workflow for the optional Model Router. */
+    routing?: RunRoutingContext;
+    /** Prepared alongside an external worktree placement. */
+    routingResolution?: RunRoutingResolution | null;
     /** Agent runtime to start under; omitted lets the lane or the machine decide. */
     harness?: string | null;
     /**
@@ -611,6 +679,19 @@ export class Orchestrator implements RunnerEventSink {
     this.assertOwnerAuthorized(opts.userId ?? null);
     // Budget refusal is likewise side-effect free.
     this.budgetGate(opts.userId ?? null);
+    const kind: RunKind = opts.kind ?? 'interactive';
+    const routingRequest = this.routingRequest({
+      kind,
+      repo: opts.repo,
+      userId: opts.userId,
+      task: opts.task,
+      routing: opts.routing,
+    });
+    // Snapshot once: saving policy while a worktree is being prepared affects
+    // the next run, never half of this one.
+    const routingResolution = opts.routingResolution !== undefined
+      ? opts.routingResolution
+      : this.resolveRunRouting(routingRequest);
     if (opts.repo) {
       if (!opts.userId) {
         throw new Error(`a personal GitHub account owner is required to run agents for ${opts.repo}`);
@@ -632,7 +713,6 @@ export class Orchestrator implements RunnerEventSink {
     }
     const id = `run-${randomUUID().slice(0, 12)}`;
     const now = Date.now();
-    const kind: RunKind = opts.kind ?? 'interactive';
     // Reserve slots for automated work: attended chats (interactive / AI Help)
     // may not consume the last `reservedRunnerSlots` of the combined capacity,
     // so triage/review/fix always have room. Always leaves at least one chat
@@ -680,15 +760,22 @@ export class Orchestrator implements RunnerEventSink {
               preferredModel: opts.preferredModel,
               userId: opts.userId,
               task: opts.task,
+              routing: opts.routing,
+              routingResolution,
+              kind,
             }),
     });
-    // Model: a choice just made → the unit of work's standing preference → this
-    // lane's pin for the task → this lane's default → the task's instance pin.
+    // Model: a choice just made → the unit of work's standing preference → the
+    // routed stage profile → this lane's pin/default → the task's instance pin.
     // Everything but the explicit choice is narrowed to what the machine can
     // serve; null lets the selected runtime apply its own default at dispatch.
+    const preferred = this.servableHere(runnerId, opts.preferredModel ?? null);
+    const routed = this.routedModel(routingResolution, { runnerId });
+    this.assertRequiredRoute(routingResolution, routed, opts.model ?? preferred);
     const model = resolveModel({
       ...(opts.model !== undefined ? { explicit: opts.model } : {}),
-      preferred: this.servableHere(runnerId, opts.preferredModel ?? null),
+      preferred,
+      routed,
       lanePin: isAutoLane(lane)
         ? null
         : this.servableHere(runnerId, opts.task ? (this.laneModels(lane, [opts.task]).pins[opts.task] ?? null) : null),
@@ -777,8 +864,18 @@ export class Orchestrator implements RunnerEventSink {
                 userId: opts.userId,
                 exclude: tried,
                 task: opts.task,
+                routing: opts.routing,
+                routingResolution,
+                kind,
               })
             : undefined;
+          if (next !== undefined) {
+            this.assertRequiredRoute(
+              routingResolution,
+              this.routedModel(routingResolution, { runnerId: next }),
+              opts.model ?? this.servableHere(next, opts.preferredModel ?? null),
+            );
+          }
         } catch {
           next = undefined;
         }
@@ -793,14 +890,25 @@ export class Orchestrator implements RunnerEventSink {
         placedBackend = this.runners.backend(placedOn);
         // The machine changed, so re-resolve: the new one may not serve the
         // preference or the pin.
-        this.store.runs.setModel(
-          id,
+        const failoverModel =
           opts.model ??
-            this.servableHere(placedOn, opts.preferredModel ?? null) ??
-            this.servablePin(placedOn, opts.task ?? null),
-        );
+          this.servableHere(placedOn, opts.preferredModel ?? null) ??
+          this.routedModel(routingResolution, { runnerId: placedOn }) ??
+          this.servablePin(placedOn, opts.task ?? null);
+        this.store.runs.setModel(id, failoverModel, this.modelPrice(failoverModel));
       }
     }
+    const finalModel = this.store.runs.get(id)?.model ?? null;
+    this.recordRunRouting(routingRequest, routingResolution, {
+      runId: id,
+      selectedModel: finalModel,
+      outcome:
+        opts.model != null || (opts.preferredModel != null && finalModel === opts.preferredModel)
+          ? 'overridden'
+          : routingResolution?.candidateModels.includes(finalModel ?? '')
+            ? 'routed'
+            : 'fallback',
+    });
     this.emitRunChanged(id);
     return this.getRun(id)!;
   }
@@ -968,6 +1076,81 @@ export class Orchestrator implements RunnerEventSink {
     return user ? this.userLane(user.username) : AUTO_LANE;
   }
 
+  /** Build the feature-neutral request the optional policy provider sees. */
+  private routingRequest(opts: {
+    readonly kind: RunKind;
+    readonly repo?: string | null;
+    readonly userId?: string | null;
+    readonly task?: string | null;
+    readonly routing?: RunRoutingContext;
+  }): RunRoutingRequest {
+    return {
+      task: opts.task ?? null,
+      kind: opts.kind,
+      repo: opts.repo ?? null,
+      userId: opts.userId ?? null,
+      ...(opts.routing?.phase ? { phase: opts.routing.phase } : {}),
+      ...(opts.routing?.workUnitId ? { workUnitId: opts.routing.workUnitId } : {}),
+      ...(opts.routing?.risk ? { risk: opts.routing.risk } : {}),
+    };
+  }
+
+  /** Provider defects fail open to the existing model cascade. An explicitly
+   * configured fail-closed rule is enforced separately by assertRequiredRoute. */
+  private resolveRunRouting(request: RunRoutingRequest): RunRoutingResolution | null {
+    try {
+      return this.runRoutingProvider?.resolve(request) ?? null;
+    } catch (err) {
+      log.warn('model routing provider failed — using existing model policy', {
+        task: request.task,
+        phase: request.phase ?? null,
+        err: String(err),
+      });
+      return null;
+    }
+  }
+
+  /** First candidate the fleet (or selected machine) can actually serve. */
+  private routedModel(
+    resolution: RunRoutingResolution | null,
+    on?: { readonly runnerId: string | null },
+  ): string | null {
+    if (!resolution) return null;
+    for (const candidate of resolution.candidateModels) {
+      const model = on
+        ? this.servableHere(on.runnerId, candidate)
+        : this.servableAnywhere(candidate);
+      if (model !== null) return model;
+    }
+    return null;
+  }
+
+  private assertRequiredRoute(
+    resolution: RunRoutingResolution | null,
+    routed: string | null,
+    higherPrecedence: string | null,
+  ): void {
+    if (!resolution || resolution.unavailable !== 'fail' || routed !== null || higherPrecedence !== null) return;
+    throw new Error(
+      `Model Router rule ${resolution.ruleId} requires one of ${resolution.candidateModels.join(', ') || 'its configured models'}, but no eligible runner can serve it`,
+    );
+  }
+
+  private recordRunRouting(
+    request: RunRoutingRequest,
+    resolution: RunRoutingResolution | null,
+    result: Pick<RunRoutingDecision, 'runId' | 'selectedModel' | 'outcome'>,
+  ): void {
+    if (!resolution || !this.runRoutingProvider) return;
+    try {
+      this.runRoutingProvider.record({ ...request, ...resolution, ...result });
+    } catch (err) {
+      // A run already exists and may already have spent tokens. Preserve its
+      // lifecycle, but make the missing audit evidence loud in daemon logs.
+      log.warn('could not record model routing decision', { runId: result.runId, err: String(err) });
+    }
+  }
+
   /**
    * A standing model preference (a task pin, a board card's model), dropped
    * where no machine may run it: such a preference falls back to the rest of
@@ -1086,7 +1269,7 @@ export class Orchestrator implements RunnerEventSink {
         .catch(() => (model ? backend.runCommand(runId, 'model', model) : undefined))
         .catch((err) => log.warn('session model sync failed', { runId, err: String(err) }));
     }
-    this.store.runs.setModel(runId, model);
+    this.store.runs.setModel(runId, model, this.modelPrice(model));
     this.emitRunChanged(runId);
     return this.getRun(runId)!;
   }
@@ -1148,6 +1331,8 @@ export class Orchestrator implements RunnerEventSink {
     issueNumber?: number | null;
     /** Feature-level task id — carried for when one-shots learn to place. */
     task?: string;
+    /** Semantic stage and parent workflow for model routing. */
+    routing?: RunRoutingContext;
     /** Server-captured lane for work that continues after its HTTP request. */
     lane?: RunLane;
     prompt: string;

@@ -44,6 +44,9 @@ importers:
       '@companion/module-jira':
         specifier: workspace:*
         version: link:../../modules/jira
+      '@companion/module-model-router':
+        specifier: workspace:*
+        version: link:../../modules/model-router
       '@companion/module-notify':
         specifier: workspace:*
         version: link:../../modules/notify
@@ -212,6 +215,9 @@ importers:
       '@companion/module-jira':
         specifier: workspace:*
         version: link:../../modules/jira
+      '@companion/module-model-router':
+        specifier: workspace:*
+        version: link:../../modules/model-router
       '@companion/module-notify':
         specifier: workspace:*
         version: link:../../modules/notify
@@ -624,6 +630,37 @@ importers:
       '@moxxy/companion-services':
         specifier: workspace:*
         version: link:../../packages/services
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.2.18
+      react:
+        specifier: ^19.2.8
+        version: 19.2.8
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  modules/model-router:
+    dependencies:
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../operate
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3

@@ -162,6 +162,7 @@ export class Proposals {
         this.orchestrator.runOneShot({
           kind: 'analysis',
           task: 'plan.analyses',
+          routing: { phase: 'analyze', workUnitId: id, risk: 'high' },
           title: `Analyze proposal: ${proposal.title.slice(0, 60)}`,
           ...(cwd ? { cwd } : {}),
           repo: proposal.repo,

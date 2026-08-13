@@ -172,6 +172,77 @@ test('the model cascade is explicit choice, then the task pin, then the runtime 
   assert.equal(modelOf(dispatched, untasked.id), null);
 });
 
+test('Model Router chooses the first servable stage candidate and records the actual decision', async () => {
+  const { orchestrator } = fixture();
+  const decisions = [];
+  orchestrator.setRunRoutingProvider({
+    resolve: (request) => request.task === 'code.pr-review' && request.phase === 'review'
+      ? {
+          policyRevision: 7,
+          ruleId: 'review',
+          profileId: 'reviewer',
+          candidateModels: ['not-in-any-catalog', 'sonnet'],
+          unavailable: 'fail',
+        }
+      : null,
+    record: (decision) => decisions.push(decision),
+  });
+
+  const run = await orchestrator.createRun({
+    kind: 'analysis',
+    task: 'code.pr-review',
+    routing: { phase: 'review', workUnitId: 'review-1', risk: 'high' },
+  });
+  assert.equal(run.model, 'sonnet');
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].selectedModel, 'sonnet');
+  assert.equal(decisions[0].outcome, 'routed');
+  assert.equal(decisions[0].workUnitId, 'review-1');
+});
+
+test('explicit and card models stay above Model Router and are audited as overrides', async () => {
+  const { orchestrator } = fixture();
+  const decisions = [];
+  orchestrator.setRunRoutingProvider({
+    resolve: () => ({
+      policyRevision: 2,
+      ruleId: 'implement',
+      profileId: 'economy',
+      candidateModels: ['haiku'],
+      unavailable: 'fallback',
+    }),
+    record: (decision) => decisions.push(decision),
+  });
+  const card = await orchestrator.createRun({
+    kind: 'implement', task: 'board.worker', preferredModel: 'sonnet', routing: { phase: 'implement' },
+  });
+  const explicit = await orchestrator.createRun({
+    kind: 'implement', task: 'board.worker', model: 'opus', routing: { phase: 'implement' },
+  });
+  assert.equal(card.model, 'sonnet');
+  assert.equal(explicit.model, 'opus');
+  assert.deepEqual(decisions.map((decision) => decision.outcome), ['overridden', 'overridden']);
+});
+
+test('a fail-closed profile refuses before a run row exists when no candidate is servable', async () => {
+  const { orchestrator, store } = fixture();
+  orchestrator.setRunRoutingProvider({
+    resolve: () => ({
+      policyRevision: 3,
+      ruleId: 'critical-review',
+      profileId: 'reviewer',
+      candidateModels: ['missing-frontier'],
+      unavailable: 'fail',
+    }),
+    record: () => assert.fail('a refused run has no decision row'),
+  });
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'analysis', task: 'code.pr-review', routing: { phase: 'review' } }),
+    /requires one of missing-frontier/,
+  );
+  assert.equal(store.runs.list().length, 0);
+});
+
 test('a task pin no machine may serve falls back, while a fresh choice is refused', async () => {
   const { orchestrator, dispatched } = fixture();
   orchestrator.setTaskModelPin('code.fix', 'sonnet');
@@ -289,6 +360,30 @@ test("a card's model gives way on a machine that cannot serve it, instead of fai
   });
   assert.equal(onGpuBox.model, 'sonnet');
   assert.equal(store.runs.get(onGpuBox.id).model, 'sonnet');
+});
+
+test('a fail-closed route refuses during prepared placement before a caller creates a worktree', async () => {
+  const { orchestrator } = await twoMachines();
+  await orchestrator.runners.update('runner-b', {
+    taskPolicy: { mode: 'deny', modules: [], tasks: ['board.worker'] },
+  });
+  orchestrator.setRunRoutingProvider({
+    resolve: () => ({
+      policyRevision: 4,
+      ruleId: 'critical-board-review',
+      profileId: 'reviewer',
+      candidateModels: ['sonnet'],
+      unavailable: 'fail',
+    }),
+    record: () => undefined,
+  });
+
+  assert.throws(
+    () => orchestrator.prepareRunPlacement(null, {
+      kind: 'analysis', task: 'board.worker', routing: { phase: 'review' },
+    }),
+    /requires one of sonnet/,
+  );
 });
 
 test("a card's model no machine may run falls through to the pin, while the same model chosen per run refuses", async () => {

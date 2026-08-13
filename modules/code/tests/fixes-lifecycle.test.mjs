@@ -36,6 +36,7 @@ function fixture(
   const orchestrator = {
     runners: { backend: () => backend },
     placeRun: () => null,
+    prepareRunPlacement: () => ({ runnerId: null, routingResolution: null }),
     createRun: async () => {
       calls.push('create');
       return run;

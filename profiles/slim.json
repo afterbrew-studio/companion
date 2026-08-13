@@ -6,6 +6,7 @@
     "workspace",
     "integrations",
     "operate",
+    "model-router",
     "code",
     "coderabbit",
     "jira",

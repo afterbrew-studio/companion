@@ -601,6 +601,8 @@ export class PlannerService {
       const result = await this.runStructured(id, userId, 'Clarify idea', prompt, lease, {
         repositoryAccess: needsRepositoryScan,
         round: session.clarification.completedRounds + 1,
+        routingPhase: 'clarify',
+        routingRisk: 'low',
       });
       if (!this.ownsAction(id, lease)) return;
       const initialResult = needsRepositoryScan ? parseInitialClarification(result) : null;
@@ -702,7 +704,7 @@ export class PlannerService {
         'Draft planning artifacts',
         artifactsPrompt(session.idea, session.brief, session.repositoryContext),
         lease,
-        { repositoryAccess: needsRepositoryScan },
+        { repositoryAccess: needsRepositoryScan, routingPhase: 'artifacts', routingRisk: 'medium' },
       );
       if (!this.ownsAction(id, lease)) return;
       const artifacts = parseArtifactBundle(output);
@@ -802,7 +804,7 @@ export class PlannerService {
         message,
         refinementItems,
         ...(context ? { context } : {}),
-      }), lease, { repositoryAccess: needsRepositoryScan });
+      }), lease, { repositoryAccess: needsRepositoryScan, routingPhase: 'discuss', routingRisk: 'low' });
       if (!this.ownsAction(id, lease)) return;
       const result = parsePlannerDiscussion(output, session, undefined, refinementItems);
       const intent = result.intent;
@@ -849,7 +851,7 @@ export class PlannerService {
         'Revise planning checkpoint',
         reviewRevisionPrompt({ session, instruction, refinementItems }),
         lease,
-        { repositoryAccess: needsRepositoryScan },
+        { repositoryAccess: needsRepositoryScan, routingPhase: 'revise', routingRisk: 'medium' },
       );
       if (!this.ownsAction(id, lease)) return;
       const pendingRevision = parsePlannerRevision(output);
@@ -960,7 +962,12 @@ export class PlannerService {
     title: string,
     prompt: string,
     lease: PlannerActionLease,
-    options: { readonly repositoryAccess?: boolean; readonly round?: number | null } = {},
+    options: {
+      readonly repositoryAccess?: boolean;
+      readonly round?: number | null;
+      readonly routingPhase: string;
+      readonly routingRisk: 'low' | 'medium' | 'high';
+    },
   ): Promise<string> {
     const session = this.mustGet(id);
     const repositoryAccess = options.repositoryAccess ?? true;
@@ -976,6 +983,7 @@ export class PlannerService {
     });
     const result = await this.operate.orchestrator.runOneShot({
       kind: 'analysis', task: 'planner.analyses', title: `${title}: ${session.title}`.slice(0, 100),
+      routing: { phase: options.routingPhase, workUnitId: id, risk: options.routingRisk },
       ...(repositoryAccess ? { cwd: this.operate.checkouts.cloneDir(session.repo) } : {}),
       repo: session.repo, userId, prompt, timeoutMs: RUN_TIMEOUT_MS,
       onQueued: (queueId) => this.trackQueued(id, queueId, lease),
@@ -1059,6 +1067,8 @@ export class PlannerService {
     const result = await this.runStructured(id, userId, 'Compact feature brief', prompt, lease, {
       repositoryAccess: false,
       round,
+      routingPhase: 'compact',
+      routingRisk: 'low',
     });
     return parseCompactedBrief(result);
   }

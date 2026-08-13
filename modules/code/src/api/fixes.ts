@@ -1,6 +1,6 @@
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
-import type { RunRecord } from '@companion/module-operate/contract';
+import type { RunRecord, RunRoutingContext } from '@companion/module-operate/contract';
 import type { PrRecord, RepoAgentContext } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, RunnerBackend } from './operate-types.js';
@@ -28,6 +28,8 @@ export interface FixRunOptions {
   /** Outranks the task's instance pin; gives way like one where the machine the
    *  run lands on cannot serve it. */
   preferredModel?: string | null;
+  /** Semantic stage and parent work unit for Model Router. */
+  routing?: RunRoutingContext;
   /** Internal owning-flow hooks: expose the child before its first prompt. */
   onCreated?: (runId: string) => void;
   /** Final cancellation fence after run creation and before every first-turn action. */
@@ -108,6 +110,7 @@ export class Fixes {
     /** See FixRunOptions; `task` defaults by kind when omitted. */
     task?: string;
     preferredModel?: string | null;
+    routing?: RunRoutingContext;
     onCreated?: (runId: string) => void;
     shouldStart?: (runId: string) => boolean;
   }): Promise<RunRecord> {
@@ -118,11 +121,19 @@ export class Fixes {
     const branchPrefix = repositoryBranchPrefix(opts.branchPrefix, opts.title, opts.kind, context);
     const branch = `${branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
-    const runnerId = this.orchestrator.placeRun(opts.repo, {
+    const routing = opts.routing ?? {
+      phase: 'implement',
+      workUnitId: opts.proposalId ?? (opts.issueNumber ? `${opts.repo}#${opts.issueNumber}` : opts.branchPrefix),
+      risk: 'medium' as const,
+    };
+    const placement = this.orchestrator.prepareRunPlacement(opts.repo, {
+      kind: opts.kind,
       userId: opts.userId,
       task,
       preferredModel: opts.preferredModel,
+      routing,
     });
+    const runnerId = placement.runnerId;
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(opts.repo, opts.userId);
     const cwd = await backend.addWorktree(
@@ -145,6 +156,8 @@ export class Fixes {
       userId: opts.userId ?? null,
       task,
       preferredModel: opts.preferredModel,
+      routing,
+      routingResolution: placement.routingResolution,
     });
 
     try {
@@ -301,11 +314,19 @@ export class Fixes {
     const context = await this.loadAgentContext(pr.repo, pr.baseRef, opts.userId);
     const suffix = `${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 8)}`;
     const task = opts.task ?? 'code.fix';
-    const runnerId = this.orchestrator.placeRun(pr.repo, {
+    const routing = opts.routing ?? {
+      phase: 'repair',
+      workUnitId: `${pr.repo}#${pr.number}`,
+      risk: 'medium' as const,
+    };
+    const placement = this.orchestrator.prepareRunPlacement(pr.repo, {
+      kind: 'fix',
       userId: opts.userId,
       task,
       preferredModel: opts.preferredModel,
+      routing,
     });
+    const runnerId = placement.runnerId;
     const backend = this.backendForRun(runnerId);
     await backend.ensureClone(pr.repo, opts.userId);
     // The objective inspects the full PR locally; refresh the base and head refs
@@ -332,6 +353,8 @@ export class Fixes {
       userId: opts.userId ?? null,
       task,
       preferredModel: opts.preferredModel,
+      routing,
+      routingResolution: placement.routingResolution,
     });
     try {
       opts.onCreated?.(run.id);

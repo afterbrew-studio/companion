@@ -57,8 +57,14 @@ export class RunsStore {
       .run(runnerId, cwd, harness, Date.now(), id);
   }
 
-  setModel(id: string, model: string | null): void {
-    this.db.prepare(`UPDATE runs SET model = ?, updated_at = ? WHERE id = ?`).run(model, Date.now(), id);
+  setModel(id: string, model: string | null, price: RunRecord['price']): void {
+    this.db
+      .prepare(
+        `UPDATE runs
+         SET model = ?, input_price_per_mtok = ?, output_price_per_mtok = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(model, price?.inputPerMTok ?? null, price?.outputPerMTok ?? null, Date.now(), id);
   }
 
   updateStatus(id: string, status: RunStatus, outcome?: string | null): void {
@@ -91,6 +97,15 @@ export class RunsStore {
 
   get(id: string): RunRow | undefined {
     return this.db.prepare(`SELECT * FROM runs WHERE id = ?`).get(id) as RunRow | undefined;
+  }
+
+  /** Bounded batch lookup for cross-module audit joins. Callers supply run ids
+   * from their own already-limited page; one query avoids an N+1 read loop. */
+  getMany(ids: readonly string[]): RunRow[] {
+    if (ids.length === 0) return [];
+    if (ids.length > 200) throw new Error('run batch lookup is limited to 200 ids');
+    const placeholders = ids.map(() => '?').join(', ');
+    return this.db.prepare(`SELECT * FROM runs WHERE id IN (${placeholders})`).all(...ids) as RunRow[];
   }
 
   list(limit = 200): RunRow[] {

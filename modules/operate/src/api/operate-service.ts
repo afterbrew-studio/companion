@@ -5,6 +5,7 @@ import type {
   QueuedRunEntry,
   RunQueueSnapshot,
   RunRecord,
+  RunRoutingProvider,
   RunTaskDescriptor,
   RunUsageSnapshot,
   RunVerification,
@@ -92,6 +93,16 @@ export class OperateService {
     return usageSnapshot(run, run.price ?? this.priceOverride(run.model));
   }
 
+  /** One SQL read for a bounded audit page of child runs. */
+  usageForRuns(runIds: readonly string[]): ReadonlyMap<string, RunUsageSnapshot> {
+    return new Map(
+      this.runsStore.getMany(runIds).map((row) => {
+        const run = rowToRun(row, false);
+        return [run.id, usageSnapshot(run, run.price ?? this.priceOverride(run.model))] as const;
+      }),
+    );
+  }
+
   /**
    * Drop a finished run's worktree now, rather than waiting out retention.
    *
@@ -123,6 +134,13 @@ export class OperateService {
    */
   registerRunTask(task: RunTaskDescriptor): void {
     this.runTasks.set(task.id, task);
+  }
+
+  /** Install the one optional model-policy provider. The disposer is identity
+   * safe, so an old module instance cannot detach a newer replacement. */
+  setRunRoutingProvider(provider: RunRoutingProvider): () => void {
+    this.orchestrator.setRunRoutingProvider(provider);
+    return () => this.orchestrator.clearRunRoutingProvider(provider);
   }
 
   /** Every registered task, placeable ones first, alphabetical within a group. */
