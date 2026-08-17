@@ -39,8 +39,8 @@
     "@moxxy/companion-services": "workspace:*",
     "@moxxy/companion-types": "workspace:*",
     "@moxxy/companion-ui": "workspace:*",
-    "@moxxy/plugin-tunnel-proxy": "^0.36.1",
-    "@moxxy/sdk": "^0.36.1",
+    "@moxxy/plugin-tunnel-proxy": "^0.37.2",
+    "@moxxy/sdk": "^0.37.2",
     "ws": "^8.21.3",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.2"
