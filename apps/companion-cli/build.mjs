@@ -35,6 +35,8 @@ await build({
     runs: join(here, 'src/runs.ts'),
     profile: join(here, 'src/profile.ts'),
     harnesses: join(here, 'src/harnesses.ts'),
+    terminal: join(here, 'src/terminal.ts'),
+    'startup-ui': join(here, 'src/startup-ui.ts'),
     mcp: join(here, 'src/mcp.ts'),
     doctor: join(here, 'src/doctor.ts'),
     version: join(here, 'src/version.ts'),

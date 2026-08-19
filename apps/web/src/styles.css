@@ -26,6 +26,30 @@
   inherits: false;
 }
 
+@keyframes mission-stream-caret {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0.2; }
+}
+
+.mission-streaming-mark > :last-child::after,
+.mission-streaming-mark:empty::after {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 0.2rem;
+  background: rgb(16 185 129);
+  vertical-align: -0.15em;
+  content: '';
+  animation: mission-stream-caret 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-streaming-mark > :last-child::after,
+  .mission-streaming-mark:empty::after {
+    animation: none;
+  }
+}
+
 /*
  * Semantic accent palette. The platform is monochrome: accent-* resolves to
  * zinc, primary controls invert (near-black on light, near-white on dark),
@@ -372,6 +396,26 @@
   }
   .markdown sup {
     @apply align-super text-[0.75em];
+  }
+
+  /* Repository descriptions need hierarchy without reading like a second
+     page title: calmer body copy, crisp headings, and airy task rows. */
+  .context-markdown {
+    @apply text-zinc-600 dark:text-zinc-300;
+  }
+  .context-markdown h2,
+  .context-markdown h3,
+  .context-markdown h4,
+  .context-markdown h5,
+  .context-markdown h6 {
+    @apply text-zinc-950 dark:text-zinc-50;
+  }
+  .context-markdown li.task-item {
+    @apply my-1.5 list-none py-0.5;
+  }
+  .context-markdown li.task-item input[type='checkbox'] {
+    @apply mr-2.5 size-3.5;
+    vertical-align: -0.1em;
   }
 
   /* highlight.js tokens (fenced code) — GitHub-ish hues on the zinc palette. */

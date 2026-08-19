@@ -11,11 +11,10 @@ From the **Modules** admin page, or against a running daemon:
 ```sh
 companion module list                     # every module in this build and its state
 companion module info slop                # dependencies, permissions, config spec
-companion module install slop --set label=ai-slop
-companion module enable slop
-companion module disable slop             # stops it, keeps its tables and config
-companion module uninstall slop           # rolls back its migrations, wipes its config
 companion module config slop --set label=junk
+companion module install playground
+companion module disable playground       # stops it, keeps its tables and config
+companion module uninstall playground     # rolls back its migrations, wipes its config
 ```
 
 `install` also enables, and is idempotent: run it on a module that is already on
@@ -38,18 +37,18 @@ First confirm the build actually contains them, because a missed build argument
 looks exactly like a module that refuses to install:
 
 ```sh
-companion module list        # expect 20 modules, 13 enabled (not "13 of 13")
+companion module list        # expect 22 modules, 15 enabled (not "15 of 15")
 ```
 
-`Unknown module: slop` means the module is not in this build at all, so no amount
-of installing will help. Rebuild with the right profile.
+`Unknown module: playground` means the module is not in this build at all, so
+no amount of installing will help. Rebuild with the right profile.
 
 Then adopt them. The order satisfies `dependsOn` (`planner` needs `refinement`;
 their other dependencies are already enabled in `slim`), and the kernel refuses
 an out-of-order install rather than half-enabling anything:
 
 ```sh
-for m in refinement planner slop playground cursor-bugbot runtime; do
+for m in refinement planner playground cursor-bugbot runtime; do
   companion module install "$m"
 done
 ```

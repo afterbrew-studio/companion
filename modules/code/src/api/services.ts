@@ -1,5 +1,5 @@
 import { currentUser, defineServices } from '@moxxy/companion-sdk/server';
-import type { Permission } from '@moxxy/companion-contracts';
+import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import { ReposStore } from './repos-store.js';
 import { IssuesStore } from './issues-store.js';
 import { PrsStore } from './prs-store.js';
@@ -47,6 +47,20 @@ export default defineServices((ctx) => {
   const workspace = ctx.services.get('workspace');
   const operate = ctx.services.get('operate');
   const integrations = ctx.services.get('integrations');
+
+  // CI status is already the narrow browser patch. Mirror that exact signal
+  // onto the internal bus so Desk can notify without polling or importing a
+  // Code store. Other coarse Code broadcasts remain browser-only.
+  const broadcast = (message: SpaServerMessage): void => {
+    ctx.broadcast(message);
+    if (message.t === 'prStatus.changed') {
+      ctx.bus.emit('code.pr-status.changed', {
+        repo: message.repo,
+        number: message.number,
+        status: message.status,
+      });
+    }
+  };
 
   // The feature tasks this module runs agents for, so runners can block them.
   operate.registerRunTask({ id: 'code.fix', label: 'Fix runs', placeable: true, hint: 'issue fixes and PR repairs — worktree goal runs' });
@@ -154,7 +168,7 @@ export default defineServices((ctx) => {
         githubLogin: connected.login,
         username: primaryAdmin,
       });
-      ctx.broadcast({ t: 'repos.changed' });
+      broadcast({ t: 'repos.changed' });
       return true;
     } catch (err) {
       ctx.log.warn('could not connect active local gh account to primary admin', {
@@ -172,12 +186,12 @@ export default defineServices((ctx) => {
       const { client } = await ghAccounts.verifiedClientFor('fetch', repo, { workspaceId, username });
       return client;
     },
-    ctx.broadcast,
+    broadcast,
   );
   const prChecks = new PrChecks(
     store,
     (repo, username) => ghAccounts.clientFor('fetch', { repo, username }),
-    ctx.broadcast,
+    broadcast,
   );
   // Every sync also refreshes CI snapshots for the repo's freshest open PRs.
   sync.onSynced = (repo, username) => prChecks.refreshOpenPrs(repo, username);
@@ -207,7 +221,7 @@ export default defineServices((ctx) => {
     operate.checkouts,
     (c) => ghAccounts.clientFor('pipelines', c),
     authorized,
-    ctx.broadcast,
+    broadcast,
   );
   const prReviews = new PrReviews(
     store,
@@ -235,7 +249,7 @@ export default defineServices((ctx) => {
     ),
     prChecks,
     authorized,
-    ctx.broadcast,
+    broadcast,
     integrations,
     integrationScope,
     operate.runners,
@@ -258,7 +272,7 @@ export default defineServices((ctx) => {
     ),
   );
 
-  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, ctx.broadcast);
+  const reviewChat = new ReviewChat(store, operate.orchestrator, operate.checkouts, authorized, broadcast);
   const agentContext = new RepoAgentContextScanner();
   const fixes = new Fixes(
     store,
@@ -278,7 +292,7 @@ export default defineServices((ctx) => {
     authorized,
     prChecks,
     agentContext,
-    ctx.broadcast,
+    broadcast,
   );
   const pipelines = new Pipelines(
     {
@@ -312,7 +326,7 @@ export default defineServices((ctx) => {
           workspace.canAccessWorkspace({ username, displayName: username, role }, workspaceId);
       },
     },
-    ctx.broadcast,
+    broadcast,
   );
 
   const code = new CodeService(

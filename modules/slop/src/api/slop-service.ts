@@ -210,11 +210,10 @@ export class SlopService {
     if (ruleSet.length === 0) throw new Error('no detection rules are enabled for this workspace');
     const client = this.github({ repo, username: userId });
     if (!client) throw new Error('your GitHub accounts cannot access this repository');
-    if (!this.checkouts.hasClone(repo)) throw new Error(`repo ${repo} has no clone yet`);
     return { pr, ruleSet, client };
   }
 
-  /** Throws when a detection cannot start (unknown PR, empty rule set, no clone…). */
+  /** Throws when a detection cannot start (unknown PR, empty rule set, no GitHub access…). */
   validateDetect(repo: string, prNumber: number, userId: string): void {
     this.prepare(repo, prNumber, userId);
   }
@@ -261,23 +260,30 @@ export class SlopService {
     this.store.insertDetection(placeholder);
     this.changed();
 
-    // Stored before the run so the snapshot and the agent's context are the
-    // same facts. A GitHub outage yields null, which the prompt reports as
-    // "no provenance data" rather than as absence of evidence.
-    const provenance: SlopProvenance | null = await gatherProvenance(client, repo, {
-      number: prNumber,
-      author: pr.author,
-      headRef: pr.headRef,
-    });
-    if (provenance) {
-      this.store.setProvenance(placeholder.id, provenance);
-      this.changed();
-    }
-
+    let provenance: SlopProvenance | null = null;
     let runId = '';
     let verdict: SlopVerdict | null = null;
     let error: string | null = null;
     try {
+      // A Desk user should not have to discover and run a separate clone
+      // command before the first assessment. The clone is the shared Git
+      // object cache only; the read-only agent still receives a disposable PR
+      // worktree below. `clone` is idempotent and protected by the repo lock.
+      await this.checkouts.clone(repo, undefined, userId);
+
+      // Stored before the run so the snapshot and the agent's context are the
+      // same facts. A GitHub outage yields null, which the prompt reports as
+      // "no provenance data" rather than as absence of evidence.
+      provenance = await gatherProvenance(client, repo, {
+        number: prNumber,
+        author: pr.author,
+        headRef: pr.headRef,
+      });
+      if (provenance) {
+        this.store.setProvenance(placeholder.id, provenance);
+        this.changed();
+      }
+
       const analysis = await this.checkouts.withPullRequestWorktree(
         repo,
         `slop-${placeholder.id}`,

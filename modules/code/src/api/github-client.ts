@@ -478,7 +478,7 @@ export class GitHubClient {
     return this.get<GhIssue>(`/repos/${fullName}/issues/${number}`);
   }
 
-  async issueComments(fullName: string, issueNumber: number): Promise<Array<{ user: { login: string } | null; body: string; created_at: string }>> {
+  async issueComments(fullName: string, issueNumber: number): Promise<GhIssueComment[]> {
     return this.get(`/repos/${fullName}/issues/${issueNumber}/comments?per_page=50`);
   }
 
@@ -493,6 +493,26 @@ export class GitHubClient {
 
   async addLabels(fullName: string, issueNumber: number, labels: string[]): Promise<void> {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
+  }
+
+  async removeLabel(fullName: string, issueNumber: number, label: string): Promise<void> {
+    await this.destroy(`/repos/${fullName}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`);
+  }
+
+  async addAssignees(fullName: string, issueNumber: number, assignees: string[]): Promise<void> {
+    await this.post(`/repos/${fullName}/issues/${issueNumber}/assignees`, { assignees });
+  }
+
+  async removeAssignees(fullName: string, issueNumber: number, assignees: string[]): Promise<void> {
+    await this.destroy(`/repos/${fullName}/issues/${issueNumber}/assignees`, { assignees });
+  }
+
+  async requestReviewers(fullName: string, prNumber: number, reviewers: string[]): Promise<void> {
+    await this.post(`/repos/${fullName}/pulls/${prNumber}/requested_reviewers`, { reviewers });
+  }
+
+  async removeReviewers(fullName: string, prNumber: number, reviewers: string[]): Promise<void> {
+    await this.destroy(`/repos/${fullName}/pulls/${prNumber}/requested_reviewers`, { reviewers });
   }
 
   /** Close/reopen an issue (works for PR numbers too via the issues API). */
@@ -636,6 +656,68 @@ export class GitHubClient {
     body: string,
   ): Promise<{ id: number; html_url: string }> {
     return this.post(`/repos/${fullName}/pulls/${prNumber}/comments/${commentId}/replies`, { body });
+  }
+
+  /** Post one reviewed comment, optionally carrying a GitHub suggestion, on an exact diff range. */
+  async createReviewComment(
+    fullName: string,
+    prNumber: number,
+    comment: GhReviewCommentInput & { readonly commit_id: string },
+  ): Promise<{ id: number; html_url: string }> {
+    return this.post(`/repos/${fullName}/pulls/${prNumber}/comments`, comment);
+  }
+
+  /** Fresh review threads include GraphQL ids, which the resolve mutation requires. */
+  async prReviewThreads(
+    fullName: string,
+    prNumber: number,
+    maxPages = 10,
+  ): Promise<{ threads: GhReviewThread[]; truncated: boolean }> {
+    const [owner, name, extra] = fullName.split('/');
+    if (!owner || !name || extra) throw new Error(`invalid repository ${fullName}`);
+    const threads: GhReviewThread[] = [];
+    let cursor: string | null = null;
+    let hasNextPage = false;
+    for (let page = 1; page <= maxPages; page += 1) {
+      const data: GhReviewThreadsQuery = await this.graphql<GhReviewThreadsQuery>(REVIEW_THREADS_QUERY, {
+        owner,
+        name,
+        number: prNumber,
+        cursor,
+      });
+      if (!data.repository?.pullRequest) throw new Error(`GitHub pull request ${fullName}#${prNumber} is unavailable`);
+      const connection: GhReviewThreadConnection = data.repository.pullRequest.reviewThreads;
+      threads.push(...connection.nodes.filter((thread): thread is GhReviewThread => thread !== null));
+      hasNextPage = connection.pageInfo.hasNextPage;
+      if (!hasNextPage || !connection.pageInfo.endCursor) break;
+      cursor = connection.pageInfo.endCursor;
+    }
+    return { threads, truncated: hasNextPage };
+  }
+
+  /** Resolve the whole inline conversation, matching GitHub's review-thread model. */
+  async resolveReviewThread(threadId: string): Promise<void> {
+    this.assertWrite('GraphQL resolveReviewThread');
+    const res = await fetch(this.graphqlUrl(), {
+      method: 'POST',
+      headers: { ...this.headers(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        query: 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}',
+        variables: { id: threadId },
+      }),
+    });
+    this.observeRateLimit(res);
+    if (!res.ok) throw await this.error(res, '/graphql resolveReviewThread');
+    const body = (await res.json()) as {
+      readonly data?: { readonly resolveReviewThread?: { readonly thread?: { readonly isResolved?: boolean } | null } | null };
+      readonly errors?: ReadonlyArray<{ readonly message?: string }>;
+    };
+    if (body.errors?.length) {
+      throw new Error(body.errors.map((error) => error.message ?? 'unknown GraphQL error').join('; '));
+    }
+    if (body.data?.resolveReviewThread?.thread?.isResolved !== true) {
+      throw new Error('GitHub did not resolve the review thread');
+    }
   }
 
   /**
@@ -854,6 +936,10 @@ export class GitHubClient {
     await this.patch(`/repos/${fullName}/pulls/${number}`, { state: 'closed' });
   }
 
+  async reopenPr(fullName: string, number: number): Promise<void> {
+    await this.patch(`/repos/${fullName}/pulls/${number}`, { state: 'open' });
+  }
+
   /**
    * Best-effort head-branch cleanup after a merge. Same-repo heads only — a
    * fork's ref is not ours to delete, and a same-named base-repo branch must
@@ -912,6 +998,18 @@ export class GitHubClient {
     this.observeRateLimit(res);
     if (!res.ok) throw await this.error(res, path);
     return (await res.json()) as T;
+  }
+
+  /** DELETE endpoints are split out because several accept a JSON body and commonly return 204. */
+  private async destroy(path: string, payload?: unknown): Promise<void> {
+    this.assertWrite(`DELETE ${path}`);
+    const res = await fetch(`${this.api}${path}`, {
+      method: 'DELETE',
+      headers: payload === undefined ? this.headers() : { ...this.headers(), 'content-type': 'application/json' },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    });
+    this.observeRateLimit(res);
+    if (!res.ok) throw await this.error(res, path);
   }
 
   private async error(res: Response, path: string): Promise<GitHubError> {
@@ -1168,6 +1266,7 @@ export interface GhPull {
   draft?: boolean;
   labels?: Array<{ name?: string } | string>;
   assignees?: Array<{ login: string }> | null;
+  requested_reviewers?: Array<{ login: string }> | null;
   head: { ref: string; sha: string; repo?: { full_name?: string } | null };
   base: { ref: string };
   /** Only on the single-PR GET and webhook payloads (never the list); null = still computing. */
@@ -1267,8 +1366,17 @@ export interface GhReview {
   submitted_at: string | null;
 }
 
+export interface GhIssueComment {
+  readonly id: number;
+  readonly html_url: string;
+  readonly user: { readonly login: string } | null;
+  readonly body: string;
+  readonly created_at: string;
+}
+
 export interface GhReviewComment {
   id?: number;
+  html_url?: string;
   user: { login: string } | null;
   body: string;
   path: string;
@@ -1280,6 +1388,41 @@ export interface GhReviewComment {
   /** Set on every reply, to the id of the comment that STARTED the thread. */
   in_reply_to_id?: number | null;
   created_at: string;
+}
+
+export interface GhReviewThreadComment {
+  readonly id: string;
+  readonly databaseId: number | null;
+  readonly author: { readonly login: string } | null;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly url: string;
+  readonly path: string;
+  readonly line: number | null;
+  readonly originalLine: number | null;
+  readonly replyTo: { readonly databaseId: number | null } | null;
+}
+
+export interface GhReviewThread {
+  readonly id: string;
+  readonly isResolved: boolean;
+  readonly isOutdated: boolean;
+  readonly path: string;
+  readonly line: number | null;
+  readonly comments: {
+    readonly nodes: ReadonlyArray<GhReviewThreadComment | null>;
+  };
+}
+
+interface GhReviewThreadConnection {
+  readonly pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null };
+  readonly nodes: ReadonlyArray<GhReviewThread | null>;
+}
+
+interface GhReviewThreadsQuery {
+  readonly repository: {
+    readonly pullRequest: { readonly reviewThreads: GhReviewThreadConnection } | null;
+  } | null;
 }
 
 /**
@@ -1340,3 +1483,21 @@ export interface GhCombinedStatus {
     updated_at: string;
   }>;
 }
+
+const REVIEW_THREADS_QUERY = `
+  query ReviewThreads($owner:String!,$name:String!,$number:Int!,$cursor:String){
+    repository(owner:$owner,name:$name){
+      pullRequest(number:$number){
+        reviewThreads(first:100,after:$cursor){
+          pageInfo{hasNextPage endCursor}
+          nodes{
+            id isResolved isOutdated path line
+            comments(first:100){
+              nodes{id databaseId author{login} body createdAt url path line originalLine replyTo{databaseId}}
+            }
+          }
+        }
+      }
+    }
+  }
+`;

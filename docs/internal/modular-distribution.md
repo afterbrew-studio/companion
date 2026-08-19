@@ -29,7 +29,7 @@ running instance, and which artifact contains it.**
 
 Facts, measured, not assumed:
 
-- 20 modules under `modules/*`, including the read-only Workbench composition
+- 22 modules under `modules/*`, including the read-only Workbench composition
   layer over the existing domain services.
 - The kernel (`packages/core/src/server/kernel.ts`) already reconciles an
   installed set into a `modules` table, topo-sorts by `dependsOn`, and does
@@ -128,8 +128,9 @@ admin") has two separable meanings, and they have wildly different costs.
 **Meaning 1: a lighter product experience.** A new instance should not open onto
 eleven sidebar sections. This needs **no build work at all.** The kernel already
 supports `autoInstall: false`, which lands a compiled-in module as "Available"
-on the Modules page instead of installing it. Set it on `plan`, `planner`,
-`board`, `refinement`, `slop`, `playground`, `automations` and you are done. A
+on the Modules page instead of installing it. Set it on `model-router`,
+`refinement`, `planner`, `playground`, `cursor-bugbot`, `oidc` and `runtime` and
+you are done. A
 disabled module's client chunk is never fetched, so the runtime cost is already
 zero.
 
@@ -145,14 +146,14 @@ distribution boundary.** Do not conflate them.
 
 Note the dependency closure when picking profiles: `refinement` depends on
 `plan` + `board`; `planner` depends on `plan` + `board` + `refinement`;
-`automations` depends on `plan`. The optional modules are one connected
-planning cluster, not seven independent choices. There are effectively three
-tiers, not eleven.
+`automations` depends on `plan`. Refinement and Planner therefore form one
+ordered planning cluster; the other optional modules remain independent unless
+their manifests say otherwise.
 
 | Profile | Modules | Artifact |
 |---|---|---|
-| `slim` | core, workspace, integrations, operate, code, coderabbit, cursor-bugbot, jira, notify, workbench, admin, plan, board, automations | `@moxxy/companion` (npx), default OSS image |
-| `full` | slim + refinement, planner, slop, playground, oidc, runtime | full-profile OSS image/build |
+| `slim` | core, workspace, integrations, operate, model-router, code, coderabbit, jira, notify, workbench, admin, plan, board, automations, slop, desk | `@moxxy/companion` (npx), default OSS image |
+| `full` | slim + refinement, planner, playground, cursor-bugbot, oidc, runtime | full-profile OSS image/build |
 | `cloud` | slim + oidc, runtime | hosted-profile image/build |
 | `enterprise` | slim + enterprise modules | `companion:enterprise` image only |
 

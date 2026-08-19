@@ -15,7 +15,6 @@ export default defineManifest({
   // and detections scope through workspaces.
   dependsOn: ['core', 'workspace', 'code', 'operate'],
   required: false,
-  autoInstall: false,
   permissions: ['slop:read', 'slop:act', 'slop:manage'],
   // Soft: a detection offers "send to refinement" only when refinement is
   // enabled and the viewer may manage it. The button hides otherwise.

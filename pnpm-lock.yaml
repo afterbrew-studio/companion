@@ -647,6 +647,9 @@ importers:
       '@companion/module-operate':
         specifier: workspace:*
         version: link:../operate
+      '@companion/module-slop':
+        specifier: workspace:*
+        version: link:../slop
       '@companion/module-workbench':
         specifier: workspace:*
         version: link:../workbench

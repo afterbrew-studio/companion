@@ -5,6 +5,8 @@ import { WORKBENCH_ACTIONS } from './workbench-actions.js';
 const id = z.string().trim().min(1).max(200);
 const repo = z.string().regex(/^[\w.-]+\/[\w.-]+$/).max(200);
 const number = z.number().int().positive();
+const labels = z.array(z.string().trim().min(1).max(100)).min(1).max(20);
+const logins = z.array(z.string().trim().min(1).max(100)).min(1).max(20);
 const actionRequestSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('run.approve'),
@@ -20,8 +22,55 @@ const actionRequestSchema = z.discriminatedUnion('action', [
     mode: z.enum(['full', 'comments', 'summary']).optional(),
   }),
   z.object({ action: z.literal('pr-review.dismiss'), repo, number }),
+  z.object({ action: z.literal('pr.comment'), repo, number, body: z.string().trim().min(1).max(64_000) }),
+  z.object({
+    action: z.literal('pr.review-comment.reply'),
+    repo,
+    number,
+    commentId: z.number().int().positive(),
+    body: z.string().trim().min(1).max(64_000),
+  }),
+  z.object({
+    action: z.literal('pr.review-comment.create'),
+    repo,
+    number,
+    path: z.string().trim().min(1).max(500),
+    side: z.enum(['LEFT', 'RIGHT']),
+    line: z.number().int().positive(),
+    startLine: z.number().int().positive().optional(),
+    quotedLine: z.string().min(1).max(4_000),
+    body: z.string().trim().min(1).max(30_000),
+    suggestion: z.string().min(1).max(30_000).optional(),
+  }),
+  z.object({ action: z.literal('pr.review-thread.resolve'), repo, number, threadId: z.string().min(1).max(500) }),
+  z.object({ action: z.literal('pr.labels.add'), repo, number, labels }),
+  z.object({ action: z.literal('pr.labels.remove'), repo, number, labels }),
+  z.object({ action: z.literal('pr.reviewers.request'), repo, number, reviewers: logins }),
+  z.object({ action: z.literal('pr.reviewers.remove'), repo, number, reviewers: logins }),
+  z.object({ action: z.literal('pr.assignees.add'), repo, number, assignees: logins }),
+  z.object({ action: z.literal('pr.assignees.remove'), repo, number, assignees: logins }),
+  z.object({
+    action: z.literal('pr.review.submit'),
+    repo,
+    number,
+    verdict: z.enum(['approve', 'request_changes']),
+    body: z.string().trim().min(1).max(64_000),
+  }),
+  z.object({ action: z.literal('pr.checks.rerun'), repo, number, scope: z.enum(['failed', 'all']) }),
+  z.object({ action: z.literal('pr.update-branch'), repo, number }),
+  z.object({ action: z.literal('pr.ready'), repo, number }),
+  z.object({ action: z.literal('pr.close'), repo, number, comment: z.string().trim().min(1).max(64_000).optional() }),
+  z.object({ action: z.literal('pr.reopen'), repo, number, comment: z.string().trim().min(1).max(64_000).optional() }),
+  z.object({ action: z.literal('pr.merge'), repo, number, method: z.enum(['merge', 'squash', 'rebase']) }),
   z.object({ action: z.literal('issue-triage.apply'), repo, number, comment: z.boolean().optional() }),
   z.object({ action: z.literal('issue-triage.dismiss'), repo, number }),
+  z.object({ action: z.literal('issue.comment'), repo, number, body: z.string().trim().min(1).max(64_000) }),
+  z.object({ action: z.literal('issue.close'), repo, number, comment: z.string().trim().min(1).max(64_000).optional() }),
+  z.object({ action: z.literal('issue.reopen'), repo, number, comment: z.string().trim().min(1).max(64_000).optional() }),
+  z.object({ action: z.literal('issue.labels.add'), repo, number, labels }),
+  z.object({ action: z.literal('issue.labels.remove'), repo, number, labels }),
+  z.object({ action: z.literal('issue.assignees.add'), repo, number, assignees: logins }),
+  z.object({ action: z.literal('issue.assignees.remove'), repo, number, assignees: logins }),
   z.object({ action: z.literal('board.merge'), taskId: id }),
   z.object({ action: z.literal('board.retry'), taskId: id }),
   z.object({

@@ -5,7 +5,12 @@ import type { AuthUser } from '@moxxy/companion-contracts';
 import type { RunRecord } from '@companion/module-operate/contract';
 import type { WorkspaceRecord } from '@companion/module-workspace/contract';
 import { log, paths } from '@moxxy/companion-sdk/server';
-import type { CommentRecord, PrFileChange, PrFileChangesPage } from '../contract/index.js';
+import type {
+  CommentRecord,
+  PrFileChange,
+  PrFileChangesPage,
+  PrReviewThreadRecord,
+} from '../contract/index.js';
 import { savePipelineSchema, saveStepDefinitionSchema } from './pipelines.js';
 import { rowToRepo } from './repos-store.js';
 import { TriageStore } from './triage-store.js';
@@ -777,6 +782,8 @@ export default defineRoutes((ctx) => {
         if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
         const raw = await client.issueComments(fullName, issue.number);
         const comments: CommentRecord[] = raw.map((c) => ({
+          id: c.id,
+          url: c.html_url,
           author: c.user?.login ?? 'unknown',
           body: c.body,
           createdAt: Date.parse(c.created_at),
@@ -905,11 +912,49 @@ export default defineRoutes((ctx) => {
         if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
         const raw = await client.issueComments(fullName, pr.number);
         const comments: CommentRecord[] = raw.map((c) => ({
+          id: c.id,
+          url: c.html_url,
           author: c.user?.login ?? 'unknown',
           body: c.body,
           createdAt: Date.parse(c.created_at),
         }));
         return { comments };
+      },
+    }),
+
+    /** Fresh inline threads carry the GraphQL id required by resolveReviewThread. */
+    route({
+      method: 'GET',
+      path: '/api/repos/:owner/:name/prs/:number/review-threads',
+      access: 'prs:read',
+      handler: async ({ params, user }) => {
+        const { fullName, pr } = requirePr(user, params.owner, params.name, params.number);
+        const { client } = await code.githubAccounts.verifiedClientFor('fetch', fullName, { username: user!.username });
+        if (!client) throw forbidden(`your connected GitHub accounts cannot access ${fullName}`);
+        const raw = await client.prReviewThreads(fullName, pr.number);
+        const threads: PrReviewThreadRecord[] = raw.threads.map((thread) => ({
+          id: thread.id,
+          resolved: thread.isResolved,
+          outdated: thread.isOutdated,
+          path: thread.path,
+          line: thread.line,
+          comments: thread.comments.nodes.flatMap((comment) =>
+            comment?.databaseId == null
+              ? []
+              : [{
+                  id: comment.databaseId,
+                  author: comment.author?.login ?? 'unknown',
+                  body: comment.body,
+                  createdAt: Date.parse(comment.createdAt),
+                  url: comment.url,
+                  path: comment.path,
+                  line: comment.line,
+                  originalLine: comment.originalLine,
+                  inReplyToId: comment.replyTo?.databaseId ?? null,
+                }],
+          ),
+        }));
+        return { threads, truncated: raw.truncated };
       },
     }),
 
@@ -2001,4 +2046,3 @@ Reply with ONLY a fenced json block matching:
 function pick<T extends string>(value: string | null, allowed: readonly T[]): T | undefined {
   return allowed.includes(value as T) ? (value as T) : undefined;
 }
-

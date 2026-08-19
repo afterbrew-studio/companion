@@ -53,7 +53,18 @@ export function PreparedActionsView({
     <>
       <ErrorBar error={error ?? feed.error} className="mb-2" />
       {feed.actions.length > 0 ? (
-        <ListCard>
+        compact ? <div className="space-y-3">
+          {feed.actions.map((action) => (
+            <ActionCard
+              key={action.id}
+              action={action}
+              compact
+              busy={busy === action.id}
+              onExecute={() => void act(action, 'execute')}
+              onCancel={() => void act(action, 'cancel')}
+            />
+          ))}
+        </div> : <ListCard>
           {feed.actions.map((action) => (
             <ActionCard
               key={action.id}
@@ -82,17 +93,31 @@ export function PreparedActionsView({
 
 function ActionCard({
   action,
+  compact = false,
   busy,
   onExecute,
   onCancel,
 }: {
   readonly action: PreparedWorkbenchAction;
+  readonly compact?: boolean;
   readonly busy: boolean;
   readonly onExecute: () => void;
   readonly onCancel: () => void;
 }): React.JSX.Element {
   const content = proposedContent(action);
   const runApproval = action.request.action === 'run.approve' ? action.request : null;
+  if (compact) {
+    return (
+      <CompactActionCard
+        action={action}
+        busy={busy}
+        content={content}
+        runApproval={runApproval}
+        onExecute={onExecute}
+        onCancel={onCancel}
+      />
+    );
+  }
   return (
     <div className="flex items-start gap-3 px-3.5 py-3">
       <StatusDot tone={action.impact === 'destructive' ? 'red' : 'amber'} className="mt-1.5" />
@@ -108,7 +133,7 @@ function ActionCard({
         {runApproval && (runApproval.title !== undefined || runApproval.body !== undefined) ? (
           <ProposedPullRequest title={runApproval.title} body={runApproval.body} />
         ) : null}
-        {content ? <ProposedContent text={content} /> : null}
+        {content ? <ProposedContent text={content.text} label={content.label} /> : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <a className="btn-ghost" href={action.href}>
             Inspect target
@@ -127,6 +152,71 @@ function ActionCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function CompactActionCard({
+  action,
+  busy,
+  content,
+  runApproval,
+  onExecute,
+  onCancel,
+}: {
+  readonly action: PreparedWorkbenchAction;
+  readonly busy: boolean;
+  readonly content: ReturnType<typeof proposedContent>;
+  readonly runApproval: Extract<PreparedWorkbenchAction['request'], { readonly action: 'run.approve' }> | null;
+  readonly onExecute: () => void;
+  readonly onCancel: () => void;
+}): React.JSX.Element {
+  const destructive = action.impact === 'destructive';
+  return (
+    <section
+      className={`relative overflow-hidden rounded-xl border bg-white px-4 py-4 shadow-sm dark:bg-zinc-950 ${
+        destructive ? 'border-red-200 dark:border-red-500/30' : 'border-amber-200 dark:border-amber-500/30'
+      }`}
+      aria-label={`Approval required: ${action.title}`}
+    >
+      <span className={`absolute inset-y-0 left-0 w-0.5 ${destructive ? 'bg-red-500' : 'bg-amber-500'}`} aria-hidden="true" />
+      <div className="flex items-start gap-3">
+        <StatusDot tone={destructive ? 'red' : 'amber'} className="mt-1.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={`text-[10px] font-semibold tracking-wide uppercase ${destructive ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
+              Approval required
+            </span>
+            <span className="dim text-[10px]">Prepared by {sourceLabel(action)} · {timeAgo(action.createdAt)}</span>
+            <span className="dim ml-auto shrink-0 text-[10px]">{expiresIn(action.expiresAt)}</span>
+          </div>
+          <h3 className="mt-1 text-sm font-semibold">{action.title}</h3>
+          <p className="dim mt-1 text-xs leading-relaxed">{action.summary}</p>
+          <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+            {action.consequence}
+          </p>
+          {runApproval && (runApproval.title !== undefined || runApproval.body !== undefined) ? (
+            <ProposedPullRequest title={runApproval.title} body={runApproval.body} />
+          ) : null}
+          {content ? <ProposedContent text={content.text} label={content.label} /> : null}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <a className="dim mr-auto text-xs hover:text-zinc-900 hover:underline dark:hover:text-zinc-100" href={action.href}>
+              Inspect target ↗
+            </a>
+            <button className="btn-ghost h-8 px-3 text-xs" type="button" disabled={busy} onClick={onCancel}>
+              Cancel
+            </button>
+            <button
+              className={`${destructive ? 'btn-danger' : 'btn'} h-8 px-3 text-xs`}
+              type="button"
+              disabled={busy}
+              onClick={onExecute}
+            >
+              {busy ? 'Applying…' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -158,14 +248,14 @@ function ProposedPullRequest({
   );
 }
 
-function ProposedContent({ text }: { readonly text: string }): React.JSX.Element {
+function ProposedContent({ text, label }: { readonly text: string; readonly label: string }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <details
       className="mt-2 rounded-md border border-zinc-200 px-2.5 py-2 dark:border-zinc-800"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="cursor-pointer text-xs font-medium">Review proposed content</summary>
+      <summary className="cursor-pointer text-xs font-medium">{label}</summary>
       {open ? (
         <div className="markdown mt-2 max-h-72 overflow-auto text-xs">
           <Markdown text={text} />
@@ -193,8 +283,41 @@ function expiresIn(at: number): string {
   return `expires in ${minutes} minutes`;
 }
 
-function proposedContent(action: PreparedWorkbenchAction): string | null {
-  return action.request.action === 'spec.create' || action.request.action === 'doc.create'
-    ? action.request.content
-    : null;
+function proposedContent(action: PreparedWorkbenchAction): { readonly text: string; readonly label: string } | null {
+  if (action.request.action === 'spec.create' || action.request.action === 'doc.create') {
+    return { text: action.request.content, label: 'Review proposed content' };
+  }
+  if (
+    action.request.action === 'pr.comment' ||
+    action.request.action === 'issue.comment' ||
+    action.request.action === 'pr.review-comment.reply' ||
+    action.request.action === 'pr.review.submit'
+  ) {
+    return { text: action.request.body, label: 'Review proposed comment' };
+  }
+  if (action.request.action === 'pr.review-comment.create') {
+    return {
+      text: reviewCommentBody(action.request.body, action.request.suggestion),
+      label: `Review comment on ${action.request.path}:${action.request.startLine === undefined
+        ? action.request.line
+        : `${action.request.startLine}-${action.request.line}`}`,
+    };
+  }
+  if (
+    (action.request.action === 'issue.close' ||
+      action.request.action === 'issue.reopen' ||
+      action.request.action === 'pr.close' ||
+      action.request.action === 'pr.reopen') &&
+    action.request.comment
+  ) {
+    return { text: action.request.comment, label: 'Review accompanying comment' };
+  }
+  return null;
+}
+
+function reviewCommentBody(body: string, suggestion?: string): string {
+  if (suggestion === undefined) return body;
+  const longest = Math.max(0, ...[...suggestion.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${body}\n\n${fence}suggestion\n${suggestion}\n${fence}`;
 }

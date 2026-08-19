@@ -40,4 +40,27 @@ export default defineMigrations([
     // stay additive; removing a column would require a table rewrite.
     down: () => undefined,
   },
+  {
+    version: 3,
+    name: 'desk_event_state',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS desk_event_state (
+          workspace_id TEXT NOT NULL,
+          event_key    TEXT NOT NULL,
+          value        TEXT NOT NULL,
+          updated_at   INTEGER NOT NULL,
+          PRIMARY KEY (workspace_id, event_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_desk_event_state_updated
+          ON desk_event_state(updated_at);
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_desk_event_state_updated;
+        DROP TABLE IF EXISTS desk_event_state;
+      `);
+    },
+  },
 ]);

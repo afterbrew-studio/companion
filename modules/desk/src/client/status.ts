@@ -15,8 +15,12 @@ export function missionStatus(view: DeskMissionView): MissionStatus {
   if (status === 'idle') return { label: 'Ready', tone: 'green', pulse: false };
   if (status === 'review') return { label: 'Review', tone: 'amber', pulse: false };
   if (status === 'completed') return { label: 'Done', tone: 'green', pulse: false };
-  if (status === 'failed' || status === 'interrupted' || status === 'abandoned') {
-    return { label: status === 'failed' ? 'Failed' : 'Interrupted', tone: 'red', pulse: false };
+  if (status === 'failed') return { label: 'Failed', tone: 'red', pulse: false };
+  // A conversation run is recoverable after a daemon or runner disconnect:
+  // the next message re-attaches its persisted session. Keep the runtime's
+  // audit status, but present the user-facing mission state as resumable.
+  if (status === 'interrupted' || status === 'abandoned') {
+    return { label: 'Paused', tone: 'amber', pulse: false };
   }
   return { label: 'Stopped', tone: 'zinc', pulse: false };
 }

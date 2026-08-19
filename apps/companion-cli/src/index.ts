@@ -37,7 +37,8 @@ import {
   saveHarnesses,
 } from './harnesses.js';
 import { offerBuiltinProvider, parseProviderCommand, runProviderCommand, PROVIDER_HELP } from './providers.js';
-import { withTerminal } from './terminal.js';
+import { captureTerminal, withTerminal } from './terminal.js';
+import { renderAlreadyRunning, renderReady, renderStartup } from './startup-ui.js';
 import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
 import { rotateSecretKey } from './rotate-key.js';
@@ -414,6 +415,7 @@ async function start(options: CliOptions): Promise<void> {
   const bundleDir = dirname(fileURLToPath(import.meta.url));
   const staticDir = join(bundleDir, 'web');
   const server = join(bundleDir, 'server.js');
+  const color = Boolean(process.stdout.isTTY && process.env.NO_COLOR === undefined);
   if (!existsSync(join(staticDir, 'index.html')) || !existsSync(server)) {
     throw new Error('Companion bundle is incomplete. Reinstall @moxxy/companion.');
   }
@@ -423,15 +425,14 @@ async function start(options: CliOptions): Promise<void> {
   // already knowable here, so treat a second `npx` as "show me the one I have".
   const already = runningPid(options.home);
   if (already !== null) {
-    process.stdout.write(`\nCompanion is already running at ${url} (pid ${already}).\n`);
-    process.stdout.write(`Stop it with: npx @moxxy/companion stop\n`);
+    process.stdout.write(renderAlreadyRunning(url, already, color));
     if (options.open) openBrowser(browserUrl);
     return;
   }
 
   process.env.COMPANION_HOME = options.home;
-  // The one-command experience stays focused on actionable status. Warnings
-  // and errors still surface; developers running `pnpm dev` keep full logs.
+  // The one-command experience stays focused on actionable status. Successful
+  // startup diagnostics are held back below; --verbose keeps the raw stream.
   if (options.verbose) process.env.COMPANION_LOG_LEVEL = 'info';
   else process.env.COMPANION_LOG_LEVEL ??= 'warn';
   const hasPendingAdmin = applyPendingAdminSetup(options.home) !== null;
@@ -442,13 +443,31 @@ async function start(options: CliOptions): Promise<void> {
   if (options.host !== undefined) process.env.COMPANION_HOST = options.host;
   if (options.port !== undefined) process.env.COMPANION_PORT = String(options.port);
 
-  const note = options.background ? `Logs: ${daemonLog(options.home)}` : 'Press Ctrl+C to stop.';
-  process.stdout.write(`\nStarting Companion at ${url}\nData directory: ${options.home}\n${note}\n\n`);
+  process.stdout.write(renderStartup({
+    url,
+    home: options.home,
+    desk: options.desk,
+    background: options.background,
+    verbose: options.verbose,
+    logFile: daemonLog(options.home),
+    color,
+  }));
   const pendingModules = takePendingProfile(options.home);
   const firstRun = pendingModules.length > 0 || hasPendingAdmin;
+  const finishStartup = async (): Promise<void> => {
+    if (pendingModules.length) {
+      process.stdout.write(`Enabling ${pendingModules.length} optional module(s)…\n`);
+      await installModules(url, pendingModules, (line) => process.stdout.write(`${line}\n`));
+    }
+    // Only on a first run: the machine's runtimes are settled once, and every
+    // later start would otherwise re-ask a question that already has an answer.
+    if (firstRun) await settleHarnesses(url, options);
+  };
   // Either way this process stays in the foreground until the questions below
   // are answered; what --background changes is who owns the server afterwards.
   let detached: Detached | null = null;
+  let replayStartupLogs: (() => void) | null = null;
+  let startupFinished = false;
   let outcome: 'ready' | 'timeout' | 'exited';
   if (options.background) {
     detached = startDetached(server, options.home);
@@ -459,10 +478,23 @@ async function start(options: CliOptions): Promise<void> {
   } else {
     process.chdir(options.home);
     const ready = waitForHealth(url, 30_000);
-    await import(pathToFileURL(server).href);
-    outcome = (await ready) ? 'ready' : 'timeout';
+    if (options.verbose) {
+      await import(pathToFileURL(server).href);
+      outcome = (await ready) ? 'ready' : 'timeout';
+    } else {
+      const startup = await captureTerminal(async () => {
+        await import(pathToFileURL(server).href);
+        if (!(await ready)) return false;
+        await finishStartup();
+        return true;
+      });
+      replayStartupLogs = startup.replay;
+      outcome = startup.value ? 'ready' : 'timeout';
+      startupFinished = startup.value;
+    }
   }
   if (outcome !== 'ready') {
+    replayStartupLogs?.();
     process.exitCode = 1;
     if (outcome === 'exited' && detached) {
       process.stderr.write(
@@ -475,14 +507,8 @@ async function start(options: CliOptions): Promise<void> {
     }
     return;
   }
-  if (pendingModules.length) {
-    process.stdout.write(`Enabling ${pendingModules.length} optional module(s)…\n`);
-    await installModules(url, pendingModules, (line) => process.stdout.write(`${line}\n`));
-  }
-  // Only on a first run: the machine's runtimes are settled once, and every
-  // later start would otherwise re-ask a question that already has an answer.
-  if (firstRun) await settleHarnesses(url, options);
-  process.stdout.write(`\nCompanion is ready: ${url}\n`);
+  if (!startupFinished) await finishStartup();
+  process.stdout.write(renderReady(url, !options.background, color));
   const cliToken = await waitForToken();
   if (cliToken) {
     try {

@@ -25,7 +25,12 @@ const HELD_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 
  */
 const HELD_LIMIT = 500;
 
-export async function withTerminal<T>(prompt: () => Promise<T>): Promise<T> {
+export interface CapturedTerminal<T> {
+  readonly value: T;
+  readonly replay: () => void;
+}
+
+async function holdTerminal<T>(run: () => Promise<T>): Promise<CapturedTerminal<T>> {
   const held: Array<() => void> = [];
   let dropped = 0;
   const original = HELD_METHODS.map((name) => [name, console[name]] as const);
@@ -39,10 +44,30 @@ export async function withTerminal<T>(prompt: () => Promise<T>): Promise<T> {
     };
   }
   try {
-    return await prompt();
+    const value = await run();
+    return {
+      value,
+      replay: () => {
+        for (const line of held) line();
+        if (dropped > 0) console.warn(`${dropped} further log line(s) were held back.`);
+      },
+    };
+  } catch (err) {
+    for (const line of held) line();
+    if (dropped > 0) console.warn(`${dropped} further log line(s) were held back.`);
+    throw err;
   } finally {
     for (const [name, write] of original) console[name] = write;
-    for (const replay of held) replay();
-    if (dropped > 0) console.warn(`${dropped} further log line(s) were dropped while a prompt was open.`);
   }
+}
+
+/** Hold daemon boot logs so a successful one-command start stays readable. */
+export function captureTerminal<T>(run: () => Promise<T>): Promise<CapturedTerminal<T>> {
+  return holdTerminal(run);
+}
+
+export async function withTerminal<T>(prompt: () => Promise<T>): Promise<T> {
+  const captured = await holdTerminal(prompt);
+  captured.replay();
+  return captured.value;
 }

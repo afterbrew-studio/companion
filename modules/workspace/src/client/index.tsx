@@ -17,6 +17,7 @@ import { onboarding } from './onboarding.js';
 export { WorkspaceProvider, useWorkspace } from './lib/workspace.js';
 export { isAmbiguousWorkspaceName, workspaceLabel } from './lib/labels.js';
 export { Inbox } from './components/Inbox.js';
+export { NotificationRow } from './components/NotificationRow.js';
 export { useNotifications } from './hooks/useNotifications.js';
 export { useWorkspaceMembers } from './hooks/useWorkspaceMembers.js';
 export { workspaceApi } from './api.js';

@@ -69,7 +69,7 @@ export function CommentsSection({
               <div className="mb-1.5 flex items-center gap-2 text-[13px]">
                 <Avatar name={c.author} size="xs" />
                 <strong>{c.author}</strong>
-                <span className="dim">{timeAgo(c.createdAt)}</span>
+                <a className="dim hover:underline" href={c.url} target="_blank" rel="noreferrer">{timeAgo(c.createdAt)}</a>
               </div>
               <Markdown text={c.body} />
             </li>

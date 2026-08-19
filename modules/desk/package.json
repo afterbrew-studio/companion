@@ -33,6 +33,7 @@
     "@companion/module-code": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@companion/module-operate": "workspace:*",
+    "@companion/module-slop": "workspace:*",
     "@companion/module-workbench": "workspace:*",
     "@companion/module-workspace": "workspace:*",
     "@moxxy/companion-sdk": "workspace:*",

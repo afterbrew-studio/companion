@@ -28,12 +28,13 @@ pnpm dev
 sign in with the seeded admin, or complete onboarding.
 
 Then add a GitHub token or account in Settings, and turn on whichever modules you
-want from the **Modules** page. A fresh install enables every module of the
-`slim` profile (all 13: the required `core` and `workspace`, plus
-`integrations`, `operate`, `code`, `coderabbit`, `jira`, `notify`, `workbench`,
-`admin`, `plan`, `board` and `automations`); the modules `full` adds
-(`refinement`, `planner`, `slop`, `playground`, `cursor-bugbot`, `oidc`,
-`runtime`) wait under **Available**.
+want from the **Modules** page. A fresh install contains the 16-module `slim`
+profile: the required `core` and `workspace`, plus integrations, execution,
+code/review, notifications, Workbench, contributor workflows, contribution
+quality and Companion Desk. Fifteen are enabled; `model-router` waits under
+**Available** until it is configured. The six modules `full` adds
+(`refinement`, `planner`, `playground`, `cursor-bugbot`, `oidc`, `runtime`) also
+wait under **Available**.
 
 Before opening a pull request, run what CI runs:
 
@@ -100,8 +101,8 @@ The set of modules a build **contains** is named in exactly one place,
 
 | Profile | Modules | Used for |
 |---|---|---|
-| `slim` (default) | 13 modules: the required core plus integrations, execution, code/review, notification, workbench and contributor workflows | the default OSS image and source build |
-| `full` | `slim` + `refinement`, `planner`, `slop`, `playground`, `cursor-bugbot`, `oidc`, `runtime` | all 20 OSS modules in this repo; the published npx package is built from it |
+| `slim` (default) | 16 modules: the required core plus integrations, execution, code/review, notification, workbench, contributor workflows, contribution quality and Desk | the default OSS image and source build |
+| `full` | `slim` + `refinement`, `planner`, `playground`, `cursor-bugbot`, `oidc`, `runtime` | all 22 OSS modules in this repo; the published npx package is built from it |
 | `cloud` | `slim` + `oidc`, `runtime` | hosted control plane with built-in execution and SSO |
 | `minimal` | `core`, `workspace` | the guard that the app shell depends on no optional module |
 
@@ -124,7 +125,7 @@ failure is silent, so check the build output rather than the running instance.
 The generator prints exactly what it produced:
 
 ```
-profile 'full': 20 module(s) [core, workspace, integrations, admin, oidc, operate, ...]
+profile 'full': 22 module(s) [core, workspace, integrations, admin, oidc, operate, ...]
 ```
 
 The registries (`apps/*/src/modules.generated.ts`) are **gitignored** and

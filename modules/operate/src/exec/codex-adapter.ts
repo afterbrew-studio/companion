@@ -206,11 +206,12 @@ export function adaptRollout(sessionId: string, records: Iterable<unknown>): Har
   const events: HarnessEvent[] = [];
   let seq = 0;
   let turnId = '';
+  let recordTs = Date.now();
   const emit = (type: string, source: string, rest: Record<string, unknown>): void => {
     events.push({
       id: `cx-${sessionId}-${seq}`,
       seq: seq++,
-      ts: Date.now(),
+      ts: recordTs,
       sessionId,
       turnId,
       source,
@@ -221,6 +222,7 @@ export function adaptRollout(sessionId: string, records: Iterable<unknown>): Har
 
   for (const record of records) {
     if (!isFrame(record)) continue;
+    recordTs = frameTimestamp(record) ?? Date.now();
     const payload = asFrame(record.payload);
     if (!payload) continue;
     const kind = String(payload.type ?? '');
@@ -297,6 +299,14 @@ function stringify(value: unknown): string {
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function frameTimestamp(frame: Frame): number | null {
+  const value = frame.timestamp;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isFrame(value: unknown): value is Frame {

@@ -1661,7 +1661,10 @@ export function Avatar({
   className?: string;
 }): React.JSX.Element {
   const shape = `${AVATAR_SIZE[size]} shrink-0 ${className}`;
-  if (src) return <img src={src} alt={name} className={`${shape} object-cover`} />;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (src && failedSrc !== src) {
+    return <img src={src} alt={name} className={`${shape} object-cover`} onError={() => setFailedSrc(src)} />;
+  }
   return (
     <span
       className={`flex items-center justify-center font-semibold uppercase ${shape} ${

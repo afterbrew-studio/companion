@@ -19,6 +19,7 @@ import type {
   PrFileChangesPage,
   PrListRecord,
   PrRecord,
+  PrReviewThreadRecord,
   PrReviewResult,
   FindingSeverity,
   FindingState,
@@ -151,6 +152,10 @@ export const codeApi = {
     post<{ run: RunRecord }>(`/api/repos/${fullName}/prs/${number}/agent`, { instructions }),
   prComments: (fullName: string, number: number) =>
     request<{ comments: CommentRecord[] }>(`/api/repos/${fullName}/prs/${number}/comments`),
+  prReviewThreads: (fullName: string, number: number) =>
+    request<{ threads: PrReviewThreadRecord[]; truncated: boolean }>(
+      `/api/repos/${fullName}/prs/${number}/review-threads`,
+    ),
   commentPr: (fullName: string, number: number, body: string) =>
     post<{ url: string }>(`/api/repos/${fullName}/prs/${number}/comment`, { body }),
   analyzePr: (fullName: string, number: number, opts?: ReviewOptions) =>
