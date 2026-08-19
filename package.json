@@ -8,7 +8,7 @@
   "scripts": {
     "acl": "node scripts/acl.mjs",
     "build": "pnpm gen:modules && pnpm -r build",
-    "dev": "pnpm gen:modules && pnpm --parallel --filter companion-api --filter companion-web dev",
+    "dev": "pnpm gen:modules && pnpm --parallel --filter companion-api --filter companion-web --filter companion-desk dev",
     "gen:modules": "node scripts/gen-modules.mjs",
     "postinstall": "node scripts/gen-modules.mjs",
     "prod": "pnpm build && pm2 startOrRestart ecosystem.config.cjs",

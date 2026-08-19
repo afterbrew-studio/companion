@@ -1,0 +1,7 @@
+@import '../../web/src/styles.css';
+
+@source "../../../modules/desk/src/client/**/*.{ts,tsx}";
+
+body {
+  overflow: hidden;
+}

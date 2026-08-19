@@ -29,7 +29,7 @@
     "build": "node build.mjs",
     "bundle": "pnpm --dir ../.. gen:modules && pnpm run bundle:prepared",
     "bundle:full": "pnpm --dir ../.. gen:modules --profile full && pnpm run bundle:prepared",
-    "bundle:prepared": "pnpm --filter 'companion-api...' build && pnpm --filter companion-web build && node build.mjs",
+    "bundle:prepared": "pnpm --filter 'companion-api...' build && pnpm --filter companion-web build && pnpm --filter companion-desk build && node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run bundle && node --test tests/*.test.mjs",
     "prepublishOnly": "pnpm run typecheck && pnpm run bundle:full && node --test tests/*.test.mjs"
@@ -46,6 +46,7 @@
     "@moxxy/companion-services": "workspace:*",
     "@types/node": "^24.13.3",
     "companion-api": "workspace:*",
+    "companion-desk": "workspace:*",
     "companion-web": "workspace:*",
     "esbuild": "^0.28.1",
     "typescript": "^7.0.2"

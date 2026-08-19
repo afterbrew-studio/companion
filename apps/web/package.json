@@ -19,6 +19,7 @@
     "@companion/module-coderabbit": "workspace:*",
     "@companion/module-core": "workspace:*",
     "@companion/module-cursor-bugbot": "workspace:*",
+    "@companion/module-desk": "workspace:*",
     "@companion/module-integrations": "workspace:*",
     "@companion/module-jira": "workspace:*",
     "@companion/module-model-router": "workspace:*",

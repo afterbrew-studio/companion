@@ -79,27 +79,23 @@ export class Assistant {
 
   info(user: AuthUser): { run: RunRecord | null; pendingAsks: AskRequest[] } {
     const run = this.currentRun(user.username);
-    return { run, pendingAsks: run ? this.orchestrator.pendingAsksFor(run.id) : [] };
+    return this.infoForRun(user, run?.id ?? null);
+  }
+
+  /** Inspect one explicitly-owned assistant conversation. Desk missions use
+   * this instead of the legacy per-user map so several chats may coexist. */
+  infoForRun(user: AuthUser, runId: string | null): { run: RunRecord | null; pendingAsks: AskRequest[] } {
+    if (!runId) return { run: null, pendingAsks: [] };
+    const run = this.requireOwnedRun(user, runId);
+    return { run, pendingAsks: this.orchestrator.pendingAsksFor(run.id) };
   }
 
   /** Attach to the user's conversation: resume the mapped run or start fresh. */
   async ensureRun(user: AuthUser): Promise<RunRecord> {
     const existing = this.currentRun(user.username);
     if (existing && existing.status !== 'failed' && existing.status !== 'abandoned') {
-      if (existing.live) {
-        // A conversation can stay live longer than the scoped API token. Keep
-        // the token fresh without minting a session on every message.
-        if ((this.credentialExpiresAt.get(existing.id) ?? 0) <= Date.now() + 10 * 60_000) {
-          await this.writeCredentials(existing, user.username);
-        }
-        this.touch(existing.id);
-        return existing;
-      }
       try {
-        const resumed = await this.orchestrator.resumeRun(existing.id);
-        await this.writeCredentials(resumed, user.username);
-        this.touch(resumed.id);
-        return resumed;
+        return await this.ensureConversationRun(user, existing.id);
       } catch (err) {
         log.warn('assistant resume failed — starting a new conversation', {
           username: user.username,
@@ -112,18 +108,56 @@ export class Assistant {
     // works even when the local machine has no provider. It can only leave the
     // local machine when a reachable daemon URL is configured (the agent calls
     // back here from another box); without one, keep it on the local runner.
+    const run = await this.createConversationRun(user, {
+      title: `AI Help — ${user.displayName || user.username}`,
+      task: 'automations.assistant',
+    });
+    this.store.settings.set(this.mapKey(user.username), run.id);
+    return run;
+  }
+
+  /** Start an independently addressable assistant conversation. The caller
+   * owns the durable mapping (Desk mission, review chat, or another domain). */
+  async createConversationRun(
+    user: AuthUser,
+    opts: {
+      readonly title: string;
+      readonly task: string;
+      readonly runnerId?: string | null;
+      readonly harness?: string | null;
+    },
+  ): Promise<RunRecord> {
     const run = await this.orchestrator.createRun({
       kind: 'assistant',
-      task: 'automations.assistant',
-      title: `AI Help — ${user.displayName || user.username}`,
-      runnerId: this.config.publicUrl ? undefined : null,
+      task: opts.task,
+      title: opts.title,
+      runnerId: opts.runnerId !== undefined ? opts.runnerId : this.config.publicUrl ? undefined : null,
+      ...(opts.harness !== undefined ? { harness: opts.harness } : {}),
       userId: user.username,
     });
     await this.writeCredentials(run, user.username);
-    this.store.settings.set(this.mapKey(user.username), run.id);
     this.store.settings.set(`assistant:primed:${run.id}`, '0');
     this.touch(run.id);
     return run;
+  }
+
+  /** Resume a mission's gateway or refresh the scoped credential on a live one. */
+  async ensureConversationRun(user: AuthUser, runId: string): Promise<RunRecord> {
+    const existing = this.requireOwnedRun(user, runId);
+    if (existing.status === 'failed' || existing.status === 'abandoned') {
+      throw new Error(`assistant run ${runId} cannot be resumed from ${existing.status}`);
+    }
+    if (existing.live) {
+      if ((this.credentialExpiresAt.get(existing.id) ?? 0) <= Date.now() + 10 * 60_000) {
+        await this.writeCredentials(existing, user.username);
+      }
+      this.touch(existing.id);
+      return existing;
+    }
+    const resumed = await this.orchestrator.resumeRun(existing.id);
+    await this.writeCredentials(resumed, user.username);
+    this.touch(resumed.id);
+    return resumed;
   }
 
   /**
@@ -133,13 +167,20 @@ export class Assistant {
    */
   async send(user: AuthUser, text: string, repo?: string): Promise<{ turnId: string }> {
     const run = await this.ensureRun(user);
-    const primedKey = `assistant:primed:${run.id}`;
-    const primed = this.store.settings.get(primedKey) === '1';
     const scope =
       repo && this.store.repos.get(repo)
-        ? `(The user is currently focused on the repository ${repo} — scope reads and actions there unless they say otherwise.)\n`
+        ? `(The user is currently focused on the repository ${repo} — scope reads and actions there unless they say otherwise.)`
         : '';
-    const hidden = `${primed ? '' : `${this.briefing(user)}\n\n`}${scope}`;
+    return this.sendToRun(user, run.id, text, scope);
+  }
+
+  /** Drive a specific assistant run. `scope` is server-authored identifiers,
+   * never fetched issue/PR prose, so external content cannot become a prompt. */
+  async sendToRun(user: AuthUser, runId: string, text: string, scope = ''): Promise<{ turnId: string }> {
+    const run = await this.ensureConversationRun(user, runId);
+    const primedKey = `assistant:primed:${run.id}`;
+    const primed = this.store.settings.get(primedKey) === '1';
+    const hidden = `${primed ? '' : `${this.briefing(user)}\n\n`}${scope ? `${scope}\n` : ''}`;
     const prompt = hidden ? `${hidden}${USER_MARKER}\n${text}` : text;
     const result = await this.orchestrator.sendPrompt(run.id, prompt);
     if (!primed) this.store.settings.set(primedKey, '1');
@@ -150,6 +191,16 @@ export class Assistant {
   async history(user: AuthUser, before: number | null, limit: number): Promise<HistorySegment> {
     const run = this.currentRun(user.username);
     if (!run) return { events: [], prevCursor: null };
+    return this.historyForRun(user, run.id, before, limit);
+  }
+
+  async historyForRun(
+    user: AuthUser,
+    runId: string,
+    before: number | null,
+    limit: number,
+  ): Promise<HistorySegment> {
+    const run = this.requireOwnedRun(user, runId);
     return this.orchestrator.loadHistory(run.id, before, limit);
   }
 
@@ -159,13 +210,35 @@ export class Assistant {
     response: { mode?: 'allow' | 'allow_session' | 'allow_always' | 'deny'; optionId?: string; text?: string },
   ): Promise<void> {
     const run = this.requireRun(user);
+    await this.respondAskForRun(user, run.id, requestId, response);
+  }
+
+  async respondAskForRun(
+    user: AuthUser,
+    runId: string,
+    requestId: string,
+    response: { mode?: 'allow' | 'allow_session' | 'allow_always' | 'deny'; optionId?: string; text?: string },
+  ): Promise<void> {
+    const run = this.requireOwnedRun(user, runId);
     await this.orchestrator.respondAsk(run.id, requestId, response);
     this.touch(run.id);
   }
 
   async abort(user: AuthUser): Promise<void> {
     const run = this.requireRun(user);
+    await this.abortRun(user, run.id);
+  }
+
+  async abortRun(user: AuthUser, runId: string): Promise<void> {
+    const run = this.requireOwnedRun(user, runId);
     await this.orchestrator.abortTurn(run.id);
+  }
+
+  async stopConversationRun(user: AuthUser, runId: string): Promise<void> {
+    const run = this.requireOwnedRun(user, runId);
+    await this.orchestrator.stopRun(run.id).catch(() => undefined);
+    this.lastActivity.delete(run.id);
+    this.credentialExpiresAt.delete(run.id);
   }
 
   /** New conversation: stop the old run (it stays in Agent Runs) and unmap it. */
@@ -182,6 +255,14 @@ export class Assistant {
   private requireRun(user: AuthUser): RunRecord {
     const run = this.currentRun(user.username);
     if (!run) throw new Error('no assistant conversation yet');
+    return run;
+  }
+
+  private requireOwnedRun(user: AuthUser, runId: string): RunRecord {
+    const run = this.orchestrator.getRun(runId);
+    if (!run || run.kind !== 'assistant' || run.userId !== user.username) {
+      throw new Error(`assistant run ${runId} not found`);
+    }
     return run;
   }
 
