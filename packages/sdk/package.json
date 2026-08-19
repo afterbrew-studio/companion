@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion-sdk",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "The public module-authoring surface for Companion.",
   "type": "module",
   "license": "MIT",
