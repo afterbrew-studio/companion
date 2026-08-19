@@ -149,7 +149,7 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
                   </span>
                   <div className="min-w-0 flex-1 pt-1">
                     <div className="text-xs font-semibold">Companion</div>
-                    <div className={`markdown mt-3 max-w-none text-sm leading-relaxed ${item.streaming ? 'mission-streaming-mark' : ''}`}><Markdown text={item.text} /></div>
+                    <div className="markdown mt-3 max-w-none text-sm leading-relaxed"><Markdown text={item.text} /></div>
                   </div>
                 </div>
               ) : item.kind === 'tool' ? (

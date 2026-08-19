@@ -53,7 +53,18 @@ export function PreparedActionsView({
     <>
       <ErrorBar error={error ?? feed.error} className="mb-2" />
       {feed.actions.length > 0 ? (
-        <ListCard>
+        compact ? <div className="space-y-3">
+          {feed.actions.map((action) => (
+            <ActionCard
+              key={action.id}
+              action={action}
+              compact
+              busy={busy === action.id}
+              onExecute={() => void act(action, 'execute')}
+              onCancel={() => void act(action, 'cancel')}
+            />
+          ))}
+        </div> : <ListCard>
           {feed.actions.map((action) => (
             <ActionCard
               key={action.id}
@@ -82,17 +93,31 @@ export function PreparedActionsView({
 
 function ActionCard({
   action,
+  compact = false,
   busy,
   onExecute,
   onCancel,
 }: {
   readonly action: PreparedWorkbenchAction;
+  readonly compact?: boolean;
   readonly busy: boolean;
   readonly onExecute: () => void;
   readonly onCancel: () => void;
 }): React.JSX.Element {
   const content = proposedContent(action);
   const runApproval = action.request.action === 'run.approve' ? action.request : null;
+  if (compact) {
+    return (
+      <CompactActionCard
+        action={action}
+        busy={busy}
+        content={content}
+        runApproval={runApproval}
+        onExecute={onExecute}
+        onCancel={onCancel}
+      />
+    );
+  }
   return (
     <div className="flex items-start gap-3 px-3.5 py-3">
       <StatusDot tone={action.impact === 'destructive' ? 'red' : 'amber'} className="mt-1.5" />
@@ -127,6 +152,71 @@ function ActionCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function CompactActionCard({
+  action,
+  busy,
+  content,
+  runApproval,
+  onExecute,
+  onCancel,
+}: {
+  readonly action: PreparedWorkbenchAction;
+  readonly busy: boolean;
+  readonly content: ReturnType<typeof proposedContent>;
+  readonly runApproval: Extract<PreparedWorkbenchAction['request'], { readonly action: 'run.approve' }> | null;
+  readonly onExecute: () => void;
+  readonly onCancel: () => void;
+}): React.JSX.Element {
+  const destructive = action.impact === 'destructive';
+  return (
+    <section
+      className={`relative overflow-hidden rounded-xl border bg-white px-4 py-4 shadow-sm dark:bg-zinc-950 ${
+        destructive ? 'border-red-200 dark:border-red-500/30' : 'border-amber-200 dark:border-amber-500/30'
+      }`}
+      aria-label={`Approval required: ${action.title}`}
+    >
+      <span className={`absolute inset-y-0 left-0 w-0.5 ${destructive ? 'bg-red-500' : 'bg-amber-500'}`} aria-hidden="true" />
+      <div className="flex items-start gap-3">
+        <StatusDot tone={destructive ? 'red' : 'amber'} className="mt-1.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={`text-[10px] font-semibold tracking-wide uppercase ${destructive ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
+              Approval required
+            </span>
+            <span className="dim text-[10px]">Prepared by {sourceLabel(action)} · {timeAgo(action.createdAt)}</span>
+            <span className="dim ml-auto shrink-0 text-[10px]">{expiresIn(action.expiresAt)}</span>
+          </div>
+          <h3 className="mt-1 text-sm font-semibold">{action.title}</h3>
+          <p className="dim mt-1 text-xs leading-relaxed">{action.summary}</p>
+          <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+            {action.consequence}
+          </p>
+          {runApproval && (runApproval.title !== undefined || runApproval.body !== undefined) ? (
+            <ProposedPullRequest title={runApproval.title} body={runApproval.body} />
+          ) : null}
+          {content ? <ProposedContent text={content.text} label={content.label} /> : null}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <a className="dim mr-auto text-xs hover:text-zinc-900 hover:underline dark:hover:text-zinc-100" href={action.href}>
+              Inspect target ↗
+            </a>
+            <button className="btn-ghost h-8 px-3 text-xs" type="button" disabled={busy} onClick={onCancel}>
+              Cancel
+            </button>
+            <button
+              className={`${destructive ? 'btn-danger' : 'btn'} h-8 px-3 text-xs`}
+              type="button"
+              disabled={busy}
+              onClick={onExecute}
+            >
+              {busy ? 'Applying…' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

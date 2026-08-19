@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { defaultClientConditions, defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -6,6 +7,9 @@ const apiTarget = process.env.COMPANION_API_URL?.trim() || 'http://127.0.0.1:890
 
 export default defineConfig({
   base: '/desk/',
+  // Desk is a separate build but the product preview is a shared brand asset.
+  // Vite copies it into Desk's own bundle, so `--desk` remains standalone.
+  publicDir: join(import.meta.dirname, '../web/public'),
   plugins: [react(), tailwindcss()],
   resolve: {
     conditions: ['source', ...defaultClientConditions],

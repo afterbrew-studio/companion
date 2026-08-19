@@ -49,6 +49,34 @@ function pushToolCall(items: readonly MissionChatItem[], call: MissionToolCall):
   return [...items, { kind: 'tool', calls: [call] }];
 }
 
+/** Final messages may arrive after a tool event. Settle the earlier stream in
+ * place so its caret cannot survive below the text or reappear as a duplicate. */
+function settleAssistantMessage(items: readonly MissionChatItem[], text: string | null): MissionChatItem[] {
+  let latestAssistantIndex = -1;
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item?.kind === 'user') break;
+    if (item?.kind === 'assistant') {
+      latestAssistantIndex = index;
+      break;
+    }
+  }
+
+  const finalText = text?.trim() ? text : null;
+  const latestAssistant = latestAssistantIndex >= 0 ? items[latestAssistantIndex] : null;
+  if (latestAssistant?.kind === 'assistant' && latestAssistant.streaming) {
+    return items.map((item, index) => index === latestAssistantIndex && item.kind === 'assistant'
+      ? { ...item, text: finalText ?? item.text, streaming: false }
+      : item);
+  }
+  if (!finalText) return [...items];
+
+  if (latestAssistant?.kind === 'assistant' && latestAssistant.text.trim() === finalText.trim()) {
+    return [...items];
+  }
+  return [...items, { kind: 'assistant', text: finalText, streaming: false }];
+}
+
 function updateToolCall(
   items: readonly MissionChatItem[],
   callId: string,
@@ -203,28 +231,23 @@ export function useMissionConversation(missionId: string | null): MissionConvers
         });
       } else if (event.type === 'assistant_message') {
         const text = (event as { readonly content?: string }).content ?? '';
-        setItems((previous) => {
-          const last = previous.at(-1);
-          const withoutStream = last?.kind === 'assistant' && last.streaming
-            ? previous.slice(0, -1)
-            : previous;
-          return text.trim()
-            ? [...withoutStream, { kind: 'assistant', text, streaming: false }]
-            : withoutStream;
-        });
+        setItems((previous) => settleAssistantMessage(previous, text));
       } else if (event.type === 'tool_call_requested') {
         const detail = event as { readonly callId?: string; readonly name?: string; readonly seq?: number; readonly input?: unknown };
-        setItems((previous) => pushToolCall(previous, {
-          callId: detail.callId ?? `tool-${detail.seq ?? previous.length}`,
-          name: detail.name ?? 'tool',
-          input: detail.input,
-          status: 'pending',
-          requestedAt: eventTimestamp(event),
-          startedAt: null,
-          completedAt: null,
-          decision: null,
-          detail: null,
-        }));
+        setItems((previous) => {
+          const settled = settleAssistantMessage(previous, null);
+          return pushToolCall(settled, {
+            callId: detail.callId ?? `tool-${detail.seq ?? settled.length}`,
+            name: detail.name ?? 'tool',
+            input: detail.input,
+            status: 'pending',
+            requestedAt: eventTimestamp(event),
+            startedAt: null,
+            completedAt: null,
+            decision: null,
+            detail: null,
+          });
+        });
       } else if (event.type === 'tool_call_approved') {
         const detail = event as { readonly callId?: string; readonly decidedBy?: string; readonly mode?: string };
         setItems((previous) => updateToolCall(previous, detail.callId ?? '', {
@@ -259,6 +282,9 @@ export function useMissionConversation(missionId: string | null): MissionConvers
       }
     } else if (message.t === 'turn' && message.runId === runId) {
       setBusy(message.phase === 'started');
+      if (message.phase !== 'started') {
+        setItems((previous) => settleAssistantMessage(previous, null));
+      }
     } else if (message.t === 'ask' && message.runId === runId) {
       setAsks((previous) => previous.some((ask) => ask.requestId === message.ask.requestId)
         ? previous
@@ -268,6 +294,9 @@ export function useMissionConversation(missionId: string | null): MissionConvers
     } else if (message.t === 'run.changed' && message.run.id === runId) {
       setRun(message.run);
       setBusy(isWorking(message.run));
+      if (!isWorking(message.run)) {
+        setItems((previous) => settleAssistantMessage(previous, null));
+      }
     }
   }), []);
 

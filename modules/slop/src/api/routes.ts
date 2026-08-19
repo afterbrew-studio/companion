@@ -251,9 +251,10 @@ export default defineRoutes((ctx) => {
       },
     }),
 
-    // Validation (unknown PR, no rules, no clone) surfaces as a 400; only the
-    // minutes-long agent phase is fire-and-forget — the result lands over WS
-    // (slop.changed), and an agent-phase failure as a stored 'failed' row.
+    // Validation (unknown PR, no rules, no GitHub access) surfaces as a 400.
+    // Clone preparation and the minutes-long agent phase are fire-and-forget —
+    // progress/results land over WS (slop.changed), and an agent-phase failure
+    // becomes a stored 'failed' row rather than a raw prerequisite error.
     route({
       method: 'POST',
       path: '/api/repos/:owner/:name/prs/:number/slop-detect',
