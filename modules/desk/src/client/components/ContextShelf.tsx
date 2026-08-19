@@ -1,32 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { onServerMessage, useLive } from '@moxxy/companion-sdk/client';
 import {
   Avatar,
-  BranchIcon,
   CloseIcon,
   ContextPanelIcon,
   ErrorBar,
   ExternalLinkIcon,
   PlusIcon,
   SearchIcon,
-  Spinner,
   StatusDot,
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import type {
   ChecksSummary,
+  ChecksSnapshot,
   CommentRecord,
   IssueListRecord,
   IssueRecord,
   PrListRecord,
   PrRecord,
+  PrStatusSnapshot,
 } from '@companion/module-code/contract';
-import { codeApi } from '@companion/module-code/client';
+import { codeApi, LabelChips } from '@companion/module-code/client';
 import { useAuth } from '@companion/module-core/client';
 import { LanePicker } from '@companion/module-operate/client';
 import type { DeskContextRef, DeskMissionView } from '../../contract/index.js';
 import { deskApi } from '../api.js';
 import { githubAvatarUrl, githubContextUrl, githubRepoUrl, githubUserUrl } from '../github.js';
+import { PrChangesPreview, PrContextIcon, PrMergeStatus } from './PrContextDetails.js';
 import { PrHealth } from './PrHealth.js';
 
 interface ContextShelfProps {
@@ -114,13 +115,15 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
   const summary = primary?.kind === 'pull-request'
     ? prs.find((pr) => pr.repo === primary.repo && pr.number === primary.number)
     : primary ? issues.find((issue) => issue.repo === primary.repo && issue.number === primary.number) : undefined;
+  const runtime = view?.run?.harness.label ?? view?.mission.harness ?? 'Auto';
+  const placement = (view?.run?.runnerId ?? view?.mission.runnerId) ? 'remote' : 'local';
 
   return (
     <aside
-      className={`relative flex shrink-0 flex-col overflow-hidden border-l bg-white transition-[width,border-color] duration-300 ease-out dark:bg-zinc-950 ${
+      className={`relative flex shrink-0 flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition-[width,border-color] duration-300 ease-out dark:bg-zinc-950 ${
         collapsed
           ? 'w-12 border-zinc-200 dark:border-zinc-800'
-          : 'w-[20rem] border-zinc-200 xl:w-[23rem] dark:border-zinc-800'
+          : 'w-[21rem] border-zinc-200 dark:border-zinc-800'
       }`}
       aria-label={collapsed ? 'Collapsed context shelf' : 'Context shelf'}
     >
@@ -148,7 +151,7 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
       ) : null}
 
       <div
-        className={`flex min-h-0 w-[20rem] flex-1 flex-col overflow-hidden transition-opacity duration-150 xl:w-[23rem] ${
+        className={`flex min-h-0 w-[21rem] flex-1 flex-col overflow-hidden transition-opacity duration-150 ${
           collapsed ? 'pointer-events-none opacity-0' : 'opacity-100 delay-150'
         }`}
         aria-hidden={collapsed}
@@ -210,9 +213,9 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
         )}
 
         <div className="mx-5 mt-5 mb-5 shrink-0 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-          <div className="dim truncate text-[11px]">{view?.mission.repo ?? 'Whole workspace'}</div>
+          <div className="dim truncate text-[11px]">{primary?.repo ?? view?.mission.repo ?? 'Whole workspace'}</div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="dim min-w-0 flex-1 truncate text-[11px]">{view?.run?.harness.label ?? view?.mission.harness ?? 'Auto'} · background</span>
+            <span className="dim min-w-0 flex-1 truncate text-[11px]">{runtime} · {placement} · background</span>
             <LanePicker rail />
           </div>
         </div>
@@ -289,7 +292,7 @@ function ContextPicker({
           />
         </label>
       </div>
-      {loading ? <div className="flex items-center gap-2 px-3 py-4 text-xs"><Spinner /> Loading GitHub context…</div> : (
+      {loading ? <PickerRowsSkeleton /> : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {shownPrs.length > 0 ? <PickerGroup title="Pull requests">
             {shownPrs.map((pr) => {
@@ -332,12 +335,13 @@ function PickerRow({ context, title, attached, busy, onClick }: { readonly conte
 function PrimaryContext({ context, summary, githubHost }: { readonly context: DeskContextRef; readonly summary: PrListRecord | IssueListRecord | undefined; readonly githubHost: string }): React.JSX.Element {
   const [detail, setDetail] = useState<{
     readonly record: PrRecord | IssueRecord;
-    readonly checks: ChecksSummary | null;
+    readonly checks: ChecksSummary | ChecksSnapshot | null;
     readonly comments: readonly CommentRecord[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const refreshGeneration = useRef(0);
+  const latestPrStatus = useRef<PrStatusSnapshot | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     const request = ++refreshGeneration.current;
@@ -350,7 +354,11 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
           codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
         ]);
         if (request === refreshGeneration.current) {
-          setDetail({ record: record.pr, checks: checkFeed.checks, comments: commentFeed.comments });
+          setDetail({
+            record: latestPrStatus.current ? { ...record.pr, ...latestPrStatus.current } : record.pr,
+            checks: checkFeed.checks,
+            comments: commentFeed.comments,
+          });
         }
       } else {
         const [record, commentFeed] = await Promise.all([
@@ -371,15 +379,28 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
 
   useEffect(() => {
     refreshGeneration.current++;
+    latestPrStatus.current = null;
     setDetail(null);
     setLoading(true);
     setError(null);
   }, [context.kind, context.number, context.repo]);
 
   useLive(refresh, (message) => context.kind === 'pull-request'
-    ? (message.t === 'prs.changed' && message.repo === context.repo)
-      || (message.t === 'prStatus.changed' && message.repo === context.repo && message.number === context.number)
+    ? message.t === 'prs.changed' && message.repo === context.repo
     : (message.t === 'issues.changed' || message.t === 'triage.changed') && message.repo === context.repo);
+
+  useEffect(() => onServerMessage((message) => {
+    if (context.kind !== 'pull-request'
+      || message.t !== 'prStatus.changed'
+      || message.repo !== context.repo
+      || message.number !== context.number) return;
+    latestPrStatus.current = message.status;
+    setDetail((current) => current && 'draft' in current.record ? {
+      ...current,
+      record: { ...current.record, ...message.status },
+      checks: message.status.checks,
+    } : current);
+  }), [context.kind, context.number, context.repo]);
 
   const record = detail?.record ?? summary ?? null;
   const checks = detail?.checks ?? ('checks' in (record ?? {}) ? (record as PrListRecord).checks : null);
@@ -388,7 +409,7 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
   return (
     <section aria-label="Primary context">
       <div className="flex items-start gap-3">
-        {context.kind === 'pull-request' ? <BranchIcon className="mt-0.5 size-4 text-amber-700 dark:text-amber-400" /> : <span className="mt-0.5 text-xs font-semibold text-violet-600">#</span>}
+        {context.kind === 'pull-request' ? <PrContextIcon pr={record && 'draft' in record ? record : null} className="mt-0.5" /> : <span className="mt-0.5 text-xs font-semibold text-violet-600">#</span>}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold">
             <span>{context.kind === 'pull-request' ? 'PR' : 'Issue'} </span>
@@ -399,13 +420,17 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
         </div>
       </div>
 
-      {loading && !record ? <div className="mt-5 flex items-center gap-2 text-xs"><Spinner /> Loading context…</div> : null}
+      {loading && !record ? <PrimaryContextSkeleton pullRequest={context.kind === 'pull-request'} /> : null}
       <ErrorBar error={error} className="mt-3" />
       {record ? (
         <>
           <dl className="mt-5 space-y-3 border-t border-zinc-200 pt-4 text-xs dark:border-zinc-800">
             <ShelfRow label="Status"><span className="flex items-center gap-2 capitalize"><StatusDot tone={record.state === 'open' ? 'green' : 'zinc'} size="sm" />{record.state}</span></ShelfRow>
             {checks ? <ShelfRow label="Checks"><span>{checks.passed} passed · <span className={checks.failed ? 'text-red-600 dark:text-red-400' : ''}>{checks.failed} failing</span></span></ShelfRow> : null}
+            {'draft' in record ? <ShelfRow label="Merge"><PrMergeStatus pr={record} /></ShelfRow> : null}
+            <ShelfRow label="Labels">
+              {record.labels.length > 0 ? <LabelChips labels={record.labels} /> : <span className="dim">None</span>}
+            </ShelfRow>
             <ShelfRow label="People">
               <span className="flex -space-x-1.5">
                 {people.slice(0, 3).map((name) => (
@@ -419,6 +444,7 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
           </dl>
 
           {context.kind === 'pull-request' ? <PrHealth repo={context.repo} number={context.number} /> : null}
+          {context.kind === 'pull-request' ? <PrChangesPreview repo={context.repo} number={context.number} /> : null}
 
           <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
             <h3 className="dim text-[10px] font-medium tracking-wide uppercase">Recent comments</h3>
@@ -442,6 +468,52 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
 
 function ShelfRow({ label, children }: { readonly label: string; readonly children: React.ReactNode }): React.JSX.Element {
   return <div className="flex items-center gap-3"><dt className="dim flex-1">{label}</dt><dd>{children}</dd></div>;
+}
+
+function PickerRowsSkeleton(): React.JSX.Element {
+  const line = 'animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800';
+  return (
+    <div className="min-h-0 flex-1 overflow-hidden" aria-label="Loading GitHub context">
+      <div className="dim bg-zinc-50 px-3 py-1.5 text-[9px] font-medium tracking-wide uppercase dark:bg-zinc-900">Pull requests</div>
+      {[0, 1, 2, 3].map((row) => (
+        <div key={row} className="flex min-h-14 items-start gap-2 border-t border-zinc-100 px-3 py-2 dark:border-zinc-900">
+          <span className={`${line} mt-1 size-2 rounded-full`} />
+          <span className="min-w-0 flex-1 space-y-2">
+            <span className={`${line} block h-2.5 w-[88%]`} />
+            <span className={`${line} block h-2 w-28`} />
+          </span>
+          <span className={`${line} h-2.5 w-8`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PrimaryContextSkeleton({ pullRequest }: { readonly pullRequest: boolean }): React.JSX.Element {
+  const line = 'animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800';
+  return (
+    <div aria-label="Loading context details">
+      <div className="mt-5 space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+        {[0, ...(pullRequest ? [1] : []), 2].map((row) => (
+          <div key={row} className="flex items-center justify-between gap-4">
+            <span className={`${line} h-3 w-14`} />
+            <span className={`${line} h-3 w-24`} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+        <span className={`${line} block h-2.5 w-28`} />
+        <div className="mt-4 flex items-start gap-2.5">
+          <span className={`${line} size-5 shrink-0 rounded-full`} />
+          <span className="min-w-0 flex-1 space-y-2">
+            <span className={`${line} block h-2.5 w-24`} />
+            <span className={`${line} block h-2.5 w-full`} />
+            <span className={`${line} block h-2.5 w-3/4`} />
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Comment({ comment, githubHost }: { readonly comment: CommentRecord; readonly githubHost: string }): React.JSX.Element {

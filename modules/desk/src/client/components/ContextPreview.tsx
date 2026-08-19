@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLive } from '@moxxy/companion-sdk/client';
+import { onServerMessage, useLive } from '@moxxy/companion-sdk/client';
 import {
   ArrowUpIcon,
   Avatar,
-  BranchIcon,
+  ChevronDown,
   ErrorBar,
   ExternalLinkIcon,
   Markdown,
@@ -13,18 +13,22 @@ import {
   timeAgo,
 } from '@moxxy/companion-sdk/ui';
 import type {
+  CheckRunInfo,
   ChecksSummary,
+  ChecksSnapshot,
   CommentRecord,
   IssueRecord,
   PrRecord,
+  PrStatusSnapshot,
 } from '@companion/module-code/contract';
-import { codeApi } from '@companion/module-code/client';
+import { codeApi, LabelChips } from '@companion/module-code/client';
 import { useAuth } from '@companion/module-core/client';
 import type { DeskContextRef, DeskMissionView } from '../../contract/index.js';
 import { githubAvatarUrl, githubRepoUrl, githubUserUrl } from '../github.js';
 import { missionStatus } from '../status.js';
 import { useDictation } from '../hooks/useDictation.js';
 import { PrHealth } from './PrHealth.js';
+import { PrChangesPreview, PrContextIcon, PrMergeStatus } from './PrContextDetails.js';
 
 interface ContextPreviewProps {
   readonly context: DeskContextRef;
@@ -45,11 +49,19 @@ export function ContextPreview({
   const [record, setRecord] = useState<PrRecord | IssueRecord | null>(null);
   const [checks, setChecks] = useState<ChecksSummary | null>(null);
   const [comments, setComments] = useState<readonly CommentRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recordLoading, setRecordLoading] = useState(true);
+  const [checksLoading, setChecksLoading] = useState(context.kind === 'pull-request');
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [checksError, setChecksError] = useState<string | null>(null);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [starting, setStarting] = useState(false);
   const refreshGeneration = useRef(0);
+  const commentsInitialized = useRef(false);
+  const checksInitialized = useRef(false);
+  const checksInFlight = useRef(0);
+  const latestPrStatus = useRef<PrStatusSnapshot | null>(null);
   const dictation = useDictation(prompt, setPrompt, starting);
   const related = useMemo(
     () => missions.filter((entry) => entry.mission.contexts.some((item) => contextKey(item) === contextKey(context))),
@@ -58,33 +70,64 @@ export function ContextPreview({
 
   const refresh = useCallback(async (): Promise<void> => {
     const request = ++refreshGeneration.current;
-    try {
-      if (context.kind === 'pull-request') {
-        const [detail, checkFeed, commentFeed] = await Promise.all([
-          codeApi.getPr(context.repo, context.number),
-          codeApi.prChecks(context.repo, context.number).catch(() => ({ checks: null })),
-          codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
-        ]);
-        if (request !== refreshGeneration.current) return;
-        setRecord(detail.pr);
-        setChecks(checkFeed.checks);
-        setComments(commentFeed.comments);
-      } else {
-        const [detail, commentFeed] = await Promise.all([
-          codeApi.getIssue(context.repo, context.number),
-          codeApi.issueComments(context.repo, context.number).catch(() => ({ comments: [] })),
-        ]);
-        if (request !== refreshGeneration.current) return;
-        setRecord(detail.issue);
-        setChecks(null);
-        setComments(commentFeed.comments);
-      }
-      setError(null);
-    } catch (err) {
-      if (request === refreshGeneration.current) setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (request === refreshGeneration.current) setLoading(false);
+    setRecordLoading(true);
+    if (!commentsInitialized.current) setCommentsLoading(true);
+    setError(null);
+    setCommentsError(null);
+
+    const recordRequest = (context.kind === 'pull-request'
+      ? codeApi.getPr(context.repo, context.number).then((detail) => detail.pr)
+      : codeApi.getIssue(context.repo, context.number).then((detail) => detail.issue))
+      .then((detail) => {
+        if (request === refreshGeneration.current) {
+          setRecord('draft' in detail && latestPrStatus.current ? { ...detail, ...latestPrStatus.current } : detail);
+        }
+      })
+      .catch((err: unknown) => {
+        if (request === refreshGeneration.current) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (request === refreshGeneration.current) setRecordLoading(false);
+      });
+
+    const commentsRequest = (context.kind === 'pull-request'
+      ? codeApi.prComments(context.repo, context.number)
+      : codeApi.issueComments(context.repo, context.number))
+      .then((feed) => {
+        if (request === refreshGeneration.current) setComments(feed.comments);
+      })
+      .catch((err: unknown) => {
+        if (request === refreshGeneration.current) setCommentsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (request === refreshGeneration.current) {
+          commentsInitialized.current = true;
+          setCommentsLoading(false);
+        }
+      });
+
+    let checksRequest: Promise<void> = Promise.resolve();
+    if (context.kind === 'pull-request') {
+      checksInFlight.current += 1;
+      if (!checksInitialized.current) setChecksLoading(true);
+      setChecksError(null);
+      checksRequest = codeApi.prChecks(context.repo, context.number)
+        .then((feed) => {
+          if (request === refreshGeneration.current) setChecks(feed.checks);
+        })
+        .catch((err: unknown) => {
+          if (request === refreshGeneration.current) setChecksError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          checksInFlight.current = Math.max(0, checksInFlight.current - 1);
+          if (request === refreshGeneration.current) {
+            checksInitialized.current = true;
+            setChecksLoading(false);
+          }
+        });
     }
+
+    await Promise.allSettled([recordRequest, commentsRequest, checksRequest]);
   }, [context.kind, context.number, context.repo]);
 
   useEffect(() => {
@@ -92,14 +135,52 @@ export function ContextPreview({
     setRecord(null);
     setChecks(null);
     setComments([]);
-    setLoading(true);
+    commentsInitialized.current = false;
+    checksInitialized.current = false;
+    checksInFlight.current = 0;
+    latestPrStatus.current = null;
+    setRecordLoading(true);
+    setChecksLoading(context.kind === 'pull-request');
+    setCommentsLoading(true);
+    setChecksError(null);
+    setCommentsError(null);
     setError(null);
   }, [context.kind, context.number, context.repo]);
 
   useLive(refresh, (message) => context.kind === 'pull-request'
-    ? (message.t === 'prs.changed' && message.repo === context.repo)
-      || (message.t === 'prStatus.changed' && message.repo === context.repo && message.number === context.number)
+    ? message.t === 'prs.changed' && message.repo === context.repo
     : (message.t === 'issues.changed' || message.t === 'triage.changed') && message.repo === context.repo);
+
+  useEffect(() => onServerMessage((message) => {
+    if (context.kind !== 'pull-request'
+      || message.t !== 'prStatus.changed'
+      || message.repo !== context.repo
+      || message.number !== context.number) return;
+
+    latestPrStatus.current = message.status;
+    setRecord((current) => current && 'checks' in current ? { ...current, ...message.status } : current);
+    if (checksInFlight.current > 0) return;
+
+    const request = refreshGeneration.current;
+    checksInFlight.current += 1;
+    void codeApi.prChecks(context.repo, context.number)
+      .then((feed) => {
+        if (request === refreshGeneration.current) {
+          setChecks(feed.checks);
+          setChecksError(null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (request === refreshGeneration.current) setChecksError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        checksInFlight.current = Math.max(0, checksInFlight.current - 1);
+        if (request === refreshGeneration.current) {
+          checksInitialized.current = true;
+          setChecksLoading(false);
+        }
+      });
+  }), [context.kind, context.number, context.repo]);
 
   const submit = async (): Promise<void> => {
     const text = prompt.trim();
@@ -115,12 +196,15 @@ export function ContextPreview({
     }
   };
 
-  if (loading && !record) {
+  if (recordLoading && !record) {
     return <ContextPreviewSkeleton context={context} onBack={onBack} />;
   }
 
+  const compactChecks = context.kind === 'pull-request' && record && 'checks' in record ? record.checks : null;
+  const visibleChecks: ChecksSummary | ChecksSnapshot | null = checks ?? compactChecks;
+
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-[#fcfcfb] dark:bg-zinc-950" aria-label="Repository context">
+    <main className="min-h-0 flex-1 overflow-y-auto bg-[#fcfcfb] dark:bg-zinc-950" aria-label="Repository context" aria-busy={recordLoading}>
       <div className="mx-auto w-full max-w-[92rem] px-6 py-5">
         <button type="button" className="dim cursor-pointer text-xs hover:text-zinc-900 dark:hover:text-zinc-100" onClick={onBack}>← Overview</button>
         <ErrorBar error={error} className="mt-3" />
@@ -152,9 +236,9 @@ export function ContextPreview({
               ) : null}
             </div>
 
-            <div className="mt-6 grid min-h-[34rem] grid-cols-[minmax(0,1fr)_21rem] gap-6">
+            <div className="mt-6 grid min-h-[34rem] grid-cols-[minmax(0,1fr)_21rem] items-start gap-6">
               <div className="min-w-0">
-                <section className="rounded-xl border border-zinc-200 bg-white px-6 py-5 dark:border-zinc-800 dark:bg-zinc-950" aria-labelledby="context-description">
+                <section className="min-h-48 rounded-xl border border-zinc-200 bg-white px-6 py-5 dark:border-zinc-800 dark:bg-zinc-950" aria-labelledby="context-description">
                   <h2 id="context-description" className="text-sm font-semibold">Description</h2>
                   {record.body ? (
                     <div className="markdown context-markdown mt-4 max-w-none text-sm leading-relaxed"><Markdown text={record.body} /></div>
@@ -163,30 +247,22 @@ export function ContextPreview({
                   )}
                 </section>
 
-                {checks ? (
-                  <section className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" aria-labelledby="context-checks">
-                    <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
-                      <StatusDot tone={checksTone(checks.state)} pulse={checks.state === 'pending'} label={checks.state} />
-                      <h2 id="context-checks" className="text-sm font-semibold">Checks</h2>
-                      <span className="dim ml-auto text-xs tabular-nums">{checks.passed}/{checks.total} passed</span>
-                    </div>
-                    {checks.runs.map((run) => (
-                      <div key={run.name} className="flex min-h-10 items-center gap-3 border-b border-zinc-100 px-5 py-2 text-xs last:border-b-0 dark:border-zinc-900">
-                        <StatusDot tone={run.status !== 'completed' ? 'blue' : run.conclusion === 'success' ? 'green' : 'red'} pulse={run.status !== 'completed'} size="sm" />
-                        <span className="min-w-0 flex-1 truncate">{run.name}</span>
-                        <span className="dim">{run.conclusion ?? run.status}</span>
-                      </div>
-                    ))}
-                  </section>
+                {context.kind === 'pull-request' ? (
+                  <ChecksSection
+                    summary={visibleChecks}
+                    details={checks}
+                    loading={checksLoading}
+                    error={checksError}
+                  />
                 ) : null}
 
                 <form
-                  className="mt-4 rounded-xl border border-zinc-300 bg-white p-3 shadow-sm focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-500"
+                  className="mt-4 flex min-h-40 flex-col rounded-xl border border-zinc-300 bg-white p-4 shadow-sm focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-500"
                   onSubmit={(event) => { event.preventDefault(); void submit(); }}
                 >
                   <textarea
                     rows={3}
-                    className="max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1 text-sm outline-none placeholder:text-zinc-400"
+                    className="max-h-48 min-h-20 w-full flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-zinc-400"
                     value={prompt}
                     onChange={(event) => {
                       dictation.clearError();
@@ -226,10 +302,10 @@ export function ContextPreview({
                 </form>
               </div>
 
-              <aside className="h-fit rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950" aria-label="Context shelf">
+              <aside className="min-h-[31rem] rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950" aria-label="Context shelf">
                 <h2 className="text-sm font-semibold">Context</h2>
                 <div className="mt-5 flex items-start gap-3">
-                  {context.kind === 'pull-request' ? <BranchIcon className="mt-0.5 size-4 text-amber-700 dark:text-amber-400" /> : <span className="mt-0.5 text-xs font-semibold text-violet-600">#</span>}
+                  {context.kind === 'pull-request' ? <PrContextIcon pr={'draft' in record ? record : null} className="mt-0.5" /> : <span className="mt-0.5 text-xs font-semibold text-violet-600">#</span>}
                   <div className="min-w-0">
                     <div className="font-medium">
                       <span>{context.kind === 'pull-request' ? 'PR' : 'Issue'} </span>
@@ -241,7 +317,15 @@ export function ContextPreview({
                 </div>
                 <dl className="mt-5 space-y-3 border-t border-zinc-200 pt-4 text-xs dark:border-zinc-800">
                   <ShelfRow label="Status"><span className="flex items-center gap-2 capitalize"><StatusDot tone={record.state === 'open' ? 'green' : 'zinc'} size="sm" />{record.state}</span></ShelfRow>
-                  {checks ? <ShelfRow label="Checks"><span>{checks.passed} passed · <span className={checks.failed ? 'text-red-600 dark:text-red-400' : ''}>{checks.failed} failing</span></span></ShelfRow> : null}
+                  {context.kind === 'pull-request' ? (
+                    <ShelfRow label="Checks">
+                      <CompactChecks summary={visibleChecks} loading={checksLoading} error={checksError} />
+                    </ShelfRow>
+                  ) : null}
+                  {'draft' in record ? <ShelfRow label="Merge"><PrMergeStatus pr={record} /></ShelfRow> : null}
+                  <ShelfRow label="Labels">
+                    {record.labels.length > 0 ? <LabelChips labels={record.labels} /> : <span className="dim">None</span>}
+                  </ShelfRow>
                   <ShelfRow label="People">
                     <span className="flex -space-x-1.5">
                       {[record.author, ...record.assignees].slice(0, 4).map((name) => (
@@ -253,6 +337,7 @@ export function ContextPreview({
                   </ShelfRow>
                 </dl>
                 {context.kind === 'pull-request' ? <PrHealth repo={context.repo} number={context.number} /> : null}
+                {context.kind === 'pull-request' ? <PrChangesPreview repo={context.repo} number={context.number} /> : null}
                 <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
                   <h3 className="dim text-[10px] font-medium tracking-wide uppercase">Recent comments</h3>
                   {comments.length > 0 ? (
@@ -261,6 +346,10 @@ export function ContextPreview({
                         <Comment key={`${comment.author}:${comment.createdAt}:${index}`} comment={comment} githubHost={auth.githubHost} />
                       ))}
                     </div>
+                  ) : commentsLoading ? (
+                    <CommentsSkeleton />
+                  ) : commentsError ? (
+                    <p className="mt-3 text-xs text-red-600 dark:text-red-400">Comments unavailable.</p>
                   ) : <p className="dim mt-3 text-xs">No comments yet.</p>}
                 </div>
                 <a href={record.url} target="_blank" rel="noreferrer" className="dim mt-5 flex items-center gap-2 border-t border-zinc-200 pt-4 text-xs hover:text-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-100">
@@ -359,6 +448,179 @@ function ContextPreviewSkeleton({ context, onBack }: { readonly context: DeskCon
       </div>
     </main>
   );
+}
+
+function ChecksSection({
+  summary,
+  details,
+  loading,
+  error,
+}: {
+  readonly summary: ChecksSummary | ChecksSnapshot | null;
+  readonly details: ChecksSummary | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const runs = details?.runs ?? [];
+  const state = summary ? checkSummaryState(summary) : null;
+  return (
+    <section
+      className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+      aria-labelledby="context-checks"
+      aria-busy={loading}
+    >
+      <button
+        type="button"
+        className={`flex min-h-12 w-full cursor-pointer items-center gap-3 px-5 py-3 text-left outline-none transition-colors hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 dark:hover:bg-zinc-900/60 ${open ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
+        aria-expanded={open}
+        aria-controls="context-check-runs"
+        onClick={() => setOpen((current) => !current)}
+      >
+        {summary ? <StatusDot tone={checksTone(summary.state)} pulse={summary.state === 'pending'} /> : <SkeletonDot />}
+        <h2 id="context-checks" className="text-sm font-semibold">Checks</h2>
+        {state ? <span className={state.className}>{state.label}</span> : loading ? <span className="dim text-xs">Loading status…</span> : null}
+        <span className="ml-auto shrink-0 text-xs tabular-nums">
+          {summary ? <CheckCounts summary={summary} /> : error ? <span className="text-red-600 dark:text-red-400">Unavailable</span> : null}
+        </span>
+        <ChevronDown open={open} className="dim size-4 shrink-0" />
+      </button>
+
+      {open ? (
+        <div id="context-check-runs">
+          {runs.length > 0 ? (
+            <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
+              {runs.map((run, index) => <CheckRun key={`${run.name}:${index}`} run={run} />)}
+            </ul>
+          ) : loading && !summary ? (
+            <CheckRowsSkeleton rows={3} />
+          ) : loading && summary ? (
+            <div className="flex min-h-10 items-center gap-3 px-5 py-2 text-xs">
+              <StatusDot tone={checksTone(summary.state)} pulse={summary.state === 'pending'} size="sm" />
+              <span className="font-medium">{checkAggregateLabel(summary)}</span>
+              <span className="dim ml-auto">Loading individual jobs…</span>
+            </div>
+          ) : (
+            <p className={`px-5 py-4 text-xs ${error ? 'text-red-600 dark:text-red-400' : 'dim'}`}>
+              {error ? 'Check details are unavailable.' : summary?.state === 'none' ? 'No checks reported for this commit.' : summary?.state === 'unknown' ? 'GitHub check status is unavailable.' : 'No individual check runs reported.'}
+            </p>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CheckRun({ run }: { readonly run: CheckRunInfo }): React.JSX.Element {
+  const outcome = checkRunOutcome(run);
+  const duration = checkRunDuration(run);
+  return (
+    <li className="flex min-h-10 items-center gap-3 px-5 py-2 text-xs">
+      <StatusDot tone={outcome.tone} pulse={outcome.pulse} size="sm" />
+      <span className="min-w-0 flex-1 truncate font-medium" title={run.name}>{run.name}</span>
+      {duration ? <span className="dim shrink-0 tabular-nums">{duration}</span> : null}
+      <span className={outcome.className}>{outcome.label}</span>
+      {run.detailsUrl ? <a href={run.detailsUrl} target="_blank" rel="noreferrer" className="dim shrink-0 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100">Logs ↗</a> : null}
+    </li>
+  );
+}
+
+function CompactChecks({
+  summary,
+  loading,
+  error,
+}: {
+  readonly summary: ChecksSummary | ChecksSnapshot | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+}): React.JSX.Element {
+  if (summary) return <span className="tabular-nums"><CheckCounts summary={summary} /></span>;
+  if (loading) return <span className="block h-3 w-24 animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800" aria-label="Loading checks" />;
+  return <span className={error ? 'text-red-600 dark:text-red-400' : 'dim'}>{error ? 'Unavailable' : 'Not checked'}</span>;
+}
+
+function CheckCounts({ summary }: { readonly summary: ChecksSummary | ChecksSnapshot }): React.JSX.Element {
+  if (summary.state === 'none') return <>No checks</>;
+  if (summary.state === 'unknown') return <span className="text-amber-600 dark:text-amber-400">Unavailable</span>;
+  return (
+    <>
+      <span className={summary.passed > 0 ? 'text-emerald-600 dark:text-emerald-400' : ''}>{summary.passed} passed</span>
+      {summary.failed > 0 ? <> · <span className="text-red-600 dark:text-red-400">{summary.failed} failing</span></> : null}
+      {summary.pending > 0 ? <> · <span className="text-blue-600 dark:text-blue-400">{summary.pending} running</span></> : null}
+    </>
+  );
+}
+
+function CheckRowsSkeleton({ rows }: { readonly rows: number }): React.JSX.Element {
+  const line = 'animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800';
+  return (
+    <div aria-label="Loading check details">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="flex h-10 items-center gap-3 border-b border-zinc-100 px-5 last:border-b-0 dark:border-zinc-900">
+          <span className={`${line} size-2 rounded-full`} />
+          <span className={`${line} h-3 w-44 max-w-[45%]`} />
+          <span className={`${line} ml-auto h-3 w-14`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CommentsSkeleton(): React.JSX.Element {
+  const line = 'animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800';
+  return (
+    <div className="mt-3 flex items-start gap-2.5" aria-label="Loading comments">
+      <span className={`${line} size-5 shrink-0 rounded-full`} />
+      <span className="min-w-0 flex-1 space-y-2">
+        <span className={`${line} block h-2.5 w-24`} />
+        <span className={`${line} block h-2.5 w-full`} />
+        <span className={`${line} block h-2.5 w-3/4`} />
+      </span>
+    </div>
+  );
+}
+
+function SkeletonDot(): React.JSX.Element {
+  return <span className="size-2.5 shrink-0 animate-pulse rounded-full bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800" />;
+}
+
+function checkSummaryState(summary: ChecksSummary | ChecksSnapshot): { readonly label: string; readonly className: string } {
+  if (summary.state === 'passing') return { label: 'Passed', className: 'text-xs text-emerald-600 dark:text-emerald-400' };
+  if (summary.state === 'failing') return { label: 'Needs attention', className: 'text-xs text-red-600 dark:text-red-400' };
+  if (summary.state === 'pending') return { label: 'Checks running', className: 'text-xs text-blue-600 dark:text-blue-400' };
+  if (summary.state === 'unknown') return { label: 'Unavailable', className: 'text-xs text-amber-600 dark:text-amber-400' };
+  return { label: 'Not configured', className: 'dim text-xs' };
+}
+
+function checkAggregateLabel(summary: ChecksSummary | ChecksSnapshot): string {
+  if (summary.state === 'passing') return `All ${summary.total} checks passed`;
+  if (summary.state === 'failing') return `${summary.failed} of ${summary.total} checks failing`;
+  if (summary.state === 'pending') return `${summary.pending} of ${summary.total} checks running`;
+  if (summary.state === 'unknown') return 'Check status unavailable';
+  return 'No checks configured';
+}
+
+function checkRunOutcome(run: CheckRunInfo): {
+  readonly label: string;
+  readonly tone: 'blue' | 'amber' | 'red' | 'green' | 'zinc';
+  readonly pulse: boolean;
+  readonly className: string;
+} {
+  if (run.status === 'queued') return { label: 'Queued', tone: 'blue', pulse: true, className: 'shrink-0 text-blue-600 dark:text-blue-400' };
+  if (run.status === 'in_progress') return { label: 'Running', tone: 'blue', pulse: true, className: 'shrink-0 text-blue-600 dark:text-blue-400' };
+  if (run.conclusion === 'success') return { label: 'Passed', tone: 'green', pulse: false, className: 'shrink-0 text-emerald-600 dark:text-emerald-400' };
+  if (run.conclusion === 'neutral') return { label: 'Neutral', tone: 'zinc', pulse: false, className: 'dim shrink-0' };
+  if (run.conclusion === 'skipped') return { label: 'Skipped', tone: 'zinc', pulse: false, className: 'dim shrink-0' };
+  if (run.conclusion === 'cancelled') return { label: 'Cancelled', tone: 'zinc', pulse: false, className: 'dim shrink-0' };
+  if (run.conclusion === 'stale') return { label: 'Stale', tone: 'amber', pulse: false, className: 'shrink-0 text-amber-600 dark:text-amber-400' };
+  return { label: run.conclusion === 'timed_out' ? 'Timed out' : run.conclusion === 'action_required' ? 'Action required' : 'Failed', tone: 'red', pulse: false, className: 'shrink-0 text-red-600 dark:text-red-400' };
+}
+
+function checkRunDuration(run: CheckRunInfo): string | null {
+  if (run.startedAt === null || run.completedAt === null) return null;
+  const seconds = Math.max(0, Math.round((run.completedAt - run.startedAt) / 1_000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function ShelfRow({ label, children }: { readonly label: string; readonly children: React.ReactNode }): React.JSX.Element {

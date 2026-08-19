@@ -3,21 +3,21 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ErrorBar,
-  InlineLoading,
   Markdown,
   MicrophoneIcon,
   SparkleIcon,
   Spinner,
   StatusDot,
   StopIcon,
+  Tooltip,
   UserIcon,
 } from '@moxxy/companion-sdk/ui';
-import { AskSheet } from '@companion/module-operate/client';
 import { useAuth } from '@companion/module-core/client';
+import { AskSheet } from '@companion/module-operate/client';
 import { PreparedActions } from '@companion/module-workbench/client';
 import type { DeskContextRef, DeskMissionView } from '../../contract/index.js';
-import { missionStatus } from '../status.js';
 import { githubContextUrl } from '../github.js';
+import { missionStatus } from '../status.js';
 import { useMissionConversation, type MissionToolCall } from '../hooks/useMissionConversation.js';
 import { useDictation } from '../hooks/useDictation.js';
 
@@ -53,15 +53,14 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
   }, [conversation.items, conversation.asks, conversation.busy]);
 
   if (!view) {
+    if (loading) return <MissionChatSkeleton />;
     return (
-      <main className="flex min-w-0 flex-1 items-center justify-center bg-white dark:bg-zinc-950">
-        {loading ? <InlineLoading label="Loading mission…" /> : (
-          <div className="max-w-md px-8 text-center">
-            <h1 className="text-lg font-semibold">Mission not found</h1>
-            <p className="dim mt-2 text-sm">It may have been archived or removed.</p>
-            <button type="button" className="btn-ghost mt-4" onClick={onBack}>Back to missions</button>
-          </div>
-        )}
+      <main className="flex min-w-0 flex-1 items-center justify-center">
+        <div className="max-w-md px-8 text-center">
+          <h1 className="text-lg font-semibold">Mission not found</h1>
+          <p className="dim mt-2 text-sm">It may have been archived or removed.</p>
+          <button type="button" className="btn-ghost mt-4" onClick={onBack}>Back to missions</button>
+        </div>
       </main>
     );
   }
@@ -73,33 +72,39 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
     setInput('');
     void conversation.send(text);
   };
-
   const runtime = conversation.run?.harness.label ?? view.run?.harness.label ?? view.mission.harness ?? 'Auto';
   const machine = conversation.run?.runnerId ?? view.run?.runnerId ?? view.mission.runnerId;
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-white dark:bg-zinc-950" aria-label="Mission conversation">
-      <header className="shrink-0 border-b border-zinc-200 px-7 pt-5 pb-5 dark:border-zinc-800">
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden" aria-label="Mission conversation">
+      <header className="shrink-0 pt-1 pb-5">
         <div className="flex items-center gap-2 text-xs">
           <button type="button" className="dim cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={onBack}>Missions</button>
           <span className="dim">/</span>
           <span className="max-w-80 truncate font-medium">{view.mission.title}</span>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="min-w-0 text-2xl font-semibold tracking-tight">{view.mission.title}</h1>
-          {status ? <StatusPill label={status.label === 'Review' || status.label === 'Needs you' ? 'Needs review' : status.label} tone={status.tone} pulse={status.pulse} /> : null}
-          <span className="dim text-xs">·</span>
-          <span className="dim text-xs">{runtime}</span>
-          <span className="dim text-xs">·</span>
-          <span className="dim text-xs">{machine ? 'Remote' : 'Local'}</span>
-          <MissionContextLinks contexts={view.mission.contexts} githubHost={auth.githubHost} />
+        <div className="mt-5 min-w-0">
+          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight" title={view.mission.title}>{view.mission.title}</h1>
+          {status ? (
+            <div className="dim mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+                <StatusDot tone={status.tone} pulse={status.pulse} size="sm" />
+                {status.label === 'Review' || status.label === 'Needs you' ? 'Needs review' : status.label}
+              </span>
+              <span>·</span>
+              <span>{runtime}</span>
+              <span>·</span>
+              <span>{machine ? 'Remote' : 'Local'}</span>
+              <MissionContextMetadata contexts={view.mission.contexts} githubHost={auth.githubHost} />
+            </div>
+          ) : null}
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
-        <div className="mx-auto flex min-h-full max-w-4xl flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto py-6">
+        <div className="flex min-h-full w-full flex-col">
           {conversation.loading ? (
-            <InlineLoading label="Opening mission transcript…" />
+            <TranscriptSkeleton />
           ) : conversation.items.length === 0 ? (
             <div className="my-auto py-10">
               <div className="flex items-start gap-4">
@@ -109,10 +114,10 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
                 <div>
                   <div className="text-xs font-semibold">Companion</div>
                   <h2 className="mt-2 text-xl font-semibold">What should I handle?</h2>
-                  <p className="dim mt-2 max-w-xl text-sm leading-relaxed">
+                  <p className="dim mt-2 text-sm leading-relaxed">
                     Describe the outcome normally. This mission keeps its own context and continues running while you work elsewhere.
                   </p>
-                  <div className="mt-5 grid max-w-2xl gap-2">
+                  <div className="mt-5 grid gap-2">
                     {SUGGESTIONS.map((suggestion) => (
                       <button
                         key={suggestion}
@@ -132,7 +137,7 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
               {conversation.items.map((item, index) => item.kind === 'user' ? (
                 <div key={index} className="anim-in flex items-start gap-4">
                   <span className="dim mt-2 flex size-8 shrink-0 items-center justify-center"><UserIcon className="size-5" /></span>
-                  <div className="max-w-3xl flex-1 rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <div className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <div className="text-xs font-semibold">You</div>
                     <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap">{item.text}</p>
                   </div>
@@ -148,7 +153,7 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
                   </div>
                 </div>
               ) : item.kind === 'tool' ? (
-                <div key={index} className="anim-in ml-12 max-w-xl">
+                <div key={index} className="anim-in ml-12">
                   <ToolProgress calls={item.calls} busy={conversation.busy} />
                 </div>
               ) : (
@@ -158,10 +163,10 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
               ))}
             </div>
           )}
-          {conversation.busy && !conversation.items.some((item) => item.kind === 'tool') ? (
-            <div className="ml-12 mt-5 flex max-w-xl items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-xs dark:border-zinc-800">
-              <Spinner /> Companion is working through the request
-            </div>
+          {conversation.busy
+            && !conversation.items.some((item) => item.kind === 'tool')
+            && conversation.items.at(-1)?.kind !== 'assistant' ? (
+            <div className="mt-5"><AssistantReplySkeleton compact /></div>
           ) : null}
           {conversation.asks.map((ask) => (
             <div className="ml-12 mt-5" key={ask.requestId}>
@@ -177,13 +182,13 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
       </div>
 
       <form
-        className="shrink-0 px-7 pt-3 pb-6"
+        className="shrink-0 pt-3"
         onSubmit={(event) => {
           event.preventDefault();
           submit();
         }}
       >
-        <div className="mx-auto max-w-4xl rounded-xl border border-zinc-300 bg-white px-4 pt-3 pb-3 shadow-sm transition-colors focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-500">
+        <div className="w-full rounded-xl border border-zinc-300 bg-white px-4 pt-3 pb-3 shadow-sm transition-colors focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-500">
           <textarea
             ref={inputRef}
             rows={2}
@@ -246,97 +251,100 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
   );
 }
 
-function MissionContextLinks({ contexts, githubHost }: { readonly contexts: readonly DeskContextRef[]; readonly githubHost: string }): React.JSX.Element {
-  const [moreOpen, setMoreOpen] = useState(false);
-  const visible = contexts.slice(0, 1);
+function MissionContextMetadata({ contexts, githubHost }: { readonly contexts: readonly DeskContextRef[]; readonly githubHost: string }): React.JSX.Element | null {
+  const primary = contexts[0];
+  if (!primary) return null;
   const overflow = contexts.slice(1);
-
   return (
     <>
-      {visible.map((context) => (
-        <span key={`${context.kind}:${context.repo}#${context.number}`} className="contents">
-          <span className="dim text-xs">·</span>
-          <ContextLink context={context} githubHost={githubHost} />
-        </span>
-      ))}
+      <span>·</span>
+      <a href={githubContextUrl(githubHost, primary.repo, primary.kind, primary.number)} target="_blank" rel="noreferrer" className="hover:text-zinc-900 hover:underline dark:hover:text-zinc-100">
+        {contextLabel(primary)}
+      </a>
       {overflow.length > 0 ? (
         <>
-          <span className="dim text-xs">·</span>
-          <span
-            className="relative"
-            onMouseEnter={() => setMoreOpen(true)}
-            onMouseLeave={() => setMoreOpen(false)}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMoreOpen(false);
-            }}
+          <span>·</span>
+          <Tooltip
+            side="bottom"
+            content={<span className="block space-y-1">{overflow.map((context) => <span key={`${context.kind}:${context.repo}#${context.number}`} className="block">{contextLabel(context)} · {context.repo}</span>)}</span>}
           >
-            <button
-              type="button"
-              className="dim cursor-pointer text-xs hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
-              onFocus={() => setMoreOpen(true)}
-              onClick={() => setMoreOpen(true)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') setMoreOpen(false);
-              }}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-            >
-              +{overflow.length} more
-            </button>
-            <span
-              className={`absolute top-full right-0 z-30 w-72 pt-2 transition-[opacity,transform] duration-150 ${moreOpen ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
-              aria-hidden={!moreOpen}
-              inert={!moreOpen}
-            >
-              <span className="block max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900" role="menu" aria-label="More attached context">
-                <span className="dim block border-b border-zinc-100 px-3 py-2 text-[9px] font-medium tracking-wide uppercase dark:border-zinc-800" aria-hidden>Attached context</span>
-                {overflow.map((context) => (
-                  <a
-                    key={`${context.kind}:${context.repo}#${context.number}`}
-                    href={githubContextUrl(githubHost, context.repo, context.kind, context.number)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-3 rounded-md px-3 py-2 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    role="menuitem"
-                  >
-                    <span className="shrink-0 font-medium">{context.kind === 'pull-request' ? 'PR' : 'Issue'} #{context.number}</span>
-                    <span className="dim min-w-0 flex-1 truncate text-[10px]">{context.repo}</span>
-                  </a>
-                ))}
-              </span>
-            </span>
-          </span>
+            <span className="cursor-help hover:text-zinc-900 dark:hover:text-zinc-100">+{overflow.length} more</span>
+          </Tooltip>
         </>
       ) : null}
     </>
   );
 }
 
-function ContextLink({ context, githubHost }: { readonly context: DeskContextRef; readonly githubHost: string }): React.JSX.Element {
+function contextLabel(context: DeskContextRef): string {
+  return `${context.kind === 'pull-request' ? 'PR' : 'Issue'} #${context.number}`;
+}
+
+function MissionChatSkeleton(): React.JSX.Element {
+  const line = 'animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800';
   return (
-    <a
-      href={githubContextUrl(githubHost, context.repo, context.kind, context.number)}
-      target="_blank"
-      rel="noreferrer"
-      className="dim text-xs hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
-      title={context.repo}
-    >
-      {context.kind === 'pull-request' ? 'PR' : 'Issue'} #{context.number}
-    </a>
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden" aria-label="Loading mission" aria-busy="true">
+      <header className="shrink-0 pt-1 pb-5">
+        <div className={`${line} h-3 w-48`} />
+        <div className={`${line} mt-5 h-7 w-[min(30rem,65%)]`} />
+        <div className="mt-3 flex items-center gap-2">
+          <div className={`${line} size-2 rounded-full`} />
+          <div className={`${line} h-3 w-20`} />
+          <div className={`${line} h-3 w-16`} />
+          <div className={`${line} h-3 w-14`} />
+        </div>
+      </header>
+      <div className="min-h-0 flex-1 overflow-hidden py-6">
+        <div className="w-full"><TranscriptSkeleton /></div>
+      </div>
+      <div className="shrink-0 pt-3">
+        <div className="min-h-24 w-full rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+          <div className={`${line} h-3 w-52`} />
+          <div className="mt-8 flex items-center justify-between">
+            <div className={`${line} h-3 w-64`} />
+            <div className={`${line} size-8 rounded-lg`} />
+          </div>
+        </div>
+      </div>
+    </main>
   );
 }
 
-function StatusPill({ label, tone, pulse }: { readonly label: string; readonly tone: 'blue' | 'amber' | 'red' | 'green' | 'zinc'; readonly pulse: boolean }): React.JSX.Element {
-  const cls = tone === 'green'
-    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-    : tone === 'amber'
-      ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-      : tone === 'red'
-        ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-        : tone === 'blue'
-          ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
-          : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
-  return <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium ${cls}`}><StatusDot tone={tone} pulse={pulse} size="sm" />{label}</span>;
+function TranscriptSkeleton(): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-7" aria-label="Loading mission transcript">
+      <div className="flex items-start gap-4">
+        <SkeletonCircle />
+        <div className="min-h-24 flex-1 rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <SkeletonLine width="w-12" />
+          <SkeletonLine width="mt-4 w-[76%]" />
+          <SkeletonLine width="mt-2 w-[58%]" />
+        </div>
+      </div>
+      <AssistantReplySkeleton />
+    </div>
+  );
+}
+
+function AssistantReplySkeleton({ compact = false }: { readonly compact?: boolean }): React.JSX.Element {
+  return (
+    <div className="flex items-start gap-4" aria-label="Companion is preparing a response">
+      <SkeletonCircle />
+      <div className="min-w-0 flex-1 pt-1">
+        <SkeletonLine width="w-20" />
+        <SkeletonLine width={`mt-4 ${compact ? 'w-[44%]' : 'w-[82%]'}`} />
+        <SkeletonLine width={`mt-2 ${compact ? 'w-[28%]' : 'w-[64%]'}`} />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonCircle(): React.JSX.Element {
+  return <span className="size-8 shrink-0 animate-pulse rounded-full bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800" />;
+}
+
+function SkeletonLine({ width }: { readonly width: string }): React.JSX.Element {
+  return <span className={`block h-3 animate-pulse rounded bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800 ${width}`} />;
 }
 
 function ToolProgress({ calls, busy }: { readonly calls: readonly MissionToolCall[]; readonly busy: boolean }): React.JSX.Element {

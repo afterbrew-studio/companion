@@ -275,7 +275,7 @@ export function DeskRoot(): React.JSX.Element {
         />
       ) : (
         <div className="flex min-h-0 flex-1 bg-[#fcfcfb] p-6 dark:bg-zinc-950">
-          <div className="mx-auto flex min-h-0 w-full max-w-[96rem] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mx-auto flex min-h-0 w-full max-w-[96rem] items-stretch gap-6">
             <MissionChat view={active} loading={missions.loading} onBack={() => navigate({ kind: 'missions' })} />
             <ContextShelf view={active} onUpdated={async () => { await missions.refresh(); }} />
           </div>
