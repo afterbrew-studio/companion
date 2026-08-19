@@ -38,6 +38,9 @@ importers:
       '@companion/module-cursor-bugbot':
         specifier: workspace:*
         version: link:../../modules/cursor-bugbot
+      '@companion/module-desk':
+        specifier: workspace:*
+        version: link:../../modules/desk
       '@companion/module-integrations':
         specifier: workspace:*
         version: link:../../modules/integrations
@@ -133,6 +136,9 @@ importers:
       companion-api:
         specifier: workspace:*
         version: link:../api
+      companion-desk:
+        specifier: workspace:*
+        version: link:../desk
       companion-web:
         specifier: workspace:*
         version: link:../web
@@ -186,6 +192,61 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
 
+  apps/desk:
+    dependencies:
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../../modules/code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../../modules/core
+      '@companion/module-desk':
+        specifier: workspace:*
+        version: link:../../modules/desk
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../../modules/operate
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../../modules/workbench
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../../modules/workspace
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@moxxy/companion-ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      react:
+        specifier: ^19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.4(@types/react@19.2.18)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.5
+        version: 6.0.5(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vite:
+        specifier: ^8.2.1
+        version: 8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
+
   apps/web:
     dependencies:
       '@companion/module-admin':
@@ -209,6 +270,9 @@ importers:
       '@companion/module-cursor-bugbot':
         specifier: workspace:*
         version: link:../../modules/cursor-bugbot
+      '@companion/module-desk':
+        specifier: workspace:*
+        version: link:../../modules/desk
       '@companion/module-integrations':
         specifier: workspace:*
         version: link:../../modules/integrations
@@ -556,6 +620,52 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
     devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.2.18
+      react:
+        specifier: ^19.2.8
+        version: 19.2.8
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  modules/desk:
+    dependencies:
+      '@companion/module-automations':
+        specifier: workspace:*
+        version: link:../automations
+      '@companion/module-code':
+        specifier: workspace:*
+        version: link:../code
+      '@companion/module-core':
+        specifier: workspace:*
+        version: link:../core
+      '@companion/module-operate':
+        specifier: workspace:*
+        version: link:../operate
+      '@companion/module-workbench':
+        specifier: workspace:*
+        version: link:../workbench
+      '@companion/module-workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@moxxy/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@moxxy/companion-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@moxxy/companion-services':
+        specifier: workspace:*
+        version: link:../../packages/services
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3

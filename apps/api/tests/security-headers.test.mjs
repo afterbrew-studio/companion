@@ -44,6 +44,8 @@ test('static requests select only boot-indexed files and reject traversal-shaped
   const root = join(container, 'web');
   mkdirSync(root);
   writeFileSync(join(root, 'index.html'), '<main>app</main>');
+  mkdirSync(join(root, 'desk'));
+  writeFileSync(join(root, 'desk', 'index.html'), '<main>desk</main>');
   writeFileSync(join(root, 'asset.js'), 'console.log("safe")');
   writeFileSync(join(container, 'outside.txt'), 'must not be served');
   const server = await startHttpServer({
@@ -60,7 +62,9 @@ test('static requests select only boot-indexed files and reject traversal-shaped
   });
   const port = server.address().port;
 
-  assert.equal((await rawGet(port, '/ordinary/spa/route')).status, 200);
+  assert.deepEqual(await rawGet(port, '/ordinary/spa/route'), { status: 200, body: '<main>app</main>' });
+  assert.deepEqual(await rawGet(port, '/desk/'), { status: 200, body: '<main>desk</main>' });
+  assert.deepEqual(await rawGet(port, '/desk/missions/one'), { status: 200, body: '<main>desk</main>' });
   assert.equal((await rawGet(port, '/%2e%2e/outside.txt')).status, 403);
   assert.equal((await rawGet(port, '/..%5coutside.txt')).status, 403);
   assert.equal((await rawGet(port, '/bad%zz')).status, 400);
@@ -75,8 +79,9 @@ test('static requests select only boot-indexed files and reject traversal-shaped
 function rawGet(port, path) {
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path }, (res) => {
-      res.resume();
-      res.once('end', () => resolve({ status: res.statusCode }));
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.once('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
     });
     req.once('error', reject);
     req.end();

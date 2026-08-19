@@ -15,6 +15,7 @@
     "admin",
     "plan",
     "board",
-    "automations"
+    "automations",
+    "desk"
   ]
 }

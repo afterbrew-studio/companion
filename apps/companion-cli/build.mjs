@@ -84,6 +84,7 @@ if (readFileSync(join(root, 'apps/api/src/modules.generated.ts'), 'utf8').includ
 }
 
 cpSync(join(root, 'apps/web/dist'), join(dist, 'web'), { recursive: true });
+cpSync(join(root, 'apps/desk/dist'), join(dist, 'web/desk'), { recursive: true });
 
 // `module scaffold` copies the hello-world example, sources only: the scaffold
 // is a starting point, never a prebuilt artifact.

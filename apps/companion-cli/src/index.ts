@@ -69,6 +69,8 @@ interface CliOptions {
   readonly host?: string;
   readonly port?: number;
   readonly open: boolean;
+  /** Open the focused Desk surface instead of the full Companion shell. */
+  readonly desk: boolean;
   readonly yes: boolean;
   readonly withAuth: boolean;
   readonly githubFromGh: boolean;
@@ -111,6 +113,8 @@ const HELP = `@moxxy/companion: run Companion locally
 
 Usage:
   npx @moxxy/companion                  Initialize when needed, start, open browser
+  npx @moxxy/companion --desk           Open the focused, agent-first Companion Desk
+  npx @moxxy/companion --simple         Alias for --desk
   npx @moxxy/companion --background     Same, but leave it running without a terminal
   npx @moxxy/companion stop             Stop the daemon using this data directory
   npx @moxxy/companion init             Prepare the local data directory only
@@ -131,6 +135,8 @@ Options:
   --host <host>    Bind host for this run (default: 127.0.0.1)
   --port <port>    HTTP port for this run (default: 8901)
   --no-open        Do not open a browser
+  --desk           Open Companion Desk instead of the full app
+  --simple         Alias for --desk
   --background     Run the daemon detached; logs go to <home>/companiond.log
   -y, --yes        Accept secure generated defaults without prompting
   --with-auth      Require Companion sign-in (default: trusted loopback session)
@@ -404,6 +410,7 @@ async function promptForAdmin(): Promise<AdminSetup> {
 async function start(options: CliOptions): Promise<void> {
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
+  const browserUrl = options.desk ? `${url}/desk/` : url;
   const bundleDir = dirname(fileURLToPath(import.meta.url));
   const staticDir = join(bundleDir, 'web');
   const server = join(bundleDir, 'server.js');
@@ -418,7 +425,7 @@ async function start(options: CliOptions): Promise<void> {
   if (already !== null) {
     process.stdout.write(`\nCompanion is already running at ${url} (pid ${already}).\n`);
     process.stdout.write(`Stop it with: npx @moxxy/companion stop\n`);
-    if (options.open) openBrowser(url);
+    if (options.open) openBrowser(browserUrl);
     return;
   }
 
@@ -489,7 +496,7 @@ async function start(options: CliOptions): Promise<void> {
   }
   if (hasPendingAdmin) consumePendingAdminSetup(options.home);
   await settleRepo(url, options);
-  if (options.open) openBrowser(url);
+  if (options.open) openBrowser(browserUrl);
   if (detached) {
     process.stdout.write(
       `\nRunning in the background (pid ${detached.pid}). Closing this terminal leaves it running.\n` +
@@ -604,6 +611,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let host: string | undefined;
   let port: number | undefined;
   let open = true;
+  let desk = false;
   let yes = false;
   let withAuth = false;
   let githubFromGh = false;
@@ -624,6 +632,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     else if (arg === '--host') host = requiredValue(argv, ++i, arg);
     else if (arg === '--port') port = validPort(requiredValue(argv, ++i, arg));
     else if (arg === '--no-open') open = false;
+    else if (arg === '--desk' || arg === '--simple') desk = true;
     else if (arg === '--yes' || arg === '-y') yes = true;
     else if (arg === '--with-auth') withAuth = true;
     else if (arg === '--github-from-gh') githubFromGh = true;
@@ -635,7 +644,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     } else throw new Error(`Unknown argument: ${arg}\n\n${HELP}`);
   }
   home = isAbsolute(home) ? home : resolve(home);
-  return { command, home, host, port, open, yes, withAuth, githubFromGh, verbose, background, file, newKey };
+  return { command, home, host, port, open, desk, yes, withAuth, githubFromGh, verbose, background, file, newKey };
 }
 
 /**

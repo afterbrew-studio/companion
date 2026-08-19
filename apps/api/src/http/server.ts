@@ -264,7 +264,11 @@ function serveStatic(
     res.end();
     return;
   }
-  const file = files.get(decoded === '/' ? '/index.html' : decoded) ?? files.get('/index.html');
+  const requested = decoded === '/' ? '/index.html' : decoded;
+  const fallback = decoded === '/desk' || decoded.startsWith('/desk/')
+    ? files.get('/desk/index.html')
+    : files.get('/index.html');
+  const file = files.get(requested) ?? fallback;
   if (!file) {
     res.writeHead(404);
     res.end();
