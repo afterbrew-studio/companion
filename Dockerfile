@@ -9,6 +9,12 @@ FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b2
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
+# The pinned Node digest can lag Debian's security repository. Upgrade the base
+# once so every published target inherits remediated OS packages even before a
+# refreshed upstream digest is available.
+RUN apt-get update \
+  && apt-get upgrade -y \
+  && rm -rf /var/lib/apt/lists/*
 # The Node image includes npm for installing an optional runtime. Keep that
 # capability, but do not inherit vulnerable transitive packages from the npm
 # version bundled into the base image. Dependabot tracks the image digest;
