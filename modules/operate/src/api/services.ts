@@ -65,6 +65,8 @@ export default defineServices(async (ctx) => {
   const broadcast = (msg: SpaServerMessage): void => {
     ctx.broadcast(msg);
     if (msg.t === 'run.changed') ctx.bus.emit('run.changed', msg.run);
+    else if (msg.t === 'ask') ctx.bus.emit('run.ask', { runId: msg.runId, ask: msg.ask });
+    else if (msg.t === 'askResolved') ctx.bus.emit('run.askResolved', { runId: msg.runId, requestId: msg.requestId });
   };
 
   // Runtime adapters discover their own prerequisites. The composition root

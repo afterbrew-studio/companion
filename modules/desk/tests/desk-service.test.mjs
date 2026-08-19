@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Database } from '@moxxy/companion-services';
 import { DeskService } from '../dist/api/desk-service.js';
+import { DeskEventStateStore } from '../dist/api/event-state-store.js';
 import migrations from '../dist/api/migrations.js';
 import { MissionsStore } from '../dist/api/missions-store.js';
 
@@ -45,6 +46,7 @@ function fixture() {
   const db = new Database(':memory:');
   for (const migration of migrations) migration.up(db);
   const runs = new Map();
+  const notifications = [];
   const assistant = {
     creates: 0,
     lastCreateOptions: null,
@@ -79,12 +81,77 @@ function fixture() {
     },
     canAccessRepo: (user) => user.username === 'alice',
   };
-  const code = { repos: { getInWorkspace: (repo, workspaceId) => (
-    workspaceId === 'ws-1' && repo === 'acme/app' ? {} : null
-  ) } };
-  const service = new DeskService(new MissionsStore(db), assistant, workspace, code, () => {});
-  return { db, assistant, service };
+  const code = {
+    repos: {
+      getInWorkspace: (repo, workspaceId) => (
+        workspaceId === 'ws-1' && repo === 'acme/app' ? {} : null
+      ),
+      workspaceIds: (repo) => repo === 'acme/app' ? ['ws-1'] : [],
+    },
+    prs: {
+      get: (repo, number) => repo === 'acme/app' && number === 7
+        ? { repo, number, title: 'Improve search' }
+        : undefined,
+    },
+  };
+  const service = new DeskService(
+    new MissionsStore(db),
+    new DeskEventStateStore(db),
+    assistant,
+    workspace,
+    code,
+    () => {},
+    (input) => notifications.push(input),
+  );
+  return { db, assistant, notifications, service };
 }
+
+test('mission and ask events create durable-inbox inputs once per transition', async () => {
+  const { db, notifications, service } = fixture();
+  const mission = service.create(alice, { workspaceId: 'ws-1', repo: 'acme/app', title: 'Fix search' }).mission;
+  const view = await service.session(alice, mission.id);
+  const idle = run(view.mission.runId);
+
+  service.recordRun(idle);
+  service.recordRun(idle);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'finished');
+  assert.match(notifications[0].title, /Response ready/);
+
+  service.recordRun({ ...idle, status: 'running', updatedAt: 2 });
+  service.recordRun({ ...idle, status: 'idle', updatedAt: 3 });
+  assert.equal(notifications.length, 2);
+
+  const ask = { requestId: 'ask-1', workspaceId: 'ws-1', kind: 'approval', approval: { title: 'Publish patch?' } };
+  service.recordAsk(idle.id, ask);
+  service.recordAsk(idle.id, ask);
+  assert.equal(notifications.length, 3);
+  assert.equal(notifications[2].kind, 'action_required');
+  assert.match(notifications[2].body, /Publish patch/);
+  db.close();
+});
+
+test('check events notify only on meaningful state transitions', () => {
+  const { db, notifications, service } = fixture();
+  const failing = {
+    checks: { state: 'failing', total: 4, passed: 3, failed: 1, pending: 0, fetchedAt: 1 },
+    reviewDecision: null,
+    mergeable: true,
+    mergeStateStatus: 'clean',
+  };
+  service.recordPrStatus('acme/app', 7, failing);
+  service.recordPrStatus('acme/app', 7, failing);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'action_required');
+
+  service.recordPrStatus('acme/app', 7, {
+    ...failing,
+    checks: { ...failing.checks, state: 'passing', passed: 4, failed: 0, fetchedAt: 2 },
+  });
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[1].kind, 'finished');
+  db.close();
+});
 
 test('concurrent session requests attach exactly one run to a mission', async () => {
   const { db, assistant, service } = fixture();

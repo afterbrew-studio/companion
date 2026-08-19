@@ -170,7 +170,7 @@ function renderBlocks(text: string): ReactNode[] {
         if (cont.length > 0) body += ' ' + cont.join(' ');
         const task = body.match(/^\[( |x|X)\]\s+(.*)$/);
         items.push(
-          <li key={li++}>
+          <li key={li++} className={task ? 'task-item' : undefined}>
             {task ? (
               <>
                 <input type="checkbox" checked={task[1] !== ' '} readOnly aria-hidden className="mr-1.5 align-middle" />

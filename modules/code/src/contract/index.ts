@@ -62,6 +62,15 @@ declare module '@moxxy/companion-contracts' {
     /** The GitHub/code domain: repos + accounts + sync cache + triage/reviews/checks/fixes/pipelines. */
     code: CodeService;
   }
+  interface BusEvents {
+    /** Narrow server-side signal used by Desk to turn meaningful CI state
+     * transitions into durable, workspace-scoped inbox entries. */
+    'code.pr-status.changed': {
+      readonly repo: string;
+      readonly number: number;
+      readonly status: PrStatusSnapshot;
+    };
+  }
 }
 
 // ---------- GitHub domain -----------------------------------------------------
@@ -749,9 +758,34 @@ export interface GitHubAccountRecord {
 
 /** A GitHub issue/PR conversation comment (read-through, not cached). */
 export interface CommentRecord {
+  readonly id: number;
+  readonly url: string;
   readonly author: string;
   readonly body: string;
   readonly createdAt: number;
+}
+
+/** One inline review comment, grouped into its GitHub review thread. */
+export interface PrReviewCommentRecord {
+  readonly id: number;
+  readonly author: string;
+  readonly body: string;
+  readonly createdAt: number;
+  readonly url: string;
+  readonly path: string;
+  readonly line: number | null;
+  readonly originalLine: number | null;
+  readonly inReplyToId: number | null;
+}
+
+/** Fresh, read-through state used to reply to or resolve an exact review thread. */
+export interface PrReviewThreadRecord {
+  readonly id: string;
+  readonly resolved: boolean;
+  readonly outdated: boolean;
+  readonly path: string;
+  readonly line: number | null;
+  readonly comments: ReadonlyArray<PrReviewCommentRecord>;
 }
 
 export interface WebhookInfo {

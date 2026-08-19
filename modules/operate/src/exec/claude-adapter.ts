@@ -65,6 +65,9 @@ export class ClaudeAdapter {
   private seq = 0;
   private turnId = '';
   private autoTurns = 0;
+  /** Timestamp of the frame currently being adapted. Session-file replay
+   * keeps the original time; live frames fall back to receipt time. */
+  private frameTs: number | null = null;
   /**
    * Assistant messages waiting for the `stop_reason` that arrives on
    * `message_delta`. Bounded: a stream that never sends one must not
@@ -109,52 +112,57 @@ export class ClaudeAdapter {
     const sessionId = frame.session_id ?? frame.sessionId;
     if (typeof sessionId === 'string' && sessionId.length > 0) this.sessionId = sessionId;
 
-    switch (frame.type) {
-      case 'system':
-        if (frame.subtype === 'init') this.handlers.onSessionInfo?.(readSessionInfo(frame));
-        return;
+    this.frameTs = frameTimestamp(frame) ?? Date.now();
+    try {
+      switch (frame.type) {
+        case 'system':
+          if (frame.subtype === 'init') this.handlers.onSessionInfo?.(readSessionInfo(frame));
+          return;
 
-      case 'stream_event':
-        this.streamEvent(asFrame(frame.event));
-        return;
+        case 'stream_event':
+          this.streamEvent(asFrame(frame.event));
+          return;
 
-      case 'assistant':
-        this.assistantBlocks(asFrame(frame.message));
-        return;
+        case 'assistant':
+          this.assistantBlocks(asFrame(frame.message));
+          return;
 
-      case 'user':
-        this.userBlocks(asFrame(frame.message));
-        return;
+        case 'user':
+          this.userBlocks(asFrame(frame.message));
+          return;
 
-      case 'rate_limit_event': {
-        // Informational unless the limiter says it actually withheld capacity.
-        const status = String(asFrame(frame.rate_limit_info)?.status ?? '');
-        if (status === 'allowed') return;
-        this.emit('error', 'system', { kind: 'retryable', message: `rate limit ${status}` });
-        return;
-      }
-
-      case 'result': {
-        this.flushMessages(frame.is_error === true ? 'error' : 'end_turn');
-        const usage = asFrame(frame.usage);
-        if (frame.is_error === true) {
-          this.emit('error', 'system', {
-            kind: 'fatal',
-            message: apiErrorStatus(frame) ?? String(frame.result ?? frame.subtype ?? 'run failed'),
-          });
+        case 'rate_limit_event': {
+          // Informational unless the limiter says it actually withheld capacity.
+          const status = String(asFrame(frame.rate_limit_info)?.status ?? '');
+          if (status === 'allowed') return;
+          this.emit('error', 'system', { kind: 'retryable', message: `rate limit ${status}` });
+          return;
         }
-        this.handlers.onTurnEnd?.({
-          turnId: this.turnId,
-          ok: frame.is_error !== true,
-          costUsd: numberOr(frame.total_cost_usd, 0),
-          inputTokens: numberOr(usage?.input_tokens, 0),
-          outputTokens: numberOr(usage?.output_tokens, 0),
-        });
-        return;
-      }
 
-      default:
-        return; // system/status, attachment, ai-title and anything newer
+        case 'result': {
+          this.flushMessages(frame.is_error === true ? 'error' : 'end_turn');
+          const usage = asFrame(frame.usage);
+          if (frame.is_error === true) {
+            this.emit('error', 'system', {
+              kind: 'fatal',
+              message: apiErrorStatus(frame) ?? String(frame.result ?? frame.subtype ?? 'run failed'),
+            });
+          }
+          this.handlers.onTurnEnd?.({
+            turnId: this.turnId,
+            ok: frame.is_error !== true,
+            costUsd: numberOr(frame.total_cost_usd, 0),
+            inputTokens: numberOr(usage?.input_tokens, 0),
+            outputTokens: numberOr(usage?.output_tokens, 0),
+          });
+          return;
+        }
+
+        default:
+          return; // system/status, attachment, ai-title and anything newer
+      }
+    } finally {
+      this.frameTs = null;
     }
   }
 
@@ -257,7 +265,7 @@ export class ClaudeAdapter {
     this.handlers.onEvent({
       id: `cc-${this.sessionId}-${seq}`,
       seq,
-      ts: Date.now(),
+      ts: this.frameTs ?? Date.now(),
       sessionId: this.sessionId,
       turnId: this.turnId,
       source,
@@ -325,6 +333,14 @@ function stringify(value: unknown): string {
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function frameTimestamp(frame: Frame): number | null {
+  const value = frame.timestamp;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isFrame(value: unknown): value is Frame {

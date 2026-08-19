@@ -22,6 +22,10 @@ declare module '@moxxy/companion-contracts' {
     /** Read-only composition of the decisions already owned by feature domains. */
     workbench: WorkbenchService;
   }
+  interface BusEvents {
+    /** Exact reviewed-action transition; consumers may notify, never execute. */
+    'workbench.action.changed': PreparedWorkbenchAction;
+  }
 }
 
 /** The decision the human must make, not the subsystem that happened to raise it. */
@@ -82,6 +86,56 @@ export type WorkbenchActionRequest =
       readonly mode?: 'full' | 'comments' | 'summary';
     }
   | { readonly action: 'pr-review.dismiss'; readonly repo: string; readonly number: number }
+  | { readonly action: 'pr.comment'; readonly repo: string; readonly number: number; readonly body: string }
+  | {
+      readonly action: 'pr.review-comment.reply';
+      readonly repo: string;
+      readonly number: number;
+      readonly commentId: number;
+      readonly body: string;
+    }
+  | {
+      readonly action: 'pr.review-comment.create';
+      readonly repo: string;
+      readonly number: number;
+      readonly path: string;
+      readonly side: 'LEFT' | 'RIGHT';
+      readonly line: number;
+      readonly startLine?: number;
+      readonly quotedLine: string;
+      readonly body: string;
+      readonly suggestion?: string;
+    }
+  | {
+      readonly action: 'pr.review-thread.resolve';
+      readonly repo: string;
+      readonly number: number;
+      readonly threadId: string;
+    }
+  | { readonly action: 'pr.labels.add'; readonly repo: string; readonly number: number; readonly labels: readonly string[] }
+  | { readonly action: 'pr.labels.remove'; readonly repo: string; readonly number: number; readonly labels: readonly string[] }
+  | { readonly action: 'pr.reviewers.request'; readonly repo: string; readonly number: number; readonly reviewers: readonly string[] }
+  | { readonly action: 'pr.reviewers.remove'; readonly repo: string; readonly number: number; readonly reviewers: readonly string[] }
+  | { readonly action: 'pr.assignees.add'; readonly repo: string; readonly number: number; readonly assignees: readonly string[] }
+  | { readonly action: 'pr.assignees.remove'; readonly repo: string; readonly number: number; readonly assignees: readonly string[] }
+  | {
+      readonly action: 'pr.review.submit';
+      readonly repo: string;
+      readonly number: number;
+      readonly verdict: 'approve' | 'request_changes';
+      readonly body: string;
+    }
+  | { readonly action: 'pr.checks.rerun'; readonly repo: string; readonly number: number; readonly scope: 'failed' | 'all' }
+  | { readonly action: 'pr.update-branch'; readonly repo: string; readonly number: number }
+  | { readonly action: 'pr.ready'; readonly repo: string; readonly number: number }
+  | { readonly action: 'pr.close'; readonly repo: string; readonly number: number; readonly comment?: string }
+  | { readonly action: 'pr.reopen'; readonly repo: string; readonly number: number; readonly comment?: string }
+  | {
+      readonly action: 'pr.merge';
+      readonly repo: string;
+      readonly number: number;
+      readonly method: 'merge' | 'squash' | 'rebase';
+    }
   | {
       readonly action: 'issue-triage.apply';
       readonly repo: string;
@@ -89,6 +143,13 @@ export type WorkbenchActionRequest =
       readonly comment?: boolean;
     }
   | { readonly action: 'issue-triage.dismiss'; readonly repo: string; readonly number: number }
+  | { readonly action: 'issue.comment'; readonly repo: string; readonly number: number; readonly body: string }
+  | { readonly action: 'issue.close'; readonly repo: string; readonly number: number; readonly comment?: string }
+  | { readonly action: 'issue.reopen'; readonly repo: string; readonly number: number; readonly comment?: string }
+  | { readonly action: 'issue.labels.add'; readonly repo: string; readonly number: number; readonly labels: readonly string[] }
+  | { readonly action: 'issue.labels.remove'; readonly repo: string; readonly number: number; readonly labels: readonly string[] }
+  | { readonly action: 'issue.assignees.add'; readonly repo: string; readonly number: number; readonly assignees: readonly string[] }
+  | { readonly action: 'issue.assignees.remove'; readonly repo: string; readonly number: number; readonly assignees: readonly string[] }
   | { readonly action: 'board.merge'; readonly taskId: string }
   | { readonly action: 'board.retry'; readonly taskId: string }
   | {
@@ -112,7 +173,7 @@ export type WorkbenchActionImpact = 'local' | 'external' | 'destructive';
 /** Machine-readable argument metadata; the MCP adapter derives its tool schemas from this. */
 export interface WorkbenchActionArgument {
   readonly name: string;
-  readonly type: 'string' | 'integer' | 'boolean';
+  readonly type: 'string' | 'string[]' | 'integer' | 'boolean';
   readonly required: boolean;
   readonly description: string;
   readonly options?: readonly string[];

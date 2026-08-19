@@ -384,6 +384,82 @@ test('managed repository webhooks install once, reconcile, and delete idempotent
   }
 });
 
+test('review-thread reads and reviewed mutations use the exact GitHub endpoints and payloads', async () => {
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : null;
+    requests.push({ method: req.method, url: req.url, body });
+    if (req.url === '/graphql' && body?.query.includes('query ReviewThreads')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{
+          id: 'PRRT_1', isResolved: false, isOutdated: false, path: 'src/a.ts', line: 8,
+          comments: { nodes: [{
+            id: 'PRRC_1', databaseId: 501, author: { login: 'sara' }, body: 'Please guard this.',
+            createdAt: '2026-08-19T10:00:00Z', url: 'https://github.test/c/501', path: 'src/a.ts',
+            line: 8, originalLine: 8, replyTo: null,
+          }] },
+        }],
+      } } } } }));
+      return;
+    }
+    if (req.url === '/graphql') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { resolveReviewThread: { thread: { id: 'PRRT_1', isResolved: true } } } }));
+      return;
+    }
+    if (req.method === 'DELETE') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 900, html_url: 'https://github.test/c/900' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const writes = [];
+  const client = new GitHubClient('test-token', `http://127.0.0.1:${port}`, (what) => writes.push(what));
+  try {
+    const read = await client.prReviewThreads('acme/app', 7);
+    assert.equal(read.threads[0].comments.nodes[0].databaseId, 501);
+    await client.replyToReviewComment('acme/app', 7, 501, 'Handled in the current patch.');
+    await client.createReviewComment('acme/app', 7, {
+      commit_id: 'abc123', path: 'src/a.ts', body: 'Use the validated value.', line: 8, side: 'RIGHT',
+    });
+    await client.resolveReviewThread('PRRT_1');
+    await client.removeLabel('acme/app', 7, 'needs review');
+    await client.removeAssignees('acme/app', 11, ['james']);
+    await client.removeReviewers('acme/app', 7, ['sara']);
+    await client.closePr('acme/app', 7);
+    await client.reopenPr('acme/app', 7);
+
+    assert.deepEqual(requests.map((request) => `${request.method} ${request.url}`), [
+      'POST /graphql',
+      'POST /repos/acme/app/pulls/7/comments/501/replies',
+      'POST /repos/acme/app/pulls/7/comments',
+      'POST /graphql',
+      'DELETE /repos/acme/app/issues/7/labels/needs%20review',
+      'DELETE /repos/acme/app/issues/11/assignees',
+      'DELETE /repos/acme/app/pulls/7/requested_reviewers',
+      'PATCH /repos/acme/app/pulls/7',
+      'PATCH /repos/acme/app/pulls/7',
+    ]);
+    assert.deepEqual(requests[1].body, { body: 'Handled in the current patch.' });
+    assert.equal(requests[2].body.commit_id, 'abc123');
+    assert.deepEqual(requests[5].body, { assignees: ['james'] });
+    assert.deepEqual(requests[6].body, { reviewers: ['sara'] });
+    assert.deepEqual(requests[7].body, { state: 'closed' });
+    assert.deepEqual(requests[8].body, { state: 'open' });
+    assert.equal(writes.length, 8, 'the GraphQL thread read stays outside the write-policy gate');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 function ghFile(filename) {
   return { filename, status: 'modified', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new' };
 }

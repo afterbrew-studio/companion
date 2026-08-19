@@ -42,6 +42,9 @@ declare module '@moxxy/companion-contracts' {
   interface BusEvents {
     /** Server-internal run lifecycle signal (modules react in onEnable, e.g. plan). */
     'run.changed': RunRecord;
+    /** Attended runs can pause for a person without changing status. */
+    'run.ask': { readonly runId: string; readonly ask: AskRequest };
+    'run.askResolved': { readonly runId: string; readonly requestId: string };
   }
 }
 

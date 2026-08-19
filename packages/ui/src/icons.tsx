@@ -123,6 +123,76 @@ export function PlusIcon({ className = 'size-4' }: { className?: string }): Reac
   );
 }
 
+/** Split pane — opens, closes, or represents a contextual side rail. */
+export function ContextPanelIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <rect x="2" y="2.5" width="12" height="11" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M9.5 2.8v10.4" stroke="currentColor" strokeWidth="1.3" />
+      <path d="m6.7 6.2-1.8 1.8 1.8 1.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Person outline — account controls and human-authored messages. */
+export function UserIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="8" cy="5.2" r="2.6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3.2 13.4c.25-2.45 2.1-4 4.8-4s4.55 1.55 4.8 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Arrow pointing up — send the current message. */
+export function ArrowUpIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="M8 13V3m0 0L4.5 6.5M8 3l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Microphone — starts and stops voice dictation in text composers. */
+export function MicrophoneIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3.5 8.3v.4a4.5 4.5 0 0 0 9 0v-.4M8 13.2V15M5.8 15h4.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Arrow leaving a corner — open an external destination. */
+export function ExternalLinkIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <path d="M9 3h4v4M13 3 7.5 8.5M12 9v3.2a.8.8 0 0 1-.8.8H3.8a.8.8 0 0 1-.8-.8V4.8a.8.8 0 0 1 .8-.8H7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Small stop square — interrupt a live agent turn. */
+export function StopIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <rect x="4.3" y="4.3" width="7.4" height="7.4" rx="1" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+/** Git branch — pull-request context without a provider-specific logo. */
+export function BranchIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`shrink-0 ${className}`} aria-hidden>
+      <circle cx="4" cy="3.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="4" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="12" cy="5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M4 5v6M5.5 11.2c4.2-.7 6.5-2.5 6.5-4.7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** Two figures — a pool of workers/people and its capacity. */
 export function WorkersIcon({ className = 'size-4' }: { className?: string }): React.JSX.Element {
   return (

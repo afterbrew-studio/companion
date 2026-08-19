@@ -1,6 +1,6 @@
 {
   "name": "slim",
-  "description": "The default build: a unified Today queue, repositories, agent execution, durable contributor workflows, the daily digest and instance administration. Everything else ships as an installable module in the full build.",
+  "description": "The default build: Companion Desk, repositories, agent execution, contribution quality, durable contributor workflows, the daily digest and instance administration. Everything else ships as an installable module in the full build.",
   "modules": [
     "core",
     "workspace",
@@ -16,6 +16,7 @@
     "plan",
     "board",
     "automations",
+    "slop",
     "desk"
   ]
 }

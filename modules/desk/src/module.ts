@@ -6,7 +6,7 @@ export default defineManifest({
   id: 'desk',
   title: 'Companion Desk',
   version: '0.1.0',
-  dependsOn: ['automations', 'code', 'operate', 'workbench', 'workspace', 'core'],
+  dependsOn: ['automations', 'code', 'operate', 'slop', 'workbench', 'workspace', 'core'],
   permissions: [],
   messages: ['desk.missions.changed'],
 });

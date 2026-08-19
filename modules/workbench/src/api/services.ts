@@ -17,7 +17,10 @@ export default defineServices((ctx) => {
     code,
     board,
     plan,
-    (username) => ctx.pushToUser(username, { t: 'workbench.actions.changed' }),
+    (username, action) => {
+      ctx.pushToUser(username, { t: 'workbench.actions.changed' });
+      if (action) ctx.bus.emit('workbench.action.changed', action);
+    },
     (event) => ctx.audit.record(event),
   );
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { onServerMessage } from '@moxxy/companion-core/client';
 import { ChevronDown, GearIcon, Portal, Spinner } from '@moxxy/companion-ui';
 import type { RunLane } from '../../contract/index.js';
@@ -21,6 +21,7 @@ export function LanePicker({ rail }: { rail?: boolean }): React.JSX.Element | nu
   const { can } = useAuth();
   const [filter, setFilter] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
 
   const load = useCallback(() => {
@@ -39,16 +40,32 @@ export function LanePicker({ rail }: { rail?: boolean }): React.JSX.Element | nu
     });
   }, [load]);
 
+  // The rail trigger sits at the viewport's right edge. Align the menu's right
+  // edge to it, then clamp both sides so the portal never opens off-screen.
+  useLayoutEffect(() => {
+    if (!open || !rail) {
+      setAnchor(null);
+      return;
+    }
+    const place = (): void => {
+      const box = boxRef.current?.getBoundingClientRect();
+      const menu = menuRef.current;
+      if (!box || !menu) return;
+      const left = Math.max(8, Math.min(box.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8));
+      setAnchor({ left, bottom: Math.max(8, window.innerHeight - box.bottom) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [open, rail]);
+
   // A menu that only closes by choosing something traps anyone who opened it
-  // to look.
+  // to look. The portaled menu counts as inside the picker.
   useEffect(() => {
     if (!open) return;
-    if (rail) {
-      const box = boxRef.current?.getBoundingClientRect();
-      if (box) setAnchor({ left: box.right + 8, bottom: window.innerHeight - box.bottom });
-    }
     const onDown = (e: MouseEvent): void => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!boxRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setOpen(false);
@@ -59,7 +76,7 @@ export function LanePicker({ rail }: { rail?: boolean }): React.JSX.Element | nu
       document.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open, rail]);
+  }, [open]);
 
   const choose = async (lane: RunLane): Promise<void> => {
     setBusy(true);
@@ -109,6 +126,7 @@ export function LanePicker({ rail }: { rail?: boolean }): React.JSX.Element | nu
 
   const menu = (
     <div
+      ref={menuRef}
       // Sized to the sidebar rather than to a guess: the aside is `w-56` with
       // `overflow-hidden`, so anything wider loses its right edge, which is
       // where the per-runtime cog sits.

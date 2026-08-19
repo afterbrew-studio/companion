@@ -36,6 +36,13 @@ export class MissionsStore {
     return row ? rowToMission(row) : null;
   }
 
+  getByRunId(runId: string): { readonly ownerId: string; readonly mission: DeskMissionRecord } | null {
+    const row = this.db
+      .prepare(`SELECT * FROM desk_missions WHERE run_id = ?`)
+      .get(runId) as MissionRow | undefined;
+    return row ? { ownerId: row.owner_id, mission: rowToMission(row) } : null;
+  }
+
   listForOwner(ownerId: string, archived = false, limit = 100): DeskMissionRecord[] {
     const bounded = Math.min(Math.max(Math.trunc(limit), 1), 100);
     const rows = this.db

@@ -268,6 +268,20 @@ test('the rollout file replays the same conversation the stream produced', () =>
   );
 });
 
+test('the rollout preserves record timestamps for tool durations', () => {
+  const replayed = adaptRollout(SESSION, ROLLOUT);
+  const call = replayed.find((event) => event.type === 'tool_call_requested');
+  const result = replayed.find((event) => event.type === 'tool_result' && event.callId === call.callId);
+  const sourceCall = ROLLOUT.find((record) =>
+    record.type === 'response_item' && (record.payload?.call_id ?? record.payload?.id) === call.callId);
+  const sourceResult = ROLLOUT.find((record) =>
+    record.type === 'response_item' && record.payload?.call_id === call.callId && /_output$/.test(record.payload?.type));
+
+  assert.equal(call.ts, Date.parse(sourceCall.timestamp));
+  assert.equal(result.ts, Date.parse(sourceResult.timestamp));
+  assert.ok(result.ts >= call.ts);
+});
+
 test('a message is not counted twice, though the file records it in two places', () => {
   // Every assistant message appears as an `event_msg` AND as a `response_item`
   // of role assistant. Relaying both would double every line on the page.

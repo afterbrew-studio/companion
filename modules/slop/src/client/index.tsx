@@ -14,6 +14,8 @@ import { slots } from './slots.js';
  */
 
 export { slopApi } from './api.js';
+export { QUALITY_META } from './components/PrQualityAssessment.js';
+export { SlopMeter } from './components/SlopMeter.js';
 export { useSlopDetections } from './hooks/useSlopDetections.js';
 export { useSlopRules } from './hooks/useSlopRules.js';
 

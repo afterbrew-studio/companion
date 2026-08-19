@@ -363,6 +363,22 @@ test('a reaped run replays from disk into the same transcript', () => {
   assert.deepEqual(status, BASELINE);
 });
 
+test('a reaped run preserves session-file timestamps for tool durations', () => {
+  const events = adaptFrames(SESSION, SESSION_FILE);
+  const call = events.find((event) => event.type === 'tool_call_requested');
+  const result = events.find((event) => event.type === 'tool_result' && event.callId === call.callId);
+  const sourceCall = SESSION_FILE.find((frame) =>
+    frame.type === 'assistant' && Array.isArray(frame.message?.content) &&
+    frame.message.content.some((block) => block.id === call.callId));
+  const sourceResult = SESSION_FILE.find((frame) =>
+    frame.type === 'user' && Array.isArray(frame.message?.content) &&
+    frame.message.content.some((block) => block.tool_use_id === call.callId));
+
+  assert.equal(call.ts, Date.parse(sourceCall.timestamp));
+  assert.equal(result.ts, Date.parse(sourceResult.timestamp));
+  assert.ok(result.ts >= call.ts);
+});
+
 test('the file carries the prompt the stream withheld, so replay needs no caller', () => {
   const blocks = fold(adaptFrames(SESSION, SESSION_FILE));
   assert.equal(blocks[0].kind, 'user');

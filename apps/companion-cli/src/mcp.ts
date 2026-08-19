@@ -79,9 +79,10 @@ interface JsonSchema {
 }
 
 interface PropertySchema {
-  readonly type: 'string' | 'integer' | 'boolean';
+  readonly type: 'string' | 'integer' | 'boolean' | 'array';
   readonly description: string;
   readonly enum?: readonly string[];
+  readonly items?: { readonly type: 'string' };
 }
 
 interface CatalogResponse {
@@ -383,6 +384,13 @@ function validateArgument(argument: WorkbenchActionArgument, value: unknown): vo
   if (argument.type === 'string' && (typeof value !== 'string' || !value.trim())) {
     throw new Error(`${argument.name} must be a non-empty string`);
   }
+  if (argument.type === 'string[]' && (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((item) => typeof item !== 'string' || !item.trim())
+  )) {
+    throw new Error(`${argument.name} must be a non-empty array of non-empty strings`);
+  }
   if (argument.type === 'integer' && (!Number.isInteger(value) || (value as number) < 1)) {
     throw new Error(`${argument.name} must be a positive integer`);
   }
@@ -399,6 +407,9 @@ function toolName(action: WorkbenchActionDefinition['id']): string {
 }
 
 function schemaForArgument(argument: WorkbenchActionArgument): PropertySchema {
+  if (argument.type === 'string[]') {
+    return { type: 'array', description: argument.description, items: { type: 'string' } };
+  }
   return {
     ...property(argument.type, argument.description),
     ...(argument.options ? { enum: argument.options } : {}),

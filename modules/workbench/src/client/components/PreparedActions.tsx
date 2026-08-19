@@ -108,7 +108,7 @@ function ActionCard({
         {runApproval && (runApproval.title !== undefined || runApproval.body !== undefined) ? (
           <ProposedPullRequest title={runApproval.title} body={runApproval.body} />
         ) : null}
-        {content ? <ProposedContent text={content} /> : null}
+        {content ? <ProposedContent text={content.text} label={content.label} /> : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <a className="btn-ghost" href={action.href}>
             Inspect target
@@ -158,14 +158,14 @@ function ProposedPullRequest({
   );
 }
 
-function ProposedContent({ text }: { readonly text: string }): React.JSX.Element {
+function ProposedContent({ text, label }: { readonly text: string; readonly label: string }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <details
       className="mt-2 rounded-md border border-zinc-200 px-2.5 py-2 dark:border-zinc-800"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="cursor-pointer text-xs font-medium">Review proposed content</summary>
+      <summary className="cursor-pointer text-xs font-medium">{label}</summary>
       {open ? (
         <div className="markdown mt-2 max-h-72 overflow-auto text-xs">
           <Markdown text={text} />
@@ -193,8 +193,41 @@ function expiresIn(at: number): string {
   return `expires in ${minutes} minutes`;
 }
 
-function proposedContent(action: PreparedWorkbenchAction): string | null {
-  return action.request.action === 'spec.create' || action.request.action === 'doc.create'
-    ? action.request.content
-    : null;
+function proposedContent(action: PreparedWorkbenchAction): { readonly text: string; readonly label: string } | null {
+  if (action.request.action === 'spec.create' || action.request.action === 'doc.create') {
+    return { text: action.request.content, label: 'Review proposed content' };
+  }
+  if (
+    action.request.action === 'pr.comment' ||
+    action.request.action === 'issue.comment' ||
+    action.request.action === 'pr.review-comment.reply' ||
+    action.request.action === 'pr.review.submit'
+  ) {
+    return { text: action.request.body, label: 'Review proposed comment' };
+  }
+  if (action.request.action === 'pr.review-comment.create') {
+    return {
+      text: reviewCommentBody(action.request.body, action.request.suggestion),
+      label: `Review comment on ${action.request.path}:${action.request.startLine === undefined
+        ? action.request.line
+        : `${action.request.startLine}-${action.request.line}`}`,
+    };
+  }
+  if (
+    (action.request.action === 'issue.close' ||
+      action.request.action === 'issue.reopen' ||
+      action.request.action === 'pr.close' ||
+      action.request.action === 'pr.reopen') &&
+    action.request.comment
+  ) {
+    return { text: action.request.comment, label: 'Review accompanying comment' };
+  }
+  return null;
+}
+
+function reviewCommentBody(body: string, suggestion?: string): string {
+  if (suggestion === undefined) return body;
+  const longest = Math.max(0, ...[...suggestion.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${body}\n\n${fence}suggestion\n${suggestion}\n${fence}`;
 }

@@ -2,6 +2,7 @@ import '@companion/module-automations/contract';
 import '@companion/module-code/contract';
 import '@companion/module-core/contract';
 import '@companion/module-operate/contract';
+import '@companion/module-slop/contract';
 import '@companion/module-workbench/contract';
 import '@companion/module-workspace/contract';
 import type { AskRequest } from '@moxxy/companion-sdk/agents';

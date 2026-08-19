@@ -8,8 +8,20 @@ import { deskApi } from '../api.js';
 export type MissionChatItem =
   | { readonly kind: 'user'; readonly text: string }
   | { readonly kind: 'assistant'; readonly text: string; readonly streaming: boolean }
-  | { readonly kind: 'tool'; readonly names: readonly string[] }
+  | { readonly kind: 'tool'; readonly calls: readonly MissionToolCall[] }
   | { readonly kind: 'error'; readonly text: string; readonly level: 'error' | 'warn' };
+
+export interface MissionToolCall {
+  readonly callId: string;
+  readonly name: string;
+  readonly input: unknown;
+  readonly status: 'pending' | 'running' | 'ok' | 'denied' | 'error';
+  readonly requestedAt: number | null;
+  readonly startedAt: number | null;
+  readonly completedAt: number | null;
+  readonly decision: string | null;
+  readonly detail: string | null;
+}
 
 export interface MissionConversation {
   readonly run: RunRecord | null;
@@ -29,12 +41,41 @@ function visibleUserText(text: string): string {
   return at >= 0 ? text.slice(at + USER_MARKER.length).trimStart() : text;
 }
 
-function pushToolCall(items: readonly MissionChatItem[], name: string): MissionChatItem[] {
+function pushToolCall(items: readonly MissionChatItem[], call: MissionToolCall): MissionChatItem[] {
   const last = items.at(-1);
   if (last?.kind === 'tool') {
-    return [...items.slice(0, -1), { kind: 'tool', names: [...last.names, name] }];
+    return [...items.slice(0, -1), { kind: 'tool', calls: [...last.calls, call] }];
   }
-  return [...items, { kind: 'tool', names: [name] }];
+  return [...items, { kind: 'tool', calls: [call] }];
+}
+
+function updateToolCall(
+  items: readonly MissionChatItem[],
+  callId: string,
+  patch: Partial<MissionToolCall>,
+): MissionChatItem[] {
+  return items.map((item) => item.kind !== 'tool' || !item.calls.some((call) => call.callId === callId)
+    ? item
+    : {
+        kind: 'tool',
+        calls: item.calls.map((call) => call.callId === callId ? { ...call, ...patch } : call),
+      });
+}
+
+function eventTimestamp(event: MoxxyEvent): number | null {
+  const value = (event as { readonly ts?: unknown }).ts;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function toolDetail(value: unknown): string | null {
+  if (value == null) return null;
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    if (!raw) return null;
+    return raw.length > 8_000 ? `${raw.slice(0, 8_000)}…` : raw;
+  } catch {
+    return String(value);
+  }
 }
 
 function foldEvents(events: readonly MoxxyEvent[]): MissionChatItem[] {
@@ -47,7 +88,40 @@ function foldEvents(events: readonly MoxxyEvent[]): MissionChatItem[] {
       const text = (event as { readonly content?: string }).content ?? '';
       if (text.trim()) items.push({ kind: 'assistant', text, streaming: false });
     } else if (event.type === 'tool_call_requested') {
-      items = pushToolCall(items, (event as { readonly name?: string }).name ?? 'tool');
+      const detail = event as { readonly callId?: string; readonly name?: string; readonly seq?: number; readonly input?: unknown };
+      items = pushToolCall(items, {
+        callId: detail.callId ?? `tool-${detail.seq ?? items.length}`,
+        name: detail.name ?? 'tool',
+        input: detail.input,
+        status: 'pending',
+        requestedAt: eventTimestamp(event),
+        startedAt: null,
+        completedAt: null,
+        decision: null,
+        detail: null,
+      });
+    } else if (event.type === 'tool_call_approved') {
+      const detail = event as { readonly callId?: string; readonly decidedBy?: string; readonly mode?: string };
+      items = updateToolCall(items, detail.callId ?? '', {
+        status: 'running',
+        startedAt: eventTimestamp(event),
+        decision: [detail.mode, detail.decidedBy].filter(Boolean).join(' · ') || null,
+      });
+    } else if (event.type === 'tool_call_denied') {
+      const detail = event as { readonly callId?: string; readonly decidedBy?: string; readonly reason?: string };
+      items = updateToolCall(items, detail.callId ?? '', {
+        status: 'denied',
+        completedAt: eventTimestamp(event),
+        decision: detail.decidedBy ?? null,
+        detail: detail.reason ?? null,
+      });
+    } else if (event.type === 'tool_result') {
+      const detail = event as { readonly callId?: string; readonly ok?: boolean; readonly output?: unknown; readonly error?: { readonly message?: string } };
+      items = updateToolCall(items, detail.callId ?? '', {
+        status: detail.ok === true ? 'ok' : 'error',
+        completedAt: eventTimestamp(event),
+        detail: detail.ok === true ? toolDetail(detail.output) : (detail.error?.message ?? 'Tool failed'),
+      });
     } else if (event.type === 'error') {
       const detail = event as { readonly message?: string; readonly kind?: string };
       if (detail.message) {
@@ -139,7 +213,40 @@ export function useMissionConversation(missionId: string | null): MissionConvers
             : withoutStream;
         });
       } else if (event.type === 'tool_call_requested') {
-        setItems((previous) => pushToolCall(previous, (event as { readonly name?: string }).name ?? 'tool'));
+        const detail = event as { readonly callId?: string; readonly name?: string; readonly seq?: number; readonly input?: unknown };
+        setItems((previous) => pushToolCall(previous, {
+          callId: detail.callId ?? `tool-${detail.seq ?? previous.length}`,
+          name: detail.name ?? 'tool',
+          input: detail.input,
+          status: 'pending',
+          requestedAt: eventTimestamp(event),
+          startedAt: null,
+          completedAt: null,
+          decision: null,
+          detail: null,
+        }));
+      } else if (event.type === 'tool_call_approved') {
+        const detail = event as { readonly callId?: string; readonly decidedBy?: string; readonly mode?: string };
+        setItems((previous) => updateToolCall(previous, detail.callId ?? '', {
+          status: 'running',
+          startedAt: eventTimestamp(event),
+          decision: [detail.mode, detail.decidedBy].filter(Boolean).join(' · ') || null,
+        }));
+      } else if (event.type === 'tool_call_denied') {
+        const detail = event as { readonly callId?: string; readonly decidedBy?: string; readonly reason?: string };
+        setItems((previous) => updateToolCall(previous, detail.callId ?? '', {
+          status: 'denied',
+          completedAt: eventTimestamp(event),
+          decision: detail.decidedBy ?? null,
+          detail: detail.reason ?? null,
+        }));
+      } else if (event.type === 'tool_result') {
+        const detail = event as { readonly callId?: string; readonly ok?: boolean; readonly output?: unknown; readonly error?: { readonly message?: string } };
+        setItems((previous) => updateToolCall(previous, detail.callId ?? '', {
+          status: detail.ok === true ? 'ok' : 'error',
+          completedAt: eventTimestamp(event),
+          detail: detail.ok === true ? toolDetail(detail.output) : (detail.error?.message ?? 'Tool failed'),
+        }));
       } else if (event.type === 'error') {
         const detail = event as { readonly message?: string; readonly kind?: string };
         if (detail.message) {
