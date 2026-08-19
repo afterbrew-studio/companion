@@ -29,7 +29,6 @@ interface OverviewPageProps {
   readonly onWorkspaceChange: (id: string) => void;
   readonly onRepoChange: (repo: string | null) => void;
   readonly onOpenContext: (context: DeskContextRef) => void;
-  readonly onOpenMission: (mission: DeskMissionView) => void;
 }
 
 export function OverviewPage({
@@ -45,7 +44,6 @@ export function OverviewPage({
   onWorkspaceChange,
   onRepoChange,
   onOpenContext,
-  onOpenMission,
 }: OverviewPageProps): React.JSX.Element {
   const [kind, setKind] = useState<KindFilter>('all');
   const [attention, setAttention] = useState<AttentionFilter>('all');
@@ -158,7 +156,7 @@ export function OverviewPage({
                     repo={repo ? null : pr.repo}
                     updatedAt={pr.updatedAt}
                     state={state}
-                    onClick={() => mission ? onOpenMission(mission) : onOpenContext(context)}
+                    onClick={() => onOpenContext(context)}
                   />
                 );
               })}
@@ -178,7 +176,7 @@ export function OverviewPage({
                     repo={repo ? null : issue.repo}
                     updatedAt={issue.updatedAt}
                     state={state}
-                    onClick={() => mission ? onOpenMission(mission) : onOpenContext(context)}
+                    onClick={() => onOpenContext(context)}
                   />
                 );
               })}

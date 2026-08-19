@@ -236,7 +236,6 @@ export function DeskRoot(): React.JSX.Element {
           onWorkspaceChange={switchWorkspace}
           onRepoChange={setSelectedRepo}
           onOpenContext={(context) => { setError(null); navigate({ kind: 'context', context }); }}
-          onOpenMission={chooseMission}
         />
       ) : route.kind === 'activity' ? (
         <ActivityPage

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLive } from '@moxxy/companion-sdk/client';
 import {
   ArrowUpIcon,
   Avatar,
@@ -48,50 +49,57 @@ export function ContextPreview({
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [starting, setStarting] = useState(false);
+  const refreshGeneration = useRef(0);
   const dictation = useDictation(prompt, setPrompt, starting);
   const related = useMemo(
     () => missions.filter((entry) => entry.mission.contexts.some((item) => contextKey(item) === contextKey(context))),
     [context, missions],
   );
 
+  const refresh = useCallback(async (): Promise<void> => {
+    const request = ++refreshGeneration.current;
+    try {
+      if (context.kind === 'pull-request') {
+        const [detail, checkFeed, commentFeed] = await Promise.all([
+          codeApi.getPr(context.repo, context.number),
+          codeApi.prChecks(context.repo, context.number).catch(() => ({ checks: null })),
+          codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
+        ]);
+        if (request !== refreshGeneration.current) return;
+        setRecord(detail.pr);
+        setChecks(checkFeed.checks);
+        setComments(commentFeed.comments);
+      } else {
+        const [detail, commentFeed] = await Promise.all([
+          codeApi.getIssue(context.repo, context.number),
+          codeApi.issueComments(context.repo, context.number).catch(() => ({ comments: [] })),
+        ]);
+        if (request !== refreshGeneration.current) return;
+        setRecord(detail.issue);
+        setChecks(null);
+        setComments(commentFeed.comments);
+      }
+      setError(null);
+    } catch (err) {
+      if (request === refreshGeneration.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (request === refreshGeneration.current) setLoading(false);
+    }
+  }, [context.kind, context.number, context.repo]);
+
   useEffect(() => {
-    let alive = true;
+    refreshGeneration.current++;
     setRecord(null);
     setChecks(null);
     setComments([]);
     setLoading(true);
     setError(null);
-    void (async () => {
-      try {
-        if (context.kind === 'pull-request') {
-          const [detail, checkFeed, commentFeed] = await Promise.all([
-            codeApi.getPr(context.repo, context.number),
-            codeApi.prChecks(context.repo, context.number).catch(() => ({ checks: null })),
-            codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
-          ]);
-          if (!alive) return;
-          setRecord(detail.pr);
-          setChecks(checkFeed.checks);
-          setComments(commentFeed.comments);
-        } else {
-          const [detail, commentFeed] = await Promise.all([
-            codeApi.getIssue(context.repo, context.number),
-            codeApi.issueComments(context.repo, context.number).catch(() => ({ comments: [] })),
-          ]);
-          if (!alive) return;
-          setRecord(detail.issue);
-          setComments(commentFeed.comments);
-        }
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
   }, [context.kind, context.number, context.repo]);
+
+  useLive(refresh, (message) => context.kind === 'pull-request'
+    ? (message.t === 'prs.changed' && message.repo === context.repo)
+      || (message.t === 'prStatus.changed' && message.repo === context.repo && message.number === context.number)
+    : (message.t === 'issues.changed' || message.t === 'triage.changed') && message.repo === context.repo);
 
   const submit = async (): Promise<void> => {
     const text = prompt.trim();

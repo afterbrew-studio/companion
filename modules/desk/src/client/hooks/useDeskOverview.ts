@@ -40,7 +40,7 @@ export function useDeskOverview(workspaceId: string | undefined, repo: string | 
 
     if (foreground) setLoading(true);
     setError(null);
-    const page = { limit: 80, offset: 0, ...(repo ? { repo } : {}) };
+    const page = { limit: 100, offset: 0, ...(repo ? { repo } : {}) };
     try {
       const [prFeed, issueFeed] = await Promise.all([
         codeApi.workspacePrs(workspaceId, 'open', page),

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLive } from '@moxxy/companion-sdk/client';
 import {
   Avatar,
   BranchIcon,
@@ -59,20 +60,24 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
     let alive = true;
     setLoading(true);
     setError(null);
-    const page = { limit: 60, offset: 0, ...(view.mission.repo ? { repo: view.mission.repo } : {}) };
-    void Promise.all([
-      codeApi.workspacePrs(view.mission.workspaceId, 'open', page),
-      codeApi.workspaceIssues(view.mission.workspaceId, 'open', page),
-    ]).then(([prFeed, issueFeed]) => {
-      if (!alive) return;
-      setPrs(prFeed.prs);
-      setIssues(issueFeed.issues);
-      setLoadedScope(scopeKey);
-    }).catch((err) => {
-      if (alive) setError(err instanceof Error ? err.message : String(err));
-    }).finally(() => {
-      if (alive) setLoading(false);
-    });
+    const page = { limit: 100, offset: 0, ...(view.mission.repo ? { repo: view.mission.repo } : {}) };
+    void (async (): Promise<void> => {
+      try {
+        await codeApi.refreshWorkspace(view.mission.workspaceId);
+        const [prFeed, issueFeed] = await Promise.all([
+          codeApi.workspacePrs(view.mission.workspaceId, 'open', page),
+          codeApi.workspaceIssues(view.mission.workspaceId, 'open', page),
+        ]);
+        if (!alive) return;
+        setPrs(prFeed.prs);
+        setIssues(issueFeed.issues);
+        setLoadedScope(scopeKey);
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
     return () => {
       alive = false;
     };
@@ -82,6 +87,11 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
     () => new Set(view?.mission.contexts.map(contextKey) ?? []),
     [view?.mission.contexts],
   );
+
+  const openPicker = (): void => {
+    setLoadedScope(null);
+    setPickerOpen(true);
+  };
 
   const changeContext = async (context: DeskContextRef, attach: boolean): Promise<void> => {
     if (!view) return;
@@ -128,7 +138,7 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
               label: 'Attach context',
               icon: <PlusIcon />,
               onClick: () => {
-                setPickerOpen(true);
+                openPicker();
                 setCollapsed(false);
               },
               disabled: !view,
@@ -146,7 +156,7 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
       >
         <div className="flex shrink-0 items-center gap-2 px-5 pt-5">
           <h2 className="min-w-0 flex-1 text-sm font-semibold">Context</h2>
-          <button type="button" className="dim flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" onClick={() => setPickerOpen((open) => !open)} disabled={!view} aria-label="Attach context">
+          <button type="button" className="dim flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" onClick={() => pickerOpen ? setPickerOpen(false) : openPicker()} disabled={!view} aria-label="Attach context">
             {pickerOpen ? <CloseIcon className="size-3.5" /> : <PlusIcon className="size-3.5" />}
           </button>
           <button type="button" className="dim flex size-7 cursor-pointer items-center justify-center rounded-md border border-zinc-200 hover:text-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-100" onClick={() => setCollapsed(true)} aria-label="Collapse context"><ContextPanelIcon className="size-3.5" /></button>
@@ -172,7 +182,7 @@ export function ContextShelf({ view, onUpdated }: ContextShelfProps): React.JSX.
                 type="button"
                 className="dim mt-1 w-full cursor-pointer rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-xs leading-relaxed hover:border-zinc-400 hover:text-zinc-700 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:text-zinc-200"
                 disabled={!view}
-                onClick={() => setPickerOpen(true)}
+                onClick={openPicker}
               >
                 Attach a pull request or issue to give this mission visible GitHub context.
               </button>
@@ -327,36 +337,49 @@ function PrimaryContext({ context, summary, githubHost }: { readonly context: De
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshGeneration = useRef(0);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    const request = ++refreshGeneration.current;
+    setLoading(true);
+    try {
+      if (context.kind === 'pull-request') {
+        const [record, checkFeed, commentFeed] = await Promise.all([
+          codeApi.getPr(context.repo, context.number),
+          codeApi.prChecks(context.repo, context.number).catch(() => ({ checks: null })),
+          codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
+        ]);
+        if (request === refreshGeneration.current) {
+          setDetail({ record: record.pr, checks: checkFeed.checks, comments: commentFeed.comments });
+        }
+      } else {
+        const [record, commentFeed] = await Promise.all([
+          codeApi.getIssue(context.repo, context.number),
+          codeApi.issueComments(context.repo, context.number).catch(() => ({ comments: [] })),
+        ]);
+        if (request === refreshGeneration.current) {
+          setDetail({ record: record.issue, checks: null, comments: commentFeed.comments });
+        }
+      }
+      if (request === refreshGeneration.current) setError(null);
+    } catch (err) {
+      if (request === refreshGeneration.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (request === refreshGeneration.current) setLoading(false);
+    }
+  }, [context.kind, context.number, context.repo]);
 
   useEffect(() => {
-    let alive = true;
+    refreshGeneration.current++;
     setDetail(null);
     setLoading(true);
     setError(null);
-    void (async () => {
-      try {
-        if (context.kind === 'pull-request') {
-          const [record, checkFeed, commentFeed] = await Promise.all([
-            codeApi.getPr(context.repo, context.number),
-            codeApi.prChecks(context.repo, context.number).catch(() => ({ checks: null })),
-            codeApi.prComments(context.repo, context.number).catch(() => ({ comments: [] })),
-          ]);
-          if (alive) setDetail({ record: record.pr, checks: checkFeed.checks, comments: commentFeed.comments });
-        } else {
-          const [record, commentFeed] = await Promise.all([
-            codeApi.getIssue(context.repo, context.number),
-            codeApi.issueComments(context.repo, context.number).catch(() => ({ comments: [] })),
-          ]);
-          if (alive) setDetail({ record: record.issue, checks: null, comments: commentFeed.comments });
-        }
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
   }, [context.kind, context.number, context.repo]);
+
+  useLive(refresh, (message) => context.kind === 'pull-request'
+    ? (message.t === 'prs.changed' && message.repo === context.repo)
+      || (message.t === 'prStatus.changed' && message.repo === context.repo && message.number === context.number)
+    : (message.t === 'issues.changed' || message.t === 'triage.changed') && message.repo === context.repo);
 
   const record = detail?.record ?? summary ?? null;
   const checks = detail?.checks ?? ('checks' in (record ?? {}) ? (record as PrListRecord).checks : null);
