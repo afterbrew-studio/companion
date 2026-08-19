@@ -54,6 +54,34 @@ to a private, not-yet-published AI review.
   <img src="docs/media/cli.gif" alt="Companion starts locally, detects available agent runtimes, and opens the application." width="820">
 </p>
 
+## Companion Desk
+
+Desk is Companion's focused, agent-first interface for day-to-day GitHub work.
+It is a separate, lightweight web application backed by the same Companion
+daemon, modules, permissions, runners, and audited actions as the full control
+plane.
+
+```sh
+npx @moxxy/companion --desk
+# --simple is an alias for --desk
+```
+
+Desk opens at `/desk/`. Its overview keeps pull requests and issues together,
+including checks, state, recent activity, and any mission already working on an
+item. Open a pull request or issue to see its description, comments, labels,
+checks, and changes beside a persistent context rail.
+
+Instead of finding a separate form for every operation, tell the agent what to
+do in normal language. A mission can inspect a failure, prepare a patch, answer
+a review comment, update labels, rerun checks, or prepare an issue or pull
+request action. Missions keep running independently, so several pieces of work
+can progress in parallel. Actions that publish or materially change GitHub are
+shown as exact, single-use approvals before they are applied.
+
+Use Desk when you want a compact maintainer workspace. The full Companion UI
+remains available for configuration, pipelines, planning, administration, and
+deeper operational views.
+
 ## Why Companion
 
 AI coding tools are good at doing work. The hard part is giving a team one
