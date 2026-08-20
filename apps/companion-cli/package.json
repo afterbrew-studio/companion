@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion",
-  "version": "0.17.3",
+  "version": "0.18.0",
   "description": "A local-first control plane for software teams and AI agents.",
   "type": "module",
   "license": "MIT",
