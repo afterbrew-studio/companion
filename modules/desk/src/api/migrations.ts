@@ -63,4 +63,48 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    version: 4,
+    name: 'desk_terminal_conversation',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE desk_missions ADD COLUMN kind TEXT NOT NULL DEFAULT 'mission';
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_desk_terminal_owner_workspace
+          ON desk_missions(owner_id, workspace_id) WHERE kind = 'terminal';
+      `);
+    },
+    // Version 1 owns the table. Removing the additive discriminator would
+    // require rewriting user mission history during uninstall.
+    down: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_desk_terminal_owner_workspace;`);
+    },
+  },
+  {
+    version: 5,
+    name: 'desk_launch_plans',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS desk_launch_plans (
+          id           TEXT PRIMARY KEY,
+          owner_id     TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          missions     TEXT NOT NULL,
+          status       TEXT NOT NULL,
+          mission_ids  TEXT NOT NULL DEFAULT '[]',
+          created_at   INTEGER NOT NULL,
+          expires_at   INTEGER NOT NULL,
+          executed_at  INTEGER,
+          error        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_desk_launch_plans_owner_workspace
+          ON desk_launch_plans(owner_id, workspace_id, status, created_at DESC);
+      `);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_desk_launch_plans_owner_workspace;
+        DROP TABLE IF EXISTS desk_launch_plans;
+      `);
+    },
+  },
 ]);

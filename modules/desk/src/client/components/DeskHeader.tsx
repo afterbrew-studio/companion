@@ -12,7 +12,7 @@ import { useAuth } from '@companion/module-core/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeskContextRef } from '../../contract/index.js';
 
-export type DeskSection = 'overview' | 'missions' | 'activity';
+export type DeskSection = 'overview' | 'missions' | 'activity' | 'terminal';
 
 interface DeskHeaderProps {
   readonly section: DeskSection;
@@ -116,6 +116,7 @@ export function DeskHeader({
             </span>
           ) : null}
         </HeaderTab>
+        <HeaderTab active={section === 'terminal'} onClick={() => onNavigate('terminal')}>Terminal</HeaderTab>
       </nav>
 
       <div className="flex-1" />

@@ -13,6 +13,7 @@ function fixture() {
 function mission(overrides = {}) {
   return {
     id: 'mission-1',
+    kind: 'mission',
     title: 'Fix PR #42',
     workspaceId: 'ws-1',
     repo: 'acme/app',
@@ -82,5 +83,21 @@ test('workspace cleanup removes only rows owned by that workspace', () => {
   assert.equal(store.removeForWorkspace('ws-1'), 1);
   assert.equal(store.getForOwner('mission-1', 'alice'), null);
   assert.equal(store.getForOwner('mission-2', 'alice').workspaceId, 'ws-2');
+  db.close();
+});
+
+test('the Terminal migration keeps existing mission rows readable', () => {
+  const db = new Database(':memory:');
+  for (const migration of migrations.slice(0, 3)) migration.up(db);
+  db.prepare(
+    `INSERT INTO desk_missions
+       (id, owner_id, title, workspace_id, repo, runner_id, harness, contexts, run_id, archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, NULL, '[]', NULL, 0, ?, ?)`,
+  ).run('old-mission', 'alice', 'Existing mission', 'ws-1', 1_000, 1_000);
+  for (const migration of migrations.slice(3)) migration.up(db);
+
+  const stored = new MissionsStore(db).getForOwner('old-mission', 'alice');
+  assert.equal(stored.kind, 'mission');
+  assert.equal(stored.title, 'Existing mission');
   db.close();
 });

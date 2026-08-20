@@ -8,5 +8,5 @@ export default defineManifest({
   version: '0.1.0',
   dependsOn: ['automations', 'code', 'operate', 'slop', 'workbench', 'workspace', 'core'],
   permissions: [],
-  messages: ['desk.missions.changed'],
+  messages: ['desk.missions.changed', 'desk.launch-plans.changed'],
 });

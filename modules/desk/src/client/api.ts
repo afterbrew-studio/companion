@@ -1,8 +1,25 @@
 import { patch, post, qs, request } from '@moxxy/companion-sdk/client';
 import type { AskRequest, HistorySegment } from '@moxxy/companion-sdk/agents';
-import type { DeskContextRef, DeskMissionView } from '../contract/index.js';
+import type {
+  DeskContextRef,
+  DeskLaunchPlanRecord,
+  DeskMissionView,
+} from '../contract/index.js';
 
 export const deskApi = {
+  terminal: (body: {
+    readonly workspaceId: string;
+    readonly runnerId?: string | null;
+    readonly harness?: string | null;
+  }) => post<DeskMissionView>('/api/desk/terminal', body),
+  resetTerminal: (workspaceId: string) =>
+    post<DeskMissionView>('/api/desk/terminal/reset', { workspaceId }),
+  launchPlans: (workspaceId: string) =>
+    request<{ plans: DeskLaunchPlanRecord[] }>(`/api/desk/launch-plans${qs({ workspace: workspaceId })}`),
+  executeLaunchPlan: (id: string) =>
+    post<{ plan: DeskLaunchPlanRecord }>(`/api/desk/launch-plans/${id}/execute`),
+  cancelLaunchPlan: (id: string) =>
+    post<{ plan: DeskLaunchPlanRecord }>(`/api/desk/launch-plans/${id}/cancel`),
   missions: (archived = false) =>
     request<{ missions: DeskMissionView[] }>(`/api/desk/missions${qs({ archived: archived ? 1 : undefined })}`),
   mission: (id: string) => request<DeskMissionView>(`/api/desk/missions/${id}`),

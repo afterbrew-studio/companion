@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineRoutes, route } from '@moxxy/companion-sdk/server';
+import { badRequest, created, defineRoutes, route } from '@moxxy/companion-sdk/server';
 import '../contract/index.js';
 
 const contextSchema = z.object({
@@ -15,6 +15,24 @@ const createSchema = z.object({
   runnerId: z.string().trim().min(1).max(100).nullable().optional(),
   harness: z.string().trim().min(1).max(100).nullable().optional(),
   contexts: z.array(contextSchema).max(8).default([]),
+});
+
+const terminalSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(100),
+  runnerId: z.string().trim().min(1).max(100).nullable().optional(),
+  harness: z.string().trim().min(1).max(100).nullable().optional(),
+});
+
+const launchMissionSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  prompt: z.string().trim().min(1).max(32_000),
+  repo: z.string().trim().min(3).max(200).nullable().default(null),
+  contexts: z.array(contextSchema).max(8).default([]),
+});
+
+const launchPlanSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(100),
+  missions: z.array(launchMissionSchema).min(1).max(6),
 });
 
 const updateSchema = z
@@ -41,6 +59,52 @@ const askSchema = z.object({
 export default defineRoutes((ctx) => {
   const desk = ctx.services.get('desk');
   return [
+    route({
+      method: 'POST',
+      path: '/api/desk/terminal',
+      access: ['workspaces:read', 'runs:act'],
+      body: terminalSchema,
+      handler: ({ user, body }) => desk.terminal(user!, body),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/desk/terminal/reset',
+      access: ['workspaces:read', 'runs:act'],
+      body: z.object({ workspaceId: z.string().trim().min(1).max(100) }),
+      handler: ({ user, body }) => desk.resetTerminal(user!, body.workspaceId),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/desk/launch-plans',
+      access: ['workspaces:read', 'runs:read'],
+      handler: ({ user, query }) => {
+        const workspaceId = query.get('workspace')?.trim() ?? '';
+        if (!workspaceId || workspaceId.length > 100) throw badRequest('valid workspace is required');
+        return { plans: desk.launchPlanList(user!, workspaceId) };
+      },
+    }),
+    route({
+      method: 'POST',
+      path: '/api/desk/launch-plans',
+      access: ['workspaces:read', 'runs:act'],
+      allowDelegatedWrite: true,
+      body: launchPlanSchema,
+      handler: ({ user, body }) => created({
+        plan: desk.prepareLaunchPlan(user!, body.workspaceId, body.missions),
+      }),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/desk/launch-plans/:id/execute',
+      access: ['workspaces:read', 'runs:act'],
+      handler: async ({ user, params }) => ({ plan: await desk.executeLaunchPlan(user!, params.id) }),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/desk/launch-plans/:id/cancel',
+      access: ['workspaces:read', 'runs:act'],
+      handler: ({ user, params }) => ({ plan: desk.cancelLaunchPlan(user!, params.id) }),
+    }),
     route({
       method: 'GET',
       path: '/api/desk/missions',
