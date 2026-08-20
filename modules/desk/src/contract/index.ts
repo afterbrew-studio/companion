@@ -12,6 +12,7 @@ import type { DeskService } from '../api/desk-service.js';
 declare module '@moxxy/companion-contracts' {
   interface ServerMessageRegistry {
     'desk.missions.changed': Record<never, never>;
+    'desk.launch-plans.changed': Record<never, never>;
   }
   interface ServiceMap {
     desk: DeskService;
@@ -19,6 +20,7 @@ declare module '@moxxy/companion-contracts' {
 }
 
 export type DeskContextKind = 'pull-request' | 'issue';
+export type DeskMissionKind = 'mission' | 'terminal';
 
 /** A visible, typed reference. GitHub prose is fetched on demand and never
  * embedded in the mission scope prompt. */
@@ -30,6 +32,7 @@ export interface DeskContextRef {
 
 export interface DeskMissionRecord {
   readonly id: string;
+  readonly kind: DeskMissionKind;
   readonly title: string;
   readonly workspaceId: string;
   /** Primary repository; null means the whole workspace. */
@@ -51,4 +54,28 @@ export interface DeskMissionView {
   readonly mission: DeskMissionRecord;
   readonly run: RunRecord | null;
   readonly pendingAsks: readonly AskRequest[];
+}
+
+export interface DeskMissionLaunchSpec {
+  readonly title: string;
+  readonly prompt: string;
+  /** Primary repository; null keeps the mission at workspace scope. */
+  readonly repo: string | null;
+  readonly contexts: readonly DeskContextRef[];
+}
+
+export type DeskLaunchPlanStatus = 'pending' | 'executing' | 'completed' | 'failed' | 'cancelled' | 'expired';
+
+/** A bounded batch proposed by the delegated Terminal agent. Only an ordinary
+ * browser session may confirm it and start the independent missions. */
+export interface DeskLaunchPlanRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly missions: readonly DeskMissionLaunchSpec[];
+  readonly status: DeskLaunchPlanStatus;
+  readonly missionIds: readonly string[];
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly executedAt: number | null;
+  readonly error: string | null;
 }

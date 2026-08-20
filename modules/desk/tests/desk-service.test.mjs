@@ -3,6 +3,7 @@ import test from 'node:test';
 import { Database } from '@moxxy/companion-services';
 import { DeskService } from '../dist/api/desk-service.js';
 import { DeskEventStateStore } from '../dist/api/event-state-store.js';
+import { LaunchPlansStore } from '../dist/api/launch-plans-store.js';
 import migrations from '../dist/api/migrations.js';
 import { MissionsStore } from '../dist/api/missions-store.js';
 
@@ -97,9 +98,11 @@ function fixture() {
   const service = new DeskService(
     new MissionsStore(db),
     new DeskEventStateStore(db),
+    new LaunchPlansStore(db),
     assistant,
     workspace,
     code,
+    () => {},
     () => {},
     (input) => notifications.push(input),
   );
@@ -244,5 +247,54 @@ test('archiving during startup leaves no detached live assistant', async () => {
   await assert.rejects(starting, /archived missions cannot start/);
   assert.deepEqual(assistant.stopped, ['run-1']);
   assert.equal(service.get(alice, mission.id).mission.runId, null);
+  db.close();
+});
+
+test('Terminal is idempotent, hidden from missions and resettable', async () => {
+  const { db, assistant, service } = fixture();
+  const first = service.terminal(alice, { workspaceId: 'ws-1' });
+  const second = service.terminal(alice, { workspaceId: 'ws-1' });
+
+  assert.equal(first.mission.id, second.mission.id);
+  assert.equal(first.mission.kind, 'terminal');
+  assert.deepEqual(service.list(alice), []);
+  assert.throws(() => service.update(alice, first.mission.id, { title: 'Not Terminal' }), /managed by Desk/);
+
+  const active = await service.session(alice, first.mission.id);
+  assert.equal(active.mission.runId, 'run-1');
+  const reset = await service.resetTerminal(alice, 'ws-1');
+  assert.equal(reset.mission.runId, null);
+  assert.deepEqual(assistant.stopped, ['run-1']);
+  db.close();
+});
+
+test('a confirmed launch plan creates and starts independent missions in parallel', async () => {
+  const { db, assistant, service } = fixture();
+  service.terminal(alice, { workspaceId: 'ws-1' });
+  const plan = service.prepareLaunchPlan(alice, 'ws-1', [
+    {
+      title: 'Review PR 7',
+      prompt: 'Inspect PR 7 and prepare a review.',
+      repo: 'acme/app',
+      contexts: [{ kind: 'pull-request', repo: 'acme/app', number: 7 }],
+    },
+    {
+      title: 'Triage issue 8',
+      prompt: 'Inspect issue 8 and propose the next action.',
+      repo: 'acme/app',
+      contexts: [{ kind: 'issue', repo: 'acme/app', number: 8 }],
+    },
+  ]);
+  assistant.sendGate = deferred();
+
+  const executing = service.executeLaunchPlan(alice, plan.id);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(assistant.sends.length, 2);
+  assistant.sendGate.resolve();
+
+  const completed = await executing;
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.missionIds.length, 2);
+  assert.equal(service.list(alice).length, 2);
   db.close();
 });

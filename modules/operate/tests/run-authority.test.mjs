@@ -22,13 +22,15 @@ function fixture() {
   });
   const orchestrator = new Orchestrator(store, CONFIG, {}, null, () => {});
   const stopped = [];
+  const aborted = [];
   const local = orchestrator.runners.localBackend;
   local.scratchDir = async (runId) => join(process.env.COMPANION_HOME, runId);
   local.spawn = async () => {};
   local.stop = async (runId) => { stopped.push(runId); };
+  local.abortTurn = async (runId, turnId) => { aborted.push({ runId, turnId }); };
   local.isLive = () => true;
   local.runTurn = async (runId) => ({ turnId: `turn-${runId}` });
-  return { db, store, orchestrator, stopped };
+  return { aborted, db, store, orchestrator, stopped };
 }
 
 function usageEvent(inputTokens, outputTokens) {
@@ -66,6 +68,17 @@ test('run authority is checked before creation and every later interaction', asy
     /no longer has runs:read/,
   );
   assert.equal(store.runs.list().length, before, 'refused creation must not persist a row');
+  db.close();
+});
+
+test('aborting an attended run targets the turn returned by its gateway', async () => {
+  const { aborted, db, orchestrator } = fixture();
+  const run = await orchestrator.createRun({ kind: 'assistant', userId: 'ana' });
+  const turn = await orchestrator.sendPrompt(run.id, 'inspect the workspace');
+
+  await orchestrator.abortTurn(run.id);
+
+  assert.deepEqual(aborted, [{ runId: run.id, turnId: turn.turnId }]);
   db.close();
 });
 

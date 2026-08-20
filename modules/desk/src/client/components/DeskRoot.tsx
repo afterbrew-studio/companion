@@ -21,6 +21,7 @@ import { OverviewPage } from './OverviewPage.js';
 type DeskRoute =
   | { readonly kind: 'overview' }
   | { readonly kind: 'activity' }
+  | { readonly kind: 'terminal' }
   | { readonly kind: 'missions' }
   | { readonly kind: 'mission'; readonly id: string }
   | { readonly kind: 'context'; readonly context: DeskContextRef };
@@ -40,7 +41,11 @@ export function DeskRoot(): React.JSX.Element {
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [terminal, setTerminal] = useState<DeskMissionView | null>(null);
+  const [terminalLoading, setTerminalLoading] = useState(false);
+  const [terminalRevision, setTerminalRevision] = useState(0);
   const overview = useDeskOverview(workspace.current?.id, selectedRepo);
+  const currentWorkspaceId = workspace.current?.id ?? null;
 
   const active = useMemo(
     () => route.kind === 'mission'
@@ -93,6 +98,33 @@ export function DeskRoot(): React.JSX.Element {
     };
   }, [workspace.current]);
 
+  useEffect(() => {
+    if (route.kind !== 'terminal') return;
+    if (!currentWorkspaceId) {
+      setTerminal(null);
+      setTerminalLoading(false);
+      return;
+    }
+    let alive = true;
+    setTerminal((current) => current?.mission.workspaceId === currentWorkspaceId ? current : null);
+    setTerminalLoading(true);
+    setError(null);
+    void deskApi.terminal({
+      workspaceId: currentWorkspaceId,
+      runnerId: lane.lane?.runnerId ?? null,
+      harness: lane.lane?.harness ?? null,
+    }).then((view) => {
+      if (alive) setTerminal(view);
+    }).catch((err) => {
+      if (alive) setError(err instanceof Error ? err.message : String(err));
+    }).finally(() => {
+      if (alive) setTerminalLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [currentWorkspaceId, lane.lane?.harness, lane.lane?.runnerId, route.kind]);
+
   const chooseSection = (section: DeskSection): void => {
     setError(null);
     setSearch('');
@@ -101,7 +133,9 @@ export function DeskRoot(): React.JSX.Element {
         ? { kind: 'overview' }
         : section === 'activity'
           ? { kind: 'activity' }
-          : { kind: 'missions' },
+          : section === 'terminal'
+            ? { kind: 'terminal' }
+            : { kind: 'missions' },
     );
   };
 
@@ -194,7 +228,20 @@ export function DeskRoot(): React.JSX.Element {
     ? 'overview'
     : route.kind === 'activity'
       ? 'activity'
+      : route.kind === 'terminal'
+        ? 'terminal'
       : 'missions';
+
+  const resetTerminal = async (): Promise<void> => {
+    if (!workspace.current) return;
+    setError(null);
+    try {
+      setTerminal(await deskApi.resetTerminal(workspace.current.id));
+      setTerminalRevision((value) => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const openNotification = (notification: NotificationRecord): void => {
     notifications.markRead(notification.id);
@@ -264,6 +311,19 @@ export function DeskRoot(): React.JSX.Element {
           onArchive={(view) => void archiveMission(view)}
           archivingId={archivingId}
         />
+      ) : route.kind === 'terminal' ? (
+        <div className="flex min-h-0 flex-1 bg-[#fcfcfb] p-6 dark:bg-zinc-950">
+          <div className="mx-auto flex min-h-0 w-full max-w-[96rem] items-stretch">
+            <MissionChat
+              key={`${terminal?.mission.id ?? 'terminal'}:${terminalRevision}`}
+              view={terminal}
+              loading={terminalLoading}
+              onBack={() => navigate({ kind: 'overview' })}
+              terminal
+              onReset={resetTerminal}
+            />
+          </div>
+        </div>
       ) : route.kind === 'context' ? (
         <ContextPreview
           key={contextKey(route.context)}
@@ -302,6 +362,7 @@ function parseRoute(hash: string): DeskRoute {
   if (parts[0] === 'missions' && parts[1]) return { kind: 'mission', id: decodeRoutePart(parts[1]) };
   if (parts[0] === 'missions') return { kind: 'missions' };
   if (parts[0] === 'activity' || parts[0] === 'inbox') return { kind: 'activity' };
+  if (parts[0] === 'terminal') return { kind: 'terminal' };
   if ((parts[0] === 'pull-request' || parts[0] === 'issue') && parts[1] && parts[2]) {
     const number = Number(parts[2]);
     if (Number.isInteger(number) && number > 0) {
@@ -333,6 +394,7 @@ function contextKey(context: DeskContextRef): string {
 function navigate(route: DeskRoute): void {
   if (route.kind === 'overview') location.hash = '#/overview';
   else if (route.kind === 'activity') location.hash = '#/activity';
+  else if (route.kind === 'terminal') location.hash = '#/terminal';
   else if (route.kind === 'missions') location.hash = '#/missions';
   else if (route.kind === 'mission') location.hash = `#/missions/${encodeURIComponent(route.id)}`;
   else location.hash = `#/${route.context.kind}/${encodeURIComponent(route.context.repo)}/${route.context.number}`;
@@ -340,6 +402,7 @@ function navigate(route: DeskRoute): void {
 
 function notificationRoute(href: string | null, missions: readonly DeskMissionView[]): DeskRoute | null {
   if (!href) return null;
+  if (href === '#/terminal') return { kind: 'terminal' };
   const run = /^#\/runs\/([^/?]+)/.exec(href);
   if (run?.[1]) {
     const runId = decodeRoutePart(run[1]);

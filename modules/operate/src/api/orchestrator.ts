@@ -35,6 +35,7 @@ import { Runners } from './runners-registry.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
 import type { OperateStore } from './operate-store.js';
 import { AgentPolicy } from './agent-policy.js';
+import { redactAgentAsk, redactAgentEvent, redactAgentHistory } from './redact-agent-data.js';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -287,6 +288,9 @@ export class Orchestrator implements RunnerEventSink {
    * produced something nobody can read.
    */
   private readonly resultSchemas = new Map<string, unknown>();
+  /** The gateway requires the exact active turn when an attended chat is
+   * stopped. Keep only live turn ids and clear them on every terminal edge. */
+  private readonly activeTurnIds = new Map<string, string>();
 
   /** Registered by the composition root once module-core is available. */
   setRunAuthorityResolver(resolve: (username: string) => boolean): void {
@@ -307,6 +311,7 @@ export class Orchestrator implements RunnerEventSink {
   // ---------- RunnerEventSink (fed by every backend, local or remote) ----------
 
   onTurnComplete(runId: string, turnId?: string): void {
+    if (!turnId || this.activeTurnIds.get(runId) === turnId) this.activeTurnIds.delete(runId);
     this.broadcast({ t: 'turn', runId, phase: 'complete', turnId });
     const waiters = this.turnWaiters.get(runId);
     if (waiters) {
@@ -359,7 +364,7 @@ export class Orchestrator implements RunnerEventSink {
       return;
     }
     this.asksFor(runId).set(ask.requestId, ask);
-    this.broadcast({ t: 'ask', runId, ask });
+    this.broadcast({ t: 'ask', runId, ask: redactAgentAsk(ask) });
   }
 
   onAskResolved(runId: string, requestId: string): void {
@@ -369,6 +374,7 @@ export class Orchestrator implements RunnerEventSink {
 
   onGone(runId: string): void {
     this.pendingAsks.delete(runId);
+    this.activeTurnIds.delete(runId);
     const waiters = this.turnWaiters.get(runId);
     if (waiters) {
       for (const resolve of [...waiters]) resolve();
@@ -548,7 +554,7 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   pendingAsksFor(runId: string): AskRequest[] {
-    return [...this.asksFor(runId).values()];
+    return [...this.asksFor(runId).values()].map(redactAgentAsk);
   }
 
   // ---------- lifecycle -----------------------------------------------------------
@@ -944,6 +950,7 @@ export class Orchestrator implements RunnerEventSink {
 
   async stopRun(runId: string): Promise<void> {
     await this.backend(runId).stop(runId);
+    this.activeTurnIds.delete(runId);
     const row = this.store.runs.get(runId);
     if (row && (row.status === 'running' || row.status === 'idle')) this.setStatus(runId, 'stopped');
     this.emitRunChanged(runId);
@@ -988,6 +995,7 @@ export class Orchestrator implements RunnerEventSink {
     // configuration. There is no meaningful instance-wide default across a
     // heterogeneous fleet.
     const result = await backend.runTurn(runId, { prompt, model: requested ?? undefined, attachments });
+    this.activeTurnIds.set(runId, result.turnId);
     // The gateway never broadcasts turn.started — synthesize it.
     this.broadcast({ t: 'turn', runId, phase: 'started', turnId: result.turnId });
     return result;
@@ -1275,7 +1283,7 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   async abortTurn(runId: string, turnId?: string): Promise<void> {
-    await this.requireLive(runId).abortTurn(runId, turnId);
+    await this.requireLive(runId).abortTurn(runId, turnId ?? this.activeTurnIds.get(runId));
   }
 
   async respondAsk(
@@ -1291,7 +1299,7 @@ export class Orchestrator implements RunnerEventSink {
   }
 
   async loadHistory(runId: string, before: number | null, limit: number): Promise<HistorySegment> {
-    return this.backend(runId).loadHistory(runId, before, limit);
+    return redactAgentHistory(await this.backend(runId).loadHistory(runId, before, limit));
   }
 
   // ---------- autonomous runs ---------------------------------------------------------
@@ -1709,7 +1717,7 @@ export class Orchestrator implements RunnerEventSink {
         if (input || output) this.store.runs.addUsage(runId, input, output);
       }
       this.revokeRun(active, 'agent emitted work after its owner lost run authority');
-      this.broadcast({ t: 'event', runId, event });
+      this.broadcast({ t: 'event', runId, event: redactAgentEvent(event) });
       return;
     }
     if (event.type === 'provider_response') {
@@ -1772,7 +1780,7 @@ export class Orchestrator implements RunnerEventSink {
         if (!attended) this.emitRunChanged(runId);
       }
     }
-    this.broadcast({ t: 'event', runId, event });
+    this.broadcast({ t: 'event', runId, event: redactAgentEvent(event) });
   }
 
   /** The run's backend, asserting a live gateway is attached. */

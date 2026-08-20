@@ -9,13 +9,14 @@ export class MissionsStore {
     this.db
       .prepare(
         `INSERT INTO desk_missions
-           (id, owner_id, title, workspace_id, repo, runner_id, harness, contexts, run_id, archived, created_at, updated_at)
+           (id, owner_id, kind, title, workspace_id, repo, runner_id, harness, contexts, run_id, archived, created_at, updated_at)
          VALUES
-           (@id, @ownerId, @title, @workspaceId, @repo, @runnerId, @harness, @contexts, @runId, @archived, @createdAt, @updatedAt)`,
+           (@id, @ownerId, @kind, @title, @workspaceId, @repo, @runnerId, @harness, @contexts, @runId, @archived, @createdAt, @updatedAt)`,
       )
       .run({
         id: mission.id,
         ownerId,
+        kind: mission.kind,
         title: mission.title,
         workspaceId: mission.workspaceId,
         repo: mission.repo,
@@ -27,6 +28,32 @@ export class MissionsStore {
         createdAt: mission.createdAt,
         updatedAt: mission.updatedAt,
       });
+  }
+
+  /** StrictMode and two open Desk windows may race on first use. The partial
+   * unique index turns both requests into one durable Terminal conversation. */
+  insertTerminal(ownerId: string, mission: DeskMissionRecord): DeskMissionRecord {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO desk_missions
+           (id, owner_id, kind, title, workspace_id, repo, runner_id, harness, contexts, run_id, archived, created_at, updated_at)
+         VALUES
+           (@id, @ownerId, 'terminal', @title, @workspaceId, @repo, @runnerId, @harness, @contexts, @runId, 0, @createdAt, @updatedAt)`,
+      )
+      .run({
+        id: mission.id,
+        ownerId,
+        title: mission.title,
+        workspaceId: mission.workspaceId,
+        repo: mission.repo,
+        runnerId: mission.runnerId,
+        harness: mission.harness,
+        contexts: JSON.stringify(mission.contexts),
+        runId: mission.runId,
+        createdAt: mission.createdAt,
+        updatedAt: mission.updatedAt,
+      });
+    return this.getTerminalForOwner(ownerId, mission.workspaceId)!;
   }
 
   getForOwner(id: string, ownerId: string): DeskMissionRecord | null {
@@ -43,12 +70,19 @@ export class MissionsStore {
     return row ? { ownerId: row.owner_id, mission: rowToMission(row) } : null;
   }
 
+  getTerminalForOwner(ownerId: string, workspaceId: string): DeskMissionRecord | null {
+    const row = this.db
+      .prepare(`SELECT * FROM desk_missions WHERE owner_id = ? AND workspace_id = ? AND kind = 'terminal'`)
+      .get(ownerId, workspaceId) as MissionRow | undefined;
+    return row ? rowToMission(row) : null;
+  }
+
   listForOwner(ownerId: string, archived = false, limit = 100): DeskMissionRecord[] {
     const bounded = Math.min(Math.max(Math.trunc(limit), 1), 100);
     const rows = this.db
       .prepare(
         `SELECT * FROM desk_missions
-         WHERE owner_id = ? AND archived = ?
+         WHERE owner_id = ? AND archived = ? AND kind = 'mission'
          ORDER BY updated_at DESC, id DESC LIMIT ?`,
       )
       .all(ownerId, archived ? 1 : 0, bounded) as MissionRow[];
@@ -109,6 +143,13 @@ export class MissionsStore {
     return this.getForOwner(id, ownerId);
   }
 
+  clearRun(id: string, ownerId: string): DeskMissionRecord | null {
+    this.db
+      .prepare(`UPDATE desk_missions SET run_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?`)
+      .run(Date.now(), id, ownerId);
+    return this.getForOwner(id, ownerId);
+  }
+
   touch(id: string, ownerId: string): void {
     this.db.prepare(`UPDATE desk_missions SET updated_at = ? WHERE id = ? AND owner_id = ?`).run(Date.now(), id, ownerId);
   }
@@ -121,6 +162,7 @@ export class MissionsStore {
 interface MissionRow {
   id: string;
   owner_id: string;
+  kind: string;
   title: string;
   workspace_id: string;
   repo: string | null;
@@ -143,6 +185,7 @@ function rowToMission(row: MissionRow): DeskMissionRecord {
   }
   return {
     id: row.id,
+    kind: row.kind === 'terminal' ? 'terminal' : 'mission',
     title: row.title,
     workspaceId: row.workspace_id,
     repo: row.repo,

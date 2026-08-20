@@ -20,6 +20,7 @@ import { githubContextUrl } from '../github.js';
 import { missionStatus } from '../status.js';
 import { useMissionConversation, type MissionToolCall } from '../hooks/useMissionConversation.js';
 import { useDictation } from '../hooks/useDictation.js';
+import { TerminalLaunchPlans } from './TerminalLaunchPlans.js';
 
 const SUGGESTIONS = [
   'Summarize this context and tell me what needs attention.',
@@ -27,20 +28,30 @@ const SUGGESTIONS = [
   'Handle this in the background and stop only when you need my decision.',
 ] as const;
 
+const TERMINAL_SUGGESTIONS = [
+  'Review the open pull requests and issues in this workspace. Tell me what needs attention first.',
+  'Compare the three riskiest pull requests, then propose independent missions to handle them.',
+  'Find work that can run safely in parallel and prepare a mission plan for me.',
+] as const;
+
 interface MissionChatProps {
   readonly view: DeskMissionView | null;
   readonly loading: boolean;
   readonly onBack: () => void;
+  readonly terminal?: boolean;
+  readonly onReset?: () => Promise<void>;
 }
 
-export function MissionChat({ view, loading, onBack }: MissionChatProps): React.JSX.Element {
+export function MissionChat({ view, loading, onBack, terminal = false, onReset }: MissionChatProps): React.JSX.Element {
   const auth = useAuth();
   const conversation = useMissionConversation(view?.mission.id ?? null);
   const [input, setInput] = useState('');
+  const [resetting, setResetting] = useState(false);
   const dictation = useDictation(input, setInput, conversation.busy);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const status = view ? missionStatus({ ...view, run: conversation.run ?? view.run }) : null;
+  const terminalReady = terminal && status?.label === 'Draft';
 
   useEffect(() => {
     dictation.stop();
@@ -57,9 +68,13 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
     return (
       <main className="flex min-w-0 flex-1 items-center justify-center">
         <div className="max-w-md px-8 text-center">
-          <h1 className="text-lg font-semibold">Mission not found</h1>
-          <p className="dim mt-2 text-sm">It may have been archived or removed.</p>
-          <button type="button" className="btn-ghost mt-4" onClick={onBack}>Back to missions</button>
+          <h1 className="text-lg font-semibold">{terminal ? 'Choose a workspace' : 'Mission not found'}</h1>
+          <p className="dim mt-2 text-sm">
+            {terminal ? 'Terminal coordinates work inside the selected workspace.' : 'It may have been archived or removed.'}
+          </p>
+          <button type="button" className="btn-ghost mt-4" onClick={onBack}>
+            {terminal ? 'Back to overview' : 'Back to missions'}
+          </button>
         </div>
       </main>
     );
@@ -72,30 +87,55 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
     setInput('');
     void conversation.send(text);
   };
+  const reset = async (): Promise<void> => {
+    if (!onReset || resetting || conversation.busy) return;
+    setResetting(true);
+    try {
+      await onReset();
+    } finally {
+      setResetting(false);
+    }
+  };
   const runtime = conversation.run?.harness.label ?? view.run?.harness.label ?? view.mission.harness ?? 'Auto';
   const machine = conversation.run?.runnerId ?? view.run?.runnerId ?? view.mission.runnerId;
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col overflow-hidden" aria-label="Mission conversation">
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden" aria-label={terminal ? 'Terminal conversation' : 'Mission conversation'}>
       <header className="shrink-0 pt-1 pb-5">
-        <div className="flex items-center gap-2 text-xs">
-          <button type="button" className="dim cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={onBack}>Missions</button>
-          <span className="dim">/</span>
-          <span className="max-w-80 truncate font-medium">{view.mission.title}</span>
-        </div>
+        {terminal ? (
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="dim">Workspace agent</span>
+            {onReset ? (
+              <button type="button" className="btn-ghost h-8 text-xs" disabled={conversation.busy || resetting} onClick={() => void reset()}>
+                {resetting ? <Spinner /> : null}
+                New chat
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs">
+            <button type="button" className="dim cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={onBack}>Missions</button>
+            <span className="dim">/</span>
+            <span className="max-w-80 truncate font-medium">{view.mission.title}</span>
+          </div>
+        )}
         <div className="mt-5 min-w-0">
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight" title={view.mission.title}>{view.mission.title}</h1>
           {status ? (
             <div className="dim mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-                <StatusDot tone={status.tone} pulse={status.pulse} size="sm" />
-                {status.label === 'Review' || status.label === 'Needs you' ? 'Needs review' : status.label}
+                <StatusDot tone={terminalReady ? 'green' : status.tone} pulse={status.pulse} size="sm" />
+                {terminalReady
+                  ? 'Ready'
+                  : status.label === 'Review' || status.label === 'Needs you'
+                    ? 'Needs review'
+                    : status.label}
               </span>
               <span>·</span>
               <span>{runtime}</span>
               <span>·</span>
               <span>{machine ? 'Remote' : 'Local'}</span>
-              <MissionContextMetadata contexts={view.mission.contexts} githubHost={auth.githubHost} />
+              {terminal ? <><span>·</span><span>Whole workspace</span></> : <MissionContextMetadata contexts={view.mission.contexts} githubHost={auth.githubHost} />}
             </div>
           ) : null}
         </div>
@@ -113,12 +153,14 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
                 </span>
                 <div>
                   <div className="text-xs font-semibold">Companion</div>
-                  <h2 className="mt-2 text-xl font-semibold">What should I handle?</h2>
+                  <h2 className="mt-2 text-xl font-semibold">{terminal ? 'What should we coordinate?' : 'What should I handle?'}</h2>
                   <p className="dim mt-2 text-sm leading-relaxed">
-                    Describe the outcome normally. This mission keeps its own context and continues running while you work elsewhere.
+                    {terminal
+                      ? 'Ask across the whole workspace. I can compare several pull requests and issues, then prepare independent missions that continue in parallel.'
+                      : 'Describe the outcome normally. This mission keeps its own context and continues running while you work elsewhere.'}
                   </p>
                   <div className="mt-5 grid gap-2">
-                    {SUGGESTIONS.map((suggestion) => (
+                    {(terminal ? TERMINAL_SUGGESTIONS : SUGGESTIONS).map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
@@ -175,6 +217,7 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
           ))}
           <div className="ml-12">
             <PreparedActions workspaceId={view.mission.workspaceId} compact />
+            {terminal ? <TerminalLaunchPlans workspaceId={view.mission.workspaceId} /> : null}
           </div>
           <ErrorBar error={conversation.error} className="mt-4 ml-12" />
           <div ref={bottomRef} />
@@ -193,7 +236,7 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
             ref={inputRef}
             rows={2}
             className="max-h-40 min-h-12 w-full resize-none border-none bg-transparent py-1 text-sm outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-70"
-            placeholder={conversation.busy ? 'This mission is working…' : 'Ask a follow-up…'}
+            placeholder={conversation.busy ? (terminal ? 'Terminal is working…' : 'This mission is working…') : (terminal ? 'Ask across the workspace, or tell me what to coordinate…' : 'Ask a follow-up…')}
             value={input}
             disabled={conversation.busy}
             onChange={(event) => {
@@ -211,6 +254,8 @@ export function MissionChat({ view, loading, onBack }: MissionChatProps): React.
             <span className={`min-w-0 flex-1 truncate text-[11px] ${dictation.error ? 'text-red-600 dark:text-red-400' : 'dim'}`}>
               {dictation.error ?? (dictation.listening
                 ? 'Listening… speak naturally'
+                : terminal
+                ? 'Workspace scope is included · mission batches require confirmation'
                 : view.mission.contexts.length > 0
                 ? `${view.mission.contexts.length} context ${view.mission.contexts.length === 1 ? 'item' : 'items'} attached`
                 : 'Workspace and repository scope are included')}
