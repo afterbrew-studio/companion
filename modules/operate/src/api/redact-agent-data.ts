@@ -28,11 +28,16 @@ function redactValue(value: unknown, depth = 0, seen = new WeakSet<object>()): u
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redactValue(item, depth + 1, seen));
 
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    output[key] = isSecretKey(key) ? REDACTED : redactValue(item, depth + 1, seen);
-  }
-  return output;
+  // Object.fromEntries defines own data properties, including `__proto__`,
+  // without invoking Object.prototype's legacy setter. Besides keeping the
+  // clone faithful, this avoids turning an untrusted runtime key into a
+  // prototype mutation while the event is projected to the browser.
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      isSecretKey(key) ? REDACTED : redactValue(item, depth + 1, seen),
+    ]),
+  );
 }
 
 function isSecretKey(key: string): boolean {

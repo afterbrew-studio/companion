@@ -71,3 +71,23 @@ test('redacts every event in a history segment and preserves its cursor', () => 
   assert.equal(history.prevCursor, 17);
   assert.doesNotMatch(history.events[0].message, new RegExp(token));
 });
+
+test('copies untrusted property names without mutating the object prototype', () => {
+  const event = JSON.parse(`{
+    "type":"tool_result",
+    "seq":4,
+    "ts":4,
+    "source":"tool",
+    "callId":"call-2",
+    "ok":true,
+    "output":"done",
+    "__proto__":{"polluted":"yes"}
+  }`);
+
+  const redacted = redactAgentEvent(event);
+
+  assert.equal(Object.getPrototypeOf(redacted), Object.prototype);
+  assert.equal(Object.hasOwn(redacted, '__proto__'), true);
+  assert.deepEqual(redacted.__proto__, { polluted: 'yes' });
+  assert.equal({}.polluted, undefined);
+});
