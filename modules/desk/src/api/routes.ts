@@ -19,6 +19,7 @@ const createSchema = z.object({
 
 const terminalSchema = z.object({
   workspaceId: z.string().trim().min(1).max(100),
+  repo: z.string().trim().min(3).max(200).nullable().optional(),
   runnerId: z.string().trim().min(1).max(100).nullable().optional(),
   harness: z.string().trim().min(1).max(100).nullable().optional(),
 });

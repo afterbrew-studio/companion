@@ -3,6 +3,7 @@ const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 const GREEN = '\x1b[38;5;42m';
 const BLUE = '\x1b[38;5;75m';
+const AMBER = '\x1b[38;5;214m';
 
 export interface StartupUiOptions {
   readonly url: string;
@@ -11,8 +12,11 @@ export interface StartupUiOptions {
   readonly background: boolean;
   readonly verbose: boolean;
   readonly logFile: string;
+  readonly authMode: 'local' | 'password' | 'sso';
   readonly color: boolean;
 }
+
+export type StartupStepState = 'success' | 'info' | 'warning';
 
 function tone(text: string, code: string, enabled: boolean): string {
   return enabled ? `${code}${text}${RESET}` : text;
@@ -34,11 +38,26 @@ export function renderStartup(options: StartupUiOptions): string {
     `  ${tone('◌', DIM, options.color)}  ${tone('Starting', BOLD, options.color)}`,
     `     ${tone(options.url, BLUE, options.color)}`,
     '',
+    `     ${tone('Access', DIM, options.color)}    ${options.authMode === 'local' ? 'local superadmin · loopback only' : options.authMode === 'sso' ? 'SSO protected' : 'password protected'}`,
     `     ${tone('Data', DIM, options.color)}      ${options.home}`,
-    `     ${tone('Mode', DIM, options.color)}      ${options.background ? 'background' : 'foreground'}`,
+    `     ${tone('Run', DIM, options.color)}       ${options.background ? 'background' : 'foreground'}`,
     `     ${tone('Logs', DIM, options.color)}      ${logs}`,
     '',
+    '',
   ].join('\n');
+}
+
+/** One completed setup fact. It shares the startup card's visual rhythm so
+ * first-run configuration never falls back to raw daemon-style lines. */
+export function renderStartupStep(
+  label: string,
+  detail: string,
+  color: boolean,
+  state: StartupStepState = 'success',
+): string {
+  const symbol = state === 'success' ? '✓' : state === 'warning' ? '!' : '•';
+  const symbolTone = state === 'success' ? GREEN : state === 'warning' ? AMBER : DIM;
+  return `  ${tone(symbol, symbolTone, color)}  ${tone(label.padEnd(11), BOLD, color)}${detail}\n`;
 }
 
 export function renderReady(url: string, foreground: boolean, color: boolean): string {

@@ -4,14 +4,11 @@ import type {
   DeskContextRef,
   DeskLaunchPlanRecord,
   DeskMissionView,
+  DeskTerminalRequest,
 } from '../contract/index.js';
 
 export const deskApi = {
-  terminal: (body: {
-    readonly workspaceId: string;
-    readonly runnerId?: string | null;
-    readonly harness?: string | null;
-  }) => post<DeskMissionView>('/api/desk/terminal', body),
+  terminal: (body: DeskTerminalRequest) => post<DeskMissionView>('/api/desk/terminal', body),
   resetTerminal: (workspaceId: string) =>
     post<DeskMissionView>('/api/desk/terminal/reset', { workspaceId }),
   launchPlans: (workspaceId: string) =>

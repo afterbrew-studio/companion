@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUpIcon,
   CheckIcon,
+  Dropdown,
   ErrorBar,
   Markdown,
   MicrophoneIcon,
@@ -12,6 +13,7 @@ import {
   Tooltip,
   UserIcon,
 } from '@moxxy/companion-sdk/ui';
+import type { RepoRecord } from '@companion/module-code/contract';
 import { useAuth } from '@companion/module-core/client';
 import { AskSheet } from '@companion/module-operate/client';
 import { PreparedActions } from '@companion/module-workbench/client';
@@ -40,18 +42,33 @@ interface MissionChatProps {
   readonly onBack: () => void;
   readonly terminal?: boolean;
   readonly onReset?: () => Promise<void>;
+  readonly terminalScope?: {
+    readonly workspaceName: string;
+    readonly repos: readonly RepoRecord[];
+    readonly loading: boolean;
+    readonly onChange: (repo: string | null) => Promise<void>;
+  };
 }
 
-export function MissionChat({ view, loading, onBack, terminal = false, onReset }: MissionChatProps): React.JSX.Element {
+export function MissionChat({ view, loading, onBack, terminal = false, onReset, terminalScope }: MissionChatProps): React.JSX.Element {
   const auth = useAuth();
   const conversation = useMissionConversation(view?.mission.id ?? null);
   const [input, setInput] = useState('');
   const [resetting, setResetting] = useState(false);
+  const [scopeChanging, setScopeChanging] = useState(false);
   const dictation = useDictation(input, setInput, conversation.busy);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const status = view ? missionStatus({ ...view, run: conversation.run ?? view.run }) : null;
   const terminalReady = terminal && status?.label === 'Draft';
+  const terminalRepo = terminal ? view?.mission.repo ?? null : null;
+  const terminalSuggestions = terminalRepo
+    ? [
+        `Review the open pull requests and issues in ${terminalRepo}. Tell me what needs attention first.`,
+        `Compare the three riskiest pull requests in ${terminalRepo}, then propose independent missions to handle them.`,
+        `Find work in ${terminalRepo} that can run safely in parallel and prepare a mission plan for me.`,
+      ]
+    : TERMINAL_SUGGESTIONS;
 
   useEffect(() => {
     dictation.stop();
@@ -104,7 +121,26 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
       <header className="shrink-0 pt-1 pb-5">
         {terminal ? (
           <div className="flex items-center justify-between gap-3 text-xs">
-            <span className="dim">Workspace agent</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="dim shrink-0">Scope</span>
+              {terminalScope ? (
+                <Dropdown
+                  value={terminalRepo ?? '__workspace__'}
+                  onChange={(value) => {
+                    setScopeChanging(true);
+                    void terminalScope.onChange(value === '__workspace__' ? null : value)
+                      .catch(() => undefined)
+                      .finally(() => setScopeChanging(false));
+                  }}
+                  options={terminalScopeOptions(terminalScope.repos, terminalRepo, terminalScope.workspaceName)}
+                  ariaLabel="Terminal scope"
+                  searchable={terminalScope.repos.length > 7}
+                  disabled={conversation.busy || scopeChanging || terminalScope.loading}
+                  placeholder={terminalScope.loading ? 'Loading repositories…' : 'Choose scope'}
+                  triggerClassName="flex h-8 max-w-72 cursor-pointer items-center gap-1 rounded-md border border-zinc-200 bg-white px-2.5 font-medium hover:border-zinc-400 disabled:cursor-default disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                />
+              ) : <span className="font-medium">Whole workspace</span>}
+            </div>
             {onReset ? (
               <button type="button" className="btn-ghost h-8 text-xs" disabled={conversation.busy || resetting} onClick={() => void reset()}>
                 {resetting ? <Spinner /> : null}
@@ -135,7 +171,7 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
               <span>{runtime}</span>
               <span>·</span>
               <span>{machine ? 'Remote' : 'Local'}</span>
-              {terminal ? <><span>·</span><span>Whole workspace</span></> : <MissionContextMetadata contexts={view.mission.contexts} githubHost={auth.githubHost} />}
+              {terminal ? null : <MissionContextMetadata contexts={view.mission.contexts} githubHost={auth.githubHost} />}
             </div>
           ) : null}
         </div>
@@ -156,11 +192,13 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
                   <h2 className="mt-2 text-xl font-semibold">{terminal ? 'What should we coordinate?' : 'What should I handle?'}</h2>
                   <p className="dim mt-2 text-sm leading-relaxed">
                     {terminal
-                      ? 'Ask across the whole workspace. I can compare several pull requests and issues, then prepare independent missions that continue in parallel.'
+                      ? terminalRepo
+                        ? `Ask about ${terminalRepo}. I can compare its pull requests and issues, then prepare independent missions that continue in parallel.`
+                        : 'Ask across the whole workspace. I can compare several pull requests and issues, then prepare independent missions that continue in parallel.'
                       : 'Describe the outcome normally. This mission keeps its own context and continues running while you work elsewhere.'}
                   </p>
                   <div className="mt-5 grid gap-2">
-                    {(terminal ? TERMINAL_SUGGESTIONS : SUGGESTIONS).map((suggestion) => (
+                    {(terminal ? terminalSuggestions : SUGGESTIONS).map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
@@ -236,7 +274,7 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
             ref={inputRef}
             rows={2}
             className="max-h-40 min-h-12 w-full resize-none border-none bg-transparent py-1 text-sm outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-70"
-            placeholder={conversation.busy ? (terminal ? 'Terminal is working…' : 'This mission is working…') : (terminal ? 'Ask across the workspace, or tell me what to coordinate…' : 'Ask a follow-up…')}
+            placeholder={conversation.busy ? (terminal ? 'Terminal is working…' : 'This mission is working…') : (terminal ? (terminalRepo ? `Ask about ${terminalRepo}, or tell me what to coordinate…` : 'Ask across the workspace, or tell me what to coordinate…') : 'Ask a follow-up…')}
             value={input}
             disabled={conversation.busy}
             onChange={(event) => {
@@ -255,7 +293,7 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
               {dictation.error ?? (dictation.listening
                 ? 'Listening… speak naturally'
                 : terminal
-                ? 'Workspace scope is included · mission batches require confirmation'
+                ? `${terminalRepo ?? 'Workspace'} scope is included · mission batches require confirmation`
                 : view.mission.contexts.length > 0
                 ? `${view.mission.contexts.length} context ${view.mission.contexts.length === 1 ? 'item' : 'items'} attached`
                 : 'Workspace and repository scope are included')}
@@ -294,6 +332,26 @@ export function MissionChat({ view, loading, onBack, terminal = false, onReset }
       </form>
     </main>
   );
+}
+
+function terminalScopeOptions(
+  repos: readonly RepoRecord[],
+  selectedRepo: string | null,
+  workspaceName: string,
+): Array<{ value: string; label: string; hint?: string; disabled?: boolean }> {
+  const options: Array<{ value: string; label: string; hint?: string; disabled?: boolean }> = [
+    { value: '__workspace__', label: 'Whole workspace', hint: workspaceName },
+    ...repos.map((repo) => ({
+      value: repo.fullName,
+      label: repo.fullName,
+      hint: repo.githubAccessible ? repo.defaultBranch : 'Unavailable',
+      disabled: !repo.githubAccessible,
+    })),
+  ];
+  if (selectedRepo && !repos.some((repo) => repo.fullName === selectedRepo)) {
+    options.push({ value: selectedRepo, label: selectedRepo, hint: 'No longer available', disabled: true });
+  }
+  return options;
 }
 
 function MissionContextMetadata({ contexts, githubHost }: { readonly contexts: readonly DeskContextRef[]; readonly githubHost: string }): React.JSX.Element | null {

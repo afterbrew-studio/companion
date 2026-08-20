@@ -56,6 +56,15 @@ export interface DeskMissionView {
   readonly pendingAsks: readonly AskRequest[];
 }
 
+/** Durable scope and execution lane for the workspace Terminal. Omitting repo
+ * preserves its current scope; null explicitly selects the whole workspace. */
+export interface DeskTerminalRequest {
+  readonly workspaceId: string;
+  readonly repo?: string | null;
+  readonly runnerId?: string | null;
+  readonly harness?: string | null;
+}
+
 export interface DeskMissionLaunchSpec {
   readonly title: string;
   readonly prompt: string;
