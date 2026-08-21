@@ -70,6 +70,9 @@ export interface AgentDeps {
   readonly runtime: RuntimeSessions;
   /** Agent CLIs installed on this machine (Claude Code, Codex). */
   readonly cli: CliHarnessSessions;
+  /** Whether COMPANION_RUNNER_GITHUB_TOKEN is set: the plain-http fallback
+   * for git operations, since the daemon withholds its credential there. */
+  readonly hasMachineGithubToken: boolean;
 }
 
 class HttpError extends Error {
@@ -295,7 +298,7 @@ async function route(
   }
 
   if (method === 'POST' && path.startsWith('/agent/git/')) {
-    return routeGit(deps.checkouts, path.slice('/agent/git/'.length), body);
+    return routeGit(deps.checkouts, deps.hasMachineGithubToken, path.slice('/agent/git/'.length), body);
   }
 
   throw new HttpError(404, `no route: ${method} ${path}`);
@@ -494,7 +497,14 @@ async function runCommand(pool: GatewayPool, runId: string, body: unknown): Prom
   }
 }
 
-async function routeGit(checkouts: Checkouts, action: string, body: unknown): Promise<unknown> {
+async function routeGit(
+  checkouts: Checkouts,
+  hasMachineToken: boolean,
+  action: string,
+  body: unknown,
+): Promise<unknown> {
+  const credential = (value: unknown, repo: string): string | undefined =>
+    gitCredential(value, hasMachineToken, repo);
   switch (action) {
     case 'clone-status': {
       const { repo } = body as AgentCloneStatusRequest;
@@ -507,13 +517,13 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
     case 'ensure-clone': {
       const { repo, githubToken } = body as AgentEnsureCloneRequest;
       requireString(repo, 'repo');
-      await checkouts.clone(repo, requireGitCredential(githubToken, repo, 'read'));
+      await checkouts.clone(repo, credential(githubToken, repo));
       return { ok: true };
     }
     case 'fetch': {
       const { repo, githubToken } = body as AgentFetchRequest;
       requireString(repo, 'repo');
-      await checkouts.fetch(repo, requireGitCredential(githubToken, repo, 'read'));
+      await checkouts.fetch(repo, credential(githubToken, repo));
       return { ok: true };
     }
     case 'worktree': {
@@ -527,7 +537,7 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
         key,
         branch,
         baseBranch,
-        requireGitCredential(githubToken, repo, 'read'),
+        credential(githubToken, repo),
       );
       return { cwd } satisfies AgentWorktreeResponse;
     }
@@ -542,7 +552,7 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
         key,
         prNumber,
         baseBranch,
-        requireGitCredential(githubToken, repo, 'read'),
+        credential(githubToken, repo),
       );
       return { cwd } satisfies AgentWorktreeResponse;
     }
@@ -555,7 +565,7 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
         repo,
         key,
         branch,
-        requireGitCredential(githubToken, repo, 'read'),
+        credential(githubToken, repo),
       );
       return { cwd } satisfies AgentWorktreeResponse;
     }
@@ -589,7 +599,7 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
       requireString(repo, 'repo');
       requireString(cwd, 'cwd');
       requireString(branch, 'branch');
-      await checkouts.push(repo, cwd, branch, requireGitCredential(githubToken, repo, 'write'));
+      await checkouts.push(repo, cwd, branch, credential(githubToken, repo));
       return { ok: true };
     }
     default:
@@ -597,13 +607,18 @@ async function routeGit(checkouts: Checkouts, action: string, body: unknown): Pr
   }
 }
 
-function requireGitCredential(value: unknown, repo: string, access: 'read' | 'write'): string {
+/**
+ * The credential a git operation runs with. The request's token wins when
+ * present (the daemon sends one only over https). Absent that, `undefined`
+ * lets Checkouts resolve this machine's own COMPANION_RUNNER_GITHUB_TOKEN;
+ * with neither, refuse here with the reason rather than deep in git.
+ */
+function gitCredential(value: unknown, hasMachineToken: boolean, repo: string): string | undefined {
   if (typeof value === 'string' && value.trim()) return value;
+  if (hasMachineToken) return undefined;
   throw new HttpError(
     403,
-    access === 'write'
-      ? `no personal GitHub credential with push access to ${repo}`
-      : `no personal GitHub credential with access to ${repo}`,
+    `no GitHub credential for ${repo}: the daemon withholds its credential from a plain-http endpoint and this machine has no COMPANION_RUNNER_GITHUB_TOKEN; reach this runner over https (for example --tunnel) or set a machine token`,
   );
 }
 

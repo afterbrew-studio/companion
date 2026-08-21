@@ -84,8 +84,9 @@ export interface RemoteSpawnPlan {
  * the agent's local paths — opaque here, round-tripped verbatim.
  *
  * Git operations that touch the network carry the hub's GitHub credential
- * (`githubTokenFor`, per repo and owning profile), so the agent machine
- * needs no GitHub configuration of its own.
+ * (`githubTokenFor`, per repo and owning profile), so an https-reached agent
+ * machine needs no GitHub configuration of its own. Over plain http the
+ * credential stays here and the machine must hold its own (see `ghToken`).
  */
 export class RemoteRunnerBackend implements RunnerBackend {
   private ws: WebSocket | null = null;
@@ -537,13 +538,16 @@ export class RemoteRunnerBackend implements RunnerBackend {
     return this.call<AgentStorageCleanupResponse>('POST', '/storage/cleanup', request, 10 * 60_000);
   }
 
-  /** Every remote network operation carries the run owner's verified token;
-   * never let the runner fall back to a machine-wide credential. */
+  /** Every remote network operation is authorised here with the run owner's
+   * verified token, but the token itself crosses only an https wire (the same
+   * rule `spawn` applies to the model spec). On plain http the request carries
+   * no credential and the machine's own COMPANION_RUNNER_GITHUB_TOKEN, if set,
+   * does the git work; without one the runner refuses visibly. */
   private async ghToken(
     repo: string,
     username?: string | null,
     access: GitAccess = 'read',
-  ): Promise<{ githubToken: string }> {
+  ): Promise<{ githubToken?: string }> {
     const token = await this.githubTokenFor(repo, username, access);
     if (!token) {
       throw new Error(
@@ -552,7 +556,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
           : `no personal GitHub credential with access to ${repo}`,
       );
     }
-    return { githubToken: token };
+    return this.secure() ? { githubToken: token } : {};
   }
 
   // ---------- event stream ----------
