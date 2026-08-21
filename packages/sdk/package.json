@@ -1,6 +1,6 @@
 {
   "name": "@moxxy/companion-sdk",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "The public module-authoring surface for Companion.",
   "type": "module",
   "license": "MIT",
@@ -65,7 +65,7 @@
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@moxxy/companion-contracts": "^0.7.0",
+    "@moxxy/companion-contracts": "^0.7.1",
     "react": "^19.2.8"
   },
   "sideEffects": false,
