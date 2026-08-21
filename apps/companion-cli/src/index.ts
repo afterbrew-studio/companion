@@ -38,7 +38,7 @@ import {
 } from './harnesses.js';
 import { offerBuiltinProvider, parseProviderCommand, runProviderCommand, PROVIDER_HELP } from './providers.js';
 import { captureTerminal, withTerminal } from './terminal.js';
-import { renderAlreadyRunning, renderReady, renderStartup } from './startup-ui.js';
+import { renderAlreadyRunning, renderReady, renderStartup, renderStartupStep } from './startup-ui.js';
 import { addRepo, declinedRepos, declineRepo, detectRepo, firstWorkspaceId, trackedRepos } from './repo.js';
 import { backupDatabase, restoreDatabase } from './backup.js';
 import { rotateSecretKey } from './rotate-key.js';
@@ -242,7 +242,7 @@ async function main(): Promise<void> {
   process.env.COMPANION_HOME = options.home;
   // Decoration, so only when a person is watching: piped output stays clean.
   // NO_COLOR still gets the mark, just without the emerald on the dot.
-  if (process.stdout.isTTY) {
+  if (process.stdout.isTTY && !options.desk) {
     process.stdout.write(process.env.NO_COLOR ? BANNER.replace(/\x1b\[[0-9;]*m/g, '') : BANNER);
   }
   const initialized = setupExists(options.home);
@@ -271,7 +271,7 @@ async function main(): Promise<void> {
     return;
   }
   if (options.command === 'init') return;
-  await start(options);
+  await start(options, effectiveMode);
 }
 
 async function connectGithub(options: CliOptions): Promise<void> {
@@ -337,22 +337,25 @@ async function connectGithub(options: CliOptions): Promise<void> {
 }
 
 async function initialize(options: CliOptions, authMode: AuthMode): Promise<void> {
-  process.stdout.write('\nWelcome to Companion.\n\n');
+  const compactDeskStart = options.desk && options.command === 'start' && authMode === 'local';
+  if (!compactDeskStart) process.stdout.write('\nWelcome to Companion.\n\n');
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
-  const modules = await resolveProfile();
+  const modules = await resolveProfile(compactDeskStart);
   const ghLogin = detectGhLogin();
 
   if (authMode === 'local') {
     writeStoredAuthMode(options.home, authMode);
     writePendingProfile(options.home, modules);
     if (ghLogin) scheduleGhImport(options.home, ghLogin);
-    process.stdout.write(
-      `Trusted local mode · ${url}\n` +
-        'Companion will open as the local superadmin; no account or password is required.\n' +
-        'Use --with-auth with a fresh data directory for a shared or networked instance.\n',
-    );
-    if (ghLogin) process.stdout.write(`Active gh account ${ghLogin} will be connected automatically.\n`);
+    if (!compactDeskStart) {
+      process.stdout.write(
+        `Trusted local mode · ${url}\n` +
+          'Companion will open as the local superadmin; no account or password is required.\n' +
+          'Use --with-auth with a fresh data directory for a shared or networked instance.\n',
+      );
+      if (ghLogin) process.stdout.write(`Active gh account ${ghLogin} will be connected automatically.\n`);
+    }
     if (options.command === 'init') process.stdout.write('\nNext: npx @moxxy/companion\n');
     return;
   }
@@ -385,10 +388,10 @@ async function initialize(options: CliOptions, authMode: AuthMode): Promise<void
 }
 
 /** npx stays on the slim DX unless an advanced scripted run explicitly opts in. */
-async function resolveProfile(): Promise<readonly string[]> {
+async function resolveProfile(quiet = false): Promise<readonly string[]> {
   const fromEnv = profileFromEnv();
   if (fromEnv) {
-    process.stdout.write(`Module set: ${fromEnv} (from COMPANION_PROFILE).\n`);
+    if (!quiet) process.stdout.write(`Module set: ${fromEnv} (from COMPANION_PROFILE).\n`);
     return modulesFor(fromEnv);
   }
   return modulesFor('slim');
@@ -408,7 +411,7 @@ async function promptForAdmin(): Promise<AdminSetup> {
   return { username: username.trim(), email: email.trim(), password: chosen, passwordSource: 'chosen' };
 }
 
-async function start(options: CliOptions): Promise<void> {
+async function start(options: CliOptions, authMode: AuthMode): Promise<void> {
   const { host, port } = resolveAddress(options);
   const url = localUrl(host, port);
   const browserUrl = options.desk ? `${url}/desk/` : url;
@@ -450,18 +453,41 @@ async function start(options: CliOptions): Promise<void> {
     background: options.background,
     verbose: options.verbose,
     logFile: daemonLog(options.home),
+    authMode,
     color,
   }));
+  let startupDetailsShown = false;
+  const writeStartupDetail = (
+    label: string,
+    detail: string,
+    state: 'success' | 'info' | 'warning' = 'success',
+  ): void => {
+    startupDetailsShown = true;
+    process.stdout.write(renderStartupStep(label, detail, color, state));
+  };
   const pendingModules = takePendingProfile(options.home);
   const firstRun = pendingModules.length > 0 || hasPendingAdmin;
   const finishStartup = async (): Promise<void> => {
     if (pendingModules.length) {
-      process.stdout.write(`Enabling ${pendingModules.length} optional module(s)…\n`);
-      await installModules(url, pendingModules, (line) => process.stdout.write(`${line}\n`));
+      const results = await installModules(url, pendingModules);
+      const enabled = results.filter((result) => result.error === null).map((result) => result.id);
+      if (enabled.length > 0) {
+        writeStartupDetail('Modules', enabled.join(', '));
+      }
+      for (const result of results) {
+        if (result.error) writeStartupDetail('Modules', `${result.id} · ${result.error}`, 'warning');
+      }
     }
     // Only on a first run: the machine's runtimes are settled once, and every
     // later start would otherwise re-ask a question that already has an answer.
-    if (firstRun) await settleHarnesses(url, options);
+    if (firstRun) {
+      const harnesses = await settleHarnesses(url, options);
+      if (harnesses?.selected.length) {
+        writeStartupDetail('Runtimes', harnesses.selected.join(', '));
+      } else if (harnesses?.message) {
+        writeStartupDetail('Runtimes', harnesses.message, 'warning');
+      }
+    }
   };
   // Either way this process stays in the foreground until the questions below
   // are answered; what --background changes is who owns the server afterwards.
@@ -508,20 +534,24 @@ async function start(options: CliOptions): Promise<void> {
     return;
   }
   if (!startupFinished) await finishStartup();
-  process.stdout.write(renderReady(url, !options.background, color));
   const cliToken = await waitForToken();
   if (cliToken) {
     try {
       const githubLogin = await importPendingGhAccount(options.home, url, { bearerToken: cliToken });
-      if (githubLogin) process.stdout.write(`Connected GitHub account ${githubLogin}.\n`);
+      if (githubLogin) writeStartupDetail('GitHub', githubLogin);
     } catch (err) {
-      process.stderr.write(
-        `${err instanceof Error ? err.message : String(err)}\nRun \`npx @moxxy/companion connect-github\` to retry.\n`,
+      writeStartupDetail(
+        'GitHub',
+        `${err instanceof Error ? err.message : String(err)} · retry with npx @moxxy/companion connect-github`,
+        'warning',
       );
     }
   }
   if (hasPendingAdmin) consumePendingAdminSetup(options.home);
-  await settleRepo(url, options);
+  const repo = await settleRepo(url, options);
+  if (repo) writeStartupDetail('Repository', repo.detail, repo.state);
+  if (startupDetailsShown) process.stdout.write('\n');
+  process.stdout.write(renderReady(url, !options.background, color));
   if (options.open) openBrowser(browserUrl);
   if (detached) {
     process.stdout.write(
@@ -545,43 +575,43 @@ async function start(options: CliOptions): Promise<void> {
  * connected account, so asking before one exists would offer something that
  * could only fail.
  */
-async function settleRepo(url: string, options: CliOptions): Promise<void> {
+async function settleRepo(
+  url: string,
+  options: CliOptions,
+): Promise<{ readonly state: 'success' | 'info' | 'warning'; readonly detail: string } | null> {
   // A scripted install must not reach out to GitHub and add rows nobody asked
   // for, so this is an interactive question or nothing at all.
-  if (options.yes || !process.stdin.isTTY) return;
+  if (options.yes || !process.stdin.isTTY) return null;
   const fullName = detectRepo(INVOKED_FROM);
-  if (!fullName || declinedRepos(options.home).includes(fullName)) return;
+  if (!fullName || declinedRepos(options.home).includes(fullName)) return null;
   const token = await waitForToken();
-  if (!token) return;
+  if (!token) return null;
   const tracked = await trackedRepos(url, token);
-  if (tracked === null || tracked.includes(fullName)) return;
+  if (tracked === null || tracked.includes(fullName)) return null;
 
   const { confirm } = await import('@inquirer/prompts');
-  // Ctrl+C here is "not now", and it must not take a Companion that already
-  // said it was ready down with it. It is also not an answer, so unlike a
-  // declined question it is not remembered.
+  // Ctrl+C here is "not now", not a failed boot. It is also not an answer, so
+  // unlike a declined question it is not remembered.
   const accepted = await withTerminal(() =>
     confirm({ message: `Add ${fullName} to Companion?`, default: true }),
   ).catch((err: unknown) => {
     if (err instanceof Error && err.name === 'ExitPromptError') return null;
     throw err;
   });
-  if (accepted === null) return;
+  if (accepted === null) return null;
   if (!accepted) {
     declineRepo(options.home, fullName);
-    process.stdout.write(`Leaving ${fullName} out. Add it later from the Repositories page.\n`);
-    return;
+    return { state: 'info', detail: `${fullName} not added · add it later from Repositories` };
   }
   const workspaceId = await firstWorkspaceId(url, token);
   if (!workspaceId) {
-    process.stderr.write(`Could not read this instance's workspaces, so ${fullName} was not added.\n`);
-    return;
+    return { state: 'warning', detail: `${fullName} · workspaces unavailable` };
   }
   try {
     await addRepo(url, token, fullName, workspaceId);
-    process.stdout.write(`Added ${fullName}.\n`);
+    return { state: 'success', detail: fullName };
   } catch (err) {
-    process.stderr.write(`Could not add ${fullName}: ${err instanceof Error ? err.message : String(err)}\n`);
+    return { state: 'warning', detail: `${fullName} · ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -595,14 +625,16 @@ async function settleRepo(url: string, options: CliOptions): Promise<void> {
  * default, so `--yes` cannot silently select historical moxxy on a machine
  * whose only usable runtime is Codex or Claude Code.
  */
-async function settleHarnesses(url: string, options: CliOptions): Promise<void> {
+async function settleHarnesses(
+  url: string,
+  options: CliOptions,
+): Promise<{ readonly selected: readonly string[]; readonly message?: string } | null> {
   const token = await waitForToken();
-  if (!token) return;
+  if (!token) return null;
   const answer = await readHarnessOptions(url, token);
-  if (!answer) return;
+  if (!answer) return null;
   if (answer.options.length === 0) {
-    process.stdout.write(`\n${NOTHING_INSTALLED}\n`);
-    return;
+    return { selected: [], message: NOTHING_INSTALLED };
   }
   let picked: readonly string[] = recommendedHarnesses(answer.options);
   if (options.withAuth && !options.yes && process.stdin.isTTY) {
@@ -615,19 +647,18 @@ async function settleHarnesses(url: string, options: CliOptions): Promise<void> 
     );
   }
   if (picked.length === 0) {
-    process.stdout.write('Nothing ticked, so this machine keeps its current runtime.\n');
-    return;
+    return { selected: [], message: 'No runtime selected; keeping the current choice' };
   }
   try {
     await saveHarnesses(url, token, picked);
-    process.stdout.write(`Agent work here runs through ${picked.join(', ')}.\n`);
     // The built-in runtime is the one whose "not ready" is fixed HERE rather
     // than in another terminal, so it is offered a model straight away.
     if (picked.includes('companion')) {
       await offerBuiltinProvider(url, token, options.withAuth && !options.yes && process.stdin.isTTY);
     }
+    return { selected: picked };
   } catch (err) {
-    process.stderr.write(`Could not save the runtime choice: ${err instanceof Error ? err.message : String(err)}\n`);
+    return { selected: [], message: `Could not save the runtime choice · ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 

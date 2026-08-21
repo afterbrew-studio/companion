@@ -79,6 +79,11 @@ const SLIM_MODULES = withDependencies(['automations']);
 export const modulesFor = (profile: ProfileId): readonly string[] =>
   profile === 'full' ? OPTIONAL_MODULES : SLIM_MODULES;
 
+export interface ModuleInstallResult {
+  readonly id: string;
+  readonly error: string | null;
+}
+
 /**
  * Install the chosen modules against the freshly started daemon.
  *
@@ -90,15 +95,13 @@ export const modulesFor = (profile: ProfileId): readonly string[] =>
 export async function installModules(
   baseUrl: string,
   ids: readonly string[],
-  out: (line: string) => void,
-): Promise<void> {
-  if (!ids.length) return;
+): Promise<readonly ModuleInstallResult[]> {
+  if (!ids.length) return [];
   const token = await waitForToken();
   if (!token) {
-    out(`Could not read the CLI token, so ${ids.join(', ')} were not installed.`);
-    out(`Install them from the Modules page, or run: companion module install ${ids[0]}`);
-    return;
+    return ids.map((id) => ({ id, error: 'CLI token unavailable; install it later from Modules' }));
   }
+  const results: ModuleInstallResult[] = [];
   for (const id of ids) {
     try {
       const res = await fetch(`${baseUrl}/api/modules/${id}/install`, {
@@ -112,11 +115,12 @@ export async function installModules(
       // one that offered these choices.
       if (res.status === 404) throw new Error('this build does not contain it, so it cannot be installed');
       if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 120)}`);
-      out(`  enabled ${id}`);
+      results.push({ id, error: null });
     } catch (err) {
-      out(`  could not enable ${id}: ${err instanceof Error ? err.message : String(err)}`);
+      results.push({ id, error: err instanceof Error ? err.message : String(err) });
     }
   }
+  return results;
 }
 
 /** The daemon mints the token during boot, a moment after it answers /healthz. */

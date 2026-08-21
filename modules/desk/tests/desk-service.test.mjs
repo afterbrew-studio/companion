@@ -65,8 +65,8 @@ function fixture() {
     },
     async ensureConversationRun(_user, id) { return runs.get(id); },
     infoForRun(_user, id) { return { run: runs.get(id), pendingAsks: [] }; },
-    async sendToRun(_user, id, text) {
-      this.sends.push({ id, text });
+    async sendToRun(_user, id, text, scope) {
+      this.sends.push({ id, text, scope });
       if (this.sendGate) await this.sendGate.promise;
       return { turnId: `turn-${this.sends.length}` };
     },
@@ -252,19 +252,48 @@ test('archiving during startup leaves no detached live assistant', async () => {
 
 test('Terminal is idempotent, hidden from missions and resettable', async () => {
   const { db, assistant, service } = fixture();
-  const first = service.terminal(alice, { workspaceId: 'ws-1' });
+  const first = service.terminal(alice, { workspaceId: 'ws-1', repo: 'acme/app' });
   const second = service.terminal(alice, { workspaceId: 'ws-1' });
 
   assert.equal(first.mission.id, second.mission.id);
   assert.equal(first.mission.kind, 'terminal');
+  assert.equal(second.mission.repo, 'acme/app');
   assert.deepEqual(service.list(alice), []);
   assert.throws(() => service.update(alice, first.mission.id, { title: 'Not Terminal' }), /managed by Desk/);
 
   const active = await service.session(alice, first.mission.id);
   assert.equal(active.mission.runId, 'run-1');
+  const workspaceScope = service.terminal(alice, { workspaceId: 'ws-1', repo: null });
+  assert.equal(workspaceScope.mission.id, first.mission.id);
+  assert.equal(workspaceScope.mission.runId, 'run-1');
+  assert.equal(workspaceScope.mission.repo, null);
+  service.terminal(alice, { workspaceId: 'ws-1', repo: 'acme/app' });
+  await service.send(alice, first.mission.id, 'Inspect this repository');
+  assert.match(assistant.sends[0].scope, /active scope is repository acme\/app/);
+  assert.match(assistant.sends[0].scope, /only inside acme\/app/);
+  assert.throws(
+    () => service.terminal(alice, { workspaceId: 'ws-1', repo: 'acme/elsewhere' }),
+    /not connected to this workspace/,
+  );
   const reset = await service.resetTerminal(alice, 'ws-1');
   assert.equal(reset.mission.runId, null);
+  assert.equal(reset.mission.repo, 'acme/app');
   assert.deepEqual(assistant.stopped, ['run-1']);
+  db.close();
+});
+
+test('repository-scoped Terminal rejects launch plans that escape its scope', () => {
+  const { db, service } = fixture();
+  service.terminal(alice, { workspaceId: 'ws-1', repo: 'acme/app' });
+  assert.throws(
+    () => service.prepareLaunchPlan(alice, 'ws-1', [{
+      title: 'Workspace audit',
+      prompt: 'Inspect every repository.',
+      repo: null,
+      contexts: [],
+    }]),
+    /Terminal is scoped to acme\/app/,
+  );
   db.close();
 });
 

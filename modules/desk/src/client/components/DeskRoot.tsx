@@ -243,6 +243,17 @@ export function DeskRoot(): React.JSX.Element {
     }
   };
 
+  const setTerminalScope = async (repo: string | null): Promise<void> => {
+    if (!workspace.current) return;
+    setError(null);
+    try {
+      setTerminal(await deskApi.terminal({ workspaceId: workspace.current.id, repo }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  };
+
   const openNotification = (notification: NotificationRecord): void => {
     notifications.markRead(notification.id);
     const deskRoute = notificationRoute(notification.href, missions.missions);
@@ -321,6 +332,12 @@ export function DeskRoot(): React.JSX.Element {
               onBack={() => navigate({ kind: 'overview' })}
               terminal
               onReset={resetTerminal}
+              terminalScope={{
+                workspaceName: workspace.current?.name ?? 'Current workspace',
+                repos,
+                loading: reposLoading,
+                onChange: setTerminalScope,
+              }}
             />
           </div>
         </div>
