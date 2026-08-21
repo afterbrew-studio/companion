@@ -138,7 +138,9 @@ async function main(): Promise<void> {
   if (config.githubToken) {
     log.info('COMPANION_RUNNER_GITHUB_TOKEN set — this machine uses its own GitHub credential');
   } else {
-    log.info('no machine GitHub token — Companion supplies its credential with each git operation');
+    log.info(
+      'no machine GitHub token: Companion supplies its credential with each git operation (https endpoints only; over plain http git operations refuse)',
+    );
   }
   const checkouts = new Checkouts(() => config.githubToken);
 
@@ -195,6 +197,7 @@ async function main(): Promise<void> {
       toolNice: config.toolNice,
       runtime,
       cli,
+      hasMachineGithubToken: config.githubToken !== null,
     },
     hub,
   });

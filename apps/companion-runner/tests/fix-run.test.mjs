@@ -222,7 +222,7 @@ test('a remote runner performs a fix run: prepared worktree, agent change, diff,
   // fail-closed, and this is the message an operator would see.
   await assert.rejects(
     () => call('POST', '/git/push', { repo: 'acme/app', cwd, branch: 'fix/paging' }),
-    /no personal GitHub credential/,
+    /no GitHub credential/,
     'a push with no credential is refused, not attempted',
   );
   await call('POST', '/git/push', { repo: 'acme/app', cwd, branch: 'fix/paging', githubToken: 'test-token' });

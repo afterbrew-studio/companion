@@ -314,8 +314,10 @@ export interface AgentCloneStatusResponse {
  * `githubToken` on this and the other network-touching git requests is the
  * hub's configured GitHub credential, sent per call so the agent needs no
  * GitHub setup of its own. The agent holds it in memory only for that one git
- * invocation (same ephemeral-credential-helper hygiene as Checkouts). A
- * COMPANION_RUNNER_GITHUB_TOKEN set on the agent's machine overrides it.
+ * invocation (same ephemeral-credential-helper hygiene as Checkouts). It rides
+ * only an https endpoint; over plain http the field is absent and the agent
+ * falls back to its machine's COMPANION_RUNNER_GITHUB_TOKEN, refusing the
+ * operation when it has none.
  */
 export interface AgentEnsureCloneRequest {
   readonly repo: string;

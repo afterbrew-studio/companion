@@ -17,9 +17,10 @@ const RETRY_MAX_MS = 60_000;
  * out, and the daemon reaches it at a stable URL derived from a persisted key.
  *
  * The address is https, which is not incidental. The daemon refuses to put a
- * model credential, an MCP definition or a tool's environment on a plain-http
- * wire, so a tunnelled runner can be sent work that a directly-addressed http
- * one cannot: everything this machine does not already hold for itself.
+ * model credential, a GitHub token, an MCP definition or a tool's environment
+ * on a plain-http wire, so a tunnelled runner can be sent work that a
+ * directly-addressed http one cannot: everything this machine does not already
+ * hold for itself.
  */
 export class RunnerTunnel {
   private handle: Awaited<ReturnType<ReturnType<typeof createProxyTunnel>['open']>> | null = null;
