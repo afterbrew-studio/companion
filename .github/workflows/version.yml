@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   propose:
+    # Upstream only. On a fork this opens version-bump pull requests nobody
+    # wants and feeds the Publish workflow it must not reach.
+    if: github.repository == 'moxxy-ai/companion'
     runs-on: ubuntu-latest
     # The bump commit is itself a push to main; without this the job would keep
     # answering its own PR.

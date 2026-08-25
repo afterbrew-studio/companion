@@ -1,0 +1,27 @@
+{
+  "_comment": "Provenance for the afterbrew fork. Machine-readable because `scripts/fork-provenance.mjs` reads it and CI fails when the working tree disagrees with it. Edited only by a deliberate rebase onto a new upstream release, never to make a failing check pass.",
+  "origin": "afterbrew-studio/companion",
+  "upstream": "moxxy-ai/companion",
+  "remote_hosts": [
+    "github.com",
+    "github-personal"
+  ],
+  "base": {
+    "tag": "v0.19.1",
+    "sha": "9b36714a0b764eeffd4d07a98bfa4b2bc2119c9c",
+    "published": "2026-08-21T14:13:20Z",
+    "selected": "2026-08-25",
+    "why": "The release inspected by rayf ADR-0055. Upstream `main` was at this same commit when the fork was taken, so the base is a released revision with no unreviewed delta."
+  },
+  "patches": [],
+  "_patches_note": "Each kernel patch added by P-0006 appends an entry naming the upstream gap, its negative test and its upstreaming disposition. An empty list means no afterbrew change to the kernel has landed yet, which is the state P-0005 ends in.",
+  "release": {
+    "publishes": false,
+    "why": "Upstream's Publish workflow releases the @moxxy/* npm scope and its job guard checked branch, event and CI conclusion but never github.repository, so on a fork a green push to main would attempt to publish fork code under upstream's package names. Both release workflows now carry an upstream-only repository guard, and are additionally disabled through the Actions API. This field is documentation: the guard in the workflow files is what enforces it.",
+    "disabled_workflows": [
+      "publish.yml",
+      "version.yml"
+    ]
+  },
+  "_remote_hosts_note": "Hosts and ssh-config aliases a remote may legitimately name. Checked against the parsed authority, not the URL string: https://github.com@evil.example/o/r.git carries the expected owner/repo and points elsewhere."
+}

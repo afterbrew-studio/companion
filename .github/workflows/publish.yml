@@ -27,11 +27,18 @@ concurrency:
 
 jobs:
   gate:
+    # Upstream only. This repository's guard checks the branch, the event and the
+    # CI conclusion but never the repository, so on a fork a green push to main
+    # would reach the publish step with only npm's trusted-publisher config in
+    # the way. A fork must not release the @moxxy/* scope. Disabling the workflow
+    # through the Actions API does the same thing and leaves no trace in the
+    # tree; this does.
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      github.repository == 'moxxy-ai/companion' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.event == 'push')
+       github.event.workflow_run.event == 'push'))
     name: Confirm green main commit
     runs-on: ubuntu-latest
     permissions:
