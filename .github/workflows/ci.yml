@@ -20,6 +20,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Afterbrew fork only. Proves this tree is still the fork fork/ledger.json says
+  # it is, and that the check itself can fail. Without this the ledger is a
+  # comment: nothing else in CI reads it.
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The verifier resolves the base tag and asserts it is an ancestor of
+          # HEAD. A shallow checkout has neither the tag nor the history, so it
+          # would fail for the wrong reason.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # `upstream` is a local convention, not something a checkout provides.
+      - name: Configure the upstream remote and fetch its tags
+        run: |
+          set -euo pipefail
+          upstream="$(node -p 'require("./fork/ledger.json").upstream')"
+          git remote add upstream "https://github.com/${upstream}.git"
+          git fetch --tags --quiet upstream
+
+      - run: node scripts/fork-provenance.mjs
+      - run: node scripts/fork-provenance.check.mjs
+
   build:
     runs-on: ubuntu-latest
     steps:
