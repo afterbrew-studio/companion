@@ -10,5 +10,13 @@
     "why": "The release inspected by rayf ADR-0055. Upstream `main` was at this same commit when the fork was taken, so the base is a released revision with no unreviewed delta."
   },
   "patches": [],
-  "_patches_note": "Each kernel patch added by P-0006 appends an entry naming the upstream gap, its negative test and its upstreaming disposition. An empty list means no afterbrew change to the kernel has landed yet, which is the state P-0005 ends in."
+  "_patches_note": "Each kernel patch added by P-0006 appends an entry naming the upstream gap, its negative test and its upstreaming disposition. An empty list means no afterbrew change to the kernel has landed yet, which is the state P-0005 ends in.",
+  "release": {
+    "publishes": false,
+    "why": "Upstream's Publish workflow releases the @moxxy/* npm scope and its job guard checks branch and CI conclusion but never github.repository, so on a fork a green push to main would attempt to publish fork code under upstream's package names. Publish and Version are disabled on this fork. Neither is a gate, so no upstream coverage is weakened.",
+    "disabled_workflows": [
+      "publish.yml",
+      "version.yml"
+    ]
+  }
 }

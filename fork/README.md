@@ -69,3 +69,24 @@ patch with no upstreaming disposition is a divergence nobody has decided to keep
 
 The list is empty today. rayf's P-0005 ends with the baseline proven and no kernel change landed;
 P-0006 is what adds them.
+
+## Release identity: this fork publishes nothing
+
+`publish.yml` and `version.yml` are **disabled** here.
+
+Upstream's Publish workflow releases the `@moxxy/*` npm scope. Its job guard checks the branch, the
+triggering event and the CI conclusion - and never checks `github.repository`. On a fork that means
+a green push to `main` reaches the publish step, and the only thing standing between it and npm is
+upstream's own trusted-publisher configuration, which is a third party's control rather than one
+this repository owns. Publishing fork code under upstream's package names would be a supply-chain
+incident against an MIT project we depend on.
+
+`version.yml` opens the version-bump pull requests that Publish waits for, so it is disabled for the
+same reason: on a fork it produces noise and it is the mechanism that would eventually trip Publish.
+
+Neither is a gate. Disabling them weakens no upstream coverage, and rayf's P-0005 A2 requirement to
+reproduce the type, test, build, SDK, ACL, dependency, CodeQL and container gates is unaffected -
+all of those live in `ci.yml`, which stays active.
+
+If this fork ever needs to publish artifacts, it publishes under an afterbrew scope from a workflow
+that names this repository explicitly. It does not re-enable upstream's.
