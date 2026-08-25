@@ -92,7 +92,15 @@ try {
   setUrl(orphan, OK);
   execFileSync("git", ["-C", orphan, "remote", "add", "upstream", `https://github.com/${ledger.upstream}.git`]);
   execFileSync("git", ["-C", orphan, "checkout", "-q", "--orphan", "counterfeit"]);
-  execFileSync("git", ["-C", orphan, "commit", "-q", "--allow-empty", "-m", "counterfeit"]);
+  // Identity is passed per-command, not read from config: CI runners have none,
+  // and a self-check that needs ambient git config is a self-check that fails
+  // in the one environment it most needs to run in.
+  execFileSync("git", [
+    "-C", orphan,
+    "-c", "user.name=provenance-selfcheck",
+    "-c", "user.email=provenance-selfcheck@invalid",
+    "commit", "-q", "--allow-empty", "-m", "counterfeit",
+  ]);
   mkdirSync(join(orphan, "fork"), { recursive: true });
   check("a tree with no ancestry from the recorded base fails", run(orphan, clean), 1);
 
