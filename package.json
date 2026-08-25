@@ -19,6 +19,8 @@
     "sdk:surface": "node scripts/sdk-surface.mjs",
     "smoke": "node scripts/smoke-install.mjs",
     "e2e": "playwright test",
+    "fork:provenance": "node scripts/fork-provenance.mjs",
+    "fork:provenance:check": "node scripts/fork-provenance.check.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm gen:modules && pnpm -r typecheck",
     "version:check": "node scripts/version.mjs --check"
