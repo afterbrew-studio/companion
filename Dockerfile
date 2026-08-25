@@ -22,20 +22,29 @@ RUN apt-get update \
 ARG NPM_VERSION=12.0.2
 ARG NPM_BRACE_EXPANSION_VERSION=5.0.9
 ARG NPM_IP_ADDRESS_VERSION=10.3.1
-# npm 12.0.2 still vendors these two older packages. Install their patched
-# releases in isolation, then replace only npm's bundled copies. Remove this
-# override once a later npm release contains both fixes; Trivy will keep the
+ARG NPM_TAR_VERSION=7.5.22
+# npm 12.0.2 still vendors these three older packages. Install their patched
+# releases in isolation, then replace only npm's bundled copies. Remove each
+# override once a later npm release contains its fix; Trivy will keep the
 # image honest in either case.
+#
+# `tar` is here because CVE-2026-73566 (HIGH, denial of service via a crafted
+# long path) affects the 7.5.19 npm 12.0.2 bundles. Trivy names 7.5.21 as the
+# first fixed release; this pins the current one above it.
 RUN npm install --global "npm@${NPM_VERSION}" --no-audit --no-fund \
   && npm install --prefix /tmp/npm-security --no-audit --no-fund --no-package-lock \
     "brace-expansion@${NPM_BRACE_EXPANSION_VERSION}" \
     "ip-address@${NPM_IP_ADDRESS_VERSION}" \
+    "tar@${NPM_TAR_VERSION}" \
   && rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
     /usr/local/lib/node_modules/npm/node_modules/ip-address \
+    /usr/local/lib/node_modules/npm/node_modules/tar \
   && cp -R /tmp/npm-security/node_modules/brace-expansion \
     /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
   && cp -R /tmp/npm-security/node_modules/ip-address \
     /usr/local/lib/node_modules/npm/node_modules/ip-address \
+  && cp -R /tmp/npm-security/node_modules/tar \
+    /usr/local/lib/node_modules/npm/node_modules/tar \
   && rm -rf /tmp/npm-security \
   && npm cache clean --force \
   && npm --version \
