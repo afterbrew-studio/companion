@@ -20,6 +20,7 @@
 #    from the one-time bootstrap token inside the volume.
 services:
   companion:
+    container_name: companion
     image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
     restart: unless-stopped
     depends_on:
@@ -51,7 +52,9 @@ services:
       # under /data symlinks to it, so losing this volume loses every provider.
       - companion-moxxy:/home/node/.moxxy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8901/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # /healthz, not /api/health -- there is no such route and the container sat
+      # `health: starting` forever while the application was serving fine.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8901/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 10s
       retries: 6
@@ -61,6 +64,7 @@ services:
   # capabilities for a finite job; the long-running service stays uid 1000 with
   # none. Same image, so it cannot drift from what it is preparing.
   companion-init:
+    container_name: companion-init
     image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
     user: "0:0"
     entrypoint:
@@ -78,6 +82,16 @@ services:
       - companion-data:/data
       - companion-moxxy:/home/node/.moxxy
 
+# Explicit names, so the volumes do not move when the compose project does.
+# Compose derives a volume's real name from the project, which is the directory
+# this file sits in -- relocating the deployment would otherwise create empty
+# volumes beside the full ones and start with no database and no provider vault.
 volumes:
   companion-data:
+    name: companion-afterbrew_companion-data
   companion-moxxy:
+    name: companion-afterbrew_companion-moxxy
+
+networks:
+  default:
+    name: companion_default
