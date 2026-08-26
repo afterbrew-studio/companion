@@ -478,4 +478,30 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_runs_task_created`);
     },
   },
+  {
+    /**
+     * Whether this machine's harness list was CHOSEN, as opposed to adopted for
+     * it at first boot.
+     *
+     * Adoption wrote the same column an operator writes, so the two became
+     * indistinguishable - and adoption then refused to revisit a non-empty list
+     * on the grounds that it might be a choice. A machine that came up when only
+     * one harness existed was pinned to it permanently: installing another could
+     * never make it selectable, and no UI wrote this column either.
+     *
+     * Existing rows default to 0. They were adopted, not chosen - a deliberate
+     * choice was not expressible before this column existed.
+     */
+    version: 15,
+    name: 'runners_harnesses_explicit',
+    up: (db) => {
+      const columns = db.prepare(`PRAGMA table_info(runners)`).all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'harnesses_explicit')) {
+        db.exec(`ALTER TABLE runners ADD COLUMN harnesses_explicit INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE runners DROP COLUMN harnesses_explicit`);
+    },
+  },
 ]);
