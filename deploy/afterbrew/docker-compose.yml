@@ -46,6 +46,29 @@ services:
       - COMPANION_PORT=8901
       # Fails closed even if /data once came from a trusted-local run.
       - COMPANION_AUTH_MODE=password
+      # moxxy installs provider plugins from npm at runtime and re-verifies them
+      # when a session boots. npm's default cache is ~/.npm, which cannot be
+      # created under a read-only root -- only /data, the moxxy home and /tmp are
+      # writable. Without this the plugin installs, persists to the moxxy volume,
+      # and every subsequent session still fails with `mkdir /home/node/.npm`.
+      #
+      # The cache is throwaway, so tmpfs is the right home for it; the plugins
+      # themselves land in the persistent moxxy volume.
+      - NPM_CONFIG_CACHE=/tmp/.npm
+      # Provider credentials, by name only: the value comes from .env, is read by
+      # the DAEMON, and is not the same as an agent child picking up a stray
+      # variable.
+      #
+      # ZAI_API_KEY and ZAI_CODING_PLAN_API_KEY are the same key under two names,
+      # and the difference matters. The first is what companiond.json's
+      # `zai-coding` provider declares via apiKeyEnv; the second is what moxxy's
+      # `zai-coding-plan` provider looks for when an agent run needs a model.
+      # `moxxy provision` cannot store the second: its slug list still advertises
+      # `zai-plan`, which the plugin does not register -- it ships `zai` and
+      # `zai-coding-plan`.
+      - MINIMAX_API_KEY
+      - ZAI_API_KEY
+      - ZAI_CODING_PLAN_API_KEY
     volumes:
       - companion-data:/data
       # moxxy's home holds the provider credentials. Companion's isolated home
