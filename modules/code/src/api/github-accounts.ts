@@ -532,7 +532,22 @@ export class GitHubAccounts {
   /** Does this account hold at least `need` on the repo? */
   private async hasAccess(row: GithubAccountRow, fullName: string, need: RepoPermission = 'pull'): Promise<boolean> {
     const granted = await this.grantedOn(row, fullName);
-    return granted !== null && RANK[granted] >= RANK[need];
+    const ok = granted !== null && RANK[granted] >= RANK[need];
+    if (!ok) {
+      // What the probe actually saw, because the caller's error cannot say it.
+      // A refusal here surfaces as "cannot write to <repo>", which is
+      // indistinguishable between "the token is read-only", "the repository is
+      // invisible to it", and "the response carried no permissions block at all
+      // and therefore graded as pull" - three different fixes.
+      log.warn('repository permission below what the caller needed', {
+        account: row.login || row.id,
+        kind: row.kind,
+        repo: fullName,
+        granted: granted ?? 'none (repository not visible to this credential)',
+        need,
+      });
+    }
+    return ok;
   }
 
   /**
@@ -552,7 +567,17 @@ export class GitHubAccounts {
     if (pending) return pending;
     const probe = (async (): Promise<RepoPermission | null> => {
       try {
-        const granted = gradeRepoPermissions((await this.clientOf(row).repo(fullName)).permissions);
+        const repo = await this.clientOf(row).repo(fullName);
+        if (!repo.permissions) {
+          // Worth naming: the grade that follows is `pull` by fallback, not by
+          // measurement, and no amount of configuring the credential changes it.
+          log.warn('repository response carried no permissions block; grading as read-only', {
+            account: row.login || row.id,
+            kind: row.kind,
+            repo: fullName,
+          });
+        }
+        const granted = gradeRepoPermissions(repo.permissions);
         if ((this.repoAccessEpoch.get(row.id) ?? 0) !== epoch) return null;
         this.repoAccess.set(key, { granted, at: Date.now() });
         return granted;
