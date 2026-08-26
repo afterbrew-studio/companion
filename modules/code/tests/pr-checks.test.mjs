@@ -51,7 +51,7 @@ test('a PR that leaves the cache mid-refresh is skipped without a warning', asyn
     },
     combinedStatus: async () => null,
     pull: async () => ({}),
-    prReviewList: async () => [],
+    prReviewList: async () => ({ reviews: [], truncated: false }),
   };
   const checks = new PrChecks(storeOf(rows), () => client, () => undefined);
 
@@ -131,7 +131,7 @@ test('a settled PR with no head commit caches its empty snapshot', async () => {
     checkRuns: async () => [],
     combinedStatus: async () => null,
     pull: async () => ({}),
-    prReviewList: async () => [],
+    prReviewList: async () => ({ reviews: [], truncated: false }),
   };
   const broadcasts = [];
   const checks = new PrChecks(store, () => client, (msg) => broadcasts.push(msg));
@@ -173,9 +173,10 @@ test('a live refresh broadcasts the complete status patch for one PR', async () 
     ],
     combinedStatus: async () => null,
     pull: async () => ({ mergeable: false, mergeable_state: 'dirty' }),
-    prReviewList: async () => [
-      { state: 'CHANGES_REQUESTED', user: { login: 'reviewer' } },
-    ],
+    prReviewList: async () => ({
+      reviews: [{ state: 'CHANGES_REQUESTED', user: { login: 'reviewer' } }],
+      truncated: false,
+    }),
   };
   const broadcasts = [];
   const checks = new PrChecks(store, () => client, (msg) => broadcasts.push(msg));

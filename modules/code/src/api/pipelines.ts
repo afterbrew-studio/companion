@@ -1236,7 +1236,7 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       }
 
       if (step.config.requireApproved) {
-        const decision = foldReviewDecision(await client.prReviewList(ctx.repo, ctx.pr.number));
+        const decision = foldReviewDecision((await client.prReviewList(ctx.repo, ctx.pr.number)).reviews);
         if (decision !== 'approved') {
           return {
             status: 'failed',

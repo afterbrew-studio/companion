@@ -505,8 +505,38 @@ export class GitHubClient {
     return this.get(`/repos/${fullName}/issues/${issueNumber}/comments?per_page=50`);
   }
 
-  async prReviewList(fullName: string, prNumber: number): Promise<GhReview[]> {
-    return this.get(`/repos/${fullName}/pulls/${prNumber}/reviews?per_page=100`);
+  /**
+   * Every review on a PR, following pagination.
+   *
+   * GitHub returns reviews OLDEST first, so a single page is the oldest 100 -
+   * and anything deciding from "the latest review" would then read a decision
+   * from early in the PR's life. On a pull request that has cycled many times
+   * through an automated write/review/fix loop, which is the case this exists
+   * to serve, a later CHANGES_REQUESTED would simply be invisible.
+   */
+  async prReviewList(
+    fullName: string,
+    prNumber: number,
+    maxPages = 10,
+  ): Promise<{ reviews: GhReview[]; truncated: boolean }> {
+    const reviews: GhReview[] = [];
+    let truncated = false;
+    const path = `/repos/${fullName}/pulls/${prNumber}/reviews`;
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await fetch(`${this.api}${path}?per_page=100&page=${page}`, { headers: this.headers() });
+      this.observeRateLimit(res);
+      if (!res.ok) throw await this.error(res, path);
+      const batch = (await res.json()) as GhReview[];
+      reviews.push(...batch);
+      const link = res.headers.get('link');
+      const more = link === null ? batch.length === 100 : linkHasRelation(link, 'next');
+      if (!more) break;
+      // Reported, not swallowed. A prefix of an oldest-first list omits the
+      // NEWEST decisions, so a caller that treats a truncated read as complete
+      // reaches the opposite conclusion from the truth.
+      if (page === maxPages) truncated = true;
+    }
+    return { reviews, truncated };
   }
 
   /** Inline (file/line-anchored) review comments on a PR. */
