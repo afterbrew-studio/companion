@@ -12,6 +12,7 @@ function fixture({
   briefing = { cadence: 'daily', ownerId: 'alice' },
   workspaceRepos = ['acme/app'],
   webhookRemoteId = 73,
+  accountKind = 'pat',
 } = {}) {
   const state = {
     owner: 'alice',
@@ -33,6 +34,7 @@ function fixture({
   const audits = [];
   let verified = 0;
   const verifiedPurposes = [];
+  const verifiedNeeds = [];
   const fieldToRecord = {
     auto_triage: 'autoTriage',
     digest_enabled: 'digestEnabled',
@@ -66,15 +68,24 @@ function fixture({
       listByWorkspace: () => workspaceRepos.map((full_name) => ({ full_name })),
     },
     githubAccounts: {
-      verifiedClientFor: async (purpose) => {
+      verifiedClientFor: async (purpose, _fullName, ctx) => {
         verified += 1;
         verifiedPurposes.push(purpose);
+        if (ctx?.need !== undefined) verifiedNeeds.push(`${purpose}:${ctx.need}`);
         return { client: purpose === unavailablePurpose ? null : {}, tried: purpose === unavailablePurpose ? ['gh-1'] : [] };
       },
+      row: (id) => ({
+        id,
+        login: accountKind === 'app' ? 'afterbrew-studio' : 'bob',
+        ownerId: 'bob',
+        kind: accountKind,
+        purposes: ['fetch', 'runs', 'pipelines', 'webhooks'],
+      }),
     },
     pipelines: { create: () => ({ id: 'pipeline-1' }) },
   };
   const automations = {
+    installWebhook: async (fullName) => ({ repo: fullName, remoteId: 99, remoteError: null }),
     contributorFlow: () => state.flow,
     listContributorFlows: () => state.flow ? [state.flow] : [],
     removeContributorFlow: () => {
@@ -135,7 +146,7 @@ function fixture({
     assert.ok(target, `${method} ${path} route exists`);
     return target.run(params, new URLSearchParams(), body, user, null);
   };
-  return { state, audits, verified: () => verified, verifiedPurposes, run };
+  return { state, audits, verified: () => verified, verifiedPurposes, verifiedNeeds, run };
 }
 
 test('only break-glass authority may reduce foreign switches, and it preserves their owner', async () => {
@@ -388,4 +399,43 @@ test('workspace briefing permissions fail before repository probes or report gen
   );
   assert.equal(fx.verified(), 0);
   assert.equal(fx.state.briefingsRun, 0);
+});
+
+test('a GitHub App registers a webhook on write, not on admin', async () => {
+  // `POST /repos/{owner}/{repo}/hooks` is governed by an App's `Webhooks: write`
+  // permission, and that permission never sets `permissions.admin` on
+  // `GET /repos/...`. Demanding the admin grade refused every App installation
+  // before GitHub was asked - and the only way to satisfy it would be granting
+  // `Administration: write`, which hands the agent's own credential authority
+  // over branch protection and collaborators to buy a webhook.
+  const fx = fixture({ accountKind: 'app' });
+  await fx.run(
+    'POST',
+    '/api/repos/:owner/:name/webhook',
+    { owner: 'acme', name: 'app' },
+    { accountId: 'gh-1' },
+    bob,
+  );
+  assert.ok(
+    fx.verifiedNeeds.includes('webhooks:push'),
+    `an App installation was graded against ${JSON.stringify(fx.verifiedNeeds)} rather than push`,
+  );
+  assert.ok(!fx.verifiedNeeds.includes('webhooks:admin'), 'an App was still required to be admin');
+});
+
+test('a personal token still needs admin to register a webhook', async () => {
+  // Unchanged, and deliberately so: for a user token GitHub really does require
+  // admin, and answers 404 without it - which reads as "missing repo".
+  const fx = fixture({ accountKind: 'pat' });
+  await fx.run(
+    'POST',
+    '/api/repos/:owner/:name/webhook',
+    { owner: 'acme', name: 'app' },
+    { accountId: 'gh-1' },
+    bob,
+  ).catch(() => undefined);
+  assert.ok(
+    fx.verifiedNeeds.includes('webhooks:admin'),
+    `a personal token was graded against ${JSON.stringify(fx.verifiedNeeds)} rather than admin`,
+  );
 });

@@ -807,15 +807,32 @@ export default defineRoutes((ctx) => {
         if (!account || account.ownerId !== user!.username || !account.purposes.includes('webhooks')) {
           throw badRequest('choose one of your GitHub accounts enabled for webhooks');
         }
-        // Registering a webhook is an admin-level repository action; without
-        // that grade GitHub answers 404 and the failure reads as "missing repo".
+        // What registering a webhook needs depends on the credential, and the
+        // two answers are genuinely different rather than one being stricter.
+        //
+        // A user token needs ADMIN on the repository; without that grade GitHub
+        // answers 404 and the failure reads as "missing repo", which is why this
+        // is checked up front rather than left to the call.
+        //
+        // A GitHub App does not. `POST /repos/{owner}/{repo}/hooks` is governed
+        // by the App's `Webhooks: write` repository permission, and that
+        // permission never sets `permissions.admin` on `GET /repos/...` - so
+        // demanding the admin grade refused every App installation before GitHub
+        // was ever asked. Requiring the operator to add `Administration: write`
+        // to satisfy the check would hand the agent's own credential authority
+        // over branch protection and collaborators to buy a webhook.
+        const need = account.kind === 'app' ? 'push' : 'admin';
         const { client } = await code.githubAccounts.verifiedClientFor('webhooks', fullName, {
           accountId: account.id,
           username: user!.username,
-          need: 'admin',
+          need,
         });
         if (!client) {
-          throw badRequest(`${account.login} needs admin access to ${fullName} to register a webhook`);
+          throw badRequest(
+            account.kind === 'app'
+              ? `${account.login} cannot write to ${fullName}; check the app installation covers this repository`
+              : `${account.login} needs admin access to ${fullName} to register a webhook`,
+          );
         }
         try {
           return await automations.installWebhook(fullName, user!.username, account.id, account.login, client);
