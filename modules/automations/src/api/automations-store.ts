@@ -386,17 +386,18 @@ export class AutomationsStore {
         `INSERT INTO contributor_flows
            (repo, workspace_id, mode, actionable_issue_kinds, queue_issues,
             auto_apply_triage, merge_method, max_attempts, owner_id, updated_at,
-            admit_label)
+            admit_label, external_review_login)
          VALUES (@repo, @workspaceId, @mode, @actionableKinds, @queueIssues,
                  @autoApplyTriage, @mergeMethod, @maxAttempts, @ownerId, @updatedAt,
-                 @admitLabel)
+                 @admitLabel, @externalReviewLogin)
          ON CONFLICT(repo) DO UPDATE SET
            workspace_id = excluded.workspace_id, mode = excluded.mode,
            actionable_issue_kinds = excluded.actionable_issue_kinds,
            queue_issues = excluded.queue_issues, auto_apply_triage = excluded.auto_apply_triage,
            merge_method = excluded.merge_method, max_attempts = excluded.max_attempts,
            owner_id = excluded.owner_id, updated_at = excluded.updated_at,
-           admit_label = excluded.admit_label`,
+           admit_label = excluded.admit_label,
+           external_review_login = excluded.external_review_login`,
       )
       .run({
         repo: policy.repo,
@@ -410,6 +411,7 @@ export class AutomationsStore {
         ownerId: policy.ownerId,
         updatedAt: policy.updatedAt,
         admitLabel: policy.admitLabel,
+        externalReviewLogin: policy.externalReviewLogin,
       });
   }
 
@@ -489,6 +491,7 @@ interface ContributorFlowRow {
   updated_at: number;
   /** Null on a row written before the column existed. */
   admit_label: string | null;
+  external_review_login: string | null;
 }
 
 interface AdmissionControlRow {
@@ -566,5 +569,9 @@ function contributorFlowRow(row: ContributorFlowRow): ContributorFlowPolicy {
     // unsatisfiable rather than absent, which is the wrong failure: the flow
     // would go silent with no refusal to read.
     admitLabel: typeof row.admit_label === 'string' && row.admit_label !== '' ? row.admit_label : null,
+    externalReviewLogin:
+      typeof row.external_review_login === 'string' && row.external_review_login !== ''
+        ? row.external_review_login
+        : null,
   };
 }

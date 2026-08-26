@@ -367,14 +367,19 @@ export class Automations {
    * had been on.
    */
   setContributorFlow(
-    input: Omit<ContributorFlowPolicy, 'admitLabel'> & { admitLabel?: string | null },
+    input: Omit<ContributorFlowPolicy, 'admitLabel' | 'externalReviewLogin'> & {
+      admitLabel?: string | null;
+      externalReviewLogin?: string | null;
+    },
   ): ContributorFlowPolicy {
+    const stored = this.store.contributorFlow(input.repo);
     const policy: ContributorFlowPolicy = {
       ...input,
-      admitLabel:
-        input.admitLabel === undefined
-          ? (this.store.contributorFlow(input.repo)?.admitLabel ?? null)
-          : input.admitLabel,
+      admitLabel: input.admitLabel === undefined ? (stored?.admitLabel ?? null) : input.admitLabel,
+      externalReviewLogin:
+        input.externalReviewLogin === undefined
+          ? (stored?.externalReviewLogin ?? null)
+          : input.externalReviewLogin,
     };
     const board = this.board();
     if (!board) throw new Error('enable the Task board module before enabling a contributor flow');
@@ -999,6 +1004,7 @@ export class Automations {
           pr.reviewRisk === 'low' &&
           pr.checks?.state === 'passing',
       );
+    const externalLogin = this.store.contributorFlow(repo)?.externalReviewLogin ?? null;
     const cursorKey = `autoMergeCursor:${repo}`;
     const cursor = Number(this.store.settings.get(cursorKey) ?? 0);
     const { selected: candidates, nextCursor } = boundedRoundRobin(
@@ -1028,6 +1034,25 @@ export class Automations {
       }
       const fresh = await this.prChecks.trySummary(repo, pr.number, userId);
       const row = this.store.prs.get(repo, pr.number);
+
+      // A separate reviewer may hold merge authority instead of this instance's
+      // own agent review - the reviewer that did not write the code.
+      //
+      // The approval is pinned to the exact head being merged. GitHub does NOT
+      // dismiss an approval when new commits arrive unless branch protection
+      // says so, so `reviewDecision: approved` routinely describes an EARLIER
+      // commit. Merging on that would ship code no reviewer ever saw, which is
+      // the one failure this whole path exists to prevent.
+      if (externalLogin !== null) {
+        const approved = await this.approvalAtHead(client, repo, pr.number, externalLogin, expectedHead);
+        if (!approved) continue;
+        if (!fresh || fresh.state !== 'passing' || fresh.headSha !== expectedHead || row?.state !== 'open') {
+          continue;
+        }
+        await this.mergeApproved(client, repo, pr, expectedHead, userId, `approved by ${externalLogin}`);
+        continue;
+      }
+
       const review = this.prReviews.latestWithFindings(repo, pr.number);
       const hasMaterialFinding = review?.findings?.some(
         (finding) =>
@@ -1052,26 +1077,94 @@ export class Automations {
       ) {
         continue;
       }
-      // Back off only once a candidate reaches the irreversible operation.
-      // A stale cache or a still-running check should be reconsidered next
-      // tick, not hidden for six hours as though GitHub had rejected a merge.
-      this.store.settings.set(`lastRun:${guard}`, String(Date.now()));
-      try {
-        // The preflight has multiple network awaits. Revalidate immediately
-        // before the irreversible write so a mid-sweep role revocation wins.
-        for (const permission of AUTO_MERGE_PERMISSIONS) {
-          this.requireAuthorized(userId, permission, 'merge the pull request', repo);
-        }
-        const merged = await client.mergePr(repo, pr.number, 'squash', expectedHead);
-        if (!merged.merged) throw new Error(merged.message || 'GitHub refused the merge');
-        await client
-          .comment(repo, pr.number, 'Auto-merged by Companion: CI green, human-approved, AI review risk low.')
-          .catch(() => undefined);
-        log.info('auto-merged PR', { repo, prNumber: pr.number });
-        this.notify(repo, 'finished', `Auto-merged ${repo}#${pr.number}`, pr.title, `#/repos/${repo}/prs/${pr.number}`);
-      } catch (err) {
-        this.automationFailed(repo, `Auto-merge failed for ${repo}#${pr.number}`, err, `#/repos/${repo}/prs/${pr.number}`);
+      await this.mergeApproved(
+        client,
+        repo,
+        pr,
+        expectedHead,
+        userId,
+        'human-approved, AI review risk low',
+      );
+    }
+  }
+
+  /**
+   * Whether `login` has an APPROVED review on this PR submitted against `head`.
+   *
+   * The head pin is the point. GitHub keeps an approval across new commits
+   * unless branch protection dismisses it, so `reviewDecision: approved` can
+   * describe a commit that is no longer being merged - and merging on that
+   * would ship code the reviewer never saw.
+   *
+   * The LATEST review by that login decides. An approval followed by a later
+   * CHANGES_REQUESTED from the same reviewer is not an approval, and taking
+   * "some approval exists" would read it as one.
+   */
+  private async approvalAtHead(
+    client: GitHubClient,
+    repo: string,
+    prNumber: number,
+    login: string,
+    head: string,
+  ): Promise<boolean> {
+    const reviews = await client.prReviewList(repo, prNumber).catch((err) => {
+      // Not "unapproved" - unknown. Returning false holds the merge, and the
+      // next sweep asks again; treating it as approved would merge on a network
+      // failure.
+      log.warn('could not read reviews to confirm approval', { repo, prNumber, err: String(err) });
+      return null;
+    });
+    if (reviews === null) return false;
+
+    const wanted = login.toLowerCase();
+    const theirs = reviews
+      .filter((review) => (review.user?.login ?? '').toLowerCase() === wanted)
+      .filter((review) => review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED')
+      .sort((a, b) => (a.submitted_at ?? '').localeCompare(b.submitted_at ?? ''));
+
+    const latest = theirs.at(-1);
+    if (!latest || latest.state !== 'APPROVED') return false;
+    if (latest.commit_id !== head) {
+      log.info('approval is for an earlier commit; holding the merge', {
+        repo,
+        prNumber,
+        approvedSha: latest.commit_id,
+        head,
+      });
+      return false;
+    }
+    return true;
+  }
+
+  /** The irreversible step, shared by both authorities. */
+  private async mergeApproved(
+    client: GitHubClient,
+    repo: string,
+    pr: { number: number; title: string },
+    expectedHead: string,
+    userId: string,
+    reason: string,
+  ): Promise<void> {
+    const guard = `automerge:${repo}#${pr.number}`;
+    // Back off only once a candidate reaches the irreversible operation.
+    // A stale cache or a still-running check should be reconsidered next
+    // tick, not hidden for six hours as though GitHub had rejected a merge.
+    this.store.settings.set(`lastRun:${guard}`, String(Date.now()));
+    try {
+      // The preflight has multiple network awaits. Revalidate immediately
+      // before the irreversible write so a mid-sweep role revocation wins.
+      for (const permission of AUTO_MERGE_PERMISSIONS) {
+        this.requireAuthorized(userId, permission, 'merge the pull request', repo);
       }
+      const merged = await client.mergePr(repo, pr.number, 'squash', expectedHead);
+      if (!merged.merged) throw new Error(merged.message || 'GitHub refused the merge');
+      await client
+        .comment(repo, pr.number, `Auto-merged by Companion: CI green, ${reason}.`)
+        .catch(() => undefined);
+      log.info('auto-merged PR', { repo, prNumber: pr.number, reason });
+      this.notify(repo, 'finished', `Auto-merged ${repo}#${pr.number}`, pr.title, `#/repos/${repo}/prs/${pr.number}`);
+    } catch (err) {
+      this.automationFailed(repo, `Auto-merge failed for ${repo}#${pr.number}`, err, `#/repos/${repo}/prs/${pr.number}`);
     }
   }
 

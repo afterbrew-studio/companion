@@ -1082,6 +1082,7 @@ function ContributorFlowEditor({
   const [mergeMethod, setMergeMethod] = useState<ContributorFlowPolicy['mergeMethod']>(flow?.mergeMethod ?? 'squash');
   const [maxAttempts, setMaxAttempts] = useState(flow?.maxAttempts ?? 3);
   const [admitLabel, setAdmitLabel] = useState(flow?.admitLabel ?? '');
+  const [externalReviewLogin, setExternalReviewLogin] = useState(flow?.externalReviewLogin ?? '');
   const [dryRunOpen, setDryRunOpen] = useState(false);
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
@@ -1095,6 +1096,7 @@ function ContributorFlowEditor({
     setMergeMethod(flow?.mergeMethod ?? 'squash');
     setMaxAttempts(flow?.maxAttempts ?? 3);
     setAdmitLabel(flow?.admitLabel ?? '');
+    setExternalReviewLogin(flow?.externalReviewLogin ?? '');
   }, [flow]);
 
   const save = async (): Promise<void> => {
@@ -1117,6 +1119,7 @@ function ContributorFlowEditor({
         // preserving it. The API treats an omitted field as "leave alone", which
         // is for callers that predate this control, not for this form.
         admitLabel: admitLabel.trim() === '' ? null : admitLabel.trim(),
+        externalReviewLogin: externalReviewLogin.trim() === '' ? null : externalReviewLogin.trim(),
       });
       await onChanged();
     } catch (err) {
@@ -1152,6 +1155,7 @@ function ContributorFlowEditor({
     mergeMethod !== (flow?.mergeMethod ?? 'squash') ||
     maxAttempts !== (flow?.maxAttempts ?? 3) ||
     admitLabel.trim() !== (flow?.admitLabel ?? '') ||
+    externalReviewLogin.trim() !== (flow?.externalReviewLogin ?? '') ||
     [...kinds].sort().join(',') !== [...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)].sort().join(',');
 
   return (
@@ -1269,6 +1273,23 @@ function ContributorFlowEditor({
                   placeholder="agent:ready"
                   value={admitLabel}
                   onChange={(event) => setAdmitLabel(event.target.value)}
+                />
+              </SettingRow>
+              <SettingRow
+                title="Whose approval merges"
+                description={
+                  externalReviewLogin.trim() === ''
+                    ? 'Empty means this instance merges on its own agent review - the same system that wrote the code judging whether it may ship.'
+                    : `Merges when ${externalReviewLogin.trim()} has an approving review on the exact commit being merged. An approval of an earlier commit does not count, because GitHub keeps approvals across new pushes.`
+                }
+              >
+                <input
+                  className="input input-sm"
+                  type="text"
+                  maxLength={100}
+                  placeholder="octopus-afterbrew[bot]"
+                  value={externalReviewLogin}
+                  onChange={(event) => setExternalReviewLogin(event.target.value)}
                 />
               </SettingRow>
             </div>

@@ -1387,6 +1387,16 @@ export interface GhReview {
   state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
   body?: string | null;
   submitted_at: string | null;
+  /**
+   * The commit the review was submitted against.
+   *
+   * Load-bearing for anything that merges on an approval. GitHub does NOT
+   * dismiss an approval when new commits arrive unless the branch protection
+   * rule says so, so `reviewDecision: approved` can describe a commit that is
+   * no longer the head. Without this field an approval cannot be distinguished
+   * from a stale one.
+   */
+  commit_id: string | null;
 }
 
 export interface GhIssueComment {

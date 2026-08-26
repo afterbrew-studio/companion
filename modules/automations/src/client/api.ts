@@ -35,6 +35,7 @@ export const automationsApi = {
       maxAttempts: number;
       /** Omit to leave the stored value alone; null clears it. */
       admitLabel?: string | null;
+      externalReviewLogin?: string | null;
     },
   ) =>
     put<{ flow: ContributorFlowPolicy | null; repo?: RepoRecord }>(
