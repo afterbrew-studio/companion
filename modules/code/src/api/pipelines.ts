@@ -32,6 +32,7 @@ import type { PrReviews } from './pr-reviews.js';
 import type { Fixes } from './fixes.js';
 import { describeChecks, foldReviewDecision, type PrChecks } from './pr-checks.js';
 import { appendPipelineStepLog, PipelineExecution } from './pipeline-execution.js';
+import { assertPipelineRunnable, assertStepRunnable, isRefusedStepKind } from './merge-refusal.js';
 
 /**
  * User-defined PR pipelines. The engine resolves a pipeline's step specs
@@ -262,6 +263,19 @@ export const savePipelineSchema = z
           code: z.ZodIssueCode.custom,
           path: ['steps', i],
           message: `step kind "${spec.step.kind}" is not allowed in a ${v.type} pipeline`,
+        });
+      }
+      // Rejected at save so the failure arrives while someone is looking at the
+      // editor, not mid-run. This is ergonomics -- the control that actually
+      // holds is in runStep, because a save check cannot see an import, a Board
+      // action or a model-drafted definition. See merge-refusal.ts.
+      if (spec.type === 'inline' && isRefusedStepKind(spec.step.kind)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['steps', i],
+          message:
+            `step kind "${spec.step.kind}" is refused by this instance and cannot be saved. ` +
+            'This is an instance-level policy, not a permission.',
         });
       }
     });
@@ -1994,6 +2008,11 @@ export class Pipelines {
       );
     }
     const doc = pipelineExportSchema.parse(payload);
+    // An import is the path that most obviously carries a definition nobody here
+    // authored, so it is refused before anything is written rather than left to
+    // fail at run time. `create` goes through savePipelineSchema, which refuses
+    // too; this is the earlier, clearer error.
+    assertPipelineRunnable(doc.pipeline.steps);
     return this.create(
       workspaceId,
       {
@@ -2548,6 +2567,12 @@ export class Pipelines {
   }
 
   private runStep(step: PipelineStep, ctx: StepContext): Promise<StepOutcome> {
+    // Before authority, deliberately. A refused kind is not a permission that a
+    // sufficiently privileged caller could be granted -- it is refused for
+    // everyone, so it must not read as an authorisation failure in logs or to
+    // the caller. See merge-refusal.ts for why the authoritative check is here
+    // rather than at the paths that write pipeline definitions.
+    assertStepRunnable(step);
     this.assertStepAuthority(step, ctx);
     const handler = this.registry[step.kind] as (s: PipelineStep, c: StepContext) => Promise<StepOutcome>;
     return handler(step, ctx);

@@ -13,7 +13,17 @@
     "selected": "2026-08-25",
     "why": "The release inspected by rayf ADR-0055. Upstream `main` was at this same commit when the fork was taken, so the base is a released revision with no unreviewed delta."
   },
-  "patches": [],
+  "patches": [
+    {
+      "id": "merge-refusal",
+      "plan": "rayf P-0006 B3",
+      "upstream_gap": "Merge is an ordinary pipeline step kind. Any writer of a pipeline definition -- a save, an import, a Board action, or a model drafting one -- can introduce it, and each write path would need its own check.",
+      "change": "An instance-level refusal at the step-registry dispatch in modules/code/src/api/pipelines.ts runStep(), so no writer can route around it. Save and import reject earlier for ergonomics only.",
+      "negative_test": "modules/code/tests/merge-refusal.test.mjs -- 10 cases, including that ordinary kinds still run and that a valid non-merge pipeline still saves, so an over-broad refusal fails too.",
+      "not_done_by": "Removing 'merge' from the step schema. Stored pipelines already contain merge steps; a schema that cannot parse them makes them invisible rather than refused, so they parse, display and can be deleted -- but never run.",
+      "upstreaming": "Not proposed. The refusal is afterbrew policy for one autonomous lane, not a defect in upstream, where merge is a legitimate feature."
+    }
+  ],
   "_patches_note": "Each kernel patch added by P-0006 appends an entry naming the upstream gap, its negative test and its upstreaming disposition. An empty list means no afterbrew change to the kernel has landed yet, which is the state P-0005 ends in.",
   "release": {
     "publishes": false,
