@@ -1,6 +1,7 @@
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord, RunRoutingContext } from '@companion/module-operate/contract';
+import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrRecord, RepoAgentContext } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, RunnerBackend } from './operate-types.js';
@@ -72,13 +73,17 @@ export class Fixes {
   }
 
   /**
-   * `createRun`, with the worktree released if it refuses.
+   * `createRun`, with the worktree released when the run is refused outright.
    *
-   * Both goal-run paths place a runner, then clone and add a worktree, then
-   * create the run - and `createRun` re-checks that the chosen runner still has
-   * a free slot, because the clone is a long enough window for another caller to
-   * take it. Without this the losing caller leaves a worktree that no run owns
-   * and nothing but storage cleanup will ever reclaim.
+   * Both goal-run paths place a runner, then fetch and add a worktree, then
+   * create the run - so `createRun` re-takes the placement decision, which can
+   * refuse. A refusal leaves a worktree no run will ever own, reclaimable only
+   * by storage cleanup.
+   *
+   * Only a refusal releases it. `createRun` can also throw AFTER inserting the
+   * row - a spawn failure marks the run `failed` and rethrows - and that run
+   * owns its worktree: `discard` and any diff against it still need the
+   * directory to be there.
    */
   private async createRunOrReleaseWorktree(
     runnerId: string | null,
@@ -87,9 +92,11 @@ export class Fixes {
     opts: Parameters<Orchestrator['createRun']>[0],
   ): Promise<RunRecord> {
     try {
-      return await this.orchestrator.createRun(opts);
+      return await this.orchestrator.createRun({ ...opts, placedAhead: true });
     } catch (err) {
-      await this.backendForRun(runnerId).removeWorktree(repo, cwd).catch(() => undefined);
+      if (isRunnerUnavailable(err)) {
+        await this.backendForRun(runnerId).removeWorktree(repo, cwd).catch(() => undefined);
+      }
       throw err;
     }
   }

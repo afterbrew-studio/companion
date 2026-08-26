@@ -192,14 +192,11 @@ test('a machine whose runs already exist is correctly seen as full', async () =>
   assert.throws(() => place('code.fix'), /accepts|available|cleared|fall back/i);
 });
 
-test('a run placed earlier is refused when its machine filled in between', async () => {
-  // The defect's actual shape: `fixes.ts` places, then clones and adds a worktree,
-  // then calls createRun with the runner already chosen -- which skipped placement
-  // and, with it, the reservation. Two callers doing that get the same slot.
-  //
-  // The slot is re-checked for that one machine before the row is written. The
-  // clone is wasted, which is the cost of placing early; two agents on a one-slot
-  // machine is worse, and silently is worse again.
+test('a run placed ahead is refused when its machine filled in between', async () => {
+  // The defect's actual shape: `fixes.ts` places, then fetches and adds a
+  // worktree, then calls createRun with the runner already chosen -- which
+  // skipped placement and, with it, the reservation. Two callers doing that get
+  // the same slot.
   const { store, orchestrator, place } = await fixture();
   await onlyRunnerB(orchestrator);
   await orchestrator.runners.update('runner-b', { maxRuns: 1 });
@@ -208,13 +205,83 @@ test('a run placed earlier is refused when its machine filled in between', async
   addRunningChat(store, 'took-the-slot', 'runner-b');
 
   await assert.rejects(
-    () => orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix' }),
-    /no free slot/,
+    () => orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix', placedAhead: true }),
+    (err) => err?.name === 'RunnerUnavailableError' && /no free slot/.test(err.message),
     'createRun accepted a runner that had filled since it was chosen',
   );
 });
 
-test('a run placed earlier still succeeds while its machine has room', async () => {
+test('the refusal is per-runner, not "does anywhere have room"', async () => {
+  // The distinguishing case. With a second machine idle, a pool-wide check says
+  // yes while the machine this run's worktree is ON says no -- so a guard
+  // written against `hasFreeCapacity` would pass the test above and still let
+  // two agents onto one slot here.
+  const { store, orchestrator } = await fixture({ machines: ['runner-b', 'runner-c'] });
+  await orchestrator.runners.update(LOCAL_RUNNER_ID, { taskPolicy: allow(['operate.chat']) });
+  await orchestrator.runners.update('runner-b', { taskPolicy: allow(['code.fix']), maxRuns: 1 });
+  await orchestrator.runners.update('runner-c', { taskPolicy: allow(['code.fix']), maxRuns: 1 });
+
+  addRunningChat(store, 'fills-runner-b', 'runner-b');
+  assert.equal(
+    orchestrator.runners.hasFreeCapacity(null, 'code.fix', null),
+    true,
+    'guard: the pool DOES have room, so a pool-wide check would allow this',
+  );
+
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix', placedAhead: true }),
+    /no free slot/,
+    'the run was allowed onto a full machine because another machine had room',
+  );
+});
+
+test('the local machine is guarded too, though placement calls it null', async () => {
+  // `place()` normalizes the local runner to null, and on an install with no
+  // remote machines that is every placement. A guard keyed on a non-null
+  // runnerId would be a no-op on the common case while reading as a fix.
+  const { store, orchestrator, place } = await fixture({ machines: [] });
+  await orchestrator.runners.update(LOCAL_RUNNER_ID, { maxRuns: 1 });
+  assert.equal(place('code.fix'), null, 'guard: local placement really is reported as null');
+
+  addRunningChat(store, 'fills-the-local-slot', null);
+
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'fix', runnerId: null, cwd: '/tmp/wt', task: 'code.fix', placedAhead: true }),
+    /no free slot/,
+    'a full local runner accepted a second run',
+  );
+});
+
+test('a machine that went offline or was disabled is refused, not just a full one', async () => {
+  // The window is long enough for the machine to leave, not only to fill.
+  const { orchestrator, place } = await fixture();
+  await onlyRunnerB(orchestrator);
+  assert.equal(place('code.fix'), 'runner-b', 'guard: placeable before it is disabled');
+
+  await orchestrator.runners.update('runner-b', { enabled: false });
+
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix', placedAhead: true }),
+    /disabled/,
+    'a disabled machine still took the run',
+  );
+});
+
+test('a durable pin is not refused: it never placed ahead of anything', async () => {
+  // A Desk mission or a lane names a machine BY CHOICE and does no preparation
+  // first, so "it was chosen before this run was created and changed in
+  // between" is a false diagnosis, and its advice -- retry to be placed again --
+  // cannot change the answer, because the retry re-reads the same pin.
+  const { store, orchestrator } = await fixture();
+  await onlyRunnerB(orchestrator);
+  await orchestrator.runners.update('runner-b', { maxRuns: 1 });
+  addRunningChat(store, 'fills-runner-b', 'runner-b');
+
+  const run = await orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix' });
+  assert.equal(run.runnerId, 'runner-b', 'a pinned run was refused by a guard that is not for it');
+});
+
+test('a run placed ahead still succeeds while its machine has room', async () => {
   // The guard must not refuse the ordinary case, which is the whole path.
   const { orchestrator, place } = await fixture();
   await onlyRunnerB(orchestrator);
@@ -224,6 +291,7 @@ test('a run placed earlier still succeeds while its machine has room', async () 
     runnerId: 'runner-b',
     cwd: '/tmp/wt',
     task: 'code.fix',
+    placedAhead: true,
   });
   assert.equal(run.runnerId, 'runner-b');
 });

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AuthUser, Permission, ServiceMap, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { NotificationEmitter } from '@moxxy/companion-sdk/server';
 import type { RunRecord, RunStatus, RunVerification } from '@companion/module-operate/contract';
+import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@moxxy/companion-sdk/server';
 import type {
@@ -1014,7 +1015,17 @@ export class BoardService {
       // A slot can disappear between the preflight above and provisioning. If
       // that race happened, return to Ready without consuming the remediation
       // ceiling; the next released slot wakes dispatch again.
-      if (!this.operate.runners.hasFreeCapacity(task.repo, 'board.worker', task.createdBy)) {
+      //
+      // The typed refusal answers this directly. The pool-wide probe beside it
+      // does not: it asks whether ANY eligible machine has room, so a refusal
+      // from the one machine this run was committed to reads as "capacity is
+      // fine" while another machine is idle, and the card is charged an attempt
+      // for a scheduling race. It stays as the fallback for a slot lost without
+      // a refusal being raised.
+      if (
+        isRunnerUnavailable(err) ||
+        !this.operate.runners.hasFreeCapacity(task.repo, 'board.worker', task.createdBy)
+      ) {
         this.store.updateTask(task.id, {
           status: 'ready',
           stage,
@@ -1022,7 +1033,11 @@ export class BoardService {
           assignedWorkerId: null,
           lastError: null,
         });
-        this.store.insertEvent(task.id, 'waiting_for_runner', 'all eligible runner slots are busy');
+        this.store.insertEvent(
+          task.id,
+          'waiting_for_runner',
+          isRunnerUnavailable(err) ? err.message : 'all eligible runner slots are busy',
+        );
         this.changed();
         return;
       }

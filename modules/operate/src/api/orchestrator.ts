@@ -22,7 +22,7 @@ import type {
   RunRoutingRequest,
   RunRoutingResolution,
 } from '../contract/index.js';
-import { laneKey } from '../contract/index.js';
+import { laneKey, RunnerUnavailableError } from '../contract/index.js';
 import { isAutoLane, resolveHarness, resolveModel, resolveRunner } from './lanes.js';
 import { currentUser, log, paths, type DaemonConfig } from '@moxxy/companion-services';
 import { describeHarness, MOXXY_HARNESS } from './harnesses.js';
@@ -679,6 +679,12 @@ export class Orchestrator implements RunnerEventSink {
      * that started it is long gone and `currentUser()` answers null.
      */
     lane?: RunLane;
+    /**
+     * This runner was placed before slow preparation work, so the placement is
+     * stale and is re-taken here. Set only by a caller that called
+     * `prepareRunPlacement` itself; a durable user pin is not this.
+     */
+    placedAhead?: boolean;
   }): Promise<RunRecord> {
     // Before every other check and before any side effect: a run whose owner
     // has lost authority must leave no row, worktree or queue entry behind.
@@ -788,24 +794,36 @@ export class Orchestrator implements RunnerEventSink {
       laneDefault: isAutoLane(lane) ? null : this.servableHere(runnerId, this.laneModels(lane, []).defaultModel),
       taskPin: this.servablePin(runnerId, opts.task ?? null),
     });
-    // A run placed by SOMEBODY ELSE skipped the reservation below, and whatever
-    // it did in between - `fixes.ts` clones a repository and adds a worktree - is
-    // an arbitrarily long window in which another caller can be handed the same
-    // slot. `place()` counts rows, and neither of them has written one yet.
+    // A caller that placed ahead skipped the reservation below, and whatever it
+    // did in between - `fixes.ts` fetches and adds a worktree - is an
+    // arbitrarily long window. `place()` decides capacity by counting run rows,
+    // and during that window neither concurrent caller has written one, so both
+    // are told yes. The machine can also have gone offline or been disabled.
     //
-    // So the slot is re-checked here, for the one machine the work is already
-    // committed to. Refusing after a clone wastes that clone, which is the cost
-    // of placing early; running two agents on a one-slot machine is worse, and
-    // silently is worse again. rayf#109.
+    // So the decision is re-taken here, against the one machine the work is now
+    // committed to. `refusalFor` answers everything except capacity and orders
+    // its own checks so a foreign personal runner refuses without confirming it
+    // exists; the slot count is asked afterwards. rayf#109.
     //
-    // Only an EXPLICIT runner is checked. A caller-prepared `cwd` pins to the
-    // local runner for a one-shot, and refusing those at capacity would break a
-    // path this defect does not touch.
-    if (opts.runnerId !== undefined && opts.runnerId !== null) {
-      if (!this.runners.runnerHasCapacity(opts.runnerId)) {
-        throw new Error(
-          `runner ${opts.runnerId} has no free slot: it was chosen before this run was created, ` +
-            "and filled in between. Retry to be placed again.",
+    // `placedAhead` is an explicit opt-in rather than inferred from an explicit
+    // `runnerId`, because a durable user pin (a Desk mission, a lane) also
+    // supplies one and never placed ahead of anything - refusing those would be
+    // a false diagnosis prescribing a retry that cannot change the answer.
+    //
+    // Nothing between here and `runs.insert()` below awaits, so the daemon's
+    // event loop cannot interleave another createRun between the check and the
+    // row that makes it true.
+    if (opts.placedAhead) {
+      // `runnerId`, not `opts.runnerId`: placement normalizes the local machine
+      // to null, which is the common case on an install with no remote runners.
+      // Reading the raw option here would skip the guard exactly there.
+      const refusal =
+        this.runners.refusalFor(runnerId, { task: opts.task, repo: opts.repo, userId: opts.userId }) ??
+        (this.runners.runnerHasCapacity(runnerId) ? null : 'that machine has no free slot');
+      if (refusal !== null) {
+        throw new RunnerUnavailableError(
+          runnerId,
+          `${refusal} - it was chosen before this run was created, and changed in between`,
         );
       }
     }

@@ -6,6 +6,7 @@ import type { AskRequest, HarnessCapabilities, MoxxyEvent } from '@moxxy/compani
 import type { OperateService } from '../api/operate-service.js';
 
 export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pricing.js';
+export { RunnerUnavailableError, isRunnerUnavailable } from './runner-unavailable.js';
 import type { ModelPricing } from './model-pricing.js';
 
 /**
