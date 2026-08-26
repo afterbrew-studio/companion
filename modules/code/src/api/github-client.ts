@@ -479,13 +479,15 @@ export class GitHubClient {
   }
 
   /**
-   * What this account may do on the repository: `admin`, `write`, `triage`,
-   * `read` or `none`.
+   * What this account may do on the repository: `admin`, `maintain`, `write`,
+   * `triage`, `read` or `none`.
    *
-   * Asked of GitHub rather than inferred from anything cached, because the whole
-   * point of asking is that the answer may have changed since the event - a
+   * Asked of GitHub each time rather than read from any local record, because
+   * the point of asking is that the answer may have changed since the event: a
    * collaborator removed between applying a label and the delivery being
-   * processed still appears as the label's author forever.
+   * processed still appears as that label's author forever. `get` may serve this
+   * from its ETag cache, which is a conditional request GitHub revalidates - a
+   * round trip, not a stale read.
    */
   async collaboratorPermission(fullName: string, username: string): Promise<string> {
     const answer = await this.get<{ permission?: unknown; role_name?: unknown }>(
