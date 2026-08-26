@@ -192,10 +192,46 @@ test('a machine whose runs already exist is correctly seen as full', async () =>
   assert.throws(() => place('code.fix'), /accepts|available|cleared|fall back/i);
 });
 
+test('a run placed earlier is refused when its machine filled in between', async () => {
+  // The defect's actual shape: `fixes.ts` places, then clones and adds a worktree,
+  // then calls createRun with the runner already chosen -- which skipped placement
+  // and, with it, the reservation. Two callers doing that get the same slot.
+  //
+  // The slot is re-checked for that one machine before the row is written. The
+  // clone is wasted, which is the cost of placing early; two agents on a one-slot
+  // machine is worse, and silently is worse again.
+  const { store, orchestrator, place } = await fixture();
+  await onlyRunnerB(orchestrator);
+  await orchestrator.runners.update('runner-b', { maxRuns: 1 });
+  assert.equal(place('code.fix'), 'runner-b', 'guard: placeable before the slot is taken');
+
+  addRunningChat(store, 'took-the-slot', 'runner-b');
+
+  await assert.rejects(
+    () => orchestrator.createRun({ kind: 'fix', runnerId: 'runner-b', cwd: '/tmp/wt', task: 'code.fix' }),
+    /no free slot/,
+    'createRun accepted a runner that had filled since it was chosen',
+  );
+});
+
+test('a run placed earlier still succeeds while its machine has room', async () => {
+  // The guard must not refuse the ordinary case, which is the whole path.
+  const { orchestrator, place } = await fixture();
+  await onlyRunnerB(orchestrator);
+  assert.equal(place('code.fix'), 'runner-b');
+  const run = await orchestrator.createRun({
+    kind: 'fix',
+    runnerId: 'runner-b',
+    cwd: '/tmp/wt',
+    task: 'code.fix',
+  });
+  assert.equal(run.runnerId, 'runner-b');
+});
+
 // `todo`, not `skip`: it runs, it fails, and node:test reports it as a known
-// defect instead of breaking the suite. A skipped test executes nothing and rots
-// silently; this one will start reporting as an unexpected pass the moment
-// placement begins reserving, which is the signal the fix is in.
+// defect instead of breaking the suite. Placement itself still hands out the same
+// slot twice -- the guard above catches it at creation rather than at placement.
+// A reservation at placement time is the fuller fix; see afterbrew-studio/rayf#109.
 test('two placements are handed the same single slot when neither run exists yet', { todo: 'rayf P-0006 B2 -- see afterbrew-studio/rayf#109' }, async () => {
   const { orchestrator, place } = await fixture();
   await onlyRunnerB(orchestrator);

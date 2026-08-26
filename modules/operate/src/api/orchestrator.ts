@@ -788,6 +788,28 @@ export class Orchestrator implements RunnerEventSink {
       laneDefault: isAutoLane(lane) ? null : this.servableHere(runnerId, this.laneModels(lane, []).defaultModel),
       taskPin: this.servablePin(runnerId, opts.task ?? null),
     });
+    // A run placed by SOMEBODY ELSE skipped the reservation below, and whatever
+    // it did in between - `fixes.ts` clones a repository and adds a worktree - is
+    // an arbitrarily long window in which another caller can be handed the same
+    // slot. `place()` counts rows, and neither of them has written one yet.
+    //
+    // So the slot is re-checked here, for the one machine the work is already
+    // committed to. Refusing after a clone wastes that clone, which is the cost
+    // of placing early; running two agents on a one-slot machine is worse, and
+    // silently is worse again. rayf#109.
+    //
+    // Only an EXPLICIT runner is checked. A caller-prepared `cwd` pins to the
+    // local runner for a one-shot, and refusing those at capacity would break a
+    // path this defect does not touch.
+    if (opts.runnerId !== undefined && opts.runnerId !== null) {
+      if (!this.runners.runnerHasCapacity(opts.runnerId)) {
+        throw new Error(
+          `runner ${opts.runnerId} has no free slot: it was chosen before this run was created, ` +
+            "and filled in between. Retry to be placed again.",
+        );
+      }
+    }
+
     const backend = this.runners.backend(runnerId);
     // Reserve the slot atomically: persist the provisioning row (carrying
     // runner_id) BEFORE the first await, so a concurrent createRun's placement

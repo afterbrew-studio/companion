@@ -71,6 +71,29 @@ export class Fixes {
     return this.orchestrator.runners.backend(runnerId);
   }
 
+  /**
+   * `createRun`, with the worktree released if it refuses.
+   *
+   * Both goal-run paths place a runner, then clone and add a worktree, then
+   * create the run - and `createRun` re-checks that the chosen runner still has
+   * a free slot, because the clone is a long enough window for another caller to
+   * take it. Without this the losing caller leaves a worktree that no run owns
+   * and nothing but storage cleanup will ever reclaim.
+   */
+  private async createRunOrReleaseWorktree(
+    runnerId: string | null,
+    repo: string,
+    cwd: string,
+    opts: Parameters<Orchestrator['createRun']>[0],
+  ): Promise<RunRecord> {
+    try {
+      return await this.orchestrator.createRun(opts);
+    } catch (err) {
+      await this.backendForRun(runnerId).removeWorktree(repo, cwd).catch(() => undefined);
+      throw err;
+    }
+  }
+
   async startFix(repo: string, issueNumber: number, userId: string | null = null): Promise<RunRecord> {
     const issue = this.store.issues.get(repo, issueNumber);
     if (!issue) throw new Error(`unknown issue ${repo}#${issueNumber}`);
@@ -144,7 +167,10 @@ export class Fixes {
       opts.userId,
     );
 
-    const run = await this.orchestrator.createRun({
+    // The runner was chosen before the clone above, and createRun re-checks that
+    // it still has a slot. Losing that race leaves a worktree nothing will ever
+    // own, so it is removed here rather than waiting for storage cleanup.
+    const run = await this.createRunOrReleaseWorktree(runnerId, opts.repo, cwd, {
       kind: opts.kind,
       title: opts.title,
       runnerId,
@@ -342,7 +368,7 @@ export class Fixes {
         `could not check out ${pr.headRef} from origin — fork-branch PRs are not supported yet (${err instanceof Error ? err.message.split('\n')[0] : String(err)})`,
       );
     }
-    const run = await this.orchestrator.createRun({
+    const run = await this.createRunOrReleaseWorktree(runnerId, pr.repo, cwd, {
       kind: 'fix',
       title,
       runnerId,
