@@ -532,7 +532,47 @@ export class GitHubAccounts {
   /** Does this account hold at least `need` on the repo? */
   private async hasAccess(row: GithubAccountRow, fullName: string, need: RepoPermission = 'pull'): Promise<boolean> {
     const granted = await this.grantedOn(row, fullName);
-    return granted !== null && RANK[granted] >= RANK[need];
+
+    // An App is graded on VISIBILITY only, because there is nothing else to
+    // grade it on. `GET /repos/...`'s `permissions` block describes the
+    // authenticated USER, and an installation is not a user: measured against a
+    // real repository with a token minted one minute earlier, an installation
+    // holding `contents: write` still came back `pull`. So the ladder can never
+    // exceed `pull` for an App, and every write-gated action was unreachable
+    // with an App credential however it was configured.
+    //
+    // Nothing is granted by this. GitHub still enforces the installation's real
+    // permissions on the call itself and answers 403/404 when they are missing;
+    // what is lost is only the pre-flight message, which exists to turn a user
+    // token's opaque 404 into something readable. That rationale is a user-token
+    // one and does not carry here.
+    if (row.kind === 'app') {
+      if (granted === null) {
+        log.warn('repository is not visible to this app installation', {
+          account: row.login || row.id,
+          repo: fullName,
+          need,
+        });
+      }
+      return granted !== null;
+    }
+
+    const ok = granted !== null && RANK[granted] >= RANK[need];
+    if (!ok) {
+      // What the probe actually saw, because the caller's error cannot say it.
+      // A refusal here surfaces as "cannot write to <repo>", which is
+      // indistinguishable between "the token is read-only", "the repository is
+      // invisible to it", and "the response carried no permissions block at all
+      // and therefore graded as pull" - three different fixes.
+      log.warn('repository permission below what the caller needed', {
+        account: row.login || row.id,
+        kind: row.kind,
+        repo: fullName,
+        granted: granted ?? 'none (repository not visible to this credential)',
+        need,
+      });
+    }
+    return ok;
   }
 
   /**
@@ -552,7 +592,17 @@ export class GitHubAccounts {
     if (pending) return pending;
     const probe = (async (): Promise<RepoPermission | null> => {
       try {
-        const granted = gradeRepoPermissions((await this.clientOf(row).repo(fullName)).permissions);
+        const repo = await this.clientOf(row).repo(fullName);
+        if (!repo.permissions) {
+          // Worth naming: the grade that follows is `pull` by fallback, not by
+          // measurement, and no amount of configuring the credential changes it.
+          log.warn('repository response carried no permissions block; grading as read-only', {
+            account: row.login || row.id,
+            kind: row.kind,
+            repo: fullName,
+          });
+        }
+        const granted = gradeRepoPermissions(repo.permissions);
         if ((this.repoAccessEpoch.get(row.id) ?? 0) !== epoch) return null;
         this.repoAccess.set(key, { granted, at: Date.now() });
         return granted;
