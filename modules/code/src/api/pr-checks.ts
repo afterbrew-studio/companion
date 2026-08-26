@@ -176,7 +176,7 @@ export class PrChecks {
     this.store.prs.setChecks(repo, prNumber, toSnapshot(summary));
     // Human review decision rides the same fetch cadence as the CI snapshot.
     try {
-      const reviews = await client.prReviewList(repo, prNumber);
+      const { reviews } = await client.prReviewList(repo, prNumber);
       this.store.prs.setReviewDecision(repo, prNumber, foldReviewDecision(reviews));
     } catch (err) {
       log.warn('review decision fetch failed', { repo, prNumber, err: String(err) });

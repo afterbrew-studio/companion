@@ -1044,8 +1044,21 @@ export class Automations {
       // commit. Merging on that would ship code no reviewer ever saw, which is
       // the one failure this whole path exists to prevent.
       if (externalLogin !== null) {
-        const approved = await this.approvalAtHead(client, repo, pr.number, externalLogin, expectedHead);
-        if (!approved) continue;
+        const verdict = await this.externalVerdict(client, repo, pr.number, externalLogin, expectedHead);
+        if (!verdict.approved) continue;
+        // Moving merge authority to one reviewer must not make everyone else
+        // unable to stop a merge. `approvalAtHead` only inspects the nominated
+        // login, so a maintainer's CHANGES_REQUESTED is invisible to it - and
+        // `pr.reviewDecision` in the loop's filter is the pre-refresh cache,
+        // which can still read `approved` when someone has just blocked it.
+        if (verdict.blockedBy !== null) {
+          log.info('holding the merge: an outstanding change request', {
+            repo,
+            prNumber: pr.number,
+            by: verdict.blockedBy,
+          });
+          continue;
+        }
         if (!fresh || fresh.state !== 'passing' || fresh.headSha !== expectedHead || row?.state !== 'open') {
           continue;
         }
@@ -1100,40 +1113,63 @@ export class Automations {
    * CHANGES_REQUESTED from the same reviewer is not an approval, and taking
    * "some approval exists" would read it as one.
    */
-  private async approvalAtHead(
+  private async externalVerdict(
     client: GitHubClient,
     repo: string,
     prNumber: number,
     login: string,
     head: string,
-  ): Promise<boolean> {
+  ): Promise<{ approved: boolean; blockedBy: string | null }> {
     const reviews = await client.prReviewList(repo, prNumber).catch((err) => {
-      // Not "unapproved" - unknown. Returning false holds the merge, and the
-      // next sweep asks again; treating it as approved would merge on a network
-      // failure.
+      // Not "unapproved" - unknown. Holding lets the next sweep ask again;
+      // treating it as approved would merge on a network failure.
       log.warn('could not read reviews to confirm approval', { repo, prNumber, err: String(err) });
       return null;
     });
-    if (reviews === null) return false;
+    if (reviews === null) return { approved: false, blockedBy: null };
+    if (reviews.truncated) {
+      // The unread pages are the newest ones. Approving on a prefix would merge
+      // on a decision that may since have been withdrawn.
+      log.warn('too many reviews to read in one sweep; holding the merge', { repo, prNumber });
+      return { approved: false, blockedBy: null };
+    }
 
-    const wanted = login.toLowerCase();
-    const theirs = reviews
-      .filter((review) => (review.user?.login ?? '').toLowerCase() === wanted)
-      .filter((review) => review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED')
-      .sort((a, b) => (a.submitted_at ?? '').localeCompare(b.submitted_at ?? ''));
+    // Latest decision per reviewer. `submitted_at` is ISO-8601, so a plain
+    // string compare is chronological; `localeCompare` is locale-sensitive and
+    // buys nothing here. A review with no timestamp sorts first, which is the
+    // conservative end - it cannot displace a real later decision.
+    const decisive = (state: string): boolean => state === 'APPROVED' || state === 'CHANGES_REQUESTED';
+    const latestBy = new Map<string, { state: string; commit_id: string | null; at: string }>();
+    for (const review of reviews.reviews) {
+      const who = review.user?.login;
+      if (!who || !decisive(review.state)) continue;
+      const at = review.submitted_at ?? '';
+      const seen = latestBy.get(who.toLowerCase());
+      if (!seen || at >= seen.at) {
+        latestBy.set(who.toLowerCase(), { state: review.state, commit_id: review.commit_id, at });
+      }
+    }
 
-    const latest = theirs.at(-1);
-    if (!latest || latest.state !== 'APPROVED') return false;
-    if (latest.commit_id !== head) {
+    // Anyone still requesting changes holds the merge, not only the nominated
+    // reviewer. Naming an approver moves who may say yes; it does not take away
+    // everyone else's no.
+    let blockedBy: string | null = null;
+    for (const [who, verdict] of latestBy) {
+      if (verdict.state === 'CHANGES_REQUESTED') blockedBy = who;
+    }
+
+    const theirs = latestBy.get(login.toLowerCase());
+    if (!theirs || theirs.state !== 'APPROVED') return { approved: false, blockedBy };
+    if (theirs.commit_id !== head) {
       log.info('approval is for an earlier commit; holding the merge', {
         repo,
         prNumber,
-        approvedSha: latest.commit_id,
+        approvedSha: theirs.commit_id,
         head,
       });
-      return false;
+      return { approved: false, blockedBy };
     }
-    return true;
+    return { approved: true, blockedBy };
   }
 
   /** The irreversible step, shared by both authorities. */

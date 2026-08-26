@@ -264,11 +264,11 @@ export class Fixes {
   ): Promise<RunRecord> {
     await this.requirePersonalAccess(repo, userId);
     const { pr, client } = this.requireOpenPr(repo, prNumber, userId);
-    const [reviews, inline] = await Promise.all([
+    const [reviewPage, inline] = await Promise.all([
       client.prReviewList(repo, prNumber),
       client.prReviewComments(repo, prNumber).catch(() => []),
     ]);
-    const feedback = reviews
+    const feedback = reviewPage.reviews
       .filter((r) => (r.state === 'CHANGES_REQUESTED' || r.state === 'COMMENTED') && r.body?.trim())
       .map((r) => `Review by ${r.user?.login ?? 'reviewer'} (${r.state}):\n${r.body!.trim()}`);
     const comments = inline.map(
