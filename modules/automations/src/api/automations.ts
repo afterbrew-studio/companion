@@ -58,6 +58,16 @@ interface DeliveryPayload {
   /** Identity snapshots captured only after HMAC verification. */
   readonly webhookOwnerId: string | null;
   readonly automationOwnerId: string | null;
+  /**
+   * The GitHub account that caused this event, from `sender.login`.
+   *
+   * Distinct from the two owners above, which are Companion identities holding
+   * the installation. This is the person who acted, and an admission gate has to
+   * check the actor rather than the operator - otherwise "an authorised
+   * collaborator applied the label" degrades to "the flow has an owner", which
+   * is true no matter who applied it.
+   */
+  readonly senderLogin: string | null;
 }
 
 /**
@@ -471,7 +481,15 @@ export class Automations {
 
   private async processIssueDelivery(job: AutomationDeliveryJob, payload: DeliveryPayload): Promise<void> {
     const issue = payload.issue!;
-    if (payload.action !== 'opened') return;
+    const flow = this.store.contributorFlow(job.repo);
+    const admitLabel = flow?.admitLabel ?? null;
+    // Without an admission label the flow reacts to `opened` and nothing else,
+    // which is what it has always done. With one, `opened` is no longer the
+    // trigger: the trigger is a person applying the label, which may happen at
+    // open time or any time after, so both actions are admitted here and the
+    // gate below decides.
+    const triggering = admitLabel === null ? payload.action === 'opened' : payload.action === 'opened' || payload.action === 'labeled';
+    if (!triggering) return;
     const repoRow = this.store.repos.get(job.repo);
     const automationOwner = repoRow?.automation_owner_id ?? null;
     if (automationOwner && this.authorized(automationOwner, 'pipelines:run', job.repo)) {
@@ -482,8 +500,26 @@ export class Automations {
       this.reportPipelineAdmissionFailures(job.repo, `issue #${issue.number}`, automationOwner, admission.failures);
     }
 
-    const flow = this.store.contributorFlow(job.repo);
     const owner = flow?.ownerId ?? automationOwner;
+
+    // The gate runs BEFORE triage, not before admission. Triage is a model call
+    // against a live repository, and an issue nobody admitted has not earned
+    // one - a gate placed after it would still refuse the work but would have
+    // already spent the call, on every unlabelled issue the repository opens.
+    if (flow !== null && flow.admitLabel !== null) {
+      const refusal = await this.admissionRefusal(job, flow, issue, flow.admitLabel);
+      if (refusal !== null) {
+        this.stage(job.id, `#${issue.number} not admitted: ${refusal}`);
+        this.audit({
+          actor: payload.senderLogin,
+          action: 'contributor-flow.admission-refused',
+          status: 403,
+          detail: `${job.repo}#${issue.number}: ${refusal}`,
+        });
+        return;
+      }
+    }
+
     const shouldTriage = repoRow?.auto_triage === 1 || (flow !== null && flow.mode !== 'off');
     if (!shouldTriage) return;
     if (!owner) throw new Error('auto-triage has no active automation owner');
@@ -503,6 +539,64 @@ export class Automations {
     }
     if (!flow || flow.mode === 'off') return;
     await this.continueIssueFlow(job, flow, result, issue, owner);
+  }
+
+  /**
+   * Why this issue is not admitted, or null when it is.
+   *
+   * Every check reads LIVE state rather than the delivery. A webhook payload is
+   * a snapshot of the moment the event fired, and the queue is durable: by the
+   * time this runs the label may have been removed, the issue closed, or the
+   * person who applied it stripped of access. Admitting on the snapshot would
+   * make each of those a race that lands work nobody currently sanctions.
+   */
+  private async admissionRefusal(
+    job: AutomationDeliveryJob,
+    flow: ContributorFlowPolicy,
+    issue: GhIssue,
+    admitLabel: string,
+  ): Promise<string | null> {
+    const actor = (await this.deliveryActor(job)) ?? null;
+    if (actor === null) return 'the acting GitHub account is unknown';
+
+    const client = this.github(job.repo, flow.ownerId);
+    if (client === null) return 'no GitHub account with access to this repository';
+
+    // Fails closed. An API error here is "we could not establish that this is
+    // admitted", and the safe reading of that is that it is not - the delivery
+    // job retries, so a transient failure costs a retry rather than the work.
+    let live: GhIssue;
+    let permission: string;
+    try {
+      [live, permission] = await Promise.all([
+        client.issue(job.repo, issue.number),
+        client.collaboratorPermission(job.repo, actor),
+      ]);
+    } catch (err) {
+      return `could not confirm admission against GitHub (${err instanceof Error ? err.message : String(err)})`;
+    }
+
+    if (live.state === 'closed') return 'the issue is closed';
+    const named = (label: string | { name?: string }): string =>
+      typeof label === 'string' ? label : (label.name ?? '');
+    if (!(live.labels ?? []).some((label) => named(label) === admitLabel)) {
+      return `${admitLabel} is not on the issue`;
+    }
+    // `triage` and `read` can both apply a label; neither may direct an agent to
+    // write code against the repository. The bar is the bar for changing it.
+    if (permission !== 'admin' && permission !== 'write' && permission !== 'maintain') {
+      return `${actor} may not admit work here (${permission})`;
+    }
+    return null;
+  }
+
+  /** The GitHub account that caused this delivery, from the stored payload. */
+  private async deliveryActor(job: AutomationDeliveryJob): Promise<string | null> {
+    try {
+      return parseDeliveryPayload(job.payload).senderLogin;
+    } catch {
+      return null;
+    }
   }
 
   private async continueIssueFlow(
@@ -1503,6 +1597,7 @@ function projectDelivery(
   return {
     ...identity,
     action: clip(identity.action, 100),
+    senderLogin: nullableClip((payload.sender as { login?: unknown } | undefined)?.login, 200),
     ...(eventName === 'issues' ? { issue: projectIssue(payload.issue) } : {}),
     ...(eventName === 'pull_request' || eventName === 'pull_request_review_comment'
       ? { pullRequest: projectPull(payload.pull_request) }
@@ -1653,6 +1748,15 @@ function parseDeliveryPayload(raw: string): DeliveryPayload {
   }
   if (candidate.automationOwnerId !== null && typeof candidate.automationOwnerId !== 'string') {
     throw new Error('stored webhook payload has an invalid automation owner');
+  }
+  // Absent on a delivery persisted before this field existed, which is a job
+  // already in the queue at upgrade time - not a corrupt one. It reads as "no
+  // known actor", and the admission gate refuses on that rather than guessing.
+  if (candidate.senderLogin === undefined) {
+    return { ...(candidate as DeliveryPayload), senderLogin: null };
+  }
+  if (candidate.senderLogin !== null && typeof candidate.senderLogin !== 'string') {
+    throw new Error('stored webhook payload has an invalid sender');
   }
   return candidate as DeliveryPayload;
 }

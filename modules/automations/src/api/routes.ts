@@ -24,6 +24,10 @@ const contributorFlowSchema = z.object({
     .default(['bug', 'docs', 'chore']),
   queueIssues: z.boolean().default(true),
   autoApplyTriage: z.boolean().default(true),
+  // Admission stays as it was unless an operator names a label. Trimmed so a
+  // stray space cannot make the gate unsatisfiable, and bounded because it is
+  // compared against a GitHub label name.
+  admitLabel: z.string().trim().min(1).max(100).nullable().default(null),
   mergeMethod: z.enum(['merge', 'squash', 'rebase']).default('squash'),
   maxAttempts: z.number().int().min(1).max(10).default(3),
 });
@@ -555,6 +559,7 @@ export default defineRoutes((ctx) => {
           actionableIssueKinds: body.actionableIssueKinds,
           queueIssues: body.queueIssues,
           autoApplyTriage: body.autoApplyTriage,
+          admitLabel: body.admitLabel,
           mergeMethod: body.mergeMethod,
           maxAttempts: body.maxAttempts,
           ownerId: user!.username,

@@ -65,6 +65,17 @@ export interface ContributorFlowPolicy {
   readonly queueIssues: boolean;
   /** Apply labels from a successful triage verdict; never posts prose. */
   readonly autoApplyTriage: boolean;
+  /**
+   * The label an authorised collaborator applies to admit one issue, or null to
+   * admit on the triage verdict alone.
+   *
+   * Set it and admission becomes a deliberate human act on a specific issue: the
+   * model has no part in the decision, only in the work that follows it. That is
+   * the difference between "the agent may work" and "the agent decided it may
+   * work", and it is why the labeller's authority is checked rather than the
+   * flow owner's.
+   */
+  readonly admitLabel: string | null;
   readonly mergeMethod: 'merge' | 'squash' | 'rebase';
   readonly maxAttempts: number;
   readonly ownerId: string;

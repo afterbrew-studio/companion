@@ -129,4 +129,17 @@ export default defineMigrations([
       db.exec(`DROP TABLE IF EXISTS automation_admission_controls`);
     },
   },
+  {
+    version: 6,
+    name: 'contributor_flow_admission_label',
+    up: (db) => {
+      // Nullable, and null means "as before": a flow that predates this column
+      // keeps admitting on the triage verdict alone. Defaulting it to a label
+      // would silently stop every existing flow at the next restart.
+      db.exec(`ALTER TABLE contributor_flows ADD COLUMN admit_label TEXT`);
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE contributor_flows DROP COLUMN admit_label`);
+    },
+  },
 ]);
