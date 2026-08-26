@@ -1081,6 +1081,7 @@ function ContributorFlowEditor({
   const [autoApplyTriage, setAutoApplyTriage] = useState(flow?.autoApplyTriage ?? true);
   const [mergeMethod, setMergeMethod] = useState<ContributorFlowPolicy['mergeMethod']>(flow?.mergeMethod ?? 'squash');
   const [maxAttempts, setMaxAttempts] = useState(flow?.maxAttempts ?? 3);
+  const [admitLabel, setAdmitLabel] = useState(flow?.admitLabel ?? '');
   const [dryRunOpen, setDryRunOpen] = useState(false);
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
@@ -1093,6 +1094,7 @@ function ContributorFlowEditor({
     setAutoApplyTriage(flow?.autoApplyTriage ?? true);
     setMergeMethod(flow?.mergeMethod ?? 'squash');
     setMaxAttempts(flow?.maxAttempts ?? 3);
+    setAdmitLabel(flow?.admitLabel ?? '');
   }, [flow]);
 
   const save = async (): Promise<void> => {
@@ -1111,6 +1113,10 @@ function ContributorFlowEditor({
         autoApplyTriage,
         mergeMethod,
         maxAttempts,
+        // Always sent, so clearing the box clears the gate rather than silently
+        // preserving it. The API treats an omitted field as "leave alone", which
+        // is for callers that predate this control, not for this form.
+        admitLabel: admitLabel.trim() === '' ? null : admitLabel.trim(),
       });
       await onChanged();
     } catch (err) {
@@ -1145,6 +1151,7 @@ function ContributorFlowEditor({
     autoApplyTriage !== (flow?.autoApplyTriage ?? true) ||
     mergeMethod !== (flow?.mergeMethod ?? 'squash') ||
     maxAttempts !== (flow?.maxAttempts ?? 3) ||
+    admitLabel.trim() !== (flow?.admitLabel ?? '') ||
     [...kinds].sort().join(',') !== [...(flow?.actionableIssueKinds ?? DEFAULT_ACTIONABLE_KINDS)].sort().join(',');
 
   return (
@@ -1247,6 +1254,23 @@ function ContributorFlowEditor({
                   <input className="input input-sm" type="number" min={1} max={10} value={maxAttempts} onChange={(event) => setMaxAttempts(Math.min(10, Math.max(1, Number(event.target.value) || 1)))} />
                 </label>
               </div>
+              <SettingRow
+                title="Require a label to admit work"
+                description={
+                  admitLabel.trim() === ''
+                    ? 'Empty means any actionable issue is admitted on the triage verdict alone - a decision the model makes. Name a label and admission becomes a deliberate act by someone with write access.'
+                    : `Only an issue labelled ${admitLabel.trim()} is admitted, and only when the person who applied that label has write access. Checked against GitHub at the moment the work starts, not when the event arrived.`
+                }
+              >
+                <input
+                  className="input input-sm"
+                  type="text"
+                  maxLength={100}
+                  placeholder="agent:ready"
+                  value={admitLabel}
+                  onChange={(event) => setAdmitLabel(event.target.value)}
+                />
+              </SettingRow>
             </div>
           </details>
         </>

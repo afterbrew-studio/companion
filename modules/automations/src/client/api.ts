@@ -33,6 +33,8 @@ export const automationsApi = {
       autoApplyTriage: boolean;
       mergeMethod: ContributorFlowPolicy['mergeMethod'];
       maxAttempts: number;
+      /** Omit to leave the stored value alone; null clears it. */
+      admitLabel?: string | null;
     },
   ) =>
     put<{ flow: ContributorFlowPolicy | null; repo?: RepoRecord }>(
