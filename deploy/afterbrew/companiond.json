@@ -1,5 +1,5 @@
 {
-  "_comment": "Declared providers, adopted when the module activates. Copied into $COMPANION_HOME (/data) at deploy time; this file is the reviewed copy. The credential is taken by indirection through apiKeyEnv so no key is written here, and baseUrl is admin configuration that no prompt, repository file or run argument can influence.",
+  "_comment": "Declared providers, adopted by the model-router module when it activates. Copied into $COMPANION_HOME (/data) at deploy time; this file is the reviewed copy. Credentials are taken by indirection through apiKeyEnv so no key is written here, and baseUrl is admin configuration that no prompt, repository file or run argument can influence.",
   "modelProviders": [
     {
       "id": "minimax",
@@ -8,8 +8,12 @@
       "baseUrl": "https://api.minimax.io/v1",
       "apiKeyEnv": "MINIMAX_API_KEY",
       "models": [
-        { "id": "MiniMax-M3" },
-        { "id": "MiniMax-M2.7" }
+        {
+          "id": "MiniMax-M3"
+        },
+        {
+          "id": "MiniMax-M2.7"
+        }
       ]
     },
     {
@@ -19,8 +23,27 @@
       "baseUrl": "https://api.z.ai/api/coding/paas/v4",
       "apiKeyEnv": "ZAI_API_KEY",
       "models": [
-        { "id": "glm-4.5" },
-        { "id": "glm-4.5-air" }
+        {
+          "id": "glm-4.5"
+        },
+        {
+          "id": "glm-4.5-air"
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek (pay as you go, $5 ceiling)",
+      "kind": "openai-compatible",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-v4-pro"
+        },
+        {
+          "id": "deepseek-v4-flash"
+        }
       ]
     }
   ]
