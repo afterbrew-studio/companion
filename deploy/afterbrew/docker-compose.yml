@@ -69,6 +69,17 @@ services:
       - MINIMAX_API_KEY
       - ZAI_API_KEY
       - ZAI_CODING_PLAN_API_KEY
+      - DEEPSEEK_API_KEY
+      # moxxy's agent runtime has no MiniMax or DeepSeek plugin -- its registry
+      # offers anthropic, claude-code, google, local, openai, openai-codex, xai
+      # and zai. Both are OpenAI-compatible, so they ride the `openai` provider,
+      # which takes ONE base URL. MiniMax gets it: it is a subscription, so a
+      # fallback that fires costs nothing, where DeepSeek is metered.
+      #
+      # DeepSeek is still reachable through the model-router module, which can
+      # hold all three at once. The asymmetry is the plugin registry's, not ours.
+      - OPENAI_BASE_URL=https://api.minimax.io/v1
+      - OPENAI_API_KEY=${MINIMAX_API_KEY:?set MINIMAX_API_KEY}
     volumes:
       - companion-data:/data
       # moxxy's home holds the provider credentials. Companion's isolated home
