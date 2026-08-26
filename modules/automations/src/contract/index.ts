@@ -76,6 +76,16 @@ export interface ContributorFlowPolicy {
    * flow owner's.
    */
   readonly admitLabel: string | null;
+  /**
+   * The GitHub login whose approving review authorises a merge, or null to
+   * require this instance's own agent review.
+   *
+   * Set it and the merge waits on somebody else's verdict - a separate reviewer
+   * that did not write the code. The approval must be pinned to the exact head
+   * being merged; an approval of an earlier commit is not an approval of this
+   * one.
+   */
+  readonly externalReviewLogin: string | null;
   readonly mergeMethod: 'merge' | 'squash' | 'rebase';
   readonly maxAttempts: number;
   readonly ownerId: string;

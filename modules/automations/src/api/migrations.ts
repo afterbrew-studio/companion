@@ -149,4 +149,19 @@ export default defineMigrations([
       db.exec(`ALTER TABLE contributor_flows DROP COLUMN admit_label`);
     },
   },
+  {
+    version: 7,
+    name: 'contributor_flow_external_review_login',
+    up: (db) => {
+      // Null means "as before": the merge waits on this instance's own agent
+      // review. Naming a login moves that authority to a separate reviewer.
+      const columns = db.prepare(`PRAGMA table_info(contributor_flows)`).all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'external_review_login')) {
+        db.exec(`ALTER TABLE contributor_flows ADD COLUMN external_review_login TEXT`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE contributor_flows DROP COLUMN external_review_login`);
+    },
+  },
 ]);
