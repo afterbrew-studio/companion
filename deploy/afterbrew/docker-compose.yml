@@ -1,0 +1,83 @@
+# The afterbrew deployment of Companion. Not upstream's root `docker-compose.yml`.
+#
+# A separate file rather than an edit, so upstream's compose keeps merging cleanly
+# and every divergence below is visible as a divergence rather than as a conflict.
+#
+#   docker compose -f deploy/afterbrew/docker-compose.yml up -d
+#
+# Upstream's file is already hardened - read-only root, no capabilities, no new
+# privileges, password auth - so this changes three things and inherits the rest.
+#
+# 1. The image is a TAG WE BUILT from this fork, not `build:`. The fork carries
+#    safety patches (the merge refusal) that upstream's published image does not,
+#    and a `build:` in the deployment file means the running bytes depend on
+#    whatever the checkout happened to be.
+#
+# 2. The port binds 127.0.0.1. Upstream publishes 8901 on every interface, which
+#    on a host that also faces a tunnel is a control plane on the LAN.
+#
+# 3. No credential has a default, and none is written here. The first admin comes
+#    from the one-time bootstrap token inside the volume.
+services:
+  companion:
+    image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
+    restart: unless-stopped
+    depends_on:
+      companion-init:
+        condition: service_completed_successfully
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777
+    ports:
+      # Loopback only. Reached through an SSH tunnel or a Cloudflare tunnel
+      # pointed at this port, never from the LAN.
+      - "127.0.0.1:${COMPANION_PORT:-8901}:8901"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - COMPANION_HOME=/data
+      - COMPANION_HOST=0.0.0.0
+      - COMPANION_PORT=8901
+      # Fails closed even if /data once came from a trusted-local run.
+      - COMPANION_AUTH_MODE=password
+    volumes:
+      - companion-data:/data
+      # moxxy's home holds the provider credentials. Companion's isolated home
+      # under /data symlinks to it, so losing this volume loses every provider.
+      - companion-moxxy:/home/node/.moxxy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8901/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 45s
+
+  # Repairs ownership of the two persisted roots, then exits. Root and two
+  # capabilities for a finite job; the long-running service stays uid 1000 with
+  # none. Same image, so it cannot drift from what it is preparing.
+  companion-init:
+    image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
+    user: "0:0"
+    entrypoint:
+      - /usr/local/bin/init-volumes.sh
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    volumes:
+      - companion-data:/data
+      - companion-moxxy:/home/node/.moxxy
+
+volumes:
+  companion-data:
+  companion-moxxy:
