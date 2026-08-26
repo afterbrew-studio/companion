@@ -24,6 +24,12 @@ const contributorFlowSchema = z.object({
     .default(['bug', 'docs', 'chore']),
   queueIssues: z.boolean().default(true),
   autoApplyTriage: z.boolean().default(true),
+  // Optional, NOT defaulted. A client that does not send the field must leave
+  // the stored value alone: defaulting to null means any save from a surface
+  // that has not been taught about this field silently switches the
+  // authorization gate off, with no audit entry and nothing visible in the UI.
+  // Sending an explicit null is how it is cleared.
+  admitLabel: z.string().trim().min(1).max(100).nullable().optional(),
   mergeMethod: z.enum(['merge', 'squash', 'rebase']).default('squash'),
   maxAttempts: z.number().int().min(1).max(10).default(3),
 });
@@ -555,6 +561,7 @@ export default defineRoutes((ctx) => {
           actionableIssueKinds: body.actionableIssueKinds,
           queueIssues: body.queueIssues,
           autoApplyTriage: body.autoApplyTriage,
+          admitLabel: body.admitLabel,
           mergeMethod: body.mergeMethod,
           maxAttempts: body.maxAttempts,
           ownerId: user!.username,

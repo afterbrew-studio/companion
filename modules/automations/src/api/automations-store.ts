@@ -385,15 +385,18 @@ export class AutomationsStore {
       .prepare(
         `INSERT INTO contributor_flows
            (repo, workspace_id, mode, actionable_issue_kinds, queue_issues,
-            auto_apply_triage, merge_method, max_attempts, owner_id, updated_at)
+            auto_apply_triage, merge_method, max_attempts, owner_id, updated_at,
+            admit_label)
          VALUES (@repo, @workspaceId, @mode, @actionableKinds, @queueIssues,
-                 @autoApplyTriage, @mergeMethod, @maxAttempts, @ownerId, @updatedAt)
+                 @autoApplyTriage, @mergeMethod, @maxAttempts, @ownerId, @updatedAt,
+                 @admitLabel)
          ON CONFLICT(repo) DO UPDATE SET
            workspace_id = excluded.workspace_id, mode = excluded.mode,
            actionable_issue_kinds = excluded.actionable_issue_kinds,
            queue_issues = excluded.queue_issues, auto_apply_triage = excluded.auto_apply_triage,
            merge_method = excluded.merge_method, max_attempts = excluded.max_attempts,
-           owner_id = excluded.owner_id, updated_at = excluded.updated_at`,
+           owner_id = excluded.owner_id, updated_at = excluded.updated_at,
+           admit_label = excluded.admit_label`,
       )
       .run({
         repo: policy.repo,
@@ -406,6 +409,7 @@ export class AutomationsStore {
         maxAttempts: policy.maxAttempts,
         ownerId: policy.ownerId,
         updatedAt: policy.updatedAt,
+        admitLabel: policy.admitLabel,
       });
   }
 
@@ -483,6 +487,8 @@ interface ContributorFlowRow {
   max_attempts: number;
   owner_id: string;
   updated_at: number;
+  /** Null on a row written before the column existed. */
+  admit_label: string | null;
 }
 
 interface AdmissionControlRow {
@@ -556,5 +562,9 @@ function contributorFlowRow(row: ContributorFlowRow): ContributorFlowPolicy {
     maxAttempts: Math.min(10, Math.max(1, row.max_attempts)),
     ownerId: row.owner_id,
     updatedAt: row.updated_at,
+    // An empty string is not a label. Treating it as one would make the gate
+    // unsatisfiable rather than absent, which is the wrong failure: the flow
+    // would go silent with no refusal to read.
+    admitLabel: typeof row.admit_label === 'string' && row.admit_label !== '' ? row.admit_label : null,
   };
 }

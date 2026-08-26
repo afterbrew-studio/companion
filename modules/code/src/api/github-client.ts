@@ -478,6 +478,27 @@ export class GitHubClient {
     return this.get<GhIssue>(`/repos/${fullName}/issues/${number}`);
   }
 
+  /**
+   * What this account may do on the repository: `admin`, `write`, `triage`,
+   * `read` or `none`.
+   *
+   * Asked of GitHub rather than inferred from anything cached, because the whole
+   * point of asking is that the answer may have changed since the event - a
+   * collaborator removed between applying a label and the delivery being
+   * processed still appears as the label's author forever.
+   */
+  async collaboratorPermission(fullName: string, username: string): Promise<string> {
+    const answer = await this.get<{ permission?: unknown; role_name?: unknown }>(
+      `/repos/${fullName}/collaborators/${encodeURIComponent(username)}/permission`,
+    );
+    // `role_name` first. `permission` carries only the legacy four
+    // (admin/write/read/none), which collapses `maintain` into `write` and
+    // `triage` into `read` - so a caller comparing against either of those two
+    // names is comparing against a string this endpoint never emits.
+    if (typeof answer.role_name === 'string' && answer.role_name !== '') return answer.role_name;
+    return typeof answer.permission === 'string' ? answer.permission : 'none';
+  }
+
   async issueComments(fullName: string, issueNumber: number): Promise<GhIssueComment[]> {
     return this.get(`/repos/${fullName}/issues/${issueNumber}/comments?per_page=50`);
   }
