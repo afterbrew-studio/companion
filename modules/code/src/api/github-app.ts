@@ -22,6 +22,15 @@ export interface InstallationToken {
   readonly token: string;
   /** Epoch ms. GitHub issues these for an hour. */
   readonly expiresAt: number;
+  /**
+   * What this installation holds, as GitHub reports it when minting the token:
+   * `{ contents: 'write', issues: 'write', ... }`.
+   *
+   * Kept because it is the only authoritative answer available. Grading an app
+   * from `GET /repos/...` reads a block that describes a USER and answers `pull`
+   * for every installation, whatever it was granted.
+   */
+  readonly permissions: Readonly<Record<string, string>>;
 }
 
 export class GitHubAppError extends Error {
@@ -67,9 +76,21 @@ export async function mintInstallationToken(
     headers: appHeaders(appJwt(appId, privateKeyPem)),
   });
   if (!res.ok) throw new GitHubAppError(await describe(res, 'minting an installation token'), res.status);
-  const body = (await res.json()) as { token?: string; expires_at?: string };
+  const body = (await res.json()) as {
+    token?: string;
+    expires_at?: string;
+    permissions?: Record<string, string>;
+  };
   if (!body.token || !body.expires_at) throw new GitHubAppError('GitHub returned no installation token', 502);
-  return { token: body.token, expiresAt: Date.parse(body.expires_at) };
+  // The mint response carries what this installation actually holds. It is the
+  // only authoritative statement of an app's capability the API offers:
+  // `GET /repos/...`'s `permissions` block describes a USER, and an installation
+  // is not one - it answers `pull` there however the app is configured.
+  return {
+    token: body.token,
+    expiresAt: Date.parse(body.expires_at),
+    permissions: body.permissions ?? {},
+  };
 }
 
 /**
