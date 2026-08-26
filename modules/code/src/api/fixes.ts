@@ -1,6 +1,7 @@
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord, RunRoutingContext } from '@companion/module-operate/contract';
+import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrRecord, RepoAgentContext } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, RunnerBackend } from './operate-types.js';
@@ -69,6 +70,35 @@ export class Fixes {
   /** Backend a completed/queued run's worktree lives on. */
   private backendForRun(runnerId: string | null): RunnerBackend {
     return this.orchestrator.runners.backend(runnerId);
+  }
+
+  /**
+   * `createRun`, with the worktree released when the run is refused outright.
+   *
+   * Both goal-run paths place a runner, then fetch and add a worktree, then
+   * create the run - so `createRun` re-takes the placement decision, which can
+   * refuse. A refusal leaves a worktree no run will ever own, reclaimable only
+   * by storage cleanup.
+   *
+   * Only a refusal releases it. `createRun` can also throw AFTER inserting the
+   * row - a spawn failure marks the run `failed` and rethrows - and that run
+   * owns its worktree: `discard` and any diff against it still need the
+   * directory to be there.
+   */
+  private async createRunOrReleaseWorktree(
+    runnerId: string | null,
+    repo: string,
+    cwd: string,
+    opts: Parameters<Orchestrator['createRun']>[0],
+  ): Promise<RunRecord> {
+    try {
+      return await this.orchestrator.createRun({ ...opts, placedAhead: true });
+    } catch (err) {
+      if (isRunnerUnavailable(err)) {
+        await this.backendForRun(runnerId).removeWorktree(repo, cwd).catch(() => undefined);
+      }
+      throw err;
+    }
   }
 
   async startFix(repo: string, issueNumber: number, userId: string | null = null): Promise<RunRecord> {
@@ -144,7 +174,10 @@ export class Fixes {
       opts.userId,
     );
 
-    const run = await this.orchestrator.createRun({
+    // The runner was chosen before the clone above, and createRun re-checks that
+    // it still has a slot. Losing that race leaves a worktree nothing will ever
+    // own, so it is removed here rather than waiting for storage cleanup.
+    const run = await this.createRunOrReleaseWorktree(runnerId, opts.repo, cwd, {
       kind: opts.kind,
       title: opts.title,
       runnerId,
@@ -342,7 +375,7 @@ export class Fixes {
         `could not check out ${pr.headRef} from origin — fork-branch PRs are not supported yet (${err instanceof Error ? err.message.split('\n')[0] : String(err)})`,
       );
     }
-    const run = await this.orchestrator.createRun({
+    const run = await this.createRunOrReleaseWorktree(runnerId, pr.repo, cwd, {
       kind: 'fix',
       title,
       runnerId,

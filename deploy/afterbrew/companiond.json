@@ -3,7 +3,7 @@
   "modelProviders": [
     {
       "id": "minimax",
-      "label": "MiniMax (subscription)",
+      "label": "MiniMax (subscription) - default worker and reviewer",
       "kind": "openai-compatible",
       "baseUrl": "https://api.minimax.io/v1",
       "apiKeyEnv": "MINIMAX_API_KEY",
@@ -18,22 +18,25 @@
     },
     {
       "id": "zai-coding",
-      "label": "Z.AI GLM (coding plan)",
+      "label": "Z.AI GLM (coding plan) - complex work only",
       "kind": "openai-compatible",
       "baseUrl": "https://api.z.ai/api/coding/paas/v4",
       "apiKeyEnv": "ZAI_API_KEY",
       "models": [
         {
-          "id": "glm-4.5"
+          "id": "glm-5.3"
         },
         {
-          "id": "glm-4.5-air"
+          "id": "glm-5.3-flash"
+        },
+        {
+          "id": "glm-4.6"
         }
       ]
     },
     {
       "id": "deepseek",
-      "label": "DeepSeek (pay as you go, $5 ceiling)",
+      "label": "DeepSeek (pay as you go, $5 ceiling) - trivial work only",
       "kind": "openai-compatible",
       "baseUrl": "https://api.deepseek.com/v1",
       "apiKeyEnv": "DEEPSEEK_API_KEY",

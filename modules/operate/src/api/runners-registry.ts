@@ -505,6 +505,21 @@ export class Runners {
     return eligible.some((row) => this.activeRuns(row, counts) < Math.max(1, row.max_runs));
   }
 
+  /**
+   * Whether THIS runner has a free slot, as opposed to `hasFreeCapacity`, which
+   * asks whether ANY eligible runner does.
+   *
+   * The distinction matters for a caller that placed a run earlier and then did
+   * slow work - a clone, a worktree - before creating it. By then "somewhere has
+   * room" is not the question; the worktree is on one machine and only that
+   * machine's capacity can be spent.
+   */
+  runnerHasCapacity(runnerId: string | null): boolean {
+    const row = this.store.runners.get(runnerId ?? LOCAL_RUNNER_ID);
+    if (!row) return false;
+    return this.activeRuns(row, this.store.runs.activeCountsByRunner()) < Math.max(1, row.max_runs);
+  }
+
   /** Reconcile persisted assignments with backend/reported liveness. */
   private activeRuns(row: RunnerRow, counts: ReadonlyMap<string | null, number>): number {
     const assigned = counts.get(row.id === LOCAL_RUNNER_ID ? null : row.id) ?? 0;
