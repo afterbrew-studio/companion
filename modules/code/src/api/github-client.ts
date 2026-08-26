@@ -488,9 +488,14 @@ export class GitHubClient {
    * processed still appears as the label's author forever.
    */
   async collaboratorPermission(fullName: string, username: string): Promise<string> {
-    const answer = await this.get<{ permission?: unknown }>(
+    const answer = await this.get<{ permission?: unknown; role_name?: unknown }>(
       `/repos/${fullName}/collaborators/${encodeURIComponent(username)}/permission`,
     );
+    // `role_name` first. `permission` carries only the legacy four
+    // (admin/write/read/none), which collapses `maintain` into `write` and
+    // `triage` into `read` - so a caller comparing against either of those two
+    // names is comparing against a string this endpoint never emits.
+    if (typeof answer.role_name === 'string' && answer.role_name !== '') return answer.role_name;
     return typeof answer.permission === 'string' ? answer.permission : 'none';
   }
 

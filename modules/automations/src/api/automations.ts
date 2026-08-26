@@ -68,6 +68,16 @@ interface DeliveryPayload {
    * is true no matter who applied it.
    */
   readonly senderLogin: string | null;
+  /**
+   * The label this event added or removed, from `label.name`.
+   *
+   * Present only on `labeled`/`unlabeled`. An admission gate has to know WHICH
+   * label was applied, not merely that some label was: without it, a maintainer
+   * adding an unrelated label to an issue that still carries the admission
+   * label satisfies the gate on that maintainer's authority, for a decision
+   * they never took.
+   */
+  readonly label?: string | null;
 }
 
 /**
@@ -349,7 +359,23 @@ export class Automations {
     return this.store.listContributorFlows(workspaceId);
   }
 
-  setContributorFlow(policy: ContributorFlowPolicy): ContributorFlowPolicy {
+  /**
+   * `admitLabel` omitted means "leave it as it is", which is why it is optional
+   * here rather than defaulted by the caller. The gate is an authorization
+   * control with no UI field yet, so any surface that saves the other settings
+   * would otherwise clear it - silently, and with nothing on screen to show it
+   * had been on.
+   */
+  setContributorFlow(
+    input: Omit<ContributorFlowPolicy, 'admitLabel'> & { admitLabel?: string | null },
+  ): ContributorFlowPolicy {
+    const policy: ContributorFlowPolicy = {
+      ...input,
+      admitLabel:
+        input.admitLabel === undefined
+          ? (this.store.contributorFlow(input.repo)?.admitLabel ?? null)
+          : input.admitLabel,
+    };
     const board = this.board();
     if (!board) throw new Error('enable the Task board module before enabling a contributor flow');
     if (!this.store.repos.inWorkspace(policy.repo, policy.workspaceId)) {
@@ -483,31 +509,23 @@ export class Automations {
     const issue = payload.issue!;
     const flow = this.store.contributorFlow(job.repo);
     const admitLabel = flow?.admitLabel ?? null;
-    // Without an admission label the flow reacts to `opened` and nothing else,
-    // which is what it has always done. With one, `opened` is no longer the
-    // trigger: the trigger is a person applying the label, which may happen at
-    // open time or any time after, so both actions are admitted here and the
-    // gate below decides.
-    const triggering = admitLabel === null ? payload.action === 'opened' : payload.action === 'opened' || payload.action === 'labeled';
+    // `opened` is the only trigger a flow without an admission label has ever
+    // had. With one, the trigger is a person APPLYING that label - which can
+    // happen at open time or long after - so `labeled` becomes a trigger too,
+    // but only when it carries the admission label itself. Widening it to every
+    // `labeled` event would make an unrelated label re-run everything below.
+    const applied = payload.label ?? null;
+    const triggering =
+      payload.action === 'opened' ||
+      (admitLabel !== null && payload.action === 'labeled' && applied === admitLabel);
     if (!triggering) return;
-    const repoRow = this.store.repos.get(job.repo);
-    const automationOwner = repoRow?.automation_owner_id ?? null;
-    if (automationOwner && this.authorized(automationOwner, 'pipelines:run', job.repo)) {
-      // Optional side reaction. A role may deliberately allow triage while
-      // revoking pipeline execution; that must not poison the primary issue
-      // flow and retry the same delivery eight times.
-      const admission = this.pipelines.autoRunForIssue(job.repo, issue.number, automationOwner);
-      this.reportPipelineAdmissionFailures(job.repo, `issue #${issue.number}`, automationOwner, admission.failures);
-    }
 
-    const owner = flow?.ownerId ?? automationOwner;
-
-    // The gate runs BEFORE triage, not before admission. Triage is a model call
-    // against a live repository, and an issue nobody admitted has not earned
-    // one - a gate placed after it would still refuse the work but would have
-    // already spent the call, on every unlabelled issue the repository opens.
+    // The gate is the FIRST thing past the trigger, ahead of the pipeline
+    // auto-run below. That block starts an issue pipeline, whose steps include
+    // `agent` - a full agent run against the repository - so a gate placed after
+    // it does not gate: the work it refuses has already started.
     if (flow !== null && flow.admitLabel !== null) {
-      const refusal = await this.admissionRefusal(job, flow, issue, flow.admitLabel);
+      const refusal = await this.admissionRefusal(job, flow, issue, flow.admitLabel, payload);
       if (refusal !== null) {
         this.stage(job.id, `#${issue.number} not admitted: ${refusal}`);
         this.audit({
@@ -520,6 +538,17 @@ export class Automations {
       }
     }
 
+    const repoRow = this.store.repos.get(job.repo);
+    const automationOwner = repoRow?.automation_owner_id ?? null;
+    if (automationOwner && this.authorized(automationOwner, 'pipelines:run', job.repo)) {
+      // Optional side reaction. A role may deliberately allow triage while
+      // revoking pipeline execution; that must not poison the primary issue
+      // flow and retry the same delivery eight times.
+      const admission = this.pipelines.autoRunForIssue(job.repo, issue.number, automationOwner);
+      this.reportPipelineAdmissionFailures(job.repo, `issue #${issue.number}`, automationOwner, admission.failures);
+    }
+
+    const owner = flow?.ownerId ?? automationOwner;
     const shouldTriage = repoRow?.auto_triage === 1 || (flow !== null && flow.mode !== 'off');
     if (!shouldTriage) return;
     if (!owner) throw new Error('auto-triage has no active automation owner');
@@ -549,32 +578,37 @@ export class Automations {
    * time this runs the label may have been removed, the issue closed, or the
    * person who applied it stripped of access. Admitting on the snapshot would
    * make each of those a race that lands work nobody currently sanctions.
+   *
+   * Two failures live here and they are NOT the same, so they do not exit the
+   * same way. A returned string is a decision - this is not admitted, and the
+   * delivery is finished. Being unable to REACH a decision throws instead, so
+   * `runDelivery` fails the delivery into the retry ladder: returning there
+   * would call `completeDelivery`, and a sanctioned admission would be dropped
+   * silently, showing green on the delivery health page with no way to replay
+   * it. A refusal indistinguishable from success is not failing closed.
    */
   private async admissionRefusal(
     job: AutomationDeliveryJob,
     flow: ContributorFlowPolicy,
     issue: GhIssue,
     admitLabel: string,
+    payload: DeliveryPayload,
   ): Promise<string | null> {
-    const actor = (await this.deliveryActor(job)) ?? null;
+    const actor = payload.senderLogin;
     if (actor === null) return 'the acting GitHub account is unknown';
 
     const client = this.github(job.repo, flow.ownerId);
-    if (client === null) return 'no GitHub account with access to this repository';
-
-    // Fails closed. An API error here is "we could not establish that this is
-    // admitted", and the safe reading of that is that it is not - the delivery
-    // job retries, so a transient failure costs a retry rather than the work.
-    let live: GhIssue;
-    let permission: string;
-    try {
-      [live, permission] = await Promise.all([
-        client.issue(job.repo, issue.number),
-        client.collaboratorPermission(job.repo, actor),
-      ]);
-    } catch (err) {
-      return `could not confirm admission against GitHub (${err instanceof Error ? err.message : String(err)})`;
+    // Indeterminate, not refused: the account may come back. Throwing retries.
+    if (client === null) {
+      throw new Error(`no GitHub account with access to ${job.repo} to confirm admission`);
     }
+
+    // Any API error is "we could not establish whether this is admitted", which
+    // is a question still open rather than an answer of no. It throws.
+    const [live, permission] = await Promise.all([
+      client.issue(job.repo, issue.number),
+      client.collaboratorPermission(job.repo, actor),
+    ]);
 
     if (live.state === 'closed') return 'the issue is closed';
     const named = (label: string | { name?: string }): string =>
@@ -582,21 +616,12 @@ export class Automations {
     if (!(live.labels ?? []).some((label) => named(label) === admitLabel)) {
       return `${admitLabel} is not on the issue`;
     }
-    // `triage` and `read` can both apply a label; neither may direct an agent to
-    // write code against the repository. The bar is the bar for changing it.
-    if (permission !== 'admin' && permission !== 'write' && permission !== 'maintain') {
+    // Labelling is not the bar. `triage` and `read` can both apply a label and
+    // neither may change the repository, so the bar is the bar for changing it.
+    if (permission !== 'admin' && permission !== 'maintain' && permission !== 'write') {
       return `${actor} may not admit work here (${permission})`;
     }
     return null;
-  }
-
-  /** The GitHub account that caused this delivery, from the stored payload. */
-  private async deliveryActor(job: AutomationDeliveryJob): Promise<string | null> {
-    try {
-      return parseDeliveryPayload(job.payload).senderLogin;
-    } catch {
-      return null;
-    }
   }
 
   private async continueIssueFlow(
@@ -1598,6 +1623,9 @@ function projectDelivery(
     ...identity,
     action: clip(identity.action, 100),
     senderLogin: nullableClip((payload.sender as { login?: unknown } | undefined)?.login, 200),
+    ...(eventName === 'issues'
+      ? { label: nullableClip((payload.label as { name?: unknown } | undefined)?.name, 200) }
+      : {}),
     ...(eventName === 'issues' ? { issue: projectIssue(payload.issue) } : {}),
     ...(eventName === 'pull_request' || eventName === 'pull_request_review_comment'
       ? { pullRequest: projectPull(payload.pull_request) }

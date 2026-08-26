@@ -136,7 +136,14 @@ export default defineMigrations([
       // Nullable, and null means "as before": a flow that predates this column
       // keeps admitting on the triage verdict alone. Defaulting it to a label
       // would silently stop every existing flow at the next restart.
-      db.exec(`ALTER TABLE contributor_flows ADD COLUMN admit_label TEXT`);
+      //
+      // Probed rather than assumed, like migrations 2 and 3: the ledger means
+      // this normally runs once, and an additive migration that cannot be run
+      // twice is one recovery path away from a broken database.
+      const columns = db.prepare(`PRAGMA table_info(contributor_flows)`).all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'admit_label')) {
+        db.exec(`ALTER TABLE contributor_flows ADD COLUMN admit_label TEXT`);
+      }
     },
     down: (db) => {
       db.exec(`ALTER TABLE contributor_flows DROP COLUMN admit_label`);

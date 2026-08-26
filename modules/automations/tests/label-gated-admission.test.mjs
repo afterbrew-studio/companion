@@ -6,18 +6,30 @@ import { AutomationsStore } from '../dist/api/automations-store.js';
 import migrations from '../dist/api/migrations.js';
 
 /**
- * Only the seams `admissionRefusal` actually reaches are real: the store, and
- * the GitHub client factory. Everything else is a positional placeholder, so a
- * constructor change surfaces as a failure here rather than as a test that
- * quietly stopped exercising the gate.
+ * These drive `runDelivery`, not the gate in isolation.
+ *
+ * The gate's value is entirely in where it sits and how it exits: ahead of the
+ * pipeline auto-run that starts an agent, and throwing rather than returning
+ * when it cannot reach a decision. Calling the private method directly asserts
+ * neither - it passes just as well with the gate in the wrong place and with a
+ * refusal that silently completes the delivery.
+ *
+ * Only the seams the path actually reaches are real. Everything else is a
+ * positional placeholder, so a constructor change fails here rather than
+ * quietly stubbing the subject out.
  */
-function fixture({ issue, permission, throws = false } = {}) {
+function fixture({ issue, permission, throws = false, admitLabel = 'agent:ready' } = {}) {
   const db = new Database(':memory:');
   for (const migration of migrations) migration.up(db);
   const empty = {};
+  const events = [];
   const store = new AutomationsStore({
     db,
-    repos: empty,
+    repos: {
+      get: () => ({ full_name: 'acme/app', auto_triage: 1, automation_owner_id: 'alice' }),
+      inWorkspace: () => true,
+      getWebhookRegistration: () => ({ ownerId: 'alice', remoteId: 'wh-1', remoteError: null }),
+    },
     issues: empty,
     prs: empty,
     runs: empty,
@@ -26,157 +38,216 @@ function fixture({ issue, permission, throws = false } = {}) {
     settings: empty,
     notify: { emit() {} },
   });
-  const calls = [];
   const client = {
-    issue: async (repo, number) => {
-      calls.push(`issue:${repo}#${number}`);
+    issue: async () => {
       if (throws) throw new Error('502 bad gateway');
       return issue;
     },
-    collaboratorPermission: async (repo, username) => {
-      calls.push(`permission:${username}`);
+    collaboratorPermission: async () => {
       if (throws) throw new Error('502 bad gateway');
       return permission;
     },
   };
+  const triage = {
+    triageIssueOnce: async () => {
+      events.push('MODEL CALL: triage');
+      return { status: 'dismissed', verdict: null };
+    },
+  };
+  const pipelines = {
+    autoRunForIssue: () => {
+      events.push('AGENT PIPELINE STARTED');
+      return { failures: [] };
+    },
+  };
   const automations = new Automations(
     store,
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+    {}, triage, {}, {}, pipelines, { applyIssue() {} }, {}, {}, {}, {},
     () => client,
-    () => undefined,
+    () => ({ ensureAutomationWorkers() {}, tightenIssueAutomation: () => 0 }),
     () => true,
     () => {},
     () => {},
   );
-  return { db, store, automations, calls };
+  if (admitLabel !== undefined) {
+    automations.setContributorFlow({
+      workspaceId: 'ws-1',
+      repo: 'acme/app',
+      mode: 'governed',
+      actionableIssueKinds: ['bug'],
+      queueIssues: true,
+      autoApplyTriage: false,
+      mergeMethod: 'squash',
+      maxAttempts: 4,
+      ownerId: 'alice',
+      updatedAt: 10,
+      admitLabel,
+    });
+  }
+  return { db, store, automations, events };
 }
 
-const FLOW = Object.freeze({
-  workspaceId: 'ws-1',
-  repo: 'acme/app',
-  mode: 'governed',
-  actionableIssueKinds: ['bug'],
-  queueIssues: true,
-  autoApplyTriage: false,
-  mergeMethod: 'squash',
-  maxAttempts: 4,
-  ownerId: 'alice',
-  updatedAt: 10,
-  admitLabel: 'agent:ready',
+const openIssue = (labels) => ({
+  number: 7,
+  state: 'open',
+  labels,
+  title: 't',
+  body: '',
+  user: { login: 'dana' },
+  assignees: [],
+  comments: 0,
+  html_url: '',
+  created_at: '',
+  updated_at: '',
+  closed_at: null,
 });
 
-const job = (senderLogin) => ({
-  repo: 'acme/app',
-  payload: JSON.stringify({
-    action: 'labeled',
-    webhookOwnerId: 'alice',
-    automationOwnerId: 'alice',
-    senderLogin,
-  }),
-});
+/** Enqueue a real webhook-shaped delivery and run it the way the pump does. */
+async function deliver(store, automations, { action, sender, label }) {
+  store.enqueueDelivery({
+    id: `d-${action}-${label ?? 'none'}-${sender ?? 'none'}`,
+    repo: 'acme/app',
+    event: 'issues',
+    action,
+    payload: JSON.stringify({
+      action,
+      webhookOwnerId: 'alice',
+      automationOwnerId: 'alice',
+      senderLogin: sender,
+      label,
+      issue: openIssue([{ name: 'agent:ready' }]),
+    }),
+    orderingKey: 'acme/app:issue:7',
+  });
+  const [job] = store.claimDueDeliveries(1, Date.now(), []);
+  assert.ok(job, 'the delivery was not claimable');
+  await automations.runDelivery(job);
+  return store.db ?? null;
+}
 
-const openIssue = (labels) => ({ number: 7, state: 'open', labels });
+const rowFor = (db, id) =>
+  db.prepare(`SELECT status, attempts, next_attempt_at FROM automation_deliveries WHERE id = ?`).get(id);
 
-test('an authorised collaborator applying the label admits the issue', async () => {
-  const { db, automations, calls } = fixture({
+test('an authorised collaborator applying the admit label admits the issue', async () => {
+  const { db, store, automations, events } = fixture({
     issue: openIssue([{ name: 'agent:ready' }]),
     permission: 'write',
   });
-  const refusal = await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready');
-  assert.equal(refusal, null);
-  // Both facts came from GitHub, not from the delivery.
-  assert.deepEqual(calls, ['issue:acme/app#7', 'permission:carol']);
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'agent:ready' });
+  assert.deepEqual(events, ['AGENT PIPELINE STARTED', 'MODEL CALL: triage']);
   db.close();
 });
 
-test('a label removed after the event is refused', async () => {
-  // The delivery says `labeled`; live state says otherwise. The queue is
-  // durable, so this is a race that really happens rather than a hypothetical.
-  const { db, automations } = fixture({ issue: openIssue([]), permission: 'write' });
-  const refusal = await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready');
-  assert.match(refusal, /agent:ready is not on the issue/);
-  db.close();
-});
-
-test('a closed issue is refused even while it carries the label', async () => {
-  const { db, automations } = fixture({
-    issue: { number: 7, state: 'closed', labels: [{ name: 'agent:ready' }] },
-    permission: 'write',
-  });
-  const refusal = await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready');
-  assert.match(refusal, /closed/);
-  db.close();
-});
-
-test('read and triage may apply a label but may not admit work', async () => {
-  // The bar is the bar for changing the repository, not for labelling it.
-  for (const permission of ['read', 'triage', 'none']) {
-    const { db, automations } = fixture({
-      issue: openIssue([{ name: 'agent:ready' }]),
-      permission,
-    });
-    const refusal = await automations.admissionRefusal(job('mallory'), FLOW, { number: 7 }, 'agent:ready');
-    assert.match(refusal, /mallory may not admit work here/, `${permission} was allowed to admit`);
-    db.close();
-  }
-});
-
-test('write, maintain and admin may admit', async () => {
-  for (const permission of ['write', 'maintain', 'admin']) {
-    const { db, automations } = fixture({
-      issue: openIssue([{ name: 'agent:ready' }]),
-      permission,
-    });
-    const refusal = await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready');
-    assert.equal(refusal, null, `${permission} was refused`);
-    db.close();
-  }
-});
-
-test('a delivery with no known actor is refused before GitHub is asked', async () => {
-  // A job persisted before the sender was captured reads as "no known actor".
-  // Refusing costs a re-label; guessing an actor would admit on nobody's say-so.
-  const { db, automations, calls } = fixture({
+test('an unrelated label from a maintainer does not admit a still-labelled issue', async () => {
+  // The issue still carries `agent:ready` from someone who could not admit it.
+  // A maintainer later adds `duplicate`. Matching on "some label was applied by
+  // someone with write" would admit here, on a decision she never took.
+  const { db, store, automations, events } = fixture({
     issue: openIssue([{ name: 'agent:ready' }]),
     permission: 'admin',
   });
-  const refusal = await automations.admissionRefusal(job(null), FLOW, { number: 7 }, 'agent:ready');
-  assert.match(refusal, /acting GitHub account is unknown/);
-  assert.deepEqual(calls, [], 'GitHub was asked about an event with no actor');
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'duplicate' });
+  assert.deepEqual(events, [], 'an unrelated label started work');
   db.close();
 });
 
-test('an unreachable GitHub fails closed', async () => {
-  const { db, automations } = fixture({
+test('the agent pipeline does not start ahead of a refusal', async () => {
+  // The pipeline's issue steps include `agent`, so a gate below it does not
+  // gate: the work it refuses has already started.
+  const { db, store, automations, events } = fixture({
+    issue: openIssue([{ name: 'agent:ready' }]),
+    permission: 'read',
+  });
+  await deliver(store, automations, { action: 'labeled', sender: 'mallory', label: 'agent:ready' });
+  assert.deepEqual(events, [], 'a refused issue still started an agent pipeline');
+  db.close();
+});
+
+test('a policy refusal finishes the delivery', async () => {
+  const { db, store, automations } = fixture({
+    issue: openIssue([{ name: 'agent:ready' }]),
+    permission: 'triage',
+  });
+  await deliver(store, automations, { action: 'labeled', sender: 'mallory', label: 'agent:ready' });
+  const row = rowFor(db, 'd-labeled-agent:ready-mallory');
+  assert.equal(row.status, 'completed', 'a decided refusal should not be retried forever');
+  db.close();
+});
+
+test('an unreachable GitHub retries instead of completing', async () => {
+  // The failure this guards: a 30-second API blip marks a SANCTIONED admission
+  // completed, the health page shows green, the label sits on the issue forever
+  // and `retryDelivery` cannot reach a completed row.
+  const { db, store, automations } = fixture({
     issue: openIssue([{ name: 'agent:ready' }]),
     permission: 'admin',
     throws: true,
   });
-  const refusal = await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready');
-  assert.match(refusal, /could not confirm admission/);
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'agent:ready' });
+  const row = rowFor(db, 'd-labeled-agent:ready-carol');
+  assert.notEqual(row.status, 'completed', 'a transient API failure silently dropped the admission');
+  assert.ok(row.attempts >= 1);
   db.close();
 });
 
-test('a bare string label is matched as well as an object', async () => {
-  // GitHub returns either shape depending on the endpoint; matching only the
-  // object form would silently never admit.
-  const { db, automations } = fixture({ issue: openIssue(['agent:ready']), permission: 'write' });
-  assert.equal(await automations.admissionRefusal(job('carol'), FLOW, { number: 7 }, 'agent:ready'), null);
+test('with no admission label the flow still reacts to opened and ignores labeled', async () => {
+  const { db, store, automations, events } = fixture({
+    issue: openIssue([]),
+    permission: 'none',
+    admitLabel: null,
+  });
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'anything' });
+  assert.deepEqual(events, [], 'labeled triggered a flow that named no admission label');
+
+  await deliver(store, automations, { action: 'opened', sender: 'carol', label: null });
+  assert.deepEqual(events, ['AGENT PIPELINE STARTED', 'MODEL CALL: triage'], 'opened stopped working');
   db.close();
 });
 
-test('the admission label round-trips, and an empty one reads as absent', () => {
-  const { db, store } = fixture({});
-  store.setContributorFlow(FLOW);
-  assert.equal(store.contributorFlow('acme/app').admitLabel, 'agent:ready');
+test('a delivery with no known actor is refused', async () => {
+  const { db, store, automations, events } = fixture({
+    issue: openIssue([{ name: 'agent:ready' }]),
+    permission: 'admin',
+  });
+  await deliver(store, automations, { action: 'labeled', sender: null, label: 'agent:ready' });
+  assert.deepEqual(events, [], 'an event with no actor admitted work');
+  db.close();
+});
 
-  // An empty string is not a label. Read as one it would make the gate
-  // unsatisfiable rather than absent - the flow would go silent with no refusal
-  // to read, which is the worse of the two failures.
+test('an omitted admitLabel preserves the stored one', () => {
+  // There is no UI field for this yet, so a save from any surface that has not
+  // been taught about it must not clear the gate.
+  const { db, store, automations } = fixture({ admitLabel: 'agent:ready' });
+  automations.setContributorFlow({
+    workspaceId: 'ws-1',
+    repo: 'acme/app',
+    mode: 'governed',
+    actionableIssueKinds: ['bug'],
+    queueIssues: true,
+    autoApplyTriage: false,
+    mergeMethod: 'squash',
+    maxAttempts: 5,
+    ownerId: 'alice',
+    updatedAt: 11,
+  });
+  const saved = store.contributorFlow('acme/app');
+  assert.equal(saved.admitLabel, 'agent:ready', 'a save without the field switched the gate off');
+  assert.equal(saved.maxAttempts, 5, 'the save did not take');
+
+  automations.setContributorFlow({ ...saved, admitLabel: null, updatedAt: 12 });
+  assert.equal(store.contributorFlow('acme/app').admitLabel, null, 'an explicit null must clear it');
+  db.close();
+});
+
+test('an empty stored label reads as absent, and the migration is idempotent', () => {
+  const { db, store } = fixture({ admitLabel: 'agent:ready' });
+  // Read as a label, an empty string makes the gate unsatisfiable with no
+  // refusal to read - silence, which is the worse of the two failures.
   db.prepare(`UPDATE contributor_flows SET admit_label = '' WHERE repo = ?`).run('acme/app');
   assert.equal(store.contributorFlow('acme/app').admitLabel, null);
 
-  db.prepare(`UPDATE contributor_flows SET admit_label = NULL WHERE repo = ?`).run('acme/app');
-  assert.equal(store.contributorFlow('acme/app').admitLabel, null);
+  const sixth = migrations.find((m) => m.version === 6);
+  sixth.up(db);
+  assert.equal(store.contributorFlow('acme/app').admitLabel, null, 're-running the migration lost data');
   db.close();
 });
