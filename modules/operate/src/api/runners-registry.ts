@@ -218,15 +218,23 @@ export class Runners {
    */
   async adoptDetectedRuntimes(): Promise<void> {
     const row = this.store.runners.get(LOCAL_RUNNER_ID);
-    if (!row || row.harnesses.length > 0) return;
+    // A list the operator PICKED is theirs; adoption never edits it. A list
+    // adoption wrote is not a choice, and is topped up as new harnesses become
+    // available - otherwise a machine that first booted with one harness is
+    // pinned to it forever, and installing another can never make it
+    // selectable. That is not hypothetical: it is what `["moxxy"]` meant on
+    // every instance that predated a second harness.
+    if (!row || row.harnessesExplicit) return;
     const ready = offeredHarnesses(await this.detected())
       .filter((runtime) => runtime.state === 'ready')
       .map((runtime) => runtime.id);
     if (ready.length === 0) return;
-    this.store.runners.update(LOCAL_RUNNER_ID, { harnesses: ready });
+    const merged = [...new Set([...row.harnesses, ...ready])];
+    if (merged.length === row.harnesses.length) return;
+    this.store.runners.update(LOCAL_RUNNER_ID, { harnesses: merged });
     this.rebuildModelIndex();
     this.broadcast({ t: 'runners.changed' });
-    log.info('adopted detected agent runtimes for this machine', { runtimes: ready });
+    log.info('adopted detected agent runtimes for this machine', { runtimes: merged });
   }
 
   /**
@@ -893,7 +901,14 @@ export class Runners {
     if (row.kind === 'local') {
       // Only this machine's set is a choice; a remote one runs what its agent
       // can spawn, so accepting a set there would record a lie.
-      this.store.runners.update(id, { ...reach, harnesses: req.harnesses });
+      // Setting the list by hand makes it a CHOICE, which adoption then leaves
+      // alone. Without this the two are the same write, and adoption cannot
+      // tell "the operator wants only this one" from "this is all there was".
+      this.store.runners.update(id, {
+        ...reach,
+        harnesses: req.harnesses,
+        ...(req.harnesses !== undefined ? { harnessesExplicit: true } : {}),
+      });
       if (req.harnesses !== undefined) {
         // The old catalog described a runtime this machine no longer runs.
         // Keeping it until a fresh probe SUCCEEDS is how a machine ends up

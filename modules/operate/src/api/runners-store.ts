@@ -43,6 +43,8 @@ export interface RunnerRow {
   /** Harness ids this machine runs work through, in preference order (JSON
    *  array). Empty = never chosen, which reads as moxxy alone. */
   harnesses: string[];
+  /** True when an operator picked the list, false when it was adopted. */
+  harnessesExplicit: boolean;
   /** Last-fetched provider/model catalog (JSON), or null. */
   catalog: RunnerCatalog | null;
   created_at: number;
@@ -128,6 +130,7 @@ export class RunnersStore {
       disabled_providers: parseJson<string[]>(row.disabled_providers, []),
       disabled_models: parseJson<string[]>(row.disabled_models, []),
       harnesses: parseJson<string[]>(row.harnesses, []),
+      harnessesExplicit: row.harnesses_explicit === 1,
       catalog: parseJson<RunnerCatalog | null>(row.catalog, null),
       workspace_ids: row.scope === 'delegated' ? this.workspaceIds(row.id) : [],
       repo_ids: repoScope === 'selected' ? this.repoIds(row.id) : [],
@@ -225,6 +228,7 @@ export class RunnersStore {
       allowedRoles: readonly string[];
       /** Full replacement harness set, in preference order. */
       harnesses: readonly string[];
+      harnessesExplicit: boolean;
     }>,
   ): void {
     const current = this.get(id);
@@ -240,7 +244,7 @@ export class RunnersStore {
         `UPDATE runners SET name = @name, endpoint = @endpoint, token = @token, scope = @scope,
          max_runs = @maxRuns, enabled = @enabled, task_policy_mode = @mode, policy_modules = @modules,
          policy_tasks = @tasks, repo_scope = @repoScope, allowed_roles = @roles,
-         harnesses = @harnesses WHERE id = @id`,
+         harnesses = @harnesses, harnesses_explicit = @harnessesExplicit WHERE id = @id`,
       )
       .run({
         id,
@@ -256,6 +260,7 @@ export class RunnersStore {
         repoScope: fields.repoScope ?? current.repo_scope,
         roles: jsonList(roles),
         harnesses: jsonList(fields.harnesses ?? current.harnesses),
+        harnessesExplicit: (fields.harnessesExplicit ?? current.harnessesExplicit) ? 1 : 0,
       });
     if (fields.workspaceIds !== undefined) this.setWorkspaces(id, fields.workspaceIds);
     if (fields.repoIds !== undefined) this.setRepos(id, fields.repoIds);
@@ -364,6 +369,7 @@ type RawRunnerRow = Omit<
   | 'disabled_providers'
   | 'disabled_models'
   | 'harnesses'
+  | 'harnessesExplicit'
   | 'catalog'
 > & {
   blocked_tasks: string | null;
@@ -375,6 +381,7 @@ type RawRunnerRow = Omit<
   disabled_providers: string | null;
   disabled_models: string | null;
   harnesses: string | null;
+  harnesses_explicit: number;
   catalog: string | null;
 };
 
