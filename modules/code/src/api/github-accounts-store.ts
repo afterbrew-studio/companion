@@ -88,12 +88,26 @@ export class GithubAccountsStore {
    * it is the refresh path, not a user edit: it must never touch purposes,
    * scope or workspaces, and it runs from a background job.
    */
-  setInstallationToken(id: string, token: string, expiresAt: number): void {
+  setInstallationToken(
+    id: string,
+    token: string,
+    expiresAt: number,
+    permissions?: Readonly<Record<string, string>>,
+  ): void {
     this.requireAccount(id);
     this.secrets.set(tokenKey(id), token);
+    // Written with the token because they are minted together and describe the
+    // same grant. Omitted leaves the previous value rather than clearing it, so
+    // a caller that does not have them cannot erase what a caller that did
+    // recorded.
     this.db
-      .prepare(`UPDATE github_accounts SET token = ?, token_expires_at = ?, token_health = 'ok', token_error = NULL WHERE id = ?`)
-      .run(SECRET_MARKER, expiresAt, id);
+      .prepare(
+        `UPDATE github_accounts
+            SET token = ?, token_expires_at = ?, token_health = 'ok', token_error = NULL,
+                installation_permissions = COALESCE(?, installation_permissions)
+          WHERE id = ?`,
+      )
+      .run(SECRET_MARKER, expiresAt, permissions ? JSON.stringify(permissions) : null, id);
   }
 
   /**
@@ -124,6 +138,7 @@ export class GithubAccountsStore {
       token_expires_at: number | null;
       token_health: string | null;
       token_error: string | null;
+      installation_permissions: string | null;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -139,6 +154,7 @@ export class GithubAccountsStore {
       kind: r.kind === 'app' ? 'app' : 'pat',
       appId: r.app_id,
       installationId: r.installation_id,
+      installationPermissions: parseInstallationPermissions(r.installation_permissions),
       privateKey: r.private_key === null
         ? null
         : this.requiredSecret(privateKeyKey(r.id), `GitHub App private key ${r.id}`),
@@ -295,6 +311,8 @@ export interface GithubAccountRow {
   kind: GitHubCredentialKind;
   appId: string | null;
   installationId: string | null;
+  /** What the installation holds, as GitHub reported at mint. Null before capture. */
+  installationPermissions: Readonly<Record<string, string>> | null;
   /** The app's PEM. Never leaves the server, exactly like `token`. */
   privateKey: string | null;
   /** Epoch ms; null for a PAT, which does not expire on a schedule we know. */
@@ -302,4 +320,21 @@ export interface GithubAccountRow {
   /** Last refresh outcome; null when no refresh has ever run (every PAT). */
   tokenHealth: 'ok' | 'failing' | null;
   tokenError: string | null;
+}
+
+/**
+ * A row written before this was captured, or by a GitHub that returned nothing,
+ * reads as null rather than as an empty grant - the two are different, and only
+ * the caller can decide what an unknown grant means.
+ */
+function parseInstallationPermissions(raw: unknown): Readonly<Record<string, string>> | null {
+  if (typeof raw !== 'string' || raw === '') return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, string>)
+      : null;
+  } catch {
+    return null;
+  }
 }

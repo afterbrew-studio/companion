@@ -184,7 +184,7 @@ export class GitHubAccounts {
       // Before the token, so a rotated key or a moved installation actually
       // takes effect instead of being reported as connected and ignored.
       this.store.githubAccounts.setAppCredentials(existing.id, app);
-      this.store.githubAccounts.setInstallationToken(existing.id, minted.token, minted.expiresAt);
+      this.store.githubAccounts.setInstallationToken(existing.id, minted.token, minted.expiresAt, minted.permissions);
       this.clients.delete(existing.id);
       this.clearAccessCache(existing.id);
       return toRecord({
@@ -263,7 +263,7 @@ export class GitHubAccounts {
       const wasFailing = row.tokenHealth === 'failing';
       try {
         const minted = await mintInstallationToken(this.api, row.appId!, row.installationId!, row.privateKey!);
-        this.store.githubAccounts.setInstallationToken(row.id, minted.token, minted.expiresAt);
+        this.store.githubAccounts.setInstallationToken(row.id, minted.token, minted.expiresAt, minted.permissions);
         // The cached client closed over the old token string.
         this.clients.delete(row.id);
         refreshed++;
@@ -413,6 +413,23 @@ export class GitHubAccounts {
    * complete. Probes are shared with resolution (same TTL cache), so listing a
    * workspace's repos costs one request per repo, not one per repo per action.
    */
+  /**
+   * What an app installation may do, from the permissions GitHub reported when
+   * it minted the token.
+   *
+   * `contents` is the one that decides: pushing a branch is a contents write,
+   * and that is what "can this board open a pull request" turns on. Absent
+   * permissions read as `pull` - a token minted before this was captured says
+   * nothing about capability, and guessing upward would claim write this
+   * installation may not hold.
+   */
+  private appPermission(row: GithubAccountRow): RepoPermission {
+    const contents = row.installationPermissions?.contents;
+    if (contents === 'write') return 'push';
+    if (contents === 'read') return 'pull';
+    return 'pull';
+  }
+
   async permissionFor(
     purpose: GitHubPurpose,
     fullName: string,
@@ -421,8 +438,14 @@ export class GitHubAccounts {
     const candidates = this.candidatesFor(purpose, { ...ctx, repo: fullName });
     let best: RepoPermission | null = null;
     for (const row of candidates) {
-      const granted = await this.grantedOn(row, fullName);
-      if (granted && (!best || RANK[granted] > RANK[best])) best = granted;
+      const visible = await this.grantedOn(row, fullName);
+      if (visible === null) continue;
+      // An app's grade comes from its installation, not from the repository's
+      // user-centric block - which answers `pull` for every installation and so
+      // reported every app as read-only. Callers act on this: the task board
+      // refuses to start work on a repo it believes it cannot push to.
+      const granted = row.kind === 'app' ? this.appPermission(row) : visible;
+      if (!best || RANK[granted] > RANK[best]) best = granted;
       if (best === 'admin') break;
     }
     return best;
@@ -553,8 +576,9 @@ export class GitHubAccounts {
           repo: fullName,
           need,
         });
+        return false;
       }
-      return granted !== null;
+      return RANK[this.appPermission(row)] >= RANK[need];
     }
 
     const ok = granted !== null && RANK[granted] >= RANK[need];

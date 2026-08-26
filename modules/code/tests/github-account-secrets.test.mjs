@@ -11,7 +11,7 @@ function fixture() {
       purposes TEXT NOT NULL DEFAULT '[]', scope TEXT NOT NULL DEFAULT 'all',
       owner_id TEXT, created_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'pat',
       app_id TEXT, installation_id TEXT, private_key TEXT, token_expires_at INTEGER,
-      token_health TEXT, token_error TEXT
+      token_health TEXT, token_error TEXT, installation_permissions TEXT
     );
     CREATE TABLE github_account_workspaces (
       account_id TEXT NOT NULL, workspace_id TEXT NOT NULL,

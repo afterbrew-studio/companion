@@ -696,4 +696,25 @@ export default defineMigrations([
       `);
     },
   },
+  {
+    /**
+     * What an app installation holds, captured when GitHub mints its token.
+     *
+     * The only authoritative source: `GET /repos/...`'s `permissions` block
+     * describes a USER, so an installation grades `pull` there however it was
+     * configured - which read as read-only everywhere it mattered, including
+     * the board's "can I open a pull request" check.
+     */
+    version: 24,
+    name: 'github_accounts_installation_permissions',
+    up: (db) => {
+      const cols = db.prepare(`PRAGMA table_info(github_accounts)`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === 'installation_permissions')) {
+        db.exec(`ALTER TABLE github_accounts ADD COLUMN installation_permissions TEXT`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE github_accounts DROP COLUMN installation_permissions`);
+    },
+  },
 ]);
