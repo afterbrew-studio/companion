@@ -307,6 +307,7 @@ test('contributor policy round-trips and malformed issue kinds fail closed', () 
     updatedAt: 10,
     admitLabel: null,
     externalReviewLogin: null,
+    humanMergeLabels: null,
   };
 
   store.setContributorFlow(policy);

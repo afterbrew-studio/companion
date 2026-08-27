@@ -386,10 +386,10 @@ export class AutomationsStore {
         `INSERT INTO contributor_flows
            (repo, workspace_id, mode, actionable_issue_kinds, queue_issues,
             auto_apply_triage, merge_method, max_attempts, owner_id, updated_at,
-            admit_label, external_review_login)
+            admit_label, external_review_login, human_merge_labels)
          VALUES (@repo, @workspaceId, @mode, @actionableKinds, @queueIssues,
                  @autoApplyTriage, @mergeMethod, @maxAttempts, @ownerId, @updatedAt,
-                 @admitLabel, @externalReviewLogin)
+                 @admitLabel, @externalReviewLogin, @humanMergeLabels)
          ON CONFLICT(repo) DO UPDATE SET
            workspace_id = excluded.workspace_id, mode = excluded.mode,
            actionable_issue_kinds = excluded.actionable_issue_kinds,
@@ -397,7 +397,8 @@ export class AutomationsStore {
            merge_method = excluded.merge_method, max_attempts = excluded.max_attempts,
            owner_id = excluded.owner_id, updated_at = excluded.updated_at,
            admit_label = excluded.admit_label,
-           external_review_login = excluded.external_review_login`,
+           external_review_login = excluded.external_review_login,
+           human_merge_labels = excluded.human_merge_labels`,
       )
       .run({
         repo: policy.repo,
@@ -412,6 +413,7 @@ export class AutomationsStore {
         updatedAt: policy.updatedAt,
         admitLabel: policy.admitLabel,
         externalReviewLogin: policy.externalReviewLogin,
+        humanMergeLabels: policy.humanMergeLabels,
       });
   }
 
@@ -492,6 +494,7 @@ interface ContributorFlowRow {
   /** Null on a row written before the column existed. */
   admit_label: string | null;
   external_review_login: string | null;
+  human_merge_labels: string | null;
 }
 
 interface AdmissionControlRow {
@@ -572,6 +575,10 @@ function contributorFlowRow(row: ContributorFlowRow): ContributorFlowPolicy {
     externalReviewLogin:
       typeof row.external_review_login === 'string' && row.external_review_login !== ''
         ? row.external_review_login
+        : null,
+    humanMergeLabels:
+      typeof row.human_merge_labels === 'string' && row.human_merge_labels !== ''
+        ? row.human_merge_labels
         : null,
   };
 }

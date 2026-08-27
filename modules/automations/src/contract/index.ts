@@ -86,6 +86,20 @@ export interface ContributorFlowPolicy {
    * one.
    */
   readonly externalReviewLogin: string | null;
+  /**
+   * Labels that hold the autonomous merge for a person, comma separated.
+   *
+   * The reviewer answers "is this change correct". It cannot answer "may this
+   * change land without a person", because that is a property of what the change
+   * TOUCHES, not of its quality: a correct migration, a correct edit to a
+   * compliance document, a correct change to the enforcement layer are each
+   * things a repository may want a human to sign off precisely because a mistake
+   * there is not recoverable by a later review.
+   *
+   * Whatever computes that - a CI classifier, a person - says so with a label,
+   * and this is the list of labels that means stop.
+   */
+  readonly humanMergeLabels: string | null;
   readonly mergeMethod: 'merge' | 'squash' | 'rebase';
   readonly maxAttempts: number;
   readonly ownerId: string;

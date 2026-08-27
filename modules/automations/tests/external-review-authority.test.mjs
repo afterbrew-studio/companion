@@ -178,3 +178,39 @@ test('a truncated review list holds the merge', async () => {
   assert.equal(await ask(automations, client), false);
   db.close();
 });
+
+test('a label in humanMergeLabels holds the merge', () => {
+  // A reviewer answers "is this correct". It cannot answer "may this land
+  // without a person", which is a property of what the change TOUCHES: a
+  // correct migration or compliance edit is exactly the case a repository wants
+  // signed off, because the mistake is not recoverable by a later review.
+  const holdLabels = ['review:human', 'tier:human'];
+  const prLabels = ['tier:human', 'documentation'];
+  const held = holdLabels.filter((l) => prLabels.some((a) => a.toLowerCase() === l));
+  assert.deepEqual(held, ['tier:human'], 'a held label must be detected case-insensitively');
+});
+
+test('the merge-hold list round-trips and an omitted field preserves it', () => {
+  const { db, store, automations } = fixture([]);
+  const base = {
+    workspaceId: 'ws-1', repo: 'acme/app', mode: 'autonomous',
+    actionableIssueKinds: ['bug'], queueIssues: true, autoApplyTriage: false,
+    mergeMethod: 'squash', maxAttempts: 3, ownerId: 'alice', updatedAt: 1,
+    admitLabel: 'agent:ready', externalReviewLogin: 'octopus[bot]',
+    humanMergeLabels: 'review:human,tier:human',
+  };
+  store.setContributorFlow(base);
+  assert.equal(store.contributorFlow('acme/app').humanMergeLabels, 'review:human,tier:human');
+
+  const { humanMergeLabels: _omitted, ...withoutIt } = base;
+  automations.setContributorFlow({ ...withoutIt, maxAttempts: 5, updatedAt: 2 });
+  assert.equal(
+    store.contributorFlow('acme/app').humanMergeLabels,
+    'review:human,tier:human',
+    'omitting the field must not remove the merge hold',
+  );
+
+  db.prepare(`UPDATE contributor_flows SET human_merge_labels = '' WHERE repo = ?`).run('acme/app');
+  assert.equal(store.contributorFlow('acme/app').humanMergeLabels, null, 'empty reads as absent');
+  db.close();
+});

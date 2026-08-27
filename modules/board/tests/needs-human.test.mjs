@@ -128,3 +128,45 @@ test('an empty diff with no question is still a failed attempt', async () => {
   assert.notEqual(task.status, 'backlog', 'a plain no-diff run must not read as a question');
   assert.equal(task.attempts, 1, 'it must still consume an attempt');
 });
+
+test('applying the label by hand stops a card already in flight', async () => {
+  // Without this the label is only honoured when the WORKER raises it: a person
+  // noticing mid-flight that a task is underspecified would label the issue and
+  // watch the agent carry on, which makes a stop look advisory.
+  const discarded = [];
+  const { store, makeService } = fixture({
+    discard: async (runId) => discarded.push(runId),
+  });
+  insertTask(store, { id: 'tsk-1', runId: 'run-9', status: 'in_progress', sourceIssueNumber: 42 });
+
+  const held = await makeService().holdForHumanAnswer('owner/repo', 42, 'alice marked it');
+  assert.equal(held, true);
+  const task = store.getTask('tsk-1');
+  assert.equal(task.status, 'backlog');
+  assert.equal(task.runId, null);
+  assert.match(task.lastError, /waiting on a human/);
+  assert.deepEqual(discarded, ['run-9'], 'the in-flight run is discarded, not left running');
+});
+
+test('holding does not disturb a finished card', async () => {
+  // Re-parking a done card would undo a finished outcome.
+  const { store, makeService } = fixture({});
+  insertTask(store, { id: 'tsk-1', status: 'done', sourceIssueNumber: 42 });
+
+  assert.equal(await makeService().holdForHumanAnswer('owner/repo', 42, 'late label'), false);
+  assert.equal(store.getTask('tsk-1').status, 'done');
+});
+
+test('hold then resume returns the card to the queue', async () => {
+  const { store, makeService } = fixture({ discard: async () => undefined });
+  insertTask(store, { id: 'tsk-1', runId: 'run-9', status: 'in_progress', sourceIssueNumber: 42, attempts: 2 });
+  const service = makeService();
+
+  await service.holdForHumanAnswer('owner/repo', 42, 'needs a decision');
+  assert.equal(store.getTask('tsk-1').status, 'backlog');
+
+  assert.equal(service.resumeAfterHumanAnswer('owner/repo', 42), true);
+  const task = store.getTask('tsk-1');
+  assert.equal(task.status, 'ready');
+  assert.equal(task.attempts, 0);
+});
