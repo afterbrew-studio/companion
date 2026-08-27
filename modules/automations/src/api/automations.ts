@@ -498,6 +498,22 @@ export class Automations {
             err: String(err),
           });
         });
+        // `syncPr` reads the REST pull request, which carries no review
+        // decision - that field is GraphQL-only and arrives with the list sync.
+        // This fetch folds the decision from the reviews themselves, which is
+        // the whole reason to react to this event.
+        //
+        // Doing it HERE rather than leaving it to the merge sweep matters: a
+        // gate that waits for `approved` cannot be the thing that refreshes
+        // `approved`, and the sweep reaches its refresh only after passing the
+        // gate. Deciding on arrival breaks that circle.
+        await this.prChecks.trySummary(job.repo, number, owner).catch((err) => {
+          log.warn('could not refresh the review decision', {
+            repo: job.repo,
+            prNumber: number,
+            err: String(err),
+          });
+        });
       }
       return;
     }
