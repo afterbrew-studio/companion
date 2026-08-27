@@ -164,4 +164,19 @@ export default defineMigrations([
       db.exec(`ALTER TABLE contributor_flows DROP COLUMN external_review_login`);
     },
   },
+  {
+    version: 8,
+    name: 'contributor_flow_human_merge_labels',
+    up: (db) => {
+      // Null means "as before": nothing holds the merge. Not defaulted to a
+      // list, because the label vocabulary is the repository's, not ours.
+      const columns = db.prepare(`PRAGMA table_info(contributor_flows)`).all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'human_merge_labels')) {
+        db.exec(`ALTER TABLE contributor_flows ADD COLUMN human_merge_labels TEXT`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE contributor_flows DROP COLUMN human_merge_labels`);
+    },
+  },
 ]);

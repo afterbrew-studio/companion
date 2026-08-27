@@ -32,6 +32,7 @@ const contributorFlowSchema = z.object({
   admitLabel: z.string().trim().min(1).max(100).nullable().optional(),
   // Same optional-not-defaulted rule as admitLabel: an omitted field preserves.
   externalReviewLogin: z.string().trim().min(1).max(100).nullable().optional(),
+  humanMergeLabels: z.string().trim().max(400).nullable().optional(),
   mergeMethod: z.enum(['merge', 'squash', 'rebase']).default('squash'),
   maxAttempts: z.number().int().min(1).max(10).default(3),
 });
@@ -565,6 +566,7 @@ export default defineRoutes((ctx) => {
           autoApplyTriage: body.autoApplyTriage,
           admitLabel: body.admitLabel,
           externalReviewLogin: body.externalReviewLogin,
+          humanMergeLabels: body.humanMergeLabels,
           mergeMethod: body.mergeMethod,
           maxAttempts: body.maxAttempts,
           ownerId: user!.username,

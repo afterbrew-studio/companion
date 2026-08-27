@@ -384,6 +384,39 @@ export class BoardService {
     return true;
   }
 
+  /**
+   * Someone applied the wait label by hand: stop the card.
+   *
+   * The symmetric half of `resumeAfterHumanAnswer`. Without it the label is only
+   * honoured when the WORKER raises it - a person noticing mid-flight that a
+   * task is underspecified would label the issue and watch the agent carry on
+   * regardless, which makes the label look advisory when it is meant to be a
+   * stop.
+   *
+   * An in-flight run is discarded, not awaited. Its work is uncommitted and
+   * unreviewed by definition, and the point of the label is that nobody wants
+   * the decision it was about to make.
+   */
+  async holdForHumanAnswer(repo: string, issueNumber: number, reason: string): Promise<boolean> {
+    const task = this.store.taskBySourceIssue(repo, issueNumber);
+    if (!task) return false;
+    // Terminal cards are not "in flight" and re-parking them would undo a
+    // finished outcome.
+    if (task.status === 'done' || task.status === 'backlog') return false;
+
+    const runId = task.runId;
+    this.store.updateTask(task.id, {
+      status: 'backlog',
+      stage: task.stage && WORK_STAGES.has(task.stage) ? task.stage : null,
+      runId: null,
+      lastError: `waiting on a human: ${reason.slice(0, 400)}`,
+    });
+    this.store.insertEvent(task.id, 'parked', reason.slice(0, 200));
+    this.changed();
+    if (runId) await this.code.fixes.discard(runId).catch(() => undefined);
+    return true;
+  }
+
   ensureAutomationWorkers(workspaceId: string): void {
     const workers = this.store.listWorkers(workspaceId);
     if (!workers.some((worker) => worker.enabled && worker.role === 'developer')) {

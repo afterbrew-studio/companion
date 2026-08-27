@@ -45,6 +45,11 @@ const DELIVERY_POLL_MS = 5_000;
  */
 const NEEDS_HUMAN_LABEL = 'tier:ai-needs-human';
 
+/** GitHub returns a label as a bare string or an object, depending on the endpoint. */
+function named(label: string | { name?: string }): string {
+  return typeof label === 'string' ? label : (label.name ?? '');
+}
+
 const DELIVERY_MAX_ATTEMPTS = 8;
 const DELIVERY_TITLE_CHARS = 500;
 const DELIVERY_BODY_CHARS = 64_000;
@@ -378,9 +383,10 @@ export class Automations {
    * had been on.
    */
   setContributorFlow(
-    input: Omit<ContributorFlowPolicy, 'admitLabel' | 'externalReviewLogin'> & {
+    input: Omit<ContributorFlowPolicy, 'admitLabel' | 'externalReviewLogin' | 'humanMergeLabels'> & {
       admitLabel?: string | null;
       externalReviewLogin?: string | null;
+      humanMergeLabels?: string | null;
     },
   ): ContributorFlowPolicy {
     const stored = this.store.contributorFlow(input.repo);
@@ -391,6 +397,10 @@ export class Automations {
         input.externalReviewLogin === undefined
           ? (stored?.externalReviewLogin ?? null)
           : input.externalReviewLogin,
+      humanMergeLabels:
+        input.humanMergeLabels === undefined
+          ? (stored?.humanMergeLabels ?? null)
+          : input.humanMergeLabels,
     };
     const board = this.board();
     if (!board) throw new Error('enable the Task board module before enabling a contributor flow');
@@ -570,6 +580,18 @@ export class Automations {
     // being accepted, so the card goes back in the queue - before the admission
     // gate below, because this is not a new admission. The issue was already
     // admitted; it is the same work resuming.
+    if (payload.action === 'labeled' && applied === NEEDS_HUMAN_LABEL) {
+      const held = await (this.board()?.holdForHumanAnswer(
+        job.repo,
+        issue.number,
+        `${payload.senderLogin ?? 'someone'} marked #${issue.number} as needing a human`,
+      ) ?? Promise.resolve(false));
+      this.stage(
+        job.id,
+        held ? `#${issue.number} held for a human` : `#${issue.number} has no active task to hold`,
+      );
+      return;
+    }
     if (payload.action === 'unlabeled' && applied === NEEDS_HUMAN_LABEL) {
       const resumed = this.board()?.resumeAfterHumanAnswer(job.repo, issue.number) ?? false;
       this.stage(
@@ -590,6 +612,14 @@ export class Automations {
     // `agent` - a full agent run against the repository - so a gate placed after
     // it does not gate: the work it refuses has already started.
     if (flow !== null && flow.admitLabel !== null) {
+      // A question in flight is a reason not to start, not merely a reason to
+      // stop what is running. Re-applying the admission label while the
+      // question is open would otherwise re-admit the same work the worker
+      // parked because it could not decide.
+      if ((issue.labels ?? []).some((label) => named(label) === NEEDS_HUMAN_LABEL)) {
+        this.stage(job.id, `#${issue.number} is waiting on a human; not admitting`);
+        return;
+      }
       const refusal = await this.admissionRefusal(job, flow, issue, flow.admitLabel, payload);
       if (refusal !== null) {
         this.stage(job.id, `#${issue.number} not admitted: ${refusal}`);
@@ -1069,7 +1099,12 @@ export class Automations {
           pr.reviewRisk === 'low' &&
           pr.checks?.state === 'passing',
       );
-    const externalLogin = this.store.contributorFlow(repo)?.externalReviewLogin ?? null;
+    const mergeFlow = this.store.contributorFlow(repo);
+    const externalLogin = mergeFlow?.externalReviewLogin ?? null;
+    const holdLabels = (mergeFlow?.humanMergeLabels ?? '')
+      .split(',')
+      .map((label) => label.trim().toLowerCase())
+      .filter((label) => label !== '');
     const cursorKey = `autoMergeCursor:${repo}`;
     const cursor = Number(this.store.settings.get(cursorKey) ?? 0);
     const { selected: candidates, nextCursor } = boundedRoundRobin(
@@ -1108,6 +1143,21 @@ export class Automations {
       // says so, so `reviewDecision: approved` routinely describes an EARLIER
       // commit. Merging on that would ship code no reviewer ever saw, which is
       // the one failure this whole path exists to prevent.
+      // A reviewer answers "is this change correct". It cannot answer "may this
+      // land without a person", because that is a property of what the change
+      // TOUCHES: a correct migration, a correct edit to a compliance document,
+      // a correct change to the enforcement layer are each things a repository
+      // may want signed off precisely because a mistake there is not
+      // recoverable by a later review. Whatever computes that says so with a
+      // label, and these are the labels that mean stop.
+      const held = holdLabels.filter((label) =>
+        pr.labels.some((applied) => applied.toLowerCase() === label),
+      );
+      if (held.length > 0) {
+        log.info('holding the merge for a human', { repo, prNumber: pr.number, labels: held });
+        continue;
+      }
+
       if (externalLogin !== null) {
         const verdict = await this.externalVerdict(client, repo, pr.number, externalLogin, expectedHead);
         if (!verdict.approved) continue;
