@@ -1272,6 +1272,21 @@ ${acceptance}${previous}${specSection}
         this.bindBack(task.id, 'address_review', `reviewer requested changes on PR #${task.prNumber}`, config);
         continue;
       }
+      // An external reviewer owns the verdict, so its decision - not this
+      // instance's own review - is what sends the card back for remediation.
+      // Without this the card waits at `awaiting_review` forever: nothing else
+      // reads a reviewer that is not us.
+      if (task.stage === 'awaiting_review' && !config.autoReview) {
+        if (pr.reviewDecision === 'changes_requested') {
+          this.bindBack(task.id, 'address_review', `reviewer requested changes on PR #${task.prNumber}`, config);
+        }
+        // `approved` falls through to the merge gate below, which already reads
+        // GitHub's decision when autoReview is off. Anything else - no decision
+        // yet, or a comment-only review - means the reviewer has not finished
+        // with it, and the card waits rather than guessing.
+        if (pr.reviewDecision !== 'approved') continue;
+      }
+
       if (task.stage === 'awaiting_review' && config.autoReview) {
         if (
           !this.hasAuthority(
