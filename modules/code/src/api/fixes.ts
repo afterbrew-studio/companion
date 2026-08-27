@@ -1,3 +1,4 @@
+import { log } from '@moxxy/companion-sdk/server';
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord, RunRoutingContext } from '@companion/module-operate/contract';
@@ -497,6 +498,24 @@ export class Fixes {
     });
 
     this.store.runs.setPr(runId, run.branch, pr.html_url);
+
+    // Which model wrote this. A reviewer reading the diff cannot otherwise tell
+    // a frontier attempt from a cheap one, and the two deserve different
+    // scepticism - a label is the cheapest way to carry that, and it survives on
+    // the pull request after the run's own record has aged out.
+    //
+    // Best effort: a label is not worth failing a pull request that already
+    // exists, and the model is also recorded on the run.
+    if (run.model) {
+      await client
+        .addLabels(run.repo, prNumberFromUrl(pr.html_url) ?? 0, [`model:${run.model}`])
+        .catch((err) => log.warn('could not label the pull request with its model', {
+          repo: run.repo,
+          model: run.model,
+          err: String(err),
+        }));
+    }
+
     this.orchestrator.markRun(runId, 'completed', `PR opened: ${pr.html_url}`);
     // Stop the gateway; the worktree stays for post-merge cleanup.
     await this.orchestrator.stopRun(runId).catch(() => undefined);
@@ -658,4 +677,10 @@ ${body || '(no description)'}
 - Investigate the codebase, implement a minimal correct fix, and verify it (run existing tests or a quick check where possible).
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the fix is complete and verified, finish with a short summary of what you changed and how you verified it.`;
+}
+
+/** The number out of a pull request's html_url, or null when it does not parse. */
+function prNumberFromUrl(url: string): number | null {
+  const match = /\/pull\/([0-9]+)(?:$|[/?#])/.exec(url);
+  return match ? Number(match[1]) : null;
 }
