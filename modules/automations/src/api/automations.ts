@@ -677,7 +677,12 @@ export class Automations {
     if (!board) throw new Error('the Task board module is disabled');
     board.ensureAutomationWorkers(flow.workspaceId);
     const automationPolicy: TaskAutomationPolicy = {
-      autoReview: true,
+      // A flow that names an external reviewer does not review its own work.
+      // Two reviewers on one pull request is a wasted model call and two
+      // verdicts to reconcile - and the board's merge gate already defers to
+      // GitHub's review decision when this is off, which is exactly the signal
+      // the nominated reviewer produces.
+      autoReview: flow.externalReviewLogin === null,
       autoMerge: flow.mode === 'autonomous',
       mergeMethod: flow.mergeMethod,
       autoFixCi: true,
