@@ -368,9 +368,14 @@ test('managed repository webhooks install once, reconcile, and delete idempotent
       'PATCH /repos/acme/app/hooks/42',
       'DELETE /repos/acme/app/hooks/42',
     ]);
+    // `pull_request_review` is the submission of a review, which is what moves a
+    // pull request's review decision. Subscribing only to
+    // `pull_request_review_comment` sees individual inline comments and misses a
+    // summary-only review entirely, so the cached decision never updates.
     assert.deepEqual(requests[1].body.events, [
       'issues',
       'pull_request',
+      'pull_request_review',
       'pull_request_review_comment',
       'check_run',
       'check_suite',

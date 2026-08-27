@@ -364,7 +364,21 @@ export class GitHubClient {
     const payload = {
       name: 'web',
       active: true,
-      events: ['issues', 'pull_request', 'pull_request_review_comment', 'check_run', 'check_suite', 'status'],
+      // `pull_request_review` carries the SUBMISSION of a review, which is what
+      // changes a pull request's review decision. Without it the cached
+      // `reviewDecision` never updates, and anything gating on approval waits
+      // forever on a value that is already `approved` at GitHub.
+      // `pull_request_review_comment` is a different event - one inline comment
+      // - and a summary-only review emits none of them.
+      events: [
+        'issues',
+        'pull_request',
+        'pull_request_review',
+        'pull_request_review_comment',
+        'check_run',
+        'check_suite',
+        'status',
+      ],
       config: { url, content_type: 'json', insecure_ssl: '0', secret },
     };
     if (knownId !== null) {

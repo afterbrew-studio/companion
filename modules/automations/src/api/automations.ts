@@ -483,6 +483,24 @@ export class Automations {
       await this.processPrDelivery(job, payload);
       return;
     }
+    if (job.event === 'pull_request_review') {
+      // Re-read the pull request so the cached review decision matches GitHub's.
+      // Everything downstream that waits on an approval reads the cache, and a
+      // decision it never learned about is indistinguishable from no decision.
+      const number = payload.pullRequest?.number;
+      const owner = this.store.repos.get(job.repo)?.automation_owner_id ?? null;
+      if (number && owner) {
+        this.requireAuthorized(owner, 'prs:read', 'read the review decision', job.repo);
+        await this.sync.syncPr(job.repo, number, owner).catch((err) => {
+          log.warn('could not refresh a pull request after a review', {
+            repo: job.repo,
+            prNumber: number,
+            err: String(err),
+          });
+        });
+      }
+      return;
+    }
     if (job.event === 'pull_request_review_comment' && payload.action === 'created') {
       const pr = payload.pullRequest;
       const owner = this.store.repos.get(job.repo)?.automation_owner_id ?? null;
@@ -1761,7 +1779,9 @@ function projectDelivery(
       ? { label: nullableClip((payload.label as { name?: unknown } | undefined)?.name, 200) }
       : {}),
     ...(eventName === 'issues' ? { issue: projectIssue(payload.issue) } : {}),
-    ...(eventName === 'pull_request' || eventName === 'pull_request_review_comment'
+    ...(eventName === 'pull_request' ||
+    eventName === 'pull_request_review' ||
+    eventName === 'pull_request_review_comment'
       ? { pullRequest: projectPull(payload.pull_request) }
       : {}),
     ...(eventName === 'pull_request_review_comment'
