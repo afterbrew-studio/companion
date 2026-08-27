@@ -34,6 +34,17 @@ import { buildContributorFlowDryRun, type ContributorFlowDryRunContext } from '.
 
 const DELIVERY_CONCURRENCY = 4;
 const DELIVERY_POLL_MS = 5_000;
+/**
+ * Applied to an issue while a worker waits on a decision. Removing it is the
+ * answer being accepted; the label is the whole protocol, because editing a
+ * label is a smaller ask of a person than opening a dashboard.
+ *
+ * Kept in step with the board's own constant deliberately rather than imported:
+ * automations must not depend on the board's internals, and the string is part
+ * of the interface a person interacts with.
+ */
+const NEEDS_HUMAN_LABEL = 'tier:ai-needs-human';
+
 const DELIVERY_MAX_ATTEMPTS = 8;
 const DELIVERY_TITLE_CHARS = 500;
 const DELIVERY_BODY_CHARS = 64_000;
@@ -554,6 +565,21 @@ export class Automations {
     // but only when it carries the admission label itself. Widening it to every
     // `labeled` event would make an unrelated label re-run everything below.
     const applied = payload.label ?? null;
+
+    // A worker asked a question and parked. Removing the label is the answer
+    // being accepted, so the card goes back in the queue - before the admission
+    // gate below, because this is not a new admission. The issue was already
+    // admitted; it is the same work resuming.
+    if (payload.action === 'unlabeled' && applied === NEEDS_HUMAN_LABEL) {
+      const resumed = this.board()?.resumeAfterHumanAnswer(job.repo, issue.number) ?? false;
+      this.stage(
+        job.id,
+        resumed
+          ? `#${issue.number} resumed after the question was answered`
+          : `#${issue.number} has no parked task waiting on an answer`,
+      );
+      return;
+    }
     const triggering =
       payload.action === 'opened' ||
       (admitLabel !== null && payload.action === 'labeled' && applied === admitLabel);
