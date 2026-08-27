@@ -581,6 +581,38 @@ export class Fixes {
   }
 }
 
+/**
+ * The scope contract, appended to every objective that runs on a PR branch.
+ *
+ * `buildObjective` on the board carries its own copy for the implement stage.
+ * These four - CI repair, review fixes, conflicts, and a maintainer's own
+ * instruction - had none, and the difference was not academic: a CI-repair run
+ * asked to make a check pass edited two GitHub Actions workflows on a pull
+ * request about a documentation file, because "make CI pass" without a boundary
+ * admits changing whatever is making it fail.
+ *
+ * The marker matches what the board's escalation reads, so a question here parks
+ * the card and asks a person exactly as it does at the build stage.
+ */
+const SCOPE_AND_ESCALATION = `
+## Scope
+This pull request has an intent, and it is the boundary of your work.
+
+- Change ONLY what the job above requires. Nothing else in the repository is yours to touch, however obviously it could be improved.
+- Do not edit CI configuration, workflows, build or lint settings to make a check pass. A check that fails is evidence about the code; changing the check hides it. If the only way to pass is to change how it is enforced, that is a decision for a person.
+- Do not rename, restructure or reformat code the job does not require.
+- Do not add dependencies, abstractions or tests the job does not require.
+- Mention unrelated problems you notice in your summary. Do not fix them.
+
+## When you cannot proceed without deciding something
+If finishing would require a choice this job does not settle - which behaviour is
+wanted, whether a check is even correct, which of two readings applies - then:
+
+1. Make NO changes. Leave the worktree exactly as you found it.
+2. End your turn with a single line starting \`NEEDS-HUMAN:\` and the question, stated so someone who has not read the code can answer it. Say what you would have done and why you are not doing it.
+
+Asking costs a reply. Guessing costs a change that has to be found and undone.`;
+
 function checkFixObjective(
   pr: PrRecord,
   failing: ReadonlyArray<{ name: string; conclusion: string | null; detailsUrl: string | null }>,
@@ -606,7 +638,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Start from the job logs above when they are present: they usually name the failure outright. Reproduce locally where they are absent or inconclusive (run the linter/build/test suite the failing check corresponds to), fix the causes minimally, and re-run to verify.
 - Respect the PR's intent — repair it, don't rewrite it.
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
-- Finish with a short summary: cause of each failure, what you changed, and how you verified it.`;
+- Finish with a short summary: cause of each failure, what you changed, and how you verified it${SCOPE_AND_ESCALATION}`;
 }
 
 function reviewFixObjective(pr: PrRecord, feedback: readonly string[], comments: readonly string[]): string {
@@ -625,7 +657,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Address every piece of feedback; where a comment is ambiguous, pick the reading most consistent with the codebase and note the choice in your summary.
 - Verify your changes (run relevant tests/builds where possible).
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
-- Finish with a summary mapping each review comment to what you did about it.`;
+- Finish with a summary mapping each review comment to what you did about it${SCOPE_AND_ESCALATION}`;
 }
 
 function conflictObjective(pr: PrRecord): string {
@@ -637,7 +669,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Work ONLY inside this worktree, on this branch. All origin refs were fetched just now — do NOT fetch or pull.
 - Run \`git merge origin/${pr.baseRef}\` and resolve every conflict by hand, preserving the intent of BOTH sides: keep what ${pr.baseRef} changed AND what this PR changes. Never resolve by wholesale taking one side.
 - After resolving, stage the resolved files and verify the result compiles/passes (run the build or test suite where practical), but leave the merge uncommitted and do not push — Companion completes it only after approval.
-- Finish with a short summary: which files conflicted, how you resolved each, and how you verified the result.`;
+- Finish with a short summary: which files conflicted, how you resolved each, and how you verified the result${SCOPE_AND_ESCALATION}`;
 }
 
 function customObjective(pr: PrRecord, instructions: string): string {
@@ -653,7 +685,7 @@ ${prDiffInspectionGuide(pr.baseRef)}
 - Respect the PR's intent unless the task explicitly says otherwise.
 - Verify your changes (run relevant tests/builds where possible).
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
-- Finish with a short summary of what you did and how you verified it.`;
+- Finish with a short summary of what you did and how you verified it.${SCOPE_AND_ESCALATION}`;
 }
 
 function prDiffInspectionGuide(baseRef: string): string {
@@ -676,7 +708,7 @@ ${body || '(no description)'}
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement a minimal correct fix, and verify it (run existing tests or a quick check where possible).
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
-- When the fix is complete and verified, finish with a short summary of what you changed and how you verified it.`;
+- When the fix is complete and verified, finish with a short summary of what you changed and how you verified it.${SCOPE_AND_ESCALATION}`;
 }
 
 /** The number out of a pull request's html_url, or null when it does not parse. */
