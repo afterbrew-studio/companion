@@ -38,6 +38,20 @@ const SLOT_RELEASED = new Set<RunStatus>(['completed', 'failed', 'stopped', 'aba
 /** Stages that mean "queued/running work of this kind" (valid in ready/in_progress). */
 const WORK_STAGES: ReadonlySet<TaskStage> = new Set(['build', 'address_review', 'fix_ci']);
 
+/**
+ * What a worker says instead of guessing.
+ *
+ * A sentinel rather than an inference: "the agent asked a question" and "the
+ * agent did nothing" both produce an empty diff, and only the agent knows which
+ * happened. Making it say so explicitly is what lets the two be told apart at
+ * all - without it, an escalation is charged as a failed attempt and the
+ * question is lost in a run log nobody reads.
+ */
+const NEEDS_HUMAN_MARKER = 'NEEDS-HUMAN:';
+
+/** Applied to the source issue while a worker is waiting on an answer. */
+const NEEDS_HUMAN_LABEL = 'tier:ai-needs-human';
+
 const MAX_SPEC_CHARS = 12_000;
 const MAX_SOURCE_ISSUE_CHARS = 16_000;
 const MAX_TRIAGE_SUMMARY_CHARS = 2_000;
@@ -346,6 +360,30 @@ export class BoardService {
   }
 
   /** One-click repository flows should never wait forever for logical workers. */
+  /**
+   * The answer arrived: put a parked card back in the queue.
+   *
+   * Keyed on the source issue, because the label a person removes is on the
+   * issue and they are not expected to know the card's id. Only a card this
+   * escalation parked is resumed - a card parked by hand stays parked, since
+   * removing a label is not a statement about that.
+   */
+  resumeAfterHumanAnswer(repo: string, issueNumber: number): boolean {
+    const task = this.store.taskBySourceIssue(repo, issueNumber);
+    if (!task) return false;
+    // Only a card THIS escalation parked. A card parked by hand stays parked:
+    // removing a label says nothing about that, and un-parking it would override
+    // a person's decision with a side effect.
+    if (task.status !== 'backlog' || !(task.lastError ?? '').startsWith('waiting on a human:')) {
+      return false;
+    }
+    this.store.updateTask(task.id, { status: 'ready', lastError: null, attempts: 0 });
+    this.store.insertEvent(task.id, 'queued', 'the question was answered; resuming');
+    this.changed();
+    this.kick();
+    return true;
+  }
+
   ensureAutomationWorkers(workspaceId: string): void {
     const workers = this.store.listWorkers(workspaceId);
     if (!workers.some((worker) => worker.enabled && worker.role === 'developer')) {
@@ -1081,7 +1119,32 @@ ${acceptance}${previous}${specSection}
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
-- When the work is complete and verified, finish with a short summary of what you changed and how you verified it.`;
+- When the work is complete and verified, finish with a short summary of what you changed and how you verified it.
+
+## Scope
+Do ONLY what this task asks. The task and its acceptance criteria are the whole
+brief; nothing outside them is yours to change, however obviously it could be
+improved. In particular:
+
+- Do not rename, restructure, reformat or "tidy" code the task does not require you to touch.
+- Do not add dependencies, abstractions, configuration or tests that the task does not ask for.
+- Do not fix unrelated defects you notice. Mention them in your summary instead.
+
+## When the task does not settle a decision
+Some tasks turn out to need a choice the brief does not make — which of two
+behaviours is wanted, which name is correct, whether an edge case matters. Making
+that choice yourself is the failure this rule exists to prevent: it produces a
+change nobody asked for, in a shape nobody reviewed.
+
+So when you hit one:
+
+1. Make NO code changes at all. Leave the worktree exactly as you found it.
+2. End your turn with a single line beginning ${NEEDS_HUMAN_MARKER} followed by the
+   question, stated so someone who has not read the code can answer it. Say what
+   you would do by default and why you are not doing it.
+
+Asking is always correct here and never counts against you. A question costs a
+reply; a guess costs a change that has to be found and undone.`;
   }
 
   /**
@@ -1089,6 +1152,62 @@ ${acceptance}${previous}${specSection}
    * reviewer-of-record here: verify there's an actual diff, push, and open (or
    * update) the PR — then hand the card to the review column.
    */
+  /**
+   * Park the card and ask, on the issue, in the open.
+   *
+   * On the SOURCE ISSUE rather than a run log: the question needs to reach
+   * whoever wrote the task, and it needs to still be there when they answer
+   * tomorrow. The label is what makes the wait visible in a list, and removing
+   * it is the answer being accepted - a person editing labels is a smaller ask
+   * than a person opening a dashboard.
+   *
+   * The card goes to backlog, not failed. Nothing is wrong with it; it is
+   * waiting, and its attempts are untouched so the answer gets a full budget.
+   */
+  private async escalateToHuman(task: TaskRecord, runId: string, question: string): Promise<void> {
+    this.store.updateTask(task.id, {
+      status: 'backlog',
+      stage: task.stage && WORK_STAGES.has(task.stage) ? task.stage : null,
+      runId: null,
+      lastError: `waiting on a human: ${question.slice(0, 400)}`,
+    });
+    this.store.insertEvent(task.id, 'parked', `asked for a decision: ${question.slice(0, 200)}`);
+    this.changed();
+
+    const issue = task.sourceIssueNumber;
+    if (issue === null) {
+      log.warn('board: a worker asked for a decision on a task with no source issue', {
+        taskId: task.id,
+        question: question.slice(0, 200),
+      });
+      return;
+    }
+
+    const body = [
+      `**This needs a decision before the agent can continue.**`,
+      '',
+      question,
+      '',
+      `Reply here with the answer, then remove the \`${NEEDS_HUMAN_LABEL}\` label and the agent picks the task up again.`,
+      '',
+      `<sub>Asked by the Companion worker on task \`${task.id}\`. It made no changes.</sub>`,
+    ].join('\n');
+
+    // Best effort, and in this order: the label is what a person scans for, so
+    // it matters more than the prose. Neither failing may lose the parked state
+    // above, which is what actually stops the worker.
+    await this.code.githubAccounts
+      .performForRepo('pipelines', task.repo, async (client) => {
+        await client.addLabels(task.repo, issue, [NEEDS_HUMAN_LABEL]);
+        await client.comment(task.repo, issue, body);
+      })
+      .catch((err) => log.warn('board: could not post the escalation to the issue', {
+        repo: task.repo,
+        issue,
+        err: String(err),
+      }));
+  }
+
   private async approveFlow(taskId: string, runId: string): Promise<void> {
     const task = this.store.getTask(taskId);
     if (!task || task.runId !== runId || task.status !== 'in_progress') return;
@@ -1101,6 +1220,20 @@ ${acceptance}${previous}${specSection}
       // Detach/charge BEFORE discarding — the discard re-emits run.changed
       // synchronously and must find nothing to react to.
       const outcome = this.operate.runsStore.get(runId)?.outcome;
+
+      // A question is not a failed attempt. The worker was told to make no
+      // changes and say so rather than decide, and charging that against its
+      // attempt ceiling would teach exactly the behaviour the rule forbids:
+      // three questions and the card fails, so guessing looks cheaper.
+      const asked = outcome && outcome.includes(NEEDS_HUMAN_MARKER)
+        ? outcome.slice(outcome.indexOf(NEEDS_HUMAN_MARKER) + NEEDS_HUMAN_MARKER.length).trim()
+        : null;
+      if (asked) {
+        await this.escalateToHuman(task, runId, asked);
+        await this.code.fixes.discard(runId).catch(() => undefined);
+        return;
+      }
+
       if (outcome?.startsWith('fatal: ')) {
         // The run died (provider auth, gateway crash) — it never worked, so
         // neither "no changes needed" nor the plain no-diff message applies.
