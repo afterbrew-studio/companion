@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PrChecks, UnknownPrError, latestPerName } from '../dist/api/pr-checks.js';
+import { PrChecks, UnknownPrError, latestPerName, foldReviewDecision } from '../dist/api/pr-checks.js';
 
 function openPr(number) {
   return {
@@ -229,4 +229,42 @@ test('a re-run still deciding outranks the finished attempt it replaced', () => 
     { name: 'check', status: 'in_progress', conclusion: null, startedAt: 200, completedAt: null },
   ];
   assert.equal(latestPerName(runs)[0].status, 'in_progress');
+});
+
+test('a change request about a superseded commit is not a current verdict', () => {
+  // rayf#304: Octopus requested changes on b40beab. The agent pushed 65a13ab, and GitHub
+  // still reported `changes_requested` because a decision attaches to the pull request,
+  // not the commit. Companion re-dispatched remediation for work already done, twice,
+  // and the card failed at its attempt ceiling on a pull request that was fine.
+  const reviews = [
+    { user: { login: 'octopus-afterbrew[bot]' }, state: 'CHANGES_REQUESTED', commit_id: 'b40beab', submitted_at: '2026-08-28T02:30:27Z' },
+  ];
+  assert.equal(foldReviewDecision(reviews, '65a13ab'), null, 'stale request must not read as current');
+  assert.equal(foldReviewDecision(reviews, 'b40beab'), 'changes_requested', 'current on its own commit');
+  assert.equal(foldReviewDecision(reviews), 'changes_requested', "no head given keeps GitHub's semantics");
+});
+
+test('an approval of an older commit does not authorise merging a newer one', () => {
+  const reviews = [
+    { user: { login: 'octopus-afterbrew[bot]' }, state: 'APPROVED', commit_id: 'old1234', submitted_at: '2026-08-28T01:00:00Z' },
+  ];
+  assert.equal(foldReviewDecision(reviews, 'new5678'), null);
+  assert.equal(foldReviewDecision(reviews, 'old1234'), 'approved');
+});
+
+test('the re-review after a fix is what makes the decision current again', () => {
+  const reviews = [
+    { user: { login: 'octopus-afterbrew[bot]' }, state: 'CHANGES_REQUESTED', commit_id: 'b40beab', submitted_at: '2026-08-28T02:30:27Z' },
+    { user: { login: 'octopus-afterbrew[bot]' }, state: 'APPROVED', commit_id: '65a13ab', submitted_at: '2026-08-28T02:35:23Z' },
+  ];
+  assert.equal(foldReviewDecision(reviews, '65a13ab'), 'approved');
+});
+
+test('a review with no recorded commit is still counted', () => {
+  // Older reviews, and some integrations, leave commit_id null. Dropping those would
+  // silently ignore a real verdict.
+  const reviews = [
+    { user: { login: 'someone' }, state: 'CHANGES_REQUESTED', commit_id: null, submitted_at: '2026-08-28T02:00:00Z' },
+  ];
+  assert.equal(foldReviewDecision(reviews, 'anysha'), 'changes_requested');
 });

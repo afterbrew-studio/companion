@@ -180,7 +180,7 @@ export class PrChecks {
     // Human review decision rides the same fetch cadence as the CI snapshot.
     try {
       const { reviews } = await client.prReviewList(repo, prNumber);
-      this.store.prs.setReviewDecision(repo, prNumber, foldReviewDecision(reviews));
+      this.store.prs.setReviewDecision(repo, prNumber, foldReviewDecision(reviews, pr.headSha));
     } catch (err) {
       log.warn('review decision fetch failed', { repo, prNumber, err: String(err) });
     }
@@ -207,11 +207,22 @@ export class PrChecks {
 }
 
 /** Latest substantive review per reviewer; any CHANGES_REQUESTED outweighs approvals. */
-export function foldReviewDecision(reviews: readonly GhReview[]): 'approved' | 'changes_requested' | null {
+export function foldReviewDecision(
+  reviews: readonly GhReview[],
+  headSha?: string | null,
+): 'approved' | 'changes_requested' | null {
   const latest = new Map<string, GhReview['state']>();
   for (const r of reviews) {
     const who = r.user?.login;
     if (!who) continue;
+    // A review is evidence about the commit it was submitted against. GitHub keeps a
+    // decision attached to the pull request rather than the commit, so after the author
+    // pushes a fix the old `changes_requested` still reads as current - and a caller that
+    // acts on it re-dispatches remediation for work already done, spending its attempt
+    // budget until the card fails on a pull request that is fine.
+    //
+    // Passing no head keeps GitHub's own semantics, for callers that want them.
+    if (headSha && r.commit_id && r.commit_id !== headSha) continue;
     if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') latest.set(who, r.state);
     else if (r.state === 'DISMISSED') latest.delete(who);
   }
