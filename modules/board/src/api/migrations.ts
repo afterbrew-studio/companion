@@ -265,4 +265,30 @@ export default defineMigrations([
       db.exec(`DROP INDEX IF EXISTS idx_board_tasks_pull_request`);
     },
   },
+  {
+    version: 13,
+    name: 'board_separate_remediation_budgets',
+    up: (db) => {
+      // CI repair and review remediation shared one counter, so a flaky check spent the
+      // budget a reviewer's findings would later need - and the card failed with the
+      // objection unaddressed. Two failures that are not the same failure do not share
+      // a ceiling.
+      //
+      // Existing cards start both counters at their current total rather than at zero:
+      // an in-flight card must not silently gain budget mid-loop.
+      const columns = db.prepare(`PRAGMA table_info(board_tasks)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'ci_attempts')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN ci_attempts INTEGER NOT NULL DEFAULT 0`);
+        db.exec(`UPDATE board_tasks SET ci_attempts = attempts`);
+      }
+      if (!columns.some((column) => column.name === 'review_attempts')) {
+        db.exec(`ALTER TABLE board_tasks ADD COLUMN review_attempts INTEGER NOT NULL DEFAULT 0`);
+        db.exec(`UPDATE board_tasks SET review_attempts = attempts`);
+      }
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE board_tasks DROP COLUMN ci_attempts`);
+      db.exec(`ALTER TABLE board_tasks DROP COLUMN review_attempts`);
+    },
+  },
 ]);

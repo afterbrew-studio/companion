@@ -46,7 +46,9 @@ export function fixture({
       priority INTEGER NOT NULL, status TEXT NOT NULL, stage TEXT, created_by TEXT,
       first_worker TEXT, assigned_worker_id TEXT, run_id TEXT, branch TEXT,
       pr_number INTEGER, pr_url TEXT, review_risk TEXT, review_recommendation TEXT,
-      attempts INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL,
+      ci_attempts INTEGER NOT NULL DEFAULT 0, review_attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT, created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER
     );
     CREATE UNIQUE INDEX idx_board_tasks_source_issue
@@ -165,6 +167,8 @@ export function insertTask(store, overrides = {}) {
     reviewRisk: null,
     reviewRecommendation: null,
     attempts: 0,
+    ciAttempts: 0,
+    reviewAttempts: 0,
     lastError: null,
     createdAt: now,
     updatedAt: now,

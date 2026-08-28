@@ -284,6 +284,8 @@ export class BoardService {
       reviewRisk: null,
       reviewRecommendation: null,
       attempts: 0,
+      ciAttempts: 0,
+      reviewAttempts: 0,
       lastError: null,
       createdAt: now,
       updatedAt: now,
@@ -377,7 +379,7 @@ export class BoardService {
     if (task.status !== 'backlog' || !(task.lastError ?? '').startsWith('waiting on a human:')) {
       return false;
     }
-    this.store.updateTask(task.id, { status: 'ready', lastError: null, attempts: 0 });
+    this.store.updateTask(task.id, { status: 'ready', lastError: null, attempts: 0, ciAttempts: 0, reviewAttempts: 0 });
     this.store.insertEvent(task.id, 'queued', 'the question was answered; resuming');
     this.changed();
     this.kick();
@@ -577,6 +579,8 @@ export class BoardService {
               : { status: 'in_review', stage: 'awaiting_review' };
       if (from === 'failed') {
         patch.attempts = 0;
+        patch.ciAttempts = 0;
+        patch.reviewAttempts = 0;
         patch.lastError = null;
       }
       this.retryBackoff.delete(id);
@@ -1281,6 +1285,9 @@ reply; a guess costs a change that has to be found and undone.`;
           stage: 'awaiting_review',
           runId: null,
           attempts: task.attempts + 1,
+          ...(task.stage === 'fix_ci'
+            ? { ciAttempts: task.ciAttempts + 1 }
+            : { reviewAttempts: task.reviewAttempts + 1 }),
         });
         this.store.insertEvent(
           taskId,
@@ -1733,7 +1740,7 @@ reply; a guess costs a change that has to be found and undone.`;
       .filter((e) => e.kind === 'review_verdict')
       .reverse(); // the store returns newest-first; the briefing reads in order
     const lines = [
-      `This review is part of an autonomous build/review loop on a task board (round ${prior.length + 1}; remediation budget ${task.attempts}/${config.maxAttempts} used). Your verdict routes the card automatically:`,
+      `This review is part of an autonomous build/review loop on a task board (round ${prior.length + 1}; remediation budget ${task.reviewAttempts}/${config.maxAttempts} used). Your verdict routes the card automatically:`,
       `- "request_changes" — the PR returns to the agent that built it, which addresses ALL your findings in one pass.`,
       `- "approve" — the PR ${config.autoMerge ? 'is merged automatically once checks are green' : 'is handed to a human to merge'}.`,
       `- "comment" — the loop STOPS and waits for a human decision. Reserve it for questions that genuinely need human judgment; minor polish is not such a question.`,
@@ -1888,9 +1895,14 @@ reply; a guess costs a change that has to be found and undone.`;
   private bindBack(taskId: string, stage: 'address_review' | 'fix_ci', reason: string, config: BoardConfig): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
+    // Each remediation kind carries its own ceiling. A red check and a reviewer's objection
+    // are different failures, and a flaky check used to spend the budget the objection would
+    // need - so the card failed with the objection unaddressed.
+    const spent = stage === 'fix_ci' ? task.ciAttempts : task.reviewAttempts;
     // Same ceiling as attemptFail: the Nth cycle is allowed, the (N+1)th fails.
-    if (task.attempts + 1 > config.maxAttempts) {
-      this.fail(taskId, `${reason} — attempt ceiling reached (${config.maxAttempts})`);
+    if (spent + 1 > config.maxAttempts) {
+      const kind = stage === 'fix_ci' ? 'CI repair' : 'review remediation';
+      this.fail(taskId, `${reason} — ${kind} ceiling reached (${config.maxAttempts})`);
       return;
     }
     this.store.updateTask(taskId, {
@@ -1898,6 +1910,7 @@ reply; a guess costs a change that has to be found and undone.`;
       stage,
       runId: null,
       attempts: task.attempts + 1,
+      ...(stage === 'fix_ci' ? { ciAttempts: spent + 1 } : { reviewAttempts: spent + 1 }),
       lastError: null,
     });
     this.store.insertEvent(taskId, stage === 'fix_ci' ? 'checks_failed' : 'changes_requested', `${reason} — bound back to its worker`);

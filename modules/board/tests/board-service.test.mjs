@@ -321,3 +321,68 @@ test('a capacity race returns the task to ready without consuming an attempt', a
   service.dispose();
   db.close();
 });
+
+test('CI repair does not spend the budget a reviewer objection will need', async () => {
+  // rayf#304 and #315: one counter served both, so a flaky check exhausted the ceiling and
+  // the card failed with the reviewer's objection unaddressed. Two failures that are not
+  // the same failure do not share a ceiling.
+  const latestReview = {
+    source: 'agent',
+    status: 'applied',
+    headSha: 'head-1',
+    error: null,
+    coverage: { state: 'complete' },
+    verdict: { recommendation: 'request_changes' },
+  };
+  const { store, makeService } = fixture({ latestReview });
+  insertTask(store, {
+    status: 'in_review',
+    stage: 'awaiting_merge',
+    prNumber: 14,
+    prUrl: 'https://example.test/pr/14',
+    reviewRisk: 'high',
+    reviewRecommendation: 'request_changes',
+    // Three CI repairs already spent — the whole ceiling, on the other budget.
+    ciAttempts: 3,
+    attempts: 3,
+  });
+
+  const service = makeService();
+  await service.tick();
+
+  const task = store.getTask('tsk-1');
+  assert.equal(task.stage, 'address_review', 'remediation still has its own budget');
+  assert.equal(task.reviewAttempts, 1);
+  assert.equal(task.ciAttempts, 3, 'the CI counter is untouched by a review cycle');
+  assert.notEqual(task.status, 'failed');
+  service.dispose();
+});
+
+test('the review budget still has a ceiling of its own', async () => {
+  const latestReview = {
+    source: 'agent',
+    status: 'applied',
+    headSha: 'head-1',
+    error: null,
+    coverage: { state: 'complete' },
+    verdict: { recommendation: 'request_changes' },
+  };
+  const { store, makeService } = fixture({ latestReview });
+  insertTask(store, {
+    status: 'in_review',
+    stage: 'awaiting_merge',
+    prNumber: 14,
+    prUrl: 'https://example.test/pr/14',
+    reviewRisk: 'high',
+    reviewRecommendation: 'request_changes',
+    reviewAttempts: 3,
+  });
+
+  const service = makeService();
+  await service.tick();
+
+  const task = store.getTask('tsk-1');
+  assert.equal(task.status, 'failed', 'separate budgets are still bounded, not unlimited');
+  assert.match(task.lastError ?? '', /review remediation ceiling/);
+  service.dispose();
+});
