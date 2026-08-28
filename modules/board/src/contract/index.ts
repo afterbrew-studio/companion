@@ -126,6 +126,10 @@ export interface TaskRecord {
   readonly reviewRecommendation: 'approve' | 'request_changes' | 'comment' | null;
   /** Remediation cycles consumed (build failures, CI fixes, review rounds). */
   readonly attempts: number;
+  /** CI repair cycles spent. Separate from review remediation: a flaky check must not
+   *  spend the budget a reviewer's findings will need. */
+  readonly ciAttempts: number;
+  readonly reviewAttempts: number;
   readonly lastError: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;

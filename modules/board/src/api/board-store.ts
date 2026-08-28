@@ -48,6 +48,8 @@ interface TaskRow {
   review_risk: string | null;
   review_recommendation: string | null;
   attempts: number;
+  ci_attempts: number;
+  review_attempts: number;
   last_error: string | null;
   created_at: number;
   updated_at: number;
@@ -102,6 +104,8 @@ function rowToTask(row: TaskRow): TaskRecord {
     reviewRisk: row.review_risk as TaskRecord['reviewRisk'],
     reviewRecommendation: row.review_recommendation as TaskRecord['reviewRecommendation'],
     attempts: row.attempts,
+    ciAttempts: row.ci_attempts ?? 0,
+    reviewAttempts: row.review_attempts ?? 0,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -136,6 +140,8 @@ export interface TaskPatch {
   reviewRisk?: TaskRecord['reviewRisk'];
   reviewRecommendation?: TaskRecord['reviewRecommendation'];
   attempts?: number;
+  ciAttempts?: number;
+  reviewAttempts?: number;
   lastError?: string | null;
   startedAt?: number | null;
   finishedAt?: number | null;
@@ -162,6 +168,8 @@ const TASK_PATCH_COLUMNS: ReadonlyArray<[keyof TaskPatch, string]> = [
   ['reviewRisk', 'review_risk'],
   ['reviewRecommendation', 'review_recommendation'],
   ['attempts', 'attempts'],
+  ['ciAttempts', 'ci_attempts'],
+  ['reviewAttempts', 'review_attempts'],
   ['lastError', 'last_error'],
   ['startedAt', 'started_at'],
   ['finishedAt', 'finished_at'],
@@ -232,13 +240,13 @@ export class BoardStore {
            id, workspace_id, repo, target_branch, source_issue_number, automation_policy,
            title, description, acceptance, spec_id, attachments, depends_on, model, priority, status, stage,
            created_by, first_worker, assigned_worker_id, run_id, branch, pr_number, pr_url,
-           review_risk, review_recommendation, attempts, last_error,
+           review_risk, review_recommendation, attempts, ci_attempts, review_attempts, last_error,
            created_at, updated_at, started_at, finished_at
          ) VALUES (
            @id, @workspaceId, @repo, @targetBranch, @sourceIssueNumber, @automationPolicy,
            @title, @description, @acceptance, @specId, @attachments, @dependsOn, @model, @priority, @status, @stage,
            @createdBy, @firstWorker, @assignedWorkerId, @runId, @branch, @prNumber, @prUrl,
-           @reviewRisk, @reviewRecommendation, @attempts, @lastError,
+           @reviewRisk, @reviewRecommendation, @attempts, @ciAttempts, @reviewAttempts, @lastError,
            @createdAt, @updatedAt, @startedAt, @finishedAt
          )`,
       )
