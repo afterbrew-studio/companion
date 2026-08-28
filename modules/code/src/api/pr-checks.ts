@@ -163,6 +163,9 @@ export class PrChecks {
       ...(combined?.statuses ?? []).map(fromCommitStatus),
     ];
     const base = summarize(runs);
+    // The agent reading this should see the same runs the state was folded from, not a
+    // superseded attempt beside its replacement.
+    const current = latestPerName(runs);
     const summary: ChecksSummary = {
       ...base,
       // No signal AND a source errored = we don't know — 'none' here would
@@ -171,7 +174,7 @@ export class PrChecks {
       repo,
       prNumber,
       headSha: pr.headSha,
-      runs,
+      runs: current,
     };
     this.store.prs.setChecks(repo, prNumber, toSnapshot(summary));
     // Human review decision rides the same fetch cadence as the CI snapshot.
@@ -227,7 +230,32 @@ const FAILING: ReadonlyArray<CheckRunInfo['conclusion']> = [
   'action_required',
 ];
 
-function summarize(runs: readonly CheckRunInfo[]): ChecksSnapshot {
+/**
+ * The current run for each check name.
+ *
+ * A re-run, or a concurrency group with `cancel-in-progress`, leaves the superseded attempt
+ * on the same commit as `cancelled`. GitHub reports mergeability from the latest run per
+ * name; counting every historical attempt instead reads a green pull request as failing,
+ * which sends its task to CI repair, finds nothing to repair, and blocks the merge an
+ * approval had already authorised.
+ */
+export function latestPerName(runs: readonly CheckRunInfo[]): CheckRunInfo[] {
+  const newest = new Map<string, CheckRunInfo>();
+  for (const run of runs) {
+    const held = newest.get(run.name);
+    if (!held || rank(run) >= rank(held)) newest.set(run.name, run);
+  }
+  return [...newest.values()];
+}
+
+/** An unfinished run outranks a finished one: it is the attempt still deciding. */
+function rank(run: CheckRunInfo): number {
+  if (run.status !== 'completed') return Number.MAX_SAFE_INTEGER;
+  return run.completedAt ?? run.startedAt ?? 0;
+}
+
+function summarize(all: readonly CheckRunInfo[]): ChecksSnapshot {
+  const runs = latestPerName(all);
   const pending = runs.filter((r) => r.status !== 'completed').length;
   const failed = runs.filter((r) => r.status === 'completed' && FAILING.includes(r.conclusion)).length;
   const passed = runs.length - pending - failed;

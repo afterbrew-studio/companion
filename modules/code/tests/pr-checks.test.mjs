@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PrChecks, UnknownPrError } from '../dist/api/pr-checks.js';
+import { PrChecks, UnknownPrError, latestPerName } from '../dist/api/pr-checks.js';
 
 function openPr(number) {
   return {
@@ -195,4 +195,38 @@ test('a live refresh broadcasts the complete status patch for one PR', async () 
       mergeStateStatus: 'dirty',
     },
   });
+});
+
+test('a superseded cancelled run does not make a green PR read as failing', () => {
+  // rayf#296: `cancel-in-progress` left `triage` and `swift` cancelled on the same commit
+  // as their successful re-runs. Counting every attempt read the pull request as failing,
+  // sent its task to CI repair three times, and blocked a merge Octopus had approved.
+  const runs = [
+    { name: 'triage', status: 'completed', conclusion: 'cancelled', startedAt: 100, completedAt: 110 },
+    { name: 'triage', status: 'completed', conclusion: 'success', startedAt: 200, completedAt: 210 },
+    { name: 'swift', status: 'completed', conclusion: 'cancelled', startedAt: 100, completedAt: 115 },
+    { name: 'swift', status: 'completed', conclusion: 'skipped', startedAt: 200, completedAt: 220 },
+    { name: 'check', status: 'completed', conclusion: 'success', startedAt: 200, completedAt: 230 },
+  ];
+
+  const current = latestPerName(runs);
+  assert.equal(current.length, 3, 'one entry per check name');
+  assert.equal(current.find((r) => r.name === 'triage').conclusion, 'success');
+  assert.equal(current.find((r) => r.name === 'swift').conclusion, 'skipped');
+});
+
+test('a genuine failure still fails, even beside an older success', () => {
+  const runs = [
+    { name: 'check', status: 'completed', conclusion: 'success', startedAt: 100, completedAt: 110 },
+    { name: 'check', status: 'completed', conclusion: 'failure', startedAt: 200, completedAt: 210 },
+  ];
+  assert.equal(latestPerName(runs)[0].conclusion, 'failure');
+});
+
+test('a re-run still deciding outranks the finished attempt it replaced', () => {
+  const runs = [
+    { name: 'check', status: 'completed', conclusion: 'failure', startedAt: 100, completedAt: 110 },
+    { name: 'check', status: 'in_progress', conclusion: null, startedAt: 200, completedAt: null },
+  ];
+  assert.equal(latestPerName(runs)[0].status, 'in_progress');
 });
