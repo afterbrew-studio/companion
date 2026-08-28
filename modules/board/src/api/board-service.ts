@@ -1343,6 +1343,13 @@ reply; a guess costs a change that has to be found and undone.`;
     }
     this.store.updateTask(taskId, prPatch);
     this.store.insertEvent(taskId, hadPr ? 'pr_updated' : 'pr_opened', prUrl);
+    // A reviewer who asked for changes is owed an answer, not just a commit. Without this
+    // the pull request shows an objection and a silent push, and nobody can tell whether it
+    // was accepted, worked around or missed. Best effort: failing to talk about the work
+    // must never fail the work, which is already published at this point.
+    if (task.stage === 'address_review' && task.prNumber != null) {
+      void this.answerReviewFeedback(task, taskId, task.prNumber);
+    }
     this.notifyUser(task, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board?task=${taskId}`);
     this.changed();
     // Warm the PR cache so the review cycle sees the new head promptly.
@@ -1835,6 +1842,46 @@ reply; a guess costs a change that has to be found and undone.`;
    * Send the card back to the worker that built it (review feedback / CI
    * repair). Consumes an attempt so a PR can't ping-pong forever.
    */
+  /**
+   * Tell the reviewer what happened, and close the thread we just answered.
+   *
+   * Gated on the repository's own setting: a deployment that does not want the agent
+   * writing on its pull requests gets silence, which is what the flag has always meant
+   * even though nothing read it before.
+   */
+  private async answerReviewFeedback(task: TaskRecord, taskId: string, prNumber: number): Promise<void> {
+    try {
+      const repoRow = this.code.repos.get(task.repo);
+      if (repoRow?.review_replies !== 1) return;
+      if (!task.createdBy) return;
+
+      const head = this.code.prs.get(task.repo, prNumber)?.headSha ?? null;
+      const body = [
+        'Addressed in the latest push' + (head ? ` (\`${head.slice(0, 8)}\`).` : '.'),
+        '',
+        `_Companion board task \`${taskId}\`. Re-review when you are ready._`,
+      ].join('\n');
+
+      const outcome = await this.code.prReviews.answerReviewerThreads(
+        task.repo,
+        prNumber,
+        task.createdBy,
+        { body },
+      );
+      if (outcome.replied > 0 || outcome.resolved > 0 || outcome.failed > 0) {
+        this.store.insertEvent(
+          taskId,
+          'review_answered',
+          `replied to ${outcome.replied} thread(s), resolved ${outcome.resolved}` +
+            (outcome.failed > 0 ? `, ${outcome.failed} failed` : ''),
+        );
+        this.changed();
+      }
+    } catch (err) {
+      log.warn('board: answering review feedback failed', { taskId, prNumber, err: String(err) });
+    }
+  }
+
   private bindBack(taskId: string, stage: 'address_review' | 'fix_ci', reason: string, config: BoardConfig): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
