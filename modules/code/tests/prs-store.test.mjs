@@ -115,3 +115,33 @@ test('a workspace scheduler query excludes closed history in SQL', () => {
 
   assert.deepEqual(prs.listWorkspace('ws-1', 'open').map((pr) => pr.number), [7]);
 });
+
+test('a push clears the review decision, like it already clears the checks', () => {
+  // rayf#307: Octopus requested changes on one commit, the agent fixed it and pushed, and
+  // the stored decision still said changes_requested. The board read it, bound the card
+  // back to remediation for work already done, and burned its attempt budget doing so.
+  const { prs, sync } = fixture();
+  sync.applyPull('acme/app', pull);
+  prs.setReviewDecision('acme/app', 7, 'changes_requested');
+  prs.setChecks('acme/app', 7, { state: 'passing', total: 1, passed: 1, failed: 0, pending: 0, fetchedAt: 1 });
+
+  assert.equal(prs.get('acme/app', 7).reviewDecision, 'changes_requested');
+
+  sync.applyPull('acme/app', { ...pull, head: { ref: 'feat/widget', sha: 'def456' } });
+
+  const after = prs.get('acme/app', 7);
+  assert.equal(after.reviewDecision, null, 'a decision about the old commit is not one about this one');
+  assert.equal(after.checks, null, 'checks were already invalidated; the decision now follows the same rule');
+});
+
+test('a sync that does not move the head keeps the decision', () => {
+  // The decision is expensive to re-establish - it waits on a human or a bot reviewer -
+  // so an ordinary re-sync must not discard it.
+  const { prs, sync } = fixture();
+  sync.applyPull('acme/app', pull);
+  prs.setReviewDecision('acme/app', 7, 'approved');
+
+  sync.applyPull('acme/app', { ...pull, title: 'Add the widget, renamed' });
+
+  assert.equal(prs.get('acme/app', 7).reviewDecision, 'approved');
+});

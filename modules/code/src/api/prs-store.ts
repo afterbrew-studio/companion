@@ -28,6 +28,11 @@ export class PrsStore {
            checks = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.checks END,
            mergeable = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.mergeable END,
            merge_state = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.merge_state END,
+           -- A review decision describes the commit it was made on. GitHub keeps it
+           -- attached to the pull request, so after a push the old changes_requested
+           -- still reads as current and a caller acting on it re-dispatches remediation
+           -- for work already done. Unknown until the next fold, exactly like checks.
+           review_decision = CASE WHEN excluded.head_sha IS NOT prs.head_sha THEN NULL ELSE prs.review_decision END,
            head_sha = excluded.head_sha`,
       )
       .run({
