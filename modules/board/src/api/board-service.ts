@@ -1855,9 +1855,12 @@ reply; a guess costs a change that has to be found and undone.`;
       if (repoRow?.review_replies !== 1) return;
       if (!task.createdBy) return;
 
-      const head = this.code.prs.get(task.repo, prNumber)?.headSha ?? null;
+      // No commit named on purpose. The cached head is the one from before this push -
+      // the cache is warmed after this runs - so citing it names the commit the reviewer
+      // objected to rather than the one that answered them. Verified on rayf#315, where
+      // the reply pointed at the defect it had just fixed.
       const body = [
-        'Addressed in the latest push' + (head ? ` (\`${head.slice(0, 8)}\`).` : '.'),
+        'Addressed in the latest push.',
         '',
         `_Companion board task \`${taskId}\`. Re-review when you are ready._`,
       ].join('\n');
