@@ -2269,6 +2269,69 @@ export class PrReviews {
    * reply never triggers it, a thread we did not open is left alone, and a
    * thread we have already answered three times is finished.
    */
+  /**
+   * Answer, and close, the threads an external reviewer opened once their feedback
+   * has been addressed.
+   *
+   * This is the other direction from `replyToReviewComment`: there we are the reviewer
+   * answering somebody on our own finding; here we are the author, and a reviewer is
+   * waiting on us. Without it a pull request shows an objection and a silent commit,
+   * and a reader cannot tell whether it was accepted, worked around, or missed.
+   *
+   * Best effort by design. A failure to talk about the work must never fail the work,
+   * so every thread is attempted independently and the caller is told what happened
+   * rather than thrown at.
+   */
+  async answerReviewerThreads(
+    repo: string,
+    prNumber: number,
+    userId: string,
+    opts: { readonly reviewerLogin?: string | null; readonly body: string },
+  ): Promise<{ replied: number; resolved: number; failed: number }> {
+    const result = { replied: 0, resolved: 0, failed: 0 };
+    const client = this.github({ repo, username: userId });
+    if (!client) return result;
+
+    const ourLogins = new Set(this.store.githubAccounts.logins().map((l) => l.toLowerCase()));
+    // No reviewer named means answer whoever is waiting. We owe a reply to anyone whose
+    // objection we acted on, not only to the one the flow happens to be configured with.
+    const reviewer = opts.reviewerLogin?.toLowerCase() ?? null;
+
+    const { threads } = await client.prReviewThreads(repo, prNumber).catch(() => ({ threads: [] }));
+
+    for (const thread of threads) {
+      if (thread.isResolved) continue;
+      const root = thread.comments.nodes.find((c) => c !== null);
+      const author = root?.author?.login?.toLowerCase();
+      // Only threads this reviewer opened, and never our own: replying to ourselves
+      // would resolve an objection nobody raised.
+      if (!author || ourLogins.has(author)) continue;
+      if (reviewer && author !== reviewer) continue;
+      if (root?.databaseId == null) continue;
+
+      try {
+        await client.replyToReviewComment(repo, prNumber, root.databaseId, opts.body);
+        result.replied += 1;
+      } catch (err) {
+        result.failed += 1;
+        log.warn('review thread reply failed', { repo, prNumber, thread: thread.id, err: String(err) });
+        // A thread we could not answer is not one to close: resolving it would
+        // hide an objection that still has no reply.
+        continue;
+      }
+
+      try {
+        await client.resolveReviewThread(thread.id);
+        result.resolved += 1;
+      } catch (err) {
+        result.failed += 1;
+        log.warn('review thread resolve failed', { repo, prNumber, thread: thread.id, err: String(err) });
+      }
+    }
+
+    return result;
+  }
+
   async replyToReviewComment(
     repo: string,
     prNumber: number,
