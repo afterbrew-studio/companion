@@ -7,14 +7,17 @@ import { Triage } from '../dist/api/triage.js';
  * GitHub, and `addLabels` CREATES anything it is given -- so a label the model invented
  * becomes a real, permanent label on somebody's repository.
  */
-function harness({ verdict, defined, labelsThrow = false }) {
-  const calls = { added: [], comments: [] };
+function harness({ verdict, defined, labelsThrow = false, truncated = false }) {
+  const calls = { added: [], comments: [], addLabelsCalls: 0 };
   const client = {
     repoLabels: async () => {
       if (labelsThrow) throw new Error('GitHub is unreachable');
-      return defined;
+      return { labels: defined, truncated };
     },
-    addLabels: async (_repo, _issue, labels) => calls.added.push(...labels),
+    addLabels: async (_repo, _issue, labels) => {
+      calls.addLabelsCalls += 1;
+      calls.added.push(...labels);
+    },
     comment: async (_repo, _issue, body) => calls.comments.push(body),
   };
   const result = {
@@ -68,7 +71,30 @@ test('applies duplicate and needs-info where the repository does define them', a
 test('makes no GitHub call when nothing survives the filter', async () => {
   const { svc, calls } = harness({ verdict: { labels: ['invented'] }, defined: ['area:ci'] });
   await apply(svc);
+  // The call COUNT, not just the result: asserting an empty array passes whether addLabels
+  // was never called or was called with nothing, so removing the guard would not fail it.
+  assert.equal(calls.addLabelsCalls, 0);
   assert.deepEqual(calls.added, []);
+});
+
+test('a repository with no labels at all filters everything out', async () => {
+  // Not an outage - a permanent, legitimate state for a repository that deleted GitHub's
+  // defaults. Reading it as "no catalogue" reproduced the bug this filtering prevents.
+  const { svc, calls } = harness({ verdict: { labels: ['invented'] }, defined: [] });
+  await apply(svc);
+  assert.equal(calls.addLabelsCalls, 0);
+});
+
+test('a truncated label list does not filter against a partial catalogue', async () => {
+  // Filtering against page 1-3 of a longer list would strip legitimate labels and log them
+  // identically to invented ones. Unreadable is the honest answer.
+  const { svc, calls } = harness({
+    verdict: { labels: ['area:ci'] },
+    defined: ['something-else'],
+    truncated: true,
+  });
+  await apply(svc);
+  assert.deepEqual(calls.added, ['area:ci']);
 });
 
 test('an unreadable label list degrades to applying what was proposed', async () => {
