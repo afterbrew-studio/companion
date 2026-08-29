@@ -558,6 +558,28 @@ export class GitHubClient {
     return this.get(`/repos/${fullName}/pulls/${prNumber}/comments?per_page=100`);
   }
 
+  /**
+   * Every label defined on the repository.
+   *
+   * `addLabels` CREATES a label GitHub does not have, silently. That is convenient for a
+   * caller that knows what it wants and wrong for one whose label names come from a model:
+   * a near-miss spelling becomes a real label nobody declared, and it persists. Callers
+   * that take label names from generated output filter against this first.
+   */
+  async repoLabels(fullName: string): Promise<string[]> {
+    const pages: Array<Array<{ name?: string }>> = [];
+    // A repository with more than 300 labels is not one this is useful for, and an
+    // unbounded loop against a paginated endpoint is a way to spend a rate limit.
+    for (let page = 1; page <= 3; page += 1) {
+      const batch = await this.get<Array<{ name?: string }>>(
+        `/repos/${fullName}/labels?per_page=100&page=${page}`,
+      );
+      pages.push(batch);
+      if (batch.length < 100) break;
+    }
+    return pages.flat().flatMap((label) => (label.name ? [label.name] : []));
+  }
+
   async addLabels(fullName: string, issueNumber: number, labels: string[]): Promise<void> {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
   }

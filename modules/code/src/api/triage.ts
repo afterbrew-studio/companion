@@ -37,6 +37,9 @@ const triageEvaluationFixtureSchema = z
   .object({
     issue: issueEvaluationSchema,
     openIssues: z.array(issueEvaluationSchema).max(60),
+    // Optional so existing fixtures still parse. A fixture that omits it exercises the
+    // no-catalogue prompt, which is what a repository whose labels could not be read gets.
+    availableLabels: z.array(z.string()).max(300).optional(),
   })
   .strict();
 
@@ -95,6 +98,29 @@ export class Triage {
     }
   }
 
+  /**
+   * The labels this repository defines, or `[]` when they cannot be read.
+   *
+   * Never throws. Both callers treat an empty list as "no catalogue": the prompt falls
+   * back to the old convention, and `apply()` falls back to applying what the model
+   * returned. That second fallback is the deliberate one -- a GitHub outage must not
+   * silently stop triage from labelling anything, and the alternative failure (an invented
+   * label) is the one a human sees on the Apply screen before it is written.
+   */
+  private async repoLabels(repo: string, userId: string): Promise<string[]> {
+    try {
+      const client = this.github({ repo, username: userId });
+      if (!client) return [];
+      return await client.repoLabels(repo);
+    } catch (err) {
+      log.warn('could not read repository labels; triage will not constrain them', {
+        repo,
+        err: String(err),
+      });
+      return [];
+    }
+  }
+
   /** Queue a triage run for one issue. Resolves when the verdict is stored. */
   async triageIssue(repo: string, issueNumber: number, userId: string): Promise<TriageResult> {
     this.validateTriage(repo, issueNumber, userId);
@@ -119,6 +145,11 @@ export class Triage {
     this.broadcast({ t: 'triage.changed', repo });
     this.broadcast({ t: 'issues.changed', repo });
 
+    // Best effort, and deliberately so: an unreadable label list degrades the prompt to the
+    // old convention rather than failing a triage run. `apply()` filters regardless, so the
+    // worst case is a verdict whose labels are mostly discarded, not an invented one applied.
+    const availableLabels = await this.repoLabels(repo, userId);
+
     try {
       const repoRow = this.store.repos.get(repo);
       if (!repoRow) throw new Error(`unknown repo ${repo}`);
@@ -135,7 +166,7 @@ export class Triage {
             repo,
             userId,
             issueNumber,
-            prompt: buildTriagePrompt(issue, openIssues),
+            prompt: buildTriagePrompt(issue, openIssues, availableLabels),
             resultSchema: resultSchemaOf(verdictSchema),
             timeoutMs: 6 * 60_000,
             resume: { type: 'triage', args: { repo, number: issueNumber, userId } },
@@ -185,9 +216,30 @@ export class Triage {
     const labels = [...result.verdict.labels];
     if (result.verdict.duplicateOf) labels.push('duplicate');
     if (result.verdict.needsInfo) labels.push('needs-info');
-    if (labels.length > 0) {
+
+    // `addLabels` CREATES a label the repository does not have, so anything reaching it
+    // from generated output is a label nobody declared and nobody can remove by fixing a
+    // prompt. `duplicate` and `needs-info` are filtered too: they are our conventions, not
+    // every repository's, and this one has been creating them on repositories that use
+    // different names for the same idea.
+    //
+    // An unreadable catalogue means no filtering rather than no labelling -- see repoLabels.
+    const defined = await this.repoLabels(result.repo, opts.userId);
+    const applicable = defined.length
+      ? dedupe(labels).filter((label) => defined.includes(label))
+      : dedupe(labels);
+    const discarded = dedupe(labels).filter((label) => !applicable.includes(label));
+    if (discarded.length) {
+      log.info('triage proposed labels this repository does not define', {
+        repo: result.repo,
+        issue: result.issueNumber,
+        discarded,
+      });
+    }
+
+    if (applicable.length > 0) {
       this.requireAuthority(opts.userId, 'issues:act', result.repo, 'apply triage labels');
-      await client.addLabels(result.repo, result.issueNumber, dedupe(labels));
+      await client.addLabels(result.repo, result.issueNumber, applicable);
     }
 
     let reply = result.verdict.draftReply.trim();
@@ -238,10 +290,24 @@ export class Triage {
  */
 const DRAFT_REPLY_SPEC = `"<AT MOST 2 sentences of plain prose, no headings, no bullet lists, no code blocks, no greeting or sign-off. Say only what the reporter must do next or what will happen next. Do not summarise their issue back to them, and do not restate the labels or severity. Empty string if nothing needs saying — silence is better than an empty acknowledgement.>"`;
 
-function buildTriagePrompt(issue: IssueRecord, openIssues: IssueRecord[]): string {
+function buildTriagePrompt(
+  issue: IssueRecord,
+  openIssues: IssueRecord[],
+  availableLabels: string[] = [],
+): string {
   const others = openIssues
     .map((i) => `- #${i.number}: ${i.title}${i.labels.length ? ` [${i.labels.join(', ')}]` : ''}`)
     .join('\n');
+  // Offer the repository's own labels rather than a spelling convention. Asking for
+  // "lowercase-kebab" produced labels that were plausible and wrong -- `agent-ready` for a
+  // repository whose label is `agent:ready` -- and `addLabels` creates whatever it is given,
+  // so each near miss became a real, permanent, undeclared label.
+  const labelSpec = availableLabels.length
+    ? `["<up to 5, chosen ONLY from the list above. Copy each exactly, including any \`:\` or spaces. Omit rather than invent.>"]`
+    : `["<up to 5 suggested labels, lowercase-kebab>"]`;
+  const labelCatalogue = availableLabels.length
+    ? `\n## Labels available on this repository\nChoose only from these. A label not on this list will be discarded.\n${availableLabels.map((l) => `- ${l}`).join('\n')}\n`
+    : '';
   return `You are triaging a GitHub issue for the repository checked out in the current directory.
 
 READ-ONLY RULES (mandatory): you may read files and search the codebase to assess the issue, but you must NOT modify, create, or delete any file, and you must NOT run any command that writes (no git commit/push, no installs). Your ONLY output is the final JSON verdict.
@@ -255,14 +321,14 @@ ${issue.body || '(no description)'}
 
 ## Other open issues (for duplicate detection)
 ${others || '(none)'}
-
+${labelCatalogue}
 ## Your task
 Investigate briefly (read relevant code if useful). Mark an issue invalid only when repository evidence contradicts it, not merely because reproduction details are missing. Claim a duplicate only when another issue describes the same behavior and root cause; title similarity is insufficient. Distinguish observed facts from missing information, and use needsInfo for uncertainty instead of inventing certainty. Then reply with ONLY a JSON object (no markdown fence, no prose before or after) matching exactly this shape:
 {
   "summary": "<ONE sentence: what this issue is and whether it is valid. No preamble, no restating the title.>",
   "severity": "critical" | "high" | "medium" | "low" | "trivial",
   "kind": "bug" | "feature" | "question" | "docs" | "chore" | "invalid",
-  "labels": ["<up to 5 suggested labels, lowercase-kebab>"],
+  "labels": ${labelSpec},
   "duplicateOf": <issue number if this duplicates one of the other open issues, else null>,
   "needsInfo": <true if the report is missing information needed to act>,
   "draftReply": ${DRAFT_REPLY_SPEC}
@@ -283,7 +349,7 @@ export function buildTriageEvaluationPrompt(fixture: unknown): string {
     closedAt: issue.state === 'closed' ? 0 : null,
     triage: null,
   });
-  return buildTriagePrompt(toIssue(parsed.issue), parsed.openIssues.map(toIssue));
+  return buildTriagePrompt(toIssue(parsed.issue), parsed.openIssues.map(toIssue), parsed.availableLabels ?? []);
 }
 
 export function parseVerdict(text: string): TriageVerdict {
