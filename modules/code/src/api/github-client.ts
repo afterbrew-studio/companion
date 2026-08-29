@@ -558,6 +558,36 @@ export class GitHubClient {
     return this.get(`/repos/${fullName}/pulls/${prNumber}/comments?per_page=100`);
   }
 
+  /**
+   * Every label defined on the repository.
+   *
+   * `addLabels` CREATES a label GitHub does not have, silently. That is convenient for a
+   * caller that knows what it wants and wrong for one whose label names come from a model:
+   * a near-miss spelling becomes a real label nobody declared, and it persists. Callers
+   * that take label names from generated output filter against this first.
+   */
+  async repoLabels(fullName: string): Promise<{ labels: string[]; truncated: boolean }> {
+    const pages: Array<Array<{ name?: string }>> = [];
+    // Bounded: an unbounded loop against a paginated endpoint is a way to spend a rate
+    // limit. `truncated` is reported rather than swallowed, the same shape `prReviewList`
+    // and `prCommits` use -- a capped read must never be mistaken for a complete one. A
+    // caller filtering against a partial list would strip legitimate labels and log them
+    // identically to invented ones.
+    let truncated = false;
+    for (let page = 1; page <= 3; page += 1) {
+      const batch = await this.get<Array<{ name?: string }>>(
+        `/repos/${fullName}/labels?per_page=100&page=${page}`,
+      );
+      pages.push(batch);
+      if (batch.length < 100) break;
+      if (page === 3) truncated = true;
+    }
+    return {
+      labels: pages.flat().flatMap((label) => (label.name ? [label.name] : [])),
+      truncated,
+    };
+  }
+
   async addLabels(fullName: string, issueNumber: number, labels: string[]): Promise<void> {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
   }
