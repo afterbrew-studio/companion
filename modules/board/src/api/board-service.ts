@@ -5,6 +5,7 @@ import type { RunRecord, RunStatus, RunVerification } from '@companion/module-op
 import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@moxxy/companion-sdk/server';
+import { octopusAdapterConfig, startOctopusReview } from './octopus-adapter.js';
 import type {
   BoardConfig,
   SpecOption,
@@ -50,7 +51,7 @@ const WORK_STAGES: ReadonlySet<TaskStage> = new Set(['build', 'address_review', 
 const NEEDS_HUMAN_MARKER = 'NEEDS-HUMAN:';
 
 /** Applied to the source issue while a worker is waiting on an answer. */
-const NEEDS_HUMAN_LABEL = 'tier:ai-needs-human';
+const NEEDS_HUMAN_LABEL = 'state:needs-human';
 
 const MAX_SPEC_CHARS = 12_000;
 const MAX_SOURCE_ISSUE_CHARS = 16_000;
@@ -1014,6 +1015,7 @@ export class BoardService {
       const dispatch = {
         task: 'board.worker',
         preferredModel: task.model,
+        sourceIssueNumber: task.sourceIssueNumber,
         routing: {
           phase: stage === 'build' ? 'implement' : 'repair',
           workUnitId: task.id,
@@ -1235,7 +1237,16 @@ reply; a guess costs a change that has to be found and undone.`;
     // above, which is what actually stops the worker.
     await this.code.githubAccounts
       .performForRepo('pipelines', task.repo, async (client) => {
+        const live = await client.issue(task.repo, issue).catch(() => null);
+        const names = (live?.labels ?? []).map((label: string | { name?: string }) =>
+          typeof label === 'string' ? label : (label.name ?? ''),
+        );
         await client.addLabels(task.repo, issue, [NEEDS_HUMAN_LABEL]);
+        for (const name of names) {
+          if (name.startsWith('state:') && name !== NEEDS_HUMAN_LABEL) {
+            await client.removeLabel(task.repo, issue, name).catch(() => undefined);
+          }
+        }
         await client.comment(task.repo, issue, body);
       })
       .catch((err) => log.warn('board: could not post the escalation to the issue', {
@@ -1313,18 +1324,28 @@ reply; a guess costs a change that has to be found and undone.`;
     const prDescription = task.sourceIssueNumber === null
       ? task.description
       : `Implements #${task.sourceIssueNumber}.`;
-    const { prUrl } = await this.code.fixes.approve(runId, {
-      title: task.title,
-      baseBranch: task.targetBranch,
-      body: `${prDescription ? `${prDescription}\n\n` : ''}${
-        task.acceptance.trim() ? `### Acceptance criteria\n${task.acceptance.trim()}\n\n` : ''
-      }${task.sourceIssueNumber !== null ? `Closes #${task.sourceIssueNumber}.\n\n` : ''}_Task \`${task.id}\` on the Companion board._`,
-      beforeWrite: () => {
-        if (!this.hasAuthority(beforePush, publishPermissions, 'publish the agent change')) {
-          throw new Error('task owner authority was revoked before the GitHub write');
-        }
-      },
-    });
+    let prUrl: string;
+    try {
+      ({ prUrl } = await this.code.fixes.approve(runId, {
+        title: task.title,
+        baseBranch: task.targetBranch,
+        body: `${prDescription ? `${prDescription}\n\n` : ''}${
+          task.acceptance.trim() ? `### Acceptance criteria\n${task.acceptance.trim()}\n\n` : ''
+        }${task.sourceIssueNumber !== null ? `Closes #${task.sourceIssueNumber}.\n\n` : ''}_Task \`${task.id}\` on the Companion board._`,
+        beforeWrite: () => {
+          if (!this.hasAuthority(beforePush, publishPermissions, 'publish the agent change')) {
+            throw new Error('task owner authority was revoked before the GitHub write');
+          }
+        },
+      }));
+    } catch (err) {
+      if (err instanceof Error && err.name === 'ForbiddenGithubEdit') {
+        await this.escalateToHuman(task, runId, err.message);
+        await this.code.fixes.discard(runId).catch(() => undefined);
+        return;
+      }
+      throw err;
+    }
     const run = this.operate.runsStore.get(runId);
     const after = this.store.getTask(taskId);
     if (!after) {
@@ -1358,6 +1379,15 @@ reply; a guess costs a change that has to be found and undone.`;
       void this.answerReviewFeedback(task, taskId, task.prNumber);
     }
     this.notifyUser(task, 'finished', hadPr ? `Board task updated its PR` : `Board task opened a PR`, `${task.title} — ${prUrl}`, `#/board?task=${taskId}`);
+    this.changed();
+    const publishedNumber = prPatch.prNumber;
+    if (
+      publishedNumber != null &&
+      after.automationPolicy &&
+      after.automationPolicy.autoReview === false
+    ) {
+      void this.startLaneReview(after, publishedNumber);
+    }
     this.changed();
     // Warm the PR cache so the review cycle sees the new head promptly.
     if (task.createdBy) {
@@ -1464,7 +1494,12 @@ reply; a guess costs a change that has to be found and undone.`;
         // GitHub's decision when autoReview is off. Anything else - no decision
         // yet, or a comment-only review - means the reviewer has not finished
         // with it, and the card waits rather than guessing.
-        if (pr.reviewDecision !== 'approved') continue;
+        if (pr.reviewDecision !== 'approved') {
+          if (!this.octopusStartedFor(task, task.prNumber)) {
+            void this.startLaneReview(task, task.prNumber);
+          }
+          continue;
+        }
       }
 
       if (task.stage === 'awaiting_review' && config.autoReview) {
@@ -1541,7 +1576,10 @@ reply; a guess costs a change that has to be found and undone.`;
       }
       this.clearBlocker(task.id, 'ci_missing');
       if (summary.state === 'failing') {
-        if (config.autoFixCi) this.bindBack(task.id, 'fix_ci', `CI failing on PR #${task.prNumber}`, config);
+        if (config.autoFixCi) {
+          const abandoned = await this.abandonUnrecoverable(task);
+          if (!abandoned) this.bindBack(task.id, 'fix_ci', `CI failing on PR #${task.prNumber}`, config);
+        }
         continue;
       }
       if (summary.state === 'pending') continue;
@@ -1919,6 +1957,89 @@ reply; a guess costs a change that has to be found and undone.`;
   }
 
   /**
+   * When an ancestor commit is unrecoverable, opening another fix_ci loop
+   * cannot repair it. Successor PR from the current tree on a clean base.
+   */
+  private async abandonUnrecoverable(task: TaskRecord): Promise<boolean> {
+    if (!task.prNumber || !task.createdBy) return false;
+    const reopen = this.code.fixes.reopenCleanHistory;
+    if (typeof reopen !== 'function') return false;
+    try {
+      const successor = await reopen.call(
+        this.code.fixes,
+        task.repo,
+        task.prNumber,
+        task.createdBy,
+        'CI is red because an ancestor commit is unrecoverable',
+      );
+      if (!successor) return false;
+      this.store.updateTask(task.id, {
+        status: 'in_review',
+        stage: 'awaiting_review',
+        prNumber: successor.prNumber,
+        prUrl: successor.prUrl,
+        runId: null,
+        lastError: null,
+      });
+      this.store.insertEvent(task.id, 'pr_opened', `successor ${successor.prUrl} after unrecoverable history`);
+      this.changed();
+      this.kick();
+      return true;
+    } catch (err) {
+      log.warn('board: abandon-and-reopen failed', { taskId: task.id, err: String(err) });
+      return false;
+    }
+  }
+
+  private octopusStartedFor(task: TaskRecord, prNumber: number): boolean {
+    return this.store
+      .listEvents(task.id)
+      .some((event) => event.kind === 'review_requested' && event.detail.includes(`#${prNumber}`));
+  }
+
+  /**
+   * Companion-authored lane PRs skip vendor auto-dispatch; this is the call
+   * that actually starts Octopus (`source: "adapter"`).
+   */
+  private async startLaneReview(task: TaskRecord, prNumber: number): Promise<void> {
+    const config = octopusAdapterConfig();
+    if (!config) {
+      this.notifyBlocker(
+        task,
+        'octopus_adapter',
+        'Board task is waiting for Octopus',
+        `PR #${prNumber} for ${task.title} needs the lane reviewer, but COMPANION_OCTOPUS_URL and COMPANION_OCTOPUS_TOKEN are not set.`,
+      );
+      return;
+    }
+    const correlationId = randomUUID();
+    const headSha = this.code.prs.get(task.repo, prNumber)?.headSha ?? undefined;
+    try {
+      await startOctopusReview({
+        ...config,
+        remoteUrl: `https://github.com/${task.repo}.git`,
+        prNumber,
+        correlationId,
+        headSha,
+      });
+      this.clearBlocker(task.id, 'octopus_adapter');
+      this.store.insertEvent(
+        task.id,
+        'review_requested',
+        `octopus adapter ${correlationId} for ${task.repo}#${prNumber}${headSha ? ` at ${headSha}` : ''}`,
+      );
+      this.changed();
+    } catch (err) {
+      this.notifyBlocker(
+        task,
+        'octopus_adapter',
+        'Board task could not start Octopus',
+        `PR #${prNumber} for ${task.title}: ${String(err)}. Companion will retry.`,
+      );
+    }
+  }
+
+  /**
    * An attempt (build, remediation or review) failed: requeue with the sticky
    * binding released — failover to any free worker — or drop the card into
    * Failed once the ceiling is reached.
@@ -2023,6 +2144,7 @@ reply; a guess costs a change that has to be found and undone.`;
     this.clearBlocker(taskId, 'ci_missing');
     this.clearBlocker(taskId, 'github');
     this.clearBlocker(taskId, 'authority');
+    this.clearBlocker(taskId, 'octopus_adapter');
   }
 
   /**

@@ -102,6 +102,9 @@ const openIssue = (labels) => ({
   closed_at: null,
 });
 
+const readyIssue = (extra = []) =>
+  openIssue([{ name: 'agent:ready' }, { name: 'state:ready' }, { name: 'tier:ai' }, ...extra]);
+
 /** Enqueue a real webhook-shaped delivery and run it the way the pump does. */
 async function deliver(store, automations, { action, sender, label }) {
   store.enqueueDelivery({
@@ -130,7 +133,7 @@ const rowFor = (db, id) =>
 
 test('an authorised collaborator applying the admit label admits the issue', async () => {
   const { db, store, automations, events } = fixture({
-    issue: openIssue([{ name: 'agent:ready' }]),
+    issue: readyIssue(),
     permission: 'write',
   });
   await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'agent:ready' });
@@ -143,7 +146,7 @@ test('an unrelated label from a maintainer does not admit a still-labelled issue
   // A maintainer later adds `duplicate`. Matching on "some label was applied by
   // someone with write" would admit here, on a decision she never took.
   const { db, store, automations, events } = fixture({
-    issue: openIssue([{ name: 'agent:ready' }]),
+    issue: readyIssue(),
     permission: 'admin',
   });
   await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'duplicate' });
@@ -155,7 +158,7 @@ test('the agent pipeline does not start ahead of a refusal', async () => {
   // The pipeline's issue steps include `agent`, so a gate below it does not
   // gate: the work it refuses has already started.
   const { db, store, automations, events } = fixture({
-    issue: openIssue([{ name: 'agent:ready' }]),
+    issue: readyIssue(),
     permission: 'read',
   });
   await deliver(store, automations, { action: 'labeled', sender: 'mallory', label: 'agent:ready' });
@@ -165,7 +168,7 @@ test('the agent pipeline does not start ahead of a refusal', async () => {
 
 test('a policy refusal finishes the delivery', async () => {
   const { db, store, automations } = fixture({
-    issue: openIssue([{ name: 'agent:ready' }]),
+    issue: readyIssue(),
     permission: 'triage',
   });
   await deliver(store, automations, { action: 'labeled', sender: 'mallory', label: 'agent:ready' });
@@ -249,5 +252,25 @@ test('an empty stored label reads as absent, and the migration is idempotent', (
   const sixth = migrations.find((m) => m.version === 6);
   sixth.up(db);
   assert.equal(store.contributorFlow('acme/app').admitLabel, null, 're-running the migration lost data');
+  db.close();
+});
+
+test('agent:ready on a blocked issue does not start a pipeline', async () => {
+  const { db, store, automations, events } = fixture({
+    issue: openIssue([{ name: 'agent:ready' }, { name: 'state:blocked' }, { name: 'tier:ai' }]),
+    permission: 'admin',
+  });
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'agent:ready' });
+  assert.deepEqual(events, [], 'a blocked issue started work');
+  db.close();
+});
+
+test('agent:ready on a tier:human issue does not start a pipeline', async () => {
+  const { db, store, automations, events } = fixture({
+    issue: openIssue([{ name: 'agent:ready' }, { name: 'state:ready' }, { name: 'tier:human' }]),
+    permission: 'admin',
+  });
+  await deliver(store, automations, { action: 'labeled', sender: 'carol', label: 'agent:ready' });
+  assert.deepEqual(events, [], 'a human-owned issue started work');
   db.close();
 });

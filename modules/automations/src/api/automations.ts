@@ -43,7 +43,7 @@ const DELIVERY_POLL_MS = 5_000;
  * automations must not depend on the board's internals, and the string is part
  * of the interface a person interacts with.
  */
-const NEEDS_HUMAN_LABEL = 'tier:ai-needs-human';
+const NEEDS_HUMAN_LABEL = 'state:needs-human';
 
 /** GitHub returns a label as a bare string or an object, depending on the endpoint. */
 function named(label: string | { name?: string }): string {
@@ -710,6 +710,12 @@ export class Automations {
       typeof label === 'string' ? label : (label.name ?? '');
     if (!(live.labels ?? []).some((label) => named(label) === admitLabel)) {
       return `${admitLabel} is not on the issue`;
+    }
+    if (!(live.labels ?? []).some((label) => named(label) === 'state:ready')) {
+      return 'state:ready is not on the issue';
+    }
+    if (!(live.labels ?? []).some((label) => named(label) === 'tier:ai')) {
+      return 'tier:ai is not on the issue';
     }
     // Labelling is not the bar. `triage` and `read` can both apply a label and
     // neither may change the repository, so the bar is the bar for changing it.

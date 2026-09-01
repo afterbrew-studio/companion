@@ -34,7 +34,10 @@ function pull(index, count = BACKLOG_LINES[index] ?? 100) {
     merged_at: null,
     closed_at: null,
     draft: DRAFTS.has(index),
-    labels: AGENT_AUTHORED.has(index) ? [{ name: 'agent-authored' }] : [],
+    labels: [],
+    body: AGENT_AUTHORED.has(index)
+      ? '- [x] An agent produced this diff (`agent-authored`)'
+      : '',
     assignees: [],
     head: { ref: `pull-${number}`, sha: `sha-${number}` },
     base: { ref: 'main' },
@@ -208,7 +211,11 @@ test('agent-authored provenance cannot choose a different lane', () => {
   const plain = pull(40, 217);
   plain.mergeable = true;
   plain.mergeable_state = 'clean';
-  const agent = { ...plain, labels: [{ name: 'agent-authored' }] };
+  const agent = {
+    ...plain,
+    labels: [],
+    body: '- [x] An agent produced this diff (`agent-authored`)',
+  };
   const cached = cachedPull(plain, 40, now);
   cached.checks = { ...cached.checks, state: 'passing', passed: 10, failed: 0 };
 
@@ -218,6 +225,13 @@ test('agent-authored provenance cannot choose a different lane', () => {
   assert.equal(second.agentAuthored, true);
   assert.equal(first.lane, second.lane);
   assert.deepEqual(first.reasons, second.reasons);
+
+  const labelledOnly = { ...plain, labels: [{ name: 'agent-authored' }], body: '' };
+  assert.equal(
+    classifyContributorPull({ pull: labelledOnly, cached, observedAt: now }).agentAuthored,
+    false,
+    'a label without body provenance must not count as authored',
+  );
 });
 
 test('an explicit live no-review decision cannot inherit a stale cached approval', () => {

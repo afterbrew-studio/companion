@@ -63,8 +63,9 @@ test('issue triage adapter keeps missing evidence separate from invalidity', () 
     },
     openIssues: [],
   });
-  assert.equal(ISSUE_TRIAGE_PROMPT_VERSION, 1);
+  assert.equal(ISSUE_TRIAGE_PROMPT_VERSION, 2);
   assert.match(prompt, /Mark an issue invalid only when repository evidence contradicts it/);
+  assert.match(prompt, /labels\.json/);
   const parsed = parseTriageVerdict(JSON.stringify({
     summary: 'A plausible deletion bug needs reproduction details.',
     severity: 'medium',

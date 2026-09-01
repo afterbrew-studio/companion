@@ -3,6 +3,12 @@
  * ETag-aware GETs keep polling cheap against the 5k/hr PAT budget.
  */
 
+import {
+  filterProposedLabels,
+  loadLabelRegistry,
+  type RegistryEntry,
+} from './label-registry.js';
+
 export class GitHubError extends Error {
   /**
    * What the CLIENT should be told. GitHub failing is not this daemon failing,
@@ -562,6 +568,27 @@ export class GitHubClient {
     await this.post(`/repos/${fullName}/issues/${issueNumber}/labels`, { labels });
   }
 
+  /** Default-branch `.github/labels.json`. Missing or unreadable fails closed. */
+  async readLabelRegistry(fullName: string): Promise<RegistryEntry[]> {
+    return loadLabelRegistry(this, fullName);
+  }
+
+  /**
+   * Apply only active registry names in this namespace. Never mints filer
+   * families or retiring leftovers. Does not call addLabels when nothing remains.
+   */
+  async applyRegistryLabels(
+    fullName: string,
+    issueNumber: number,
+    labels: readonly string[],
+    namespace: 'issue' | 'pr',
+  ): Promise<string[]> {
+    const filtered = filterProposedLabels(labels, await this.readLabelRegistry(fullName), namespace);
+    if (filtered.length === 0) return [];
+    await this.addLabels(fullName, issueNumber, filtered);
+    return filtered;
+  }
+
   async removeLabel(fullName: string, issueNumber: number, label: string): Promise<void> {
     await this.destroy(`/repos/${fullName}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`);
   }
@@ -672,6 +699,16 @@ export class GitHubClient {
       if (!full) break;
     }
     return { commits, truncated: full };
+  }
+
+  /** Files one commit changed. Ownership is per-commit, not per pull request. */
+  async commitFiles(fullName: string, sha: string): Promise<string[]> {
+    const commit = await this.get<{ files?: Array<{ filename?: string }> }>(
+      `/repos/${fullName}/commits/${encodeURIComponent(sha)}`,
+    );
+    return (commit.files ?? [])
+      .map((file) => file.filename)
+      .filter((name): name is string => typeof name === 'string' && name !== '');
   }
 
   /**
@@ -1121,6 +1158,7 @@ const AUTONOMY_PULL_QUERY = `
           baseRefName
           reviewDecision
           author { login }
+          body
           labels(first: 100) { nodes { name } }
         }
       }
@@ -1172,6 +1210,7 @@ interface GhAutonomyPullNode {
   baseRefName: string;
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
   author: { login: string } | null;
+  body: string | null;
   labels: { nodes: Array<{ name: string } | null> };
 }
 
@@ -1215,7 +1254,7 @@ function mapAutonomyPull(node: GhAutonomyPullNode): GhPull {
   return {
     number: node.number,
     title: node.title,
-    body: null,
+    body: node.body ?? null,
     state: 'open',
     merged_at: null,
     closed_at: null,
@@ -1363,7 +1402,7 @@ export interface GhPull {
   updated_at: string;
 }
 
-/** Exact queue totals plus bounded body-free rows for read-only planning. */
+/** Exact queue totals plus bounded rows for read-only planning. */
 export interface GhRepositoryAutonomyQueue {
   readonly pulls: ReadonlyArray<GhPull>;
   readonly openPullCount: number;

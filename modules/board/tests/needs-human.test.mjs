@@ -26,6 +26,8 @@ test('a question parks the card without charging an attempt', async () => {
     performForRepo: async (_purpose, _repo, action) => {
       await action({
         addLabels: async (repo, issue, labels) => posted.push({ kind: 'label', repo, issue, labels }),
+        removeLabel: async (repo, issue, name) => posted.push({ kind: 'unlabel', repo, issue, name }),
+        issue: async () => ({ labels: [{ name: 'state:ready' }] }),
         comment: async (repo, issue, body) => posted.push({ kind: 'comment', repo, issue, body }),
       });
       return { result: null, client: null, tried: [] };
@@ -52,6 +54,8 @@ test('the question reaches the source issue, labelled', async () => {
     performForRepo: async (_purpose, _repo, action) => {
       await action({
         addLabels: async (repo, issue, labels) => posted.push({ kind: 'label', repo, issue, labels }),
+        removeLabel: async (repo, issue, name) => posted.push({ kind: 'unlabel', repo, issue, name }),
+        issue: async () => ({ labels: [{ name: 'state:ready' }] }),
         comment: async (repo, issue, body) => posted.push({ kind: 'comment', repo, issue, body }),
       });
       return { result: null, client: null, tried: [] };
@@ -64,8 +68,14 @@ test('the question reaches the source issue, labelled', async () => {
 
   const label = posted.find((p) => p.kind === 'label');
   const comment = posted.find((p) => p.kind === 'comment');
-  assert.deepEqual(label.labels, ['tier:ai-needs-human']);
+  assert.deepEqual(label.labels, ['state:needs-human']);
   assert.equal(label.issue, 42, 'the question goes to the issue, not a run log');
+  assert.deepEqual(posted.find((p) => p.kind === 'unlabel'), {
+    kind: 'unlabel',
+    repo: 'owner/repo',
+    issue: 42,
+    name: 'state:ready',
+  });
   assert.match(comment.body, /Which of the two spellings is canonical\?/);
   assert.match(comment.body, /remove the/, 'it must say how to unblock it');
 });
