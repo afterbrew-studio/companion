@@ -86,6 +86,10 @@ function fixture() {
         addLabels: async () => {
           labels += 1;
         },
+        applyRegistryLabels: async () => {
+          labels += 1;
+          return ['ok'];
+        },
       }),
       checks: {},
       reviews: {},

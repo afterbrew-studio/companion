@@ -1433,7 +1433,7 @@ function ContributorFlowDryRunModal({
                 ))}
               </ListCard>
               <div className="banner-info mb-0 mt-3 text-[11px] leading-relaxed">
-                {report.workload.agentAuthored} PR(s) disclose <code className="code-inline">agent-authored</code> provenance. This count never selects a lane or quality verdict.
+                {report.workload.agentAuthored} PR(s) disclose agent-authored provenance in the pull-request body. This count never selects a lane or quality verdict.
               </div>
               {report.rateLimit ? (
                 <p className="dim mt-2 text-[11px]">

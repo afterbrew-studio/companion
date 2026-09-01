@@ -466,7 +466,7 @@ export class SlopService {
           (hints.length > 0 ? `\n\nSuggestions:\n${hints.map((h) => `- ${h}`).join('\n')}` : '');
       switch (action) {
         case 'label':
-          await client.addLabels(result.repo, result.prNumber, [this.slopLabel()]);
+          await client.applyRegistryLabels(result.repo, result.prNumber, [this.slopLabel()], 'pr');
           break;
         case 'comment':
           await client.comment(result.repo, result.prNumber, body);

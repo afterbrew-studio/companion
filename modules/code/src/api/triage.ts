@@ -21,7 +21,7 @@ const verdictSchema = z.object({
 });
 
 /** Frozen-corpus compatibility version for issue triage prompt + parser. */
-export const ISSUE_TRIAGE_PROMPT_VERSION = 1;
+export const ISSUE_TRIAGE_PROMPT_VERSION = 2;
 
 const issueEvaluationSchema = z
   .object({
@@ -182,12 +182,10 @@ export class Triage {
     const client = this.github({ repo: result.repo, accountId: opts.accountId, username: opts.userId });
     if (!client) throw new Error('GitHub is not configured');
 
-    const labels = [...result.verdict.labels];
-    if (result.verdict.duplicateOf) labels.push('duplicate');
-    if (result.verdict.needsInfo) labels.push('needs-info');
+    const labels = dedupe(result.verdict.labels);
     if (labels.length > 0) {
       this.requireAuthority(opts.userId, 'issues:act', result.repo, 'apply triage labels');
-      await client.addLabels(result.repo, result.issueNumber, dedupe(labels));
+      await client.applyRegistryLabels(result.repo, result.issueNumber, labels, 'issue');
     }
 
     let reply = result.verdict.draftReply.trim();
@@ -262,7 +260,7 @@ Investigate briefly (read relevant code if useful). Mark an issue invalid only w
   "summary": "<ONE sentence: what this issue is and whether it is valid. No preamble, no restating the title.>",
   "severity": "critical" | "high" | "medium" | "low" | "trivial",
   "kind": "bug" | "feature" | "question" | "docs" | "chore" | "invalid",
-  "labels": ["<up to 5 suggested labels, lowercase-kebab>"],
+  "labels": ["<up to 5 names from .github/labels.json; never invent a name, never P0-P3/tier/state/complexity/model/agent:ready>"],
   "duplicateOf": <issue number if this duplicates one of the other open issues, else null>,
   "needsInfo": <true if the report is missing information needed to act>,
   "draftReply": ${DRAFT_REPLY_SPEC}
@@ -290,6 +288,6 @@ export function parseVerdict(text: string): TriageVerdict {
   return verdictSchema.parse(extractModelJson(text)) as TriageVerdict;
 }
 
-function dedupe(values: string[]): string[] {
+function dedupe(values: readonly string[]): string[] {
   return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
 }

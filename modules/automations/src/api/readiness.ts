@@ -20,6 +20,14 @@ const LARGE_REVIEW_FILES = 50;
 const OVERSIZED_REVIEW_LINES = 14_400;
 const OVERSIZED_REVIEW_FILES = 500;
 
+/** Provenance lives in the pull-request body, never as a GitHub label. */
+export function agentAuthoredFromBody(body: string | null | undefined): boolean {
+  if (!body) return false;
+  if (/(?:^|\n)\s*-\s*\[\s*[xX]\s*\][^\n]*agent-authored/i.test(body)) return true;
+  if (/(?:^|\n)Agent-authored:/im.test(body)) return true;
+  return false;
+}
+
 export interface ContributorFlowDryRunContext {
   readonly workspaceId: string;
   readonly repo: string;
@@ -299,10 +307,9 @@ export function classifyContributorPull({ pull, cached, observedAt }: Contributo
     url: pull.html_url,
     author: pull.user?.login ?? '',
     draft: pull.draft === true,
-    // A label records disclosed provenance. It has intentionally not appeared
-    // in any branch above and therefore cannot choose the outcome.
-    agentAuthored: (pull.labels ?? []).some((label) =>
-      (typeof label === 'string' ? label : label.name) === 'agent-authored'),
+    // Body provenance has intentionally not appeared in any branch above and
+    // therefore cannot choose the outcome.
+    agentAuthored: agentAuthoredFromBody(pull.body),
     changedLines,
     changedFiles,
     mergeability,

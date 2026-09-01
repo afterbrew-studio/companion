@@ -28,6 +28,7 @@ export function fixture({
   discard = async () => undefined,
   performForRepo,
   trySummary = async () => null,
+  reopenCleanHistory = async () => null,
   authorized = () => true,
   canAccessWorkspace = () => true,
 } = {}) {
@@ -99,6 +100,7 @@ export function fixture({
         record('build', ([opts]) => ({ repo: opts.repo, userId: opts.userId, task: opts.task, preferredModel: opts.preferredModel })),
       startCheckFix: startCheckFix ?? record('fix_ci', fromPrBranch),
       startReviewFix: startReviewFix ?? record('address_review', fromPrBranch),
+      reopenCleanHistory,
     },
     // The board is the pusher-of-record, so a task is held until its owner has
     // an account that can push. These tests are about what happens AFTER that

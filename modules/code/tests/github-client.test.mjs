@@ -92,7 +92,7 @@ test('read-only queue calls expose bounded rate telemetry and explicit open-stat
   }
 });
 
-test('autonomy queue uses body-free GraphQL metadata instead of one REST detail call per PR', async () => {
+test('autonomy queue uses GraphQL metadata instead of one REST detail call per PR', async () => {
   const requests = [];
   const writes = [];
   const server = createServer(async (req, res) => {
@@ -126,7 +126,8 @@ test('autonomy queue uses body-free GraphQL metadata instead of one REST detail 
                   baseRefName: 'main',
                   reviewDecision: 'CHANGES_REQUESTED',
                   author: { login: 'contributor' },
-                  labels: { nodes: [{ name: 'agent-authored' }] },
+                  body: '- [x] An agent produced this diff (`agent-authored`)',
+                  labels: { nodes: [] },
                 }],
               },
             }
@@ -175,7 +176,7 @@ test('autonomy queue uses body-free GraphQL metadata instead of one REST detail 
         files: 51,
         mergeable: false,
         review: 'changes_requested',
-        body: null,
+        body: '- [x] An agent produced this diff (`agent-authored`)',
       },
     );
   } finally {

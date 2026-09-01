@@ -9,6 +9,13 @@ import type { Orchestrator, RunnerBackend } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
 import type { PrChecks } from './pr-checks.js';
 import {
+  copyBothScopeLabels,
+  labelNames,
+  loadLabelRegistry,
+} from './label-registry.js';
+import { ForbiddenGithubEdit, pathsFromDiff, unnamedGithubPaths } from './github-path-guard.js';
+import { unrecoverableOwnedAncestor } from './unrecoverable-history.js';
+import {
   mergePullRequestBody,
   primaryPullRequestTemplate,
   pullRequestSummary,
@@ -470,6 +477,14 @@ export class Fixes {
       context.policies.conventionalPrTitle,
     );
     opts.beforeWrite?.();
+    if (run.issue_number) {
+      const issueBody = await client
+        .issue(run.repo, run.issue_number)
+        .then((issue) => issue.body ?? '')
+        .catch(() => '');
+      const forbidden = unnamedGithubPaths(pathsFromDiff(await backend.diffVsBase(run.cwd, baseBranch)), issueBody);
+      if (forbidden.length > 0) throw new ForbiddenGithubEdit(forbidden);
+    }
     // Fresh PRs are collapsed onto their trusted base before Companion creates
     // one clean commit. This removes any attribution trailer even if a harness
     // ignored the no-commit prompt. Existing PR repairs retain their topology.
@@ -489,31 +504,22 @@ export class Fixes {
     const generatedBody =
       opts.body ??
       `${pullRequestSummary(run.outcome)}\n\n${run.issue_number ? `Closes #${run.issue_number}.` : ''}`.trim();
+    const withModel = run.model
+      ? `${generatedBody}\n\nWorker model: \`${run.model}\`.`
+      : generatedBody;
     const pr = await client.createPr(run.repo, {
       title,
       head: run.branch,
       base: baseBranch,
-      body: mergePullRequestBody(primaryPullRequestTemplate(context), generatedBody),
+      body: mergePullRequestBody(primaryPullRequestTemplate(context), withModel),
       draft: context.policies.pullRequestDraft,
     });
 
     this.store.runs.setPr(runId, run.branch, pr.html_url);
 
-    // Which model wrote this. A reviewer reading the diff cannot otherwise tell
-    // a frontier attempt from a cheap one, and the two deserve different
-    // scepticism - a label is the cheapest way to carry that, and it survives on
-    // the pull request after the run's own record has aged out.
-    //
-    // Best effort: a label is not worth failing a pull request that already
-    // exists, and the model is also recorded on the run.
-    if (run.model) {
-      await client
-        .addLabels(run.repo, prNumberFromUrl(pr.html_url) ?? 0, [`model:${run.model}`])
-        .catch((err) => log.warn('could not label the pull request with its model', {
-          repo: run.repo,
-          model: run.model,
-          err: String(err),
-        }));
+    const prNumber = pr.number || prNumberFromUrl(pr.html_url) || 0;
+    if (run.issue_number && prNumber > 0) {
+      await this.copyIssueLabelsOntoPr(client, run.repo, run.issue_number, prNumber);
     }
 
     this.orchestrator.markRun(runId, 'completed', `PR opened: ${pr.html_url}`);
@@ -578,6 +584,85 @@ export class Fixes {
       );
     }
     return client;
+  }
+
+  private async copyIssueLabelsOntoPr(
+    client: GitHubClient,
+    repo: string,
+    issueNumber: number,
+    prNumber: number,
+  ): Promise<void> {
+    try {
+      const issue = await client.issue(repo, issueNumber);
+      const copied = copyBothScopeLabels(labelNames(issue.labels), await loadLabelRegistry(client, repo));
+      if (copied.length === 0) return;
+      await client.addLabels(repo, prNumber, copied);
+    } catch (err) {
+      log.warn('could not copy issue labels onto the pull request', {
+        repo,
+        issueNumber,
+        prNumber,
+        err: String(err),
+      });
+    }
+  }
+
+  /**
+   * Open a successor PR from the current tree on a clean base, then close the
+   * unrecoverable ancestor history. No rebase, no amend, no force-push.
+   */
+  async reopenCleanHistory(
+    repo: string,
+    oldPrNumber: number,
+    username: string,
+    reason: string,
+  ): Promise<{ prUrl: string; prNumber: number } | null> {
+    const client = await this.requirePushAccess(repo, username);
+    const repoRow = this.store.repos.get(repo);
+    if (!repoRow) throw new Error(`unknown repo ${repo}`);
+    const old = await client.pull(repo, oldPrNumber);
+    const files = await client.prFiles(repo, oldPrNumber);
+    const { commits } = await client.prCommits(repo, oldPrNumber);
+    const ancestor = unrecoverableOwnedAncestor(
+      commits.map((commit) => ({ sha: commit.sha, message: commit.commit.message })),
+      files.files.map((file) => file.filename),
+    );
+    if (!ancestor) return null;
+
+    const backend = this.orchestrator.runners.backend(null);
+    const key = `reopen-${oldPrNumber}-${ancestor.sha.slice(0, 8)}`;
+    const cwd = await backend.addWorktreeAtBranch(repo, key, old.head.ref, username);
+    const author = await client
+      .viewer()
+      .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
+      .catch(() => undefined);
+    const title = old.title;
+    await backend.commitAll(cwd, title, author, repoRow.default_branch);
+    const newBranch = `companion/reopen-${oldPrNumber}-${ancestor.sha.slice(0, 7)}`;
+    await backend.push(repo, cwd, newBranch, username);
+    const body = [
+      old.body ?? '',
+      '',
+      `Successor of #${oldPrNumber}. ${reason}`,
+      `Unrecoverable ancestor: \`${ancestor.sha.slice(0, 12)}\`.`,
+    ].join('\n');
+    const pr = await client.createPr(repo, {
+      title,
+      head: newBranch,
+      base: repoRow.default_branch,
+      body: body.trim(),
+    });
+    await client
+      .comment(
+        repo,
+        oldPrNumber,
+        `Abandoned: ${reason}\n\nSuccessor: ${pr.html_url}\nUnrecoverable ancestor \`${ancestor.sha.slice(0, 12)}\` cannot be repaired by fix_ci.`,
+      )
+      .catch((err) => log.warn('could not comment on the abandoned pull request', { repo, oldPrNumber, err: String(err) }));
+    await client.closePr(repo, oldPrNumber).catch((err) =>
+      log.warn('could not close the abandoned pull request', { repo, oldPrNumber, err: String(err) }),
+    );
+    return { prUrl: pr.html_url, prNumber: pr.number };
   }
 }
 

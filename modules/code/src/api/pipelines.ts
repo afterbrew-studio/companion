@@ -763,8 +763,16 @@ function createStepRegistry(deps: EngineDeps, broadcast: (msg: SpaServerMessage)
       const client = deps.github({ repo: ctx.repo, username: ctx.userId });
       if (!client) return { status: 'error', summary: 'GitHub is not configured' };
       ctx.requirePermission(ctx.pr ? 'prs:act' : 'issues:act', 'apply GitHub labels');
-      await client.addLabels(ctx.repo, target.number, [...step.config.labels]);
-      return { status: 'passed', summary: `added ${step.config.labels.join(', ')}` };
+      const applied = await client.applyRegistryLabels(
+        ctx.repo,
+        target.number,
+        [...step.config.labels],
+        ctx.pr ? 'pr' : 'issue',
+      );
+      if (applied.length === 0 && step.config.labels.length > 0) {
+        return { status: 'error', summary: 'none of those labels are in the repository registry' };
+      }
+      return { status: 'passed', summary: `added ${applied.join(', ')}` };
     },
 
     comment: async (step, ctx) => {

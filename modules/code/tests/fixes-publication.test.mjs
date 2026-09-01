@@ -19,11 +19,14 @@ Hardened the integration probes and ran targeted tests.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`,
     issue_number: 568,
     pr_url: null,
+    model: 'MiniMax-M3',
   };
   const backend = {
     commitAll: async (...args) => calls.push(['commit', ...args]),
     push: async (...args) => calls.push(['push', ...args]),
+    diffVsBase: async () => '',
   };
+  const labelled = [];
   const created = [];
   const client = {
     viewer: async () => ({ login: 'alice' }),
@@ -31,6 +34,20 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`,
       created.push(args);
       return { html_url: 'https://github.com/example-org/example-repo/pull/999', number: 999 };
     },
+    issue: async () => ({
+      labels: [{ name: 'tier:ai' }, { name: 'agent:ready' }, { name: 'complexity:tiny' }],
+      body: 'Relevant files: agents/rules/foo.md',
+    }),
+    repo: async () => ({ default_branch: 'main' }),
+    repoTextFiles: async () => new Map([['.github/labels.json', JSON.stringify({
+      labels: [
+        { name: 'tier:ai', scope: 'both', status: 'active' },
+        { name: 'complexity:tiny', scope: 'both', status: 'active' },
+        { name: 'agent:ready', scope: 'issue', status: 'active' },
+        { name: 'model:MiniMax-M3', scope: 'pr', status: 'retiring' },
+      ],
+    })]]),
+    addLabels: async (_repo, number, labels) => labelled.push({ number, labels }),
   };
   const store = {
     runs: {
@@ -110,6 +127,8 @@ Hardened the integration probes and ran targeted tests.
 
 Closes #568.
 
+Worker model: \`MiniMax-M3\`.
+
 ## Validation
 - [ ] pnpm test
 
@@ -117,4 +136,61 @@ Closes #568.
 - [x] An agent produced this diff (\`agent-authored\`)`,
   });
   assert.doesNotMatch(created[0].body, /Co-Authored-By/i);
+  assert.doesNotMatch(created[0].body, /model:MiniMax-M3/);
+  assert.deepEqual(labelled, [{ number: 999, labels: ['tier:ai', 'complexity:tiny'] }]);
+});
+
+test('approve refuses an unnamed .github edit before committing', async () => {
+  const calls = [];
+  const run = {
+    id: 'fix-ci-1',
+    repo: 'example-org/example-repo',
+    branch: 'fix/ci',
+    cwd: '/tmp/fix-ci-1',
+    runner_id: null,
+    user_id: 'alice',
+    title: 'Fix CI',
+    outcome: 'tweaked a workflow',
+    issue_number: 25,
+    pr_url: 'https://github.com/example-org/example-repo/pull/8',
+    model: 'MiniMax-M3',
+  };
+  const backend = {
+    commitAll: async (...args) => calls.push(['commit', ...args]),
+    push: async (...args) => calls.push(['push', ...args]),
+    diffVsBase: async () =>
+      'diff --git a/.github/workflows/review-dispatch.yml b/.github/workflows/review-dispatch.yml\n',
+  };
+  const client = {
+    viewer: async () => ({ login: 'alice' }),
+    issue: async () => ({
+      labels: [],
+      body: 'Relevant files:\n- agents/rules/model-routing.md',
+    }),
+  };
+  const store = {
+    runs: { get: () => run, setPr: () => undefined, updateStatus: () => undefined },
+    repos: { get: () => ({ default_branch: 'main' }) },
+  };
+  const fixes = new Fixes(
+    store,
+    {
+      runners: { backend: () => backend },
+      markRun: () => undefined,
+      stopRun: async () => undefined,
+    },
+    () => client,
+    async () => true,
+    async () => ({ client, tried: [] }),
+    () => true,
+    {},
+    { scan: async () => ({ policies: { conventionalPrTitle: false, pullRequestDraft: false, noAiAttribution: false, agentProvenance: false, branchPrefixes: [] }, files: [] }) },
+    () => undefined,
+  );
+
+  await assert.rejects(() => fixes.approve(run.id, {}, 'alice'), (err) => {
+    assert.equal(err.name, 'ForbiddenGithubEdit');
+    return true;
+  });
+  assert.equal(calls.length, 0, 'the forbidden diff must not be committed');
 });
