@@ -1015,6 +1015,7 @@ export class BoardService {
       const dispatch = {
         task: 'board.worker',
         preferredModel: task.model,
+        sourceIssueNumber: task.sourceIssueNumber,
         routing: {
           phase: stage === 'build' ? 'implement' : 'repair',
           workUnitId: task.id,
@@ -1493,7 +1494,12 @@ reply; a guess costs a change that has to be found and undone.`;
         // GitHub's decision when autoReview is off. Anything else - no decision
         // yet, or a comment-only review - means the reviewer has not finished
         // with it, and the card waits rather than guessing.
-        if (pr.reviewDecision !== 'approved') continue;
+        if (pr.reviewDecision !== 'approved') {
+          if (!this.octopusStartedFor(task, task.prNumber)) {
+            void this.startLaneReview(task, task.prNumber);
+          }
+          continue;
+        }
       }
 
       if (task.stage === 'awaiting_review' && config.autoReview) {
@@ -1985,6 +1991,12 @@ reply; a guess costs a change that has to be found and undone.`;
     }
   }
 
+  private octopusStartedFor(task: TaskRecord, prNumber: number): boolean {
+    return this.store
+      .listEvents(task.id)
+      .some((event) => event.kind === 'review_requested' && event.detail.includes(`#${prNumber}`));
+  }
+
   /**
    * Companion-authored lane PRs skip vendor auto-dispatch; this is the call
    * that actually starts Octopus (`source: "adapter"`).
@@ -1992,33 +2004,38 @@ reply; a guess costs a change that has to be found and undone.`;
   private async startLaneReview(task: TaskRecord, prNumber: number): Promise<void> {
     const config = octopusAdapterConfig();
     if (!config) {
-      log.warn('board: octopus adapter is not configured; lane review will not start', {
-        repo: task.repo,
-        prNumber,
-      });
+      this.notifyBlocker(
+        task,
+        'octopus_adapter',
+        'Board task is waiting for Octopus',
+        `PR #${prNumber} for ${task.title} needs the lane reviewer, but COMPANION_OCTOPUS_URL and COMPANION_OCTOPUS_TOKEN are not set.`,
+      );
       return;
     }
     const correlationId = randomUUID();
+    const headSha = this.code.prs.get(task.repo, prNumber)?.headSha ?? undefined;
     try {
       await startOctopusReview({
         ...config,
         remoteUrl: `https://github.com/${task.repo}.git`,
         prNumber,
         correlationId,
+        headSha,
       });
+      this.clearBlocker(task.id, 'octopus_adapter');
       this.store.insertEvent(
         task.id,
         'review_requested',
-        `octopus adapter ${correlationId} for ${task.repo}#${prNumber}`,
+        `octopus adapter ${correlationId} for ${task.repo}#${prNumber}${headSha ? ` at ${headSha}` : ''}`,
       );
       this.changed();
     } catch (err) {
-      log.warn('board: octopus adapter failed to start', {
-        repo: task.repo,
-        prNumber,
-        correlationId,
-        err: String(err),
-      });
+      this.notifyBlocker(
+        task,
+        'octopus_adapter',
+        'Board task could not start Octopus',
+        `PR #${prNumber} for ${task.title}: ${String(err)}. Companion will retry.`,
+      );
     }
   }
 
@@ -2127,6 +2144,7 @@ reply; a guess costs a change that has to be found and undone.`;
     this.clearBlocker(taskId, 'ci_missing');
     this.clearBlocker(taskId, 'github');
     this.clearBlocker(taskId, 'authority');
+    this.clearBlocker(taskId, 'octopus_adapter');
   }
 
   /**

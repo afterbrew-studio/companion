@@ -1,6 +1,6 @@
 /**
- * CI repair must not edit `.github/**` unless the issue that started the run
- * named that path. Prompt text is not an enforcer; this is.
+ * CI repair must not edit `.github/**` unless the originating issue named that
+ * path in Relevant files. The pull-request body is the agent's own output.
  */
 
 const GITHUB_DIR = /^\.github(?:\/|$)/;
@@ -33,11 +33,24 @@ export function isRepoGithubPath(path: string): boolean {
   return GITHUB_DIR.test(path.replace(/^\.\//, ''));
 }
 
+/** The Relevant files answer, not Context, Summary, or the rest of the body. */
+export function relevantFilesSection(body: string): string {
+  const heading = body.match(
+    /(?:^|\n)#{1,6}\s*Relevant files\b[^\n]*\n([\s\S]*?)(?=\n#{1,6}\s|\n_{3,}\s*$|$)/i,
+  );
+  if (typeof heading?.[1] === 'string') return heading[1];
+  const labelled = body.match(
+    /(?:^|\n)Relevant files:\s*\n([\s\S]*?)(?=\n[A-Z][^:\n]{0,40}:\s*\n|$)/i,
+  );
+  return labelled?.[1] ?? '';
+}
+
 export function issueNamesPath(body: string, path: string): boolean {
+  const section = relevantFilesSection(body);
+  if (section.trim() === '') return false;
   const needle = path.replace(/^\.\//, '');
-  if (body.includes(needle)) return true;
-  // A Relevant-files row that names the directory covers files under it.
-  if (needle.startsWith('.github/') && /(?:^|[\s`])\.github\/?(?:\s|$)/m.test(body)) return true;
+  if (section.includes(needle)) return true;
+  if (needle.startsWith('.github/') && /(?:^|[\s`])\.github\/?(?:\s|$)/m.test(section)) return true;
   return false;
 }
 

@@ -701,6 +701,16 @@ export class GitHubClient {
     return { commits, truncated: full };
   }
 
+  /** Files one commit changed. Ownership is per-commit, not per pull request. */
+  async commitFiles(fullName: string, sha: string): Promise<string[]> {
+    const commit = await this.get<{ files?: Array<{ filename?: string }> }>(
+      `/repos/${fullName}/commits/${encodeURIComponent(sha)}`,
+    );
+    return (commit.files ?? [])
+      .map((file) => file.filename)
+      .filter((name): name is string => typeof name === 'string' && name !== '');
+  }
+
   /**
    * Post a PR review (COMMENT / APPROVE / REQUEST_CHANGES), optionally with
    * inline comments anchored to lines of the diff.

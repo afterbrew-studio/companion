@@ -10,6 +10,7 @@ export interface OctopusStartRequest {
   readonly remoteUrl: string;
   readonly prNumber: number;
   readonly correlationId: string;
+  readonly headSha?: string;
   readonly fetch?: typeof fetch;
 }
 
@@ -50,6 +51,7 @@ export async function startOctopusReview(request: OctopusStartRequest): Promise<
     body: JSON.stringify({
       prNumber: request.prNumber,
       correlationId: request.correlationId,
+      ...(request.headSha ? { headSha: request.headSha } : {}),
     }),
   });
   if (!started.ok) {

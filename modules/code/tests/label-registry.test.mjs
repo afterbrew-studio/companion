@@ -14,7 +14,8 @@ const RAYF_SHAPED = JSON.stringify({
     { name: 'area:governance', scope: 'both', status: 'active' },
     { name: 'agent:ready', scope: 'issue', status: 'active' },
     { name: 'review:ai', scope: 'pr', status: 'active' },
-    { name: 'bug', scope: 'issue', status: 'retiring' },
+    { name: 'review:none', scope: 'pr', status: 'active' },
+    { name: 'bug', scope: 'issue', status: 'active' },
     { name: 'test', scope: 'issue', status: 'retiring' },
     { name: 'docs', scope: 'issue', status: 'retiring' },
     { name: 'model:MiniMax-M3', scope: 'pr', status: 'retiring' },
@@ -25,6 +26,14 @@ test('a model that invents test, bug, or agent-ready applies none of them', () =
   const entries = parseLabelRegistry(RAYF_SHAPED);
   assert.deepEqual(
     filterProposedLabels(['test', 'bug', 'agent-ready', 'docs'], entries, 'issue'),
+    [],
+  );
+});
+
+test('review: is not applied from model output even when active', () => {
+  const entries = parseLabelRegistry(RAYF_SHAPED);
+  assert.deepEqual(
+    filterProposedLabels(['review:none', 'review:ai', 'ready-to-merge'], entries, 'pr'),
     [],
   );
 });

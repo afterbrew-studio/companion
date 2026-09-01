@@ -21,12 +21,21 @@ export class LabelRegistryError extends Error {
   }
 }
 
-/** Families a filer (or template) owns. Model output must not apply these. */
-const FILER_PREFIXES = ['complexity:', 'tier:', 'state:', 'model:', 'area:', 'feature:'] as const;
+/** Families a filer, template, or classifier owns. Model output must not apply these. */
+const FILER_PREFIXES = [
+  'complexity:',
+  'tier:',
+  'state:',
+  'model:',
+  'area:',
+  'feature:',
+  'review:',
+] as const;
 
 export function isFilerFamily(name: string): boolean {
   if (/^P[0-3]$/.test(name)) return true;
   if (name === 'agent:ready' || name === 'agent-ready') return true;
+  if (name === 'bug') return true;
   return FILER_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 

@@ -29,6 +29,7 @@ test('startOctopusReview POSTs the CLI adapter and never applies a label', async
     remoteUrl: 'https://github.com/acme/app.git',
     prNumber: 12,
     correlationId: 'corr-1',
+    headSha: 'abc123',
     fetch: fetchImpl,
   });
   assert.equal(result.repoId, 'repo-1');
@@ -36,6 +37,10 @@ test('startOctopusReview POSTs the CLI adapter and never applies a label', async
   assert.match(calls[0].url, /by-remote/);
   assert.equal(calls[1].method, 'POST');
   assert.match(calls[1].url, /\/api\/cli\/repos\/repo-1\/review$/);
-  assert.deepEqual(JSON.parse(calls[1].body), { prNumber: 12, correlationId: 'corr-1' });
+  assert.deepEqual(JSON.parse(calls[1].body), {
+    prNumber: 12,
+    correlationId: 'corr-1',
+    headSha: 'abc123',
+  });
   assert.equal(calls.every((call) => !String(call.body ?? '').includes('review:octopus')), true);
 });

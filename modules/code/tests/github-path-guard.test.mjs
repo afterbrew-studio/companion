@@ -25,7 +25,18 @@ test('a fix_ci diff under .github is rejected unless the issue named that path',
   assert.equal(err.name, 'ForbiddenGithubEdit');
 });
 
-test('naming the workflow path in the issue allows the edit', () => {
+test('a workflow path in Context does not authorise a .github edit', () => {
+  const paths = ['.github/workflows/review-dispatch.yml'];
+  const issue = [
+    '### Context',
+    'The failure is in `.github/workflows/review-dispatch.yml`.',
+    '### Relevant files',
+    '- agents/rules/model-routing.md',
+  ].join('\n');
+  assert.deepEqual(unnamedGithubPaths(paths, issue), paths);
+});
+
+test('naming the workflow path in Relevant files allows the edit', () => {
   const paths = ['.github/workflows/review-dispatch.yml'];
   const issue = 'Relevant files:\n- .github/workflows/review-dispatch.yml';
   assert.deepEqual(unnamedGithubPaths(paths, issue), []);

@@ -14,7 +14,7 @@ import {
   loadLabelRegistry,
 } from './label-registry.js';
 import { ForbiddenGithubEdit, pathsFromDiff, unnamedGithubPaths } from './github-path-guard.js';
-import { unrecoverableOwnedAncestor } from './unrecoverable-history.js';
+import { parseOwnershipRules, unrecoverableOwnedAncestor } from './unrecoverable-history.js';
 import {
   mergePullRequestBody,
   primaryPullRequestTemplate,
@@ -39,6 +39,8 @@ export interface FixRunOptions {
   preferredModel?: string | null;
   /** Semantic stage and parent work unit for Model Router. */
   routing?: RunRoutingContext;
+  /** Originating GitHub issue, when this run repairs a PR that implements one. */
+  sourceIssueNumber?: number | null;
   /** Internal owning-flow hooks: expose the child before its first prompt. */
   onCreated?: (runId: string) => void;
   /** Final cancellation fence after run creation and before every first-turn action. */
@@ -389,7 +391,7 @@ export class Fixes {
       runnerId,
       cwd,
       repo: pr.repo,
-      issueNumber: pr.number,
+      issueNumber: opts.sourceIssueNumber ?? null,
       branch: pr.headRef,
       userId: opts.userId ?? null,
       task,
@@ -477,12 +479,17 @@ export class Fixes {
       context.policies.conventionalPrTitle,
     );
     opts.beforeWrite?.();
-    if (run.issue_number) {
-      const issueBody = await client
-        .issue(run.repo, run.issue_number)
-        .then((issue) => issue.body ?? '')
-        .catch(() => '');
-      const forbidden = unnamedGithubPaths(pathsFromDiff(await backend.diffVsBase(run.cwd, baseBranch)), issueBody);
+    if (run.pr_url) {
+      const issueBody = run.issue_number
+        ? await client
+            .issue(run.repo, run.issue_number)
+            .then((issue) => issue.body ?? '')
+            .catch(() => '')
+        : '';
+      const forbidden = unnamedGithubPaths(
+        pathsFromDiff(await backend.diffVsBase(run.cwd, baseBranch)),
+        issueBody,
+      );
       if (forbidden.length > 0) throw new ForbiddenGithubEdit(forbidden);
     }
     // Fresh PRs are collapsed onto their trusted base before Companion creates
@@ -621,15 +628,27 @@ export class Fixes {
     const repoRow = this.store.repos.get(repo);
     if (!repoRow) throw new Error(`unknown repo ${repo}`);
     const old = await client.pull(repo, oldPrNumber);
-    const files = await client.prFiles(repo, oldPrNumber);
+    const mapText = (await client.repoTextFiles(repo, repoRow.default_branch, [
+      'scripts/lint/doc_ownership.json',
+    ])).get('scripts/lint/doc_ownership.json');
+    if (typeof mapText !== 'string' || mapText.trim() === '') return null;
+    const rules = parseOwnershipRules(mapText);
+    if (rules.length === 0) return null;
     const { commits } = await client.prCommits(repo, oldPrNumber);
-    const ancestor = unrecoverableOwnedAncestor(
-      commits.map((commit) => ({ sha: commit.sha, message: commit.commit.message })),
-      files.files.map((file) => file.filename),
-    );
+    const ranged = [];
+    for (const commit of commits) {
+      ranged.push({
+        sha: commit.sha,
+        message: commit.commit.message,
+        files: await client.commitFiles(repo, commit.sha),
+      });
+    }
+    const ancestor = unrecoverableOwnedAncestor(ranged, rules);
     if (!ancestor) return null;
 
+    const baseRef = old.base.ref || repoRow.default_branch;
     const backend = this.orchestrator.runners.backend(null);
+    await backend.fetchOrigin(repo, username);
     const key = `reopen-${oldPrNumber}-${ancestor.sha.slice(0, 8)}`;
     const cwd = await backend.addWorktreeAtBranch(repo, key, old.head.ref, username);
     const author = await client
@@ -637,7 +656,7 @@ export class Fixes {
       .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
       .catch(() => undefined);
     const title = old.title;
-    await backend.commitAll(cwd, title, author, repoRow.default_branch);
+    await backend.commitAll(cwd, title, author, baseRef);
     const newBranch = `companion/reopen-${oldPrNumber}-${ancestor.sha.slice(0, 7)}`;
     await backend.push(repo, cwd, newBranch, username);
     const body = [
@@ -649,7 +668,7 @@ export class Fixes {
     const pr = await client.createPr(repo, {
       title,
       head: newBranch,
-      base: repoRow.default_branch,
+      base: baseRef,
       body: body.trim(),
     });
     await client
