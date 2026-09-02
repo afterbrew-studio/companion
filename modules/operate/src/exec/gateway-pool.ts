@@ -75,8 +75,14 @@ export function gatewayConfigYaml(
   provider: ProviderDefaults | null,
   access: AgentRunAccess = 'workspace-write',
 ): string {
+  // `plugins.provider.default` is what selects the ACTIVE provider; the
+  // `provider:` block only supplies the model the request asks for. Writing the
+  // block alone left the overlay's model paired with whatever provider the user
+  // config defaulted to, so a routed run sent its model to another vendor's
+  // endpoint and got "model does not exist" back. Both are written, and they
+  // always name the same provider.
   const providerYaml = provider
-    ? `provider:\n  name: ${JSON.stringify(provider.name)}\n${provider.model ? `  model: ${JSON.stringify(provider.model)}\n` : ''}`
+    ? `plugins:\n  provider:\n    default: ${JSON.stringify(provider.name)}\nprovider:\n  name: ${JSON.stringify(provider.name)}\n${provider.model ? `  model: ${JSON.stringify(provider.model)}\n` : ''}`
     : '';
   // These are config-level immutable denies. Goal-mode auto approval and an
   // "allow always" response cannot remove them, so read-only is a property of

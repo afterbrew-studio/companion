@@ -61,7 +61,7 @@ test('per-run config carries provider defaults without changing the imported con
 
   assert.equal(
     config,
-    `provider:\n  name: "openai-codex"\n  model: "gpt-5.6-terra"\nchannels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/companion skills"\n`,
+    `plugins:\n  provider:\n    default: "openai-codex"\nprovider:\n  name: "openai-codex"\n  model: "gpt-5.6-terra"\nchannels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/companion skills"\n`,
   );
 });
 
@@ -103,4 +103,16 @@ test('a malformed or absent routing table falls back to the default', () => {
       model: 'glm-5.3',
     });
   }
+});
+
+test('the overlay names the routed provider where moxxy actually reads it', () => {
+  const config = gatewayPool.gatewayConfigYaml?.(50176, '/tmp/skills', {
+    name: 'openai',
+    model: 'MiniMax-M3',
+  });
+  // `plugins.provider.default` selects the active provider; the `provider:`
+  // block only supplies the requested model. Both must name the same vendor or
+  // the model reaches another endpoint.
+  assert.match(config, /plugins:\n  provider:\n    default: "openai"\n/);
+  assert.match(config, /provider:\n  name: "openai"\n  model: "MiniMax-M3"\n/);
 });
