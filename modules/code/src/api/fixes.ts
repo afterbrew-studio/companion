@@ -140,6 +140,14 @@ export class Fixes {
     title: string;
     repo: string;
     issueNumber?: number | null;
+    /**
+     * The issue this work came from, under the name the board dispatches every
+     * stage with. `createPrBranchRun` already accepts it, so a build-stage run
+     * that spread the same object silently lost the number and opened a pull
+     * request with no issue against it - which is what gates copying the
+     * issue's labels onto it.
+     */
+    sourceIssueNumber?: number | null;
     proposalId?: string | null;
     branchPrefix: string;
     baseBranch: string;
@@ -158,12 +166,13 @@ export class Fixes {
     await this.requirePersonalAccess(opts.repo, opts.userId);
     const context = await this.loadAgentContext(opts.repo, opts.baseBranch, opts.userId);
     const suffix = Date.now().toString(36).slice(-4);
+    const issueNumber = opts.issueNumber ?? opts.sourceIssueNumber ?? null;
     const branchPrefix = repositoryBranchPrefix(opts.branchPrefix, opts.title, opts.kind, context);
     const branch = `${branchPrefix}-${suffix}`;
     const task = opts.task ?? (opts.kind === 'fix' ? 'code.fix' : 'code.implement');
     const routing = opts.routing ?? {
       phase: 'implement',
-      workUnitId: opts.proposalId ?? (opts.issueNumber ? `${opts.repo}#${opts.issueNumber}` : opts.branchPrefix),
+      workUnitId: opts.proposalId ?? (issueNumber ? `${opts.repo}#${issueNumber}` : opts.branchPrefix),
       risk: 'medium' as const,
     };
     const placement = this.orchestrator.prepareRunPlacement(opts.repo, {
@@ -193,7 +202,7 @@ export class Fixes {
       runnerId,
       cwd,
       repo: opts.repo,
-      issueNumber: opts.issueNumber ?? null,
+      issueNumber,
       proposalId: opts.proposalId ?? null,
       branch,
       userId: opts.userId ?? null,
