@@ -61,7 +61,7 @@ test('per-run config carries provider defaults without changing the imported con
 
   assert.equal(
     config,
-    `provider:\n  name: "openai-codex"\n  model: "gpt-5.6-terra"\nchannels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/companion skills"\n`,
+    `plugins:\n  provider:\n    default: "openai-codex"\nprovider:\n  name: "openai-codex"\n  model: "gpt-5.6-terra"\nchannels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/companion skills"\n`,
   );
 });
 
@@ -69,4 +69,50 @@ test('per-run config stays provider-agnostic when no default is configured', () 
   const config = gatewayPool.gatewayConfigYaml?.(50176, '/tmp/skills', null);
 
   assert.equal(config, `channels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/skills"\n`);
+});
+
+test('an unrouted model keeps the configured provider', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  const routes = home.providerRoutesFromJson('{"MiniMax-M3":"openai"}');
+  assert.deepEqual(home.providerForModel(defaults, routes, 'glm-5.3'), {
+    name: 'zai-coding-plan',
+    model: 'glm-5.3',
+  });
+});
+
+test('a routed model starts the run under its own vendor', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  const routes = home.providerRoutesFromJson('{"MiniMax-M3":"openai","MiniMax-M2.7":"openai"}');
+  assert.deepEqual(home.providerForModel(defaults, routes, 'MiniMax-M3'), {
+    name: 'openai',
+    model: 'MiniMax-M3',
+  });
+});
+
+test('a run with no model of its own keeps the configured defaults', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  assert.deepEqual(home.providerForModel(defaults, new Map(), null), defaults);
+});
+
+test('a malformed or absent routing table falls back to the default', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  for (const table of [null, 'not json', '[]', '{"MiniMax-M3":42}']) {
+    const routes = home.providerRoutesFromJson(table);
+    assert.deepEqual(home.providerForModel(defaults, routes, 'MiniMax-M3'), {
+      name: 'zai-coding-plan',
+      model: 'glm-5.3',
+    });
+  }
+});
+
+test('the overlay names the routed provider where moxxy actually reads it', () => {
+  const config = gatewayPool.gatewayConfigYaml?.(50176, '/tmp/skills', {
+    name: 'openai',
+    model: 'MiniMax-M3',
+  });
+  // `plugins.provider.default` selects the active provider; the `provider:`
+  // block only supplies the requested model. Both must name the same vendor or
+  // the model reaches another endpoint.
+  assert.match(config, /plugins:\n  provider:\n    default: "openai"\n/);
+  assert.match(config, /provider:\n  name: "openai"\n  model: "MiniMax-M3"\n/);
 });

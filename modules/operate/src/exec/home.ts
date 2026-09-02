@@ -230,6 +230,53 @@ export function providerNamesFromConfigYaml(yaml: string | null): string[] {
   return [...scanProviderConfig(yaml).names].sort();
 }
 
+/** Companion's routing table: which provider serves a given model id. */
+export const MODEL_ROUTES_FILE = 'model-routes.json';
+
+/**
+ * Model → provider, read from Companion's own file beside moxxy's config
+ * rather than from the config itself. moxxy validates its document against a
+ * closed schema and refuses to start on an unknown key, so a routing table
+ * added there would take the whole instance down rather than be ignored. This
+ * is Companion's decision anyway: moxxy holds one active provider per process
+ * and knows nothing about the tier a unit of work was pinned to.
+ */
+export function providerRoutesFromJson(json: string | null): ReadonlyMap<string, string> {
+  const routes = new Map<string, string>();
+  if (!json) return routes;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return routes;
+    for (const [model, provider] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof provider === 'string' && provider.trim() && model.trim()) {
+        routes.set(model, provider.trim());
+      }
+    }
+  } catch {
+    // A malformed table falls back to the configured default, which is the
+    // behaviour every run had before routing existed.
+  }
+  return routes;
+}
+
+/**
+ * The provider a run should start under. A run carries a model, chosen from
+ * the tier its work was pinned to, and moxxy sends that id to whichever
+ * provider is active — so a run whose model belongs to another vendor reaches
+ * the wrong endpoint and fails its every turn. An unrouted model keeps the
+ * configured default.
+ */
+export function providerForModel(
+  defaults: ProviderDefaults | null,
+  routes: ReadonlyMap<string, string>,
+  model: string | null,
+): ProviderDefaults | null {
+  if (model === null) return defaults;
+  const routed = routes.get(model);
+  if (routed) return { name: routed, model };
+  return defaults ? { name: defaults.name, model: defaults.model } : null;
+}
+
 function scanProviderConfig(yaml: string): ProviderConfigScan {
   const names = new Set<string>();
   let explicitName: string | null = null;
