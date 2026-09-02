@@ -793,6 +793,9 @@ export class Automations {
       issueNumber: issue.number,
       title: issue.title,
       body: issue.body ?? '',
+      labels: (issue.labels ?? []).map((label) =>
+        typeof label === 'string' ? label : (label.name ?? ''),
+      ),
       triageSummary: verdict.summary,
       priority: priorityFor(verdict.severity),
       queue: flow.queueIssues,

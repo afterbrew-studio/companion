@@ -324,6 +324,8 @@ export class BoardService {
     issueNumber: number;
     title: string;
     body: string;
+    /** The issue's labels, which carry the complexity tier this work routes on. */
+    labels: readonly string[];
     triageSummary: string;
     priority: TaskPriority;
     queue: boolean;
@@ -356,12 +358,37 @@ export class BoardService {
       priority: input.priority,
       queue: input.queue,
       createdBy: input.createdBy,
+      model: this.modelForComplexity(input.labels),
     });
     this.store.insertEvent(task.id, 'source_issue', `${input.repo}#${input.issueNumber}`);
     this.changed();
     return { task, created: true };
   }
 
+
+  /**
+   * The worker for work of this difficulty, from the issue's `complexity:`
+   * label. A tier is a property of the WORK; the task pin is a property of the
+   * unit of work ('board.worker'), so the pin alone routes every card through
+   * one model however hard it is. This lands on the card's own model, which
+   * already outranks the pin, so an unlabelled issue and an unpinned tier both
+   * fall back to exactly the behaviour that existed before.
+   *
+   * Conflicting labels resolve to the strongest: an escalation is the label
+   * most likely to have been added second, and a tier may be raised and never
+   * lowered.
+   */
+  private modelForComplexity(labels: readonly string[]): string | null {
+    const tiers = ['strong', 'normal', 'tiny'];
+    const present = new Set(
+      labels
+        .map((label) => label.trim().toLowerCase())
+        .filter((label) => label.startsWith('complexity:'))
+        .map((label) => label.slice('complexity:'.length)),
+    );
+    const tier = tiers.find((candidate) => present.has(candidate));
+    return tier ? this.operate.orchestrator.complexityModelPin(tier) : null;
+  }
   /** One-click repository flows should never wait forever for logical workers. */
   /**
    * The answer arrived: put a parked card back in the queue.
