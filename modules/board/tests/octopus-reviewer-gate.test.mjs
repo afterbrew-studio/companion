@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { octopusAdapterConfig } from '../dist/api/octopus-adapter.js';
+import { octopusAdapterConfig, octopusLogin } from '../dist/api/octopus-adapter.js';
 import { fixture, insertTask } from './fixture.mjs';
 
 /**
@@ -129,4 +129,52 @@ test('the [bot] suffix is not part of the comparison', async () => {
     assert.equal(started(store), true, 'same app, two spellings');
     db.close();
   });
+});
+
+test('the comparison is case-folded, because GitHub logins are', async () => {
+  // The two sides arrive from independent unnormalised places: free-text API input and an
+  // environment variable. Without folding, an operator typing a different case silently
+  // drops the review Octopus was meant to do.
+  await withAdapterEnv('Octopus-AB[bot]', async () => {
+    const { db, store, makeService } = fixture();
+    laneTask(store, 'octopus-ab[bot]');
+    const service = makeService();
+    await service.tick();
+    await until(() => started(store));
+    service.dispose();
+    assert.equal(started(store), true, 'same account, different case, must still match');
+    db.close();
+  });
+});
+
+test('a nominated other reviewer is skipped even with no adapter configured', async () => {
+  // The login is readable without a URL or token. Folding the two together meant an
+  // unconfigured adapter could not answer who the reviewer was, so a flow that nominated
+  // a person still collected a "waiting for Octopus" blocker on every pull request.
+  const prev = { ...process.env };
+  delete process.env.COMPANION_OCTOPUS_URL;
+  delete process.env.COMPANION_OCTOPUS_TOKEN;
+  process.env.COMPANION_OCTOPUS_LOGIN = 'octopus-ab[bot]';
+  try {
+    const { db, store, makeService } = fixture();
+    laneTask(store, 'some-human');
+    const service = makeService();
+    await service.tick();
+    await until(() => store.hasActiveBlocker('tsk-1', 'octopus_adapter'));
+    service.dispose();
+    assert.equal(
+      store.hasActiveBlocker('tsk-1', 'octopus_adapter'),
+      false,
+      'no blocker for a reviewer this deployment was never asked to run',
+    );
+    db.close();
+  } finally {
+    process.env = prev;
+  }
+});
+
+test('the login is readable without a url or token', () => {
+  assert.equal(octopusLogin({ COMPANION_OCTOPUS_LOGIN: 'octopus-ab[bot]' }), 'octopus-ab[bot]');
+  assert.equal(octopusLogin({}), null);
+  assert.equal(octopusLogin({ COMPANION_OCTOPUS_LOGIN: '  ' }), null);
 });

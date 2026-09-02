@@ -5,7 +5,7 @@ import type { RunRecord, RunStatus, RunVerification } from '@companion/module-op
 import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@moxxy/companion-sdk/server';
-import { octopusAdapterConfig, startOctopusReview } from './octopus-adapter.js';
+import { octopusAdapterConfig, octopusLogin, startOctopusReview } from './octopus-adapter.js';
 import type {
   BoardConfig,
   SpecOption,
@@ -2066,12 +2066,18 @@ reply; a guess costs a change that has to be found and undone.`;
   private octopusIsTheReviewer(task: TaskRecord, login: string | null): boolean {
     const nominated = task.automationPolicy?.externalReviewLogin ?? null;
     if (!login || !nominated) return true;
-    return nominated.replace(/\[bot\]$/, '') === login.replace(/\[bot\]$/, '');
+    // Case-folded, because GitHub logins are. The two sides arrive from independent
+    // unnormalised places - `externalReviewLogin` from free-text API input, the other from
+    // an environment variable - so an operator typing a different case than however it was
+    // stored would silently drop the review Octopus was meant to do. `externalVerdict` in
+    // automations.ts already lowercases both sides of this same field.
+    const bare = (value: string) => value.replace(/\[bot\]$/, '').toLowerCase();
+    return bare(nominated) === bare(login);
   }
 
   private async startLaneReview(task: TaskRecord, prNumber: number): Promise<void> {
     const config = octopusAdapterConfig();
-    if (config && !this.octopusIsTheReviewer(task, config.login)) {
+    if (!this.octopusIsTheReviewer(task, octopusLogin())) {
       // Not a blocker. The flow is working as configured; Octopus is simply not its
       // reviewer, and raising a card for that would be noise on every pull request.
       log.info('board: skipping Octopus, the flow nominated another reviewer', {

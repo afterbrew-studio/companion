@@ -54,6 +54,20 @@ balance`; the Coding Plan is served at `/api/coding/paas/v4`.
 prompt, will spend its whole token budget reasoning and never write an answer. Where it is reached
 through an OpenAI-compatible gateway, pass `thinking: {"type": "disabled"}`.
 
+## The lane's reviewer
+
+Octopus reviews the pull requests the autonomous lane opens. Three variables, all in `.env`:
+
+| Variable | Without it |
+|---|---|
+| `COMPANION_OCTOPUS_URL` | No review is started; the board raises a blocker |
+| `COMPANION_OCTOPUS_TOKEN` | Same |
+| `COMPANION_OCTOPUS_LOGIN` | The board cannot tell whether Octopus is a given flow's reviewer, and answers permissively, so a flow that nominated a person or another bot still gets Octopus started |
+
+The login is read independently of the other two, because whether Octopus is the reviewer is
+knowable without being able to reach it. Compared case-insensitively, with a trailing `[bot]`
+ignored on either side.
+
 ## The first admin
 
 A clean volume writes a one-time capability to `/data/bootstrap-token` (mode 600):
