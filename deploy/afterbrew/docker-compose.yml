@@ -78,7 +78,15 @@ services:
       #
       # DeepSeek is still reachable through the model-router module, which can
       # hold all three at once. The asymmetry is the plugin registry's, not ours.
-      - OPENAI_BASE_URL=https://api.minimax.io/v1
+      #
+      # It reaches MiniMax through `minimax-proxy` rather than directly. MiniMax
+      # reasons inline unless the request carries `thinking: {"type":
+      # "disabled"}`, and it IGNORES `reasoning_effort` -- the only reasoning
+      # control the openai plugin can send. Unproxied, the model returns a
+      # `<think>` block inside `message.content`, that message replays into the
+      # next request, and MiniMax answers 400 (2013): every agent run dies right
+      # after its first tool call, while one-shots with no tool call succeed.
+      - OPENAI_BASE_URL=http://minimax-proxy:8080/v1
       - OPENAI_API_KEY=${MINIMAX_API_KEY:?set MINIMAX_API_KEY}
     volumes:
       - companion-data:/data
@@ -97,6 +105,23 @@ services:
   # Repairs ownership of the two persisted roots, then exits. Root and two
   # capabilities for a finite job; the long-running service stays uid 1000 with
   # none. Same image, so it cannot drift from what it is preparing.
+  # Adds the one request field MiniMax needs and the openai plugin cannot send.
+  # Nothing else is rewritten; responses are piped so streaming still streams.
+  minimax-proxy:
+    image: node:22-alpine
+    container_name: minimax-proxy
+    restart: unless-stopped
+    command: ["node", "/app/minimax-proxy.mjs"]
+    volumes:
+      - ./minimax-proxy.mjs:/app/minimax-proxy.mjs:ro
+    environment:
+      - PROXY_PORT=8080
+      - UPSTREAM_BASE_URL=https://api.minimax.io
+    # Never published to the host: it forwards a credential-bearing request and
+    # has no authentication of its own. Only the compose network reaches it.
+    expose:
+      - "8080"
+
   companion-init:
     container_name: companion-init
     image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
