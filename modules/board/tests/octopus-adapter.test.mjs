@@ -10,7 +10,7 @@ test('octopus adapter config is absent until both URL and token are set', () => 
       COMPANION_OCTOPUS_URL: 'https://octopus.example/',
       COMPANION_OCTOPUS_TOKEN: 'tok',
     }),
-    { baseUrl: 'https://octopus.example', token: 'tok' },
+    { baseUrl: 'https://octopus.example', token: 'tok', login: null },
   );
 });
 

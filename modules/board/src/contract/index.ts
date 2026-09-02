@@ -190,6 +190,14 @@ export interface BoardConfig {
  */
 export interface TaskAutomationPolicy {
   readonly autoReview: boolean;
+  /**
+   * The reviewer this flow nominated, or null when it reviews its own work.
+   *
+   * `autoReview` is derived from whether this is set, which answers "does someone else
+   * review" but not "who". The board needs the who: it starts Octopus, and starting it for
+   * a flow that nominated somebody else buys a review nobody asked for.
+   */
+  readonly externalReviewLogin: string | null;
   readonly autoMerge: boolean;
   readonly mergeMethod: BoardConfig['mergeMethod'];
   readonly autoFixCi: boolean;

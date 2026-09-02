@@ -21,11 +21,26 @@ export interface OctopusStartResult {
 
 export function octopusAdapterConfig(
   env: NodeJS.ProcessEnv = process.env,
-): { baseUrl: string; token: string } | null {
+): { baseUrl: string; token: string; login: string | null } | null {
   const baseUrl = (env.COMPANION_OCTOPUS_URL ?? env.OCTOPUS_URL ?? '').replace(/\/+$/, '');
   const token = env.COMPANION_OCTOPUS_TOKEN ?? env.OCTOPUS_TOKEN ?? '';
   if (!baseUrl || !token) return null;
-  return { baseUrl, token };
+  return { baseUrl, token, login: octopusLogin(env) };
+}
+
+/**
+ * Which GitHub login Octopus reviews as, or null when nobody has said.
+ *
+ * Read separately from `octopusAdapterConfig`, which needs a URL and a token. Whether
+ * Octopus is this flow's reviewer is knowable without being able to reach it, and folding
+ * the two together meant an unconfigured adapter could not answer the question at all -
+ * so a flow that nominated a person still collected a "waiting for Octopus" blocker.
+ *
+ * Absent means "cannot tell", which the gate answers permissively: a deployment that has
+ * not set this must not silently lose the reviews it was getting.
+ */
+export function octopusLogin(env: NodeJS.ProcessEnv = process.env): string | null {
+  return (env.COMPANION_OCTOPUS_LOGIN ?? '').trim() || null;
 }
 
 export async function startOctopusReview(request: OctopusStartRequest): Promise<OctopusStartResult> {

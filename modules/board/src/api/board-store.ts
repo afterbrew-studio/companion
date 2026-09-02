@@ -573,6 +573,11 @@ function parseAutomationPolicy(raw: string | null): TaskAutomationPolicy | null 
     ) {
       return {
         autoReview: value.autoReview,
+        // Absent on a row written before this field existed. Null reads as "not
+        // recorded", which the reviewer gate treats as "cannot tell" and so leaves the
+        // stored behaviour alone rather than changing it under an in-flight task.
+        externalReviewLogin:
+          typeof value.externalReviewLogin === 'string' ? value.externalReviewLogin : null,
         autoMerge: value.autoMerge,
         mergeMethod: value.mergeMethod,
         autoFixCi: value.autoFixCi,
@@ -584,6 +589,7 @@ function parseAutomationPolicy(raw: string | null): TaskAutomationPolicy | null 
   }
   return {
     autoReview: false,
+    externalReviewLogin: null,
     autoMerge: false,
     mergeMethod: 'squash',
     autoFixCi: false,

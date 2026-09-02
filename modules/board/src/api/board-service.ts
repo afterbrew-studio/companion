@@ -5,7 +5,7 @@ import type { RunRecord, RunStatus, RunVerification } from '@companion/module-op
 import { isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrReviewResult } from '@companion/module-code/contract';
 import { log } from '@moxxy/companion-sdk/server';
-import { octopusAdapterConfig, startOctopusReview } from './octopus-adapter.js';
+import { octopusAdapterConfig, octopusLogin, startOctopusReview } from './octopus-adapter.js';
 import type {
   BoardConfig,
   SpecOption,
@@ -2053,8 +2053,40 @@ reply; a guess costs a change that has to be found and undone.`;
    * Companion-authored lane PRs skip vendor auto-dispatch; this is the call
    * that actually starts Octopus (`source: "adapter"`).
    */
+  /**
+   * Whether Octopus is the reviewer this flow actually nominated.
+   *
+   * `autoReview: false` only says somebody else reviews, not who. Starting Octopus for a
+   * flow that named a person or another bot buys a review nobody asked for, and leaves a
+   * second verdict to reconcile against the one that was wanted.
+   *
+   * Answers true when it cannot tell - either login unset - so a deployment that has not
+   * named its reviewer keeps the behaviour it had rather than silently losing reviews.
+   */
+  private octopusIsTheReviewer(task: TaskRecord, login: string | null): boolean {
+    const nominated = task.automationPolicy?.externalReviewLogin ?? null;
+    if (!login || !nominated) return true;
+    // Case-folded, because GitHub logins are. The two sides arrive from independent
+    // unnormalised places - `externalReviewLogin` from free-text API input, the other from
+    // an environment variable - so an operator typing a different case than however it was
+    // stored would silently drop the review Octopus was meant to do. `externalVerdict` in
+    // automations.ts already lowercases both sides of this same field.
+    const bare = (value: string) => value.replace(/\[bot\]$/, '').toLowerCase();
+    return bare(nominated) === bare(login);
+  }
+
   private async startLaneReview(task: TaskRecord, prNumber: number): Promise<void> {
     const config = octopusAdapterConfig();
+    if (!this.octopusIsTheReviewer(task, octopusLogin())) {
+      // Not a blocker. The flow is working as configured; Octopus is simply not its
+      // reviewer, and raising a card for that would be noise on every pull request.
+      log.info('board: skipping Octopus, the flow nominated another reviewer', {
+        taskId: task.id,
+        prNumber,
+        nominated: task.automationPolicy?.externalReviewLogin ?? null,
+      });
+      return;
+    }
     if (!config) {
       this.notifyBlocker(
         task,
