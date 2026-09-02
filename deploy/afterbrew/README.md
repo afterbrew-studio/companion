@@ -39,6 +39,27 @@ values live in `.env` and are read by the daemon.
 
 ### Traps worth knowing
 
+**GLM reasons by default and nothing asks it not to.** moxxy sends a reasoning parameter only
+when `context.reasoning` is an object carrying an `effort`; unset, it sends none, and Z.AI's
+GLM 5.x reasons anyway. Measured against the Coding Plan endpoint with a 20-token cap: no
+parameter returns `finish_reason: "length"`, empty `content` and a full `reasoning_content`,
+while both `reasoning_effort: "low"` and `thinking: {"type": "disabled"}` answer normally. On an
+agent loop that is not a curiosity - a worker spends its whole output budget thinking, hits
+`max_tokens`, and finishes having changed nothing. Set it:
+
+```sh
+moxxy config set context.reasoning '{"effort":"low"}'
+```
+
+It has to be set in the home the GATEWAY reads (`MOXXY_HOME`, i.e. Companion's isolated home),
+not only in the daily home `moxxy config` writes to by default.
+
+**The Z.AI Coding Plan caps usage over a rolling five hours.** Exhausting it returns `429`
+code `1308` naming the reset time, and the whole GLM tier goes with it - every model on the
+plan shares the cap, so falling back from `glm-5.3` to `glm-5.2` does not route around it.
+MiniMax is a separate subscription and stays available.
+
+
 **`moxxy provision` offers a provider that does not exist.** Its list advertises `zai-plan`; the
 plugin ships `zai` and `zai-coding-plan`. Provisioning `zai-plan` succeeds, writes the config, stores
 the key - and then every run fails with "provider not registered", naming the provider just
