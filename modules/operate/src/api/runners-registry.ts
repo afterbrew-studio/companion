@@ -46,6 +46,7 @@ import {
 } from './harnesses.js';
 import type { OperateStore } from './operate-store.js';
 import { LOCAL_RUNNER_ID, type RunnerRow } from './runners-store.js';
+import { MODEL_ROUTES_FILE, providerRoutesFromJson, readHomeFile } from '../exec/home.js';
 import type { Checkouts } from '../exec/checkouts.js';
 import type { MoxxyCli } from '../exec/cli.js';
 import type { RunnerBackend, RunnerEventSink } from './backend.js';
@@ -1551,7 +1552,7 @@ export class Runners {
       }
     }
     if (catalogs.length === 0) return this.store.runners.get(id)?.catalog ?? null;
-    const catalog = mergeCatalogs(catalogs);
+    const catalog = id === LOCAL_RUNNER_ID ? withDeclaredModels(mergeCatalogs(catalogs)) : mergeCatalogs(catalogs);
     this.storeCatalog(id, catalog);
     return catalog;
   }
@@ -1624,6 +1625,37 @@ function rowServes(row: RunnerRow, servers: ReadonlySet<string> | null): boolean
 type SessionInfo = { activeProvider?: unknown; providers?: unknown; readyProviders?: unknown } | null;
 
 /** Parse the normalized session-info surface into a per-runner catalog. */
+/**
+ * Fold in the models the operator declared servable here but the runtime did
+ * not report. A provider plugin advertises the ids it shipped with, so a model
+ * newer than the plugin is missing from the probe while the endpoint behind it
+ * serves it perfectly well. Without this every pin naming such a model
+ * resolves to null and the run silently takes the runtime's own default
+ * instead of the tier it was pinned to.
+ *
+ * Only providers the runtime already reported are extended, so a declaration
+ * can widen a configured provider's catalog but never invent one that has no
+ * credentials behind it.
+ */
+function withDeclaredModels(catalog: RunnerCatalog): RunnerCatalog {
+  const routes = providerRoutesFromJson(readHomeFile(MODEL_ROUTES_FILE));
+  if (routes.size === 0) return catalog;
+  return {
+    ...catalog,
+    providers: catalog.providers.map((provider) => {
+      const declared = [...routes]
+        .filter(([, name]) => name === provider.name)
+        .map(([model]) => model)
+        .filter((model) => !provider.models.some((known) => known.id === model));
+      if (declared.length === 0) return provider;
+      return {
+        ...provider,
+        models: [...provider.models, ...declared.map((id) => ({ id, contextWindow: null }))],
+      };
+    }),
+  };
+}
+
 function parseCatalog(info: SessionInfo): RunnerCatalog {
   // Readiness gates placement AND what the catalog shows. A moxxy build that
   // doesn't report the field at all leaves it unknown — fall back to `enabled`

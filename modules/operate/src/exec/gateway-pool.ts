@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import type { AgentRunAccess, AskRequest, MoxxyEvent } from '@moxxy/companion-types';
 import { log, paths } from '@moxxy/companion-services';
 import { GatewayClient } from './gateway-client.js';
-import { providerDefaultsFromConfigYaml, readHomeFile, type ProviderDefaults } from './home.js';
+import {
+  MODEL_ROUTES_FILE,
+  providerDefaultsFromConfigYaml,
+  providerForModel,
+  providerRoutesFromJson,
+  readHomeFile,
+  type ProviderDefaults,
+} from './home.js';
 
 /**
  * One live agent run = TWO moxxy processes under Companion's isolated
@@ -53,6 +60,8 @@ export interface SpawnOptions {
   readonly cwd: string;
   readonly moxxyCliPath: string;
   readonly access: AgentRunAccess;
+  /** The run's model, which decides the provider it starts under. */
+  readonly model?: string | null;
 }
 
 const SERVE_READY_TIMEOUT_MS = 120_000;
@@ -144,7 +153,11 @@ export class GatewayPool {
     // (ignores MOXXY_HOME — upstream bug), so point it at Companion's skills.
     const configFile = join(paths.runConfigs(), `${opts.runId}.yaml`);
     mkdirSync(paths.runConfigs(), { recursive: true });
-    const provider = providerDefaultsFromConfigYaml(readHomeFile('config.yaml'));
+    const provider = providerForModel(
+      providerDefaultsFromConfigYaml(readHomeFile('config.yaml')),
+      providerRoutesFromJson(readHomeFile(MODEL_ROUTES_FILE)),
+      opts.model ?? null,
+    );
     writeFileSync(
       configFile,
       gatewayConfigYaml(port, join(paths.moxxyHome(), 'skills'), provider, opts.access),

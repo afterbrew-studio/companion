@@ -70,3 +70,37 @@ test('per-run config stays provider-agnostic when no default is configured', () 
 
   assert.equal(config, `channels:\n  mobile:\n    port: 50176\nskills:\n  userDir: "/tmp/skills"\n`);
 });
+
+test('an unrouted model keeps the configured provider', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  const routes = home.providerRoutesFromJson('{"MiniMax-M3":"openai"}');
+  assert.deepEqual(home.providerForModel(defaults, routes, 'glm-5.3'), {
+    name: 'zai-coding-plan',
+    model: 'glm-5.3',
+  });
+});
+
+test('a routed model starts the run under its own vendor', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  const routes = home.providerRoutesFromJson('{"MiniMax-M3":"openai","MiniMax-M2.7":"openai"}');
+  assert.deepEqual(home.providerForModel(defaults, routes, 'MiniMax-M3'), {
+    name: 'openai',
+    model: 'MiniMax-M3',
+  });
+});
+
+test('a run with no model of its own keeps the configured defaults', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  assert.deepEqual(home.providerForModel(defaults, new Map(), null), defaults);
+});
+
+test('a malformed or absent routing table falls back to the default', () => {
+  const defaults = { name: 'zai-coding-plan', model: 'glm-5.3' };
+  for (const table of [null, 'not json', '[]', '{"MiniMax-M3":42}']) {
+    const routes = home.providerRoutesFromJson(table);
+    assert.deepEqual(home.providerForModel(defaults, routes, 'MiniMax-M3'), {
+      name: 'zai-coding-plan',
+      model: 'glm-5.3',
+    });
+  }
+});

@@ -164,7 +164,7 @@ export class LocalRunnerBackend implements RunnerBackend {
     // machine ran before the choice existed, not on whichever branch happens to
     // be last.
     if (!contributed && spec.harness !== CLAUDE_CODE_HARNESS.id && spec.harness !== CODEX_HARNESS.id) {
-      await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath, access });
+      await this.pool.spawn({ runId, cwd, moxxyCliPath: this.moxxyCliPath, access, model: spec.model });
       return;
     }
     if (this.sessions.has(runId)) return;
