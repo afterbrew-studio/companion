@@ -21,11 +21,15 @@ export interface OctopusStartResult {
 
 export function octopusAdapterConfig(
   env: NodeJS.ProcessEnv = process.env,
-): { baseUrl: string; token: string } | null {
+): { baseUrl: string; token: string; login: string | null } | null {
   const baseUrl = (env.COMPANION_OCTOPUS_URL ?? env.OCTOPUS_URL ?? '').replace(/\/+$/, '');
   const token = env.COMPANION_OCTOPUS_TOKEN ?? env.OCTOPUS_TOKEN ?? '';
   if (!baseUrl || !token) return null;
-  return { baseUrl, token };
+  // Optional, and absent means "cannot tell". A flow naming some other reviewer is then
+  // treated as it was before this existed, rather than silently stopping: a deployment
+  // that has not set this must not lose the reviews it was getting.
+  const login = (env.COMPANION_OCTOPUS_LOGIN ?? '').trim();
+  return { baseUrl, token, login: login || null };
 }
 
 export async function startOctopusReview(request: OctopusStartRequest): Promise<OctopusStartResult> {

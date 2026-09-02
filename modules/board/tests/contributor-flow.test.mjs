@@ -4,6 +4,7 @@ import { fixture, insertDeveloper, insertTask } from './fixture.mjs';
 
 const governed = Object.freeze({
   autoReview: true,
+  externalReviewLogin: null,
   autoMerge: false,
   mergeMethod: 'squash',
   autoFixCi: true,
@@ -75,6 +76,9 @@ test('a corrupt stored automation policy fails closed instead of inheriting auto
 
   assert.deepEqual(store.getTask(task.id).automationPolicy, {
     autoReview: false,
+    // Null, not a login: an unreadable row records no reviewer, and the gate reads that as
+    // "cannot tell" and leaves the behaviour alone rather than changing it.
+    externalReviewLogin: null,
     autoMerge: false,
     mergeMethod: 'squash',
     autoFixCi: false,

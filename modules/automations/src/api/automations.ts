@@ -779,6 +779,7 @@ export class Automations {
       // GitHub's review decision when this is off, which is exactly the signal
       // the nominated reviewer produces.
       autoReview: flow.externalReviewLogin === null,
+      externalReviewLogin: flow.externalReviewLogin,
       autoMerge: flow.mode === 'autonomous',
       mergeMethod: flow.mergeMethod,
       autoFixCi: true,
