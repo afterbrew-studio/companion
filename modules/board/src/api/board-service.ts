@@ -1156,6 +1156,7 @@ ${acceptance}${previous}${specSection}
 ## Rules
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
+- Verify with what this environment already provides. Do NOT install toolchains, SDKs, language runtimes or system packages, and do not try to make another platform's build work here: a check this host cannot run is one you REPORT, not one you obtain. Establish that once, move on, and name it in your summary under "not verified". Chasing it instead is how a run spends its whole budget on setup and finishes having changed nothing.
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the work is complete and verified, finish with a short summary of what you changed and how you verified it.
