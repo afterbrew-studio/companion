@@ -1497,6 +1497,10 @@ reply; a guess costs a change that has to be found and undone.`;
         if (pr.reviewDecision !== 'approved') {
           if (!this.octopusStartedFor(task, task.prNumber)) {
             void this.startLaneReview(task, task.prNumber);
+          } else {
+            // Started, and no decision yet. Either it is still running or it declined,
+            // and those look identical from `reviewDecision` alone.
+            void this.octopusDeclined(task, task.prNumber);
           }
           continue;
         }
@@ -1988,6 +1992,54 @@ reply; a guess costs a change that has to be found and undone.`;
     } catch (err) {
       log.warn('board: abandon-and-reopen failed', { taskId: task.id, err: String(err) });
       return false;
+    }
+  }
+
+  /**
+   * Octopus declined this head, so no review is coming and the card must stop waiting.
+   *
+   * ADR-0088: a `neutral` conclusion on the `Octopus Review` check is **unavailable**, not
+   * a review. Octopus posts it when it will not look - automatic review off, a draft, a
+   * blocked author - and nothing here used to read it, so a declined review was
+   * indistinguishable from a slow one and the card sat in `awaiting_review` forever.
+   *
+   * Only the LATEST completed run counts. A lane pull request normally collects two: the
+   * `pull_request opened` event is refused upstream and posts `neutral`, and the adapter
+   * then starts the real one. Reading any run rather than the last would call every lane
+   * review declined on the strength of the refusal that precedes it.
+   */
+  private async octopusDeclined(task: TaskRecord, prNumber: number): Promise<void> {
+    const headSha = this.code.prs.get(task.repo, prNumber)?.headSha;
+    if (!headSha) return;
+    try {
+      const { result } = await this.code.githubAccounts.performForRepo(
+        'pipelines',
+        task.repo,
+        async (client) => client.checkRuns(task.repo, headSha),
+      );
+      const runs = (result ?? []).filter(
+        (run) => run.name === 'Octopus Review' && run.status === 'completed',
+      );
+      const latest = runs[runs.length - 1];
+      if (!latest) return;
+      if (latest.conclusion === 'neutral') {
+        this.notifyBlocker(
+          task,
+          'octopus_declined',
+          'Octopus declined to review',
+          `PR #${prNumber} for ${task.title}: Octopus reported \`neutral\` on its check at ${headSha}, which means it did not review rather than that it found nothing. The card is waiting on a review that is not coming.`,
+        );
+        return;
+      }
+      this.clearBlocker(task.id, 'octopus_declined');
+    } catch (err) {
+      // A failed read is not a decline. Saying "Octopus declined" because GitHub was
+      // briefly unreachable would send someone looking at the wrong system.
+      log.warn('board: could not read the Octopus check run', {
+        taskId: task.id,
+        prNumber,
+        err: String(err),
+      });
     }
   }
 
