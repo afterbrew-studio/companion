@@ -1195,6 +1195,14 @@ ${acceptance}${previous}${specSection}
 - Verify with what this environment already provides. Do NOT install toolchains, SDKs, language runtimes or system packages, and do not try to make another platform's build work here: a check this host cannot run is one you REPORT, not one you obtain. Establish that once, move on, and name it in your summary under "not verified". Chasing it instead is how a run spends its whole budget on setup and finishes having changed nothing.
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
+- If a check demands a commit trailer to accept your change - a waiver naming a
+  document, an amendment naming a record - write one per line into
+  \`.companion-commit-trailers\` at the root of this worktree, in the exact form
+  the check asks for (\`token: value\` or \`token(scope): value\`). Companion
+  appends them to the commit it makes and the file is never committed. This is
+  the only way your change can carry one, so a check that asks for a trailer is
+  satisfied here rather than worked around: do not edit the check, and do not
+  revert the change that triggered it.
 - When the work is complete and verified, finish with a short summary of what you changed and how you verified it.
 
 ## Scope
