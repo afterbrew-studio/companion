@@ -123,12 +123,25 @@ ENTRYPOINT ["node", "/app/dist/index.js"]
 FROM base AS mise
 ARG MISE_VERSION=2026.8.10
 ARG MISE_SHA256=1f5e8795d24073904ef20ba70c1250ad6389d8c5672226d152e0ed24909ba72f
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
-  && curl -fsSL -o /tmp/mise "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64" \
-  && echo "${MISE_SHA256}  /tmp/mise" | sha256sum -c - \
-  && chmod +x /tmp/mise \
-  && rm -rf /var/lib/apt/lists/*
+# Downloaded with node rather than curl: the base image already has one, and
+# adding a downloader means apt, which means this stage fails whenever the build
+# network cannot reach a Debian mirror - for a file fetched from GitHub. Node
+# also carries its own CA bundle, so no ca-certificates package is needed.
+RUN node -e "\
+const fs = require('node:fs'); \
+const { createHash } = require('node:crypto'); \
+const version = process.env.MISE_VERSION; \
+const want = process.env.MISE_SHA256; \
+const url = \`https://github.com/jdx/mise/releases/download/v\${version}/mise-v\${version}-linux-x64\`; \
+fetch(url).then((res) => { \
+  if (!res.ok) throw new Error(\`GET \${url} -> \${res.status}\`); \
+  return res.arrayBuffer(); \
+}).then((body) => { \
+  const bytes = Buffer.from(body); \
+  const got = createHash('sha256').update(bytes).digest('hex'); \
+  if (got !== want) throw new Error(\`checksum mismatch: got \${got}, want \${want}\`); \
+  fs.writeFileSync('/tmp/mise', bytes, { mode: 0o755 }); \
+});"
 
 FROM base AS runtime
 ENV NODE_ENV=production
