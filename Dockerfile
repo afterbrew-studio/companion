@@ -195,6 +195,19 @@ ENV MISE_DATA_DIR=/data/mise/data \
 ENV XDG_CACHE_HOME=/data/xdg/cache \
     XDG_DATA_HOME=/data/xdg/data \
     XDG_STATE_HOME=/data/xdg/state
+# A global identity so `git config user.email` RESOLVES. It never authors
+# anything: every commit this daemon makes passes `-c user.name/-c user.email`
+# with the identity resolved from the GitHub account that will push it. But a
+# repository may check that an identity exists before allowing a commit, and
+# with none configured anywhere that check fails inside the container while
+# passing everywhere else - so an agent sees its own environment as a defect in
+# the change it is making.
+#
+# Written into the image because $HOME is on the read-only root and cannot be
+# configured at runtime. Not a placeholder address: a repository is entitled to
+# reject those, and rightly.
+RUN printf '[user]\n\tname = Companion\n\temail = companion@users.noreply.github.com\n' > /home/node/.gitconfig \
+  && chown node:node /home/node/.gitconfig
 # undici/ws/inquirer are left external by the bundle, so install exactly those
 # from the CLI's own manifest. All three are plain JavaScript: this stage has no
 # toolchain and needs none, and the install prints no warnings. It used to carry
