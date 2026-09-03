@@ -1523,6 +1523,12 @@ reply; a guess costs a change that has to be found and undone.`;
         // yet, or a comment-only review - means the reviewer has not finished
         // with it, and the card waits rather than guessing.
         if (pr.reviewDecision !== 'approved') {
+          // A red build is actionable without the reviewer's opinion, and
+          // waiting for one here is a deadlock: Octopus declines to review a
+          // pull request whose checks are failing, so the decision the rest of
+          // this branch waits for never arrives and the card sits in
+          // `awaiting_review` with a broken build and `ciAttempts` at zero.
+          if (await this.repairFailingChecks(task, config)) continue;
           if (!this.octopusStartedFor(task, task.prNumber)) {
             void this.startLaneReview(task, task.prNumber);
           } else {
@@ -1960,6 +1966,26 @@ reply; a guess costs a change that has to be found and undone.`;
     } catch (err) {
       log.warn('board: answering review feedback failed', { taskId, prNumber, err: String(err) });
     }
+  }
+
+  /**
+   * Send a card back to repair its own build when its checks are red, and say
+   * whether it acted. Split out because the merge gate is not the only caller
+   * that needs it: a card waiting on an EXTERNAL reviewer never reaches that
+   * gate, and a reviewer which declines red pull requests will never release
+   * it.
+   */
+  private async repairFailingChecks(task: TaskRecord, config: BoardConfig): Promise<boolean> {
+    if (!config.autoFixCi || task.prNumber == null || !task.createdBy) return false;
+    if (!this.hasAuthority(task, ['board:manage', 'prs:read', 'prs:act'], 'repair the pull request')) return false;
+    const summary = await this.code.prChecks.trySummary(task.repo, task.prNumber, task.createdBy);
+    // Only `failing` is evidence. `unknown` is a fetch that did not work and
+    // `none`/`pending` are builds that have not answered yet; neither is a
+    // reason to spend a repair cycle.
+    if (summary?.state !== 'failing') return false;
+    if (await this.abandonUnrecoverable(task)) return true;
+    this.bindBack(task.id, 'fix_ci', `CI failing on PR #${task.prNumber}`, config);
+    return true;
   }
 
   private bindBack(taskId: string, stage: 'address_review' | 'fix_ci', reason: string, config: BoardConfig): void {
