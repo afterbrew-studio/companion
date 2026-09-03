@@ -123,6 +123,13 @@ ENTRYPOINT ["node", "/app/dist/index.js"]
 FROM base AS mise
 ARG MISE_VERSION=2026.8.10
 ARG MISE_SHA256=1f5e8795d24073904ef20ba70c1250ad6389d8c5672226d152e0ed24909ba72f
+# uv is what mise's `pipx:` backend shells out to. Without it `mise install`
+# stops on the first pipx-backed tool and installs none of the toolchain, so a
+# repository pinning any of them gets no toolchain at all. Shipped as a system
+# binary rather than a mise global, because the root filesystem is read-only and
+# a global mise config has nowhere to live.
+ARG UV_VERSION=0.12.9
+ARG UV_SHA256=ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460
 # Downloaded with node rather than curl: the base image already has one, and
 # adding a downloader means apt, which means this stage fails whenever the build
 # network cannot reach a Debian mirror - for a file fetched from GitHub. Node
@@ -142,6 +149,22 @@ fetch(url).then((res) => { \
   if (got !== want) throw new Error(\`checksum mismatch: got \${got}, want \${want}\`); \
   fs.writeFileSync('/tmp/mise', bytes, { mode: 0o755 }); \
 });"
+RUN node -e "\
+const fs = require('node:fs'); \
+const { createHash } = require('node:crypto'); \
+const want = process.env.UV_SHA256; \
+const url = \`https://github.com/astral-sh/uv/releases/download/\${process.env.UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz\`; \
+fetch(url).then((res) => { \
+  if (!res.ok) throw new Error(\`GET \${url} -> \${res.status}\`); \
+  return res.arrayBuffer(); \
+}).then((body) => { \
+  const bytes = Buffer.from(body); \
+  const got = createHash('sha256').update(bytes).digest('hex'); \
+  if (got !== want) throw new Error(\`checksum mismatch: got \${got}, want \${want}\`); \
+  fs.writeFileSync('/tmp/uv.tar.gz', bytes); \
+});"
+RUN tar -xzf /tmp/uv.tar.gz -C /tmp --strip-components=1 uv-x86_64-unknown-linux-gnu/uv \
+  && chmod +x /tmp/uv
 
 FROM base AS runtime
 ENV NODE_ENV=production
@@ -150,7 +173,7 @@ ENV HOME=/home/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=mise /tmp/mise /usr/local/bin/mise
+COPY --from=mise /tmp/mise /tmp/uv /usr/local/bin/
 # The root filesystem is read-only, so every directory mise writes to is placed
 # on the data volume. That also makes an installed toolchain persist between
 # runs rather than being refetched for each one.
