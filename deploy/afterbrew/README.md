@@ -85,6 +85,21 @@ Octopus reviews the pull requests the autonomous lane opens. Three variables, al
 | `COMPANION_OCTOPUS_TOKEN` | Same |
 | `COMPANION_OCTOPUS_LOGIN` | The board cannot tell whether Octopus is a given flow's reviewer, and answers permissively, so a flow that nominated a person or another bot still gets Octopus started |
 
+**Point the URL at Octopus's service name, not its public hostname.** The public name resolves
+through an access proxy that expects credentials Companion does not carry, so the request comes
+back `401` from the proxy rather than from Octopus. The two compose projects are joined on
+Octopus's own network instead and the adapter is given `http://octopus-web:3000`.
+
+**The token is an Octopus org API token, not a GitHub one.** It must begin `oct_`; Octopus stores
+only its SHA-256, so a lost token cannot be recovered and a replacement has to be minted. With
+either variable empty the board raises an `octopus_adapter` blocker on the pull request it just
+opened and no review is ever requested - which reads exactly like Octopus ignoring the PR.
+
+**Octopus will not review a pull request whose checks are failing.** It logs
+`PR <n> has failing checks at <sha>; not reviewing yet` and waits. A lane PR that trips a gate
+therefore gets no review until the lane repairs it, and an empty review queue may mean a red
+build rather than a broken reviewer.
+
 The login is read independently of the other two, because whether Octopus is the reviewer is
 knowable without being able to reach it. Compared case-insensitively, with a trailing `[bot]`
 ignored on either side.

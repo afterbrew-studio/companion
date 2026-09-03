@@ -23,6 +23,9 @@ services:
     container_name: companion
     image: ${COMPANION_IMAGE:?set COMPANION_IMAGE to a tag built from this fork}
     restart: unless-stopped
+    networks:
+      - default
+      - octopus
     depends_on:
       companion-init:
         condition: service_completed_successfully
@@ -154,3 +157,12 @@ volumes:
 networks:
   default:
     name: companion_default
+  # Octopus reviews the pull requests this lane opens, and Companion starts
+  # that review over Octopus's own API rather than by labelling the PR. Its
+  # public hostname sits behind an access proxy that expects credentials
+  # Companion does not carry, so the two are joined on Octopus's own network
+  # and the adapter is pointed at the service name. External: this compose
+  # file does not own that network and must not recreate it.
+  octopus:
+    external: true
+    name: octopus_default
