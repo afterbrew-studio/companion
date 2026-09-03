@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -106,6 +106,84 @@ function redactSecrets(text: string): string {
  * access-verified personal credential riding the request and it always wins
  * over any legacy machine credential.
  */
+
+/**
+ * A repository may refuse a commit that does not explain itself: rayf will not
+ * accept a change to a document it maps to code, or to the body of an accepted
+ * decision record, without a trailer naming the document and why. The daemon
+ * writes the commit, not the agent, so until now the lane could not satisfy
+ * those gates at all - the work was correct and the commit was rejected
+ * forever, one repair cycle after another.
+ *
+ * The agent leaves them in this file and the daemon appends them. Read and
+ * deleted before anything is staged, so the file never lands in the tree.
+ */
+const COMMIT_TRAILERS_FILE = '.companion-commit-trailers';
+
+/** Enough for a change touching several owned documents; far short of a prose channel. */
+const MAX_TRAILERS = 20;
+const MAX_TRAILER_LENGTH = 300;
+
+/**
+ * `token: value` or `token(scope): value` — git's own trailer shape, which is
+ * what a repository's parser reads.
+ */
+const TRAILER_SHAPE = /^[A-Za-z][A-Za-z0-9-]*(\([^()\n]{1,200}\))?: \S.*$/;
+
+/**
+ * Tokens the agent may not write, whatever the repository's own vocabulary is.
+ * Attribution because the commit is the daemon's and a model must not sign it
+ * as someone else - the same reason the base is reset before committing. Issue
+ * closers because they act on GitHub rather than describing the change, and a
+ * trailer could close an issue nobody connected to this work.
+ */
+const FORBIDDEN_TRAILERS = new Set([
+  'co-authored-by',
+  'signed-off-by',
+  'closes',
+  'close',
+  'fixes',
+  'fix',
+  'resolves',
+  'resolve',
+]);
+
+function readCommitTrailers(worktree: string): string[] {
+  const file = join(worktree, COMMIT_TRAILERS_FILE);
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  // Removed whether or not a single line survives validation: leaving a
+  // rejected file behind would stage it on the next commit.
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // Best effort. `git add -A` would stage it, which the caller's own
+    // conflict-marker check does not cover, so log rather than fail the commit.
+    log.warn('could not remove the commit-trailer file', { worktree });
+  }
+  const kept: string[] = [];
+  for (const line of raw.split('\n')) {
+    const trailer = line.trim();
+    if (trailer === '' || trailer.startsWith('#')) continue;
+    if (trailer.length > MAX_TRAILER_LENGTH || !TRAILER_SHAPE.test(trailer)) {
+      log.warn('ignoring a malformed commit trailer', { trailer: trailer.slice(0, 120) });
+      continue;
+    }
+    const token = trailer.slice(0, trailer.indexOf(':')).replace(/\(.*$/, '').toLowerCase();
+    if (FORBIDDEN_TRAILERS.has(token)) {
+      log.warn('ignoring a commit trailer an agent may not write', { token });
+      continue;
+    }
+    kept.push(trailer);
+    if (kept.length === MAX_TRAILERS) break;
+  }
+  return kept;
+}
+
 export class Checkouts {
   /** Per-repo mutex: `git worktree add` / fetch mutate shared .git state. */
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -438,6 +516,8 @@ export class Checkouts {
     author?: { name: string; email: string },
     baseBranch?: string,
   ): Promise<void> {
+    // Read and removed BEFORE `git add -A`, so the file itself is never staged.
+    const trailers = readCommitTrailers(worktree);
     await this.git(['add', '-A'], worktree);
     if (baseBranch) {
       // Agents are asked to leave changes uncommitted, but a harness can still
@@ -468,8 +548,12 @@ export class Checkouts {
 
     const name = author?.name ?? 'Companion';
     const email = author?.email ?? 'companion@localhost';
+    // Trailers are a SECOND `-m`, which git renders as its own paragraph, so a
+    // repository's parser sees them where it expects to and the subject stays
+    // one line.
+    const body = trailers.length > 0 ? ['-m', trailers.join('\n')] : [];
     await this.git(
-      ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-q', '-m', message],
+      ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-q', '-m', message, ...body],
       worktree,
     );
   }
