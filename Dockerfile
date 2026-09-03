@@ -187,6 +187,14 @@ ENV MISE_DATA_DIR=/data/mise/data \
     MISE_STATE_DIR=/data/mise/state \
     MISE_YES=1 \
     MISE_TRUSTED_CONFIG_PATHS=/data/worktrees
+# The same problem one level up: every tool mise drives writes under $HOME by
+# default, and $HOME is on the read-only root. uv fails with
+# "Failed to initialize cache at /home/node/.cache/uv" and takes the whole
+# toolchain install down with it. Redirecting the XDG roots fixes the class
+# rather than that one tool - pre-commit's cache lands here too.
+ENV XDG_CACHE_HOME=/data/xdg/cache \
+    XDG_DATA_HOME=/data/xdg/data \
+    XDG_STATE_HOME=/data/xdg/state
 # undici/ws/inquirer are left external by the bundle, so install exactly those
 # from the CLI's own manifest. All three are plain JavaScript: this stage has no
 # toolchain and needs none, and the install prints no warnings. It used to carry
