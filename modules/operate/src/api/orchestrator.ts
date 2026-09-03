@@ -89,6 +89,15 @@ function taskPinKey(task: string): string {
   return `modelPin:task:${task}`;
 }
 
+/**
+ * The pin for a COMPLEXITY tier rather than a unit of work. A task pin answers
+ * "which model runs triage"; this answers "which model does work this hard",
+ * which is the axis a repository's own routing policy is written in.
+ */
+function complexityPinKey(tier: string): string {
+  return `modelPin:complexity:${tier}`;
+}
+
 /** The lane a person's own actions run in. Per profile, so two maintainers differ. */
 function userLaneKey(username: string): string {
   return `lane:user:${username}`;
@@ -1070,6 +1079,17 @@ export class Orchestrator implements RunnerEventSink {
   /** Bind a task to a model instance-wide; null (or blank) clears the pin. */
   setTaskModelPin(task: string, model: string | null): void {
     this.store.settings.set(taskPinKey(task), model?.trim() ?? '');
+  }
+
+  /** The instance pin for a complexity tier, exactly as stored (null = unpinned). */
+  complexityModelPin(tier: string): string | null {
+    const pinned = this.store.settings.get(complexityPinKey(tier));
+    return pinned && pinned.trim() !== '' ? pinned : null;
+  }
+
+  /** Bind a complexity tier to a model instance-wide; null (or blank) clears it. */
+  setComplexityModelPin(tier: string, model: string | null): void {
+    this.store.settings.set(complexityPinKey(tier), model?.trim() ?? '');
   }
 
   /** Where this person's own actions run. Unset is auto placement. */

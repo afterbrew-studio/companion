@@ -111,6 +111,61 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 USER node
 ENTRYPOINT ["node", "/app/dist/index.js"]
 
+# mise, pinned to the version rayf's CI runs, so an agent verifies its work with
+# the same toolchain the pipeline will judge it by. Without it the repository's
+# single entry point (`scripts/check.sh`) cannot run at all: an agent then hunts
+# for an interpreter, hand-enumerates the individual checkers, and misses the
+# pre-commit stage entirely - which is how a change reaches review having passed
+# nothing that actually gates it.
+#
+# Fetched in its own stage and checksummed. The runtime copies one static binary
+# and keeps no downloader, which is why this is not folded into that stage.
+FROM base AS mise
+ARG MISE_VERSION=2026.8.10
+ARG MISE_SHA256=1f5e8795d24073904ef20ba70c1250ad6389d8c5672226d152e0ed24909ba72f
+# uv is what mise's `pipx:` backend shells out to. Without it `mise install`
+# stops on the first pipx-backed tool and installs none of the toolchain, so a
+# repository pinning any of them gets no toolchain at all. Shipped as a system
+# binary rather than a mise global, because the root filesystem is read-only and
+# a global mise config has nowhere to live.
+ARG UV_VERSION=0.12.9
+ARG UV_SHA256=ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460
+# Downloaded with node rather than curl: the base image already has one, and
+# adding a downloader means apt, which means this stage fails whenever the build
+# network cannot reach a Debian mirror - for a file fetched from GitHub. Node
+# also carries its own CA bundle, so no ca-certificates package is needed.
+RUN node -e "\
+const fs = require('node:fs'); \
+const { createHash } = require('node:crypto'); \
+const version = process.env.MISE_VERSION; \
+const want = process.env.MISE_SHA256; \
+const url = \`https://github.com/jdx/mise/releases/download/v\${version}/mise-v\${version}-linux-x64\`; \
+fetch(url).then((res) => { \
+  if (!res.ok) throw new Error(\`GET \${url} -> \${res.status}\`); \
+  return res.arrayBuffer(); \
+}).then((body) => { \
+  const bytes = Buffer.from(body); \
+  const got = createHash('sha256').update(bytes).digest('hex'); \
+  if (got !== want) throw new Error(\`checksum mismatch: got \${got}, want \${want}\`); \
+  fs.writeFileSync('/tmp/mise', bytes, { mode: 0o755 }); \
+});"
+RUN node -e "\
+const fs = require('node:fs'); \
+const { createHash } = require('node:crypto'); \
+const want = process.env.UV_SHA256; \
+const url = \`https://github.com/astral-sh/uv/releases/download/\${process.env.UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz\`; \
+fetch(url).then((res) => { \
+  if (!res.ok) throw new Error(\`GET \${url} -> \${res.status}\`); \
+  return res.arrayBuffer(); \
+}).then((body) => { \
+  const bytes = Buffer.from(body); \
+  const got = createHash('sha256').update(bytes).digest('hex'); \
+  if (got !== want) throw new Error(\`checksum mismatch: got \${got}, want \${want}\`); \
+  fs.writeFileSync('/tmp/uv.tar.gz', bytes); \
+});"
+RUN tar -xzf /tmp/uv.tar.gz -C /tmp --strip-components=1 uv-x86_64-unknown-linux-gnu/uv \
+  && chmod +x /tmp/uv
+
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV COMPANION_HOME=/data
@@ -118,6 +173,41 @@ ENV HOME=/home/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
+COPY --from=mise /tmp/mise /tmp/uv /usr/local/bin/
+# The root filesystem is read-only, so every directory mise writes to is placed
+# on the data volume. That also makes an installed toolchain persist between
+# runs rather than being refetched for each one.
+#
+# MISE_YES because nothing here is attended, and a trust prompt on a worktree
+# would hang the turn rather than fail it. Trust is scoped to the worktree root:
+# the paths are generated per run, and a repository's own mise.toml is exactly
+# what an agent is meant to honour.
+ENV MISE_DATA_DIR=/data/mise/data \
+    MISE_CACHE_DIR=/data/mise/cache \
+    MISE_STATE_DIR=/data/mise/state \
+    MISE_YES=1 \
+    MISE_TRUSTED_CONFIG_PATHS=/data/worktrees
+# The same problem one level up: every tool mise drives writes under $HOME by
+# default, and $HOME is on the read-only root. uv fails with
+# "Failed to initialize cache at /home/node/.cache/uv" and takes the whole
+# toolchain install down with it. Redirecting the XDG roots fixes the class
+# rather than that one tool - pre-commit's cache lands here too.
+ENV XDG_CACHE_HOME=/data/xdg/cache \
+    XDG_DATA_HOME=/data/xdg/data \
+    XDG_STATE_HOME=/data/xdg/state
+# A global identity so `git config user.email` RESOLVES. It never authors
+# anything: every commit this daemon makes passes `-c user.name/-c user.email`
+# with the identity resolved from the GitHub account that will push it. But a
+# repository may check that an identity exists before allowing a commit, and
+# with none configured anywhere that check fails inside the container while
+# passing everywhere else - so an agent sees its own environment as a defect in
+# the change it is making.
+#
+# Written into the image because $HOME is on the read-only root and cannot be
+# configured at runtime. Not a placeholder address: a repository is entitled to
+# reject those, and rightly.
+RUN printf '[user]\n\tname = Companion\n\temail = companion@users.noreply.github.com\n' > /home/node/.gitconfig \
+  && chown node:node /home/node/.gitconfig
 # undici/ws/inquirer are left external by the bundle, so install exactly those
 # from the CLI's own manifest. All three are plain JavaScript: this stage has no
 # toolchain and needs none, and the install prints no warnings. It used to carry

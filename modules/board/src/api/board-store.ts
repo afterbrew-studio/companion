@@ -515,6 +515,10 @@ export class BoardStore {
         mergeAccountId: null,
         autoFixCi: true,
         maxAttempts: 3,
+        // Workspace board settings carry no reservation of their own; the
+        // repository flow is what nominates labels, and it freezes them onto
+        // the task.
+        humanMergeLabels: [],
       };
     }
     return {
@@ -523,6 +527,7 @@ export class BoardStore {
       autoMerge: row.auto_merge === 1,
       mergeMethod: row.merge_method as BoardConfig['mergeMethod'],
       mergeAccountId: row.merge_account_id,
+      humanMergeLabels: [],
       autoFixCi: row.auto_fix_ci === 1,
       maxAttempts: row.max_attempts,
     };
@@ -582,6 +587,11 @@ function parseAutomationPolicy(raw: string | null): TaskAutomationPolicy | null 
         mergeMethod: value.mergeMethod,
         autoFixCi: value.autoFixCi,
         maxAttempts: value.maxAttempts,
+        // Absent on a row written before this field existed. An empty list
+        // reserves nothing, which is the behaviour those tasks already had.
+        humanMergeLabels: Array.isArray(value.humanMergeLabels)
+          ? value.humanMergeLabels.filter((name: unknown): name is string => typeof name === 'string')
+          : [],
       };
     }
   } catch {
@@ -592,6 +602,7 @@ function parseAutomationPolicy(raw: string | null): TaskAutomationPolicy | null 
     externalReviewLogin: null,
     autoMerge: false,
     mergeMethod: 'squash',
+    humanMergeLabels: [],
     autoFixCi: false,
     maxAttempts: 1,
   };

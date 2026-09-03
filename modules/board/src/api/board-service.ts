@@ -58,6 +58,8 @@ const MAX_SOURCE_ISSUE_CHARS = 16_000;
 const MAX_TRIAGE_SUMMARY_CHARS = 2_000;
 const MERGE_BACKOFF_MS = 10 * 60_000;
 const REVIEW_BACKOFF_MS = 5 * 60_000;
+/** Consecutive free retries before infrastructure is treated as the card's problem. */
+const MAX_INFRASTRUCTURE_RETRIES = 5;
 const RETRY_BACKOFF_MS = 60_000;
 
 /**
@@ -80,6 +82,8 @@ export class BoardService {
   private readonly mergeBackoff = new Map<string, number>();
   /** Reviewer-infrastructure failures back off without charging the task's attempts. */
   private readonly reviewBackoff = new Map<string, number>();
+  /** Consecutive infrastructure failures per task; reset the moment one is the task's own. */
+  private readonly infraRetries = new Map<string, number>();
   /** Failed attempts cool down before redispatch — a fast-dying runner
    *  environment must not burn the whole attempt ceiling in seconds. */
   private readonly retryBackoff = new Map<string, number>();
@@ -111,6 +115,7 @@ export class BoardService {
           mergeMethod: task.automationPolicy.mergeMethod,
           autoFixCi: task.automationPolicy.autoFixCi,
           maxAttempts: task.automationPolicy.maxAttempts,
+          humanMergeLabels: task.automationPolicy.humanMergeLabels ?? [],
         }
       : workspace;
   }
@@ -324,6 +329,8 @@ export class BoardService {
     issueNumber: number;
     title: string;
     body: string;
+    /** The issue's labels, which carry the complexity tier this work routes on. */
+    labels: readonly string[];
     triageSummary: string;
     priority: TaskPriority;
     queue: boolean;
@@ -356,12 +363,37 @@ export class BoardService {
       priority: input.priority,
       queue: input.queue,
       createdBy: input.createdBy,
+      model: this.modelForComplexity(input.labels),
     });
     this.store.insertEvent(task.id, 'source_issue', `${input.repo}#${input.issueNumber}`);
     this.changed();
     return { task, created: true };
   }
 
+
+  /**
+   * The worker for work of this difficulty, from the issue's `complexity:`
+   * label. A tier is a property of the WORK; the task pin is a property of the
+   * unit of work ('board.worker'), so the pin alone routes every card through
+   * one model however hard it is. This lands on the card's own model, which
+   * already outranks the pin, so an unlabelled issue and an unpinned tier both
+   * fall back to exactly the behaviour that existed before.
+   *
+   * Conflicting labels resolve to the strongest: an escalation is the label
+   * most likely to have been added second, and a tier may be raised and never
+   * lowered.
+   */
+  private modelForComplexity(labels: readonly string[]): string | null {
+    const tiers = ['strong', 'normal', 'tiny'];
+    const present = new Set(
+      labels
+        .map((label) => label.trim().toLowerCase())
+        .filter((label) => label.startsWith('complexity:'))
+        .map((label) => label.slice('complexity:'.length)),
+    );
+    const tier = tiers.find((candidate) => present.has(candidate));
+    return tier ? this.operate.orchestrator.complexityModelPin(tier) : null;
+  }
   /** One-click repository flows should never wait forever for logical workers. */
   /**
    * The answer arrived: put a parked card back in the queue.
@@ -634,6 +666,7 @@ export class BoardService {
     this.mergeBackoff.delete(id);
     this.reviewBackoff.delete(id);
     this.retryBackoff.delete(id);
+    this.infraRetries.delete(id);
     if (task.runId) {
       await this.code.fixes.discard(task.runId).catch((err) => log.warn('board: discard on delete failed', { err: String(err) }));
     }
@@ -1086,6 +1119,9 @@ export class BoardService {
         return;
       }
       this.store.updateTask(task.id, { runId: run.id, branch: run.branch ?? task.branch });
+      // The run reached a worker, so whatever infrastructure was failing has
+      // recovered; the free-retry allowance starts again from here.
+      this.infraRetries.delete(task.id);
       this.store.insertEvent(task.id, 'run_started', `run ${run.id}`);
       this.changed();
     } catch (err) {
@@ -1156,6 +1192,7 @@ ${acceptance}${previous}${specSection}
 ## Rules
 - Work ONLY inside this worktree.
 - Investigate the codebase, implement the task completely, and verify it (run existing tests, a build or a typecheck where possible).
+- Verify with what this environment already provides. Do NOT install toolchains, SDKs, language runtimes or system packages, and do not try to make another platform's build work here: a check this host cannot run is one you REPORT, not one you obtain. Establish that once, move on, and name it in your summary under "not verified". Chasing it instead is how a run spends its whole budget on setup and finishes having changed nothing.
 - Follow the specification where one is given; where it is silent, match the conventions of the surrounding code.
 - Leave the finished changes uncommitted and do not push — Companion creates the reviewed commit and publishes it only after approval.
 - When the work is complete and verified, finish with a short summary of what you changed and how you verified it.
@@ -1495,7 +1532,13 @@ reply; a guess costs a change that has to be found and undone.`;
         // yet, or a comment-only review - means the reviewer has not finished
         // with it, and the card waits rather than guessing.
         if (pr.reviewDecision !== 'approved') {
-          if (!this.octopusStartedFor(task, task.prNumber)) {
+          // A red build is actionable without the reviewer's opinion, and
+          // waiting for one here is a deadlock: Octopus declines to review a
+          // pull request whose checks are failing, so the decision the rest of
+          // this branch waits for never arrives and the card sits in
+          // `awaiting_review` with a broken build and `ciAttempts` at zero.
+          if (await this.repairFailingChecks(task, config)) continue;
+          if (!this.octopusStartedFor(task, task.prNumber, pr.headSha)) {
             void this.startLaneReview(task, task.prNumber);
           } else {
             // Started, and no decision yet. Either it is still running or it declined,
@@ -1588,6 +1631,20 @@ reply; a guess costs a change that has to be found and undone.`;
       }
       if (summary.state === 'pending') continue;
       if (!approved || !config.autoMerge) continue;
+      // Reserved for a person. Checked here rather than earlier so the card
+      // still reviews, still repairs its own build, and still reaches the
+      // maintainer green - it is the MERGE that is withheld, not the work.
+      const reserved = this.reservedForHuman(pr.labels, config);
+      if (reserved) {
+        this.notifyBlocker(
+          task,
+          'human_merge',
+          'Board task is waiting for a person to merge',
+          `PR #${task.prNumber} carries ${reserved}, which reserves the merge for a person. It is approved and green; merge it deliberately.`,
+        );
+        continue;
+      }
+      this.clearBlocker(task.id, 'human_merge');
       if (!summary.headSha) continue;
       const notBefore = this.mergeBackoff.get(task.id) ?? 0;
       if (Date.now() < notBefore) continue;
@@ -1607,6 +1664,17 @@ reply; a guess costs a change that has to be found and undone.`;
       return pinned?.enabled && pinned.role === 'reviewer' ? pinned : undefined;
     }
     return this.store.listWorkers(workspaceId).find((w) => w.enabled && w.role === 'reviewer');
+  }
+
+  /**
+   * The first label on the pull request that reserves its merge for a person,
+   * or null. Compared case-insensitively because a label applied by hand and
+   * one applied by a workflow differ in case more often than in meaning.
+   */
+  private reservedForHuman(labels: ReadonlyArray<string>, config: BoardConfig): string | null {
+    if (config.humanMergeLabels.length === 0) return null;
+    const reserved = new Set(config.humanMergeLabels.map((name) => name.trim().toLowerCase()).filter(Boolean));
+    return labels.find((label) => reserved.has(label.trim().toLowerCase())) ?? null;
   }
 
   /** One reviewer, one PR at a time: analyze, post the verdict, route the card. */
@@ -1934,6 +2002,26 @@ reply; a guess costs a change that has to be found and undone.`;
     }
   }
 
+  /**
+   * Send a card back to repair its own build when its checks are red, and say
+   * whether it acted. Split out because the merge gate is not the only caller
+   * that needs it: a card waiting on an EXTERNAL reviewer never reaches that
+   * gate, and a reviewer which declines red pull requests will never release
+   * it.
+   */
+  private async repairFailingChecks(task: TaskRecord, config: BoardConfig): Promise<boolean> {
+    if (!config.autoFixCi || task.prNumber == null || !task.createdBy) return false;
+    if (!this.hasAuthority(task, ['board:manage', 'prs:read', 'prs:act'], 'repair the pull request')) return false;
+    const summary = await this.code.prChecks.trySummary(task.repo, task.prNumber, task.createdBy);
+    // Only `failing` is evidence. `unknown` is a fetch that did not work and
+    // `none`/`pending` are builds that have not answered yet; neither is a
+    // reason to spend a repair cycle.
+    if (summary?.state !== 'failing') return false;
+    if (await this.abandonUnrecoverable(task)) return true;
+    this.bindBack(task.id, 'fix_ci', `CI failing on PR #${task.prNumber}`, config);
+    return true;
+  }
+
   private bindBack(taskId: string, stage: 'address_review' | 'fix_ci', reason: string, config: BoardConfig): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
@@ -2023,6 +2111,28 @@ reply; a guess costs a change that has to be found and undone.`;
       const latest = runs[runs.length - 1];
       if (!latest) return;
       if (latest.conclusion === 'neutral') {
+        // Octopus declines a pull request whose checks are failing and never
+        // comes back on its own. If they have since gone green the decline is
+        // stale, and the card waits forever on a review nobody will start - the
+        // lane stalls with an approved-looking, green pull request and no
+        // reviewer. Backed off so a reviewer that keeps declining a green pull
+        // request is asked periodically rather than every tick.
+        if (Date.now() >= (this.reviewBackoff.get(task.id) ?? 0)) {
+          const summary = task.createdBy
+            ? await this.code.prChecks.trySummary(task.repo, prNumber, task.createdBy)
+            : null;
+          if (summary?.state === 'passing') {
+            this.reviewBackoff.set(task.id, Date.now() + REVIEW_BACKOFF_MS);
+            this.clearBlocker(task.id, 'octopus_declined');
+            this.store.insertEvent(
+              task.id,
+              'review_stale',
+              `Octopus declined PR #${prNumber} while its checks were failing; they pass now, asking again`,
+            );
+            await this.startLaneReview(task, prNumber);
+            return;
+          }
+        }
         this.notifyBlocker(
           task,
           'octopus_declined',
@@ -2043,10 +2153,21 @@ reply; a guess costs a change that has to be found and undone.`;
     }
   }
 
-  private octopusStartedFor(task: TaskRecord, prNumber: number): boolean {
-    return this.store
-      .listEvents(task.id)
-      .some((event) => event.kind === 'review_requested' && event.detail.includes(`#${prNumber}`));
+  /**
+   * Whether Octopus has already been asked to review THIS commit. Scoped to the
+   * head sha, not the pull request: a review answers a diff, so a card that
+   * pushed a repair after being reviewed needs asking again, and matching on the
+   * pull request number alone would record it as already started forever.
+   *
+   * A request recorded before the sha was written down still counts, so the
+   * change does not re-review every card that predates it.
+   */
+  private octopusStartedFor(task: TaskRecord, prNumber: number, headSha?: string | null): boolean {
+    return this.store.listEvents(task.id).some((event) => {
+      if (event.kind !== 'review_requested' || !event.detail.includes(`#${prNumber}`)) return false;
+      if (!headSha) return true;
+      return !event.detail.includes(' at ') || event.detail.includes(headSha);
+    });
   }
 
   /**
@@ -2128,10 +2249,53 @@ reply; a guess costs a change that has to be found and undone.`;
    * binding released — failover to any free worker — or drop the card into
    * Failed once the ceiling is reached.
    */
+  /**
+   * A failure that says nothing about the change: the provider refused, the
+   * gateway died, the daemon was restarted mid-run. The reviewer path already
+   * refuses to charge its budget for its own infrastructure; a worker run is no
+   * different, and charging it means a passing change lands in Failed because
+   * a vendor rate-limited for ten minutes.
+   *
+   * Matched on the message because that is the only signal a finished run
+   * carries, and deliberately narrow: anything ambiguous stays a real attempt.
+   * A model that produced a bad diff must still spend one.
+   */
+  private static isInfrastructureFailure(reason: string): boolean {
+    return [
+      /provider kept returning a retryable error/i,
+      /no active provider/i,
+      /\b(429|502|503|504)\b/,
+      /rate.?limit/i,
+      /premature close/i,
+      /agent run stopped/i,
+      /(ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed)/i,
+    ].some((pattern) => pattern.test(reason));
+  }
+
   private attemptFail(taskId: string, reason: string): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
     const config = this.configFor(task);
+    // Retried without spending the budget, but not forever: infrastructure that
+    // never recovers is something a person has to see, and a card that retried
+    // silently until it did would hide it.
+    const infraSoFar = this.infraRetries.get(taskId) ?? 0;
+    if (BoardService.isInfrastructureFailure(reason) && infraSoFar < MAX_INFRASTRUCTURE_RETRIES) {
+      this.infraRetries.set(taskId, infraSoFar + 1);
+      this.store.insertEvent(taskId, 'attempt_failed', `infrastructure, not charged: ${reason}`.slice(0, 500));
+      const backTo: TaskPatch =
+        task.stage && WORK_STAGES.has(task.stage)
+          ? { status: 'ready', stage: task.stage }
+          : task.prNumber != null
+            ? { status: 'in_review', stage: 'awaiting_review' }
+            : { status: 'ready', stage: 'build' };
+      this.store.updateTask(taskId, { ...backTo, runId: null, assignedWorkerId: null, lastError: reason.slice(0, 500) });
+      this.retryBackoff.set(taskId, Date.now() + RETRY_BACKOFF_MS);
+      this.changed();
+      this.kick();
+      return;
+    }
+    this.infraRetries.delete(taskId);
     const attempts = task.attempts + 1;
     this.store.insertEvent(taskId, 'attempt_failed', reason.slice(0, 500));
     if (attempts >= config.maxAttempts) {

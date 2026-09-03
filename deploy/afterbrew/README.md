@@ -39,6 +39,27 @@ values live in `.env` and are read by the daemon.
 
 ### Traps worth knowing
 
+**GLM reasons by default and nothing asks it not to.** moxxy sends a reasoning parameter only
+when `context.reasoning` is an object carrying an `effort`; unset, it sends none, and Z.AI's
+GLM 5.x reasons anyway. Measured against the Coding Plan endpoint with a 20-token cap: no
+parameter returns `finish_reason: "length"`, empty `content` and a full `reasoning_content`,
+while both `reasoning_effort: "low"` and `thinking: {"type": "disabled"}` answer normally. On an
+agent loop that is not a curiosity - a worker spends its whole output budget thinking, hits
+`max_tokens`, and finishes having changed nothing. Set it:
+
+```sh
+moxxy config set context.reasoning '{"effort":"low"}'
+```
+
+It has to be set in the home the GATEWAY reads (`MOXXY_HOME`, i.e. Companion's isolated home),
+not only in the daily home `moxxy config` writes to by default.
+
+**The Z.AI Coding Plan caps usage over a rolling five hours.** Exhausting it returns `429`
+code `1308` naming the reset time, and the whole GLM tier goes with it - every model on the
+plan shares the cap, so falling back from `glm-5.3` to `glm-5.2` does not route around it.
+MiniMax is a separate subscription and stays available.
+
+
 **`moxxy provision` offers a provider that does not exist.** Its list advertises `zai-plan`; the
 plugin ships `zai` and `zai-coding-plan`. Provisioning `zai-plan` succeeds, writes the config, stores
 the key - and then every run fails with "provider not registered", naming the provider just
@@ -63,6 +84,21 @@ Octopus reviews the pull requests the autonomous lane opens. Three variables, al
 | `COMPANION_OCTOPUS_URL` | No review is started; the board raises a blocker |
 | `COMPANION_OCTOPUS_TOKEN` | Same |
 | `COMPANION_OCTOPUS_LOGIN` | The board cannot tell whether Octopus is a given flow's reviewer, and answers permissively, so a flow that nominated a person or another bot still gets Octopus started |
+
+**Point the URL at Octopus's service name, not its public hostname.** The public name resolves
+through an access proxy that expects credentials Companion does not carry, so the request comes
+back `401` from the proxy rather than from Octopus. The two compose projects are joined on
+Octopus's own network instead and the adapter is given `http://octopus-web:3000`.
+
+**The token is an Octopus org API token, not a GitHub one.** It must begin `oct_`; Octopus stores
+only its SHA-256, so a lost token cannot be recovered and a replacement has to be minted. With
+either variable empty the board raises an `octopus_adapter` blocker on the pull request it just
+opened and no review is ever requested - which reads exactly like Octopus ignoring the PR.
+
+**Octopus will not review a pull request whose checks are failing.** It logs
+`PR <n> has failing checks at <sha>; not reviewing yet` and waits. A lane PR that trips a gate
+therefore gets no review until the lane repairs it, and an empty review queue may mean a red
+build rather than a broken reviewer.
 
 The login is read independently of the other two, because whether Octopus is the reviewer is
 knowable without being able to reach it. Compared case-insensitively, with a trailing `[bot]`

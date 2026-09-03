@@ -784,6 +784,9 @@ export class Automations {
       mergeMethod: flow.mergeMethod,
       autoFixCi: true,
       maxAttempts: flow.maxAttempts,
+      // Frozen with the rest of the policy: relaxing the flow tomorrow must not
+      // grant a task admitted today permission to merge itself.
+      humanMergeLabels: parseHumanMergeLabels(flow.humanMergeLabels),
     };
     this.stage(job.id, `${flow.queueIssues ? 'Queueing' : 'Adding'} issue #${issue.number} on the board`);
     const admitted = board.createIssueTask({
@@ -793,6 +796,9 @@ export class Automations {
       issueNumber: issue.number,
       title: issue.title,
       body: issue.body ?? '',
+      labels: (issue.labels ?? []).map((label) =>
+        typeof label === 'string' ? label : (label.name ?? ''),
+      ),
       triageSummary: verdict.summary,
       priority: priorityFor(verdict.severity),
       queue: flow.queueIssues,
@@ -2016,6 +2022,18 @@ function labels(value: unknown): string[] {
   return value
     .slice(0, DELIVERY_LIST_ITEMS)
     .map((item) => typeof item === 'string' ? clip(item, 256) : clip(record(item)?.name, 256))
+    .filter(Boolean);
+}
+
+/**
+ * The flow's human-merge labels as a list. Stored as one comma-separated
+ * string because that is how the settings form collects it; blank entries are
+ * dropped so a trailing comma does not become a label that matches nothing.
+ */
+function parseHumanMergeLabels(raw: string | null): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((name) => name.trim())
     .filter(Boolean);
 }
 

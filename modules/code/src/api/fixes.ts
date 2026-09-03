@@ -9,6 +9,7 @@ import type { Orchestrator, RunnerBackend } from './operate-types.js';
 import type { GitHubClient } from './github-client.js';
 import type { PrChecks } from './pr-checks.js';
 import {
+  allowedNames,
   copyBothScopeLabels,
   labelNames,
   loadLabelRegistry,
@@ -602,6 +603,31 @@ export class Fixes {
     return client;
   }
 
+  /**
+   * Carry an abandoned pull request's labels onto its successor. The successor
+   * is the same work on a clean base, so it needs the same routing and the
+   * same declared tier; without them it arrives at review unlabelled and the
+   * repository cannot tell what it is or who should look at it.
+   *
+   * Filtered through the registry rather than copied blindly, so a label
+   * retired since the ancestor was opened does not come back.
+   */
+  private async carryLabelsOntoSuccessor(
+    client: GitHubClient,
+    repo: string,
+    labels: ReadonlyArray<{ name?: string } | string> | undefined,
+    prNumber: number,
+  ): Promise<void> {
+    try {
+      const allowed = allowedNames(await loadLabelRegistry(client, repo), 'pr');
+      const carried = labelNames(labels).filter((name) => allowed.has(name));
+      if (carried.length === 0) return;
+      await client.addLabels(repo, prNumber, carried);
+    } catch (err) {
+      log.warn('could not carry labels onto the successor pull request', { repo, prNumber, err: String(err) });
+    }
+  }
+
   private async copyIssueLabelsOntoPr(
     client: GitHubClient,
     repo: string,
@@ -680,6 +706,7 @@ export class Fixes {
       base: baseRef,
       body: body.trim(),
     });
+    await this.carryLabelsOntoSuccessor(client, repo, old.labels, pr.number);
     await client
       .comment(
         repo,

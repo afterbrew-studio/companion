@@ -178,3 +178,75 @@ test('the login is readable without a url or token', () => {
   assert.equal(octopusLogin({}), null);
   assert.equal(octopusLogin({ COMPANION_OCTOPUS_LOGIN: '  ' }), null);
 });
+
+/**
+ * The deadlock this guards against: Companion waited for the external
+ * reviewer's decision before it would look at the build, and Octopus declines
+ * to review a pull request whose checks are failing. Neither side moves, the
+ * card sits in `awaiting_review` with `ciAttempts` at zero, and the build is
+ * never repaired.
+ */
+test('a red build is repaired without waiting for the external reviewer', async () => {
+  await withAdapterEnv('octopus-ab[bot]', async () => {
+    const { db, store, makeService } = fixture({
+      trySummary: async () => ({ state: 'failing', headSha: 'head-1' }),
+    });
+    insertTask(store, {
+      status: 'in_review',
+      stage: 'awaiting_review',
+      prNumber: 14,
+      prUrl: 'https://example.test/pr/14',
+      automationPolicy: {
+        autoReview: false,
+        externalReviewLogin: 'octopus-ab[bot]',
+        autoMerge: false,
+        mergeMethod: 'merge',
+        autoFixCi: true,
+        maxAttempts: 3,
+      },
+    });
+    const service = makeService();
+    await service.tick();
+    service.dispose();
+
+    const task = store.getTask('tsk-1');
+    assert.equal(task.stage, 'fix_ci', 'the card must go back to repair its own build');
+    assert.equal(task.ciAttempts, 1);
+    db.close();
+  });
+});
+
+test('a green build still waits for the external reviewer rather than repairing', async () => {
+  // The guard: a repair path that fired regardless of check state would satisfy
+  // the assertion above while breaking every healthy card.
+  await withAdapterEnv('octopus-ab[bot]', async () => {
+    const { db, store, makeService } = fixture({
+      trySummary: async () => ({ state: 'passing', headSha: 'head-1' }),
+    });
+    insertTask(store, {
+      status: 'in_review',
+      stage: 'awaiting_review',
+      prNumber: 14,
+      prUrl: 'https://example.test/pr/14',
+      automationPolicy: {
+        autoReview: false,
+        externalReviewLogin: 'octopus-ab[bot]',
+        autoMerge: false,
+        mergeMethod: 'merge',
+        autoFixCi: true,
+        maxAttempts: 3,
+      },
+    });
+    const service = makeService();
+    await service.tick();
+    // A green card falls through to starting the review, and that adapter call
+    // is dispatched rather than awaited. Let it settle before closing the
+    // database, or it lands on a closed handle after the test has ended.
+    await until(() => started(store));
+    service.dispose();
+
+    assert.equal(store.getTask('tsk-1').stage, 'awaiting_review');
+    assert.equal(store.getTask('tsk-1').ciAttempts, 0);
+    db.close();
+  });
+});

@@ -19,6 +19,7 @@ export function fixture({
   startReviewFix,
   servableModels = () => [],
   taskModelPin = () => null,
+  complexityModelPin = () => null,
   pr = { state: 'open', reviewDecision: null, checks: null, headSha: 'head-1' },
   latestReview = null,
   /** Run rows the board can read back, keyed by run id (id → row). */
@@ -118,7 +119,7 @@ export function fixture({
     {
       runsStore: { get: (id) => runRows[id] },
       runners: { hasFreeCapacity, servableModels },
-      orchestrator: { taskModelPin },
+      orchestrator: { taskModelPin, complexityModelPin },
     },
     { canAccessRepo: () => true, canAccessWorkspace, requireAccessible: () => undefined },
     () => undefined,
