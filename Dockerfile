@@ -111,6 +111,25 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 USER node
 ENTRYPOINT ["node", "/app/dist/index.js"]
 
+# mise, pinned to the version rayf's CI runs, so an agent verifies its work with
+# the same toolchain the pipeline will judge it by. Without it the repository's
+# single entry point (`scripts/check.sh`) cannot run at all: an agent then hunts
+# for an interpreter, hand-enumerates the individual checkers, and misses the
+# pre-commit stage entirely - which is how a change reaches review having passed
+# nothing that actually gates it.
+#
+# Fetched in its own stage and checksummed. The runtime copies one static binary
+# and keeps no downloader, which is why this is not folded into that stage.
+FROM base AS mise
+ARG MISE_VERSION=2026.8.10
+ARG MISE_SHA256=1f5e8795d24073904ef20ba70c1250ad6389d8c5672226d152e0ed24909ba72f
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && curl -fsSL -o /tmp/mise "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64" \
+  && echo "${MISE_SHA256}  /tmp/mise" | sha256sum -c - \
+  && chmod +x /tmp/mise \
+  && rm -rf /var/lib/apt/lists/*
+
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV COMPANION_HOME=/data
@@ -118,6 +137,20 @@ ENV HOME=/home/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
+COPY --from=mise /tmp/mise /usr/local/bin/mise
+# The root filesystem is read-only, so every directory mise writes to is placed
+# on the data volume. That also makes an installed toolchain persist between
+# runs rather than being refetched for each one.
+#
+# MISE_YES because nothing here is attended, and a trust prompt on a worktree
+# would hang the turn rather than fail it. Trust is scoped to the worktree root:
+# the paths are generated per run, and a repository's own mise.toml is exactly
+# what an agent is meant to honour.
+ENV MISE_DATA_DIR=/data/mise/data \
+    MISE_CACHE_DIR=/data/mise/cache \
+    MISE_STATE_DIR=/data/mise/state \
+    MISE_YES=1 \
+    MISE_TRUSTED_CONFIG_PATHS=/data/worktrees
 # undici/ws/inquirer are left external by the bundle, so install exactly those
 # from the CLI's own manifest. All three are plain JavaScript: this stage has no
 # toolchain and needs none, and the install prints no warnings. It used to carry
