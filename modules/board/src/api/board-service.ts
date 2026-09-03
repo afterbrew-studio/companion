@@ -58,6 +58,8 @@ const MAX_SOURCE_ISSUE_CHARS = 16_000;
 const MAX_TRIAGE_SUMMARY_CHARS = 2_000;
 const MERGE_BACKOFF_MS = 10 * 60_000;
 const REVIEW_BACKOFF_MS = 5 * 60_000;
+/** Consecutive free retries before infrastructure is treated as the card's problem. */
+const MAX_INFRASTRUCTURE_RETRIES = 5;
 const RETRY_BACKOFF_MS = 60_000;
 
 /**
@@ -80,6 +82,8 @@ export class BoardService {
   private readonly mergeBackoff = new Map<string, number>();
   /** Reviewer-infrastructure failures back off without charging the task's attempts. */
   private readonly reviewBackoff = new Map<string, number>();
+  /** Consecutive infrastructure failures per task; reset the moment one is the task's own. */
+  private readonly infraRetries = new Map<string, number>();
   /** Failed attempts cool down before redispatch — a fast-dying runner
    *  environment must not burn the whole attempt ceiling in seconds. */
   private readonly retryBackoff = new Map<string, number>();
@@ -662,6 +666,7 @@ export class BoardService {
     this.mergeBackoff.delete(id);
     this.reviewBackoff.delete(id);
     this.retryBackoff.delete(id);
+    this.infraRetries.delete(id);
     if (task.runId) {
       await this.code.fixes.discard(task.runId).catch((err) => log.warn('board: discard on delete failed', { err: String(err) }));
     }
@@ -1114,6 +1119,9 @@ export class BoardService {
         return;
       }
       this.store.updateTask(task.id, { runId: run.id, branch: run.branch ?? task.branch });
+      // The run reached a worker, so whatever infrastructure was failing has
+      // recovered; the free-retry allowance starts again from here.
+      this.infraRetries.delete(task.id);
       this.store.insertEvent(task.id, 'run_started', `run ${run.id}`);
       this.changed();
     } catch (err) {
@@ -1530,7 +1538,7 @@ reply; a guess costs a change that has to be found and undone.`;
           // this branch waits for never arrives and the card sits in
           // `awaiting_review` with a broken build and `ciAttempts` at zero.
           if (await this.repairFailingChecks(task, config)) continue;
-          if (!this.octopusStartedFor(task, task.prNumber)) {
+          if (!this.octopusStartedFor(task, task.prNumber, pr.headSha)) {
             void this.startLaneReview(task, task.prNumber);
           } else {
             // Started, and no decision yet. Either it is still running or it declined,
@@ -2103,6 +2111,28 @@ reply; a guess costs a change that has to be found and undone.`;
       const latest = runs[runs.length - 1];
       if (!latest) return;
       if (latest.conclusion === 'neutral') {
+        // Octopus declines a pull request whose checks are failing and never
+        // comes back on its own. If they have since gone green the decline is
+        // stale, and the card waits forever on a review nobody will start - the
+        // lane stalls with an approved-looking, green pull request and no
+        // reviewer. Backed off so a reviewer that keeps declining a green pull
+        // request is asked periodically rather than every tick.
+        if (Date.now() >= (this.reviewBackoff.get(task.id) ?? 0)) {
+          const summary = task.createdBy
+            ? await this.code.prChecks.trySummary(task.repo, prNumber, task.createdBy)
+            : null;
+          if (summary?.state === 'passing') {
+            this.reviewBackoff.set(task.id, Date.now() + REVIEW_BACKOFF_MS);
+            this.clearBlocker(task.id, 'octopus_declined');
+            this.store.insertEvent(
+              task.id,
+              'review_stale',
+              `Octopus declined PR #${prNumber} while its checks were failing; they pass now, asking again`,
+            );
+            await this.startLaneReview(task, prNumber);
+            return;
+          }
+        }
         this.notifyBlocker(
           task,
           'octopus_declined',
@@ -2123,10 +2153,21 @@ reply; a guess costs a change that has to be found and undone.`;
     }
   }
 
-  private octopusStartedFor(task: TaskRecord, prNumber: number): boolean {
-    return this.store
-      .listEvents(task.id)
-      .some((event) => event.kind === 'review_requested' && event.detail.includes(`#${prNumber}`));
+  /**
+   * Whether Octopus has already been asked to review THIS commit. Scoped to the
+   * head sha, not the pull request: a review answers a diff, so a card that
+   * pushed a repair after being reviewed needs asking again, and matching on the
+   * pull request number alone would record it as already started forever.
+   *
+   * A request recorded before the sha was written down still counts, so the
+   * change does not re-review every card that predates it.
+   */
+  private octopusStartedFor(task: TaskRecord, prNumber: number, headSha?: string | null): boolean {
+    return this.store.listEvents(task.id).some((event) => {
+      if (event.kind !== 'review_requested' || !event.detail.includes(`#${prNumber}`)) return false;
+      if (!headSha) return true;
+      return !event.detail.includes(' at ') || event.detail.includes(headSha);
+    });
   }
 
   /**
@@ -2208,10 +2249,53 @@ reply; a guess costs a change that has to be found and undone.`;
    * binding released — failover to any free worker — or drop the card into
    * Failed once the ceiling is reached.
    */
+  /**
+   * A failure that says nothing about the change: the provider refused, the
+   * gateway died, the daemon was restarted mid-run. The reviewer path already
+   * refuses to charge its budget for its own infrastructure; a worker run is no
+   * different, and charging it means a passing change lands in Failed because
+   * a vendor rate-limited for ten minutes.
+   *
+   * Matched on the message because that is the only signal a finished run
+   * carries, and deliberately narrow: anything ambiguous stays a real attempt.
+   * A model that produced a bad diff must still spend one.
+   */
+  private static isInfrastructureFailure(reason: string): boolean {
+    return [
+      /provider kept returning a retryable error/i,
+      /no active provider/i,
+      /\b(429|502|503|504)\b/,
+      /rate.?limit/i,
+      /premature close/i,
+      /agent run stopped/i,
+      /(ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed)/i,
+    ].some((pattern) => pattern.test(reason));
+  }
+
   private attemptFail(taskId: string, reason: string): void {
     const task = this.store.getTask(taskId);
     if (!task) return;
     const config = this.configFor(task);
+    // Retried without spending the budget, but not forever: infrastructure that
+    // never recovers is something a person has to see, and a card that retried
+    // silently until it did would hide it.
+    const infraSoFar = this.infraRetries.get(taskId) ?? 0;
+    if (BoardService.isInfrastructureFailure(reason) && infraSoFar < MAX_INFRASTRUCTURE_RETRIES) {
+      this.infraRetries.set(taskId, infraSoFar + 1);
+      this.store.insertEvent(taskId, 'attempt_failed', `infrastructure, not charged: ${reason}`.slice(0, 500));
+      const backTo: TaskPatch =
+        task.stage && WORK_STAGES.has(task.stage)
+          ? { status: 'ready', stage: task.stage }
+          : task.prNumber != null
+            ? { status: 'in_review', stage: 'awaiting_review' }
+            : { status: 'ready', stage: 'build' };
+      this.store.updateTask(taskId, { ...backTo, runId: null, assignedWorkerId: null, lastError: reason.slice(0, 500) });
+      this.retryBackoff.set(taskId, Date.now() + RETRY_BACKOFF_MS);
+      this.changed();
+      this.kick();
+      return;
+    }
+    this.infraRetries.delete(taskId);
     const attempts = task.attempts + 1;
     this.store.insertEvent(taskId, 'attempt_failed', reason.slice(0, 500));
     if (attempts >= config.maxAttempts) {
