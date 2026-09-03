@@ -23,6 +23,32 @@ const UPSTREAM = new URL(process.env.UPSTREAM_BASE_URL ?? 'https://api.minimax.i
 const MAX_REWRITE_BYTES = 32 * 1024 * 1024;
 
 /**
+ * Hop-by-hop headers belong to one connection and must not be relayed onto the
+ * next one. Copying `transfer-encoding` in particular corrupts a streamed reply:
+ * the upstream declares chunked framing, Node applies its own on top, and the
+ * caller sees the response end mid-stream - `Premature close`. Short replies
+ * survive it, which is why a smoke test passes and only long agent turns break.
+ */
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function withoutHopByHop(headers) {
+  const out = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!HOP_BY_HOP.has(name.toLowerCase())) out[name] = value;
+  }
+  return out;
+}
+
+/**
  * moxxy emits one assistant turn as TWO messages - the tool call with empty
  * content, then the prose - which leaves the `tool` result no longer adjacent
  * to the call it answers, and the call itself carrying `content: ""`. MiniMax
@@ -92,23 +118,33 @@ const server = createServer((req, res) => {
       }
     }
 
-    const headers = { ...req.headers, host: UPSTREAM.host };
+    const headers = { ...withoutHopByHop(req.headers), host: UPSTREAM.host };
     delete headers['content-length'];
     if (payload.length > 0) headers['content-length'] = String(payload.length);
 
     const upstream = httpsRequest(
       { protocol: UPSTREAM.protocol, hostname: UPSTREAM.hostname, port: UPSTREAM.port || 443, path: req.url, method: req.method, headers },
       (upstreamRes) => {
-        res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+        res.writeHead(upstreamRes.statusCode ?? 502, withoutHopByHop(upstreamRes.headers));
         // Piped rather than buffered: completions stream, and holding the
-        // response would defeat the streaming the caller asked for.
+        // response would defeat the streaming the caller asked for. An error
+        // mid-stream destroys the caller's socket instead of ending it cleanly,
+        // so a truncated answer is not mistaken for a complete one.
+        upstreamRes.on('error', (err) => {
+          console.log('upstream stream error', err.code ?? '', err.message ?? String(err));
+          res.destroy(err);
+        });
         upstreamRes.pipe(res);
       },
     );
 
+    // A transport failure here ends the caller's turn, so it is logged with the
+    // code that caused it: `502 minimax proxy:` with nothing after the colon is
+    // otherwise indistinguishable from the vendor rejecting the request.
     upstream.on('error', (err) => {
+      console.log('upstream error', req.method, req.url, err.code ?? '', err.message ?? String(err));
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: `minimax proxy: ${err.message}` } }));
+      res.end(JSON.stringify({ error: { message: `minimax proxy: ${err.code ?? ''} ${err.message ?? ''}`.trim() } }));
     });
 
     if (payload.length > 0) upstream.write(payload);
