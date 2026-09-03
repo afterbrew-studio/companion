@@ -177,6 +177,13 @@ export interface BoardConfig {
   readonly autoFixCi: boolean;
   /** Remediation ceiling before the task drops into the Failed column. */
   readonly maxAttempts: number;
+  /**
+   * Labels that reserve the merge for a person. A pull request carrying any of
+   * them is never merged automatically, however green and however approved:
+   * they are how a repository says "this one is not the lane's to land",
+   * applied to changes whose blast radius does not show in the diff.
+   */
+  readonly humanMergeLabels: readonly string[];
 }
 
 /**
@@ -202,6 +209,12 @@ export interface TaskAutomationPolicy {
   readonly mergeMethod: BoardConfig['mergeMethod'];
   readonly autoFixCi: boolean;
   readonly maxAttempts: number;
+  /**
+   * Frozen with the rest of the policy, for the reason the others are: a
+   * repository relaxing this tomorrow must not grant an in-flight task
+   * permission to merge itself today.
+   */
+  readonly humanMergeLabels: readonly string[];
 }
 
 /** Spec picker option (soft plan dependency — empty when plan is disabled). */

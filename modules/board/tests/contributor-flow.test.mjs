@@ -9,6 +9,7 @@ const governed = Object.freeze({
   mergeMethod: 'squash',
   autoFixCi: true,
   maxAttempts: 4,
+  humanMergeLabels: [],
 });
 
 const issue = Object.freeze({
@@ -84,6 +85,9 @@ test('a corrupt stored automation policy fails closed instead of inheriting auto
     mergeMethod: 'squash',
     autoFixCi: false,
     maxAttempts: 1,
+    // An unreadable row reserves nothing, because it also permits nothing:
+    // autoMerge is false, so there is no merge for a label to withhold.
+    humanMergeLabels: [],
   });
 
   service.dispose();

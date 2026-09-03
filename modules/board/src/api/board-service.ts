@@ -111,6 +111,7 @@ export class BoardService {
           mergeMethod: task.automationPolicy.mergeMethod,
           autoFixCi: task.automationPolicy.autoFixCi,
           maxAttempts: task.automationPolicy.maxAttempts,
+          humanMergeLabels: task.automationPolicy.humanMergeLabels ?? [],
         }
       : workspace;
   }
@@ -1622,6 +1623,20 @@ reply; a guess costs a change that has to be found and undone.`;
       }
       if (summary.state === 'pending') continue;
       if (!approved || !config.autoMerge) continue;
+      // Reserved for a person. Checked here rather than earlier so the card
+      // still reviews, still repairs its own build, and still reaches the
+      // maintainer green - it is the MERGE that is withheld, not the work.
+      const reserved = this.reservedForHuman(pr.labels, config);
+      if (reserved) {
+        this.notifyBlocker(
+          task,
+          'human_merge',
+          'Board task is waiting for a person to merge',
+          `PR #${task.prNumber} carries ${reserved}, which reserves the merge for a person. It is approved and green; merge it deliberately.`,
+        );
+        continue;
+      }
+      this.clearBlocker(task.id, 'human_merge');
       if (!summary.headSha) continue;
       const notBefore = this.mergeBackoff.get(task.id) ?? 0;
       if (Date.now() < notBefore) continue;
@@ -1641,6 +1656,17 @@ reply; a guess costs a change that has to be found and undone.`;
       return pinned?.enabled && pinned.role === 'reviewer' ? pinned : undefined;
     }
     return this.store.listWorkers(workspaceId).find((w) => w.enabled && w.role === 'reviewer');
+  }
+
+  /**
+   * The first label on the pull request that reserves its merge for a person,
+   * or null. Compared case-insensitively because a label applied by hand and
+   * one applied by a workflow differ in case more often than in meaning.
+   */
+  private reservedForHuman(labels: ReadonlyArray<string>, config: BoardConfig): string | null {
+    if (config.humanMergeLabels.length === 0) return null;
+    const reserved = new Set(config.humanMergeLabels.map((name) => name.trim().toLowerCase()).filter(Boolean));
+    return labels.find((label) => reserved.has(label.trim().toLowerCase())) ?? null;
   }
 
   /** One reviewer, one PR at a time: analyze, post the verdict, route the card. */
