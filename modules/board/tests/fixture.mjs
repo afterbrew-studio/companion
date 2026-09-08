@@ -19,6 +19,7 @@ export function fixture({
   startReviewFix,
   servableModels = () => [],
   taskModelPin = () => null,
+  activeOwned = [],
   complexityModelPin = () => null,
   pr = { state: 'open', reviewDecision: null, checks: null, headSha: 'head-1' },
   latestReview = null,
@@ -85,6 +86,7 @@ export function fixture({
     task: opts.task,
     preferredModel: opts.preferredModel,
   });
+  const reclaimed = [];
   const code = {
     repos: {
       get: (name) => (name === 'owner/repo' ? repo : undefined),
@@ -118,7 +120,11 @@ export function fixture({
     store,
     code,
     {
-      runsStore: { get: (id) => runRows[id] },
+      runsStore: {
+        get: (id) => runRows[id],
+        activeOwned: () => activeOwned,
+        updateStatus: (id, status, outcome) => reclaimed.push({ id, status, outcome }),
+      },
       runners: { hasFreeCapacity, servableModels },
       orchestrator: { taskModelPin, complexityModelPin },
     },
@@ -128,7 +134,7 @@ export function fixture({
     () => undefined,
     { emit: (notification) => notifications.push(notification) },
   );
-  return { db, store, notifications, dispatched, makeService };
+  return { db, store, notifications, dispatched, reclaimed, makeService };
 }
 
 export function insertDeveloper(store) {

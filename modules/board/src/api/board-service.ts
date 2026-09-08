@@ -866,8 +866,38 @@ export class BoardService {
     }
   }
 
+  /**
+   * Release the slot of a board run no card claims any more.
+   *
+   * `activeCountsByRunner` counts `review` towards a runner's capacity, and it
+   * is right to: a run awaiting a decision outlives its gateway. But when the
+   * card has moved on - repaired, failed, requeued - nothing will ever advance
+   * that run, and it holds its slot for good. Three of them silenced the whole
+   * lane: `max_runs` is 3, so capacity was zero, and every card sat `ready`
+   * while the oldest ghost had been dead for twelve days.
+   *
+   * Ownership is the test, not liveness. Asking whether a gateway is running
+   * would reclaim a legitimate awaiting-review run that survived a restart;
+   * asking whether any card still points at the run cannot.
+   */
+  private reclaimUnclaimedRuns(): void {
+    const claimed = this.store.claimedRunIds();
+    let reclaimed = 0;
+    for (const run of this.operate.runsStore.activeOwned()) {
+      if (run.task !== 'board.worker' || claimed.has(run.id)) continue;
+      this.operate.runsStore.updateStatus(run.id, 'abandoned', 'no board card claims this run');
+      log.warn('board: reclaimed the slot of an unclaimed run', { runId: run.id, status: run.status });
+      reclaimed += 1;
+    }
+    // Only when a slot actually came free. An unconditional kick here queues a
+    // follow-up pass on every tick, and that pass kicks again - the sweep runs
+    // from `tick`, so kicking from it unconditionally never stops.
+    if (reclaimed > 0) this.kick();
+  }
+
   private async recoverDangling(): Promise<void> {
     await this.refetchStalePrs();
+    this.reclaimUnclaimedRuns();
     for (const task of this.store.listTasksByStatus('in_progress')) {
       if (!task.runId) {
         this.attemptFail(task.id, 'lost its run — requeued');

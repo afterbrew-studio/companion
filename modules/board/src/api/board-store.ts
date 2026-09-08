@@ -306,6 +306,14 @@ export class BoardStore {
   }
 
   /** Workspace-scoped board feed; schedulers use the separate status query. */
+  /** Every run id a card currently points at, across all workspaces. */
+  claimedRunIds(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT run_id FROM board_tasks WHERE run_id IS NOT NULL`)
+      .all() as Array<{ run_id: string }>;
+    return new Set(rows.map((row) => row.run_id));
+  }
+
   listTasks(workspaceId: string): TaskRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM board_tasks WHERE workspace_id = ? ORDER BY priority, created_at`)
