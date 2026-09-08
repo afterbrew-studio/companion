@@ -144,3 +144,46 @@ test('a failure that is the card own still spends an attempt', async () => {
   const task = await dispatchAndFail('the patch did not apply');
   assert.equal(task.attempts, 1);
 });
+
+/**
+ * A card in review learns its pull request's fate from a webhook and nothing
+ * else, so an event that arrives while the daemon is down is gone: the cached
+ * row still says `open` and the card waits on a pull request closed days ago.
+ * Measured at five days, against a pull request closed while the host rebooted.
+ */
+test('a card re-reads its pull request once per daemon life', async () => {
+  const asked = [];
+  const { db, store, makeService } = fixture({
+    syncPr: async (repo, number) => {
+      asked.push(`${repo}#${number}`);
+    },
+  });
+  insertTask(store, { status: 'in_review', stage: 'awaiting_review', prNumber: 21 });
+  const service = makeService();
+
+  await service.tick();
+  await service.tick();
+  await service.tick();
+  service.dispose();
+
+  // Once, not per tick: the webhook is the live path and this only covers the
+  // window where nothing was listening.
+  assert.deepEqual(asked, ['owner/repo#21']);
+  db.close();
+});
+
+test('a card with no pull request is not re-read', async () => {
+  const asked = [];
+  const { db, store, makeService } = fixture({
+    syncPr: async (repo, number) => {
+      asked.push(`${repo}#${number}`);
+    },
+  });
+  insertTask(store, { status: 'ready', stage: 'build' });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  assert.deepEqual(asked, []);
+  db.close();
+});

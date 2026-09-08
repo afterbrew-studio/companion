@@ -29,6 +29,7 @@ export function fixture({
   discard = async () => undefined,
   performForRepo,
   trySummary = async () => null,
+  syncPr = async () => undefined,
   reopenCleanHistory = async () => null,
   authorized = () => true,
   canAccessWorkspace = () => true,
@@ -92,7 +93,7 @@ export function fixture({
     prs: { get: () => pr },
     prReviews: { listForPr: () => [], latestWithFindings: () => latestReview },
     prChecks: { trySummary },
-    sync: { syncRepo: async () => undefined },
+    sync: { syncRepo: async () => undefined, syncPr },
     fixes: {
       discard,
       diff,
