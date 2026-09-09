@@ -322,8 +322,8 @@ export class LocalRunnerBackend implements RunnerBackend {
   fetchOrigin(repo: string, username?: string | null): Promise<void> {
     return this.checkouts.fetch(repo, undefined, username);
   }
-  addWorktree(repo: string, key: string, branch: string, baseBranch: string, username?: string | null): Promise<string> {
-    return this.checkouts.addWorktree(repo, key, branch, baseBranch, undefined, username);
+  addWorktree(repo: string, key: string, branch: string, resetOnto: string, username?: string | null): Promise<string> {
+    return this.checkouts.addWorktree(repo, key, branch, resetOnto, undefined, username);
   }
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string> {
     return this.checkouts.addWorktreeAtBranch(repo, key, branch, undefined, username);
@@ -332,24 +332,24 @@ export class LocalRunnerBackend implements RunnerBackend {
     repo: string,
     key: string,
     prNumber: number,
-    baseBranch: string,
+    resetOnto: string,
     username?: string | null,
   ): Promise<string> {
-    return this.checkouts.addPullRequestWorktree(repo, key, prNumber, baseBranch, undefined, username);
+    return this.checkouts.addPullRequestWorktree(repo, key, prNumber, resetOnto, undefined, username);
   }
   removeWorktree(repo: string, cwd: string): Promise<void> {
     return this.checkouts.removeWorktree(repo, cwd);
   }
-  diffVsBase(cwd: string, baseBranch: string): Promise<string> {
-    return this.checkouts.diffVsBase(cwd, baseBranch);
+  diffVsBase(cwd: string, resetOnto: string): Promise<string> {
+    return this.checkouts.diffVsBase(cwd, resetOnto);
   }
   commitAll(
     cwd: string,
     message: string,
     author?: { name: string; email: string },
-    baseBranch?: string,
+    resetOnto?: string,
   ): Promise<void> {
-    return this.checkouts.commitAll(cwd, message, author, baseBranch);
+    return this.checkouts.commitAll(cwd, message, author, resetOnto);
   }
   /** This machine runs it directly; there is no agent hop to degrade through. */
   verify(cwd: string, command: string, timeoutMs?: number): Promise<AgentVerifyResponse> {

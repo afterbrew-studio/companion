@@ -84,6 +84,8 @@ export class BoardService {
   private readonly reviewBackoff = new Map<string, number>();
   /** Consecutive infrastructure failures per task; reset the moment one is the task's own. */
   private readonly infraRetries = new Map<string, number>();
+  /** Whether this daemon life has already recovered the pull-request state it missed. */
+  private prsRefetched = false;
   /** Failed attempts cool down before redispatch — a fast-dying runner
    *  environment must not burn the whole attempt ceiling in seconds. */
   private readonly retryBackoff = new Map<string, number>();
@@ -832,7 +834,76 @@ export class BoardService {
    * Boot/periodic sweep: tasks pointing at runs that died (or finished) while
    * the board wasn't looking, and 'reviewing' rows orphaned by a restart.
    */
+  /**
+   * Re-read the pull request of every card waiting on one, once per daemon life.
+   *
+   * A card in review learns its pull request's fate from a webhook and nothing
+   * else. An event that arrives while the daemon is down is simply gone: the
+   * cached row still says `open`, `reviewCycle` acts on that, and the card waits
+   * for a decision on a pull request that was closed days ago. Measured - a card
+   * sat in `awaiting_review` for five days against a pull request closed while
+   * the host was rebooting, and no tick could ever notice.
+   *
+   * Once per boot, not per tick: the webhook is the live path and works: this
+   * only has to cover what was missed while nothing was listening.
+   */
+  private async refetchStalePrs(): Promise<void> {
+    if (this.prsRefetched) return;
+    this.prsRefetched = true;
+    for (const task of this.store.listTasksByStatus('in_review')) {
+      if (task.prNumber == null || !task.createdBy) continue;
+      await this.code.sync
+        .syncPr(task.repo, task.prNumber, task.createdBy, task.workspaceId)
+        .catch((err) =>
+          // Best effort. A failure leaves the cache as it was, which is the
+          // behaviour every tick before this one had.
+          log.warn('board: could not re-read a card\'s pull request', {
+            taskId: task.id,
+            prNumber: task.prNumber,
+            err: String(err),
+          }),
+        );
+    }
+  }
+
+  /**
+   * Release the slot of a board run no card claims any more.
+   *
+   * `activeCountsByRunner` counts `review` towards a runner's capacity, and it
+   * is right to: a run awaiting a decision outlives its gateway. But when the
+   * card has moved on - repaired, failed, requeued - nothing will ever advance
+   * that run, and it holds its slot for good. Three of them silenced the whole
+   * lane: `max_runs` is 3, so capacity was zero, and every card sat `ready`
+   * while the oldest ghost had been dead for twelve days.
+   *
+   * Ownership is the test, not liveness. Asking whether a gateway is running
+   * would reclaim a legitimate awaiting-review run that survived a restart;
+   * asking whether any card still points at the run cannot.
+   */
+  private reclaimUnclaimedRuns(): void {
+    const claimed = this.store.claimedRunIds();
+    let reclaimed = 0;
+    for (const run of this.operate.runsStore.activeOwned()) {
+      if (run.task !== 'board.worker' || claimed.has(run.id)) continue;
+      // Unclaimed is not the same as dead. A card releases its run the moment it
+      // fails, and the agent behind that run can still be mid-turn: reclaiming
+      // then kills work in flight and the outcome reads as `no board card claims
+      // this run` rather than whatever the run was actually doing. A live run
+      // holds its slot legitimately and will release it when it ends.
+      if (this.operate.orchestrator.getRun(run.id)?.live) continue;
+      this.operate.runsStore.updateStatus(run.id, 'abandoned', 'no board card claims this run');
+      log.warn('board: reclaimed the slot of an unclaimed run', { runId: run.id, status: run.status });
+      reclaimed += 1;
+    }
+    // Only when a slot actually came free. An unconditional kick here queues a
+    // follow-up pass on every tick, and that pass kicks again - the sweep runs
+    // from `tick`, so kicking from it unconditionally never stops.
+    if (reclaimed > 0) this.kick();
+  }
+
   private async recoverDangling(): Promise<void> {
+    await this.refetchStalePrs();
+    this.reclaimUnclaimedRuns();
     for (const task of this.store.listTasksByStatus('in_progress')) {
       if (!task.runId) {
         this.attemptFail(task.id, 'lost its run — requeued');

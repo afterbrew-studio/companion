@@ -19,6 +19,8 @@ export function fixture({
   startReviewFix,
   servableModels = () => [],
   taskModelPin = () => null,
+  activeOwned = [],
+  getRun = () => null,
   complexityModelPin = () => null,
   pr = { state: 'open', reviewDecision: null, checks: null, headSha: 'head-1' },
   latestReview = null,
@@ -29,6 +31,7 @@ export function fixture({
   discard = async () => undefined,
   performForRepo,
   trySummary = async () => null,
+  syncPr = async () => undefined,
   reopenCleanHistory = async () => null,
   authorized = () => true,
   canAccessWorkspace = () => true,
@@ -84,6 +87,7 @@ export function fixture({
     task: opts.task,
     preferredModel: opts.preferredModel,
   });
+  const reclaimed = [];
   const code = {
     repos: {
       get: (name) => (name === 'owner/repo' ? repo : undefined),
@@ -92,7 +96,7 @@ export function fixture({
     prs: { get: () => pr },
     prReviews: { listForPr: () => [], latestWithFindings: () => latestReview },
     prChecks: { trySummary },
-    sync: { syncRepo: async () => undefined },
+    sync: { syncRepo: async () => undefined, syncPr },
     fixes: {
       discard,
       diff,
@@ -117,9 +121,19 @@ export function fixture({
     store,
     code,
     {
-      runsStore: { get: (id) => runRows[id] },
+      runsStore: {
+        get: (id) => runRows[id],
+        activeOwned: () => activeOwned,
+        // Mirrors the real store: a terminal status drops the run from the
+        // active set, so a second sweep cannot see it again.
+        updateStatus: (id, status, outcome) => {
+          reclaimed.push({ id, status, outcome });
+          const at = activeOwned.findIndex((run) => run.id === id);
+          if (at !== -1) activeOwned.splice(at, 1);
+        },
+      },
       runners: { hasFreeCapacity, servableModels },
-      orchestrator: { taskModelPin, complexityModelPin },
+      orchestrator: { taskModelPin, complexityModelPin, getRun: (id) => getRun(id) },
     },
     { canAccessRepo: () => true, canAccessWorkspace, requireAccessible: () => undefined },
     () => undefined,
@@ -127,7 +141,7 @@ export function fixture({
     () => undefined,
     { emit: (notification) => notifications.push(notification) },
   );
-  return { db, store, notifications, dispatched, makeService };
+  return { db, store, notifications, dispatched, reclaimed, makeService };
 }
 
 export function insertDeveloper(store) {

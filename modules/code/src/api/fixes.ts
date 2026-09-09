@@ -505,7 +505,9 @@ export class Fixes {
     // Fresh PRs are collapsed onto their trusted base before Companion creates
     // one clean commit. This removes any attribution trailer even if a harness
     // ignored the no-commit prompt. Existing PR repairs retain their topology.
-    await backend.commitAll(run.cwd, title, author, run.pr_url ? undefined : baseBranch);
+    // An existing pull request resets onto its OWN branch, not the base: the
+    // push has to be a fast-forward of what is already there.
+    await backend.commitAll(run.cwd, title, author, run.pr_url ? run.branch : baseBranch);
     opts.beforeWrite?.();
     await backend.push(run.repo, run.cwd, run.branch, credentialOwner);
 

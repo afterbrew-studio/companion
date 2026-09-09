@@ -194,3 +194,91 @@ test('approve refuses an unnamed .github edit before committing', async () => {
   });
   assert.equal(calls.length, 0, 'the forbidden diff must not be committed');
 });
+
+/**
+ * A repair pushes to a branch that already has commits, so its own commit has
+ * to be a descendant of that branch rather than of the base. An agent that
+ * reached for `git reset` left HEAD a sibling, and the push was rejected
+ * non-fast-forward after the whole turn had been spent - the card burned its
+ * last attempt on a failure that had nothing to do with its change.
+ */
+test('a repair on an existing pull request commits onto that branch, not the base', async () => {
+  const calls = [];
+  const run = {
+    id: 'fix-570',
+    repo: 'example-org/example-repo',
+    branch: 'companion/task-abc-defg',
+    cwd: '/tmp/fix-570',
+    runner_id: null,
+    user_id: 'alice',
+    title: 'Fix CI on PR #564',
+    outcome: 'Repaired the failing gate.',
+    issue_number: 509,
+    pr_url: 'https://github.com/example-org/example-repo/pull/564',
+    model: 'MiniMax-M3',
+  };
+  const backend = {
+    commitAll: async (...args) => calls.push(['commit', ...args]),
+    push: async (...args) => calls.push(['push', ...args]),
+    diffVsBase: async () => '',
+  };
+  const client = {
+    viewer: async () => ({ login: 'alice' }),
+    createPr: async () => {
+      throw new Error('a repair must not open a second pull request');
+    },
+    issue: async () => ({ labels: [], body: '' }),
+    repo: async () => ({ default_branch: 'main' }),
+    repoTextFiles: async () => new Map(),
+    addLabels: async () => undefined,
+  };
+  const store = {
+    runs: {
+      get: () => run,
+      setPr: (...args) => calls.push(['set-pr', ...args]),
+      updateStatus: (...args) => calls.push(['status', ...args]),
+    },
+    repos: { get: () => ({ default_branch: 'main' }) },
+  };
+  const orchestrator = {
+    runners: { backend: () => backend },
+    markRun: (...args) => calls.push(['mark', ...args]),
+    stopRun: async (...args) => calls.push(['stop', ...args]),
+  };
+  const context = {
+    repo: run.repo,
+    ref: 'main',
+    scannedAt: Date.now(),
+    truncated: false,
+    files: [],
+    policies: {
+      noAiAttribution: true,
+      pullRequestDraft: false,
+      conventionalPrTitle: false,
+      agentProvenance: false,
+      branchPrefixes: [],
+    },
+  };
+  const fixes = new Fixes(
+    store,
+    orchestrator,
+    () => client,
+    async () => true,
+    async () => ({ client, tried: [] }),
+    () => true,
+    {},
+    { scan: async () => context },
+    () => undefined,
+  );
+
+  await fixes.approve(run.id, {}, 'alice');
+
+  const commit = calls.find((c) => c[0] === 'commit');
+  assert.ok(commit, 'it commits');
+  assert.equal(commit[4], run.branch, 'resets onto the pull request branch, not the base');
+  assert.notEqual(commit[4], 'main');
+  assert.deepEqual(
+    calls.find((c) => c[0] === 'push')?.slice(1, 4),
+    [run.repo, run.cwd, run.branch],
+  );
+});

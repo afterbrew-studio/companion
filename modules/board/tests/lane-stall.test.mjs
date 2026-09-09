@@ -144,3 +144,119 @@ test('a failure that is the card own still spends an attempt', async () => {
   const task = await dispatchAndFail('the patch did not apply');
   assert.equal(task.attempts, 1);
 });
+
+/**
+ * A card in review learns its pull request's fate from a webhook and nothing
+ * else, so an event that arrives while the daemon is down is gone: the cached
+ * row still says `open` and the card waits on a pull request closed days ago.
+ * Measured at five days, against a pull request closed while the host rebooted.
+ */
+test('a card re-reads its pull request once per daemon life', async () => {
+  const asked = [];
+  const { db, store, makeService } = fixture({
+    syncPr: async (repo, number) => {
+      asked.push(`${repo}#${number}`);
+    },
+  });
+  insertTask(store, { status: 'in_review', stage: 'awaiting_review', prNumber: 21 });
+  const service = makeService();
+
+  await service.tick();
+  await service.tick();
+  await service.tick();
+  service.dispose();
+
+  // Once, not per tick: the webhook is the live path and this only covers the
+  // window where nothing was listening.
+  assert.deepEqual(asked, ['owner/repo#21']);
+  db.close();
+});
+
+test('a card with no pull request is not re-read', async () => {
+  const asked = [];
+  const { db, store, makeService } = fixture({
+    syncPr: async (repo, number) => {
+      asked.push(`${repo}#${number}`);
+    },
+  });
+  insertTask(store, { status: 'ready', stage: 'build' });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  assert.deepEqual(asked, []);
+  db.close();
+});
+
+/**
+ * `activeCountsByRunner` counts `review` towards a runner's capacity, rightly:
+ * a run awaiting a decision outlives its gateway. But once the card has moved
+ * on, nothing will ever advance that run and it holds its slot for good. Three
+ * of them silenced the whole lane - `max_runs` is 3, so capacity was zero and
+ * every card sat `ready` while the oldest ghost had been dead twelve days.
+ */
+test('a board run no card claims gives its slot back', async () => {
+  const { db, store, makeService, reclaimed } = fixture({
+    activeOwned: [
+      { id: 'run-ghost', task: 'board.worker', status: 'review' },
+      { id: 'run-mine', task: 'board.worker', status: 'running' },
+    ],
+    // The claimed run has to exist as a row too, or `recoverDangling` requeues
+    // its card for a lost run before the sweep is reached - which would leave
+    // the run unclaimed and pass this test for the wrong reason.
+    runRows: { 'run-mine': { id: 'run-mine', status: 'running' } },
+  });
+  insertTask(store, { status: 'in_progress', stage: 'build', runId: 'run-mine' });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  // A Set, because reclaiming frees a slot and so kicks a follow-up pass; the
+  // question is which runs were touched, not how many times.
+  assert.deepEqual(
+    [...new Set(reclaimed.map((r) => r.id))],
+    ['run-ghost'],
+    'the claimed run keeps its slot',
+  );
+  assert.equal(reclaimed[0].status, 'abandoned');
+  db.close();
+});
+
+test('a run belonging to another feature is left alone', async () => {
+  // The guard: the board must not reclaim slots it does not own. A chat or a
+  // triage run has no card by design and is not a leak.
+  const { db, store, makeService, reclaimed } = fixture({
+    activeOwned: [
+      { id: 'run-chat', task: 'operate.chat', status: 'idle' },
+      { id: 'run-triage', task: 'code.triage', status: 'running' },
+    ],
+  });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  assert.deepEqual(reclaimed, [], 'only board.worker runs are the board to reclaim');
+  db.close();
+});
+
+/**
+ * Unclaimed is not the same as dead. A card releases its run the moment it
+ * fails, and the agent behind it can still be mid-turn - observed on a repair
+ * whose outcome was overwritten with `no board card claims this run` while it
+ * was still producing tokens.
+ */
+test('a live run keeps its slot even with no card claiming it', async () => {
+  const { db, store, makeService, reclaimed } = fixture({
+    activeOwned: [
+      { id: 'run-live', task: 'board.worker', status: 'running' },
+      { id: 'run-dead', task: 'board.worker', status: 'review' },
+    ],
+    getRun: (id) => ({ id, live: id === 'run-live' }),
+  });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  assert.deepEqual(reclaimed.map((r) => r.id), ['run-dead']);
+  db.close();
+});
