@@ -15,12 +15,25 @@
  * else through untouched.
  */
 import { createServer } from 'node:http';
-import { request as httpsRequest } from 'node:https';
+import { Agent, request as httpsRequest } from 'node:https';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const UPSTREAM = new URL(process.env.UPSTREAM_BASE_URL ?? 'https://api.minimax.io');
 /** Bodies above this are forwarded unread; a chat completion is far smaller. */
 const MAX_REWRITE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * A long turn ships a large prompt and then waits, silently, while the vendor
+ * thinks. Nothing was holding that connection open: short requests always
+ * succeeded while long ones died with `ETIMEDOUT` mid-wait, and the run lost
+ * everything it had done - one gave up after 661k input tokens. TCP keep-alive
+ * gives the path something to see, so an idle-but-live connection is not
+ * mistaken for a dead one.
+ */
+const UPSTREAM_AGENT = new Agent({ keepAlive: true, keepAliveMsecs: 15_000, maxSockets: 64 });
+
+/** Generous, but not unbounded: a turn that has produced nothing in this long is stuck. */
+const UPSTREAM_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Hop-by-hop headers belong to one connection and must not be relayed onto the
@@ -123,7 +136,16 @@ const server = createServer((req, res) => {
     if (payload.length > 0) headers['content-length'] = String(payload.length);
 
     const upstream = httpsRequest(
-      { protocol: UPSTREAM.protocol, hostname: UPSTREAM.hostname, port: UPSTREAM.port || 443, path: req.url, method: req.method, headers },
+      {
+        protocol: UPSTREAM.protocol,
+        hostname: UPSTREAM.hostname,
+        port: UPSTREAM.port || 443,
+        path: req.url,
+        method: req.method,
+        headers,
+        agent: UPSTREAM_AGENT,
+        timeout: UPSTREAM_TIMEOUT_MS,
+      },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, withoutHopByHop(upstreamRes.headers));
         // Piped rather than buffered: completions stream, and holding the
@@ -141,6 +163,15 @@ const server = createServer((req, res) => {
     // A transport failure here ends the caller's turn, so it is logged with the
     // code that caused it: `502 minimax proxy:` with nothing after the colon is
     // otherwise indistinguishable from the vendor rejecting the request.
+    // Keep-alive probes on the socket itself, not just the pool: the pool keeps
+    // an IDLE socket warm between requests, while this is what holds a socket
+    // open DURING one long wait.
+    upstream.on('socket', (socket) => socket.setKeepAlive(true, 15_000));
+    upstream.on('timeout', () => {
+      console.log('upstream timeout', req.method, req.url, `after ${UPSTREAM_TIMEOUT_MS}ms`);
+      upstream.destroy(new Error(`upstream produced nothing for ${UPSTREAM_TIMEOUT_MS}ms`));
+    });
+
     upstream.on('error', (err) => {
       console.log('upstream error', req.method, req.url, err.code ?? '', err.message ?? String(err));
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
