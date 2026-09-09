@@ -238,3 +238,25 @@ test('a run belonging to another feature is left alone', async () => {
   assert.deepEqual(reclaimed, [], 'only board.worker runs are the board to reclaim');
   db.close();
 });
+
+/**
+ * Unclaimed is not the same as dead. A card releases its run the moment it
+ * fails, and the agent behind it can still be mid-turn - observed on a repair
+ * whose outcome was overwritten with `no board card claims this run` while it
+ * was still producing tokens.
+ */
+test('a live run keeps its slot even with no card claiming it', async () => {
+  const { db, store, makeService, reclaimed } = fixture({
+    activeOwned: [
+      { id: 'run-live', task: 'board.worker', status: 'running' },
+      { id: 'run-dead', task: 'board.worker', status: 'review' },
+    ],
+    getRun: (id) => ({ id, live: id === 'run-live' }),
+  });
+  const service = makeService();
+  await service.tick();
+  service.dispose();
+
+  assert.deepEqual(reclaimed.map((r) => r.id), ['run-dead']);
+  db.close();
+});

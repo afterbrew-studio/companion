@@ -885,6 +885,12 @@ export class BoardService {
     let reclaimed = 0;
     for (const run of this.operate.runsStore.activeOwned()) {
       if (run.task !== 'board.worker' || claimed.has(run.id)) continue;
+      // Unclaimed is not the same as dead. A card releases its run the moment it
+      // fails, and the agent behind that run can still be mid-turn: reclaiming
+      // then kills work in flight and the outcome reads as `no board card claims
+      // this run` rather than whatever the run was actually doing. A live run
+      // holds its slot legitimately and will release it when it ends.
+      if (this.operate.orchestrator.getRun(run.id)?.live) continue;
       this.operate.runsStore.updateStatus(run.id, 'abandoned', 'no board card claims this run');
       log.warn('board: reclaimed the slot of an unclaimed run', { runId: run.id, status: run.status });
       reclaimed += 1;

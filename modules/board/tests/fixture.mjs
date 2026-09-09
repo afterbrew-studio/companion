@@ -20,6 +20,7 @@ export function fixture({
   servableModels = () => [],
   taskModelPin = () => null,
   activeOwned = [],
+  getRun = () => null,
   complexityModelPin = () => null,
   pr = { state: 'open', reviewDecision: null, checks: null, headSha: 'head-1' },
   latestReview = null,
@@ -123,10 +124,16 @@ export function fixture({
       runsStore: {
         get: (id) => runRows[id],
         activeOwned: () => activeOwned,
-        updateStatus: (id, status, outcome) => reclaimed.push({ id, status, outcome }),
+        // Mirrors the real store: a terminal status drops the run from the
+        // active set, so a second sweep cannot see it again.
+        updateStatus: (id, status, outcome) => {
+          reclaimed.push({ id, status, outcome });
+          const at = activeOwned.findIndex((run) => run.id === id);
+          if (at !== -1) activeOwned.splice(at, 1);
+        },
       },
       runners: { hasFreeCapacity, servableModels },
-      orchestrator: { taskModelPin, complexityModelPin },
+      orchestrator: { taskModelPin, complexityModelPin, getRun: (id) => getRun(id) },
     },
     { canAccessRepo: () => true, canAccessWorkspace, requireAccessible: () => undefined },
     () => undefined,
