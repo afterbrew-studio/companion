@@ -339,7 +339,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
     repo: string,
     key: string,
     branch: string,
-    baseBranch: string,
+    resetOnto: string,
     username?: string | null,
   ): Promise<string> {
     return (
@@ -347,7 +347,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
         repo,
         key,
         branch,
-        baseBranch,
+        resetOnto,
         ...(await this.ghToken(repo, username)),
       })
     ).cwd;
@@ -365,20 +365,20 @@ export class RemoteRunnerBackend implements RunnerBackend {
   async removeWorktree(repo: string, cwd: string): Promise<void> {
     await this.call('POST', '/git/remove-worktree', { repo, cwd });
   }
-  async diffVsBase(cwd: string, baseBranch: string): Promise<string> {
-    return (await this.call<AgentDiffResponse>('POST', '/git/diff', { cwd, baseBranch })).diff;
+  async diffVsBase(cwd: string, resetOnto: string): Promise<string> {
+    return (await this.call<AgentDiffResponse>('POST', '/git/diff', { cwd, resetOnto })).diff;
   }
   async commitAll(
     cwd: string,
     message: string,
     author?: { name: string; email: string },
-    baseBranch?: string,
+    resetOnto?: string,
   ): Promise<void> {
     await this.call('POST', '/git/commit-all', {
       cwd,
       message,
       ...(author ? { author } : {}),
-      ...(baseBranch ? { baseBranch } : {}),
+      ...(resetOnto ? { resetOnto } : {}),
     });
   }
   async push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void> {
@@ -437,7 +437,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
     repo: string,
     key: string,
     prNumber: number,
-    baseBranch: string,
+    resetOnto: string,
     username?: string | null,
   ): Promise<string | null> {
     try {
@@ -446,7 +446,7 @@ export class RemoteRunnerBackend implements RunnerBackend {
           repo,
           key,
           prNumber,
-          baseBranch,
+          resetOnto,
           ...(await this.ghToken(repo, username)),
         })
       ).cwd;

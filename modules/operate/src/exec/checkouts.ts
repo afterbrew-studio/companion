@@ -514,18 +514,25 @@ export class Checkouts {
     worktree: string,
     message: string,
     author?: { name: string; email: string },
-    baseBranch?: string,
+    resetOnto?: string,
   ): Promise<void> {
     // Read and removed BEFORE `git add -A`, so the file itself is never staged.
     const trailers = readCommitTrailers(worktree);
     await this.git(['add', '-A'], worktree);
-    if (baseBranch) {
+    if (resetOnto) {
       // Agents are asked to leave changes uncommitted, but a harness can still
-      // ignore that instruction. A fresh PR has no history worth preserving,
-      // so move HEAD back to the server-selected base while retaining the
-      // final reviewed tree in the index. The commit below is then guaranteed
-      // to have Companion's message/author and no model attribution trailer.
-      await this.git(['reset', '--soft', `origin/${baseBranch}`], worktree);
+      // ignore that instruction - and one that reaches for `git reset` or
+      // `git rebase` rewrites the branch under itself. Moving HEAD back to the
+      // ref the server chose, while keeping the final reviewed tree in the
+      // index, makes the commit below Companion's regardless: its message, its
+      // author, no model attribution trailer, and a history the server picked.
+      //
+      // For a fresh pull request that ref is the base branch. For work on an
+      // existing one it is that branch's own remote tip, which is what makes
+      // the push a fast-forward: an agent that reset onto the base left HEAD a
+      // sibling of the branch, and the push was rejected as non-fast-forward
+      // after the whole turn had been spent.
+      await this.git(['reset', '--soft', `origin/${resetOnto}`], worktree);
     }
     const status = await this.git(['status', '--porcelain'], worktree);
     if (!status.stdout.trim()) return;

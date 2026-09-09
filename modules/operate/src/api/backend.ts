@@ -90,7 +90,7 @@ export interface RunnerBackend {
   ensureClone(repo: string, username?: string | null): Promise<void>;
   /** Refresh all origin refs of the clone (e.g. a fresh base before a merge). */
   fetchOrigin(repo: string, username?: string | null): Promise<void>;
-  addWorktree(repo: string, key: string, branch: string, baseBranch: string, username?: string | null): Promise<string>;
+  addWorktree(repo: string, key: string, branch: string, resetOnto: string, username?: string | null): Promise<string>;
   addWorktreeAtBranch(repo: string, key: string, branch: string, username?: string | null): Promise<string>;
   /**
    * Detached worktree at a pull request's head ref: what a code review reads,
@@ -103,16 +103,16 @@ export interface RunnerBackend {
     repo: string,
     key: string,
     prNumber: number,
-    baseBranch: string,
+    resetOnto: string,
     username?: string | null,
   ): Promise<string | null>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
-  diffVsBase(cwd: string, baseBranch: string): Promise<string>;
+  diffVsBase(cwd: string, resetOnto: string): Promise<string>;
   commitAll(
     cwd: string,
     message: string,
     author?: { name: string; email: string },
-    baseBranch?: string,
+    resetOnto?: string,
   ): Promise<void>;
   push(repo: string, cwd: string, branch: string, username?: string | null): Promise<void>;
 
