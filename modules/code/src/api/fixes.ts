@@ -15,7 +15,7 @@ import {
   loadLabelRegistry,
 } from './label-registry.js';
 import { ForbiddenGithubEdit, pathsFromDiff, unnamedGithubPaths } from './github-path-guard.js';
-import { parseOwnershipRules, unrecoverableOwnedAncestor } from './unrecoverable-history.js';
+import { judgeOwnedHistory, parseOwnershipRules } from './unrecoverable-history.js';
 import {
   mergePullRequestBody,
   primaryPullRequestTemplate,
@@ -60,6 +60,9 @@ export interface FixRunOptions {
  * backend, and diff/commit/push route back to the same backend so the whole
  * fix executes on one machine.
  */
+/** Where a repository keeps the code-path-to-document map the ownership gate reads. */
+const OWNERSHIP_MAP = 'scripts/lint/doc_ownership.json';
+
 export class Fixes {
   constructor(
     private readonly store: CodeStore,
@@ -665,12 +668,22 @@ export class Fixes {
     const repoRow = this.store.repos.get(repo);
     if (!repoRow) throw new Error(`unknown repo ${repo}`);
     const old = await client.pull(repo, oldPrNumber);
+    // Every exit below is a different diagnosis, and from outside they were all
+    // one silent `null`. A card whose pull request cannot be repaired then loops
+    // repair cycles - a full agent turn each - against a verdict nobody can see.
+    const decline = (why: string): null => {
+      log.info('reopen-clean-history declined', { repo, pr: oldPrNumber, why });
+      return null;
+    };
+
     const mapText = (await client.repoTextFiles(repo, repoRow.default_branch, [
-      'scripts/lint/doc_ownership.json',
-    ])).get('scripts/lint/doc_ownership.json');
-    if (typeof mapText !== 'string' || mapText.trim() === '') return null;
+      OWNERSHIP_MAP,
+    ])).get(OWNERSHIP_MAP);
+    if (typeof mapText !== 'string' || mapText.trim() === '') {
+      return decline(`${OWNERSHIP_MAP} is absent or empty on ${repoRow.default_branch}`);
+    }
     const rules = parseOwnershipRules(mapText);
-    if (rules.length === 0) return null;
+    if (rules.length === 0) return decline(`${OWNERSHIP_MAP} parsed to no rules`);
     const { commits } = await client.prCommits(repo, oldPrNumber);
     const ranged = [];
     for (const commit of commits) {
@@ -680,8 +693,13 @@ export class Fixes {
         files: await client.commitFiles(repo, commit.sha),
       });
     }
-    const ancestor = unrecoverableOwnedAncestor(ranged, rules);
-    if (!ancestor) return null;
+    const verdict = judgeOwnedHistory(ranged, rules);
+    if (verdict.kind === 'no-ancestor') return decline('fewer than two commits; no ancestor to be stuck on');
+    if (verdict.kind === 'unreadable') {
+      return decline(`no file list for ${verdict.sha.slice(0, 8)}; cannot judge its ownership`);
+    }
+    if (verdict.kind === 'clean') return decline('every ancestor satisfies the ownership map');
+    const ancestor = verdict.commit;
 
     const baseRef = old.base.ref || repoRow.default_branch;
     const backend = this.orchestrator.runners.backend(null);
