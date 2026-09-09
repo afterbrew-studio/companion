@@ -77,6 +77,32 @@ export function commitViolatesOwnership(
 }
 
 /**
+ * What an ownership read concluded, as three distinguishable answers rather
+ * than one nullable one.
+ *
+ * `unreadable` is the case that matters. A commit whose file list came back
+ * empty matches no `when` glob, so it reads as innocent and the whole history
+ * reads as clean - the pull request stays unrepairable and nothing says why.
+ * An empty result is a failed read, not a clean commit.
+ */
+export type OwnedHistoryVerdict =
+  | { readonly kind: 'unrecoverable'; readonly commit: RangeCommit }
+  | { readonly kind: 'clean' }
+  | { readonly kind: 'unreadable'; readonly sha: string }
+  | { readonly kind: 'no-ancestor' };
+
+export function judgeOwnedHistory(
+  commits: readonly RangeCommit[],
+  rules: readonly OwnershipRule[],
+): OwnedHistoryVerdict {
+  if (commits.length < 2 || rules.length === 0) return { kind: 'no-ancestor' };
+  const unreadable = commits.find((commit) => commit.files.length === 0);
+  if (unreadable) return { kind: 'unreadable', sha: unreadable.sha };
+  const commit = unrecoverableOwnedAncestor(commits, rules);
+  return commit ? { kind: 'unrecoverable', commit } : { kind: 'clean' };
+}
+
+/**
  * Oldest-first commits. HEAD is the last entry. Unrecoverable when an ancestor
  * (not HEAD) would fail the ownership gate on its own file list.
  */

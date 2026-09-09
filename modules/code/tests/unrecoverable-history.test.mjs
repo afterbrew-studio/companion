@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   commitViolatesOwnership,
+  judgeOwnedHistory,
   parseOwnershipRules,
   pathMatches,
   unrecoverableOwnedAncestor,
@@ -87,5 +88,51 @@ test('parseOwnershipRules reads the when/update map', () => {
   assert.equal(
     commitViolatesOwnership({ sha: 'a', message: 'm', files: ['scripts/check.sh'] }, rules),
     true,
+  );
+});
+
+/**
+ * The three answers have to stay distinguishable. A commit whose file list came
+ * back empty matches no `when` glob, so under a nullable verdict it read as a
+ * clean history - the pull request stayed unrepairable and nothing said why.
+ */
+test('an unreadable file list is not a clean history', () => {
+  const verdict = judgeOwnedHistory(
+    [
+      { sha: 'aaa111', message: 'fix: silence a gate\n', files: [] },
+      { sha: 'bbb222', message: 'fix: repair\n', files: ['scripts/check.sh', 'AGENTS.md'] },
+    ],
+    RAYF_RULES,
+  );
+  assert.deepEqual(verdict, { kind: 'unreadable', sha: 'aaa111' });
+});
+
+test('a genuinely clean history says clean, not unreadable', () => {
+  const verdict = judgeOwnedHistory(
+    [
+      { sha: 'aaa111', message: 'docs: prose\n', files: ['docs/product.md'] },
+      { sha: 'bbb222', message: 'docs: more\n', files: ['docs/product.md'] },
+    ],
+    RAYF_RULES,
+  );
+  assert.deepEqual(verdict, { kind: 'clean' });
+});
+
+test('an unrecoverable ancestor is named, not merely flagged', () => {
+  const verdict = judgeOwnedHistory(
+    [
+      { sha: 'aaa111', message: 'fix: silence a gate\n', files: ['scripts/check.sh'] },
+      { sha: 'bbb222', message: 'fix: repair\n', files: ['scripts/check.sh', 'AGENTS.md'] },
+    ],
+    RAYF_RULES,
+  );
+  assert.equal(verdict.kind, 'unrecoverable');
+  assert.equal(verdict.commit?.sha, 'aaa111');
+});
+
+test('one commit has no ancestor to be stuck on', () => {
+  assert.deepEqual(
+    judgeOwnedHistory([{ sha: 'aaa111', message: 'x\n', files: ['scripts/check.sh'] }], RAYF_RULES),
+    { kind: 'no-ancestor' },
   );
 });
