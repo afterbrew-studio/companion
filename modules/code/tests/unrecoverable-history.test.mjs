@@ -5,7 +5,7 @@ import {
   judgeOwnedHistory,
   parseOwnershipRules,
   pathMatches,
-  unrecoverableOwnedAncestor,
+  unrecoverableOwnedCommit,
 } from '../dist/api/unrecoverable-history.js';
 
 const RAYF_RULES = [
@@ -13,8 +13,8 @@ const RAYF_RULES = [
   { when: ['Packages/**', 'App/**'], update: ['ARCHITECTURE.md', 'docs/technical-spec.md'] },
 ];
 
-test('an ancestor that touched a watched path without its owning document is unrecoverable', () => {
-  const ancestor = unrecoverableOwnedAncestor(
+test('a commit that touched a watched path without its owning document is unrecoverable', () => {
+  const ancestor = unrecoverableOwnedCommit(
     [
       { sha: 'aaa111', message: 'fix: silence a gate\n', files: ['scripts/check.sh'] },
       { sha: 'bbb222', message: 'fix: silence a gate\n\ndoc-ownership(AGENTS.md): internal\n', files: ['scripts/check.sh', 'AGENTS.md'] },
@@ -26,7 +26,7 @@ test('an ancestor that touched a watched path without its owning document is unr
 
 test('a docs-only ancestor is not unrecoverable: docs are the update side', () => {
   assert.equal(
-    unrecoverableOwnedAncestor(
+    unrecoverableOwnedCommit(
       [
         { sha: 'aaa111', message: 'docs: mention the command\n', files: ['docs/product.md'] },
         { sha: 'bbb222', message: 'docs: mention the command again\n', files: ['docs/product.md'] },
@@ -39,7 +39,7 @@ test('a docs-only ancestor is not unrecoverable: docs are the update side', () =
 
 test('a trailer on the ancestor is the intended escape', () => {
   assert.equal(
-    unrecoverableOwnedAncestor(
+    unrecoverableOwnedCommit(
       [
         {
           sha: 'aaa111',
@@ -56,7 +56,7 @@ test('a trailer on the ancestor is the intended escape', () => {
 
 test('a single clean commit is not unrecoverable history', () => {
   assert.equal(
-    unrecoverableOwnedAncestor(
+    unrecoverableOwnedCommit(
       [{ sha: 'bbb222', message: 'fix: a test\n', files: ['scripts/check.sh'] }],
       RAYF_RULES,
     ),
@@ -66,7 +66,7 @@ test('a single clean commit is not unrecoverable history', () => {
 
 test('no ownership map means the detector does not guess', () => {
   assert.equal(
-    unrecoverableOwnedAncestor(
+    unrecoverableOwnedCommit(
       [
         { sha: 'aaa111', message: 'fix: a test\n', files: ['scripts/check.sh'] },
         { sha: 'bbb222', message: 'fix: a test better\n', files: ['scripts/check.sh'] },
@@ -134,5 +134,30 @@ test('one commit has no ancestor to be stuck on', () => {
   assert.deepEqual(
     judgeOwnedHistory([{ sha: 'aaa111', message: 'x\n', files: ['scripts/check.sh'] }], RAYF_RULES),
     { kind: 'no-ancestor' },
+  );
+});
+
+test('a violating HEAD is unrecoverable too, not merely a repairable tip', () => {
+  // rayf #599: the first commit updated the owning document, the repair commit
+  // on top touched the watched path alone. The gate reads every commit in
+  // BASE..HEAD, so the tip's violation is as permanent as an ancestor's - and
+  // the tip is where a repair commit always lands.
+  const verdict = judgeOwnedHistory(
+    [
+      { sha: 'aaa111', message: 'fix: the checker\n', files: ['scripts/check.sh', 'AGENTS.md'] },
+      { sha: 'bbb222', message: 'fix: lint\n', files: ['scripts/check.sh'] },
+    ],
+    RAYF_RULES,
+  );
+  assert.equal(verdict.kind, 'unrecoverable');
+  assert.equal(verdict.commit.sha, 'bbb222');
+});
+
+test('a single violating commit is still not reopened, or the successor would spin', () => {
+  // The successor this verdict produces has exactly one commit. Calling that
+  // unrecoverable would abandon and reopen it forever.
+  assert.equal(
+    judgeOwnedHistory([{ sha: 'aaa111', message: 'fix: it\n', files: ['scripts/check.sh'] }], RAYF_RULES).kind,
+    'no-ancestor',
   );
 });
