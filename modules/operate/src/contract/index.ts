@@ -7,6 +7,7 @@ import type { OperateService } from '../api/operate-service.js';
 
 export { estimateUsd, formatUsd, priceFor, type ModelPricing } from './model-pricing.js';
 export { RunnerUnavailableError, isRunnerUnavailable } from './runner-unavailable.js';
+export { COMMIT_TRAILERS_FILE, COMMIT_TRAILER_RULE } from './commit-trailers.js';
 import type { ModelPricing } from './model-pricing.js';
 
 /**

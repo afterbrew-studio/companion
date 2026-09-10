@@ -2,7 +2,7 @@ import { log } from '@moxxy/companion-sdk/server';
 import type { Permission, SpaServerMessage } from '@moxxy/companion-contracts';
 import type { PromptAttachment } from '@moxxy/companion-sdk/agents';
 import type { RunRecord, RunRoutingContext } from '@companion/module-operate/contract';
-import { isRunnerUnavailable } from '@companion/module-operate/contract';
+import { COMMIT_TRAILER_RULE, isRunnerUnavailable } from '@companion/module-operate/contract';
 import type { PrRecord, RepoAgentContext } from '../contract/index.js';
 import type { CodeStore } from './code-store.js';
 import type { Orchestrator, RunnerBackend } from './operate-types.js';
@@ -744,12 +744,15 @@ export class Fixes {
 /**
  * The scope contract, appended to every objective that runs on a PR branch.
  *
- * `buildObjective` on the board carries its own copy for the implement stage.
- * These four - CI repair, review fixes, conflicts, and a maintainer's own
- * instruction - had none, and the difference was not academic: a CI-repair run
- * asked to make a check pass edited two GitHub Actions workflows on a pull
- * request about a documentation file, because "make CI pass" without a boundary
- * admits changing whatever is making it fail.
+ * The board's `buildObjective` states the same boundary for the implement stage.
+ * These had none, and the difference was not academic: a CI-repair run asked to
+ * make a check pass edited two GitHub Actions workflows on a pull request about
+ * a documentation file, because "make CI pass" without a boundary admits
+ * changing whatever is making it fail.
+ *
+ * The trailer rule sits directly under the bullet that forbids editing a check,
+ * because it is the legal move that bullet leaves: a gate demanding a trailer
+ * is otherwise unsatisfiable from a repair run.
  *
  * The marker matches what the board's escalation reads, so a question here parks
  * the card and asks a person exactly as it does at the build stage.
@@ -760,6 +763,7 @@ This pull request has an intent, and it is the boundary of your work.
 
 - Change ONLY what the job above requires. Nothing else in the repository is yours to touch, however obviously it could be improved.
 - Do not edit CI configuration, workflows, build or lint settings to make a check pass. A check that fails is evidence about the code; changing the check hides it. If the only way to pass is to change how it is enforced, that is a decision for a person.
+${COMMIT_TRAILER_RULE}
 - Do not rename, restructure or reformat code the job does not require.
 - Do not add dependencies, abstractions or tests the job does not require.
 - Mention unrelated problems you notice in your summary. Do not fix them.

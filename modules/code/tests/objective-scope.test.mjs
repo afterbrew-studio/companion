@@ -45,3 +45,13 @@ test('the contract uses the marker the board escalation reads', () => {
   // board would charge a failed attempt and drop the question.
   assert.match(source, /NEEDS-HUMAN:/);
 });
+
+test('the contract carries the commit-trailer rule', () => {
+  // The bullet above forbids editing a check. A gate that demands a trailer is
+  // then unsatisfiable unless the agent is told where to write one - which is
+  // how a repair run spent its ceiling on a change that was already correct.
+  assert.match(source, /\$\{COMMIT_TRAILER_RULE\}/);
+  const forbid = source.indexOf('Do not edit CI configuration');
+  const rule = source.indexOf('${COMMIT_TRAILER_RULE}');
+  assert.ok(rule > forbid, 'the trailer rule must follow the bullet it is the answer to');
+});

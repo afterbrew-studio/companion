@@ -5,6 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { log, paths } from '@moxxy/companion-services';
 import type { GitAccess, GitCredentialResolver } from '../contract/index.js';
+import { COMMIT_TRAILERS_FILE } from '../contract/commit-trailers.js';
 
 const execFileP = promisify(execFile);
 
@@ -106,19 +107,6 @@ function redactSecrets(text: string): string {
  * access-verified personal credential riding the request and it always wins
  * over any legacy machine credential.
  */
-
-/**
- * A repository may refuse a commit that does not explain itself: rayf will not
- * accept a change to a document it maps to code, or to the body of an accepted
- * decision record, without a trailer naming the document and why. The daemon
- * writes the commit, not the agent, so until now the lane could not satisfy
- * those gates at all - the work was correct and the commit was rejected
- * forever, one repair cycle after another.
- *
- * The agent leaves them in this file and the daemon appends them. Read and
- * deleted before anything is staged, so the file never lands in the tree.
- */
-const COMMIT_TRAILERS_FILE = '.companion-commit-trailers';
 
 /** Enough for a change touching several owned documents; far short of a prose channel. */
 const MAX_TRAILERS = 20;
