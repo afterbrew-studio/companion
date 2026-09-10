@@ -484,6 +484,30 @@ export class Checkouts {
     return (await this.diffVsBase(worktree, baseBranch)).trim().length > 0;
   }
 
+  /**
+   * Move HEAD to the commit this branch and its base last shared, keeping the
+   * working tree, so the next commit carries the branch's OWN changes.
+   *
+   * Squashing a stale branch onto the base TIP instead produces a commit whose
+   * tree is a snapshot from before the base moved: everything the base gained
+   * since reads as a deletion, and the result silently reverts landed work.
+   * rayf #602 was built that way and proposed removing four files its task
+   * never touched.
+   *
+   * False when the shared commit cannot be read - the caller must then decline
+   * rather than commit, because an unreadable base is the case that produced
+   * the revert.
+   */
+  async resetOntoMergeBase(worktree: string, baseBranch: string): Promise<boolean> {
+    const found = await this.git(['merge-base', 'HEAD', `origin/${baseBranch}`], worktree).catch(
+      () => ({ stdout: '' }),
+    );
+    const sha = found.stdout.trim();
+    if (!/^[0-9a-f]{7,40}$/.test(sha)) return false;
+    await this.git(['reset', '--soft', sha], worktree);
+    return true;
+  }
+
   /** Commit everything in the worktree (agent may have left work uncommitted). */
   /**
    * Stage everything and commit it, refusing anything still in conflict.

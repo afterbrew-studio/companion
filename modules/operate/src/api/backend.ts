@@ -108,6 +108,15 @@ export interface RunnerBackend {
   ): Promise<string | null>;
   removeWorktree(repo: string, cwd: string): Promise<void>;
   diffVsBase(cwd: string, resetOnto: string): Promise<string>;
+  /**
+   * Squash-prepare a branch onto the commit it shares with its base, so the
+   * commit that follows carries only that branch's changes.
+   *
+   * Optional: only the local backend needs it, and a caller must decline when
+   * it is absent rather than fall back to the base tip, which builds a commit
+   * that reverts whatever the base gained in the meantime.
+   */
+  resetOntoMergeBase?(cwd: string, baseBranch: string): Promise<boolean>;
   commitAll(
     cwd: string,
     message: string,

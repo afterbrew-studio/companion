@@ -343,6 +343,9 @@ export class LocalRunnerBackend implements RunnerBackend {
   diffVsBase(cwd: string, resetOnto: string): Promise<string> {
     return this.checkouts.diffVsBase(cwd, resetOnto);
   }
+  resetOntoMergeBase(cwd: string, baseBranch: string): Promise<boolean> {
+    return this.checkouts.resetOntoMergeBase(cwd, baseBranch);
+  }
   commitAll(
     cwd: string,
     message: string,

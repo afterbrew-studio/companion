@@ -11,7 +11,7 @@ const COMMITS = [
   { sha: '74f30d051bbb', commit: { message: 'fix: repair once\n' } },
 ];
 
-function harness({ mapText = RULES, commits = COMMITS, filesBySha = {}, push } = {}) {
+function harness({ mapText = RULES, commits = COMMITS, filesBySha = {}, push, mergeBase = true } = {}) {
   const calls = [];
   const client = {
     viewer: async () => ({ login: 'alice' }),
@@ -27,6 +27,10 @@ function harness({ mapText = RULES, commits = COMMITS, filesBySha = {}, push } =
   const backend = {
     fetchOrigin: async () => undefined,
     addWorktreeAtBranch: async () => '/tmp/reopen',
+    resetOntoMergeBase: async (...args) => {
+      calls.push(['merge-base', ...args]);
+      return mergeBase;
+    },
     commitAll: async (...args) => calls.push(['commit', ...args]),
     push: push ?? (async (...args) => calls.push(['push', ...args])),
     removeWorktree: async () => undefined,
@@ -90,4 +94,38 @@ test('a single-commit pull request has no ancestor to be stuck on', async () => 
 test('an absent ownership map declines rather than guessing', async () => {
   const { fixes } = harness({ mapText: null });
   assert.equal(await fixes.reopenCleanHistory('owner/repo', 564, 'alice', 'CI is red'), null);
+});
+
+test('the successor is squashed onto the branch point, not onto the base tip', async () => {
+  // Onto the tip, the commit's tree is the old pull request's snapshot, so
+  // every change the base landed since reads as a deletion. rayf #602 was built
+  // that way and proposed removing four files its task never touched.
+  const { fixes, calls } = harness({
+    filesBySha: {
+      d7d7f4469aaa: ['scripts/lint/check_references.py'],
+      '74f30d051bbb': ['scripts/lint/check_references.py', 'agents/rules/AGENT-INDEX.md'],
+    },
+  });
+  await fixes.reopenCleanHistory('owner/repo', 564, 'alice', 'CI is red');
+
+  assert.deepEqual(
+    calls.find((c) => c[0] === 'merge-base'),
+    ['merge-base', '/tmp/reopen', 'main'],
+  );
+  const commit = calls.find((c) => c[0] === 'commit');
+  // A fourth argument here is a reset onto the moving base, which is the defect.
+  assert.equal(commit.length, 4, `commitAll must not reset onto a branch: ${JSON.stringify(commit)}`);
+});
+
+test('an unresolvable branch point declines instead of building a reverting successor', async () => {
+  const { fixes, calls } = harness({
+    mergeBase: false,
+    filesBySha: {
+      d7d7f4469aaa: ['scripts/lint/check_references.py'],
+      '74f30d051bbb': ['scripts/lint/check_references.py', 'agents/rules/AGENT-INDEX.md'],
+    },
+  });
+  assert.equal(await fixes.reopenCleanHistory('owner/repo', 564, 'alice', 'CI is red'), null);
+  assert.equal(calls.some((c) => c[0] === 'commit'), false);
+  assert.equal(calls.some((c) => c[0] === 'push'), false);
 });

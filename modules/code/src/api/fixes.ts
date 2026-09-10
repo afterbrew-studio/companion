@@ -706,12 +706,21 @@ export class Fixes {
     await backend.fetchOrigin(repo, username);
     const key = `reopen-${oldPrNumber}-${ancestor.sha.slice(0, 8)}`;
     const cwd = await backend.addWorktreeAtBranch(repo, key, old.head.ref, username);
+    // Onto the commit this branch shares with its base, NOT the base tip: the
+    // tree here is the old pull request's, so squashing it onto a base that has
+    // since moved proposes deleting everything the base gained. Declined rather
+    // than approximated - a successor that reverts landed work is worse than no
+    // successor at all.
+    if (!(await backend.resetOntoMergeBase?.(cwd, baseRef))) {
+      await backend.removeWorktree(repo, cwd).catch(() => undefined);
+      return decline(`could not resolve where ${old.head.ref} branched from ${baseRef}`);
+    }
     const author = await client
       .viewer()
       .then(({ login }) => ({ name: login, email: `${login}@users.noreply.github.com` }))
       .catch(() => undefined);
     const title = old.title;
-    await backend.commitAll(cwd, title, author, baseRef);
+    await backend.commitAll(cwd, title, author);
     const newBranch = `companion/reopen-${oldPrNumber}-${ancestor.sha.slice(0, 7)}`;
     await backend.push(repo, cwd, newBranch, username);
     const body = [
