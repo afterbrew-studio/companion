@@ -86,9 +86,13 @@ function withoutHopByHop(headers) {
 /**
  * moxxy emits one assistant turn as TWO messages - the tool call with empty
  * content, then the prose - which leaves the `tool` result no longer adjacent
- * to the call it answers, and the call itself carrying `content: ""`. MiniMax
- * rejects that whole shape with `400 invalid params (2013)`; OpenAI and Z.AI
- * accept it, which is why only this vendor needs the repair.
+ * to the call it answers, and the call itself carrying `content: ""`.
+ *
+ * This is a defect in what WE send, not a vendor quirk, so it is repaired for
+ * every vendor behind this port. Strict endpoints refuse it in their own words:
+ * MiniMax with `400 invalid params (2013)`, DeepSeek with `400 An assistant
+ * message with 'tool_calls' must be followed by tool messages`. OpenAI and Z.AI
+ * happen to accept it, which is what made it look vendor-specific.
  *
  * Folding the prose back into the call-bearing message restores the adjacency
  * and gives it real content, losing nothing: it is one turn either way.
@@ -113,21 +117,23 @@ function mergeSplitAssistantTurns(messages) {
 }
 
 /**
- * Add the field only when the caller has not already expressed a preference.
+ * Repair the request body, and report the model so the caller can route on it
+ * without parsing twice.
  *
- * MiniMax only: `thinking` and the split-turn repair are fixes for THIS vendor's
- * deviations, and sending them to another one asks it to honour a field it never
- * declared. Returns the model so the caller can route on it without parsing the
- * body twice.
+ * The two repairs have different scopes on purpose: the split assistant turn is
+ * a defect in what we send and is fixed for every vendor, while `thinking` is a
+ * MiniMax quirk and is sent only there.
  */
 function withThinkingDisabled(raw) {
   const body = JSON.parse(raw);
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return { payload: raw, model: null };
   const model = typeof body.model === 'string' ? body.model : null;
-  if (routeFor(model).vendor !== 'minimax') return { payload: raw, model };
   const patched = { ...body };
+  // Every vendor: the malformed turn is ours to fix wherever it is sent.
   if (Array.isArray(patched.messages)) patched.messages = mergeSplitAssistantTurns(patched.messages);
-  if (!('thinking' in patched)) {
+  // MiniMax only: `thinking` IS a vendor quirk, and asking another endpoint to
+  // honour a field it never declared is a different mistake.
+  if (routeFor(model).vendor === 'minimax' && !('thinking' in patched)) {
     // `reasoning_effort` is what moxxy sends and what MiniMax ignores. Dropping
     // it keeps the request honest about which control actually applies.
     delete patched.reasoning_effort;
