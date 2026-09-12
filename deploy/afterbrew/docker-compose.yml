@@ -120,6 +120,11 @@ services:
     environment:
       - PROXY_PORT=8080
       - UPSTREAM_BASE_URL=https://api.minimax.io
+      # moxxy has one generic OpenAI-compatible slot and this proxy holds it, so
+      # a vendor not reachable through this port is not reachable at all. Routed
+      # by model id; unset leaves the proxy single-vendor.
+      - DEEPSEEK_BASE_URL=https://api.deepseek.com
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
     # Never published to the host: it forwards a credential-bearing request and
     # has no authentication of its own. Only the compose network reaches it.
     expose:

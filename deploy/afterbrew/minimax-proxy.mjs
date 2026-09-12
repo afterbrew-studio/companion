@@ -19,6 +19,28 @@ import { Agent, request as httpsRequest } from 'node:https';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const UPSTREAM = new URL(process.env.UPSTREAM_BASE_URL ?? 'https://api.minimax.io');
+
+/**
+ * A second vendor behind the same port, chosen by the model the request names.
+ *
+ * moxxy has ONE generic OpenAI-compatible provider slot and this proxy occupies
+ * it, so a vendor that is not reachable through this port is not reachable at
+ * all. Routing here keeps the slot shared instead of making the cheap tier
+ * unreachable - `model-routes.json` already maps a model to a provider, so the
+ * catalogue side needs nothing new.
+ *
+ * Unset leaves the proxy single-vendor, exactly as before.
+ */
+const DEEPSEEK = process.env.DEEPSEEK_BASE_URL ? new URL(process.env.DEEPSEEK_BASE_URL) : null;
+const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY ?? '';
+
+/** Which upstream serves this model, and the credential that upstream expects. */
+function routeFor(model) {
+  if (DEEPSEEK && typeof model === 'string' && model.toLowerCase().startsWith('deepseek')) {
+    return { upstream: DEEPSEEK, key: DEEPSEEK_KEY, vendor: 'deepseek' };
+  }
+  return { upstream: UPSTREAM, key: null, vendor: 'minimax' };
+}
 /** Bodies above this are forwarded unread; a chat completion is far smaller. */
 const MAX_REWRITE_BYTES = 32 * 1024 * 1024;
 
@@ -90,10 +112,19 @@ function mergeSplitAssistantTurns(messages) {
   return out;
 }
 
-/** Add the field only when the caller has not already expressed a preference. */
+/**
+ * Add the field only when the caller has not already expressed a preference.
+ *
+ * MiniMax only: `thinking` and the split-turn repair are fixes for THIS vendor's
+ * deviations, and sending them to another one asks it to honour a field it never
+ * declared. Returns the model so the caller can route on it without parsing the
+ * body twice.
+ */
 function withThinkingDisabled(raw) {
   const body = JSON.parse(raw);
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return raw;
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return { payload: raw, model: null };
+  const model = typeof body.model === 'string' ? body.model : null;
+  if (routeFor(model).vendor !== 'minimax') return { payload: raw, model };
   const patched = { ...body };
   if (Array.isArray(patched.messages)) patched.messages = mergeSplitAssistantTurns(patched.messages);
   if (!('thinking' in patched)) {
@@ -102,7 +133,7 @@ function withThinkingDisabled(raw) {
     delete patched.reasoning_effort;
     patched.thinking = { type: 'disabled' };
   }
-  return JSON.stringify(patched);
+  return { payload: JSON.stringify(patched), model };
 }
 
 const server = createServer((req, res) => {
@@ -119,27 +150,35 @@ const server = createServer((req, res) => {
   req.on('end', () => {
     const original = Buffer.concat(chunks);
     let payload = original;
+    let model = null;
 
     // Only chat completions carry the field, and only if the body parses. A
     // body we cannot read is forwarded as it arrived rather than rejected:
     // failing here would turn a vendor's new endpoint into an outage.
     if (!tooLarge && req.method === 'POST' && req.url.includes('/chat/completions') && original.length > 0) {
       try {
-        payload = Buffer.from(withThinkingDisabled(original.toString('utf8')), 'utf8');
+        const rewritten = withThinkingDisabled(original.toString('utf8'));
+        payload = Buffer.from(rewritten.payload, 'utf8');
+        model = rewritten.model;
       } catch {
         payload = original;
       }
     }
 
-    const headers = { ...withoutHopByHop(req.headers), host: UPSTREAM.host };
+    const route = routeFor(model);
+    const headers = { ...withoutHopByHop(req.headers), host: route.upstream.host };
+    // The caller holds ONE credential for this port, so a second vendor behind it
+    // must be given its own. Replaced rather than added: two auth headers is an
+    // ambiguity each vendor resolves differently.
+    if (route.key) headers.authorization = `Bearer ${route.key}`;
     delete headers['content-length'];
     if (payload.length > 0) headers['content-length'] = String(payload.length);
 
     const upstream = httpsRequest(
       {
-        protocol: UPSTREAM.protocol,
-        hostname: UPSTREAM.hostname,
-        port: UPSTREAM.port || 443,
+        protocol: route.upstream.protocol,
+        hostname: route.upstream.hostname,
+        port: route.upstream.port || 443,
         path: req.url,
         method: req.method,
         headers,
