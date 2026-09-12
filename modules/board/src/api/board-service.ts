@@ -1365,7 +1365,38 @@ reply; a guess costs a change that has to be found and undone.`;
       }));
   }
 
+  /**
+   * Runs reached here from two independent triggers - a run.changed event and
+   * the reconcile tick - and nothing stopped both firing for the SAME run.
+   *
+   * The two then disagree about one fact. The first call finds a diff and
+   * publishes, which commits the working tree; the second finds no diff, because
+   * the first just consumed it, and charges "finished without producing any
+   * changes". The card goes back to Ready with its work already pushed, a fresh
+   * run redoes it, and the pull request is opened twice:
+   *
+   *   06:13:04  attempt_failed  agent finished without producing any changes
+   *   06:13:05  pr_opened       #649          <- the same run
+   *   06:14:34  run_started                   <- charged, so it retried
+   *   06:31:14  pr_opened       #650          <- the duplicate
+   *
+   * The existing guards ask whether this run is still the card's current one,
+   * which both callers pass. Single-flight per run is the missing question.
+   */
   private async approveFlow(taskId: string, runId: string): Promise<void> {
+    if (this.approvingRuns.has(runId)) return;
+    this.approvingRuns.add(runId);
+    try {
+      await this.approveFlowOnce(taskId, runId);
+    } finally {
+      this.approvingRuns.delete(runId);
+    }
+  }
+
+  /** Runs whose approve flow is in flight; see `approveFlow`. */
+  private readonly approvingRuns = new Set<string>();
+
+  private async approveFlowOnce(taskId: string, runId: string): Promise<void> {
     const task = this.store.getTask(taskId);
     if (!task || task.runId !== runId || task.status !== 'in_progress') return;
 
